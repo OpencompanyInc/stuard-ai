@@ -1,0 +1,24 @@
+{
+  "name": "stuardai-monorepo",
+  "private": true,
+  "packageManager": "pnpm@8.15.0",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean --parallel",
+    "dev:stack": "concurrently -k -n CLOUD,AGENT,DESKTOP,OPS,WEB \"pnpm -F @stuardai/cloud-ai dev\" \"powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts\\run-agent.ps1\" \"npm --prefix apps/desktop run dev\" \"pnpm -F ops-console dev\" \"pnpm -F stuard-ai-website dev\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "turbo": "^1.10.12",
+    "typescript": "^5.3.3"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "node-pty@1.0.0": "patches/node-pty@1.0.0.patch"
+    }
+  }
+}

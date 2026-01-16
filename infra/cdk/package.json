@@ -1,0 +1,25 @@
+{
+  "name": "@stuardai/infra",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -w -p tsconfig.json",
+    "synth": "pnpm build && cdk synth",
+    "deploy": "pnpm build && cdk deploy",
+    "diff": "pnpm build && cdk diff",
+    "destroy": "pnpm build && cdk destroy",
+    "clean": "rimraf dist cdk.out"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.137.0",
+    "constructs": "^10.3.0",
+    "source-map-support": "^0.5.21"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "aws-cdk": "^2.137.0",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.3.3"
+  }
+}

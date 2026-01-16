@@ -1,0 +1,59 @@
+# Ops Console (Mission Control)
+
+Local DevOps dashboard for managing deployments across Beta, Staging, and Production.
+
+## Environment Variables
+
+Create a `.env.local` file with:
+
+```bash
+# GitHub Personal Access Token (with `repo` and `workflow` scopes)
+GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# Optional alias (same scopes)
+OPS_GITHUB_TOKEN=${GITHUB_TOKEN}
+
+# Optional: Override repo (defaults to Ifesol-backup/Stuard-AI)
+GITHUB_REPO=Ifesol-backup/Stuard-AI
+OPS_GITHUB_REPO=Ifesol-backup/Stuard-AI
+```
+
+To create a GitHub token:
+1. Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
+2. Generate new token with `repo` and `workflow` scopes
+
+Update manifests for the desktop auto-updater are read from the public bucket `https://storage.googleapis.com/stuardai-updates/desktop/{channel}/latest.yml` for `beta`, `staging`, and `stable`.
+
+## Getting Started
+
+Run the development server:
+
+```bash
+npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+
+## Learn More
+
+To learn more about Next.js, take a look at the following resources:
+
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+
+## Deploy on Vercel
+
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

@@ -1,0 +1,163 @@
+/**
+ * useWorkflowOperations - Hook for workflow CRUD and execution operations
+ */
+import { useState, useCallback, useEffect } from "react";
+import type { DesignerModel } from "../types";
+import { getValidAccessToken } from "../../auth/authManager";
+
+interface UseWorkflowOperationsProps {
+  refresh: () => Promise<void>;
+}
+
+export function useWorkflowOperations({ refresh }: UseWorkflowOperationsProps) {
+  const [selectedId, setSelectedId] = useState("");
+  const [model, setModel] = useState<DesignerModel | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [runningIds, setRunningIds] = useState<Record<string, boolean>>({});
+  const [showDeployPanel, setShowDeployPanel] = useState(false);
+  const [deployStatus, setDeployStatus] = useState<{ deployed: boolean; running: boolean; triggers: string[] } | null>(null);
+
+  const load = useCallback(async (id: string, onLoadSuccess?: () => void) => {
+    if (!id) return;
+    const res = await (window as any).desktopAPI?.workflowsRead?.(id);
+    if (res?.ok) {
+      setSelectedId(res.id);
+      try { setModel(JSON.parse(res.content || '{}')); } catch { setModel(null); }
+      setDirty(false);
+      onLoadSuccess?.();
+    }
+  }, []);
+
+  const save = useCallback(async () => {
+    if (!selectedId || !model) return;
+    setSaving(true);
+    const res = await (window as any).desktopAPI?.workflowsSave?.(selectedId, JSON.stringify(model, null, 2));
+    if (res?.ok) { setDirty(false); await refresh(); } else alert(res?.error || 'Save failed');
+    setSaving(false);
+  }, [selectedId, model, refresh]);
+
+  const create = useCallback(async () => {
+    const safe = `flow_${Math.random().toString(36).slice(2, 10)}`;
+    const skeleton: DesignerModel = {
+      id: safe,
+      name: "New Flow",
+      version: "1",
+      triggers: [{ id: `trig_0`, type: 'manual', label: 'Manual Trigger', args: {}, position: { x: 50, y: 50 } }],
+      nodes: [{
+        id: `start`,
+        type: 'local.tool',
+        tool: 'log',
+        label: 'Log Message',
+        args: { message: 'Workflow started' },
+        fallbackTo: '',
+        position: { x: 50, y: 180 }
+      }],
+      wires: [{ from: 'trig_0', to: 'start' }],
+    };
+    try {
+      const res = await (window as any).desktopAPI?.workflowsSave?.(safe, JSON.stringify(skeleton, null, 2));
+      if (res?.ok) {
+        await refresh();
+        await load(safe);
+      } else {
+        alert(res?.error || 'Failed to create workflow');
+      }
+    } catch (e: any) {
+      alert(e?.message || 'Failed to create workflow');
+    }
+  }, [refresh, load]);
+
+  const del = useCallback(async () => {
+    if (!selectedId || !confirm(`Delete "${selectedId}"?`)) return;
+    await (window as any).desktopAPI?.workflowsDelete?.(selectedId);
+    setSelectedId("");
+    setModel(null);
+    await refresh();
+  }, [selectedId, refresh]);
+
+  const run = useCallback(async () => {
+    if (!selectedId) return;
+    setRunningIds(p => ({ ...p, [selectedId]: true }));
+    try {
+      // Get access token for cloud tool authentication
+      const accessToken = await getValidAccessToken() || undefined;
+      const res = await (window as any).desktopAPI?.workflowsRun?.(selectedId, undefined, { accessToken });
+      setRunningIds(p => ({ ...p, [selectedId]: false }));
+      if (!res?.ok) alert(res?.error || 'Run failed');
+    } catch (e: any) {
+      setRunningIds(p => ({ ...p, [selectedId]: false }));
+      alert(e?.message || 'Run failed');
+    }
+  }, [selectedId]);
+
+  const stop = useCallback(async () => {
+    if (!selectedId) return;
+    await (window as any).desktopAPI?.workflowsStop?.(selectedId);
+    setRunningIds(p => ({ ...p, [selectedId]: false }));
+  }, [selectedId]);
+
+  const fetchDeployStatus = useCallback(async () => {
+    if (!selectedId) return;
+    try {
+      const status = await (window as any).desktopAPI?.workflowsGetDeployStatus?.(selectedId);
+      if (status?.ok) setDeployStatus({ deployed: status.deployed, running: status.running, triggers: status.triggers || [] });
+    } catch {}
+  }, [selectedId]);
+
+  useEffect(() => { if (selectedId) fetchDeployStatus(); }, [selectedId, fetchDeployStatus]);
+
+  const deploy = useCallback(async () => {
+    if (!selectedId || !model) return;
+    try {
+      await (window as any).desktopAPI?.workflowsSave?.(selectedId, JSON.stringify(model, null, 2));
+      const res = await (window as any).desktopAPI?.workflowsDeploy?.(selectedId);
+      if (res?.ok) {
+        setDeployStatus({ deployed: true, running: true, triggers: model.triggers?.map(t => t.type) || [] });
+        setShowDeployPanel(false);
+      } else {
+        alert(res?.error || 'Deploy failed');
+      }
+    } catch (e: any) { alert(e?.message || 'Failed'); }
+  }, [selectedId, model]);
+
+  const undeploy = useCallback(async () => {
+    if (!selectedId) return;
+    try {
+      const res = await (window as any).desktopAPI?.workflowsUndeploy?.(selectedId);
+      if (res?.ok) {
+        setDeployStatus({ deployed: false, running: false, triggers: model?.triggers?.map(t => t.type) || [] });
+      }
+    } catch (e: any) { alert(e?.message || 'Failed'); }
+  }, [selectedId, model]);
+
+  const exportWorkflow = useCallback(async () => {
+    if (!selectedId) return;
+    try {
+      const res = await (window as any).desktopAPI?.workflowsExport?.(selectedId);
+      if (res?.ok && res?.path) {
+        await (window as any).desktopAPI?.showItemInFolder?.(res.path);
+      } else {
+        alert(res?.error || 'Export failed');
+      }
+    } catch (e: any) {
+      alert(e?.message || 'Export failed');
+    }
+  }, [selectedId]);
+
+  const updateModel = useCallback((m: DesignerModel) => {
+    setModel(m);
+    setDirty(true);
+  }, []);
+
+  return {
+    selectedId, setSelectedId,
+    model, setModel,
+    dirty, setDirty,
+    saving,
+    runningIds, setRunningIds,
+    showDeployPanel, setShowDeployPanel,
+    deployStatus,
+    load, save, create, del, run, stop, deploy, undeploy, exportWorkflow, updateModel
+  };
+}

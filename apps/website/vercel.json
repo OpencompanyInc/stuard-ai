@@ -1,0 +1,32 @@
+{
+  "buildCommand": "npm run build",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+  "framework": "nextjs",
+  "regions": ["iad1"],
+
+
+  
+  "redirects": [
+    {
+      "source": "/auth/login",
+      "destination": "/login",
+      "permanent": true
+    },
+    {
+      "source": "/auth/signup",
+      "destination": "/signup",
+      "permanent": true
+    },
+    {
+      "source": "/steward-ai",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/stuart-ai",
+      "destination": "/",
+      "permanent": true
+    }
+  ]
+} 

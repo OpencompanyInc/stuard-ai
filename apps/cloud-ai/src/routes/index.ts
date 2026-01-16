@@ -1,0 +1,39 @@
+import type { IncomingMessage, ServerResponse } from 'http';
+import { handleWebhooks } from './webhooks';
+import { handleHealth } from './health';
+import { handleCredits } from './credits';
+import { handleGithubRoutes } from './integrations/github';
+import { handleGoogleRoutes } from './integrations/google';
+import { handleOutlookRoutes } from './integrations/outlook';
+import { handleCalendarRoutes } from './calendar';
+import { handleInferenceRoutes } from './inference';
+import { handleBetaRoutes } from './beta';
+import { handleMarketplaceRoutes } from './marketplace';
+import { handleToolsRoutes } from './tools';
+import { handleKnowledgeRoutes } from './knowledge';
+import { handleMemoryRoutes } from './memory-routes';
+import { handleModelsRoutes } from './models';
+import { handleSharedSpacesRoutes } from './shared-spaces';
+import { handleMCPRoutes } from './mcp';
+import { handleFileIndexRoutes } from './file-index';
+
+export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
+  if (await handleWebhooks(req, res, parsedUrl)) return true;
+  if (handleHealth(req, res, parsedUrl)) return true;
+  if (await handleModelsRoutes(req, res, parsedUrl)) return true;
+  if (await handleCredits(req, res, parsedUrl)) return true;
+  if (await handleBetaRoutes(req, res, parsedUrl)) return true;
+  if (await handleGithubRoutes(req, res, parsedUrl)) return true;
+  if (await handleGoogleRoutes(req, res, parsedUrl)) return true;
+  if (await handleOutlookRoutes(req, res, parsedUrl)) return true;
+  if (await handleCalendarRoutes(req, res, parsedUrl)) return true;
+  if (await handleInferenceRoutes(req, res, parsedUrl)) return true;
+  if (await handleMarketplaceRoutes(req, res, parsedUrl)) return true;
+  if (await handleToolsRoutes(req, res, parsedUrl)) return true;
+  if (await handleKnowledgeRoutes(req, res, parsedUrl)) return true;
+  if (await handleMemoryRoutes(req, res, parsedUrl)) return true;
+  if (await handleSharedSpacesRoutes(req, res, parsedUrl)) return true;
+  if (await handleMCPRoutes(req, res, parsedUrl)) return true;
+  if (await handleFileIndexRoutes(req, res, parsedUrl)) return true;
+  return false;
+}

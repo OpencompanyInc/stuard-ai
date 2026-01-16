@@ -1,0 +1,32 @@
+{
+    "manifest_version": 3,
+    "name": "Stuard AI Helper",
+    "version": "1.0.0",
+    "description": "Browser control extension for Stuard AI",
+    "permissions": [
+        "activeTab",
+        "scripting",
+        "storage",
+        "tabs"
+    ],
+    "host_permissions": [
+        "<all_urls>"
+    ],
+    "background": {
+        "service_worker": "src/background/index.ts",
+        "type": "module"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "<all_urls>"
+            ],
+            "js": [
+                "src/content/index.ts"
+            ]
+        }
+    ],
+    "action": {
+        "default_popup": "index.html"
+    }
+}

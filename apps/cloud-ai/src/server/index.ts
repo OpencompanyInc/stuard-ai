@@ -1,0 +1,38 @@
+
+import 'dotenv/config';
+import { createHttpServer } from './http/app';
+import { SocketManager } from './socket/manager';
+import { handleSpeechConnection } from '../routes/speech';
+import { PORT } from '../utils/config';
+import { WebSocketServer } from 'ws';
+
+console.log('[cloud-ai] Starting server...');
+
+const server = createHttpServer();
+const socketManager = new SocketManager();
+const speechWss = new WebSocketServer({ noServer: true });
+
+server.on('upgrade', (req, socket, head) => {
+  const url = req.url || '';
+  
+  if (url === '/ws' || url.startsWith('/ws?')) {
+    socketManager.handleUpgrade(req, socket, head);
+  } else if (url === '/speech' || url.startsWith('/speech?')) {
+    speechWss.handleUpgrade(req, socket, head, (ws) => {
+       handleSpeechConnection(ws, req);
+    });
+  } else {
+    socket.destroy();
+  }
+});
+
+server.listen(PORT, () => {
+   console.log(`[cloud-ai] HTTP listening on http://0.0.0.0:${PORT}`);
+   console.log(`[cloud-ai] WS endpoint at ws://<host>:${PORT}/ws`);
+});
+
+// Handle cleanup
+process.on('SIGTERM', () => {
+  socketManager.cleanup();
+  server.close();
+});

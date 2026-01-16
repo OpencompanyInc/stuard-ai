@@ -1,0 +1,244 @@
+import { WebSocketServer, WebSocket } from 'ws';
+import { IncomingMessage } from 'http';
+import { writeLog } from '../../utils/logger';
+import { handleClientToolMessage } from '../../tools/bridge';
+import { normalizeMessages } from '../../utils/messages';
+import { verifyToken, checkAccess, incrementDailyRequestCounter, createConversation, addUserMessage, addAssistantMessage } from '../../supabase';
+import { runAgent, abortAgent } from '../streaming/agent-runner';
+import { PING_INTERVAL_MS } from '../../utils/config';
+
+// State maps
+const wsAlive = new WeakMap<WebSocket, boolean>();
+const wsQueues = new WeakMap<WebSocket, Array<any>>();
+const wsIsRunning = new WeakMap<WebSocket, boolean>();
+
+// Configuration
+const WS_MAX_PAYLOAD = Number(process.env.CLOUD_WS_MAX_PAYLOAD || 868435456);
+const REQUIRE_AUTH = process.env.REQUIRE_AUTH === 'true';
+
+export class SocketManager {
+  private wss: WebSocketServer;
+  private pingTimer: NodeJS.Timeout;
+
+  constructor() {
+    this.wss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD });
+    
+    this.wss.on('connection', this.handleConnection.bind(this));
+    
+    // Setup heartbeat
+    this.pingTimer = setInterval(() => {
+      this.wss.clients.forEach((client: WebSocket) => {
+        const alive = wsAlive.get(client);
+        if (alive === false) {
+          writeLog('ws_terminate_due_to_no_pong');
+          try { client.terminate(); } catch { }
+          wsAlive.delete(client);
+          return;
+        }
+        wsAlive.set(client, false);
+        try { client.ping(); } catch { }
+      });
+    }, PING_INTERVAL_MS);
+  }
+
+  public handleUpgrade(req: IncomingMessage, socket: any, head: any) {
+    this.wss.handleUpgrade(req, socket, head, (ws) => {
+      this.wss.emit('connection', ws, req);
+    });
+  }
+
+  public cleanup() {
+    clearInterval(this.pingTimer);
+  }
+
+  private send(ws: WebSocket, data: unknown) {
+    try {
+      ws.send(JSON.stringify(data));
+    } catch { }
+  }
+
+  private handleConnection(ws: WebSocket, req: IncomingMessage) {
+    try {
+      const rawUrl = String(req?.url || '');
+      const qIndex = rawUrl.indexOf('?');
+      if (qIndex >= 0) {
+        const search = rawUrl.slice(qIndex + 1);
+        const parts = search.split('&');
+        for (const part of parts) {
+          const [k, v] = part.split('=');
+          if (decodeURIComponent(k || '') === 'client') {
+            (ws as any).__clientType = decodeURIComponent(v || '');
+            break;
+          }
+        }
+      }
+    } catch {}
+
+    this.send(ws, { type: 'handshake', origin: 'cloud-ai', message: 'connected' });
+    wsQueues.set(ws, []);
+    wsIsRunning.set(ws, false);
+    writeLog('ws_connected');
+    try { wsAlive.set(ws, true); } catch { }
+    try { ws.on('pong', () => { try { wsAlive.set(ws, true); } catch { } }); } catch { }
+    try { ws.on('close', () => { writeLog('ws_disconnected'); }); } catch { }
+
+    ws.on('message', async (buf: WebSocket.RawData) => {
+      await this.handleMessage(ws, buf);
+    });
+  }
+
+  private async handleMessage(ws: WebSocket, buf: WebSocket.RawData) {
+    let msg: any;
+    try {
+      msg = JSON.parse(Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf));
+    } catch {
+      this.send(ws, { type: 'error', message: 'invalid json' });
+      return;
+    }
+
+    const kind = String(msg?.type || '').toLowerCase();
+
+    // Bridge passthrough: tool events/results coming from the client
+    if (kind === 'tool_event' || kind === 'tool_result') {
+      try { handleClientToolMessage(ws, msg); } catch { }
+      return;
+    }
+
+    // Handle stop/abort request
+    if (kind === 'stop' || kind === 'abort') {
+      const aborted = abortAgent(ws);
+      this.send(ws, { type: 'stopped', success: aborted });
+      return;
+    }
+
+    if (kind !== 'chat') {
+      this.send(ws, { type: 'error', message: `unknown type: ${kind}` });
+      return;
+    }
+
+    // Queue logic
+    try {
+      const runningNow = wsIsRunning.get(ws) === true;
+      if (runningNow) {
+        const q = wsQueues.get(ws) || [];
+        q.push(msg);
+        wsQueues.set(ws, q);
+        const messageText = String(msg?.text || '').slice(0, 120);
+        const messageId = `q-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        this.send(ws, { type: 'queued', position: q.length, text: messageText, id: messageId });
+        return;
+      }
+    } catch { }
+
+    // Auth & Processing
+    const messages = normalizeMessages(msg);
+    if (messages.length === 0) {
+      this.send(ws, { type: 'error', message: 'empty prompt' });
+      return;
+    }
+
+    try {
+      const accessToken = String(msg?.auth?.accessToken || '');
+      const authUser = accessToken ? await verifyToken(accessToken) : null;
+      
+      if (REQUIRE_AUTH && !authUser) {
+        this.send(ws, { type: 'error', message: 'unauthorized' });
+        return;
+      }
+
+      if (authUser) {
+        const access = await checkAccess(authUser.userId);
+        if (!access.allowed) {
+          this.send(ws, { type: 'error', message: access.reason || 'access_denied', data: { plan: access.plan, limit: access.limit, used: access.used } });
+          return;
+        }
+        try { await incrementDailyRequestCounter(authUser.userId); } catch { }
+      }
+
+      wsIsRunning.set(ws, true);
+      
+      // Determine agent configuration from message
+      const userText = msg.text || (messages[messages.length - 1] as any).content || '';
+      const normalizeTier = (v: any) => {
+        const s = String(v || '').toLowerCase().trim();
+        if (s === 'deep') return 'smart';
+        if (s === 'smart') return 'smart';
+        if (s === 'fast') return 'fast';
+        if (s === 'balanced') return 'balanced';
+        if (s === 'auto') return 'auto';
+        return 'balanced';
+      };
+      const modelName = normalizeTier(msg.model || 'balanced');
+      const modelId = typeof msg?.modelId === 'string' ? String(msg.modelId).trim() : '';
+      const chosenModelId = modelId || undefined;
+      let conversationId = msg.conversationId || null;
+      const userId = authUser?.userId || null;
+
+      // Create or continue conversation
+      if (userId) {
+        if (!conversationId) {
+          // New conversation
+          conversationId = await createConversation(userId, userText, modelName, {
+            mode: modelName,
+            tier: modelName === 'auto' ? undefined : modelName,
+            modelId: chosenModelId,
+          });
+          if (conversationId) {
+            this.send(ws, { type: 'conversation', conversationId });
+          }
+        } else {
+          // Continuing conversation - store user message
+          await addUserMessage(userId, conversationId, userText, {
+            mode: modelName,
+            tier: modelName === 'auto' ? undefined : modelName,
+            modelId: chosenModelId,
+          });
+        }
+      }
+
+      const agentConfig = {
+        text: userText,
+        agent: msg.agent, // 'stuard' or 'workflow'
+        model: modelName,
+        modelId: chosenModelId,
+        modelConfig: (msg?.modelConfig && typeof msg.modelConfig === 'object') ? msg.modelConfig : undefined,
+        integrations: msg.integrations,
+        history: messages.slice(0, -1),
+        userId,
+        conversationId,
+        context: msg.context || {}
+      };
+
+      try {
+        const result = await runAgent(ws, agentConfig as any);
+        // Store assistant response
+        if (userId && conversationId && result?.text) {
+          await addAssistantMessage(userId, conversationId, result.text, {
+            mode: modelName,
+            tier: modelName === 'auto' ? undefined : modelName,
+            modelId: chosenModelId,
+          });
+        }
+      } finally {
+        try { wsIsRunning.set(ws, false); } catch { }
+        this.processNextInQueue(ws);
+      }
+
+    } catch (e: any) {
+      this.send(ws, { type: 'error', message: e?.message || String(e) });
+    }
+  }
+
+  private processNextInQueue(ws: WebSocket) {
+    try {
+      const q = wsQueues.get(ws) || [];
+      const next = q.shift();
+      wsQueues.set(ws, q);
+      if (next) {
+        setImmediate(() => {
+          try { ws.emit('message', Buffer.from(JSON.stringify(next)), false); } catch { }
+        });
+      }
+    } catch { }
+  }
+}

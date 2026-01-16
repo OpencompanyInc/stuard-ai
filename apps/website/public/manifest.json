@@ -1,0 +1,25 @@
+{
+  "name": "Stuard AI — Your Private Desktop AI Assistant",
+  "short_name": "Stuard AI",
+  "description": "A powerful desktop AI assistant that learns, remembers, and adapts to your needs while keeping your data 100% private",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#1a237e",
+  "categories": ["productivity", "utilities", "business"],
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "512x512 384x384 192x192 180x180 96x96 64x64 32x32 16x16",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+} 

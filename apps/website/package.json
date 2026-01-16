@@ -1,0 +1,35 @@
+{
+  "name": "stuard-ai-website",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": "20.x"
+  },
+  "scripts": {
+    "dev": "next dev --turbopack -p 3000",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@polar-sh/nextjs": "^0.9.3",
+    "@stripe/stripe-js": "^7.8.0",
+    "@supabase/supabase-js": "^2.54.0",
+    "next": "16.0.8",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "stripe": "^18.4.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.0.8",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vitest": "^4.0.10"
+  }
+}

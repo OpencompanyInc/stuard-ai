@@ -1,0 +1,52 @@
+{
+  "name": "@stuardai/cloud-ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "build": "tsup src/server.ts --format esm --sourcemap --out-dir dist",
+    "start": "node dist/server.js",
+    "clean": "rimraf dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:memory": "vitest run src/memory/conversations.test.ts",
+    "test:embedding:integration": "vitest run src/memory/embedding.integration.test.ts",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "sync:tools": "tsx scripts/sync-tools-to-db.ts",
+    "sync:tools:force": "tsx scripts/sync-tools-to-db.ts --force --disable-obsolete",
+    "sync:tools:status": "tsx scripts/sync-tools-to-db.ts --status",
+    "sync:tools:validate": "tsx scripts/sync-tools-to-db.ts --validate"
+  },
+  "dependencies": {
+    "@ai-sdk/deepseek": "^1.0.31",
+    "@ai-sdk/google": "^2.0.51",
+    "@ai-sdk/openai": "^2.0.80",
+    "@ai-sdk/xai": "^2.0.39",
+    "@google-cloud/storage": "^7.13.0",
+    "@mastra/core": "^0.24.9",
+    "@mastra/libsql": "^0.16.2",
+    "@mastra/mcp": "^0.3.0",
+    "@mastra/memory": "^0.15.11",
+    "@mastra/voice-openai": "^0.11.12",
+    "@openrouter/ai-sdk-provider": "^1.4.1",
+    "@supabase/supabase-js": "^2.45.4",
+    "ai": "^5.0.108",
+    "ai-sdk-ollama": "^1.0.2",
+    "dotenv": "^16.4.5",
+    "openai": "^6.16.0",
+    "sis-tools": "^0.1.2",
+    "ws": "^8.18.3",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/ws": "^8.5.10",
+    "rimraf": "^5.0.5",
+    "tsup": "^8.0.1",
+    "tsx": "^4.17.0",
+    "typescript": "^5.3.3",
+    "vitest": "^4.0.10"
+  }
+}

@@ -1,0 +1,627 @@
+@import url('https://fonts.googleapis.com/css2?family=Indie+Flower&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+
+  /* Default Light Theme - Matching Stuard Overlay */
+  --background: #f0f2f5;
+  --foreground: #1a1a1a;
+  --foreground-muted: #64748b;
+  /* slate-500 */
+
+  --sidebar-bg: #e2e8f0;
+  /* slate-200 */
+  --sidebar-border: #cbd5e1;
+  /* slate-300 */
+  --sidebar-item-hover: #cbd5e1;
+  --sidebar-item-active: #b8c5d6;
+
+  --card-bg: #ffffff;
+  --card-border: #e2e8f0;
+
+  --input-bg: #ffffff;
+  --input-border: #cbd5e1;
+
+  --primary: #007acc;
+  /* VS Code Blue */
+  --primary-foreground: #ffffff;
+
+  --accent: #f8fafc;
+  /* slate-50 */
+  --accent-foreground: #0f172a;
+  /* slate-900 */
+
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+
+  --border: #e2e8f0;
+
+  --radius-card: 1.5rem;
+  --radius-button: 0.75rem;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* Stuard Overlay / VS Code Dark Theme */
+  --background: #1e1e1e;
+  --foreground: #ffffff;
+  --foreground-muted: #a6a6a6;
+
+  --sidebar-bg: #252526;
+  --sidebar-border: #2b2b2b;
+  /* Slightly darker than main borders */
+  --sidebar-item-hover: #2a2d2e;
+  --sidebar-item-active: #37373d;
+
+  --card-bg: #252526;
+  /* Same as sidebar for flat look, or slightly lighter? Overlay uses 252526 for panels */
+  --card-border: #3e3e3e;
+  /* Standard VS Code border */
+
+  --input-bg: #3c3c3c;
+  --input-border: #3c3c3c;
+  /* Inputs usually blend or have subtle border */
+
+  --primary: #007acc;
+  --primary-foreground: #ffffff;
+
+  --accent: #2d2d2d;
+  --accent-foreground: #ffffff;
+
+  --destructive: #f48771;
+  /* VS Code error red */
+  --destructive-foreground: #ffffff;
+
+  --border: #3e3e3e;
+
+  --radius-card: 1.5rem;
+  --radius-button: 0.75rem;
+}
+
+/* Custom Theme - Uses custom gradient colors set via JS */
+:root[style*="--custom-gradient-start"] {
+  --background: var(--custom-gradient-start);
+  --foreground: var(--custom-text-color, #ffffff);
+  --foreground-muted: color-mix(in srgb, var(--custom-text-color, #ffffff) 60%, transparent);
+
+  --sidebar-bg: color-mix(in srgb, var(--custom-gradient-start) 80%, var(--custom-gradient-end) 20%);
+  --sidebar-border: color-mix(in srgb, var(--custom-gradient-end) 50%, transparent);
+  --sidebar-item-hover: color-mix(in srgb, var(--custom-gradient-end) 30%, transparent);
+  --sidebar-item-active: color-mix(in srgb, var(--custom-gradient-end) 50%, transparent);
+
+  --card-bg: color-mix(in srgb, var(--custom-gradient-start) 70%, var(--custom-gradient-end) 30%);
+  --card-border: color-mix(in srgb, var(--custom-gradient-end) 40%, transparent);
+
+  --input-bg: color-mix(in srgb, var(--custom-gradient-start) 60%, var(--custom-gradient-end) 40%);
+  --input-border: color-mix(in srgb, var(--custom-gradient-end) 50%, transparent);
+
+  --border: color-mix(in srgb, var(--custom-gradient-end) 40%, transparent);
+}
+
+/* Utility classes for using variables with Tailwind */
+.bg-theme-bg {
+  background-color: var(--background);
+}
+
+.bg-theme-sidebar {
+  background-color: var(--sidebar-bg);
+}
+
+.bg-theme-card {
+  background-color: var(--card-bg);
+}
+
+.bg-theme-input {
+  background-color: var(--input-bg);
+}
+
+.bg-theme-hover {
+  background-color: var(--sidebar-item-hover);
+}
+
+.bg-theme-active {
+  background-color: var(--sidebar-item-active);
+}
+
+.text-theme-fg {
+  color: var(--foreground);
+}
+
+.text-theme-muted {
+  color: var(--foreground-muted);
+}
+
+.border-theme {
+  border-color: var(--border);
+}
+
+.border-theme-sidebar {
+  border-color: var(--sidebar-border);
+}
+
+.bg-primary {
+  background-color: var(--primary);
+}
+
+.text-primary-fg {
+  color: var(--primary-foreground);
+}
+
+.rounded-theme-card {
+  border-radius: var(--radius-card);
+}
+
+.rounded-theme-button {
+  border-radius: var(--radius-button);
+}
+
+.font-stuard {
+  font-family: 'Indie Flower', cursive;
+}
+
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  background: transparent;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Window drag regions */
+.drag {
+  -webkit-app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Custom thin scrollbars - Minimal & Clean */
+.scrollbar-minimal {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.2) transparent;
+}
+
+.scrollbar-minimal::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.scrollbar-minimal::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-minimal::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.2);
+  border-radius: 9999px;
+  transition: background-color 0.2s ease;
+}
+
+.scrollbar-minimal:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.4);
+}
+
+.scrollbar-minimal::-webkit-scrollbar-thumb:active {
+  background-color: rgba(148, 163, 184, 0.6);
+}
+
+/* Dark variant */
+.dark .scrollbar-minimal,
+[data-theme='dark'] .scrollbar-minimal {
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.dark .scrollbar-minimal::-webkit-scrollbar-thumb,
+[data-theme='dark'] .scrollbar-minimal::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.dark .scrollbar-minimal:hover::-webkit-scrollbar-thumb,
+[data-theme='dark'] .scrollbar-minimal:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Hide scrollbar completely */
+.scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Radix Dropdown Animations */
+@keyframes slideUpAndFade {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideRightAndFade {
+  from {
+    opacity: 0;
+    transform: translateX(-2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideDownAndFade {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideLeftAndFade {
+  from {
+    opacity: 0;
+    transform: translateX(2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.DropdownContent {
+  animation-duration: 200ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform, opacity;
+}
+
+.DropdownContent[data-side="top"] {
+  animation-name: slideDownAndFade;
+}
+
+.DropdownContent[data-side="right"] {
+  animation-name: slideLeftAndFade;
+}
+
+.DropdownContent[data-side="bottom"] {
+  animation-name: slideUpAndFade;
+}
+
+.DropdownContent[data-side="left"] {
+  animation-name: slideRightAndFade;
+}
+
+/* Workflow Execution Flow Animations */
+@keyframes flowPulse {
+
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+    transform: scale(1);
+  }
+
+  50% {
+    box-shadow: 0 0 20px 10px rgba(16, 185, 129, 0.2);
+    transform: scale(1.02);
+  }
+}
+
+@keyframes wireFlow {
+  0% {
+    stroke-dashoffset: 100;
+  }
+
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes glowPulse {
+
+  0%,
+  100% {
+    filter: drop-shadow(0 0 2px rgba(16, 185, 129, 0.5));
+  }
+
+  50% {
+    filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.8));
+  }
+}
+
+@keyframes stepRunning {
+  0% {
+    border-color: rgb(16, 185, 129);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+  }
+
+  50% {
+    border-color: rgb(52, 211, 153);
+    box-shadow: 0 0 15px 5px rgba(16, 185, 129, 0.3);
+  }
+
+  100% {
+    border-color: rgb(16, 185, 129);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+  }
+}
+
+.workflow-node-running {
+  animation: stepRunning 1.5s ease-in-out infinite;
+}
+
+.workflow-wire-active {
+  stroke-dasharray: 10 5;
+  animation: wireFlow 1s linear infinite;
+}
+
+.workflow-glow {
+  animation: glowPulse 2s ease-in-out infinite;
+}
+
+/* Mask Utilities */
+.mask-linear-fade {
+  mask-image: linear-gradient(to right, black calc(100% - 32px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 32px), transparent 100%);
+}
+
+/* Resize Handle Styles */
+.resize-grip {
+  position: absolute;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 100;
+  pointer-events: auto;
+}
+
+.resize-grip:hover {
+  opacity: 1;
+}
+
+/* Corner grips - visible on hover */
+.resize-grip-corner {
+  width: 12px;
+  height: 12px;
+  background: radial-gradient(circle, var(--primary) 30%, transparent 70%);
+  border-radius: 2px;
+}
+
+.resize-grip-corner.top-left {
+  top: 2px;
+  left: 2px;
+  cursor: nwse-resize;
+}
+
+.resize-grip-corner.top-right {
+  top: 2px;
+  right: 2px;
+  cursor: nesw-resize;
+}
+
+.resize-grip-corner.bottom-left {
+  bottom: 2px;
+  left: 2px;
+  cursor: nesw-resize;
+}
+
+.resize-grip-corner.bottom-right {
+  bottom: 2px;
+  right: 2px;
+  cursor: nwse-resize;
+}
+
+/* Visual resize indicator in corner */
+.resize-indicator {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  width: 12px;
+  height: 12px;
+  opacity: 0.3;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.resize-indicator:hover,
+.resize-indicator.active {
+  opacity: 0.7;
+}
+
+.resize-indicator::before,
+.resize-indicator::after {
+  content: '';
+  position: absolute;
+  background: var(--foreground-muted);
+  border-radius: 1px;
+}
+
+.resize-indicator::before {
+  width: 8px;
+  height: 2px;
+  bottom: 0;
+  right: 0;
+}
+
+.resize-indicator::after {
+  width: 2px;
+  height: 8px;
+  bottom: 0;
+  right: 0;
+}
+
+/* Mode transition animations */
+@keyframes modeTransition {
+  from {
+    opacity: 0.8;
+    transform: scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.mode-transition {
+  animation: modeTransition 0.2s ease-out;
+}
+
+/* Smooth size transitions for UI elements */
+.smooth-resize {
+  transition: width 0.15s ease-out, height 0.15s ease-out, padding 0.15s ease-out;
+}
+
+/* Responsive breakpoints for overlay width */
+@media (max-width: 450px) {
+  .overlay-responsive {
+    --content-padding: 8px;
+  }
+}
+
+@media (min-width: 451px) and (max-width: 600px) {
+  .overlay-responsive {
+    --content-padding: 12px;
+  }
+}
+
+@media (min-width: 601px) {
+  .overlay-responsive {
+    --content-padding: 16px;
+  }
+}
+
+/* Animate-in utilities for dropdowns */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideInFromBottom {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInFromBottomCentered {
+  from {
+    opacity: 0;
+    transform: translateY(8px) translateX(-50%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) translateX(-50%);
+  }
+}
+
+@keyframes slideInFromTop {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInFromTopCentered {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) translateX(-50%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) translateX(-50%);
+  }
+}
+
+.animate-in {
+  animation-duration: 200ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  animation-fill-mode: both;
+}
+
+.fade-in {
+  animation-name: fadeIn;
+}
+
+.slide-in-from-bottom-2 {
+  animation-name: slideInFromBottom;
+}
+
+.slide-in-from-bottom-4 {
+  animation-name: slideInFromBottom;
+}
+
+.slide-in-from-bottom-8 {
+  animation-name: slideInFromBottom;
+}
+
+.slide-in-from-bottom-centered {
+  animation-name: slideInFromBottomCentered;
+}
+
+.slide-in-from-top-2 {
+  animation-name: slideInFromTop;
+}
+
+.slide-in-from-top-4 {
+  animation-name: slideInFromTop;
+}
+
+.slide-in-from-top-8 {
+  animation-name: slideInFromTop;
+}
+
+.slide-in-from-top-centered {
+  animation-name: slideInFromTopCentered;
+}
