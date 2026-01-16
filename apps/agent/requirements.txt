@@ -1,0 +1,22 @@
+fastapi==0.115.2
+uvicorn[standard]==0.32.0
+pydantic==2.9.2
+python-dotenv==1.0.0
+websockets>=12.0
+pyautogui==0.9.54
+pyperclip>=1.11.0
+mss>=10.1.0
+Pillow>=10.3.0
+opencv-python>=4.9.0
+lancedb>=0.25.2
+pyarrow>=21.0.0
+numpy>=1.26.0
+sounddevice
+soundfile
+# WASAPI loopback for system audio capture (Windows)
+# PyAudioWPatch>=0.0.7  # Temporarily disabled - not compatible with Python 3.14 yet
+pytest==8.3.4
+pyinstaller>=6.0.0
+# Encryption
+cryptography>=42.0.0
+keyring>=25.0.0

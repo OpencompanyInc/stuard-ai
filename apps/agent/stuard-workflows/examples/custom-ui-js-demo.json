@@ -1,0 +1,53 @@
+{
+  "id": "flow_custom_ui_js_demo",
+  "name": "Custom UI with JavaScript Demo",
+  "version": "1",
+  "description": "Demonstrates the enhanced custom UI system with JavaScript support, tool calling, and event handling",
+  "triggers": [
+    {
+      "id": "trig_0",
+      "type": "manual",
+      "label": "Launch Demo",
+      "args": {},
+      "position": { "x": 50, "y": 50 }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "demo_ui",
+      "tool": "custom_ui",
+      "label": "Interactive Demo",
+      "args": {
+        "id": "js_demo_window",
+        "title": "Custom UI JavaScript Demo",
+        "window": {
+          "width": 600,
+          "height": 500,
+          "position": "center",
+          "borderRadius": 16,
+          "alwaysOnTop": true
+        },
+        "html": "<div class=\"p-6 glass min-h-full\"><h1 class=\"text-2xl font-bold mb-4\">Custom UI with JS Support</h1><div class=\"space-y-4\"><div class=\"card\"><h3 class=\"text-lg font-semibold mb-2\">1. Call Workflow Tools</h3><p class=\"text-sm text-slate-400 mb-2\">Click to call the clipboard tool from within the UI:</p><button id=\"btn-clipboard\" class=\"btn btn-primary\">Read Clipboard</button><div id=\"clipboard-result\" class=\"mt-2 text-sm text-green-400\"></div></div><div class=\"card\"><h3 class=\"text-lg font-semibold mb-2\">2. File Picker</h3><p class=\"text-sm text-slate-400 mb-2\">Use native file dialogs:</p><button data-action=\"pick_file\" data-target=\"selectedFile\" class=\"btn btn-secondary\">Pick File</button><input data-bind=\"selectedFile\" class=\"mt-2\" placeholder=\"Selected file path...\" readonly /></div><div class=\"card\"><h3 class=\"text-lg font-semibold mb-2\">3. Dynamic Updates</h3><p class=\"text-sm text-slate-400 mb-2\">Counter: <span id=\"counter\" class=\"text-indigo-400 font-bold\">0</span></p><button id=\"btn-increment\" class=\"btn btn-secondary\">Increment</button></div><div class=\"card\"><h3 class=\"text-lg font-semibold mb-2\">4. System Integration</h3><div class=\"flex gap-2\"><button id=\"btn-notify\" class=\"btn btn-secondary\">Show Notification</button><button id=\"btn-copy\" class=\"btn btn-secondary\">Copy Text</button></div></div><div class=\"flex justify-end gap-2 mt-6\"><button data-action=\"cancel\" class=\"btn btn-ghost\">Cancel</button><button data-action=\"submit\" class=\"btn btn-primary\">Submit</button></div></div></div>",
+        "script": "// This script runs when the window opens\nlet counter = 0;\n\n// Button to read clipboard using workflow tool\ndocument.getElementById('btn-clipboard').addEventListener('click', async () => {\n  const result = await stuard.callTool('get_clipboard_content');\n  const el = document.getElementById('clipboard-result');\n  if (result.ok) {\n    el.textContent = 'Clipboard: ' + (result.text || '(empty)').slice(0, 50);\n  } else {\n    el.textContent = 'Error: ' + result.error;\n  }\n});\n\n// Counter increment button\ndocument.getElementById('btn-increment').addEventListener('click', () => {\n  counter++;\n  document.getElementById('counter').textContent = counter;\n  formData.counter = counter;\n});\n\n// Notification button\ndocument.getElementById('btn-notify').addEventListener('click', () => {\n  stuard.notify('Hello from Custom UI!', 'This notification was triggered from JavaScript');\n});\n\n// Copy to clipboard button\ndocument.getElementById('btn-copy').addEventListener('click', async () => {\n  await stuard.copyToClipboard('Hello from StuardAI Custom UI!');\n  stuard.notify('Copied!', 'Text copied to clipboard');\n});\n\nconsole.log('[Demo] Custom UI initialized with stuard API:', typeof stuard);",
+        "data": {
+          "selectedFile": "",
+          "counter": 0
+        }
+      },
+      "position": { "x": 200, "y": 50 }
+    },
+    {
+      "id": "show_result",
+      "tool": "log",
+      "label": "Show Result",
+      "args": {
+        "message": "User action: {{demo_ui.action}}, Counter: {{demo_ui.data.counter}}, File: {{demo_ui.data.selectedFile}}"
+      },
+      "position": { "x": 350, "y": 50 }
+    }
+  ],
+  "wires": [
+    { "from": "trig_0", "to": "demo_ui" },
+    { "from": "demo_ui", "to": "show_result" }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "name": "inline-python-test",
+  "version": "1",
+  "description": "Test inline Python script execution",
+  "mode": "manual",
+  "triggers": [
+    {
+      "type": "webhook.local",
+      "args": {}
+    }
+  ],
+  "steps": [
+    {
+      "id": "log_start",
+      "uses": "local.log",
+      "with": {
+        "message": "Testing inline Python script..."
+      }
+    },
+    {
+      "id": "run_inline",
+      "uses": "local.run_python_script",
+      "with": {
+        "code": "import sys\nimport platform\nprint(f'Python {sys.version}')\nprint(f'Platform: {platform.system()} {platform.release()}')\nprint(f'Hello from inline script!')\nresult = 2 + 2\nprint(f'2 + 2 = {result}')",
+        "timeoutMs": 5000
+      }
+    },
+    {
+      "id": "log_result",
+      "uses": "local.log",
+      "with": {
+        "message": "Exit code: {{run_inline.exitCode}}\nOutput:\n{{run_inline.stdout}}"
+      }
+    }
+  ]
+}
