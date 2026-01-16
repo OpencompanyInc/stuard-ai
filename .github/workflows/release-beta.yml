@@ -1,0 +1,311 @@
+name: Beta Release (Develop)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or commit to deploy (leave empty for current branch)'
+        required: false
+        default: ''
+      deploy_cloud:
+        description: 'Deploy Cloud AI backend'
+        type: boolean
+        default: true
+      deploy_website:
+        description: 'Deploy Website'
+        type: boolean
+        default: true
+      build_desktop:
+        description: 'Build Desktop App'
+        type: boolean
+        default: true
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ secrets.GCP_REGION }}
+  GAR_REPO: ${{ secrets.GAR_REPO }}
+  GAR_HOST: ${{ secrets.GCP_REGION }}-docker.pkg.dev
+
+jobs:
+  # 0. CI Checks (Gatekeeper)
+  ci-checks:
+    name: Verify Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - name: Install Dependencies
+        run: pnpm install
+      - name: Lint
+        run: pnpm turbo run lint
+      - name: Typecheck
+        run: pnpm turbo run typecheck
+      - name: Unit Tests
+        run: pnpm turbo run test
+
+  # 1. Deploy Cloud AI (Backend) to Cloud Run (Beta)
+  deploy-beta-backend:
+    name: Cloud AI (Beta)
+    runs-on: ubuntu-latest
+    needs: ci-checks
+    if: ${{ github.event.inputs.deploy_cloud == 'true' }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Auth to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for GAR
+        run: gcloud auth configure-docker $GAR_HOST --quiet
+
+      - name: Build & Push Container
+        working-directory: apps/cloud-ai
+        run: |
+          IMAGE="$GAR_HOST/$GCP_PROJECT_ID/$GAR_REPO/stuard-cloud-ai:beta"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      - name: Deploy to Cloud Run (Beta)
+        run: |
+          IMAGE="$GAR_HOST/$GCP_PROJECT_ID/$GAR_REPO/stuard-cloud-ai:beta"
+          gcloud run deploy stuard-cloud-ai-beta \
+            --image "$IMAGE" \
+            --region "$GCP_REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --service-account "${{ secrets.GCP_RUN_SA }}" \
+            --set-env-vars NODE_ENV=beta,CLOUD_PUBLIC_URL=https://beta-api.stuard.ai,WEBSITE_BASE_URL=https://beta.stuard.ai,SUPABASE_URL=${{ secrets.SUPABASE_URL }} \
+            --set-secrets XAI_API_KEY=XAI_API_KEY:latest,GOOGLE_GENERATIVE_AI_API_KEY=GOOGLE_GENERATIVE_AI_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,SUPABASE_PUBLISHABLE_KEY=SUPABASE_PUBLISHABLE_KEY:latest,SUPABASE_SECRET_KEY=SUPABASE_SECRET_KEY:latest,PERPLEXITY_API_KEY=PERPLEXITY_API_KEY:latest,ASSEMBLYAI_API_KEY=ASSEMBLYAI_API_KEY:latest,OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest
+
+  # 2. Deploy Website (Frontend) to Vercel Preview
+  deploy-beta-website:
+    name: Website (Beta)
+    runs-on: ubuntu-latest
+    needs: ci-checks
+    if: ${{ github.event.inputs.deploy_website == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+      - name: Pull Vercel environment (preview)
+        working-directory: apps/website
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Build with Vercel (preview)
+        working-directory: apps/website
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Deploy prebuilt to Vercel (preview)
+        working-directory: apps/website
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }}
+
+  # 3. Build Desktop App for all platforms
+  build-beta-desktop:
+    name: Desktop App (Beta - ${{ matrix.os }}${{ matrix.arch && format(' {0}', matrix.arch) || '' }})
+    needs: ci-checks
+    if: ${{ github.event.inputs.build_desktop == 'true' }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact-name: stuard-desktop-beta-windows
+            artifact-ext: exe
+          - os: macos-13
+            artifact-name: stuard-desktop-beta-mac-intel
+            artifact-ext: dmg
+            arch: x64
+          - os: macos-latest
+            artifact-name: stuard-desktop-beta-mac-silicon
+            artifact-ext: dmg
+            arch: arm64
+          - os: ubuntu-latest
+            artifact-name: stuard-desktop-beta-linux
+            artifact-ext: AppImage
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+      
+      # Build Python Agent first
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk python3-dev scrot xvfb libportaudio2
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'apps/agent/requirements.txt'
+      
+      - name: Install Python dependencies
+        working-directory: apps/agent
+        run: pip install -r requirements.txt
+      
+      - name: Build Python Agent
+        working-directory: apps/agent
+        run: python build-agent.py
+      
+      - name: Verify Agent Binary
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            ls -la dist/stuard-agent.exe
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            ls -la dist/stuard-agent-macos
+          else
+            ls -la dist/stuard-agent-linux
+          fi
+        shell: bash
+      
+      # Build Electron App (use npm for desktop to avoid pnpm transitive dep issues)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Desktop Dependencies
+        working-directory: apps/desktop
+        run: npm install
+      - name: Write Cloud Config for Beta
+        shell: bash
+        run: |
+          echo "CLOUD_PUBLIC_URL=https://beta-api.stuard.ai" > apps/desktop/build/.env
+          echo "CLOUD_AI_HTTP=https://beta-api.stuard.ai" >> apps/desktop/build/.env
+          echo "STUARD_UPDATE_BASE_URL=https://updates.stuard.ai/desktop" >> apps/desktop/build/.env
+          mkdir -p apps/desktop/build/agent
+          cp apps/desktop/build/.env apps/desktop/build/agent/.env
+      - name: Build Desktop App
+        working-directory: apps/desktop
+        run: |
+          if [ -n "${{ matrix.arch }}" ]; then
+            npm run build && npm run prepare:agent && npx electron-builder --${{ matrix.arch }}
+          else
+            npm run dist
+          fi
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLOUD_PUBLIC_URL: "https://beta-api.stuard.ai"
+          # PostHog analytics enabled for beta only
+          VITE_PUBLIC_POSTHOG_KEY: ${{ secrets.POSTHOG_API_KEY }}
+          VITE_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com"
+          # macOS code signing (optional - uncomment when ready)
+          # CSC_LINK: ${{ secrets.MAC_CERTIFICATE_BASE64 }}
+          # CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      
+      # Windows: Compile Inno Setup installer
+      - name: Get App Version
+        if: runner.os == 'Windows'
+        id: version
+        shell: bash
+        run: echo "version=$(node -p "require('./apps/desktop/package.json').version")" >> $GITHUB_OUTPUT
+      
+      - name: Compile Inno Setup Installer
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMY_APP_VERSION=${{ steps.version.outputs.version }} apps\desktop\inno\setup.iss
+      
+      - name: Configure R2 credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          aws-region: auto
+      
+      # Generate update manifest
+      - name: Generate Update Manifest (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: node apps/desktop/scripts/generate-update-manifest.cjs ${{ steps.version.outputs.version }} beta windows
+      
+      - name: Generate Update Manifest (Mac)
+        if: runner.os == 'macOS'
+        run: |
+          VERSION=$(node -p "require('./apps/desktop/package.json').version")
+          node apps/desktop/scripts/generate-update-manifest.cjs $VERSION beta mac
+      
+      - name: Generate Update Manifest (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          VERSION=$(node -p "require('./apps/desktop/package.json').version")
+          node apps/desktop/scripts/generate-update-manifest.cjs $VERSION beta linux
+      
+      # Upload artifacts + manifest
+      - name: Upload to R2 (Mac)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # Upload with architecture suffix for clarity
+          ENDPOINT="https://${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          for f in apps/desktop/release/*.dmg; do
+            filename=$(basename "$f" .dmg)
+            aws s3 cp "$f" "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/beta/${filename}-${{ matrix.arch }}.dmg" --endpoint-url "$ENDPOINT"
+          done
+          for f in apps/desktop/release/*.zip; do
+            filename=$(basename "$f" .zip)
+            aws s3 cp "$f" "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/beta/${filename}-${{ matrix.arch }}.zip" --endpoint-url "$ENDPOINT"
+          done || true
+          aws s3 cp apps/desktop/release/latest-mac.yml "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/beta/latest-mac-${{ matrix.arch }}.yml" --endpoint-url "$ENDPOINT"
+      
+      - name: Upload to R2 (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          ENDPOINT="https://${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          CACHE_ASSET="public, max-age=31536000, immutable"
+          CACHE_MANIFEST="public, max-age=60"
+          aws s3 cp apps/desktop/release/*.AppImage "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/beta/" --endpoint-url "$ENDPOINT" --cache-control "$CACHE_ASSET"
+          aws s3 cp apps/desktop/release/latest-linux.yml "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/beta/latest-linux.yml" --endpoint-url "$ENDPOINT" --cache-control "$CACHE_MANIFEST"
+      
+      - name: Upload to R2 (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          ENDPOINT="https://${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          CACHE_ASSET="public, max-age=31536000, immutable"
+          CACHE_MANIFEST="public, max-age=60"
+          aws s3 cp apps/desktop/release/StuardAI-Setup-*.exe "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/beta/" --endpoint-url "$ENDPOINT" --cache-control "$CACHE_ASSET"
+          aws s3 cp apps/desktop/release/latest.yml "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/beta/latest.yml" --endpoint-url "$ENDPOINT" --cache-control "$CACHE_MANIFEST"
