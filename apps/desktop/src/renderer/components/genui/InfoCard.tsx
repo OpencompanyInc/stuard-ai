@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { Info, AlertTriangle, CheckCircle, AlertOctagon, Lightbulb, ArrowRight } from 'lucide-react';
 import clsx from 'clsx';
 import { RichText } from './RichText';
@@ -31,13 +31,23 @@ export const InfoCard: React.FC<InfoCardProps> = ({
 }) => {
   const Icon = iconMap[variant];
 
+  const handleContainerClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+  }, []);
+
+  const handleAction = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    onAction?.();
+  }, [onAction]);
+
+  // Theme-aware styles with dark mode support
   const styles = {
-    info: "bg-blue-50 border-blue-100 text-blue-900",
-    warning: "bg-amber-50 border-amber-100 text-amber-900",
-    success: "bg-emerald-50 border-emerald-100 text-emerald-900",
-    danger: "bg-red-50 border-red-100 text-red-900",
-    tip: "bg-violet-50 border-violet-100 text-violet-900",
-    neutral: "bg-neutral-50 border-neutral-200 text-neutral-900"
+    info: "bg-blue-500/10 border-blue-500/20 text-blue-700 dark:text-blue-300",
+    warning: "bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-300",
+    success: "bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-300",
+    danger: "bg-red-500/10 border-red-500/20 text-red-700 dark:text-red-300",
+    tip: "bg-violet-500/10 border-violet-500/20 text-violet-700 dark:text-violet-300",
+    neutral: "bg-theme-hover border-theme/20 text-theme-fg"
   };
 
   const iconStyles = {
@@ -46,44 +56,46 @@ export const InfoCard: React.FC<InfoCardProps> = ({
     success: "text-emerald-500",
     danger: "text-red-500",
     tip: "text-violet-500",
-    neutral: "text-neutral-500"
+    neutral: "text-theme-muted"
   };
 
   return (
-    <div className={clsx(
-      "w-full max-w-2xl rounded-xl border p-4 my-3 transition-all",
-      styles[variant]
-    )}>
+    <div
+      onClick={handleContainerClick}
+      className={clsx(
+        "w-full max-w-2xl rounded-xl border p-4 my-3 transition-all",
+        styles[variant]
+      )}
+    >
       <div className="flex items-start gap-3">
-        <div className={clsx("mt-0.5 shrink-0 p-1.5 bg-white rounded-lg shadow-sm border border-transparent", iconStyles[variant])}>
+        <div className={clsx("mt-0.5 shrink-0 p-1.5 bg-theme-card rounded-lg shadow-sm border border-theme/10", iconStyles[variant])}>
           <Icon className="w-5 h-5" />
         </div>
-        
+
         <div className="flex-1 min-w-0">
           <h3 className="font-semibold text-sm mb-1">{title}</h3>
-          
+
           <div className={clsx(
             "text-sm leading-relaxed opacity-90",
-            // Inherit text color but allow RichText to style internals
             "prose-p:my-0 prose-p:leading-relaxed"
           )}>
             <RichText content={message} compact className="text-inherit" />
           </div>
 
           {(actionLabel || footer) && (
-            <div className="mt-4 flex items-center justify-between gap-4 pt-3 border-t border-black/5">
+            <div className="mt-4 flex items-center justify-between gap-4 pt-3 border-t border-theme/10">
               {footer ? (
                 <span className="text-xs opacity-70 font-medium tracking-wide uppercase">
                   {footer}
                 </span>
               ) : <div />}
-              
+
               {actionLabel && (
                 <button
-                  onClick={onAction}
+                  onClick={handleAction}
                   className={clsx(
-                    "text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5",
-                    "bg-white shadow-sm border border-black/5 hover:bg-black/5 active:scale-95",
+                    "text-xs font-semibold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5",
+                    "bg-theme-card shadow-sm border border-theme/10 hover:bg-theme-hover active:scale-95",
                     iconStyles[variant]
                   )}
                 >

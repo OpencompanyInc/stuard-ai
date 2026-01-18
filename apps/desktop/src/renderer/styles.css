@@ -242,6 +242,94 @@ body {
   display: none;
 }
 
+/* GenUI Component Scrollbar - Sleek & Minimal */
+.genui-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary, #007acc) transparent;
+}
+
+.genui-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.genui-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 10px;
+}
+
+.genui-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--primary, #007acc) 40%, transparent),
+    color-mix(in srgb, var(--primary, #007acc) 60%, transparent)
+  );
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  transition: all 0.2s ease;
+}
+
+.genui-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--primary, #007acc) 60%, transparent),
+    color-mix(in srgb, var(--primary, #007acc) 80%, transparent)
+  );
+}
+
+.genui-scrollbar::-webkit-scrollbar-thumb:active {
+  background: var(--primary, #007acc);
+}
+
+/* GenUI Scrollbar - Dark variant */
+[data-theme='dark'] .genui-scrollbar {
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+[data-theme='dark'] .genui-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.15),
+    rgba(255, 255, 255, 0.25)
+  );
+}
+
+[data-theme='dark'] .genui-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.25),
+    rgba(255, 255, 255, 0.35)
+  );
+}
+
+[data-theme='dark'] .genui-scrollbar::-webkit-scrollbar-thumb:active {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+/* GenUI component base styles */
+.genui-card {
+  background-color: var(--card-bg);
+  border-color: var(--border);
+  color: var(--foreground);
+}
+
+.genui-card-header {
+  background-color: color-mix(in srgb, var(--background) 50%, var(--card-bg) 50%);
+  border-color: var(--border);
+}
+
+.genui-input {
+  background-color: var(--input-bg);
+  border-color: var(--input-border);
+  color: var(--foreground);
+}
+
+.genui-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 20%, transparent);
+}
+
 @keyframes spin {
   from {
     transform: rotate(0deg);

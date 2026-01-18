@@ -1,0 +1,43 @@
+{
+  "triggers": [
+    {
+      "id": "trig_manual",
+      "type": "manual",
+      "label": "Open Gallery",
+      "args": {},
+      "position": { "x": 72, "y": 120 }
+    }
+  ],
+  "autostart": false,
+  "id": "flow_image_gallery",
+  "nodes": [
+    {
+      "id": "gallery_ui",
+      "type": "local.tool",
+      "tool": "custom_ui",
+      "label": "Image Gallery",
+      "args": {
+        "id": "image_gallery",
+        "title": "Image Gallery",
+        "keepOpen": true,
+        "window": {
+          "borderRadius": 12,
+          "position": "center",
+          "height": 600,
+          "width": 800,
+          "alwaysOnTop": false
+        },
+        "css": ".thumbnail { transition: all 0.2s; border: 2px solid transparent; cursor: pointer; } .thumbnail:hover { border-color: #6366f1; } .thumbnail.active { border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,0.3); }",
+        "html": "<div class=\"flex h-screen bg-slate-900\"><div class=\"w-48 border-r border-slate-700 flex flex-col\"><div class=\"p-2 border-b border-slate-700\"><button id=\"openBtn\" class=\"btn btn-primary w-full text-sm bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded\">Open Folder</button></div><div id=\"thumbnails\" class=\"flex-1 overflow-y-auto p-2 space-y-2\"><div class=\"text-slate-500 text-center p-4 text-sm\">Click Open Folder to browse</div></div><div class=\"p-2 border-t border-slate-700 text-xs text-slate-500\"><span id=\"image-count\">0 images</span></div></div><div class=\"flex-1 flex flex-col\"><div class=\"flex-1 flex items-center justify-center bg-slate-950 p-4 relative\"><img id=\"preview\" class=\"max-w-full max-h-full object-contain hidden\" /><div id=\"placeholder\" class=\"text-slate-600 text-center\"><div class=\"text-4xl mb-2\">🖼️</div><div>Select a folder to browse images</div><div class=\"text-sm mt-2\">Use ← → or click thumbnails</div></div></div><div class=\"p-3 border-t border-slate-700 flex justify-between items-center\"><div class=\"text-sm text-slate-400\"><span id=\"filename\">No image selected</span></div><div class=\"flex gap-2\"><button id=\"prev\" class=\"btn btn-secondary text-sm px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded disabled:opacity-50\" disabled>← Prev</button><button id=\"next\" class=\"btn btn-secondary text-sm px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded disabled:opacity-50\" disabled>Next →</button></div></div></div></div>",
+        "script": "let images = []; let currentIndex = -1; const thumbnails = document.getElementById('thumbnails'); const preview = document.getElementById('preview'); const placeholder = document.getElementById('placeholder'); const filename = document.getElementById('filename'); const prevBtn = document.getElementById('prev'); const nextBtn = document.getElementById('next'); const countEl = document.getElementById('image-count'); const openBtn = document.getElementById('openBtn'); window.selectImage = function(index) { if (index < 0 || index >= images.length) return; currentIndex = index; const img = images[index]; preview.src = 'local-file://' + img.path; preview.classList.remove('hidden'); placeholder.classList.add('hidden'); filename.textContent = img.name; document.querySelectorAll('.thumbnail').forEach((el, i) => el.classList.toggle('active', i === index)); prevBtn.disabled = index === 0; nextBtn.disabled = index === images.length - 1; const thumb = document.querySelector('.thumbnail[data-index=\"' + index + '\"]'); if (thumb) thumb.scrollIntoView({ block: 'nearest' }); }; async function loadFolder() { try { const result = await stuard.pickFolder({ title: 'Select Image Folder' }); if (result.canceled || !result.filePaths || !result.filePaths[0]) return; const folder = result.filePaths[0]; openBtn.textContent = 'Loading...'; openBtn.disabled = true; const scanResult = await stuard.callTool('run_python_script', { code: `import os, json; folder = ${JSON.stringify(folder)}; exts = {'.jpg','.jpeg','.png','.gif','.webp','.bmp','.svg'}; imgs = [{'name': f, 'path': os.path.join(folder, f).replace(chr(92), '/')} for f in sorted(os.listdir(folder)) if os.path.splitext(f.lower())[1] in exts]; print(json.dumps(imgs))` }); openBtn.textContent = 'Open Folder'; openBtn.disabled = false; if (scanResult.ok && scanResult.stdout) { images = JSON.parse(scanResult.stdout); countEl.textContent = images.length + ' images'; let html = ''; images.forEach((img, i) => { html += '<div class=\"thumbnail rounded-lg overflow-hidden bg-slate-800 aspect-square\" onclick=\"selectImage(' + i + ')\" data-index=\"' + i + '\"><img src=\"local-file://' + img.path + '\" class=\"w-full h-full object-cover\" loading=\"lazy\" /></div>'; }); thumbnails.innerHTML = html || '<div class=\"text-slate-500 text-center p-4\">No images found</div>'; if (images.length > 0) selectImage(0); } } catch(e) { console.error('Load error:', e); openBtn.textContent = 'Open Folder'; openBtn.disabled = false; } } openBtn.addEventListener('click', loadFolder); prevBtn.addEventListener('click', () => selectImage(currentIndex - 1)); nextBtn.addEventListener('click', () => selectImage(currentIndex + 1)); document.addEventListener('keydown', (e) => { if (e.key === 'ArrowLeft') selectImage(currentIndex - 1); if (e.key === 'ArrowRight') selectImage(currentIndex + 1); if (e.key === 'Escape') stuard.close(); if (e.key === 'Home') selectImage(0); if (e.key === 'End') selectImage(images.length - 1); });"
+      },
+      "position": { "x": 408, "y": 120 }
+    }
+  ],
+  "name": "Local Image Gallery",
+  "variables": [],
+  "wires": [
+    { "to": "gallery_ui", "from": "trig_manual" }
+  ],
+  "version": "1"
+}

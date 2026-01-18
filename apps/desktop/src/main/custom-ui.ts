@@ -678,6 +678,7 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      webSecurity: false, // Allow loading local files from data URL origin
       preload: preloadPath,
     },
   });
@@ -813,7 +814,7 @@ export async function execUpdateCustomUi(args: any, ctx: RouterContext): Promise
       if (bindEl) {
         if (bindEl.tagName === 'INPUT' || bindEl.tagName === 'TEXTAREA') {
           bindEl.value = value;
-        } else if (bindEl.hasAttribute('data-html')) {
+        } else if (bindEl.hasAttribute('data-html') || bindEl.hasAttribute('data-render-html')) {
           bindEl.innerHTML = value;
         } else {
           bindEl.textContent = value;
@@ -1048,11 +1049,21 @@ function generateCustomUiHtml(
     @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
   `;
 
+  // Interpolate template variables in raw HTML
+  // Triple braces {{{var}}} = raw HTML (unescaped)
+  // Double braces {{var}} = escaped text
   const interpolatedHtml = rawHtml
-    ? rawHtml.replace(/\{\{\s*([\w\.]+)\s*\}\}/g, (match: string, k: string) => {
-      const val = k.split('.').reduce((o, key) => (o || {})[key], data);
-      return val !== undefined ? escapeHtml(String(val)) : match;
-    })
+    ? rawHtml
+      // First handle triple braces (raw HTML, no escaping)
+      .replace(/\{\{\{\s*([\w\.]+)\s*\}\}\}/g, (match: string, k: string) => {
+        const val = k.split('.').reduce((o, key) => (o || {})[key], data);
+        return val !== undefined ? String(val) : match;
+      })
+      // Then handle double braces (escaped)
+      .replace(/\{\{\s*([\w\.]+)\s*\}\}/g, (match: string, k: string) => {
+        const val = k.split('.').reduce((o, key) => (o || {})[key], data);
+        return val !== undefined ? escapeHtml(String(val)) : match;
+      })
     : null;
   const layoutHtml = interpolatedHtml || renderLayout(layout, data);
 
@@ -1060,6 +1071,7 @@ function generateCustomUiHtml(
 <html>
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https:; img-src * data: blob: local-file: file:; media-src * data: blob: local-file: file:; font-src * data:;">
   <title>${escapeHtml(title)}</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -1091,6 +1103,7 @@ function generateCustomUiHtml(
     document.querySelectorAll('[data-bind]').forEach(el => {
       const key = el.getAttribute('data-bind');
       const val = formData[key];
+      const useHtml = el.hasAttribute('data-html') || el.hasAttribute('data-render-html');
 
       if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
         if (val !== undefined && val !== '') {
@@ -1101,7 +1114,11 @@ function generateCustomUiHtml(
         el.addEventListener('input', (e) => { formData[key] = e.target.value; });
       } else {
         if (val !== undefined) {
-          el.textContent = val;
+          if (useHtml) {
+            el.innerHTML = val;
+          } else {
+            el.textContent = val;
+          }
         }
       }
     });
@@ -1187,6 +1204,8 @@ function generateCustomUiHtml(
           if (bindEl) {
             if (bindEl.tagName === 'INPUT' || bindEl.tagName === 'TEXTAREA') {
               bindEl.value = value;
+            } else if (bindEl.hasAttribute('data-html') || bindEl.hasAttribute('data-render-html')) {
+              bindEl.innerHTML = value;
             } else {
               bindEl.textContent = value;
             }

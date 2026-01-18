@@ -27,5 +27,8 @@ export { Slider } from './Slider';
 export { Chart } from './Chart';
 export { EmailView } from './EmailView';
 
+// === Agent Tools ===
+export { AgentTodoList } from './AgentTodoList';
+
 // === Container ===
 export { GenUIContainer } from './GenUIContainer';

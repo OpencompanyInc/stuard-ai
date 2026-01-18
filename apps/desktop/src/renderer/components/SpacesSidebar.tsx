@@ -503,6 +503,11 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [isMoveItemOpen, setIsMoveItemOpen] = useState(false);
   const [itemToMove, setItemToMove] = useState<SpaceItem | null>(null);
+  const [isEditItemOpen, setIsEditItemOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<SpaceItem | null>(null);
+  const [editItemTitle, setEditItemTitle] = useState("");
+  const [editItemContent, setEditItemContent] = useState("");
+  const [isUpdatingItem, setIsUpdatingItem] = useState(false);
 
   const [newSpaceName, setNewSpaceName] = useState("");
   const [newSpaceType, setNewSpaceType] = useState<Space['type']>('topic');
@@ -779,6 +784,42 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
     } else {
       setViewingItem(item);
     }
+  };
+
+  const handleEditItem = async () => {
+    if (!selectedSpace || !editingItem) return;
+    setIsUpdatingItem(true);
+    try {
+      const result = await (window as any).desktopAPI?.execTool?.('space_item_update', {
+        item_id: editingItem.id,
+        title: editItemTitle || undefined,
+        content: editItemContent
+      });
+      if (result?.ok) {
+        setToastMessage('Item updated');
+        setIsEditItemOpen(false);
+        setEditingItem(null);
+        loadSpaceItems(selectedSpace);
+        loadFolderTree(selectedSpace);
+        // Update viewing item if it's the same item
+        if (viewingItem?.id === editingItem.id) {
+          setViewingItem({...editingItem, title: editItemTitle, content: editItemContent});
+        }
+      } else {
+        setToastMessage('Failed to update item');
+      }
+    } catch {
+      setToastMessage('Error updating item');
+    } finally {
+      setIsUpdatingItem(false);
+    }
+  };
+
+  const openEditModal = (item: SpaceItem) => {
+    setEditingItem(item);
+    setEditItemTitle(item.title || '');
+    setEditItemContent(item.content);
+    setIsEditItemOpen(true);
   };
 
   // Filtered data
@@ -1150,6 +1191,54 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
         )}
       </AnimatePresence>
 
+      {/* Edit Item Modal */}
+      <AnimatePresence>
+        {isEditItemOpen && editingItem && (
+          <Modal isOpen={isEditItemOpen} onClose={() => { setIsEditItemOpen(false); setEditingItem(null); }} title="Edit Item">
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-theme-muted mb-2">Title <span className="opacity-50">(optional)</span></label>
+                <input
+                  className="w-full bg-theme-hover border border-theme rounded-xl px-3.5 py-2.5 text-sm text-theme-fg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all"
+                  placeholder="Give it a title..."
+                  value={editItemTitle}
+                  onChange={e => setEditItemTitle(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-theme-muted mb-2">Content</label>
+                <textarea
+                  className={clsx(
+                    "w-full bg-theme-hover border border-theme rounded-xl px-3.5 py-2.5 text-sm text-theme-fg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none resize-none h-32 transition-all",
+                    editingItem.type === 'snippet' && "font-mono text-xs"
+                  )}
+                  placeholder={editingItem.type === 'link' ? "https://..." : editingItem.type === 'snippet' ? "Paste your code..." : "Write your note..."}
+                  value={editItemContent}
+                  onChange={e => setEditItemContent(e.target.value)}
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  onClick={() => { setIsEditItemOpen(false); setEditingItem(null); }}
+                  className="px-4 py-2.5 text-sm font-medium text-theme-muted hover:bg-theme-hover rounded-xl transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleEditItem}
+                  disabled={!editItemContent.trim() || isUpdatingItem}
+                  className="px-5 py-2.5 text-sm font-medium text-primary-fg bg-primary hover:opacity-90 rounded-xl transition-all disabled:opacity-50 flex items-center gap-2"
+                >
+                  {isUpdatingItem && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Save
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )}
+      </AnimatePresence>
+
       {/* Move Item Modal */}
       <AnimatePresence>
         {isMoveItemOpen && itemToMove && (
@@ -1481,6 +1570,13 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                   <span className="text-xs font-medium">Back</span>
                 </button>
                 <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => openEditModal(viewingItem)}
+                    className="p-2 hover:bg-theme-hover rounded-xl text-theme-muted hover:text-theme-fg transition-colors"
+                    title="Edit"
+                  >
+                    <Edit3 className="w-4 h-4" />
+                  </button>
                   <button
                     onClick={() => {
                       navigator.clipboard.writeText(viewingItem.content);

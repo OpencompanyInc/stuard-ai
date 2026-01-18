@@ -173,6 +173,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'task_crud', category: 'data', kind: 'local', description: 'Create/Read/Update/Delete tasks', argsTemplate: { action: 'create', task: {} }, outputSchema: { ok: 'boolean', task: 'object' } },
   { id: 'task_reminders', category: 'data', kind: 'local', description: 'Schedule/List reminders', argsTemplate: { action: 'schedule', taskId: '', time: '' }, outputSchema: { ok: 'boolean' } },
   { id: 'planner_list_items', category: 'data', kind: 'local', description: 'Get unified list of tasks/reminders', argsTemplate: { start: '', end: '' }, outputSchema: { items: 'any[]' } },
+  { id: 'agent_todo', category: 'data', kind: 'local', description: 'Agent internal todo list for tracking long-running tasks (session-scoped)', argsTemplate: { action: 'list', sessionId: '', data: {} }, outputSchema: { ok: 'boolean', items: 'any[]', todo: 'object', progress: 'object', count: 'number' } },
 
   // --- VARIABLES ---
   { id: 'set_variable', category: 'data', kind: 'local', description: 'Set a workflow variable. For workflow.* variables, they must be defined in the workflow variables array first.', argsTemplate: { name: '', value: '', scope: 'workflow' }, outputSchema: { ok: 'boolean' } },
@@ -414,6 +415,11 @@ if (TOOL_SCHEMAS['custom_ui']) {
       type: 'json',
       label: 'Initial Data',
       description: 'Data object passed to the UI components. Accessible in layout via {{data.fieldName}}',
+    },
+    _uiDesign: {
+      type: 'json',
+      label: 'UI Design Data',
+      description: 'Internal: Stores the visual UI Builder design for editing. Do not modify directly.',
     },
   };
 }

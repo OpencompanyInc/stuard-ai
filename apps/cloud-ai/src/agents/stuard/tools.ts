@@ -204,9 +204,13 @@ export const TIER_1_PARAMOUNT_TOOLS = [
   // Vision/Media/Capture (4)
   'analyze_media', 'capture_screen', 'capture_media', 'stop_capture',
 
-  // Memory/Context (4)
+  // Memory/Context & Spaces (13)
   'search_past_conversations', 'get_conversation_context',
   'list_user_spaces', 'get_space_contents',
+  'create_space', 'add_to_space', 'add_source_to_space',
+  'add_note_to_space', 'add_code_snippet_to_space',
+  'find_or_create_space', 'update_space_item', 'delete_space_item',
+  'link_conversation_to_space',
 
   // Web Search (1)
   'web_search',

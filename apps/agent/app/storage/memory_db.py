@@ -14,6 +14,7 @@ All data is encrypted at rest using AES-256-GCM.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sys
@@ -25,6 +26,9 @@ from typing import Any, Dict, List, Optional, Tuple, Literal
 from dataclasses import dataclass, asdict, field
 
 from .crypto import get_crypto_manager, CryptoManager, EncryptedData
+
+# Get logger for this module
+logger = logging.getLogger(__name__)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONSTANTS & TYPES
@@ -444,6 +448,14 @@ class MemoryDB:
                 cur.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='space_items'")
                 table_sql = cur.fetchone()
                 if table_sql and "'folder'" not in table_sql[0]:
+                    logger.info("Migrating space_items table to include 'folder' type")
+
+                    # Clean up any existing space_items_new table from previous failed migration
+                    cur.execute("DROP TABLE IF EXISTS space_items_new")
+
+                    # Disable foreign key constraints temporarily
+                    cur.execute("PRAGMA foreign_keys=OFF")
+
                     # Recreate table with new constraint
                     cur.execute("""
                         CREATE TABLE space_items_new (
@@ -462,21 +474,44 @@ class MemoryDB:
                             updated_at TEXT NOT NULL
                         )
                     """)
-                    
-                    # Copy data from old table
-                    cur.execute("""
-                        INSERT INTO space_items_new 
-                        SELECT * FROM space_items
-                    """)
-                    
+
+                    # Copy data from old table (handle missing columns gracefully)
+                    try:
+                        cur.execute("""
+                            INSERT INTO space_items_new
+                            SELECT id, space_id, type, title_enc, content_enc, metadata_enc,
+                                   added_by, pinned, embedding, parent_id, position, created_at, updated_at
+                            FROM space_items
+                        """)
+                    except sqlite3.OperationalError:
+                        # If parent_id/position don't exist in old table, use defaults
+                        cur.execute("""
+                            INSERT INTO space_items_new
+                            (id, space_id, type, title_enc, content_enc, metadata_enc,
+                             added_by, pinned, embedding, parent_id, position, created_at, updated_at)
+                            SELECT id, space_id, type, title_enc, content_enc, metadata_enc,
+                                   added_by, pinned, embedding, NULL, 0, created_at, updated_at
+                            FROM space_items
+                        """)
+
                     # Drop old table
                     cur.execute("DROP TABLE space_items")
-                    
+
                     # Rename new table
                     cur.execute("ALTER TABLE space_items_new RENAME TO space_items")
-            except sqlite3.OperationalError as e:
-                # If migration fails, log but continue (table might already be correct)
-                pass
+
+                    # Re-enable foreign key constraints
+                    cur.execute("PRAGMA foreign_keys=ON")
+
+                    logger.info("space_items table migration completed successfully")
+            except Exception as e:
+                logger.error(f"space_items migration failed: {e}")
+                # Re-enable foreign keys even if migration failed
+                try:
+                    cur.execute("PRAGMA foreign_keys=ON")
+                except:
+                    pass
+                raise
 
             # Indexes
             cur.execute("CREATE INDEX IF NOT EXISTS idx_conv_date ON conversations(created_at DESC)")

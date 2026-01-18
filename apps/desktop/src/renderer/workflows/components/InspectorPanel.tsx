@@ -3,13 +3,14 @@
  * Redesigned for beginner-friendliness and Scratch-like UX
  */
 import React, { useMemo, useState, useEffect, useCallback } from "react";
-import { X, Settings, Trash2, ArrowRight, Sparkles, Info, ChevronDown, ChevronRight, Hash, Activity, GitBranch, GitMerge, FileText, Zap, Power } from "lucide-react";
+import { X, Settings, Trash2, ArrowRight, Sparkles, Info, ChevronDown, ChevronRight, Hash, Activity, GitBranch, GitMerge, FileText, Zap, Power, Paintbrush } from "lucide-react";
 import { ToolArgsEditor, TextInputWithVariables, type UpstreamNode } from "./SmartArgEditor";
 import { getToolSchema, getToolOutputs } from "../constants/tool-schemas";
 import { getToolIcon, getToolColor, CATEGORY_COLORS } from "../constants/paletteCategories";
 import { parseGuard, guardToString } from "../builder/guards";
 import { VariablesPanel } from "./VariablesPanel";
 import type { DesignerModel, WorkflowVariable } from "../types";
+import { UIBuilderModal, generateCustomUIArgs, parseCustomUIArgs, type UIDesign, type GeneratedCode } from "../../ui-builder";
 
 interface InspectorPanelProps {
   model: DesignerModel;
@@ -65,6 +66,7 @@ function getUpstreamNodes(model: DesignerModel, nodeId: string): UpstreamNode[] 
 
 export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onClose }: InspectorPanelProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showUIBuilder, setShowUIBuilder] = useState(false);
 
   const allItems = [...model.triggers, ...model.nodes];
   const item = allItems.find(n => n.id === selectedNodeId);
@@ -334,6 +336,21 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
             })()}
           </div>
 
+          {/* Quick Action for custom_ui tool */}
+          {toolName === 'custom_ui' && (
+            <div>
+              <button
+                onClick={() => setShowUIBuilder(true)}
+                className="w-full py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl font-semibold flex items-center justify-center gap-2.5 hover:from-indigo-600 hover:to-purple-700 shadow-lg hover:shadow-xl transition-all group"
+              >
+                <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+                  <Paintbrush className="w-5 h-5" />
+                </div>
+                <span>Design UI Visually</span>
+              </button>
+            </div>
+          )}
+
           {/* Settings / Arguments */}
           <div>
             <div className="flex items-center gap-2 mb-3">
@@ -423,6 +440,19 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
             </button>
           </div>
         </div>
+      )}
+
+      {/* UI Builder Modal for custom_ui tool */}
+      {showUIBuilder && item && toolName === 'custom_ui' && (
+        <UIBuilderModal
+          initialDesign={parseCustomUIArgs(item.args || {}) || undefined}
+          onSave={(design: UIDesign, code: GeneratedCode) => {
+            const newArgs = generateCustomUIArgs(design);
+            updateItem({ args: newArgs });
+            setShowUIBuilder(false);
+          }}
+          onClose={() => setShowUIBuilder(false)}
+        />
       )}
     </div>
   );

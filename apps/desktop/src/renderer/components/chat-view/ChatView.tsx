@@ -73,6 +73,7 @@ interface ChatViewProps {
 
   // GenUI
   onSubmitToolOutput?: (id: string, result: any) => void;
+  onGenUIResponse?: (component: string, result: any) => void;
 
   // Translucent mode
   translucentMode?: boolean;
@@ -117,6 +118,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   onCloseTab,
   onAddTab,
   onSubmitToolOutput,
+  onGenUIResponse,
   attachments = [],
   onRemoveAttachment,
   onAttachFiles,
@@ -333,6 +335,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               thinkingStartTime={thinkingStartTime}
               className="h-full px-5 py-4 custom-scrollbar"
               onSubmitToolOutput={onSubmitToolOutput}
+              onGenUIResponse={onGenUIResponse}
             />
           </div>
         </div>

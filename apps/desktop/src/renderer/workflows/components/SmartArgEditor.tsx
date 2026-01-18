@@ -3,12 +3,13 @@
  * Redesigned for visual clarity and ease of use (Scratch-like UX)
  */
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { ChevronDown, Variable, Check, X, Plus, Trash2, Keyboard, FolderOpen, Code2, Info, ToggleLeft, ToggleRight, GripVertical, Zap, Play, ChevronRight, Settings2 } from "lucide-react";
+import { ChevronDown, Variable, Check, X, Plus, Trash2, Keyboard, FolderOpen, Code2, Info, ToggleLeft, ToggleRight, GripVertical, Zap, Play, ChevronRight, Settings2, Paintbrush } from "lucide-react";
 import { getToolSchema, getToolOutputs, type ArgSchema, type ArgOption, type ToolSchema } from "../constants/tool-schemas";
 import { PALETTE_CATEGORIES } from "../constants/paletteCategories";
 import { RichCodeEditor } from "./RichCodeEditor";
 import { CronEditor } from "./CronEditor";
 import type { WorkflowVariable } from "../types";
+import { UIBuilderModal, generateCustomUIArgs, parseCustomUIArgs, type UIDesign, type GeneratedCode } from "../../ui-builder";
 
 export interface UpstreamNode {
   id: string;
@@ -1409,6 +1410,102 @@ export function ToolArgsEditor({
   const schema = useMemo(() => getToolSchema(toolName), [toolName]);
   const [showAddArg, setShowAddArg] = useState(false);
   const [newArgKey, setNewArgKey] = useState('');
+  const [showUIBuilder, setShowUIBuilder] = useState(false);
+
+  // Special case: custom_ui tool - show visual UI builder
+  if (toolName === 'custom_ui') {
+    const existingDesign = parseCustomUIArgs(args);
+
+    const handleUIBuilderSave = (design: UIDesign, code: GeneratedCode) => {
+      const newArgs = generateCustomUIArgs(design);
+      onUpdate(newArgs);
+      setShowUIBuilder(false);
+    };
+
+    return (
+      <div className="space-y-4">
+        {/* Design UI Button */}
+        <button
+          onClick={() => setShowUIBuilder(true)}
+          className="w-full py-3.5 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl font-semibold flex items-center justify-center gap-2.5 hover:from-indigo-600 hover:to-purple-700 shadow-lg hover:shadow-xl transition-all group"
+        >
+          <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+            <Paintbrush className="w-5 h-5" />
+          </div>
+          <span>Design UI Visually</span>
+        </button>
+
+        {/* Preview of current args if any */}
+        {args.html && (
+          <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-slate-500">Current UI Configuration</span>
+              <span className="text-[10px] text-slate-400">
+                {args.width || 400}x{args.height || 500}
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <div className="px-2 py-1.5 bg-white rounded border border-slate-200">
+                <span className="text-slate-400">Position:</span>{' '}
+                <span className="text-slate-700 font-medium">{args.position || 'center'}</span>
+              </div>
+              <div className="px-2 py-1.5 bg-white rounded border border-slate-200">
+                <span className="text-slate-400">Frameless:</span>{' '}
+                <span className="text-slate-700 font-medium">{args.frameless ? 'Yes' : 'No'}</span>
+              </div>
+              <div className="px-2 py-1.5 bg-white rounded border border-slate-200">
+                <span className="text-slate-400">On Top:</span>{' '}
+                <span className="text-slate-700 font-medium">{args.alwaysOnTop ? 'Yes' : 'No'}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Advanced: Edit manually */}
+        <details className="text-sm">
+          <summary className="cursor-pointer text-slate-500 hover:text-indigo-600 font-medium py-2 flex items-center gap-2">
+            <Code2 className="w-4 h-4" />
+            Advanced: Edit HTML/CSS/JS manually
+          </summary>
+          <div className="mt-3 space-y-4 pl-6 border-l-2 border-indigo-100">
+            <SmartArgEditor
+              toolName={toolName}
+              argKey="html"
+              value={args.html || ''}
+              onChange={v => onUpdate({ ...args, html: v })}
+              upstreamNodes={upstreamNodes}
+              workflowVariables={workflowVariables}
+            />
+            <SmartArgEditor
+              toolName={toolName}
+              argKey="css"
+              value={args.css || ''}
+              onChange={v => onUpdate({ ...args, css: v })}
+              upstreamNodes={upstreamNodes}
+              workflowVariables={workflowVariables}
+            />
+            <SmartArgEditor
+              toolName={toolName}
+              argKey="js"
+              value={args.js || ''}
+              onChange={v => onUpdate({ ...args, js: v })}
+              upstreamNodes={upstreamNodes}
+              workflowVariables={workflowVariables}
+            />
+          </div>
+        </details>
+
+        {/* UI Builder Modal */}
+        {showUIBuilder && (
+          <UIBuilderModal
+            initialDesign={existingDesign || undefined}
+            onSave={handleUIBuilderSave}
+            onClose={() => setShowUIBuilder(false)}
+          />
+        )}
+      </div>
+    );
+  }
 
   const updateArg = (key: string, value: any) => {
     onUpdate({ ...args, [key]: value });

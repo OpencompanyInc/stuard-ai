@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { Check, X, AlertTriangle, AlertOctagon, Info, HelpCircle } from 'lucide-react';
 import clsx from 'clsx';
 import { RichText } from './RichText';
@@ -28,6 +28,23 @@ export const ConfirmationCard: React.FC<ConfirmationCardProps> = ({
 }) => {
   const isDone = isConfirmed || isCancelled;
 
+  // Stop propagation to prevent triggering parent click handlers
+  const handleContainerClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+  }, []);
+
+  const handleConfirm = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!isDone) onConfirm();
+  }, [isDone, onConfirm]);
+
+  const handleCancel = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!isDone) onCancel();
+  }, [isDone, onCancel]);
+
   const icons = {
     danger: AlertOctagon,
     warning: AlertTriangle,
@@ -37,25 +54,26 @@ export const ConfirmationCard: React.FC<ConfirmationCardProps> = ({
 
   const Icon = icons[variant];
 
+  // Theme-aware styles with dark mode support
   const styles = {
-    danger: "bg-red-50 border-red-100",
-    warning: "bg-amber-50 border-amber-100",
-    info: "bg-blue-50 border-blue-100",
-    question: "bg-violet-50 border-violet-100"
+    danger: "bg-red-500/10 border-red-500/20 dark:bg-red-500/15 dark:border-red-500/30",
+    warning: "bg-amber-500/10 border-amber-500/20 dark:bg-amber-500/15 dark:border-amber-500/30",
+    info: "bg-blue-500/10 border-blue-500/20 dark:bg-blue-500/15 dark:border-blue-500/30",
+    question: "bg-violet-500/10 border-violet-500/20 dark:bg-violet-500/15 dark:border-violet-500/30"
   };
 
   const iconStyles = {
-    danger: "bg-red-100 text-red-600",
-    warning: "bg-amber-100 text-amber-600",
-    info: "bg-blue-100 text-blue-600",
-    question: "bg-violet-100 text-violet-600"
+    danger: "bg-red-500/20 text-red-600 dark:text-red-400",
+    warning: "bg-amber-500/20 text-amber-600 dark:text-amber-400",
+    info: "bg-blue-500/20 text-blue-600 dark:text-blue-400",
+    question: "bg-violet-500/20 text-violet-600 dark:text-violet-400"
   };
 
   const titleStyles = {
-    danger: "text-red-900",
-    warning: "text-amber-900",
-    info: "text-blue-900",
-    question: "text-violet-900"
+    danger: "text-red-700 dark:text-red-300",
+    warning: "text-amber-700 dark:text-amber-300",
+    info: "text-blue-700 dark:text-blue-300",
+    question: "text-violet-700 dark:text-violet-300"
   };
 
   const buttonStyles = {
@@ -66,11 +84,14 @@ export const ConfirmationCard: React.FC<ConfirmationCardProps> = ({
   };
 
   return (
-    <div className={clsx(
-      "w-full max-w-md rounded-xl border overflow-hidden shadow-sm my-3 transition-all",
-      styles[variant],
-      isDone && "opacity-70 pointer-events-none grayscale-[0.5]"
-    )}>
+    <div
+      onClick={handleContainerClick}
+      className={clsx(
+        "w-full max-w-md rounded-xl border overflow-hidden shadow-sm my-3 transition-all",
+        styles[variant],
+        isDone && "opacity-70 pointer-events-none grayscale-[0.5]"
+      )}
+    >
       <div className="p-4">
         <div className="flex items-start gap-3">
           <div className={clsx(
@@ -86,32 +107,32 @@ export const ConfirmationCard: React.FC<ConfirmationCardProps> = ({
             )}>
               {title}
             </h3>
-            
-            <div className="text-sm text-neutral-700 leading-relaxed mb-4 prose-p:my-0">
+
+            <div className="text-sm text-theme-fg/80 leading-relaxed mb-4 prose-p:my-0">
               <RichText content={message} compact className="text-inherit" />
             </div>
-            
+
             <div className="flex gap-3">
               <button
-                onClick={onCancel}
+                onClick={handleCancel}
                 disabled={isDone}
                 className={clsx(
-                  "flex-1 px-4 py-2 rounded-lg text-sm font-medium border transition-colors flex items-center justify-center gap-2",
-                  "bg-white border-neutral-200 text-neutral-700 hover:bg-neutral-50 hover:border-neutral-300 shadow-sm",
-                  isCancelled && "bg-neutral-100 ring-2 ring-neutral-200"
+                  "flex-1 px-4 py-2 rounded-lg text-sm font-medium border transition-all flex items-center justify-center gap-2",
+                  "bg-theme-card border-theme/20 text-theme-fg hover:bg-theme-hover hover:border-theme/30 shadow-sm",
+                  isCancelled && "bg-theme-active ring-2 ring-theme/30"
                 )}
               >
                 {isCancelled && <Check className="w-3.5 h-3.5" />}
                 {cancelLabel}
               </button>
-              
+
               <button
-                onClick={onConfirm}
+                onClick={handleConfirm}
                 disabled={isDone}
                 className={clsx(
-                  "flex-1 px-4 py-2 rounded-lg text-sm font-medium border transition-colors flex items-center justify-center gap-2 shadow-sm text-white",
+                  "flex-1 px-4 py-2 rounded-lg text-sm font-medium border transition-all flex items-center justify-center gap-2 shadow-sm text-white",
                   buttonStyles[variant],
-                  isConfirmed && `ring-2 ring-offset-1`
+                  isConfirmed && "ring-2 ring-offset-1 ring-offset-theme-bg"
                 )}
               >
                 {isConfirmed && <Check className="w-3.5 h-3.5" />}

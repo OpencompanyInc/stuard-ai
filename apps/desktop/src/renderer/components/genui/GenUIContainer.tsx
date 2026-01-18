@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { ConfirmationCard } from './ConfirmationCard';
 import { ChoiceGroup } from './ChoiceGroup';
 import { DatePicker } from './DatePicker';
@@ -16,6 +16,7 @@ import { Slider } from './Slider';
 import { Chart } from './Chart';
 import { InfoCard } from './InfoCard';
 import { EmailView } from './EmailView';
+import { AgentTodoList } from './AgentTodoList';
 
 export interface GenUIProps {
   toolName: string;
@@ -33,6 +34,11 @@ export const GenUIContainer: React.FC<GenUIProps> = ({
   result
 }) => {
   const disabled = isCompleted;
+
+  // Prevent click events from bubbling to parent elements (like chat bubbles)
+  const handleContainerClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+  }, []);
 
   switch (toolName) {
     // === Decision & Input Components ===
@@ -268,15 +274,41 @@ export const GenUIContainer: React.FC<GenUIProps> = ({
         />
       );
 
+    // === Agent Tools ===
+    case 'agent_todo':
+    case 'agent_todo_list':
+    case 'show_todo':
+    case 'todo_list':
+      return (
+        <AgentTodoList
+          items={args.items || []}
+          title={args.title}
+          progress={args.progress}
+          compact={args.compact}
+        />
+      );
+
     // === Fallback ===
     default:
       return (
-        <div className="p-3 border rounded-lg bg-neutral-50 text-neutral-500 text-xs font-mono my-2">
-          <span className="text-neutral-400">GenUI:</span> {toolName}
-          <pre className="mt-2 p-2 bg-white rounded border text-[10px] overflow-auto max-h-[100px]">
+        <div onClick={handleContainerClick} className="p-3 border rounded-lg bg-theme-card border-theme/20 text-theme-muted text-xs font-mono my-2">
+          <span className="text-theme-muted/60">GenUI:</span> {toolName}
+          <pre className="mt-2 p-2 bg-theme-bg rounded border border-theme/10 text-[10px] overflow-auto max-h-[100px] genui-scrollbar">
             {JSON.stringify(args, null, 2)}
           </pre>
         </div>
       );
   }
+};
+
+// Wrapper component to stop event propagation for all GenUI components
+export const GenUIWrapper: React.FC<{ children: React.ReactNode; className?: string }> = ({ children, className }) => {
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+  };
+  return (
+    <div onClick={handleClick} onMouseDown={handleClick} className={className}>
+      {children}
+    </div>
+  );
 };

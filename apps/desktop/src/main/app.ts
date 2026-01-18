@@ -35,12 +35,25 @@ setupSingleInstance();
 app.whenReady().then(async () => {
   // Register local-file:// protocol handler to serve local files in renderer
   protocol.handle('local-file', (request) => {
-    // URL format: local-file://C:/path/to/file.jpg or local-file:///C:/path/to/file.jpg
-    let filePath = decodeURIComponent(request.url.replace('local-file://', ''));
-    // Remove leading slashes for Windows paths (keep the path with forward slashes for file:// URL)
+    // URL format: local-file://C:/path or local-file:///C:/path
+    // When using local-file://C:/path, the browser treats "C:" as hostname
+    const url = new URL(request.url);
+    let filePath: string;
+
+    if (url.hostname) {
+      // Browser parsed "C:" as hostname, so reconstruct: hostname + pathname
+      // hostname = "c" (lowercase), pathname = "/Users/..."
+      filePath = url.hostname.toUpperCase() + ':' + decodeURIComponent(url.pathname);
+    } else {
+      // Format was local-file:///C:/path, pathname contains full path
+      filePath = decodeURIComponent(url.pathname);
+    }
+
+    // Remove leading slashes for Windows paths
     filePath = filePath.replace(/^\/+/, '');
-    // Ensure forward slashes for file:// URL
+    // Ensure forward slashes
     filePath = filePath.replace(/\\/g, '/');
+
     logger.debug('[local-file protocol] Serving:', filePath);
     return net.fetch(`file:///${filePath}`);
   });

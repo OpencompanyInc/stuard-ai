@@ -54,6 +54,7 @@ interface MessageListProps {
   thinkingStartTime?: number;
   className?: string;
   onSubmitToolOutput?: (id: string, result: any) => void;
+  onGenUIResponse?: (component: string, result: any) => void;
 }
 
 // Format seconds to human readable
@@ -215,6 +216,7 @@ const MessageList: React.FC<MessageListProps> = ({
   thinkingStartTime,
   className,
   onSubmitToolOutput,
+  onGenUIResponse,
 }) => {
   const endRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -346,6 +348,7 @@ const MessageList: React.FC<MessageListProps> = ({
               streamChunks={m.streamChunks}
               contextPaths={m.contextPaths}
               onSubmitToolOutput={onSubmitToolOutput}
+              onGenUIResponse={onGenUIResponse}
             />
           ))}
           {/* Streaming response with interleaved content */}
@@ -359,6 +362,7 @@ const MessageList: React.FC<MessageListProps> = ({
               streamChunks={currentStreamChunks}
               isStreaming
               onSubmitToolOutput={onSubmitToolOutput}
+              onGenUIResponse={onGenUIResponse}
             />
           )}
           {/* Thinking indicator when reasoning but no response/chunks yet */}

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Callable, Awaitable
 
-from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture
+from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo
 
 
 # Map tool names to handler functions
@@ -170,6 +170,9 @@ _HANDLERS = {
 
     # Notifications
     "send_notification": tasks.send_notification,
+
+    # Agent Internal Todo (session-scoped task tracking)
+    "agent_todo": agent_todo.agent_todo,
 
     # Workflow Utilities
     "parallel_executor": concurrency.parallel_executor,

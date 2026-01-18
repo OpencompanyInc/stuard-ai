@@ -353,7 +353,21 @@ async def segment_search(args: Dict[str, Any]) -> Dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 async def space_create(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Create a new space."""
+    """Create a new space for organizing knowledge.
+
+    Spaces are containers for organizing notes, links, code snippets, files, and other content.
+    They can be used for projects, research, topics, or general reference.
+
+    Args:
+        name (str): Name of the space (required)
+        type (str): Type of space - 'project', 'topic', 'research', 'reference', or 'custom' (default: 'topic')
+        description (str): Optional description
+        icon (str): Optional icon
+        color (str): Optional color
+
+    Returns:
+        dict with 'ok': True and 'space' containing the created space data
+    """
     try:
         name = args.get("name")
         space_type = args.get("type", "custom")
@@ -397,7 +411,16 @@ async def space_get(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def space_list(args: Dict[str, Any]) -> Dict[str, Any]:
-    """List spaces."""
+    """List all spaces, optionally filtered by type.
+
+    Args:
+        type (str): Optional filter by space type ('project', 'topic', 'research', 'reference', 'custom')
+        include_archived (bool): Include archived spaces (default: False)
+        limit (int): Maximum number of spaces to return (default: 50, max: 200)
+
+    Returns:
+        dict with 'ok': True, 'spaces': list of space data, and 'count': number of spaces
+    """
     try:
         db = get_memory_db()
         space_type = args.get("type")
@@ -468,7 +491,22 @@ async def space_delete(args: Dict[str, Any]) -> Dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 async def space_item_add(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Add an item to a space."""
+    """Add an item (note, link, code snippet, file, fact, or folder) to a space.
+
+    Items can be organized in folders using the parent_id parameter.
+
+    Args:
+        space_id (str): ID of the space to add to (required)
+        type (str): Type of item - 'note', 'link', 'snippet', 'file', 'fact', or 'folder' (default: 'note')
+        content (str): Content of the item (required) - URL for links, code for snippets, text for notes
+        title (str): Optional title for the item
+        parent_id (str): Optional folder ID to organize the item under
+        position (int): Optional position within parent folder
+        pinned (bool): Whether to pin the item (default: False)
+
+    Returns:
+        dict with 'ok': True and 'item' containing the created item data
+    """
     try:
         space_id = args.get("space_id")
         item_type = args.get("type", "note")
@@ -506,7 +544,19 @@ async def space_item_add(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def space_item_list(args: Dict[str, Any]) -> Dict[str, Any]:
-    """List items in a space."""
+    """List all items in a space.
+
+    Returns a flat list of all items including folders, notes, links, snippets, etc.
+
+    Args:
+        space_id (str): ID of the space (required)
+        item_type (str): Optional filter by item type ('note', 'link', 'snippet', 'file', 'fact', 'folder')
+        parent_id (str): Optional filter to only items in a specific folder (use null string for root level)
+        limit (int): Maximum number of items to return (default: 100, max: 500)
+
+    Returns:
+        dict with 'ok': True, 'items': list of item data, and 'count': number of items
+    """
     try:
         space_id = args.get("space_id")
         if not space_id:
@@ -533,7 +583,19 @@ async def space_item_list(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def space_item_update(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Update a space item."""
+    """Update an existing space item's content, title, or other properties.
+
+    Args:
+        item_id (str): ID of the item to update (required)
+        title (str): New title (optional)
+        content (str): New content (optional)
+        pinned (bool): Pin/unpin the item (optional)
+        parent_id (str): Move to a different folder (optional)
+        position (int): Change position (optional)
+
+    Returns:
+        dict with 'ok': True and 'item' containing the updated item data
+    """
     try:
         item_id = args.get("item_id") or args.get("id")
         if not item_id:
@@ -604,7 +666,19 @@ async def space_item_move(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def space_folder_create(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Create a folder in a space."""
+    """Create a folder to organize items in a space.
+
+    Folders can be nested by specifying a parent_id.
+
+    Args:
+        space_id (str): ID of the space (required)
+        name (str): Name of the folder (required)
+        parent_id (str): Optional parent folder ID to create a nested folder
+        position (int): Optional position within parent
+
+    Returns:
+        dict with 'ok': True and 'folder' containing the created folder data
+    """
     try:
         space_id = args.get("space_id")
         name = args.get("name")

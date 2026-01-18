@@ -37,6 +37,34 @@ const GENUI_TOOL_NAMES = new Set([
   'draft_email',
 ]);
 
+// Tools that should be hidden from the chat UI (internal/silent tools)
+const HIDDEN_TOOL_NAMES = new Set([
+  // Segment tools (internal for conversation management)
+  'segment_create',
+  'segment_update',
+  'segment_end',
+  'segment_list',
+  'segment_search',
+  'segment_get',
+  // Memory tools (internal)
+  'memory_store',
+  'memory_recall',
+  'memory_update',
+  'memory_search',
+  // Agent internal tools
+  'agent_todo',
+  // Knowledge tools (internal)
+  'knowledge_add_fact',
+  'knowledge_update_fact',
+  'knowledge_build_context',
+  'knowledge_get_directives',
+  'knowledge_get_identity',
+  // Planner internal tools
+  'planner_list_items',
+  // GenUI display tools (rendered as UI, don't need pill)
+  ...GENUI_TOOL_NAMES,
+]);
+
 
 
 const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool }) => {
@@ -105,6 +133,7 @@ interface MessageBubbleProps {
   onReasoningClick?: () => void;
   contextPaths?: ContextPath[];
   onSubmitToolOutput?: (id: string, result: any) => void;
+  onGenUIResponse?: (component: string, result: any) => void; // For syntax-based GenUI (```genui:...) responses
 }
 
 // Convert local file path to local-file:// URL for Electron (custom protocol)
@@ -251,6 +280,11 @@ const GENUI_COMPONENT_MAP: Record<string, string> = {
   'plot': 'show_chart',
   'email': 'show_email',
   'mail': 'show_email',
+  // Agent tools
+  'todo': 'agent_todo',
+  'todolist': 'agent_todo',
+  'todo_list': 'agent_todo',
+  'tasks': 'agent_todo',
 };
 
 function extractContentSegments(inputText: string): ContentSegment[] {
@@ -607,7 +641,7 @@ function processCustomMarkdown(text: string): string {
   );
 }
 
-const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasoning, reasoningDuration, toolCalls, streamChunks, isStreaming, contextPaths, onSubmitToolOutput }) => {
+const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasoning, reasoningDuration, toolCalls, streamChunks, isStreaming, contextPaths, onSubmitToolOutput, onGenUIResponse }) => {
   const [reasoningExpanded, setReasoningExpanded] = useState(false);
   const reasoningRef = useRef<HTMLDivElement>(null);
   const [genUIResults, setGenUIResults] = useState<Record<string, any>>({});
@@ -1014,6 +1048,12 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
               if (chunk.type === 'tool') {
                 const tc = chunk.tool;
                 const isGenUI = GENUI_TOOL_NAMES.has(tc.tool);
+                const isHidden = HIDDEN_TOOL_NAMES.has(tc.tool);
+
+                // Skip hidden tools (don't render anything)
+                if (isHidden && !isGenUI) {
+                  return null;
+                }
 
                 // Render GenUI components inline
                 if (isGenUI) {
@@ -1064,8 +1104,12 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                               isCompleted={isCompleted}
                               result={genUIResults[seg.id]}
                               onResult={(result) => {
-                                // For syntax-based GenUI, just update local state (no server call)
+                                // Update local state
                                 setGenUIResults(prev => ({ ...prev, [seg.id]: result }));
+                                // For syntax-based GenUI, trigger a follow-up message to the AI
+                                if (onGenUIResponse) {
+                                  onGenUIResponse(seg.component, result);
+                                }
                               }}
                             />
                           </div>
@@ -1165,8 +1209,12 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                           isCompleted={isCompleted}
                           result={genUIResults[seg.id]}
                           onResult={(result) => {
-                            // For syntax-based GenUI, just update local state (no server call)
+                            // Update local state
                             setGenUIResults(prev => ({ ...prev, [seg.id]: result }));
+                            // For syntax-based GenUI, trigger a follow-up message to the AI
+                            if (onGenUIResponse) {
+                              onGenUIResponse(seg.component, result);
+                            }
                           }}
                         />
                       </div>
@@ -1234,9 +1282,11 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
         )}
         {role === 'assistant' && !hasStreamChunks && hasToolCalls && (
           <div className="flex flex-wrap gap-2 mt-1">
-            {toolCalls.map((tc, idx) => (
-              <ToolCallPill key={tc.id || idx} tool={tc} />
-            ))}
+            {toolCalls
+              .filter(tc => !HIDDEN_TOOL_NAMES.has(tc.tool))
+              .map((tc, idx) => (
+                <ToolCallPill key={tc.id || idx} tool={tc} />
+              ))}
           </div>
         )}
         {role === 'assistant' && isStreaming && (

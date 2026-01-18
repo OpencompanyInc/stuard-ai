@@ -688,6 +688,41 @@ export default function App() {
     handleSendRef.current(overrideText);
   }, []);
 
+  // Handle GenUI responses (syntax-based GenUI like ```genui:choices)
+  const handleGenUIResponse = useCallback((component: string, result: any) => {
+    // Format the selection as a follow-up message
+    let responseText = '';
+
+    if (result?.selectedId) {
+      // For choices
+      responseText = `Selected: ${result.selectedId}`;
+    } else if (result?.confirmed !== undefined) {
+      // For confirmation
+      responseText = result.confirmed ? 'Confirmed' : 'Cancelled';
+    } else if (result?.date) {
+      // For date picker
+      responseText = `Selected date: ${result.date}`;
+    } else if (result?.files) {
+      // For file dropzone
+      responseText = `Attached ${result.files.length} file(s)`;
+    } else if (result?.value !== undefined) {
+      // For slider
+      responseText = `Set value to: ${result.value}`;
+    } else {
+      // Generic fallback
+      responseText = `Response: ${JSON.stringify(result)}`;
+    }
+
+    // Send as a follow-up message
+    if (responseText && sendMessage) {
+      sendMessage({
+        text: responseText,
+        attachments: [],
+        context: { genui_response: true, component, result }
+      });
+    }
+  }, [sendMessage]);
+
   // Base query before recording started
   const baseQueryRef = useRef("");
 
@@ -853,7 +888,7 @@ export default function App() {
 
   // Memoized callbacks for child components to prevent re-renders
   const handleOpenDashboard = useCallback(() => window.desktopAPI.openDashboard(), []);
-  const handleOpenSpaces = useCallback(() => window.desktopAPI.openSpaces(), []);
+  const handleToggleSpaces = useCallback(() => window.desktopAPI.toggleSpaces(), []);
   const handleRemoveContext = useCallback((idx: number) => setContextPaths(prev => prev.filter((_, i) => i !== idx)), []);
   const handleAddContext = useCallback((item: ContextItem) => setContextPaths(prev => prev.some(p => p.path === item.path) ? prev : [...prev, item]), []);
   const handleRemoveAttachment = useCallback((i: number) => setAttachments(p => p.filter((_, idx) => idx !== i)), []);
@@ -950,7 +985,7 @@ export default function App() {
       { id: 'toggle-window', title: 'Window layout', description: 'Switch to window layout', icon: <Layout className="w-5 h-5" />, run: handleShowWindow },
       { id: 'toggle-expand', title: expanded ? 'Collapse view' : 'Expand view', description: 'Toggle compact/expanded mode', icon: expanded ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />, run: toggleExpand },
 
-      { id: 'toggle-spaces', title: 'Spaces', description: 'Open spaces', icon: <LayoutGrid className="w-5 h-5" />, run: () => window.desktopAPI.openSpaces() },
+      { id: 'toggle-spaces', title: 'Spaces', description: 'Toggle spaces sidebar', icon: <LayoutGrid className="w-5 h-5" />, run: () => window.desktopAPI.toggleSpaces() },
       { id: 'attach-files', title: 'Attach files', description: 'Upload documents', icon: <File className="w-5 h-5" />, run: handleAttachFiles },
       { id: 'attach-images', title: 'Attach images', description: 'Upload images', icon: <Image className="w-5 h-5" />, run: handleAttachImages },
       { id: 'show-hotkeys', title: 'Show hotkeys', description: 'View keyboard shortcuts', icon: <Keyboard className="w-5 h-5" />, shortcut: 'F1', run: () => setShowHotkeys(true) },
@@ -1136,7 +1171,7 @@ export default function App() {
                   onCollapse={toggleExpand}
                   onOpenDashboard={handleOpenDashboard}
                   onNewChat={handleNewChat}
-                  onToggleSidebar={handleOpenSpaces}
+                  onToggleSidebar={handleToggleSpaces}
                   sidebarOpen={false}
                   query={query}
                   setQuery={setQuery}
@@ -1167,6 +1202,7 @@ export default function App() {
                   onAddTab={addTab}
                   translucentMode={translucentMode}
                   onSubmitToolOutput={submitToolOutput}
+                  onGenUIResponse={handleGenUIResponse}
 
                   pendingMemories={pendingMemories}
                   onConfirmPendingMemory={confirmPendingMemory}
@@ -1203,7 +1239,7 @@ export default function App() {
                   onNewChat={handleNewChat}
                   onOpenDashboard={handleOpenDashboard}
                   onToggleExpand={toggleExpand}
-                  onToggleSidebar={handleOpenSpaces}
+                  onToggleSidebar={handleToggleSpaces}
                   sidebarOpen={false}
                   plannerData={plannerData}
                   translucentMode={translucentMode}
