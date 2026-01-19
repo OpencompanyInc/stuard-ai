@@ -364,11 +364,11 @@ export async function updates_setChannel(channel: UpdateChannel): Promise<{ ok: 
   if (channel !== "beta" && channel !== "stable" && channel !== "staging") {
     return { ok: false };
   }
-  
+
   saveChannelToPrefs(channel);
   setState({ channel, status: "idle", latestVersion: undefined, error: undefined });
-  
-  // Reconfigure electron-updater if not Windows
+
+  // Reconfigure electron-updater for macOS/Linux
   if (process.platform !== "win32") {
     autoUpdater.setFeedURL({
       provider: "generic",
@@ -376,7 +376,11 @@ export async function updates_setChannel(channel: UpdateChannel): Promise<{ ok: 
       useMultipleRangeRequest: false,
     });
   }
-  
+  // For Windows: clear cached installer path so new channel is used
+  else {
+    winInstallerPath = null;
+  }
+
   return { ok: true };
 }
 

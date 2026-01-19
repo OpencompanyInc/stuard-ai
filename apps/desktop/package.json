@@ -151,8 +151,8 @@
     },
     "publish": {
       "provider": "generic",
-      "url": "https://storage.googleapis.com/stuardai-updates/desktop/stable",
-      "channel": "stable"
+      "url": "${UPDATE_BASE_URL:-https://storage.googleapis.com/stuardai-updates/desktop}",
+      "channel": "${UPDATE_CHANNEL:-stable}"
     }
   }
 }
