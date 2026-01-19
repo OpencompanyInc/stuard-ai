@@ -18,7 +18,8 @@ export const web_search = createTool({
   outputSchema: z.object({
     results: z.array(z.any()),
     id: z.string().optional(),
-  }),
+    usage: z.any().optional(),
+  }).passthrough(),
   execute: async (args) => {
     const { query: rawQuery, max_results, search_domain_filter, search_language_filter, country, max_tokens_per_page } = args.context;
 
@@ -60,6 +61,11 @@ export const web_search = createTool({
     }
 
     const data = await response.json();
-    return data as { results: any[]; id?: string };
+    const responseData: any = {
+      results: (data as any).results,
+      id: (data as any).id,
+      usage: (data as any).usage,
+    };
+    return responseData;
   },
 });

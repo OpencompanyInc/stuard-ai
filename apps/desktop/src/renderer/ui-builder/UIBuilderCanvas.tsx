@@ -9,6 +9,8 @@ export interface UIBuilderCanvasRef {
   refresh: () => void;
   updateElement: (path: string, updates: { textContent?: string; className?: string; style?: string }) => void;
   requestHtml: () => void;
+  appendHtml: (html: string) => void;
+  insertHtmlAtPoint: (html: string, point: { clientX: number; clientY: number }) => void;
 }
 
 export interface SelectedElementInfo {
@@ -61,6 +63,10 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   const [iframeReady, setIframeReady] = useState(false);
   const [hoveredPath, setHoveredPath] = useState<string | null>(null);
 
+  // Track if HTML change is from iframe sync (don't refresh) vs external (need refresh)
+  const isInternalHtmlChange = useRef(false);
+  const lastHtmlRef = useRef(html);
+
   // Generate the iframe content with selection support
   const generateIframeContent = useCallback(() => {
     return `
@@ -107,10 +113,16 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     [data-elements-path].ui-selected {
       outline: 2px solid #6366f1 !important;
       outline-offset: 1px;
+      cursor: move !important;
     }
     [data-elements-path].ui-hovered {
       outline: 2px dashed rgba(99, 102, 241, 0.6) !important;
       outline-offset: 1px;
+    }
+    [data-elements-path].ui-dragging {
+      opacity: 0.8;
+      z-index: 9999 !important;
+      position: relative;
     }
     ` : ''}
 
@@ -245,8 +257,90 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     ${!previewMode ? `
     let selectedPath = null;
     let hoveredPath = null;
+    let isDragging = false;
+    let draggedElement = null;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let elementStartX = 0;
+    let elementStartY = 0;
 
+    // Handle mousedown for drag start
+    document.body.addEventListener('mousedown', (e) => {
+      const target = e.target.closest('[data-elements-path]');
+      if (target && target.classList.contains('ui-selected')) {
+        // Start dragging the selected element
+        isDragging = true;
+        draggedElement = target;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+
+        // Get current transform or position
+        const style = window.getComputedStyle(target);
+        const transform = style.transform;
+        if (transform && transform !== 'none') {
+          const matrix = new DOMMatrix(transform);
+          elementStartX = matrix.m41;
+          elementStartY = matrix.m42;
+        } else {
+          elementStartX = 0;
+          elementStartY = 0;
+        }
+
+        target.classList.add('ui-dragging');
+        e.preventDefault();
+      }
+    });
+
+    // Handle mousemove for dragging
+    document.body.addEventListener('mousemove', (e) => {
+      if (isDragging && draggedElement) {
+        const deltaX = e.clientX - dragStartX;
+        const deltaY = e.clientY - dragStartY;
+        const newX = elementStartX + deltaX;
+        const newY = elementStartY + deltaY;
+
+        // Snap to grid (8px)
+        const gridSize = ${gridSize};
+        const snappedX = Math.round(newX / gridSize) * gridSize;
+        const snappedY = Math.round(newY / gridSize) * gridSize;
+
+        draggedElement.style.transform = 'translate(' + snappedX + 'px, ' + snappedY + 'px)';
+        return;
+      }
+
+      // Hover handling
+      const target = e.target.closest('[data-elements-path]');
+      const path = target ? target.getAttribute('data-elements-path') : null;
+
+      if (path !== hoveredPath) {
+        hoveredPath = path;
+        window.parent.postMessage({ type: 'hover', path }, '*');
+      }
+    });
+
+    // Handle mouseup for drag end
+    document.body.addEventListener('mouseup', (e) => {
+      if (isDragging && draggedElement) {
+        draggedElement.classList.remove('ui-dragging');
+
+        // Notify parent about the change
+        const info = getElementInfo(draggedElement);
+        window.parent.postMessage({ type: 'elementUpdated', element: info }, '*');
+        window.parent.postMessage({ type: 'positionChanged' }, '*');
+
+        isDragging = false;
+        draggedElement = null;
+      }
+    });
+
+    // Handle click for selection
     document.body.addEventListener('click', (e) => {
+      // Don't process click if we just finished dragging
+      if (isDragging) {
+        isDragging = false;
+        return;
+      }
+
       e.preventDefault();
       e.stopPropagation();
 
@@ -267,16 +361,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         window.parent.postMessage({ type: 'select', element: null }, '*');
       }
     }, true);
-
-    document.body.addEventListener('mousemove', (e) => {
-      const target = e.target.closest('[data-elements-path]');
-      const path = target ? target.getAttribute('data-elements-path') : null;
-
-      if (path !== hoveredPath) {
-        hoveredPath = path;
-        window.parent.postMessage({ type: 'hover', path }, '*');
-      }
-    });
 
     // Listen for commands from parent
     window.addEventListener('message', (e) => {
@@ -315,7 +399,66 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         const clone = document.body.cloneNode(true);
         clone.querySelectorAll('[data-elements-path]').forEach(el => {
           el.removeAttribute('data-elements-path');
-          el.classList.remove('ui-selected', 'ui-hovered');
+          el.classList.remove('ui-selected', 'ui-hovered', 'ui-dragging');
+        });
+        window.parent.postMessage({ type: 'html', html: clone.innerHTML }, '*');
+      } else if (e.data.type === 'updateStyles') {
+        // Update CSS without full reload
+        let styleEl = document.getElementById('user-css');
+        if (!styleEl) {
+          styleEl = document.createElement('style');
+          styleEl.id = 'user-css';
+          document.head.appendChild(styleEl);
+        }
+        styleEl.textContent = e.data.css || '';
+      } else if (e.data.type === 'updateScript') {
+        // Scripts cannot be hot-reloaded safely, just log for now
+        console.log('[Preview] Script updated - refresh for full effect');
+      } else if (e.data.type === 'insertHtmlAtPoint') {
+        const point = e.data.point || {};
+        if (typeof point.x !== 'number' || typeof point.y !== 'number') {
+          return;
+        }
+        const temp = document.createElement('div');
+        temp.innerHTML = e.data.html || '';
+        const nodes = Array.from(temp.childNodes);
+        const rawTarget = document.elementFromPoint(point.x, point.y);
+        const target = rawTarget ? rawTarget.closest('[data-elements-path]') : null;
+        const containerTags = ['DIV', 'SECTION', 'MAIN', 'FORM', 'UL', 'OL', 'NAV', 'ARTICLE', 'ASIDE', 'HEADER', 'FOOTER'];
+
+        if (!target || target === document.body || target === document.documentElement) {
+          nodes.forEach(node => document.body.appendChild(node));
+        } else if (containerTags.includes(target.tagName)) {
+          nodes.forEach(node => target.appendChild(node));
+        } else {
+          const rect = target.getBoundingClientRect();
+          const insertBefore = point.y < rect.top + rect.height / 2;
+          const parent = target.parentNode || document.body;
+          nodes.forEach(node => {
+            parent.insertBefore(node, insertBefore ? target : target.nextSibling);
+          });
+        }
+        initializeElements();
+        const clone = document.body.cloneNode(true);
+        clone.querySelectorAll('[data-elements-path]').forEach(el => {
+          el.removeAttribute('data-elements-path');
+          el.classList.remove('ui-selected', 'ui-hovered', 'ui-dragging');
+        });
+        window.parent.postMessage({ type: 'html', html: clone.innerHTML }, '*');
+      } else if (e.data.type === 'appendHtml') {
+        // Append HTML to body without full refresh
+        const temp = document.createElement('div');
+        temp.innerHTML = e.data.html || '';
+        while (temp.firstChild) {
+          document.body.appendChild(temp.firstChild);
+        }
+        // Re-init paths for new elements
+        initializeElements();
+        // Request HTML sync back to parent
+        const clone = document.body.cloneNode(true);
+        clone.querySelectorAll('[data-elements-path]').forEach(el => {
+          el.removeAttribute('data-elements-path');
+          el.classList.remove('ui-selected', 'ui-hovered', 'ui-dragging');
         });
         window.parent.postMessage({ type: 'html', html: clone.innerHTML }, '*');
       }
@@ -358,12 +501,73 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         iframeRef.current.contentWindow.postMessage({ type: 'getHtml' }, '*');
       }
     },
+    appendHtml: (html: string) => {
+      if (iframeRef.current?.contentWindow) {
+        iframeRef.current.contentWindow.postMessage({ type: 'appendHtml', html }, '*');
+      }
+    },
+    insertHtmlAtPoint: (html: string, point: { clientX: number; clientY: number }) => {
+      if (iframeRef.current?.contentWindow) {
+        const rect = iframeRef.current.getBoundingClientRect();
+        const x = (point.clientX - rect.left) / zoom;
+        const y = (point.clientY - rect.top) / zoom;
+        iframeRef.current.contentWindow.postMessage({ type: 'insertHtmlAtPoint', html, point: { x, y } }, '*');
+      }
+    },
   }));
 
-  // Update iframe when content changes
+  // Initial mount - load the iframe content
   useEffect(() => {
     refreshIframe();
-  }, [html, css, js, backgroundColor, showGrid, gridSize, previewMode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Update iframe when content changes (but not for internal HTML syncs)
+  useEffect(() => {
+    // Skip refresh if this HTML change came from iframe sync
+    if (isInternalHtmlChange.current) {
+      isInternalHtmlChange.current = false;
+      lastHtmlRef.current = html;
+      return;
+    }
+
+    // Only refresh if html actually changed from external source
+    if (html !== lastHtmlRef.current) {
+      lastHtmlRef.current = html;
+      refreshIframe();
+    }
+  }, [html, refreshIframe]);
+
+  // Only refresh for settings changes that require iframe reload, NOT for content updates
+  // CSS/JS content updates are handled via postMessage to avoid full reload
+  const lastSettingsRef = useRef({ backgroundColor, showGrid, gridSize, previewMode });
+
+  useEffect(() => {
+    const settings = { backgroundColor, showGrid, gridSize, previewMode };
+    const prev = lastSettingsRef.current;
+
+    // Only refresh if visual settings actually changed (not content)
+    if (prev.backgroundColor !== backgroundColor ||
+        prev.showGrid !== showGrid ||
+        prev.gridSize !== gridSize ||
+        prev.previewMode !== previewMode) {
+      lastSettingsRef.current = settings;
+      refreshIframe();
+    }
+  }, [backgroundColor, showGrid, gridSize, previewMode, refreshIframe]);
+
+  // Send CSS/JS updates via postMessage to avoid full refresh
+  useEffect(() => {
+    if (iframeRef.current?.contentWindow && iframeReady) {
+      iframeRef.current.contentWindow.postMessage({ type: 'updateStyles', css }, '*');
+    }
+  }, [css, iframeReady]);
+
+  useEffect(() => {
+    if (iframeRef.current?.contentWindow && iframeReady) {
+      iframeRef.current.contentWindow.postMessage({ type: 'updateScript', js }, '*');
+    }
+  }, [js, iframeReady]);
 
   // Listen for messages from iframe
   useEffect(() => {
@@ -382,8 +586,15 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       } else if (e.data.type === 'elementUpdated') {
         // Element was updated, notify parent
         onSelectElement(e.data.element);
+      } else if (e.data.type === 'positionChanged') {
+        // Position was changed via drag, request HTML to sync
+        if (iframeRef.current?.contentWindow) {
+          iframeRef.current.contentWindow.postMessage({ type: 'getHtml' }, '*');
+        }
       } else if (e.data.type === 'html') {
         // HTML was requested, send to parent
+        // Mark as internal change so we don't refresh the iframe
+        isInternalHtmlChange.current = true;
         onHtmlChange?.(e.data.html);
       }
     };

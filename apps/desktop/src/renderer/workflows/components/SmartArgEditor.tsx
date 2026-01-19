@@ -1424,7 +1424,6 @@ export function ToolArgsEditor({
         script: result.js || args.script,
         ...result.window,
       });
-      setShowUIBuilder(false);
     };
 
     return (

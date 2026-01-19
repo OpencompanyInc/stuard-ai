@@ -30,7 +30,6 @@ export const scrape_url = createTool({
       .optional()
       .describe('Request timeout (ms).'),
     includeFavicon: z.boolean().optional().default(false).describe('If true, include favicon in the response.'),
-    includeUsage: z.boolean().optional().default(false).describe('If true, include usage/credit information in the response.'),
   }),
   outputSchema: z
     .object({
@@ -42,7 +41,7 @@ export const scrape_url = createTool({
     })
     .passthrough(),
   execute: async (args) => {
-    const { urls, includeImages, extractDepth, format, timeout, includeFavicon, includeUsage } = args.context;
+    const { urls, includeImages, extractDepth, format, timeout, includeFavicon } = args.context;
 
     if (!TAVILY_API_KEY) {
       throw new Error('Missing TAVILY_API_KEY configuration');
@@ -57,7 +56,7 @@ export const scrape_url = createTool({
       format,
       timeout,
       includeFavicon,
-      includeUsage,
+      includeUsage: true,
     };
 
     Object.keys(options).forEach((k) => options[k] === undefined && delete options[k]);

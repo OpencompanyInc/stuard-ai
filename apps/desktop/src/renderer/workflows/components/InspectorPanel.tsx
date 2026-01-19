@@ -10,7 +10,7 @@ import { getToolIcon, getToolColor, CATEGORY_COLORS } from "../constants/palette
 import { parseGuard, guardToString } from "../builder/guards";
 import { VariablesPanel } from "./VariablesPanel";
 import type { DesignerModel, WorkflowVariable } from "../types";
-import { UIBuilderModal, generateCustomUIArgs, parseCustomUIArgs, type UIDesign, type GeneratedCode } from "../../ui-builder";
+import { UIBuilderModal } from "../../ui-builder";
 
 interface InspectorPanelProps {
   model: DesignerModel;
@@ -445,11 +445,30 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
       {/* UI Builder Modal for custom_ui tool */}
       {showUIBuilder && item && toolName === 'custom_ui' && (
         <UIBuilderModal
-          initialDesign={parseCustomUIArgs(item.args || {}) || undefined}
-          onSave={(design: UIDesign, code: GeneratedCode) => {
-            const newArgs = generateCustomUIArgs(design);
-            updateItem({ args: newArgs });
-            setShowUIBuilder(false);
+          html={item.args?.html || ''}
+          css={item.args?.css || ''}
+          js={item.args?.js || item.args?.script || ''}
+          windowConfig={{
+            width: item.args?.width || 800,
+            height: item.args?.height || 600,
+            title: item.args?.title,
+            position: item.args?.position,
+            alwaysOnTop: item.args?.alwaysOnTop,
+            frameless: item.args?.frameless,
+            borderRadius: item.args?.borderRadius,
+          }}
+          onSave={(result) => {
+            // Auto-save updates model without closing modal
+            updateItem({
+              args: {
+                ...item.args,
+                html: result.html,
+                css: result.css,
+                js: result.js,
+                script: result.js,
+                ...result.window,
+              }
+            });
           }}
           onClose={() => setShowUIBuilder(false)}
         />
