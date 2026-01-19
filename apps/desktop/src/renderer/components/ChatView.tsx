@@ -79,6 +79,7 @@ interface ChatViewProps {
 
   // GenUI
   onSubmitToolOutput?: (id: string, result: any) => void;
+  onGenUIResponse?: (response: any) => void;
 
   // Pending memory approvals
   pendingMemories?: Array<{

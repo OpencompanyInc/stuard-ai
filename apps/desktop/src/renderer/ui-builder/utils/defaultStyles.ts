@@ -115,9 +115,9 @@ export const BORDER_RADIUS = {
 // === Default Canvas Configuration ===
 
 export const DEFAULT_CANVAS: UICanvasConfig = {
-  width: 400,
-  height: 500,
-  backgroundColor: '#f8fafc',
+  width: 480,
+  height: 360,
+  backgroundColor: '#ffffff',
   padding: 16,
   gridSize: 8,
   showGrid: true,
@@ -127,13 +127,13 @@ export const DEFAULT_CANVAS: UICanvasConfig = {
 // === Default Window Configuration ===
 
 export const DEFAULT_WINDOW_CONFIG: UIWindowConfig = {
-  width: 400,
-  height: 500,
+  width: 480,
+  height: 360,
   position: 'center',
   alwaysOnTop: false,
   frameless: false,
   transparent: false,
-  borderRadius: 12,
+  borderRadius: 8,
   resizable: false,
   minimizable: false,
   closable: true,

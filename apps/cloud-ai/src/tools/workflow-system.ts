@@ -6,6 +6,7 @@ import { analyzeMediaTool } from './analyze-media';
 import { aiInferenceTool } from './ai-inference';
 import { executeAgenticTask } from './agentic-task';
 import { web_search } from './perplexity-tools';
+import { scrape_url } from './tavily-tools';
 import * as deviceTools from './device-tools';
 import * as googleTools from './google-tools';
 import * as httpTools from './http-tools';
@@ -47,6 +48,7 @@ function getCloudTools(): Map<string, any> {
   add(aiInferenceTool);
   add(executeAgenticTask);
   add(web_search);
+  add(scrape_url);
   for (const v of Object.values(deviceTools as any)) {
     const maybe = v as any;
     if (maybe && typeof maybe === 'object' && typeof maybe.execute === 'function' && typeof maybe.name === 'string') {

@@ -38,6 +38,7 @@ export const LOG_DIR = clean(process.env.CLOUD_LOG_DIR || './logs');
 export const LOG_BASENAME = clean(process.env.CLOUD_LOG_BASENAME || 'cloud-ai');
 
 export const PERPLEXITY_API_KEY = clean(process.env.PERPLEXITY_API_KEY || '');
+export const TAVILY_API_KEY = clean(process.env.TAVILY_API_KEY || '');
 
 // Dev mode bypasses credit/usage checks for local development
 export const DEV_MODE = process.env.DEV_MODE === '1' || process.env.NODE_ENV === 'development';

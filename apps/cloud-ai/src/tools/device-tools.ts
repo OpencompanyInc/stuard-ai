@@ -1,7 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { generateText } from 'ai';
 import { z } from 'zod';
-import { getBridgeSecrets } from './bridge';
+import { getBridgeSecrets, execLocalTool } from './bridge';
 import { buildProviderModel } from '../utils/models';
 import { getDefaultModelForCategory } from '../pricing';
 
@@ -215,6 +215,10 @@ export {
   list_user_spaces,
   get_space_contents,
   add_to_space,
+  ensure_space_path,
+  list_space_path,
+  add_to_space_path,
+  get_space_tree,
   create_space,
   get_memory_stats,
   add_source_to_space,
@@ -225,6 +229,51 @@ export {
   update_space_item,
   delete_space_item,
 } from './device/memory';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AGENT TODO TOOLS
+// ═══════════════════════════════════════════════════════════════════════════════
+export const agent_todo = createTool({
+  id: 'agent_todo',
+  description: `Agent's internal todo management for long-running tasks within a session.
+
+Actions:
+- list: Get all todos for the session
+- create: Create a new todo
+- update: Update a todo's status or details
+- complete: Mark a todo as completed
+- fail: Mark a todo as failed with error
+- delete: Remove a todo
+- clear: Clear all todos for the session
+- get_current: Get the currently in-progress todo
+- get_next: Get the next pending todo
+- progress: Get progress summary
+- bulk_create: Create multiple todos at once
+- start: Mark a todo as in_progress
+- block: Mark a todo as blocked
+
+Args:
+  action: The action to perform
+  sessionId: The conversation/thread ID (required)
+  data: Action-specific data`,
+  inputSchema: z.object({
+    action: z.string().describe('The action to perform'),
+    sessionId: z.string().describe('The conversation/thread ID'),
+    data: z.any().optional().describe('Action-specific data'),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    todo: z.any().optional(),
+    todos: z.any().optional(),
+    items: z.any().optional(),
+    count: z.number().optional(),
+    progress: z.any().optional(),
+    error: z.string().optional(),
+  }),
+  execute: async ({ context }) => {
+    return await execLocalTool('agent_todo', context);
+  },
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SUB-AGENTS (HEADLESS)

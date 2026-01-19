@@ -21,7 +21,6 @@ interface UIBuilderToolbarProps {
   onResetZoom: () => void;
   onToggleGrid: () => void;
   onToggleSnap: () => void;
-  onTogglePreview: () => void;
   onShowCode: () => void;
   onShowSettings: () => void;
   onSave: () => void;
@@ -124,7 +123,6 @@ export function UIBuilderToolbar({
   onResetZoom,
   onToggleGrid,
   onToggleSnap,
-  onTogglePreview,
   onShowCode,
   onShowSettings,
   onSave,
@@ -195,15 +193,6 @@ export function UIBuilderToolbar({
         />
 
         <ToolbarDivider />
-
-        {/* Preview Mode */}
-        <ToolbarButton
-          icon={state.previewMode ? Eye : Play}
-          label={state.previewMode ? 'Exit Preview' : 'Preview'}
-          onClick={onTogglePreview}
-          active={state.previewMode}
-          className={state.previewMode ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : ''}
-        />
       </div>
 
       {/* Right Section - Actions */}

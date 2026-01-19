@@ -3,8 +3,8 @@
  * Converts UIDesign to HTML/CSS/JS for the custom_ui tool
  */
 
-import type { UIDesign, UIElement, UIElementStyle, GeneratedCode, ButtonVariant } from '../types';
-import { SHADOWS, HEADING_SIZES, BUTTON_VARIANTS, paddingToCSS } from './defaultStyles';
+import type { UIDesign, UIElement, UIElementStyle, GeneratedCode, ButtonVariant, LayoutMode } from '../types';
+import { SHADOWS, HEADING_SIZES, BUTTON_VARIANTS, paddingToCSS, createEmptyDesign } from './defaultStyles';
 
 // === HTML Generation ===
 
@@ -36,9 +36,26 @@ function generateDataAttributes(element: UIElement): string {
 /**
  * Generate inline style string from element style
  */
-function generateInlineStyle(element: UIElement): string {
+function generateInlineStyle(element: UIElement, parentLayout?: LayoutMode): string {
   const styles: string[] = [];
   const s = element.style;
+
+  const shouldUseFreePositioning = !parentLayout || parentLayout === 'free';
+
+  if (element.props.hidden) {
+    styles.push('display: none');
+  }
+
+  if (shouldUseFreePositioning) {
+    styles.push('position: absolute');
+    styles.push(`left: ${element.x}px`);
+    styles.push(`top: ${element.y}px`);
+    if (typeof element.zIndex === 'number') {
+      styles.push(`z-index: ${element.zIndex}`);
+    }
+  } else if (element.layout === 'free') {
+    styles.push('position: relative');
+  }
 
   // Position and size
   if (typeof element.width === 'number') {
@@ -161,11 +178,11 @@ function processText(text: string): string {
 /**
  * Generate HTML for a single element
  */
-function generateElementHTML(element: UIElement, indent: string = ''): string {
+function generateElementHTML(element: UIElement, indent: string = '', parentLayout?: LayoutMode): string {
   const attrs = generateDataAttributes(element);
-  const style = generateInlineStyle(element);
-  const id = `id="${element.id}"`;
-  const attrStr = [id, attrs, style].filter(Boolean).join(' ');
+  const style = generateInlineStyle(element, parentLayout);
+  const elementId = `data-element-id="${element.id}"`;
+  const attrStr = [elementId, attrs, style].filter(Boolean).join(' ');
 
   switch (element.type) {
     case 'button': {
@@ -254,7 +271,7 @@ function generateElementHTML(element: UIElement, indent: string = ''): string {
     case 'grid':
     case 'card': {
       const children = element.children || [];
-      const childrenHtml = children.map(c => generateElementHTML(c, indent + '  ')).join('\n');
+      const childrenHtml = children.map(c => generateElementHTML(c, indent + '  ', element.layout)).join('\n');
       const tag = element.type === 'card' ? 'div' : 'div';
       const className = element.type === 'card' ? 'class="card"' : '';
       return `${indent}<${tag} ${className} ${attrStr}>\n${childrenHtml}\n${indent}</${tag}>`;
@@ -641,8 +658,10 @@ export function generateCode(design: UIDesign): GeneratedCode {
     .map(el => generateElementHTML(el, '  '))
     .join('\n');
 
-  const html = `<div class="custom-ui-root" style="padding: ${design.canvas.padding || 16}px; background-color: ${design.canvas.backgroundColor};">
+  const html = `<div class="custom-ui-root" style="width: 100%; height: 100%; padding: ${design.canvas.padding || 16}px; background-color: ${design.canvas.backgroundColor};">
+  <div class="custom-ui-canvas" style="position: relative; width: 100%; height: 100%;">
 ${elementsHtml}
+  </div>
 </div>`;
 
   // Generate CSS
@@ -706,14 +725,507 @@ export function generateCustomUIArgs(design: UIDesign): Record<string, any> {
 }
 
 /**
- * Parse existing custom_ui args back into a UIDesign (if possible)
+ * Parse existing custom_ui args back into a UIDesign
+ * Supports both stored design data and raw HTML/CSS preview
  */
 export function parseCustomUIArgs(args: Record<string, any>): UIDesign | null {
-  // If we have stored design data, use it
+  // If we have stored design data, use it (preferred)
   if (args._uiDesign && typeof args._uiDesign === 'object') {
     return args._uiDesign as UIDesign;
   }
 
-  // Otherwise, we can't parse raw HTML back to design
+  // Otherwise, create a design that stores raw HTML for preview
+  // Don't try to parse into elements - just show it as-is
+  if (args.html) {
+    const design = createEmptyDesign('Imported Design');
+
+    // Store raw content for iframe preview
+    (design as any)._rawHtml = args.html || '';
+    (design as any)._rawCss = args.css || '';
+    (design as any)._rawScript = args.script || args.js || '';
+
+    // Update canvas/window config from args
+    const windowConfig = args.window || {};
+    design.canvas.width = windowConfig.width || args.width || 480;
+    design.canvas.height = windowConfig.height || args.height || 360;
+    design.canvas.backgroundColor = windowConfig.backgroundColor || args.backgroundColor || '#ffffff';
+
+    design.windowConfig.width = design.canvas.width;
+    design.windowConfig.height = design.canvas.height;
+    design.windowConfig.position = windowConfig.position || args.position || 'center';
+    design.windowConfig.alwaysOnTop = windowConfig.alwaysOnTop ?? args.alwaysOnTop ?? false;
+    design.windowConfig.frameless = windowConfig.frameless ?? args.frameless ?? false;
+    design.windowConfig.transparent = windowConfig.transparent ?? args.transparent ?? false;
+    design.windowConfig.borderRadius = windowConfig.borderRadius ?? args.borderRadius ?? 8;
+    design.windowConfig.title = args.title || 'Custom UI';
+
+    return design;
+  }
+
   return null;
+}
+
+/**
+ * Parse raw HTML/CSS into a UIDesign
+ */
+function parseHtmlToDesign(args: Record<string, any>): UIDesign {
+  const design = createEmptyDesign('Imported Design');
+
+  // Update canvas/window config from args
+  if (args.width) {
+    design.canvas.width = args.width;
+    design.windowConfig.width = args.width;
+  }
+  if (args.height) {
+    design.canvas.height = args.height;
+    design.windowConfig.height = args.height;
+  }
+  if (args.position) design.windowConfig.position = args.position;
+  if (args.alwaysOnTop !== undefined) design.windowConfig.alwaysOnTop = args.alwaysOnTop;
+  if (args.frameless !== undefined) design.windowConfig.frameless = args.frameless;
+  if (args.transparent !== undefined) design.windowConfig.transparent = args.transparent;
+  if (args.borderRadius !== undefined) design.windowConfig.borderRadius = args.borderRadius;
+  if (args.title) design.windowConfig.title = args.title;
+
+  // Parse HTML into elements
+  const html = args.html || '';
+  const css = args.css || '';
+
+  // Parse CSS into a style map
+  const styleMap = parseCssToStyleMap(css);
+
+  // Parse HTML into elements
+  design.elements = parseHtmlElements(html, styleMap);
+
+  return design;
+}
+
+/**
+ * Parse CSS string into a map of class/id to styles
+ */
+function parseCssToStyleMap(css: string): Map<string, Record<string, string>> {
+  const styleMap = new Map<string, Record<string, string>>();
+
+  if (!css) return styleMap;
+
+  // Simple CSS parser - matches selectors and their rules
+  const ruleRegex = /([.#]?[\w-]+)\s*\{([^}]*)\}/g;
+  let match;
+
+  while ((match = ruleRegex.exec(css)) !== null) {
+    const selector = match[1].trim();
+    const rules = match[2].trim();
+    const styleObj: Record<string, string> = {};
+
+    // Parse individual rules
+    rules.split(';').forEach(rule => {
+      const [prop, value] = rule.split(':').map(s => s.trim());
+      if (prop && value) {
+        // Convert kebab-case to camelCase
+        const camelProp = prop.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+        styleObj[camelProp] = value;
+      }
+    });
+
+    styleMap.set(selector, styleObj);
+  }
+
+  return styleMap;
+}
+
+/**
+ * Parse HTML string into UIElement array
+ */
+function parseHtmlElements(html: string, styleMap: Map<string, Record<string, string>>): UIElement[] {
+  const elements: UIElement[] = [];
+
+  // Create a temporary DOM parser
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
+  const container = doc.body.firstChild as HTMLElement;
+
+  if (!container) return elements;
+
+  let yOffset = 0;
+
+  // Parse each child element
+  Array.from(container.children).forEach((child, index) => {
+    const element = parseHtmlNode(child as HTMLElement, styleMap, { x: 0, y: yOffset }, index);
+    if (element) {
+      elements.push(element);
+      // Stack elements vertically with some spacing
+      const height = typeof element.height === 'number' ? element.height : 40;
+      yOffset += height + 12;
+    }
+  });
+
+  return elements;
+}
+
+/**
+ * Parse a single HTML node into a UIElement
+ */
+function parseHtmlNode(
+  node: HTMLElement,
+  styleMap: Map<string, Record<string, string>>,
+  position: { x: number; y: number },
+  index: number
+): UIElement | null {
+  const tagName = node.tagName.toLowerCase();
+  const id = node.id || `el_${Date.now().toString(36)}_${index}`;
+  const className = node.className;
+
+  // Get inline styles
+  const inlineStyles = parseInlineStyle(node.getAttribute('style') || '');
+
+  // Get styles from CSS classes
+  let cssStyles: Record<string, string> = {};
+  if (className) {
+    className.split(/\s+/).forEach(cls => {
+      const classStyles = styleMap.get(`.${cls}`);
+      if (classStyles) {
+        cssStyles = { ...cssStyles, ...classStyles };
+      }
+    });
+  }
+
+  // Merge styles (inline takes precedence)
+  const mergedStyles = { ...cssStyles, ...inlineStyles };
+
+  // Convert to UIElementStyle
+  const style = convertToUIStyle(mergedStyles);
+
+  // Determine element type and create UIElement
+  const baseElement: Partial<UIElement> = {
+    id,
+    x: position.x,
+    y: position.y,
+    style,
+    bindings: {},
+  };
+
+  // Parse based on tag type
+  switch (tagName) {
+    case 'button':
+      return {
+        ...baseElement,
+        type: 'button',
+        width: parseSize(mergedStyles.width) || 120,
+        height: parseSize(mergedStyles.height) || 40,
+        props: {
+          text: node.textContent?.trim() || 'Button',
+          variant: detectButtonVariant(mergedStyles),
+        },
+      } as UIElement;
+
+    case 'input':
+      const inputType = node.getAttribute('type') || 'text';
+      if (inputType === 'checkbox') {
+        return {
+          ...baseElement,
+          type: 'checkbox',
+          width: 'auto',
+          height: 'auto',
+          props: {
+            text: node.getAttribute('placeholder') || 'Checkbox',
+          },
+        } as UIElement;
+      }
+      if (inputType === 'range') {
+        return {
+          ...baseElement,
+          type: 'slider',
+          width: parseSize(mergedStyles.width) || 200,
+          height: 24,
+          props: {
+            min: parseInt(node.getAttribute('min') || '0'),
+            max: parseInt(node.getAttribute('max') || '100'),
+            step: parseInt(node.getAttribute('step') || '1'),
+          },
+        } as UIElement;
+      }
+      return {
+        ...baseElement,
+        type: 'input',
+        width: parseSize(mergedStyles.width) || 'full',
+        height: parseSize(mergedStyles.height) || 40,
+        props: {
+          placeholder: node.getAttribute('placeholder') || '',
+          inputType: inputType as any,
+        },
+      } as UIElement;
+
+    case 'textarea':
+      return {
+        ...baseElement,
+        type: 'textarea',
+        width: parseSize(mergedStyles.width) || 'full',
+        height: parseSize(mergedStyles.height) || 100,
+        props: {
+          placeholder: node.getAttribute('placeholder') || '',
+          rows: parseInt(node.getAttribute('rows') || '4'),
+        },
+      } as UIElement;
+
+    case 'select':
+      const options: { value: string; label: string }[] = [];
+      node.querySelectorAll('option').forEach(opt => {
+        options.push({
+          value: opt.getAttribute('value') || opt.textContent || '',
+          label: opt.textContent || '',
+        });
+      });
+      return {
+        ...baseElement,
+        type: 'select',
+        width: parseSize(mergedStyles.width) || 'full',
+        height: parseSize(mergedStyles.height) || 40,
+        props: { options },
+      } as UIElement;
+
+    case 'h1':
+    case 'h2':
+    case 'h3':
+    case 'h4':
+    case 'h5':
+    case 'h6':
+      return {
+        ...baseElement,
+        type: 'heading',
+        width: 'full',
+        height: 'auto',
+        props: {
+          text: node.textContent?.trim() || 'Heading',
+          level: parseInt(tagName[1]),
+        },
+      } as UIElement;
+
+    case 'p':
+    case 'span':
+    case 'label':
+      return {
+        ...baseElement,
+        type: 'text',
+        width: parseSize(mergedStyles.width) || 'auto',
+        height: 'auto',
+        props: {
+          text: node.textContent?.trim() || 'Text',
+        },
+      } as UIElement;
+
+    case 'img':
+      return {
+        ...baseElement,
+        type: 'image',
+        width: parseSize(mergedStyles.width) || 200,
+        height: parseSize(mergedStyles.height) || 150,
+        props: {
+          src: node.getAttribute('src') || '',
+          alt: node.getAttribute('alt') || '',
+        },
+      } as UIElement;
+
+    case 'hr':
+      return {
+        ...baseElement,
+        type: 'divider',
+        width: 'full',
+        height: 1,
+        props: {},
+      } as UIElement;
+
+    case 'pre':
+    case 'code':
+      return {
+        ...baseElement,
+        type: 'code-block',
+        width: parseSize(mergedStyles.width) || 'full',
+        height: parseSize(mergedStyles.height) || 100,
+        props: {
+          text: node.textContent?.trim() || '',
+          language: 'javascript',
+        },
+      } as UIElement;
+
+    case 'progress':
+      return {
+        ...baseElement,
+        type: 'progress',
+        width: parseSize(mergedStyles.width) || 'full',
+        height: 8,
+        props: {
+          value: parseInt(node.getAttribute('value') || '0'),
+          max: parseInt(node.getAttribute('max') || '100'),
+        },
+      } as UIElement;
+
+    case 'div':
+    case 'section':
+    case 'article':
+    case 'form':
+      // Check if it's a flex/grid container
+      const layout = detectLayout(mergedStyles);
+      const children: UIElement[] = [];
+      let childY = 0;
+
+      Array.from(node.children).forEach((child, childIndex) => {
+        const childElement = parseHtmlNode(child as HTMLElement, styleMap, { x: 0, y: childY }, childIndex);
+        if (childElement) {
+          children.push(childElement);
+          const height = typeof childElement.height === 'number' ? childElement.height : 40;
+          childY += height + 8;
+        }
+      });
+
+      // If no children but has text content, treat as text
+      if (children.length === 0 && node.textContent?.trim()) {
+        return {
+          ...baseElement,
+          type: 'text',
+          width: parseSize(mergedStyles.width) || 'auto',
+          height: 'auto',
+          props: {
+            text: node.textContent.trim(),
+          },
+        } as UIElement;
+      }
+
+      return {
+        ...baseElement,
+        type: 'container',
+        width: parseSize(mergedStyles.width) || 'full',
+        height: parseSize(mergedStyles.height) || Math.max(childY, 100),
+        layout,
+        props: {},
+        children,
+      } as UIElement;
+
+    default:
+      // For unknown elements, try to render as container or text
+      if (node.children.length > 0) {
+        const children: UIElement[] = [];
+        let childY = 0;
+        Array.from(node.children).forEach((child, childIndex) => {
+          const childElement = parseHtmlNode(child as HTMLElement, styleMap, { x: 0, y: childY }, childIndex);
+          if (childElement) {
+            children.push(childElement);
+            const height = typeof childElement.height === 'number' ? childElement.height : 40;
+            childY += height + 8;
+          }
+        });
+        return {
+          ...baseElement,
+          type: 'container',
+          width: parseSize(mergedStyles.width) || 'full',
+          height: parseSize(mergedStyles.height) || Math.max(childY, 50),
+          props: {},
+          children,
+        } as UIElement;
+      }
+
+      if (node.textContent?.trim()) {
+        return {
+          ...baseElement,
+          type: 'text',
+          width: 'auto',
+          height: 'auto',
+          props: {
+            text: node.textContent.trim(),
+          },
+        } as UIElement;
+      }
+
+      return null;
+  }
+}
+
+/**
+ * Parse inline style string to object
+ */
+function parseInlineStyle(styleStr: string): Record<string, string> {
+  const styles: Record<string, string> = {};
+  if (!styleStr) return styles;
+
+  styleStr.split(';').forEach(rule => {
+    const [prop, value] = rule.split(':').map(s => s.trim());
+    if (prop && value) {
+      const camelProp = prop.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+      styles[camelProp] = value;
+    }
+  });
+
+  return styles;
+}
+
+/**
+ * Convert CSS styles to UIElementStyle
+ */
+function convertToUIStyle(styles: Record<string, string>): UIElementStyle {
+  const uiStyle: UIElementStyle = {};
+
+  if (styles.backgroundColor) uiStyle.backgroundColor = styles.backgroundColor;
+  if (styles.color) uiStyle.textColor = styles.color;
+  if (styles.fontSize) uiStyle.fontSize = parseInt(styles.fontSize);
+  if (styles.fontWeight) {
+    const weight = styles.fontWeight;
+    if (weight === '700' || weight === 'bold') uiStyle.fontWeight = 'bold';
+    else if (weight === '600') uiStyle.fontWeight = 'semibold';
+    else if (weight === '500') uiStyle.fontWeight = 'medium';
+    else uiStyle.fontWeight = 'normal';
+  }
+  if (styles.textAlign) uiStyle.textAlign = styles.textAlign as any;
+  if (styles.borderRadius) uiStyle.borderRadius = parseInt(styles.borderRadius);
+  if (styles.borderWidth) uiStyle.borderWidth = parseInt(styles.borderWidth);
+  if (styles.borderColor) uiStyle.borderColor = styles.borderColor;
+  if (styles.padding) uiStyle.padding = parseInt(styles.padding);
+  if (styles.margin) uiStyle.margin = parseInt(styles.margin);
+  if (styles.opacity) uiStyle.opacity = parseFloat(styles.opacity);
+  if (styles.boxShadow) {
+    if (styles.boxShadow.includes('25px') || styles.boxShadow.includes('20px')) uiStyle.shadow = 'xl';
+    else if (styles.boxShadow.includes('15px') || styles.boxShadow.includes('10px')) uiStyle.shadow = 'lg';
+    else if (styles.boxShadow.includes('6px') || styles.boxShadow.includes('4px')) uiStyle.shadow = 'md';
+    else uiStyle.shadow = 'sm';
+  }
+
+  return uiStyle;
+}
+
+/**
+ * Parse size value (px, %, etc.) to number or 'full'/'auto'
+ */
+function parseSize(value: string | undefined): number | 'full' | 'auto' | undefined {
+  if (!value) return undefined;
+  if (value === '100%') return 'full';
+  if (value === 'auto') return 'auto';
+  const num = parseInt(value);
+  return isNaN(num) ? undefined : num;
+}
+
+/**
+ * Detect button variant from styles
+ */
+function detectButtonVariant(styles: Record<string, string>): string {
+  const bg = styles.backgroundColor?.toLowerCase() || '';
+  const border = styles.border || styles.borderColor || '';
+
+  if (bg.includes('transparent') && border) return 'outline';
+  if (bg.includes('transparent')) return 'ghost';
+  if (bg.includes('ef4444') || bg.includes('red') || bg.includes('dc2626')) return 'danger';
+  if (bg.includes('f1f5f9') || bg.includes('e2e8f0') || bg.includes('gray')) return 'secondary';
+  return 'primary';
+}
+
+/**
+ * Detect layout type from styles
+ */
+function detectLayout(styles: Record<string, string>): 'flex-row' | 'flex-col' | 'grid' | undefined {
+  const display = styles.display?.toLowerCase();
+  const flexDir = styles.flexDirection?.toLowerCase();
+
+  if (display === 'grid') return 'grid';
+  if (display === 'flex') {
+    if (flexDir === 'column' || flexDir === 'col') return 'flex-col';
+    return 'flex-row';
+  }
+  return undefined;
 }

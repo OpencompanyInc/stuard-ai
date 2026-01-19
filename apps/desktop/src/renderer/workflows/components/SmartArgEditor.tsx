@@ -9,7 +9,7 @@ import { PALETTE_CATEGORIES } from "../constants/paletteCategories";
 import { RichCodeEditor } from "./RichCodeEditor";
 import { CronEditor } from "./CronEditor";
 import type { WorkflowVariable } from "../types";
-import { UIBuilderModal, generateCustomUIArgs, parseCustomUIArgs, type UIDesign, type GeneratedCode } from "../../ui-builder";
+import { UIBuilderModal } from "../../ui-builder";
 
 export interface UpstreamNode {
   id: string;
@@ -360,7 +360,8 @@ function SelectInput({
 /** Workflow-level variable for suggestions */
 export interface WorkflowVariableSuggestion {
   name: string;
-  type: string;
+  type: 'string' | 'number' | 'boolean' | 'json' | 'list';
+  defaultValue?: any;
   description?: string;
 }
 
@@ -1414,11 +1415,15 @@ export function ToolArgsEditor({
 
   // Special case: custom_ui tool - show visual UI builder
   if (toolName === 'custom_ui') {
-    const existingDesign = parseCustomUIArgs(args);
-
-    const handleUIBuilderSave = (design: UIDesign, code: GeneratedCode) => {
-      const newArgs = generateCustomUIArgs(design);
-      onUpdate(newArgs);
+    const handleUIBuilderSave = (result: { html: string; css: string; js: string; window: any }) => {
+      onUpdate({
+        ...args,
+        html: result.html,
+        css: result.css,
+        js: result.js || args.js,
+        script: result.js || args.script,
+        ...result.window,
+      });
       setShowUIBuilder(false);
     };
 
@@ -1427,12 +1432,12 @@ export function ToolArgsEditor({
         {/* Design UI Button */}
         <button
           onClick={() => setShowUIBuilder(true)}
-          className="w-full py-3.5 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl font-semibold flex items-center justify-center gap-2.5 hover:from-indigo-600 hover:to-purple-700 shadow-lg hover:shadow-xl transition-all group"
+          className="w-full py-3.5 text-white rounded-xl font-semibold flex items-center justify-center gap-2.5 shadow-lg hover:shadow-xl transition-all group bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700"
         >
           <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
             <Paintbrush className="w-5 h-5" />
           </div>
-          <span>Design UI Visually</span>
+          <span>Design UI</span>
         </button>
 
         {/* Preview of current args if any */}
@@ -1498,7 +1503,18 @@ export function ToolArgsEditor({
         {/* UI Builder Modal */}
         {showUIBuilder && (
           <UIBuilderModal
-            initialDesign={existingDesign || undefined}
+            html={args.html || ''}
+            css={args.css || ''}
+            js={args.js || args.script || ''}
+            windowConfig={{
+              width: args.width || args.window?.width || 800,
+              height: args.height || args.window?.height || 600,
+              title: args.title || args.window?.title,
+              position: args.position || args.window?.position,
+              alwaysOnTop: args.alwaysOnTop ?? args.window?.alwaysOnTop,
+              frameless: args.frameless ?? args.window?.frameless,
+              borderRadius: args.borderRadius || args.window?.borderRadius,
+            }}
             onSave={handleUIBuilderSave}
             onClose={() => setShowUIBuilder(false)}
           />

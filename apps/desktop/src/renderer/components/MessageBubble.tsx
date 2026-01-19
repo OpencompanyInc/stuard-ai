@@ -71,28 +71,18 @@ const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool }) => {
   const status = tool.status || 'running';
   const isCompleted = status === 'completed';
   const isError = status === 'error';
+  const [showDescription, setShowDescription] = useState(false);
 
   return (
     <div className="flex flex-col gap-1.5 my-1 group/tool">
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className={clsx(
-          "flex items-center gap-2.5 px-4 py-2 rounded-2xl text-[12px] font-bold tracking-tight w-fit transition-all duration-300",
-          "border backdrop-blur-md shadow-sm",
-          isCompleted
-            ? "bg-theme-bg/50 border-theme/20 text-theme-fg/80"
-            : isError
-              ? "bg-red-500/5 border-red-500/20 text-red-600 dark:text-red-400"
-              : "bg-primary/5 border-primary/20 text-primary animate-pulse"
-        )}
+        className="flex items-center gap-2.5 text-[12px] font-semibold tracking-tight w-fit"
       >
-        <div className={clsx(
-          "flex items-center justify-center w-6 h-6 rounded-lg transition-colors",
-          isCompleted ? "bg-theme-hover" : isError ? "bg-red-500/10" : "bg-primary/10"
-        )}>
+        <div className="flex items-center justify-center w-5.5 h-5.5">
           {isCompleted ? (
-            <CheckCircle className="w-3.5 h-3.5 opacity-60" />
+            <CheckCircle className="w-3.5 h-3.5" />
           ) : isError ? (
             <XCircle className="w-3.5 h-3.5" />
           ) : (
@@ -100,18 +90,75 @@ const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool }) => {
           )}
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="capitalize">{humanizeToolName(tool.tool)}</span>
+        <div className="flex items-center gap-1.5">
+          <span className="capitalize text-black">{humanizeToolName(tool.tool)}</span>
         </div>
 
+        <button
+          onClick={() => setShowDescription(!showDescription)}
+          className="flex items-center justify-center p-1 hover:bg-gray-100 rounded transition-colors"
+        >
+          <ChevronRight 
+            className={`w-3.5 h-3.5 text-black transition-transform duration-200 ${
+              showDescription ? 'rotate-90' : ''
+            }`}
+          />
+        </button>
+
         {status === 'running' && (
-          <span className="flex items-center gap-1 opacity-50 text-[10px] font-medium lowercase">
+          <span className="flex items-center gap-0.5 text-black text-[10px] font-medium uppercase tracking-wider">
             <span className="w-1 h-1 rounded-full bg-current animate-bounce" style={{ animationDelay: '0ms' }} />
-            <span className="w-1 h-1 rounded-full bg-current animate-bounce" style={{ animationDelay: '200ms' }} />
-            <span className="w-1 h-1 rounded-full bg-current animate-bounce" style={{ animationDelay: '400ms' }} />
+            <span className="w-1 h-1 rounded-full bg-current animate-bounce" style={{ animationDelay: '150ms' }} />
+            <span className="w-1 h-1 rounded-full bg-current animate-bounce" style={{ animationDelay: '300ms' }} />
           </span>
         )}
       </motion.div>
+
+      {showDescription && tool.args && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          className="ml-8 text-[11px] text-gray-600 font-normal"
+        >
+          {typeof tool.args === 'string' ? (
+            <div className="flex flex-wrap gap-1 items-center">
+              <span className="text-gray-500">Args:</span>
+              {tool.args.split(',').map((arg, idx) => (
+                <span key={idx} className="px-2 py-1 bg-gray-100 rounded text-gray-700 text-[10px] whitespace-nowrap">
+                  {arg.trim()}
+                </span>
+              ))}
+            </div>
+          ) : Array.isArray(tool.args) ? (
+            <div className="flex flex-wrap gap-1 items-center">
+              <span className="text-gray-500">Items:</span>
+              {tool.args.map((arg, idx) => (
+                <span key={idx} className="px-2 py-1 bg-gray-100 rounded text-gray-700 text-[10px] whitespace-nowrap">
+                  {typeof arg === 'string' ? arg : JSON.stringify(arg)}
+                </span>
+              ))}
+            </div>
+          ) : typeof tool.args === 'object' ? (
+            <div className="flex flex-wrap gap-1 items-center">
+              {Object.entries(tool.args).map(([key, value]) => (
+                <div key={key} className="flex items-center gap-1 bg-gray-50 rounded px-2 py-1">
+                  <span className="font-medium text-gray-800 text-[10px]">{key}:</span>
+                  <span className="text-gray-700 text-[10px] whitespace-nowrap">
+                    {typeof value === 'string' ? value : JSON.stringify(value)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex items-center gap-1">
+              <span className="text-gray-500">Value:</span>
+              <span className="px-2 py-1 bg-gray-100 rounded text-gray-700 text-[10px] whitespace-nowrap">
+                {String(tool.args)}
+              </span>
+            </div>
+          )}
+        </motion.div>
+      )}
     </div>
   );
 };
@@ -671,7 +718,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
         .filter((c) => c !== null && c !== undefined)
         .every((c) => typeof c === 'string' && String(c).trim().length === 0);
       if (isEmpty) return null;
-      return <p className="mb-1.5 last:mb-0 leading-relaxed [&:where(li_&)]:mb-0" {...props}>{children}</p>;
+      return <p className="mb-2 last:mb-0 leading-[1.7] text-theme-fg/95 [&:where(li_&)]:mb-1" {...props}>{children}</p>;
     },
     // Image rendering - supports local paths and web URLs
     img: ({ node, src, alt, ...props }: any) => {
@@ -686,16 +733,16 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
     a: ({ href, children, ...props }: any) => {
       // Handle highlight marker (==text==)
       if (href === '#highlight' || href === '?highlight') {
-        return <span className="bg-amber-400/30 text-amber-200 px-1.5 py-0.5 rounded font-medium">{children}</span>;
+        return <span className="bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-md font-semibold border border-amber-500/30">{children}</span>;
       }
       // Handle underline marker (++text++)
       if (href === '#underline' || href === '?underline') {
-        return <span className="underline decoration-wavy decoration-sky-400/60 underline-offset-4">{children}</span>;
+        return <span className="underline decoration-2 decoration-sky-400/70 underline-offset-3 text-sky-300/90 font-medium">{children}</span>;
       }
       // Use white/light text for user bubbles (blue background), blue for assistant
       const linkClass = role === 'user'
-        ? "text-white/90 underline underline-offset-2 decoration-white/40 hover:decoration-white/60 cursor-pointer"
-        : "text-blue-400 underline underline-offset-2 decoration-blue-400/30 hover:decoration-blue-400/50 cursor-pointer";
+        ? "text-white/95 underline underline-offset-3 decoration-white/50 hover:decoration-white/80 hover:text-white cursor-pointer transition-all font-medium"
+        : "text-indigo-400 underline underline-offset-3 decoration-indigo-400/40 hover:decoration-indigo-400/70 hover:text-indigo-300 cursor-pointer transition-all font-medium";
       return (
         <a
           className={linkClass}
@@ -711,28 +758,54 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
         >{children}</a>
       );
     },
-    ul: (props: any) => <ul className="list-disc pl-5 mb-1.5 space-y-1" {...props} />,
-    ol: (props: any) => <ol className="list-decimal pl-5 mb-1.5 space-y-1" {...props} />,
-    blockquote: (props: any) => <blockquote className="border-l-2 border-theme/20 pl-3 my-2 text-theme-muted italic" {...props} />,
-    h1: (props: any) => <h1 className="text-base font-bold mb-2 mt-3 first:mt-0 tracking-tight text-theme-fg font-stuard" {...props} />,
-    h2: (props: any) => <h2 className="text-sm font-bold mb-2 mt-3 first:mt-0 tracking-tight text-theme-fg font-stuard" {...props} />,
-    h3: (props: any) => <h3 className="text-sm font-bold mb-1.5 mt-2 first:mt-0 text-theme-fg font-stuard" {...props} />,
+    ul: (props: any) => <ul className="list-disc pl-6 mb-3 space-y-1.5 marker:text-theme/60 marker:text-sm" {...props} />,
+    ol: (props: any) => <ol className="list-decimal pl-6 mb-3 space-y-1.5 marker:text-theme/60 marker:text-sm marker:font-semibold" {...props} />,
+    li: (props: any) => <li className="leading-[1.7] text-theme-fg/95 pl-1" {...props} />,
+    blockquote: (props: any) => (
+      <blockquote className="border-l-4 border-indigo-500/40 pl-4 my-3 py-2 bg-gradient-to-r from-indigo-500/10 to-transparent rounded-r-lg" {...props}>
+        <span className="text-theme-muted/90 italic leading-[1.7]">{props.children}</span>
+      </blockquote>
+    ),
+    h1: (props: any) => <h1 className="text-lg font-bold mb-3 mt-4 first:mt-0 tracking-tight text-theme-fg border-b border-theme/10 pb-2" {...props} />,
+    h2: (props: any) => <h2 className="text-base font-bold mb-2.5 mt-3.5 first:mt-0 tracking-tight text-theme-fg" {...props} />,
+    h3: (props: any) => <h3 className="text-sm font-bold mb-2 mt-3 first:mt-0 text-theme-fg/95" {...props} />,
+    h4: (props: any) => <h4 className="text-sm font-semibold mb-1.5 mt-2.5 first:mt-0 text-theme-fg/90" {...props} />,
+    h5: (props: any) => <h5 className="text-xs font-semibold mb-1 mt-2 first:mt-0 text-theme-fg/85 uppercase tracking-wide" {...props} />,
+    h6: (props: any) => <h6 className="text-xs font-medium mb-1 mt-2 first:mt-0 text-theme-muted/80 uppercase tracking-wide" {...props} />,
+    strong: (props: any) => <strong className="font-bold text-theme-fg" {...props} />,
+    em: (props: any) => <em className="italic text-theme-fg/95" {...props} />,
     code: ({ inline, className, children, ...props }: any) => (
       inline
-        ? <code className="bg-theme-hover rounded-md px-1.5 py-0.5 font-mono text-[85%] align-middle text-primary font-bold" {...props}>{children}</code>
-        : <div className="my-3 rounded-2xl overflow-hidden bg-theme-bg/50 backdrop-blur-sm border border-theme/20 shadow-inner">
-          <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4">
-            <code className={clsx(className, "font-mono text-[13px] block min-w-full leading-relaxed text-theme-fg")} {...props}>{children}</code>
+        ? <code className="bg-gradient-to-br from-slate-700/80 to-slate-800/80 text-slate-100 rounded-md px-2 py-0.5 font-mono text-[85%] align-middle font-semibold border border-slate-600/30 shadow-sm" {...props}>{children}</code>
+        : <div className="my-4 rounded-xl overflow-hidden bg-gradient-to-br from-slate-900/95 to-slate-800/95 border border-slate-700/50 shadow-xl">
+            <div className="bg-slate-800/50 px-4 py-2 border-b border-slate-700/50 flex items-center justify-between">
+              <span className="text-xs text-slate-400 font-mono">{className?.replace('language-', '') || 'code'}</span>
+              <div className="flex gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
+                <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
+                <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
+              </div>
+            </div>
+            <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4">
+              <code className={clsx(className, "font-mono text-[13px] block min-w-full leading-[1.7] text-slate-100")} {...props}>{children}</code>
+            </div>
           </div>
-        </div>
     ),
-    table: (props: any) => <div className="overflow-x-auto my-2 rounded border border-theme/20"><table className="min-w-full divide-y divide-theme/20 text-sm" {...props} /></div>,
-    thead: (props: any) => <thead className="bg-theme-hover/50" {...props} />,
-    tbody: (props: any) => <tbody className="divide-y divide-theme/10" {...props} />,
-    tr: (props: any) => <tr className="" {...props} />,
-    th: (props: any) => <th className="px-3 py-2 text-left font-bold text-theme-fg uppercase tracking-wider text-[10px]" {...props} />,
-    td: (props: any) => <td className="px-3 py-2 text-theme-fg/90 whitespace-pre-wrap font-medium" {...props} />,
-    hr: (props: any) => <hr className="my-3 border-theme/10" {...props} />,
+    pre: (props: any) => <pre className="my-4" {...props} />,
+    table: (props: any) => (
+      <div className="overflow-x-auto my-3 rounded-xl border border-theme/20 shadow-sm">
+        <table className="min-w-full divide-y divide-theme/15 text-sm" {...props} />
+      </div>
+    ),
+    thead: (props: any) => <thead className="bg-gradient-to-b from-theme-hover/60 to-theme-hover/40" {...props} />,
+    tbody: (props: any) => <tbody className="divide-y divide-theme/10 bg-theme-bg/30" {...props} />,
+    tr: (props: any) => <tr className="hover:bg-theme-hover/40 transition-colors" {...props} />,
+    th: (props: any) => <th className="px-4 py-2.5 text-left font-bold text-theme-fg uppercase tracking-wider text-[11px]" {...props} />,
+    td: (props: any) => <td className="px-4 py-2.5 text-theme-fg/90 whitespace-pre-wrap" {...props} />,
+    hr: (props: any) => <hr className="my-4 border-theme/15" {...props} />,
+    del: (props: any) => <del className="line-through text-theme-muted/60 decoration-2" {...props} />,
+    sup: (props: any) => <sup className="text-[75%] align-super text-theme-muted/80" {...props} />,
+    sub: (props: any) => <sub className="text-[75%] align-sub text-theme-muted/80" {...props} />,
   }), [role]);
 
   const segments = useMemo<ContentSegment[]>(() => {

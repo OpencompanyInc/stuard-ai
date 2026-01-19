@@ -24,11 +24,16 @@ const CORE_TOOLS = new Set([
   'run_parallel',
   // Always useful
   'web_search',
+  'scrape_url',
   'analyze_media',
   'ai_inference',
   // Memory/knowledge
   'memory_retrieval',
   'search_past_conversations',
+  'ensure_space_path',
+  'list_space_path',
+  'add_to_space_path',
+  'get_space_tree',
   // System
   'run_command',
   'run_system_command',

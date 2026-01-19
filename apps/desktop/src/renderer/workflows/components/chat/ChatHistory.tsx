@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
+import clsx from "clsx";
 import { User, Bot, AlertCircle, CheckCircle2, RotateCw, Zap, Sparkles, X, Undo2 } from "lucide-react";
 import { AudioPlayer } from "../../../components/AudioPlayer";
 import { ReasoningBlock } from "../../../components/ReasoningBlock";
@@ -387,19 +388,55 @@ export function ChatHistory({
                     rehypePlugins={[rehypeKatex]}
                     components={{
                       img: (props) => <ChatMedia {...props as any} />,
-                      p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                      a: ({ node, ...props }) => <a {...props} className="text-indigo-500 hover:underline" target="_blank" rel="noopener noreferrer" />,
+                      p: ({ children }) => <p className="mb-2 last:mb-0 leading-[1.7]">{children}</p>,
+                      a: ({ node, ...props }) => <a {...props} className="text-indigo-500 hover:text-indigo-600 underline underline-offset-2 decoration-indigo-500/30 hover:decoration-indigo-500/50 transition-all" target="_blank" rel="noopener noreferrer" />,
                       code: ({ node, className, children, ...props }) => {
-                        return !String(className).includes('language-') ? (
-                          <code className={`${msg.role === 'user' ? 'bg-slate-800' : 'bg-slate-100'} px-1.5 py-0.5 rounded text-[12px] font-mono`} {...props}>
+                        const isInline = !String(className).includes('language-');
+                        return isInline ? (
+                          <code className={`${msg.role === 'user' ? 'bg-slate-700/50 text-slate-100' : 'bg-slate-100 text-slate-800'} px-2 py-0.5 rounded-md text-[85%] font-mono font-semibold border border-slate-600/20 shadow-sm`} {...props}>
                             {children}
                           </code>
                         ) : (
-                          <code className={className} {...props}>
-                            {children}
-                          </code>
+                          <div className="my-4 rounded-xl overflow-hidden bg-gradient-to-br from-slate-900/95 to-slate-800/95 border border-slate-700/50 shadow-xl">
+                            <div className="bg-slate-800/50 px-4 py-2 border-b border-slate-700/50 flex items-center justify-between">
+                              <span className="text-xs text-slate-400 font-mono">{className?.replace('language-', '') || 'code'}</span>
+                              <div className="flex gap-1.5">
+                                <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
+                                <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
+                                <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
+                              </div>
+                            </div>
+                            <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4">
+                              <code className={clsx(className, "font-mono text-[13px] block min-w-full leading-[1.7] text-slate-100")} {...props}>{children}</code>
+                            </div>
+                          </div>
                         )
-                      }
+                      },
+                      ul: (props) => <ul className="list-disc pl-6 mb-3 space-y-1.5 marker:text-slate-400 marker:text-sm" {...props} />,
+                      ol: (props) => <ol className="list-decimal pl-6 mb-3 space-y-1.5 marker:text-slate-400 marker:text-sm marker:font-semibold" {...props} />,
+                      li: (props) => <li className="leading-[1.7] pl-1" {...props} />,
+                      blockquote: (props) => (
+                        <blockquote className="border-l-4 border-indigo-500/40 pl-4 my-3 py-2 bg-gradient-to-r from-indigo-500/10 to-transparent rounded-r-lg" {...props}>
+                          <span className="text-slate-600 italic leading-[1.7]">{props.children}</span>
+                        </blockquote>
+                      ),
+                      h1: (props) => <h1 className="text-lg font-bold mb-3 mt-4 first:mt-0 tracking-tight border-b border-slate-200 pb-2" {...props} />,
+                      h2: (props) => <h2 className="text-base font-bold mb-2.5 mt-3.5 first:mt-0 tracking-tight" {...props} />,
+                      h3: (props) => <h3 className="text-sm font-bold mb-2 mt-3 first:mt-0" {...props} />,
+                      h4: (props) => <h4 className="text-sm font-semibold mb-1.5 mt-2.5 first:mt-0" {...props} />,
+                      strong: (props) => <strong className="font-bold" {...props} />,
+                      em: (props) => <em className="italic" {...props} />,
+                      table: (props) => (
+                        <div className="overflow-x-auto my-3 rounded-xl border border-slate-200 shadow-sm">
+                          <table className="min-w-full divide-y divide-slate-200 text-sm" {...props} />
+                        </div>
+                      ),
+                      thead: (props) => <thead className="bg-gradient-to-b from-slate-50 to-slate-100/50" {...props} />,
+                      tbody: (props) => <tbody className="divide-y divide-slate-100 bg-white/50" {...props} />,
+                      tr: (props) => <tr className="hover:bg-slate-50 transition-colors" {...props} />,
+                      th: (props) => <th className="px-4 py-2.5 text-left font-bold uppercase tracking-wider text-[11px] text-slate-600" {...props} />,
+                      td: (props) => <td className="px-4 py-2.5 whitespace-pre-wrap" {...props} />,
+                      hr: (props) => <hr className="my-4 border-slate-200" {...props} />,
                     }}
                   >
                     {preprocessMessageContent(msg.content)}
@@ -453,13 +490,38 @@ export function ChatHistory({
                       rehypePlugins={[rehypeKatex]}
                       components={{
                         img: (props) => <ChatMedia {...props as any} />,
-                        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                        a: ({ node, ...props }) => <a {...props} className="text-indigo-500 hover:underline" target="_blank" rel="noopener noreferrer" />,
+                        p: ({ children }) => <p className="mb-2 last:mb-0 leading-[1.7]">{children}</p>,
+                        a: ({ node, ...props }) => <a {...props} className="text-indigo-500 hover:text-indigo-600 underline underline-offset-2 decoration-indigo-500/30 hover:decoration-indigo-500/50 transition-all" target="_blank" rel="noopener noreferrer" />,
                         code: ({ node, className, children, ...props }) => (
-                          <code className="bg-slate-100 px-1.5 py-0.5 rounded text-[12px] font-mono" {...props}>
+                          <code className="bg-slate-100 text-slate-800 px-2 py-0.5 rounded-md text-[85%] font-mono font-semibold border border-slate-600/20 shadow-sm" {...props}>
                             {children}
                           </code>
-                        )
+                        ),
+                        ul: (props) => <ul className="list-disc pl-6 mb-3 space-y-1.5 marker:text-slate-400 marker:text-sm" {...props} />,
+                        ol: (props) => <ol className="list-decimal pl-6 mb-3 space-y-1.5 marker:text-slate-400 marker:text-sm marker:font-semibold" {...props} />,
+                        li: (props) => <li className="leading-[1.7] pl-1" {...props} />,
+                        blockquote: (props) => (
+                          <blockquote className="border-l-4 border-indigo-500/40 pl-4 my-3 py-2 bg-gradient-to-r from-indigo-500/10 to-transparent rounded-r-lg" {...props}>
+                            <span className="text-slate-600 italic leading-[1.7]">{props.children}</span>
+                          </blockquote>
+                        ),
+                        h1: (props) => <h1 className="text-lg font-bold mb-3 mt-4 first:mt-0 tracking-tight border-b border-slate-200 pb-2" {...props} />,
+                        h2: (props) => <h2 className="text-base font-bold mb-2.5 mt-3.5 first:mt-0 tracking-tight" {...props} />,
+                        h3: (props) => <h3 className="text-sm font-bold mb-2 mt-3 first:mt-0" {...props} />,
+                        h4: (props) => <h4 className="text-sm font-semibold mb-1.5 mt-2.5 first:mt-0" {...props} />,
+                        strong: (props) => <strong className="font-bold" {...props} />,
+                        em: (props) => <em className="italic" {...props} />,
+                        table: (props) => (
+                          <div className="overflow-x-auto my-3 rounded-xl border border-slate-200 shadow-sm">
+                            <table className="min-w-full divide-y divide-slate-200 text-sm" {...props} />
+                          </div>
+                        ),
+                        thead: (props) => <thead className="bg-gradient-to-b from-slate-50 to-slate-100/50" {...props} />,
+                        tbody: (props) => <tbody className="divide-y divide-slate-100 bg-white/50" {...props} />,
+                        tr: (props) => <tr className="hover:bg-slate-50 transition-colors" {...props} />,
+                        th: (props) => <th className="px-4 py-2.5 text-left font-bold uppercase tracking-wider text-[11px] text-slate-600" {...props} />,
+                        td: (props) => <td className="px-4 py-2.5 whitespace-pre-wrap" {...props} />,
+                        hr: (props) => <hr className="my-4 border-slate-200" {...props} />,
                       }}
                     >
                       {preprocessMessageContent(item.content)}

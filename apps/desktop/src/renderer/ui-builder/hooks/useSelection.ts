@@ -250,7 +250,7 @@ export function useSelection(options: UseSelectionOptions) {
       }
 
       if (dx !== 0 || dy !== 0) {
-        onMoveElements(selectedIds, dx, dy);
+        onMoveElements(Array.from(currentState.dragStartPositions.keys()), dx, dy);
         // Update drag start point for incremental moves
         setState(prev => ({
           ...prev,

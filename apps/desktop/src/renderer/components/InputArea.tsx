@@ -158,7 +158,7 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
     setMarketplaceSearching(true);
     marketplaceDebounceRef.current = setTimeout(async () => {
       try {
-        const token = accessToken;
+        const token = accessToken ?? null;
         const api = getMarketplaceApi(() => token);
         const res = await api.search({ query: q, limit: 3 });
         if (res.ok && res.results) {

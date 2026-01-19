@@ -72,12 +72,14 @@ export interface Space {
 export interface SpaceItem {
   id: string;
   space_id: string;
-  type: 'note' | 'source' | 'link' | 'file' | 'fact' | 'snippet';
+  type: 'note' | 'source' | 'link' | 'file' | 'fact' | 'snippet' | 'folder';
   title: string | null;
   content: string;
   metadata: Record<string, any> | null;
   added_by: 'user' | 'ai';
   pinned: boolean;
+  parent_id?: string | null;
+  position?: number;
   created_at: string;
   updated_at: string;
 }
@@ -98,6 +100,38 @@ export async function generateEmbedding(text: string): Promise<number[]> {
   } catch (error) {
     writeLog('embedding_error', { error: String(error) });
     return [];
+  }
+}
+
+export async function createSpaceFolder(
+  spaceId: string,
+  name: string,
+  options?: { parent_id?: string; position?: number }
+): Promise<SpaceItem | null> {
+  try {
+    const result = await execLocalTool('space_folder_create', {
+      space_id: spaceId,
+      name,
+      ...options,
+    });
+    if (result?.ok && result.folder) {
+      return result.folder as SpaceItem;
+    }
+    return null;
+  } catch (error) {
+    return null;
+  }
+}
+
+export async function getSpaceTree(spaceId: string): Promise<any[] | null> {
+  try {
+    const result = await execLocalTool('space_get_tree', { space_id: spaceId });
+    if (result?.ok && result.tree) {
+      return result.tree as any[];
+    }
+    return null;
+  } catch (error) {
+    return null;
   }
 }
 
@@ -583,6 +617,8 @@ export async function addSpaceItem(
     metadata?: Record<string, any>;
     added_by?: 'user' | 'ai';
     pinned?: boolean;
+    parent_id?: string;
+    position?: number;
   }
 ): Promise<SpaceItem | null> {
   try {
@@ -610,7 +646,13 @@ export async function addSpaceItem(
 
 export async function getSpaceItems(
   spaceId: string,
-  options?: { type?: SpaceItem['type']; pinned_only?: boolean; limit?: number }
+  options?: {
+    type?: SpaceItem['type'];
+    pinned_only?: boolean;
+    parent_id?: string;
+    include_all?: boolean;
+    limit?: number;
+  }
 ): Promise<SpaceItem[]> {
   try {
     const result = await execLocalTool('space_item_list', {

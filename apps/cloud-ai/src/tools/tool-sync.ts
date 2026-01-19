@@ -92,11 +92,18 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   // Web Search
   web_search: ['google', 'search online', 'look up', 'find information', 'research'],
 
+  // Web Extraction
+  scrape_url: ['scrape url', 'extract url', 'web scrape', 'web extraction', 'get page content', 'tavily extract'],
+
   // Memory/Context
   search_past_conversations: ['history', 'previous chats', 'memory search'],
   get_conversation_context: ['conversation history', 'chat context'],
   list_user_spaces: ['spaces', 'folders', 'collections'],
   get_space_contents: ['space items', 'folder contents'],
+  ensure_space_path: ['create folder path', 'ensure folder', 'make folders', 'space path', 'nested folders'],
+  list_space_path: ['list folder path', 'browse space', 'folder listing', 'space path list'],
+  add_to_space_path: ['add to folder', 'save under path', 'add note to folder', 'space subfolder'],
+  get_space_tree: ['space tree', 'folder tree', 'space folders', 'list folders'],
 
   // Workflows
   list_local_workflows: ['workflows', 'automations', 'stuards'],

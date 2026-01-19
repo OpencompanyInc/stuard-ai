@@ -4,8 +4,9 @@ import { analyzeMediaTool } from '../../tools/analyze-media';
 import { outlook_get_me, outlook_list_messages, outlook_search_messages, outlook_send_mail } from '../../tools/outlook-tools';
 import { github_get_me, github_list_repos, github_list_issues, github_create_issue } from '../../tools/github-tools';
 import { google_get_userinfo, gmail_send_message, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, gmail_modify_message, gmail_delete_message, gmail_archive_message, gmail_mark_as_read, gmail_mark_as_unread, calendar_list_events, calendar_create_event, tasks_list, drive_list_files, sheets_read_range, docs_get_document, docs_create_document, docs_write_text } from '../../tools/google-tools';
-import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, canvas_manager, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, stop_system_audio, describe_system_audio_capabilities, run_command, run_system_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, list_local_workflows, list_local_stuards, show_json_workflow_code, import_workflow, run_automation, stop_automation, invoke_workflow, search_past_conversations, get_conversation_context, list_user_spaces, get_space_contents, add_to_space, create_space, add_source_to_space, add_note_to_space, add_code_snippet_to_space, link_conversation_to_space, find_or_create_space, update_space_item, delete_space_item, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, browser_get_content, browser_click_element, browser_type_text, browser_find_text, browser_get_element_position, browser_find_clickable, browser_hover, browser_select_option, browser_press_key, browser_get_form_fields, browser_fill_form, browser_wait_for_element, browser_scroll_to, browser_get_page_info, browser_execute_script } from '../../tools/device-tools';
+import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, canvas_manager, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, stop_system_audio, describe_system_audio_capabilities, run_command, run_system_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, list_local_workflows, list_local_stuards, show_json_workflow_code, import_workflow, run_automation, stop_automation, invoke_workflow, search_past_conversations, get_conversation_context, list_user_spaces, get_space_contents, add_to_space, ensure_space_path, list_space_path, add_to_space_path, get_space_tree, create_space, add_source_to_space, add_note_to_space, add_code_snippet_to_space, link_conversation_to_space, find_or_create_space, update_space_item, delete_space_item, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, browser_get_content, browser_click_element, browser_type_text, browser_find_text, browser_get_element_position, browser_find_clickable, browser_hover, browser_select_option, browser_press_key, browser_get_form_fields, browser_fill_form, browser_wait_for_element, browser_scroll_to, browser_get_page_info, browser_execute_script, agent_todo, get_mouse_position, click_at_coordinates, double_click_at_coordinates, type_text, scroll, drag_and_drop } from '../../tools/device-tools';
 import { web_search } from '../../tools/perplexity-tools';
+import { scrape_url } from '../../tools/tavily-tools';
 import { deployHeadlessAgent } from '../../tools/deploy-headless-agent';
 import { getHeadlessAgentStatus } from '../../tools/get-headless-agent-status';
 import { listHeadlessAgentTasks } from '../../tools/list-headless-agent-tasks';
@@ -23,6 +24,7 @@ export const ALL_TOOLS = {
   // Vision/media analysis (consolidated tool)
   analyze_media: analyzeMediaTool,
   web_search,
+  scrape_url,
   deploy_headless_agent: deployHeadlessAgent,
   get_headless_agent_status: getHeadlessAgentStatus,
   list_headless_agent_tasks: listHeadlessAgentTasks,
@@ -55,6 +57,12 @@ export const ALL_TOOLS = {
   docs_create_document,
   docs_write_text,
   send_hotkey,
+  get_mouse_position,
+  click_at_coordinates,
+  double_click_at_coordinates,
+  type_text,
+  scroll,
+  drag_and_drop,
   canvas_manager,
   capture_media,
   stop_capture,
@@ -116,6 +124,10 @@ export const ALL_TOOLS = {
   list_user_spaces,
   get_space_contents,
   add_to_space,
+  ensure_space_path,
+  list_space_path,
+  add_to_space_path,
+  get_space_tree,
   create_space,
   add_source_to_space,
   add_note_to_space,
@@ -160,6 +172,7 @@ export const ALL_TOOLS = {
   browser_scroll_to,
   browser_get_page_info,
   browser_execute_script,
+  agent_todo,
 } as const;
 
 /**
@@ -198,26 +211,39 @@ export const TIER_1_PARAMOUNT_TOOLS = [
   'run_command', 'run_system_command', 'list_terminals', 'read_terminal',
   'terminal_create', 'terminal_list',
 
-  // Input/Automation (1)
+  // Input/Automation (7)
   'send_hotkey',
+  'get_mouse_position',
+  'click_at_coordinates',
+  'double_click_at_coordinates',
+  'type_text',
+  'scroll',
+  'drag_and_drop',
 
   // Vision/Media/Capture (4)
   'analyze_media', 'capture_screen', 'capture_media', 'stop_capture',
 
-  // Memory/Context & Spaces (13)
+  // Memory/Context & Spaces (17)
   'search_past_conversations', 'get_conversation_context',
   'list_user_spaces', 'get_space_contents',
   'create_space', 'add_to_space', 'add_source_to_space',
   'add_note_to_space', 'add_code_snippet_to_space',
+  'ensure_space_path', 'list_space_path', 'add_to_space_path', 'get_space_tree',
   'find_or_create_space', 'update_space_item', 'delete_space_item',
   'link_conversation_to_space',
 
   // Web Search (1)
   'web_search',
 
+  // Web Extraction (1)
+  'scrape_url',
+
   // Headless Agents (4)
   'deploy_headless_agent', 'get_headless_agent_status',
   'list_headless_agent_tasks', 'stop_headless_agent',
+
+  // Agent Todo Management (1)
+  'agent_todo',
 ] as const;
 
 const SIS_ESSENTIAL_TOOLS = ['wait', 'run_sequential', 'run_parallel'] as const;
@@ -279,7 +305,7 @@ async function getSis(): Promise<SIS | null> {
 
 // Always available tools
 export const CORE_TOOLS_LIST = [
-  'wait', 'run_sequential', 'run_parallel', 'analyze_media', 'web_search',
+  'wait', 'run_sequential', 'run_parallel', 'analyze_media', 'web_search', 'scrape_url',
   'deploy_headless_agent', 'get_headless_agent_status', 'list_headless_agent_tasks', 'stop_headless_agent',
   'send_hotkey', 'canvas_manager', 'capture_media', 'stop_capture',
   'describe_media_capture_capabilities',
@@ -300,6 +326,7 @@ export const CORE_TOOLS_LIST = [
   'import_workflow', 'run_automation', 'stop_automation', 'invoke_workflow',
   'search_past_conversations', 'get_conversation_context',
   'list_user_spaces', 'get_space_contents',
+  'ensure_space_path', 'list_space_path', 'add_to_space_path', 'get_space_tree',
   'add_to_space', 'create_space',
   'add_source_to_space', 'add_note_to_space', 'add_code_snippet_to_space',
   'link_conversation_to_space', 'find_or_create_space',

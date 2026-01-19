@@ -3,6 +3,7 @@ import { z } from 'zod';
 import * as deviceTools from './device-tools';
 import * as googleTools from './google-tools';
 import { web_search } from './perplexity-tools';
+import { scrape_url } from './tavily-tools';
 import * as outlookTools from './outlook-tools';
 import * as githubTools from './github-tools';
 import * as youtubeTools from './youtube-tools';
@@ -164,7 +165,7 @@ Object.values(deviceTools).forEach(t => {
         register(t, 'Media');
     } else if (['list_local_workflows', 'list_local_stuards', 'show_json_workflow_code', 'import_workflow', 'run_automation', 'stop_automation', 'create_workflow', 'workflow_modify', 'retrieve_tool_format'].includes(name)) {
         register(t, 'Workflow');
-    } else if (['memory_retrieval', 'group_management', 'memory_summarization', 'memory_classify_texts', 'memory_auto_ingest', 'memory_extract_texts', 'search_past_conversations', 'get_conversation_context', 'list_user_spaces', 'get_space_contents', 'add_to_space', 'create_space', 'get_memory_stats', 'add_source_to_space', 'add_note_to_space', 'add_code_snippet_to_space', 'link_conversation_to_space', 'find_or_create_space', 'update_space_item', 'delete_space_item'].includes(name)) {
+    } else if (['memory_retrieval', 'group_management', 'memory_summarization', 'memory_classify_texts', 'memory_auto_ingest', 'memory_extract_texts', 'search_past_conversations', 'get_conversation_context', 'list_user_spaces', 'get_space_contents', 'add_to_space', 'ensure_space_path', 'list_space_path', 'add_to_space_path', 'get_space_tree', 'create_space', 'get_memory_stats', 'add_source_to_space', 'add_note_to_space', 'add_code_snippet_to_space', 'link_conversation_to_space', 'find_or_create_space', 'update_space_item', 'delete_space_item'].includes(name)) {
         register(t, 'Memory');
     } else if (['knowledge_add_instruction', 'knowledge_remember_about_user', 'knowledge_update_profile', 'knowledge_add_project_fact', 'knowledge_stats'].includes(name)) {
         register(t, 'Knowledge');
@@ -183,6 +184,7 @@ Object.values(deviceTools).forEach(t => {
 register(analyzeMediaTool, 'AI');
 register(aiInferenceTool, 'AI');
 register(web_search, 'Search');
+register(scrape_url, 'Search');
 
 Object.values(googleTools).forEach(t => register(t, 'Google'));
 // Backward compatibility alias

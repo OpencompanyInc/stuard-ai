@@ -500,6 +500,73 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     outputSchema: { results: 'any[]', id: 'string' },
   },
 
+  {
+    id: 'scrape_url',
+    category: 'data',
+    kind: 'cloud',
+    description: 'Extract/scrape raw page content from one or more URLs using Tavily Extract.',
+    argsTemplate: {
+      urls: ['https://stuard.ai'],
+      includeImages: false,
+      extractDepth: 'advanced',
+      format: 'markdown',
+      timeout: 30000,
+      includeFavicon: false,
+      includeUsage: false,
+    },
+    outputSchema: { results: 'any[]', failedResults: 'any[]', responseTime: 'number', requestId: 'string' },
+  },
+
+  // --- SPACES (PATH / FOLDERS) ---
+  {
+    id: 'ensure_space_path',
+    category: 'data',
+    kind: 'local',
+    description: 'Ensure a folder path exists inside a space (creates nested folders as needed).',
+    argsTemplate: {
+      space_id: '{{ input.space_id }}',
+      path: 'Project/Notes',
+    },
+    outputSchema: { ok: 'boolean', folder_id: 'string', created: 'boolean', error: 'string' },
+  },
+  {
+    id: 'list_space_path',
+    category: 'data',
+    kind: 'local',
+    description: 'List items inside a folder path within a space.',
+    argsTemplate: {
+      space_id: '{{ input.space_id }}',
+      path: 'Project/Notes',
+      type: 'note',
+      limit: 200,
+    },
+    outputSchema: { ok: 'boolean', folder_id: 'string', items: 'any[]', error: 'string' },
+  },
+  {
+    id: 'add_to_space_path',
+    category: 'data',
+    kind: 'local',
+    description: 'Add an item (note/source/link/file/fact/snippet) under a folder path within a space.',
+    argsTemplate: {
+      space_id: '{{ input.space_id }}',
+      path: 'Project/Notes',
+      type: 'note',
+      title: 'Quick note',
+      content: '...'
+    },
+    outputSchema: { ok: 'boolean', item: 'any', folder_id: 'string', error: 'string' },
+  },
+  {
+    id: 'get_space_tree',
+    category: 'data',
+    kind: 'local',
+    description: 'Get the full folder tree for a space as a nested structure.',
+    argsTemplate: {
+      space_id: '{{ input.space_id }}',
+    },
+    outputSchema: { ok: 'boolean', tree: 'any[]', error: 'string' },
+  },
+
   // --- BROWSER ---
   {
     id: 'browser_get_content',

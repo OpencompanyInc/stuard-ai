@@ -28,7 +28,15 @@ export interface AgentTodoListProps {
   compact?: boolean;
 }
 
-const statusConfig = {
+interface StatusConfig {
+  icon: React.ComponentType<any>;
+  color: string;
+  bg: string;
+  label: string;
+  animate?: boolean;
+}
+
+const statusConfig: Record<string, StatusConfig> = {
   pending: {
     icon: Circle,
     color: 'text-theme-muted',
