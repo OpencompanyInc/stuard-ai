@@ -148,6 +148,11 @@ export function UIBuilderModal({
   // Track if we need to sync on close
   const needsSyncRef = useRef(false);
   const hasMountedRef = useRef(false);
+  const windowConfigRef = useRef(windowConfig);
+
+  useEffect(() => {
+    windowConfigRef.current = windowConfig;
+  }, [windowConfig]);
 
   // UI state
   const [zoom, setZoom] = useState(1);
@@ -240,12 +245,13 @@ export function UIBuilderModal({
         html,
         css,
         js,
-        window: windowConfig,
+        window: windowConfigRef.current,
       });
+      needsSyncRef.current = false;
     }, 300);
 
     return () => window.clearTimeout(timeout);
-  }, [html, css, js, windowConfig, onSave]);
+  }, [html, css, js, onSave]);
 
   // Handle HTML change from canvas (after element updates or on close)
   const handleHtmlChange = useCallback((newHtml: string) => {
