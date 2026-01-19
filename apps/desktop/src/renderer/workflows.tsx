@@ -946,8 +946,8 @@ function WorkflowsApp() {
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-3 select-none">
             <div>
-              <div className="text-sm font-bold text-slate-900 tracking-tight leading-none">Stuard Studio</div>
-              <div className="text-[10px] text-slate-500 font-medium mt-0.5 tracking-wide">Intelligent Workflow Engine</div>
+              <div className="text-sm font-bold text-slate-900 tracking-tight leading-none font-stuard">Stuard Studio</div>
+              <div className="text-[10px] text-slate-500 font-medium mt-0.5 tracking-wide font-stuard">Intelligent Workflow Engine</div>
             </div>
           </div>
 
