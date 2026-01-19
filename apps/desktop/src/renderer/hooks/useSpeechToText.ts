@@ -115,8 +115,6 @@ export function useSpeechToText(cloudUrl?: string) {
 
   const startRecording = useCallback(async () => {
     setError(null);
-    setTranscript('');
-    setInterimTranscript('');
     serverReadyRef.current = false;
 
     try {

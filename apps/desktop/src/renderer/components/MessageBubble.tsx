@@ -1160,9 +1160,9 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                 <div
                   key={`txt-${idx}`}
                   className={clsx(
-                    "max-w-[85%] md:max-w-[55%]",
-                    "rounded-[22px] px-5 py-3.5 shadow-xl backdrop-blur-md text-[16px] leading-relaxed transition-all",
-                    "bg-theme-card/90 text-theme-fg rounded-tl-sm border border-theme/10"
+                    "w-fit",
+                    "rounded-[22px] px-5 py-3.5 backdrop-blur-md text-[16px] leading-relaxed transition-all",
+                    "bg-gray-100 text-gray-900 rounded-tl-sm"
                   )}
                 >
                   <div className="select-text whitespace-pre-wrap break-normal font-medium">
@@ -1252,10 +1252,10 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
         ) : (
           // Fallback to single bubble for user messages or when no streamChunks
           <div className={clsx(
-            "rounded-2xl px-5 py-3.5 shadow-lg text-[15px] relative group/bubble leading-relaxed border transition-all",
+            "rounded-2xl px-5 py-3.5 text-[15px] relative group/bubble leading-relaxed transition-all",
             role === 'user'
-              ? "bg-primary text-primary-fg border-primary shadow-primary/5 ml-auto max-w-[85%] md:max-w-[55%] min-w-[56px] font-bold"
-              : "bg-theme-card text-theme-fg border-theme/10 mr-auto max-w-[85%] md:max-w-[55%] font-medium"
+              ? "bg-primary text-primary-fg border-primary shadow-primary/5 ml-auto w-fit max-w-[85%] min-w-[56px] font-bold"
+              : "bg-gray-100 text-gray-900 mr-auto w-fit font-medium"
           )}>
             <div
               className="select-text whitespace-pre-wrap break-normal"

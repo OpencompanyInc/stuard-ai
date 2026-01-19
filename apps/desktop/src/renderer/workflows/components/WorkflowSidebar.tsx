@@ -82,22 +82,6 @@ export function WorkflowSidebar({
 
   return (
     <aside className="w-[280px] bg-[#fdfdfd] border-r border-slate-100 flex flex-col h-full shrink-0 z-20">
-      {/* Header Section */}
-      <div className="h-14 px-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
-        <div className="flex items-center gap-2.5 font-bold text-slate-800 text-sm">
-          <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-xl flex items-center justify-center shadow-sm text-white">
-            <Zap className="w-4 h-4 fill-current" />
-          </div>
-          <span>Automations</span>
-        </div>
-        <button
-          onClick={onToggleCollapse}
-          className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-lg transition-colors"
-        >
-          <ChevronLeft className="w-4 h-4" />
-        </button>
-      </div>
-
       {/* Action Buttons */}
       <div className="p-4 space-y-3">
         <div className="grid grid-cols-2 gap-2">

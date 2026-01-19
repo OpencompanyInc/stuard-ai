@@ -242,6 +242,14 @@ body {
   display: none;
 }
 
+.scrollbar-hidden .simplebar-track {
+  display: none !important;
+}
+
+.scrollbar-hidden .simplebar-scrollbar {
+  display: none !important;
+}
+
 /* GenUI Component Scrollbar - Sleek & Minimal */
 .genui-scrollbar {
   scrollbar-width: thin;

@@ -945,11 +945,8 @@ function WorkflowsApp() {
       <div className="drag h-14 bg-white/80 backdrop-blur-md border-b border-slate-200/60 flex items-center px-4 shrink-0 justify-between z-30 relative">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-3 select-none">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-200/50">
-              <span className="text-sm font-bold text-white">S</span>
-            </div>
             <div>
-              <div className="text-sm font-bold text-slate-900 tracking-tight leading-none">Stuard Automate</div>
+              <div className="text-sm font-bold text-slate-900 tracking-tight leading-none">Stuard Studio</div>
               <div className="text-[10px] text-slate-500 font-medium mt-0.5 tracking-wide">Intelligent Workflow Engine</div>
             </div>
           </div>

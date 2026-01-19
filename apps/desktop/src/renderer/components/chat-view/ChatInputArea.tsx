@@ -62,10 +62,10 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   return (
     <div
       className={clsx(
-        "rounded-[28px] p-2 flex flex-col gap-1 shrink-0 relative transition-all duration-300 shadow-2xl",
+        "rounded-[28px] p-1 flex flex-col gap-1 shrink-0 relative transition-all duration-300",
         translucentMode
-          ? "bg-theme-bg/25 backdrop-blur-2xl border border-theme/20"
-          : "bg-theme-card border border-theme/50"
+          ? "bg-theme-bg backdrop-blur-xl"
+          : "bg-theme-card"
       )}
       onDragOver={(e) => { e.preventDefault(); try { e.dataTransfer.dropEffect = 'copy'; } catch { } }}
       onDrop={onDrop}
@@ -132,7 +132,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
       </div>
 
       {/* Input Row */}
-      <div className="flex items-center gap-2 bg-theme-hover/50 rounded-[24px] p-1.5 pr-2 border border-theme focus-within:ring-2 focus-within:ring-primary/10 transition-all relative z-50">
+      <div className="flex items-center gap-2 bg-theme-hover/50 rounded-[24px] p-1.5 pr-2 focus-within:ring-2 focus-within:ring-primary/10 transition-all relative z-50">
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
             <button

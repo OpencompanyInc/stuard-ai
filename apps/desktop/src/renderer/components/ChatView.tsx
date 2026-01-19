@@ -309,154 +309,307 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
         onClose={() => setShowFileNav(false)}
         onNavigate={handleNavigate}
       />
-      <div className={clsx(
-        "flex flex-col h-full bg-transparent relative font-sans smooth-resize",
-        isSidebarMode ? "gap-2" : "gap-4"
-      )}>
-        {/* Top Card: Header & Messages */}
-        <div
-          className={clsx(
-            "flex-1 flex flex-col overflow-hidden relative transition-all duration-300 shadow-2xl",
-            isSidebarMode ? "rounded-[16px]" : "rounded-[28px]",
-            translucentMode
-              ? "bg-theme-bg/25 backdrop-blur-2xl border border-theme/20"
-              : "bg-theme-card border border-theme/50"
-          )}
-        >
-          {/* Top Header */}
-          <div className="flex items-center justify-between px-2 py-2 border-b border-theme/10 bg-theme-hover/40 backdrop-blur-sm">
-            <ChatTabs
-              tabs={tabs}
-              activeTabId={activeTabId}
-              onSwitchTab={onSwitchTab}
-              onCloseTab={onCloseTab}
-              onAddTab={onAddTab}
-            />
-            <ChatHeaderActions
-              onToggleSidebar={onToggleSidebar}
-              sidebarOpen={sidebarOpen}
-              onOpenDashboard={onOpenDashboard}
-              onCollapse={onCollapse}
-              chatMenuOpen={chatMenuOpen}
-              onChatMenuOpenChange={onChatMenuOpenChange}
-              conversations={conversations}
-              loadingConversations={loadingConversations}
-              onSelectConversation={onSelectConversation}
-              onDeleteConversation={onDeleteConversation}
-              viewMode={viewMode}
-              onViewModeChange={setViewMode}
-            />
-          </div>
-
-          {/* Pending memories (overlay-only; compact UI) */}
-          {viewMode === 'chat' && Array.isArray(pendingMemories) && pendingMemories.length > 0 && (
-            <div className="px-4 py-2 border-b border-theme/10 bg-amber-500/10">
-              <div className="flex items-center justify-between gap-2 mb-2">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                  <span className="text-[11px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-300">
-                    Pending memory
-                  </span>
-                </div>
-                <div className="text-[10px] font-bold text-amber-700/70 dark:text-amber-300/70">
-                  {pendingMemories.length} item(s)
-                </div>
+      <div
+        className={clsx(
+          "flex flex-col h-full bg-transparent relative font-sans smooth-resize min-h-0",
+          isSidebarMode ? "gap-2" : "gap-4"
+        )}
+      >
+        {(overlayMode === 'expanded' || overlayMode === 'window' || overlayMode === 'sidebar') ? (
+          <div className="flex-1 min-h-0 flex flex-col gap-3 p-3 bg-theme-bg backdrop-blur-3xl rounded-[28px] border border-theme/10">
+            {/* Top Card: Header & Messages */}
+            <div
+              className={clsx(
+                "flex-1 min-h-0 flex flex-col overflow-hidden relative transition-all duration-300",
+                isSidebarMode ? "rounded-[16px]" : "rounded-[24px]",
+                translucentMode
+                  ? "bg-theme-bg backdrop-blur-xl border border-theme/5"
+                  : "bg-theme-card border border-theme/10"
+              )}
+            >
+              {/* Top Header */}
+              <div className="flex items-center justify-between px-2 py-2 border-b border-theme/10 bg-theme-hover/40 backdrop-blur-sm">
+                <ChatTabs
+                  tabs={tabs}
+                  activeTabId={activeTabId}
+                  onSwitchTab={onSwitchTab}
+                  onCloseTab={onCloseTab}
+                  onAddTab={onAddTab}
+                />
+                <ChatHeaderActions
+                  onToggleSidebar={onToggleSidebar}
+                  sidebarOpen={sidebarOpen}
+                  onOpenDashboard={onOpenDashboard}
+                  onCollapse={onCollapse}
+                  chatMenuOpen={chatMenuOpen}
+                  onChatMenuOpenChange={onChatMenuOpenChange}
+                  conversations={conversations}
+                  loadingConversations={loadingConversations}
+                  onSelectConversation={onSelectConversation}
+                  onDeleteConversation={onDeleteConversation}
+                  viewMode={viewMode}
+                  onViewModeChange={setViewMode}
+                />
               </div>
-              <div className="space-y-2">
-                {pendingMemories.slice(0, 3).map((pm) => (
-                  <div key={pm.id} className="flex items-start justify-between gap-3 p-3 rounded-xl bg-theme-card/70 border border-theme/10">
-                    <div className="min-w-0">
-                      <div className="text-[12px] font-semibold text-theme-fg truncate">
-                        {pm.proposed_action}{pm.proposed_key ? `:${pm.proposed_key}` : ''}
-                      </div>
-                      <div className="text-[11px] text-theme-muted mt-0.5 line-clamp-2">
-                        {pm.proposed_value}
-                      </div>
+
+              {/* Pending memories (overlay-only; compact UI) */}
+              {viewMode === 'chat' && Array.isArray(pendingMemories) && pendingMemories.length > 0 && (
+                <div className="px-4 py-2 border-b border-theme/10 bg-amber-500/10">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                      <span className="text-[11px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-300">
+                        Pending memory
+                      </span>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-300 text-[10px] font-black uppercase tracking-widest border border-emerald-500/20"
-                        onClick={() => onConfirmPendingMemory?.(pm.id)}
-                      >
-                        Keep
-                      </button>
-                      <button
-                        className="px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-300 text-[10px] font-black uppercase tracking-widest border border-red-500/20"
-                        onClick={() => onRejectPendingMemory?.(pm.id)}
-                      >
-                        No
-                      </button>
+                    <div className="text-[10px] font-bold text-amber-700/70 dark:text-amber-300/70">
+                      {pendingMemories.length} item(s)
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Secondary Header: Context Pills */}
-          {viewMode === 'chat' && contextPaths.length > 0 && (
-            <div className="flex items-center gap-2 px-4 py-2 bg-theme-active/20 border-b border-theme/10 overflow-x-auto scrollbar-hidden">
-              {contextPaths.map((ctx, idx) => (
-                <div key={idx} className="flex items-center gap-1.5 px-3 py-1.5 bg-theme-card rounded-full text-[11px] text-theme-fg font-bold border border-theme/10 whitespace-nowrap">
-                  <span className="truncate max-w-[120px]">{ctx.name}</span>
-                  <button
-                    onClick={() => onRemoveContext(idx)}
-                    className="hover:bg-theme-hover rounded-full p-0.5 transition-colors"
-                  >
-                    <X className="w-3 h-3 text-theme-muted" />
-                  </button>
+                  <div className="space-y-2">
+                    {pendingMemories.slice(0, 3).map((pm) => (
+                      <div key={pm.id} className="flex items-start justify-between gap-3 p-3 rounded-xl bg-theme-card/70 border border-theme/10">
+                        <div className="min-w-0">
+                          <div className="text-[12px] font-semibold text-theme-fg truncate">
+                            {pm.proposed_action}{pm.proposed_key ? `:${pm.proposed_key}` : ''}
+                          </div>
+                          <div className="text-[11px] text-theme-muted mt-0.5 line-clamp-2">
+                            {pm.proposed_value}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-300 text-[10px] font-black uppercase tracking-widest border border-emerald-500/20"
+                            onClick={() => onConfirmPendingMemory?.(pm.id)}
+                          >
+                            Keep
+                          </button>
+                          <button
+                            className="px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-300 text-[10px] font-black uppercase tracking-widest border border-red-500/20"
+                            onClick={() => onRejectPendingMemory?.(pm.id)}
+                          >
+                            No
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              ))}
-            </div>
-          )}
+              )}
 
-          {/* Messages or Tasks View */}
-          <div className="flex-1 overflow-hidden relative">
-            {viewMode === 'tasks' ? (
-              <div className="h-full overflow-y-auto custom-scrollbar p-2">
-                <SubAgentsView compact parentId={conversations.find(c => c.id === messages[0]?.conversation_id)?.id} />
+              {/* Secondary Header: Context Pills */}
+              {viewMode === 'chat' && contextPaths.length > 0 && (
+                <div className="flex items-center gap-2 px-4 py-2 bg-theme-active/20 border-b border-theme/10 overflow-x-auto scrollbar-hidden">
+                  {contextPaths.map((ctx, idx) => (
+                    <div key={idx} className="flex items-center gap-1.5 px-3 py-1.5 bg-theme-card rounded-full text-[11px] text-theme-fg font-bold border border-theme/10 whitespace-nowrap">
+                      <span className="truncate max-w-[120px]">{ctx.name}</span>
+                      <button
+                        onClick={() => onRemoveContext(idx)}
+                        className="hover:bg-theme-hover rounded-full p-0.5 transition-colors"
+                      >
+                        <X className="w-3 h-3 text-theme-muted" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Messages or Tasks View */}
+              <div className="flex-1 min-h-0 overflow-hidden relative">
+                {viewMode === 'tasks' ? (
+                  <div className="h-full overflow-y-auto custom-scrollbar p-2">
+                    <SubAgentsView compact parentId={conversations.find(c => c.id === messages[0]?.conversation_id)?.id} />
+                  </div>
+                ) : (
+                  <MessageList
+                    messages={messages}
+                    currentResponse={currentResponse}
+                    currentReasoning={currentReasoning}
+                    currentToolCalls={currentToolCalls}
+                    currentStreamChunks={currentStreamChunks}
+                    thinkingStartTime={thinkingStartTime}
+                    className="h-full px-2.5 py-2 scrollbar-hidden"
+                    onSubmitToolOutput={onSubmitToolOutput}
+                  />
+                )}
               </div>
-            ) : (
-              <MessageList
-                messages={messages}
-                currentResponse={currentResponse}
-                currentReasoning={currentReasoning}
-                currentToolCalls={currentToolCalls}
-                currentStreamChunks={currentStreamChunks}
-                thinkingStartTime={thinkingStartTime}
-                className="h-full px-5 py-4 custom-scrollbar"
-                onSubmitToolOutput={onSubmitToolOutput}
-              />
-            )}
-          </div>
-        </div>
+            </div>
 
-        {/* Bottom Card: Status & Input */}
-        <ChatInputArea
-          query={query}
-          setQuery={setQuery}
-          onSend={onSend}
-          onStop={onStop}
-          isStreaming={isStreaming}
-          isRecording={isRecording}
-          onMicClick={onMicClick}
-          attachments={attachments}
-          onRemoveAttachment={onRemoveAttachment}
-          onAttachFiles={onAttachFiles}
-          onAttachImages={onAttachImages}
-          onDrop={onDrop}
-          queueDepth={queueDepth}
-          queuedMessages={queuedMessages}
-          statusText={statusText}
-          connectionStatus={connectionStatus}
-          displayModelName={displayModelName}
-          translucentMode={translucentMode}
-          showFileNav={showFileNav}
-          textareaRef={textareaRef}
-          selectedModelId={selectedModelId}
-          onChatModeChange={onChatModeChange}
-          fileNavRef={fileNavRef}
-        />
+            {/* Bottom Card: Status & Input */}
+            <ChatInputArea
+              query={query}
+              setQuery={setQuery}
+              onSend={onSend}
+              onStop={onStop}
+              isStreaming={isStreaming}
+              isRecording={isRecording}
+              onMicClick={onMicClick}
+              attachments={attachments}
+              onRemoveAttachment={onRemoveAttachment}
+              onAttachFiles={onAttachFiles}
+              onAttachImages={onAttachImages}
+              onDrop={onDrop}
+              queueDepth={queueDepth}
+              queuedMessages={queuedMessages}
+              statusText={statusText}
+              connectionStatus={connectionStatus}
+              displayModelName={displayModelName}
+              translucentMode={translucentMode}
+              showFileNav={showFileNav}
+              textareaRef={textareaRef}
+              selectedModelId={selectedModelId}
+              onChatModeChange={onChatModeChange}
+              fileNavRef={fileNavRef}
+            />
+          </div>
+        ) : (
+          <>
+            {/* Top Card: Header & Messages */}
+            <div
+              className={clsx(
+                "flex-1 min-h-0 flex flex-col overflow-hidden relative transition-all duration-300 shadow-2xl",
+                isSidebarMode ? "rounded-[16px]" : "rounded-[28px]",
+                translucentMode
+                  ? "bg-theme-bg/25 backdrop-blur-2xl border border-theme/20"
+                  : "bg-theme-card border border-theme/50"
+              )}
+            >
+              {/* Top Header */}
+              <div className="flex items-center justify-between px-2 py-2 border-b border-theme/10 bg-theme-hover/40 backdrop-blur-sm">
+                <ChatTabs
+                  tabs={tabs}
+                  activeTabId={activeTabId}
+                  onSwitchTab={onSwitchTab}
+                  onCloseTab={onCloseTab}
+                  onAddTab={onAddTab}
+                />
+                <ChatHeaderActions
+                  onToggleSidebar={onToggleSidebar}
+                  sidebarOpen={sidebarOpen}
+                  onOpenDashboard={onOpenDashboard}
+                  onCollapse={onCollapse}
+                  chatMenuOpen={chatMenuOpen}
+                  onChatMenuOpenChange={onChatMenuOpenChange}
+                  conversations={conversations}
+                  loadingConversations={loadingConversations}
+                  onSelectConversation={onSelectConversation}
+                  onDeleteConversation={onDeleteConversation}
+                  viewMode={viewMode}
+                  onViewModeChange={setViewMode}
+                />
+              </div>
+
+              {/* Pending memories (overlay-only; compact UI) */}
+              {viewMode === 'chat' && Array.isArray(pendingMemories) && pendingMemories.length > 0 && (
+                <div className="px-4 py-2 border-b border-theme/10 bg-amber-500/10">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                      <span className="text-[11px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-300">
+                        Pending memory
+                      </span>
+                    </div>
+                    <div className="text-[10px] font-bold text-amber-700/70 dark:text-amber-300/70">
+                      {pendingMemories.length} item(s)
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    {pendingMemories.slice(0, 3).map((pm) => (
+                      <div key={pm.id} className="flex items-start justify-between gap-3 p-3 rounded-xl bg-theme-card/70 border border-theme/10">
+                        <div className="min-w-0">
+                          <div className="text-[12px] font-semibold text-theme-fg truncate">
+                            {pm.proposed_action}{pm.proposed_key ? `:${pm.proposed_key}` : ''}
+                          </div>
+                          <div className="text-[11px] text-theme-muted mt-0.5 line-clamp-2">
+                            {pm.proposed_value}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-300 text-[10px] font-black uppercase tracking-widest border border-emerald-500/20"
+                            onClick={() => onConfirmPendingMemory?.(pm.id)}
+                          >
+                            Keep
+                          </button>
+                          <button
+                            className="px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-300 text-[10px] font-black uppercase tracking-widest border border-red-500/20"
+                            onClick={() => onRejectPendingMemory?.(pm.id)}
+                          >
+                            No
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Secondary Header: Context Pills */}
+              {viewMode === 'chat' && contextPaths.length > 0 && (
+                <div className="flex items-center gap-2 px-4 py-2 bg-theme-active/20 border-b border-theme/10 overflow-x-auto scrollbar-hidden">
+                  {contextPaths.map((ctx, idx) => (
+                    <div key={idx} className="flex items-center gap-1.5 px-3 py-1.5 bg-theme-card rounded-full text-[11px] text-theme-fg font-bold border border-theme/10 whitespace-nowrap">
+                      <span className="truncate max-w-[120px]">{ctx.name}</span>
+                      <button
+                        onClick={() => onRemoveContext(idx)}
+                        className="hover:bg-theme-hover rounded-full p-0.5 transition-colors"
+                      >
+                        <X className="w-3 h-3 text-theme-muted" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Messages or Tasks View */}
+              <div className="flex-1 min-h-0 overflow-hidden relative">
+                {viewMode === 'tasks' ? (
+                  <div className="h-full overflow-y-auto custom-scrollbar p-2">
+                    <SubAgentsView compact parentId={conversations.find(c => c.id === messages[0]?.conversation_id)?.id} />
+                  </div>
+                ) : (
+                  <MessageList
+                    messages={messages}
+                    currentResponse={currentResponse}
+                    currentReasoning={currentReasoning}
+                    currentToolCalls={currentToolCalls}
+                    currentStreamChunks={currentStreamChunks}
+                    thinkingStartTime={thinkingStartTime}
+                    className="h-full px-5 py-4 scrollbar-hidden"
+                    onSubmitToolOutput={onSubmitToolOutput}
+                  />
+                )}
+              </div>
+            </div>
+
+            {/* Bottom Card: Status & Input */}
+            <ChatInputArea
+              query={query}
+              setQuery={setQuery}
+              onSend={onSend}
+              onStop={onStop}
+              isStreaming={isStreaming}
+              isRecording={isRecording}
+              onMicClick={onMicClick}
+              attachments={attachments}
+              onRemoveAttachment={onRemoveAttachment}
+              onAttachFiles={onAttachFiles}
+              onAttachImages={onAttachImages}
+              onDrop={onDrop}
+              queueDepth={queueDepth}
+              queuedMessages={queuedMessages}
+              statusText={statusText}
+              connectionStatus={connectionStatus}
+              displayModelName={displayModelName}
+              translucentMode={translucentMode}
+              showFileNav={showFileNav}
+              textareaRef={textareaRef}
+              selectedModelId={selectedModelId}
+              onChatModeChange={onChatModeChange}
+              fileNavRef={fileNavRef}
+            />
+          </>
+        )}
       </div>
     </>
   );

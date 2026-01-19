@@ -333,7 +333,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               currentToolCalls={currentToolCalls}
               currentStreamChunks={currentStreamChunks}
               thinkingStartTime={thinkingStartTime}
-              className="h-full px-5 py-4 custom-scrollbar"
+              className="h-full px-5 py-4 scrollbar-hidden"
               onSubmitToolOutput={onSubmitToolOutput}
               onGenUIResponse={onGenUIResponse}
             />
