@@ -90,13 +90,6 @@ export const ChatHeaderActions: React.FC<ChatHeaderActionsProps> = ({
               <span>Compact</span>
             </DropdownMenu.Item>
             <DropdownMenu.Item
-              onSelect={() => window.desktopAPI.setMode('expanded')}
-              className="text-[13px] text-theme-fg flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors"
-            >
-              <div className="w-4 h-6 border-2 border-current rounded opacity-50" />
-              <span>Expanded</span>
-            </DropdownMenu.Item>
-            <DropdownMenu.Item
               onSelect={() => window.desktopAPI.setMode('sidebar')}
               className="text-[13px] text-theme-fg flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors"
             >

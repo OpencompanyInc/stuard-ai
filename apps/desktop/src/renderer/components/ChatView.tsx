@@ -68,7 +68,7 @@ interface ChatViewProps {
   onChatModelsChange?: (cfg: ChatModelsConfig) => void;
 
   // Layout mode for responsive styling
-  overlayMode?: 'compact' | 'expanded' | 'sidebar' | 'window';
+  overlayMode?: 'compact' | 'sidebar' | 'window';
 
   // Tabs
   tabs?: any[];
@@ -315,7 +315,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
           isSidebarMode ? "gap-2" : "gap-4"
         )}
       >
-        {(overlayMode === 'expanded' || overlayMode === 'window' || overlayMode === 'sidebar') ? (
+        {(overlayMode === 'window' || overlayMode === 'sidebar') ? (
           <div className="flex-1 min-h-0 flex flex-col gap-3 p-3 bg-theme-bg backdrop-blur-3xl rounded-[28px] border border-theme/10">
             {/* Top Card: Header & Messages */}
             <div
