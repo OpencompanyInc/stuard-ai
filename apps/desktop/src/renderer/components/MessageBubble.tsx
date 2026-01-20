@@ -98,10 +98,9 @@ const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool }) => {
           onClick={() => setShowDescription(!showDescription)}
           className="flex items-center justify-center p-1 hover:bg-gray-100 rounded transition-colors"
         >
-          <ChevronRight 
-            className={`w-3.5 h-3.5 text-black transition-transform duration-200 ${
-              showDescription ? 'rotate-90' : ''
-            }`}
+          <ChevronRight
+            className={`w-3.5 h-3.5 text-black transition-transform duration-200 ${showDescription ? 'rotate-90' : ''
+              }`}
           />
         </button>
 
@@ -774,24 +773,44 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
     h6: (props: any) => <h6 className="text-xs font-medium mb-1 mt-2 first:mt-0 text-theme-muted/80 uppercase tracking-wide" {...props} />,
     strong: (props: any) => <strong className="font-bold text-theme-fg" {...props} />,
     em: (props: any) => <em className="italic text-theme-fg/95" {...props} />,
-    code: ({ inline, className, children, ...props }: any) => (
-      inline
-        ? <code className="bg-gradient-to-br from-slate-700/80 to-slate-800/80 text-slate-100 rounded-md px-2 py-0.5 font-mono text-[85%] align-middle font-semibold border border-slate-600/30 shadow-sm" {...props}>{children}</code>
-        : <div className="my-4 rounded-xl overflow-hidden bg-gradient-to-br from-slate-900/95 to-slate-800/95 border border-slate-700/50 shadow-xl">
-            <div className="bg-slate-800/50 px-4 py-2 border-b border-slate-700/50 flex items-center justify-between">
-              <span className="text-xs text-slate-400 font-mono">{className?.replace('language-', '') || 'code'}</span>
-              <div className="flex gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
-                <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
-                <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
-              </div>
-            </div>
-            <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4">
-              <code className={clsx(className, "font-mono text-[13px] block min-w-full leading-[1.7] text-slate-100")} {...props}>{children}</code>
+    code: ({ inline, className, children, ...props }: any) => {
+      // If it's an inline code block, render simplified version
+      if (inline) {
+        return <code className="bg-gradient-to-br from-slate-700/80 to-slate-800/80 text-slate-100 rounded-md px-2 py-0.5 font-mono text-[85%] align-middle font-semibold border border-slate-600/30 shadow-sm" {...props}>{children}</code>;
+      }
+      // Block-level code (handled here instead of 'pre' to allow custom styling)
+      return (
+        <div className="my-4 rounded-xl overflow-hidden bg-gradient-to-br from-slate-900/95 to-slate-800/95 border border-slate-700/50 shadow-xl w-full max-w-full group/codeblock grid">
+          <div className="bg-slate-800/50 px-4 py-2 border-b border-slate-700/50 flex items-center justify-between select-none">
+            <span className="text-xs text-slate-400 font-mono font-bold uppercase tracking-wider">{className?.replace('language-', '') || 'code'}</span>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  const code = String(children).replace(/\n$/, '');
+                  navigator.clipboard.writeText(code);
+                }}
+                className="flex items-center gap-1.5 px-2 py-1 hover:bg-white/10 rounded-md transition-colors text-slate-400 hover:text-white text-[10px] font-medium uppercase tracking-wider"
+                title="Copy code"
+              >
+                <Copy className="w-3 h-3" />
+                Copy
+              </button>
             </div>
           </div>
-    ),
-    pre: (props: any) => <pre className="my-4" {...props} />,
+          <div className="relative w-full overflow-hidden">
+            <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4 w-full">
+              <code
+                className={clsx(className, "font-mono text-[13px] inline-block min-w-full leading-[1.7] text-slate-100 whitespace-pre tab-4")}
+                {...props}
+              >
+                {children}
+              </code>
+            </div>
+          </div>
+        </div>
+      );
+    },
+    pre: ({ children }: any) => <>{children}</>,
     table: (props: any) => (
       <div className="overflow-x-auto my-3 rounded-xl border border-theme/20 shadow-sm">
         <table className="min-w-full divide-y divide-theme/15 text-sm" {...props} />

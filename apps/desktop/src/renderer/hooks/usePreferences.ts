@@ -38,6 +38,7 @@ export const ALL_CHAT_MODEL_IDS: string[] = [
   'xai/grok-3-latest',
   'xai/grok-3-mini',
   'xai/grok-3-mini-fast',
+  'google/gemini-3-flash-preview',
   'google/gemini-2.5-flash',
   'google/gemini-2.5-flash-lite',
   'google/gemini-2.5-pro',
