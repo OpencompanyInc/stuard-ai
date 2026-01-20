@@ -3,12 +3,13 @@ import { clsx } from 'clsx';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   LayoutGrid,
-  Layout,
   Home,
   Clock,
   Trash2,
-  ChevronDown,
-  Cpu
+  Cpu,
+  AppWindow,
+  PanelRight,
+  Minimize2
 } from 'lucide-react';
 
 interface ChatHeaderActionsProps {
@@ -16,6 +17,7 @@ interface ChatHeaderActionsProps {
   sidebarOpen?: boolean;
   onOpenDashboard: () => void;
   onCollapse: () => void;
+  overlayMode?: 'compact' | 'sidebar' | 'window';
   chatMenuOpen: boolean;
   onChatMenuOpenChange: (open: boolean) => void;
   conversations: any[];
@@ -31,6 +33,7 @@ export const ChatHeaderActions: React.FC<ChatHeaderActionsProps> = ({
   sidebarOpen,
   onOpenDashboard,
   onCollapse,
+  overlayMode,
   chatMenuOpen,
   onChatMenuOpenChange,
   conversations,
@@ -70,42 +73,34 @@ export const ChatHeaderActions: React.FC<ChatHeaderActionsProps> = ({
       )}
 
       {/* Layout Menu */}
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger asChild>
-          <button
-            type="button"
-            className="w-8 h-8 bg-theme-card/80 rounded-lg flex items-center justify-center hover:bg-theme-hover transition-colors border border-theme/10 text-theme-muted hover:text-theme-fg"
-            title="Layout"
-          >
-            <Layout className="w-3.5 h-3.5" />
-          </button>
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content className="DropdownContent z-[10001] w-48 bg-theme-card rounded-xl border border-theme p-1 shadow-2xl backdrop-blur-xl" sideOffset={10} align="end" collisionPadding={10}>
-            <DropdownMenu.Item
-              onSelect={() => window.desktopAPI.setMode('compact')}
-              className="text-[13px] text-theme-fg flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors"
-            >
-              <div className="w-4 h-4 border-2 border-current rounded opacity-50" />
-              <span>Compact</span>
-            </DropdownMenu.Item>
-            <DropdownMenu.Item
-              onSelect={() => window.desktopAPI.setMode('sidebar')}
-              className="text-[13px] text-theme-fg flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors"
-            >
-              <div className="w-2 h-4 border-2 border-current rounded opacity-50" />
-              <span>Sidebar</span>
-            </DropdownMenu.Item>
-            <DropdownMenu.Item
-              onSelect={() => window.desktopAPI.setMode('window')}
-              className="text-[13px] text-theme-fg flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors"
-            >
-              <div className="w-6 h-4 border-2 border-current rounded opacity-50" />
-              <span>Window</span>
-            </DropdownMenu.Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
+      <button
+        type="button"
+        onClick={onCollapse}
+        className="w-8 h-8 bg-theme-card/80 rounded-lg flex items-center justify-center hover:bg-theme-hover transition-colors border border-theme/10 text-theme-muted hover:text-theme-fg"
+        title="Compact"
+      >
+        <Minimize2 className="w-3.5 h-3.5" />
+      </button>
+      {overlayMode !== 'sidebar' && (
+        <button
+          type="button"
+          onClick={() => window.desktopAPI.setMode('sidebar')}
+          className="w-8 h-8 bg-theme-card/80 rounded-lg flex items-center justify-center hover:bg-theme-hover transition-colors border border-theme/10 text-theme-muted hover:text-theme-fg"
+          title="Sidebar"
+        >
+          <PanelRight className="w-3.5 h-3.5" />
+        </button>
+      )}
+      {overlayMode !== 'window' && (
+        <button
+          type="button"
+          onClick={() => window.desktopAPI.setMode('window')}
+          className="w-8 h-8 bg-theme-card/80 rounded-lg flex items-center justify-center hover:bg-theme-hover transition-colors border border-theme/10 text-theme-muted hover:text-theme-fg"
+          title="Window"
+        >
+          <AppWindow className="w-3.5 h-3.5" />
+        </button>
+      )}
 
       <button className="w-8 h-8 bg-theme-card/80 rounded-lg flex items-center justify-center hover:bg-theme-hover transition-colors border border-theme/10" title="Dashboard" onClick={onOpenDashboard}>
         <Home className="w-3.5 h-3.5 text-theme-muted" />

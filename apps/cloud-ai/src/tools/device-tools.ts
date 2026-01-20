@@ -116,6 +116,8 @@ export {
   list_local_workflows,
   list_local_stuards,
   show_json_workflow_code,
+  execute_workflow,
+  find_workflow_semantic,
   import_workflow,
   run_automation,
   stop_automation,

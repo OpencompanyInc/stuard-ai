@@ -2,6 +2,8 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { execLocalTool, hasClientBridge, makeLocalTool } from './shared';
 import { workflowMap } from '../workflow-system';
+import { embedMany } from 'ai';
+import { resolveEmbedder, cosineSimilarity } from '../../utils/embeddings';
 
 export const list_local_workflows = createTool({
   id: 'list_local_workflows',
@@ -160,6 +162,109 @@ export const import_workflow = makeLocalTool(
     error: z.string().optional(),
   }),
 );
+
+export const execute_workflow = createTool({
+  id: 'execute_workflow',
+  description: 'Execute a workflow by ID with arguments and return its structured return value (from return_value). This is the recommended way to treat workflows as custom tools.',
+  inputSchema: z.object({
+    id: z.string().describe('The workflow ID to execute'),
+    args: z.any().optional().describe('Optional key-value arguments passed to the workflow as ctx.args'),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    workflowId: z.string().optional(),
+    result: z.any().optional(),
+    status: z.string().optional(),
+    error: z.string().optional(),
+  }),
+  execute: async (args, runCtx) => {
+    const writer = (runCtx as any)?.writer;
+    const context = args.context || {};
+    const id = String(context.id || '').trim();
+    if (!id) return { ok: false, error: 'missing_id' };
+
+    // Always wait; this is a tool-like execution.
+    return await execLocalTool(
+      'invoke_workflow',
+      {
+        id,
+        args: context.args,
+        waitForCompletion: true,
+      },
+      writer as any,
+      300000,
+    );
+  },
+});
+
+export const find_workflow_semantic = createTool({
+  id: 'find_workflow_semantic',
+  description: 'Find the best matching local workflow for a natural language query using embeddings. Returns the selected workflow id and basic metadata.',
+  inputSchema: z.object({
+    query: z.string().min(1).describe('Natural language description of the workflow you want'),
+    topK: z.number().int().min(1).max(10).default(5).describe('How many matches to return'),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    best: z.any().optional(),
+    matches: z.array(z.any()).optional(),
+    error: z.string().optional(),
+  }),
+  execute: async (args, runCtx) => {
+    const writer = (runCtx as any)?.writer;
+    const { query, topK } = args.context as any;
+
+    // Prefer in-band bridge when available; otherwise fall back to direct local agent WS.
+    const preferBridge = hasClientBridge();
+    const listRes = await execLocalTool(
+      'list_local_workflows',
+      preferBridge ? {} : { _forceDirect: true },
+      writer as any,
+      15000,
+    );
+    const items = Array.isArray(listRes?.items) ? listRes.items : [];
+    if (!items.length) return { ok: true, matches: [], best: null };
+
+    const texts = items.map((it: any) => {
+      const id = String(it?.id || '');
+      const name = String(it?.name || '');
+      const triggers = Array.isArray(it?.triggers) ? it.triggers.join(', ') : '';
+      const inputKeys = Array.isArray(it?.inputKeys) ? it.inputKeys.join(', ') : '';
+      return `id=${id}\nname=${name}\ntriggers=${triggers}\ninputKeys=${inputKeys}`;
+    });
+
+    try {
+      const { embedder } = await resolveEmbedder(writer as any);
+      const { embeddings } = await embedMany({ model: embedder as any, values: [String(query), ...texts] });
+      const qVec = embeddings[0];
+
+      const scored = items.map((it: any, idx: number) => {
+        const vec = embeddings[idx + 1];
+        const score = cosineSimilarity(qVec as any, vec as any);
+        return { ...it, score };
+      });
+
+      scored.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
+      const matches = scored.slice(0, Math.max(1, Number(topK || 5)));
+      return { ok: true, best: matches[0] || null, matches };
+    } catch {
+      // Fallback: simple keyword scoring (works even without embeddings API keys)
+      const q = String(query || '').toLowerCase();
+      const scored = items.map((it: any) => {
+        const name = String(it?.name || '').toLowerCase();
+        const id = String(it?.id || '').toLowerCase();
+        const triggers = Array.isArray(it?.triggers) ? it.triggers.join(' ').toLowerCase() : '';
+        const inputKeys = Array.isArray(it?.inputKeys) ? it.inputKeys.join(' ').toLowerCase() : '';
+        const hay = `${id} ${name} ${triggers} ${inputKeys}`;
+        const score = q && hay.includes(q) ? 1 : 0;
+        return { ...it, score };
+      });
+      scored.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
+      const matches = scored.slice(0, Math.max(1, Number(topK || 5)));
+      return { ok: true, best: matches[0] || null, matches };
+    }
+  },
+});
 
 export const run_automation = makeLocalTool(
   'run_automation',

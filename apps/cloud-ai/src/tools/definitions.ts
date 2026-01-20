@@ -950,6 +950,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     outputSchema: { ok: 'boolean', terminated: 'boolean' },
   },
   {
+    id: 'return_value',
+    category: 'flow',
+    kind: 'local',
+    description: 'Return a value from a workflow and terminate execution. Use this to implement custom tools via workflows.',
+    argsTemplate: { value: {} },
+    outputSchema: { ok: 'boolean', terminated: 'boolean', value: 'any' },
+  },
+  {
     id: 'log',
     category: 'flow',
     kind: 'local',
@@ -1151,6 +1159,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description: 'Deploys an autonomous sub-agent to run a task locally in the background. Multiple sub-agents can run in parallel. Returns a taskId to track progress.',
     argsTemplate: {
       objective: 'Search for recent news about OpenAI and summarize it',
+      mode: 'generic',
       tools_allowed: ['web_search'],
       custom_system_prompt: 'Be extremely concise',
       model: 'fast'

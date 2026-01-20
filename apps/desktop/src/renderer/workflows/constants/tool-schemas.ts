@@ -62,6 +62,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'run_parallel', category: 'flow', kind: 'orchestration', description: 'Run a list of tools in parallel', argsTemplate: { steps: [], concurrency: 2 }, outputSchema: { results: 'any[]', combined: 'object', allOk: 'boolean' } },
   { id: 'loop_executor', category: 'flow', kind: 'orchestration', description: 'Execute a tool repeatedly (each, times, while, until)', argsTemplate: { mode: 'each', items: ['a', 'b'], item_var: 'item', count: 3 }, outputSchema: { results: 'any[]' } },
   { id: 'end', category: 'flow', kind: 'local', description: 'Terminate the workflow gracefully', argsTemplate: {}, outputSchema: { ok: 'boolean', terminated: 'boolean' } },
+  { id: 'return_value', category: 'flow', kind: 'local', description: 'Return a value from a workflow and terminate execution', argsTemplate: { value: {} }, outputSchema: { ok: 'boolean', terminated: 'boolean', value: 'any' } },
   { id: 'log', category: 'flow', kind: 'local', description: 'Log a message to the workflow execution log', argsTemplate: { message: 'Step completed' }, outputSchema: { ok: 'boolean', logged: 'string' } },
   { id: 'send_notification', category: 'flow', kind: 'local', description: 'Show a local desktop notification (OS toast)', argsTemplate: { title: 'Stuard AI', body: 'Hello!', severity: 'info', taskId: '', workflowRunId: '' }, outputSchema: { ok: 'boolean', notification: 'object', error: 'string' } },
 

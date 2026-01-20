@@ -3,7 +3,6 @@ import TextareaAutosize from 'react-textarea-autosize';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   Clipboard,
-  Layout,
   LayoutGrid,
   Home,
   Clock,
@@ -41,7 +40,8 @@ import {
   Grid3X3,
   Send,
   FolderSearch,
-  MessageSquare
+  MessageSquare,
+  PanelRight
 } from 'lucide-react';
 import type { UsePlannerDataResult, NextUpItem, PlannerTask } from '../hooks/usePlannerData';
 import { CommandItem } from './CommandPalette';
@@ -60,6 +60,7 @@ interface LauncherViewProps {
   onMicClick?: () => void;
   isRecording?: boolean;
   accessToken?: string | null;
+  overlayMode?: 'compact' | 'sidebar' | 'window';
 
   // History Props
   conversations: any[];
@@ -125,6 +126,8 @@ const quickActions = [
   { id: 'workflows', label: 'Workflows', icon: Zap, color: 'from-amber-500 to-orange-600', bgLight: 'bg-amber-500/10', textColor: 'text-amber-500', description: 'Automate tasks' },
   { id: 'files', label: 'Files', icon: FolderSearch, color: 'from-emerald-500 to-teal-600', bgLight: 'bg-emerald-500/10', textColor: 'text-emerald-500', description: 'Search your files' },
   { id: 'spaces', label: 'Spaces', icon: Grid3X3, color: 'from-blue-500 to-cyan-600', bgLight: 'bg-blue-500/10', textColor: 'text-blue-500', description: 'Organize projects' },
+  { id: 'sidebar', label: 'Sidebar', icon: LayoutGrid, color: 'from-blue-500 to-cyan-600', bgLight: 'bg-blue-500/10', textColor: 'text-blue-500', description: 'Toggle sidebar', hidden: true },
+  { id: 'window', label: 'Window', icon: AppWindow, color: 'from-blue-500 to-cyan-600', bgLight: 'bg-blue-500/10', textColor: 'text-blue-500', description: 'Toggle window', hidden: true },
 ];
 
 export const LauncherView: React.FC<LauncherViewProps> = ({
@@ -137,6 +140,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   onMicClick,
   isRecording,
   accessToken,
+  overlayMode,
   conversations,
   loadingConversations,
   onSelectConversation,
@@ -149,7 +153,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   sidebarOpen,
   plannerData,
   translucentMode = false,
-  chatMode = 'auto',
+  chatMode,
   onChatModeChange,
   chatModels,
   onChatModelsChange
@@ -435,41 +439,25 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
             </button>
           )}
 
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
-              <button
-                className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
-                title="Layout"
-              >
-                <Layout className="w-4 h-4" />
-              </button>
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content className="DropdownContent z-[10002] w-48 bg-theme-card rounded-xl border border-theme p-1 shadow-2xl backdrop-blur-xl" sideOffset={10} align="end" collisionPadding={10}>
-                <DropdownMenu.Item
-                  onSelect={() => window.desktopAPI.setMode('compact')}
-                  className="text-[13px] text-theme-fg flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors"
-                >
-                  <div className="w-4 h-4 border-2 border-current rounded opacity-50" />
-                  <span>Compact</span>
-                </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  onSelect={() => window.desktopAPI.setMode('sidebar')}
-                  className="text-[13px] text-theme-fg flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors"
-                >
-                  <div className="w-2 h-4 border-2 border-current rounded opacity-50" />
-                  <span>Sidebar</span>
-                </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  onSelect={() => window.desktopAPI.setMode('window')}
-                  className="text-[13px] text-theme-fg flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors"
-                >
-                  <div className="w-6 h-4 border-2 border-current rounded opacity-50" />
-                  <span>Window</span>
-                </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
+          {overlayMode !== 'sidebar' && (
+            <button
+              onClick={() => window.desktopAPI.setMode('sidebar')}
+              className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
+              title="Sidebar"
+            >
+              <PanelRight className="w-4 h-4" />
+            </button>
+          )}
+
+          {overlayMode !== 'window' && (
+            <button
+              onClick={onToggleExpand}
+              className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
+              title="Window"
+            >
+              <AppWindow className="w-4 h-4" />
+            </button>
+          )}
 
           <button
             onClick={() => (window as any).desktopAPI?.openWorkflows?.()}

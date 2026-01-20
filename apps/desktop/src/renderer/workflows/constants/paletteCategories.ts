@@ -53,6 +53,7 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'local.tool', t: 'wait', label: 'Wait / Delay', icon: Clock, args: { ms: 1000 } },
       { k: 'local.tool', t: 'log', label: 'Log Message', icon: FileText, args: { message: '' } },
       { k: 'local.tool', t: 'send_notification', label: 'Send Notification', icon: Bell, args: { title: 'Stuard AI', body: 'Hello!', severity: 'info' } },
+      { k: 'local.tool', t: 'return_value', label: 'Return Value', icon: StopCircle, args: { value: {} } },
       { k: 'local.tool', t: 'end', label: 'End Flow', icon: StopCircle, args: {} },
       { k: 'local.tool', t: 'run_sequential', label: 'Run Sequential', icon: ListOrdered, args: { steps: [] } },
       { k: 'local.tool', t: 'run_parallel', label: 'Run Parallel', icon: Zap, args: { steps: [] } },

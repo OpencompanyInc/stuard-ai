@@ -131,6 +131,8 @@ export default function App() {
   const [approvalPrompt, setApprovalPrompt] = useState<{ id: string; tool: string; args?: Record<string, any>; description?: string } | null>(null);
   const [contextPaths, setContextPaths] = useState<ContextItem[]>([]);
 
+  const [showMiniOutput, setShowMiniOutput] = useState(true);
+
   const overlayModeRef = useRef<'compact' | 'sidebar' | 'window'>(overlayMode);
   const prevOverlayModeRef = useRef<'compact' | 'sidebar' | 'window'>(overlayMode);
   const modeBeforeDockRef = useRef<'compact' | 'sidebar' | 'window'>('compact');
@@ -197,6 +199,7 @@ export default function App() {
     if (!window.desktopAPI) return;
 
     window.desktopAPI.onShow(() => {
+      setShowMiniOutput(false);
       setOverlayMode('compact');
       window.desktopAPI.setMode('compact');
       setTimeout(() => inputRef.current?.focus(), 0);
@@ -353,10 +356,12 @@ export default function App() {
       if (e.key === 'Escape') {
         const mode = overlayModeRef.current;
         if (mode === 'sidebar' || mode === 'window') {
+          setShowMiniOutput(false);
           setOverlayMode('compact');
           try { window.desktopAPI.setMode('compact'); } catch { }
           return;
         }
+        setShowMiniOutput(false);
         window.desktopAPI.hide();
         return;
       }
@@ -1065,6 +1070,44 @@ export default function App() {
   const hasMessages = messages.length > 0;
   const showResizeGrips = overlayMode === 'sidebar' || overlayMode === 'window';
 
+  const lastAssistantMessage = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m?.role === 'assistant') return m;
+    }
+    return null;
+  }, [messages]);
+
+  const miniOutputText = useMemo(() => {
+    const streamingText = (currentResponse || '').trim();
+    if (streamingText) return currentResponse || '';
+    return lastAssistantMessage?.text || '';
+  }, [currentResponse, lastAssistantMessage]);
+
+  const miniOutputHasContent = useMemo(() => {
+    const streamingText = (currentResponse || '').trim();
+    if (streamingText) return true;
+    return !!(lastAssistantMessage?.text || '').trim();
+  }, [currentResponse, lastAssistantMessage?.text]);
+
+  const lastAssistantIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const id = lastAssistantMessage?.id || null;
+    if (id && id !== lastAssistantIdRef.current) {
+      setShowMiniOutput(true);
+    }
+    lastAssistantIdRef.current = id;
+  }, [lastAssistantMessage?.id]);
+
+  const hadStreamingRef = useRef(false);
+  useEffect(() => {
+    const isStreamingNow = !!(currentResponse || '').trim();
+    if (isStreamingNow && !hadStreamingRef.current) {
+      setShowMiniOutput(true);
+    }
+    hadStreamingRef.current = isStreamingNow;
+  }, [currentResponse]);
+
   return (
     <div className="w-full h-full text-sans overflow-hidden relative">
       {/* Resize handles for user-resizable window - invisible but draggable edges */}
@@ -1226,6 +1269,7 @@ export default function App() {
                   onMicClick={handleMicClick}
                   isRecording={isRecording}
                   accessToken={accessToken}
+                  overlayMode={overlayMode}
                   conversations={convList}
                   loadingConversations={loadingConvs}
                   onSelectConversation={handleSelectConversation}
@@ -1275,6 +1319,7 @@ export default function App() {
               expanded={false}
               onToggleExpand={handleShowWindow}
               onOpenDashboard={handleOpenDashboard}
+              overlayMode={overlayMode}
               statusText={inputStatusText}
               statusIcon={inputStatusIcon}
               statusUrgency={inputStatusUrgency}
@@ -1287,6 +1332,13 @@ export default function App() {
               setContextPaths={setContextPaths}
               translucentMode={translucentMode}
               accessToken={accessToken}
+              miniOutputText={miniOutputText}
+              miniOutputHasContent={miniOutputHasContent}
+              miniOutputStreaming={isStreaming && !!(currentResponse || '').trim()}
+              showMiniOutput={showMiniOutput}
+              setShowMiniOutput={setShowMiniOutput}
+              onSubmitToolOutput={submitToolOutput}
+              onGenUIResponse={handleGenUIResponse}
             />
           </div>
         )}

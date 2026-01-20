@@ -571,10 +571,7 @@ export function createWindow() {
     win?.show();
   });
 
-  // Strengthen always-on-top level so it floats over desktop on Windows
-  try {
-    win.setAlwaysOnTop(true, 'screen-saver');
-  } catch { }
+  applyOverlayChrome(currentMode);
 
   win.on("closed", () => {
     win = null;
@@ -991,7 +988,9 @@ export function showWindow() {
   if (!win.isFocused()) {
     updateLastActiveWindowHandle('showWindow');
   }
-  repositionTopCenter(win);
+  if (currentMode === 'compact') {
+    repositionTopCenter(win);
+  }
   const bounds = win.getBounds();
   logger.info("Window bounds:", bounds);
   try {

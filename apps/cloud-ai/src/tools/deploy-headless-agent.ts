@@ -64,6 +64,7 @@ export const deployHeadlessAgent = createTool({
   description: 'Deploys an autonomous sub-agent to run a task in the background locally. Returns a taskId to track progress. Multiple sub-agents can run in parallel.',
   inputSchema: z.object({
     objective: z.string().describe('The goal or objective for the sub-agent'),
+    mode: z.enum(['generic', 'specialized']).optional().default('generic').describe('Sub-agent mode. generic = normal headless agent. specialized = restricted tools + custom system prompt.'),
     tools_allowed: z.array(z.string()).optional().describe('Optional list of specific tools the sub-agent is allowed to use. If omitted, it uses the default core tools.'),
     // Backwards compatibility (deprecated)
     tool: z.string().optional().describe('DEPRECATED: single tool name. Prefer tools_allowed.'),
@@ -76,7 +77,7 @@ export const deployHeadlessAgent = createTool({
     error: z.string().optional(),
   }),
   execute: async ({ context }) => {
-    const { objective, tools_allowed, tool, custom_system_prompt, model } = context;
+    const { objective, mode, tools_allowed, tool, custom_system_prompt, model } = context as any;
     const secrets = getBridgeSecrets();
     const bridgeWs = getBridgeWs();
     const userId = secrets?.userId;
@@ -93,6 +94,18 @@ export const deployHeadlessAgent = createTool({
         Array.isArray(tools_allowed) && tools_allowed.length > 0
           ? tools_allowed.map((t: any) => String(t || '').trim()).filter(Boolean)
           : (typeof tool === 'string' && tool.trim() ? [tool.trim()] : undefined);
+
+      const normalizedMode = (mode === 'specialized' || mode === 'generic') ? mode : 'generic';
+      if (normalizedMode === 'specialized') {
+        const hasAllowed = Array.isArray(normalizedToolsAllowed) && normalizedToolsAllowed.length > 0;
+        const hasPrompt = typeof custom_system_prompt === 'string' && custom_system_prompt.trim().length > 0;
+        if (!hasAllowed && !hasPrompt) {
+          return {
+            ok: false,
+            error: 'specialized mode requires tools_allowed and/or custom_system_prompt',
+          };
+        }
+      }
 
       // 1. Register sub-agent locally (not in Supabase)
       const spawnResult = await execLocalTool('subagent_spawn', {
@@ -112,7 +125,7 @@ export const deployHeadlessAgent = createTool({
       // 2. Start the agent execution in the background (fire and forget)
       // We don't await this so the tool returns immediately
       const run = () =>
-        runHeadlessTask(localTaskId, userId, objective, normalizedToolsAllowed, custom_system_prompt, model).catch((err) => {
+        runHeadlessTask(localTaskId, userId, objective, normalizedToolsAllowed, custom_system_prompt, model, normalizedMode).catch((err) => {
           writeLog('subagent_background_error', { taskId: localTaskId, error: err?.message || String(err) });
           // Update local status to failed
           execLocalTool('subagent_update', { task_id: localTaskId, status: 'failed', result: { error: err?.message } }).catch(() => {});
@@ -150,7 +163,8 @@ async function runHeadlessTask(
   objective: string,
   toolsAllowed?: string[],
   customSystemPrompt?: string,
-  model: any = 'fast'
+  model: any = 'fast',
+  mode: 'generic' | 'specialized' = 'generic'
 ) {
   // Create abort controller for this task
   const abortController = new AbortController();
@@ -194,7 +208,11 @@ async function runHeadlessTask(
     }
 
     // 2. Initialize the headless agent
-    const agent = getHeadlessAgent(model, enabledIntegrations, mcpTools, toolsAllowed, customSystemPrompt);
+    const allowedForAgent = mode === 'specialized'
+      ? (Array.isArray(toolsAllowed) && toolsAllowed.length > 0 ? toolsAllowed : ['wait', 'run_sequential', 'run_parallel'])
+      : toolsAllowed;
+
+    const agent = getHeadlessAgent(model, enabledIntegrations, mcpTools, allowedForAgent, customSystemPrompt);
 
     // Prepare provider options
     const providerOptions: any = {};

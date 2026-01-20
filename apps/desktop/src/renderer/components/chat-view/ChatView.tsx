@@ -298,6 +298,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               sidebarOpen={sidebarOpen}
               onOpenDashboard={onOpenDashboard}
               onCollapse={onCollapse}
+              overlayMode={overlayMode}
               chatMenuOpen={chatMenuOpen}
               onChatMenuOpenChange={onChatMenuOpenChange}
               conversations={conversations}

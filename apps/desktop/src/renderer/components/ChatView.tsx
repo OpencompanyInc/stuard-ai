@@ -135,7 +135,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   onChatModeChange,
   chatModels,
   onChatModelsChange,
-  overlayMode = 'expanded',
+  overlayMode = 'compact',
   tabs = [],
   activeTabId,
   onSwitchTab,
@@ -341,6 +341,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                   sidebarOpen={sidebarOpen}
                   onOpenDashboard={onOpenDashboard}
                   onCollapse={onCollapse}
+                  overlayMode={overlayMode}
                   chatMenuOpen={chatMenuOpen}
                   onChatMenuOpenChange={onChatMenuOpenChange}
                   conversations={conversations}
@@ -475,7 +476,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               )}
             >
               {/* Top Header */}
-              <div className="flex items-center justify-between px-2 py-2 border-b border-theme/10 bg-theme-hover/40 backdrop-blur-sm">
+              <div className="flex items-center justify-between px-2 py-2 border-b border-black/5 bg-white/40 backdrop-blur-sm">
                 <ChatTabs
                   tabs={tabs}
                   activeTabId={activeTabId}
@@ -488,6 +489,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                   sidebarOpen={sidebarOpen}
                   onOpenDashboard={onOpenDashboard}
                   onCollapse={onCollapse}
+                  overlayMode={overlayMode}
                   chatMenuOpen={chatMenuOpen}
                   onChatMenuOpenChange={onChatMenuOpenChange}
                   conversations={conversations}

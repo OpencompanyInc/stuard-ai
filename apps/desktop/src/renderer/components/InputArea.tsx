@@ -6,17 +6,17 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   FileIcon,
   ImageIcon,
-  ClockIcon,
   Cross2Icon,
   ChevronDownIcon,
   ChevronUpIcon,
   HomeIcon,
   PlusIcon
 } from "@radix-ui/react-icons";
-import { Mic, LogIn, Video, Calendar, Bell, CheckSquare, Layout, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Box } from 'lucide-react';
+import { Mic, LogIn, Video, Calendar, Bell, CheckSquare, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Box } from 'lucide-react';
 import { clsx } from 'clsx';
 import QueuePanel from './QueuePanel';
 import { FileNavigator, ContextItem, FileNavRef } from './FileNavigator';
+import MessageBubble from './MessageBubble';
 import stuardLogo from '@website-assets/logo.png';
 import googleLogo from '../assets/icons/google.png';
 import bingLogo from '../assets/icons/bing.png';
@@ -58,6 +58,8 @@ interface InputAreaProps {
   onToggleExpand: () => void;
   onOpenDashboard: () => void;
 
+  overlayMode?: 'compact' | 'sidebar' | 'window';
+
   // Optional: compact-mode status row text
   statusText?: string;
   statusIcon?: 'video' | 'calendar' | 'bell' | 'task';
@@ -81,6 +83,14 @@ interface InputAreaProps {
 
   // Access token for semantic search
   accessToken?: string | null;
+
+  miniOutputText?: string;
+  miniOutputHasContent?: boolean;
+  miniOutputStreaming?: boolean;
+  showMiniOutput?: boolean;
+  setShowMiniOutput?: React.Dispatch<React.SetStateAction<boolean>>;
+  onSubmitToolOutput?: (id: string, result: any) => void;
+  onGenUIResponse?: (component: string, result: any) => void;
 }
 
 const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
@@ -89,13 +99,20 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
   onPaste, onDrop,
   signedIn, onSignIn,
   conversationTitle, conversations, loadingConversations, onSelectConversation, onDeleteConversation, onNewChat, onStopGeneration, onChatMenuOpenChange, chatMenuOpen,
-  expanded, onToggleExpand, onOpenDashboard, statusText, statusIcon, statusUrgency,
+  expanded, onToggleExpand, onOpenDashboard, overlayMode, statusText, statusIcon, statusUrgency,
   connectionStatus,
   queueDepth, queuedMessages,
   isRecording, onMicClick,
   contextPaths, setContextPaths,
   translucentMode = false,
-  accessToken
+  accessToken,
+  miniOutputText,
+  miniOutputHasContent,
+  miniOutputStreaming,
+  showMiniOutput,
+  setShowMiniOutput,
+  onSubmitToolOutput,
+  onGenUIResponse
 }, ref) => {
 
   const conn = connectionStatus || 'connected';
@@ -389,7 +406,7 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
   }>(null);
 
   const updateFileNavOverlayPos = useCallback(() => {
-    if (!expanded || !showFileNav) return;
+    if (!showFileNav) return;
     const el = localTextareaRef.current;
     if (!el) return;
 
@@ -412,10 +429,10 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
     }
 
     setFileNavOverlay({ left, top, placement, width });
-  }, [expanded, showFileNav]);
+  }, [showFileNav]);
 
   useEffect(() => {
-    if (!expanded || !showFileNav) return;
+    if (!showFileNav) return;
     updateFileNavOverlayPos();
 
     const handler = () => updateFileNavOverlayPos();
@@ -426,7 +443,7 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
       window.removeEventListener('resize', handler);
       window.removeEventListener('scroll', handler, true);
     };
-  }, [expanded, showFileNav, updateFileNavOverlayPos]);
+  }, [showFileNav, updateFileNavOverlayPos]);
 
   useEffect(() => {
     // Debounce the file navigator check to avoid expensive updates on every keystroke
@@ -512,9 +529,9 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
 
   // Reposition the expanded-mode overlay when the filter changes (typing after @)
   useEffect(() => {
-    if (!expanded || !showFileNav) return;
+    if (!showFileNav) return;
     updateFileNavOverlayPos();
-  }, [expanded, showFileNav, fileNavFilter, updateFileNavOverlayPos]);
+  }, [showFileNav, fileNavFilter, updateFileNavOverlayPos]);
 
   const removeContext = useCallback((index: number) => {
     if (setContextPaths) {
@@ -524,6 +541,7 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
 
   // Show search options dropdown when user has typed something (not @ mentions)
   const showSearchOptions = !expanded && query.trim().length >= 2 && !showFileNav;
+  const typingActive = query.trim().length > 0;
 
   // State for expanded web search options - must be defined before updateWindowSize
   const [showWebOptions, setShowWebOptions] = useState(false);
@@ -560,26 +578,38 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
       const screenHeight = window?.screen?.availHeight || 1080;
       const windowTop = window?.screenY || window?.screenTop || 0;
       const windowHeight = window?.outerHeight || 140;
-      const flipThreshold = 80; // Further reduced so it flips very low on screen
+      const flipToTopThreshold = dropdownPlacement === 'bottom' ? 80 : 60;
+      const flipToBottomThreshold = 160;
 
       // Space available below the window
       const spaceBelow = screenHeight - (windowTop + windowHeight);
       // Space available above the window
       const spaceAbove = windowTop;
 
-      // Flip to top only when very low on screen
-      if (spaceBelow < flipThreshold && spaceAbove > spaceBelow) {
-        return 'top';
+      if (dropdownPlacement === 'bottom') {
+        // Flip to top only when very low on screen
+        if (spaceBelow < flipToTopThreshold && spaceAbove > spaceBelow) {
+          return 'top';
+        }
+        return 'bottom';
       }
-      return 'bottom';
+      // dropdownPlacement === 'top'
+      if (spaceBelow > flipToBottomThreshold) {
+        return 'bottom';
+      }
+      return 'top';
     } catch {
       return 'top';
     }
-  }, []);
+  }, [dropdownPlacement]);
 
   // Handle window resizing based on content with smart placement
   const updateWindowSize = useCallback(() => {
     if (expanded) return;
+
+    const needsDropdown = showSearchOptions || showFileNav;
+    const miniEnabled = !!(showMiniOutput && (miniOutputHasContent ?? !!(miniOutputText || '').trim()));
+    const miniHeight = miniEnabled && !needsDropdown && !typingActive ? 280 : 0;
 
     const height = currentTextareaHeightRef.current;
     const baseTextareaHeight = 36;
@@ -587,7 +617,7 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
 
     // Calculate target height
     // baseHeight should match inputBarHeight (140 + inputBarGap)
-    const baseHeight = 156; // 140 + 16 gap
+    const baseHeight = 156 + miniHeight; // 140 + 16 gap + mini output
     const hasFileResults = fileResults.length > 0;
     const fileResultsHeight = hasFileResults ? Math.min(fileResults.length * 60 + 40, 300) : 0;
 
@@ -599,7 +629,6 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
     const totalContentHeight = (showWebOptions ? 440 : 380) + fileResultsHeight + workflowsHeight;
     const dropdownHeight = Math.min(totalContentHeight, 450);
 
-    const needsDropdown = showSearchOptions || showFileNav;
     const targetHeight = needsDropdown ? baseHeight + dropdownHeight : baseHeight;
 
     const finalHeight = Math.min(Math.max(100, targetHeight + extraHeight), 800);
@@ -612,7 +641,8 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
     }
 
     // Determine placement BEFORE resizing
-    const newPlacement = needsDropdown ? calculatePlacement() : 'top';
+    const needsOverlay = needsDropdown || miniEnabled;
+    const newPlacement = needsOverlay ? calculatePlacement() : 'top';
     setDropdownPlacement(newPlacement);
 
     // Skip if no change
@@ -629,22 +659,24 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
         window.desktopAPI?.moveBy?.(0, -heightChange);
       }
       // Resize after move to ensure smooth animation
-      window.desktopAPI?.resize?.(520, finalHeight);
+      const currentOuterWidth = Math.round((window as any)?.outerWidth || 520);
+      const targetWidth = overlayMode === 'compact' ? 520 : currentOuterWidth;
+      window.desktopAPI?.resize?.(targetWidth, finalHeight);
     });
-  }, [expanded, showSearchOptions, showFileNav, showWebOptions, fileResults.length, calculatePlacement]);
+  }, [expanded, showSearchOptions, showFileNav, showWebOptions, fileResults.length, calculatePlacement, showMiniOutput, miniOutputHasContent, typingActive, overlayMode]);
 
   // Update on dropdown state changes
   useEffect(() => {
     if (expanded) return;
     updateWindowSize();
-  }, [expanded, updateWindowSize, showSearchOptions, showFileNav, showWebOptions]);
+  }, [expanded, updateWindowSize, showSearchOptions, showFileNav, showWebOptions, showMiniOutput, miniOutputHasContent, overlayMode]);
 
   // Recalculate placement when window moves
   useEffect(() => {
     if (expanded) return;
 
     const handleWindowMove = () => {
-      if (showSearchOptions || showFileNav) {
+      if (showSearchOptions || showFileNav || (showMiniOutput && miniOutputHasContent)) {
         const newPlacement = calculatePlacement();
         if (newPlacement !== dropdownPlacement) {
           setDropdownPlacement(newPlacement);
@@ -654,14 +686,14 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
 
     // Check periodically while dropdown is open (window move events aren't reliable in Electron)
     let interval: ReturnType<typeof setInterval> | null = null;
-    if (showSearchOptions || showFileNav) {
+    if (showSearchOptions || showFileNav || (showMiniOutput && miniOutputHasContent)) {
       interval = setInterval(handleWindowMove, 200);
     }
 
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [expanded, showSearchOptions, showFileNav, calculatePlacement, dropdownPlacement]);
+  }, [expanded, showSearchOptions, showFileNav, calculatePlacement, dropdownPlacement, showMiniOutput, miniOutputHasContent]);
 
   // Handle height change for auto-expansion in compact mode
   const handleHeightChange = useCallback((height: number) => {
@@ -717,6 +749,10 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
 
   // Compact Mode
   if (!expanded) {
+    const needsDropdown = showSearchOptions || showFileNav;
+    const miniEnabled = !!(showMiniOutput && (miniOutputHasContent ?? !!(miniOutputText || '').trim()));
+    const isTyping = query.trim().length > 0;
+    const miniOpen = miniEnabled && !needsDropdown && !isTyping;
     return (
       <div className={clsx(
         "w-full h-full flex flex-col p-2 relative transition-all duration-300",
@@ -1018,17 +1054,15 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
           document.body
         )}
 
-        {/* File Navigator Overlay - positioned at top level to avoid clipping */}
-        {showFileNav && typeof document !== 'undefined' && document.body && createPortal(
+        {showFileNav && fileNavOverlay && typeof document !== 'undefined' && document.body && createPortal(
           <div
-            className={clsx(
-              "fixed left-1/2 -translate-x-1/2 z-[100000] w-[92%] max-w-[480px] animate-in fade-in duration-200",
-              dropdownPlacement === 'top' ? "slide-in-from-bottom-centered mb-3" : "slide-in-from-top-centered mt-2"
-            )}
             style={{
-              // Position dropdown based on placement with proper spacing
-              bottom: dropdownPlacement === 'top' ? `${inputBarHeight}px` : 'auto',
-              top: dropdownPlacement === 'bottom' ? `${inputBarHeight - 8}px` : 'auto',
+              position: 'fixed',
+              left: fileNavOverlay.left,
+              top: fileNavOverlay.top,
+              width: fileNavOverlay.width,
+              transform: fileNavOverlay.placement === 'top' ? 'translateY(-100%)' : undefined,
+              zIndex: 100000,
             }}
           >
             <FileNavigator
@@ -1038,6 +1072,55 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
               onNavigate={handleNavigate}
               filter={fileNavFilter}
             />
+          </div>,
+          document.body
+        )}
+
+        {/* Quick Answer Dropdown - behaves like suggestion dropdown (top/bottom placement) */}
+        {miniOpen && typeof document !== 'undefined' && document.body && createPortal(
+          <div
+            className={clsx(
+              "fixed left-1/2 -translate-x-1/2 z-[99999] w-[92%] max-w-[520px]",
+              "animate-in fade-in duration-200",
+              dropdownPlacement === 'top' ? "slide-in-from-bottom-centered mb-3" : "slide-in-from-top-centered mt-2"
+            )}
+            style={{
+              bottom: dropdownPlacement === 'top' ? `${inputBarHeight}px` : 'auto',
+              top: dropdownPlacement === 'bottom' ? `${inputBarHeight - 8}px` : 'auto',
+            }}
+          >
+            <div className={clsx(
+              translucentMode
+                ? "rounded-[24px] bg-theme-bg/15 backdrop-blur-2xl border border-theme/15"
+                : "rounded-[24px] bg-theme-card border border-theme/40",
+              "shadow-2xl overflow-hidden"
+            )}>
+              <div className="flex items-center justify-between px-4 py-3 border-b border-theme/10 bg-theme-hover/20">
+                <div className="text-[11px] font-black uppercase tracking-widest text-theme-muted">
+                  Quick answer
+                </div>
+                <button
+                  type="button"
+                  className="w-7 h-7 rounded-[10px] bg-theme-card border border-theme/10 text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all flex items-center justify-center"
+                  title="Hide"
+                  onClick={() => setShowMiniOutput?.(false)}
+                >
+                  <Cross2Icon className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="px-4 py-3 max-h-[260px] overflow-y-auto custom-scrollbar">
+                <MessageBubble
+                  role="assistant"
+                  text={miniOutputText || ''}
+                  isStreaming={!!miniOutputStreaming}
+                  reasoning={undefined}
+                  toolCalls={undefined}
+                  streamChunks={undefined}
+                  onSubmitToolOutput={onSubmitToolOutput}
+                  onGenUIResponse={onGenUIResponse}
+                />
+              </div>
+            </div>
           </div>,
           document.body
         )}
@@ -1099,42 +1182,26 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
 
             <div className="flex items-center gap-2 no-drag flex-shrink-0">
               {/* Layout Menu */}
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger asChild>
-                  <button
-                    type="button"
-                    className="w-8 h-8 rounded-[10px] bg-theme-card border border-theme/10 text-theme-fg hover:bg-theme-hover hover:scale-105 active:scale-95 transition-all flex items-center justify-center"
-                    title="Layout"
-                  >
-                    <Layout className="w-3.5 h-3.5" />
-                  </button>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content className="DropdownContent z-[10001] w-48 bg-theme-card rounded-xl border border-theme p-1 shadow-2xl backdrop-blur-xl" sideOffset={10} align="end" collisionPadding={10}>
-                    <DropdownMenu.Item
-                      onSelect={() => window.desktopAPI.setMode('compact')}
-                      className="text-[13px] text-theme-fg flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors"
-                    >
-                      <div className="w-4 h-4 border-2 border-current rounded opacity-50" />
-                      <span>Compact</span>
-                    </DropdownMenu.Item>
-                    <DropdownMenu.Item
-                      onSelect={() => window.desktopAPI.setMode('sidebar')}
-                      className="text-[13px] text-theme-fg flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors"
-                    >
-                      <div className="w-2 h-4 border-2 border-current rounded opacity-50" />
-                      <span>Sidebar</span>
-                    </DropdownMenu.Item>
-                    <DropdownMenu.Item
-                      onSelect={() => window.desktopAPI.setMode('window')}
-                      className="text-[13px] text-theme-fg flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors"
-                    >
-                      <div className="w-6 h-4 border-2 border-current rounded opacity-50" />
-                      <span>Window</span>
-                    </DropdownMenu.Item>
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
+              {overlayMode !== 'sidebar' && (
+                <button
+                  type="button"
+                  className="w-8 h-8 rounded-[10px] bg-theme-card border border-theme/10 text-theme-fg hover:bg-theme-hover hover:scale-105 active:scale-95 transition-all flex items-center justify-center"
+                  title="Sidebar"
+                  onClick={() => window.desktopAPI.setMode('sidebar')}
+                >
+                  <PanelRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {overlayMode !== 'window' && (
+                <button
+                  type="button"
+                  className="w-8 h-8 rounded-[10px] bg-theme-card border border-theme/10 text-theme-fg hover:bg-theme-hover hover:scale-105 active:scale-95 transition-all flex items-center justify-center"
+                  title="Window"
+                  onClick={() => window.desktopAPI.setMode('window')}
+                >
+                  <AppWindow className="w-3.5 h-3.5" />
+                </button>
+              )}
 
               {/* Dashboard / Home */}
               <button
@@ -1146,56 +1213,6 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
                 <HomeIcon className="w-3.5 h-3.5" />
               </button>
 
-              {/* History */}
-              <DropdownMenu.Root open={chatMenuOpen} onOpenChange={onChatMenuOpenChange}>
-                <DropdownMenu.Trigger asChild>
-                  <button
-                    type="button"
-                    className={clsx(
-                      "w-8 h-8 rounded-[10px] border border-theme/10 transition-all flex items-center justify-center hover:scale-105 active:scale-95",
-                      chatMenuOpen ? "bg-theme-active text-theme-fg" : "bg-theme-card text-theme-fg hover:bg-theme-hover",
-                    )}
-                    title="Chat history"
-                  >
-                    <ClockIcon className="w-3.5 h-3.5" />
-                  </button>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content className="DropdownContent z-[10001] w-72 bg-theme-card rounded-xl border border-theme p-1 shadow-2xl backdrop-blur-xl" sideOffset={10} align="end" collisionPadding={10}>
-                    <DropdownMenu.Item
-                      onSelect={onNewChat}
-                      className="text-[13px] text-primary font-bold flex items-center gap-2 px-3 py-2.5 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors mb-1"
-                    >
-                      <PlusIcon className="w-3.5 h-3.5" />
-                      <span>New chat</span>
-                    </DropdownMenu.Item>
-
-                    <div className="h-px bg-theme border-none my-1 opacity-50" />
-
-                    <div className={clsx(
-                      "overflow-y-auto custom-scrollbar",
-                      expanded ? "max-h-[calc(100vh-240px)]" : "max-h-[80px]"
-                    )}>
-                      {loadingConversations ? (
-                        <div className="px-3 py-2 text-[12px] text-theme-muted">Loading...</div>
-                      ) : conversations.length === 0 ? (
-                        <div className="px-3 py-2 text-[12px] text-theme-muted italic">No recent chats</div>
-                      ) : (
-                        conversations.map(c => (
-                          <DropdownMenu.Item
-                            key={c.id}
-                            onSelect={() => onSelectConversation(String(c.id))}
-                            className="text-[13px] text-theme-fg flex flex-col px-3 py-2.5 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors"
-                          >
-                            <span className="truncate w-full font-bold">{c.title || 'Untitled Chat'}</span>
-                            <span className="text-[10px] text-theme-muted font-bold mt-0.5">{c.created_at ? new Date(c.created_at).toLocaleDateString() : ''}</span>
-                          </DropdownMenu.Item>
-                        ))
-                      )}
-                    </div>
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
             </div>
           </div>
 
@@ -1445,57 +1462,6 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
                 <Mic className="w-3.5 h-3.5" />
               </button>
             )}
-            <div className="w-px h-4 bg-theme/20 mx-0.5" />
-
-            {/* Chat History */}
-            <DropdownMenu.Root open={chatMenuOpen} onOpenChange={onChatMenuOpenChange}>
-              <DropdownMenu.Trigger asChild>
-                <button
-                  id="stuard-history-btn"
-                  className={clsx(
-                    "no-drag inline-flex items-center justify-center rounded-md transition-all text-theme-fg/70 hover:text-theme-fg h-7 px-2 text-[12px] font-bold gap-1 max-w-[120px]",
-                    chatMenuOpen ? "bg-theme-active text-theme-fg" : "hover:bg-theme-hover"
-                  )}
-                  title="Conversation History"
-                >
-                  <span className="truncate">{conversationTitle || 'Chat'}</span>
-                  <ChevronDownIcon className="w-3 h-3 opacity-50" />
-                </button>
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content className="DropdownContent z-[10001] w-64 bg-theme-card rounded-lg border border-theme p-1 shadow-2xl backdrop-blur-xl" sideOffset={5} align="end" collisionPadding={10}>
-                  <DropdownMenu.Item
-                    onSelect={onNewChat}
-                    className="text-[13px] text-primary font-bold flex items-center gap-2 px-3 py-2 rounded hover:bg-theme-hover outline-none cursor-pointer transition-colors mb-1"
-                  >
-                    <PlusIcon className="w-3.5 h-3.5" />
-                    <span>New chat</span>
-                  </DropdownMenu.Item>
-
-                  <div className="h-px bg-theme opacity-50 my-1" />
-
-                  <div className="max-h-[calc(100vh-200px)] overflow-y-auto custom-scrollbar">
-                    {loadingConversations ? (
-                      <div className="px-3 py-2 text-[12px] text-theme-muted">Loading...</div>
-                    ) : conversations.length === 0 ? (
-                      <div className="px-3 py-2 text-[12px] text-theme-muted italic">No recent chats</div>
-                    ) : (
-                      conversations.map(c => (
-                        <DropdownMenu.Item
-                          key={c.id}
-                          onSelect={() => onSelectConversation(String(c.id))}
-                          className="text-[13px] text-theme-fg flex flex-col px-3 py-2.5 rounded hover:bg-theme-hover outline-none cursor-pointer transition-colors border-l-2 border-transparent hover:border-primary/50"
-                        >
-                          <span className="truncate w-full font-bold">{c.title || 'Untitled Chat'}</span>
-                          <span className="text-[10px] text-theme-muted font-bold mt-0.5">{c.created_at ? new Date(c.created_at).toLocaleDateString() : ''}</span>
-                        </DropdownMenu.Item>
-                      ))
-                    )}
-                  </div>
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
-
             <div className="w-px h-4 bg-theme/20 mx-0.5" />
 
             {/* Dashboard Link */}
