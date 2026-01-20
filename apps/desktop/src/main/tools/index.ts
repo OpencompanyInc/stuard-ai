@@ -2,7 +2,7 @@ import { RouterContext } from './types';
 import { getToolKind } from './registry';
 import { execCloudTool } from './handlers/cloud';
 import { execLocalTool, calcToolTimeout } from './handlers/local';
-import { execCustomUi, execCloseCustomUi, execPlayAudio, execLog, execWait, execEnd, execUpdateCustomUi, execGetClipboardContent, execSetClipboardContent, execSendUiEvent, execRunUiScript, execListCustomUiWindows, initCustomUiIpc } from './handlers/electron';
+import { execCustomUi, execCloseCustomUi, execPlayAudio, execLog, execWait, execEnd, execReturnValue, execUpdateCustomUi, execGetClipboardContent, execSetClipboardContent, execSendUiEvent, execRunUiScript, execListCustomUiWindows, initCustomUiIpc } from './handlers/electron';
 import { execSetVariable, execGetVariable, execToggleVariable, execIncrementVariable, execAppendToList, execListVariables, execDeleteVariable } from './handlers/variables';
 import { execTerminalCreate, execTerminalList, execTerminalGet, execTerminalSendInput, execTerminalSendRaw, execTerminalSendKeys, execTerminalRead, execTerminalWaitFor, execTerminalDestroy } from './handlers/terminal';
 import { execInvokeWorkflow, execTestRunSteps } from './handlers/workflow';
@@ -50,6 +50,7 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'log') return execLog(args, ctx);
       if (toolName === 'wait') return execWait(args, ctx);
       if (toolName === 'end') return execEnd(args, ctx);
+      if (toolName === 'return_value') return execReturnValue(args, ctx);
       if (toolName === 'invoke_workflow') return execInvokeWorkflow(args, ctx);
       if (toolName === 'test_run_steps') return execTestRunSteps(args, ctx);
       if (toolName === 'get_clipboard_content') return execGetClipboardContent(args, ctx);

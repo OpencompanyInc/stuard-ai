@@ -83,6 +83,8 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
 
   let current = pickStartStep(spec);
   const ctx: any = {};
+  let hasReturn = false;
+  let returnValue: any = undefined;
 
   const varsProxy: any = new Proxy({}, {
     get(_t, prop: any) {
@@ -113,6 +115,7 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
       if (payload && typeof payload === 'object' && ('input' in payload || 'webhook' in payload)) {
         if (payload.input !== undefined) ctx.input = payload.input;
         if (payload.webhook !== undefined) ctx.webhook = payload.webhook;
+        if (payload.args !== undefined) ctx.args = payload.args;
       } else {
         ctx.input = payload;
         ctx.webhook = payload;
@@ -236,6 +239,15 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
       emitStepEvent(safe, current.id, 'completed', { result: out.ctx?.[current.id] });
       prevStepId = current.id;
 
+      if (out.ctx && (out.ctx as any).__terminated) {
+        if ((out.ctx as any).__return !== undefined && !hasReturn) {
+          hasReturn = true;
+          returnValue = (out.ctx as any).__return;
+        }
+        try { controller.abort(); } catch { }
+        break;
+      }
+
       // Handle parallel branches (multiple nextIds)
       if (out.nextIds && out.nextIds.length > 1) {
         engineCtx.logFn(`[${current.id}] ⚡ Executing ${out.nextIds.length} parallel branches`);
@@ -268,6 +280,7 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
   try {
     // Start the main branch
     await runBranch(current!, ctx, undefined);
+    return hasReturn ? { ok: true, returnValue } : { ok: true };
   } finally {
     try {
       const set = activeRunControllers.get(safe);

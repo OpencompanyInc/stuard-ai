@@ -40,8 +40,13 @@ export async function execInvokeWorkflow(args: any, ctx: RouterContext): Promise
     if (waitForCompletion) {
       // Wait for completion
       try {
-        await runStuardEngine(id, payload, engineCtx);
-        return { ok: true, workflowId: id, status: 'completed' };
+        const runRes: any = await runStuardEngine(id, payload, engineCtx);
+        return {
+          ok: true,
+          workflowId: id,
+          status: 'completed',
+          result: runRes?.returnValue,
+        };
       } catch (e: any) {
         return { ok: false, workflowId: id, status: 'error', error: e?.message || 'execution failed' };
       }

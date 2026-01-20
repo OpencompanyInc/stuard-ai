@@ -44,6 +44,16 @@ export async function executeStep(
     // Store result in context
     ctx[step.id] = result;
 
+    // Capture structured return values
+    if (toolName === 'return_value' || result?.action === 'return') {
+      (ctx as any).__return = (result && typeof result === 'object' && 'value' in result) ? result.value : result;
+    }
+
+    // Track termination so the engine can stop all branches
+    if (result?.terminated) {
+      (ctx as any).__terminated = true;
+    }
+
     // Handle 'end' tool - terminates the workflow
     if (toolName === 'end' || result?.terminated) {
       return { ok: true, ctx }; // No nextId = end of workflow

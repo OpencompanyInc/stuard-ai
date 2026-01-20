@@ -14,7 +14,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   show: () => ipcRenderer.invoke("overlay:show"),
   hide: () => ipcRenderer.invoke("overlay:hide"),
   toggle: () => ipcRenderer.invoke("overlay:toggle"),
-  setMode: (mode: 'compact' | 'expanded' | 'sidebar' | 'window') => ipcRenderer.invoke('overlay:setMode', mode),
+  setMode: (mode: 'compact' | 'sidebar' | 'window') => ipcRenderer.invoke('overlay:setMode', mode),
   resize: (w: number, h: number) => ipcRenderer.invoke('overlay:resize', w, h),
   moveBy: (dx: number, dy: number) => ipcRenderer.invoke('overlay:moveBy', dx, dy),
   getSize: () => ipcRenderer.invoke('overlay:getSize'),

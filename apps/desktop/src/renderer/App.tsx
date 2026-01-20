@@ -121,8 +121,7 @@ export default function App() {
   }, [paletteQuery, showPalette, accessToken]);
 
   // UI State
-  const [expanded, setExpanded] = useState(false);
-  const [overlayMode, setOverlayMode] = useState<'compact' | 'expanded' | 'sidebar' | 'window'>('compact');
+  const [overlayMode, setOverlayMode] = useState<'compact' | 'sidebar' | 'window'>('compact');
   const [windowSize, setWindowSize] = useState({ width: 520, height: 130 });
   const [chatMenuOpen, setChatMenuOpen] = useState(false);
   const [conversationTitle, setConversationTitle] = useState<string | null>(null);
@@ -131,6 +130,22 @@ export default function App() {
   const [attachments, setAttachments] = useState<Array<{ type: 'image' | 'file'; name: string; data: string; mimeType: string }>>([]);
   const [approvalPrompt, setApprovalPrompt] = useState<{ id: string; tool: string; args?: Record<string, any>; description?: string } | null>(null);
   const [contextPaths, setContextPaths] = useState<ContextItem[]>([]);
+
+  const overlayModeRef = useRef<'compact' | 'sidebar' | 'window'>(overlayMode);
+  const prevOverlayModeRef = useRef<'compact' | 'sidebar' | 'window'>(overlayMode);
+  const modeBeforeDockRef = useRef<'compact' | 'sidebar' | 'window'>('compact');
+
+  useEffect(() => {
+    overlayModeRef.current = overlayMode;
+  }, [overlayMode]);
+
+  useEffect(() => {
+    const prev = prevOverlayModeRef.current;
+    if ((overlayMode === 'sidebar' || overlayMode === 'window') && prev !== 'sidebar' && prev !== 'window') {
+      modeBeforeDockRef.current = prev;
+    }
+    prevOverlayModeRef.current = overlayMode;
+  }, [overlayMode]);
 
   // Reasoning/Thinking time tracking
   const [thinkingStartTime, setThinkingStartTime] = useState<number | undefined>(undefined);
@@ -182,7 +197,6 @@ export default function App() {
     if (!window.desktopAPI) return;
 
     window.desktopAPI.onShow(() => {
-      setExpanded(false);
       setOverlayMode('compact');
       window.desktopAPI.setMode('compact');
       setTimeout(() => inputRef.current?.focus(), 0);
@@ -191,9 +205,8 @@ export default function App() {
     // Listen for open-chat requests (e.g. from Dashboard)
     const unsubOpen = window.desktopAPI.onOpenChat?.((id: string) => {
       if (id) {
-        setExpanded(true);
-        setOverlayMode('expanded');
-        window.desktopAPI.setMode('expanded');
+        setOverlayMode('window');
+        window.desktopAPI.setMode('window');
         loadConversation(id);
       }
     });
@@ -210,7 +223,6 @@ export default function App() {
     });
     const unsubModeChanged = window.desktopAPI?.onModeChanged?.((data) => {
       setOverlayMode(data.mode as any);
-      setExpanded(data.mode !== 'compact');
       setWindowSize({ width: data.width, height: data.height });
     });
 
@@ -219,7 +231,6 @@ export default function App() {
       if (size) {
         setWindowSize({ width: size.width, height: size.height });
         setOverlayMode(size.mode as any);
-        setExpanded(size.mode !== 'compact');
       }
     }).catch(() => { });
 
@@ -339,7 +350,16 @@ export default function App() {
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { window.desktopAPI.hide(); return; }
+      if (e.key === 'Escape') {
+        const mode = overlayModeRef.current;
+        if (mode === 'sidebar' || mode === 'window') {
+          setOverlayMode('compact');
+          try { window.desktopAPI.setMode('compact'); } catch { }
+          return;
+        }
+        window.desktopAPI.hide();
+        return;
+      }
       pressed.add(e.key);
       if (e.ctrlKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         e.preventDefault();
@@ -408,8 +428,8 @@ export default function App() {
         if (evt.event === 'wakeword_detected') {
           try {
             window.desktopAPI.show();
-            setExpanded(true);
-            window.desktopAPI.setMode('expanded');
+            setOverlayMode('window');
+            window.desktopAPI.setMode('window');
             setTimeout(() => inputRef.current?.focus(), 0);
 
             if (!isRecording) {
@@ -565,14 +585,9 @@ export default function App() {
 
   const handleSignIn = useCallback(async () => await startBrowserSignIn(), []);
 
-  const toggleExpand = useCallback(() => {
-    setExpanded(prev => {
-      const next = !prev;
-      const nextMode = next ? 'expanded' : 'compact';
-      setOverlayMode(nextMode);
-      window.desktopAPI.setMode(nextMode);
-      return next;
-    });
+  const handleShowCompact = useCallback(() => {
+    setOverlayMode('compact');
+    window.desktopAPI.setMode('compact');
   }, []);
 
   const handleNewChat = useCallback(() => {
@@ -588,14 +603,6 @@ export default function App() {
     } catch { }
     loadConversation(id);
     setChatMenuOpen(false);
-    // Expand the view to show the loaded conversation
-    setExpanded(prev => {
-      if (!prev) {
-        window.desktopAPI.setMode('expanded');
-        return true;
-      }
-      return prev;
-    });
   }, [convList, loadConversation]);
 
   const handleDeleteConversation = useCallback(async (id: string) => {
@@ -672,15 +679,6 @@ export default function App() {
     // Clear speech transcript state so it doesn't re-sync stale text
     clearTranscript();
     baseQueryRef.current = "";
-
-    // Auto-expand if sending from compact
-    setExpanded(prev => {
-      if (!prev) {
-        window.desktopAPI.setMode('expanded');
-        return true;
-      }
-      return prev;
-    });
   }, [signedIn, query, attachments, contextPaths, chatMode, chatModels, tone, customTone, persona, sendMessage, handleSignIn, clearTranscript]);
 
   // Stable callback ref for child components
@@ -967,13 +965,13 @@ export default function App() {
   }, [connectionStatus, statusLabel]);
 
   const handleShowSidebar = useCallback(() => {
+    setOverlayMode('sidebar');
     window.desktopAPI.setMode('sidebar');
-    setExpanded(true);
   }, []);
 
   const handleShowWindow = useCallback(() => {
+    setOverlayMode('window');
     window.desktopAPI.setMode('window');
-    setExpanded(true);
   }, []);
 
   const commands = useMemo<CommandItem[]>(() => {
@@ -981,9 +979,9 @@ export default function App() {
     const staticItems: CommandItem[] = [
       { id: 'new-chat', title: 'New chat', description: 'Start a fresh conversation', icon: <Plus className="w-5 h-5" />, run: handleNewChat },
       { id: 'open-dashboard', title: 'Open dashboard', description: 'View full dashboard', icon: <Layout className="w-5 h-5" />, shortcut: 'Dash', run: () => window.desktopAPI.openDashboard() },
+      { id: 'toggle-compact', title: 'Compact layout', description: 'Switch to compact layout', icon: <Minimize2 className="w-5 h-5" />, run: handleShowCompact },
       { id: 'toggle-sidebar', title: 'Sidebar layout', description: 'Switch to sidebar layout', icon: <Layout className="w-5 h-5" />, run: handleShowSidebar },
       { id: 'toggle-window', title: 'Window layout', description: 'Switch to window layout', icon: <Layout className="w-5 h-5" />, run: handleShowWindow },
-      { id: 'toggle-expand', title: expanded ? 'Collapse view' : 'Expand view', description: 'Toggle compact/expanded mode', icon: expanded ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />, run: toggleExpand },
 
       { id: 'toggle-spaces', title: 'Spaces', description: 'Toggle spaces sidebar', icon: <LayoutGrid className="w-5 h-5" />, run: () => window.desktopAPI.toggleSpaces() },
       { id: 'attach-files', title: 'Attach files', description: 'Upload documents', icon: <File className="w-5 h-5" />, run: handleAttachFiles },
@@ -1062,13 +1060,10 @@ export default function App() {
     }
 
     return items;
-  }, [expanded, signedIn, setOnboardingComplete, setTourComplete, setTone, localWorkflows, marketplaceResults, query]);
+  }, [signedIn, setOnboardingComplete, setTourComplete, setTone, localWorkflows, marketplaceResults, query, handleShowCompact, handleShowSidebar, handleShowWindow, handleNewChat, handleAttachFiles, handleAttachImages]);
 
-  // Determine which expanded view to show
   const hasMessages = messages.length > 0;
-
-  // Determine if we should show resize grips (not in compact mode)
-  const showResizeGrips = expanded || overlayMode === 'sidebar' || overlayMode === 'window';
+  const showResizeGrips = overlayMode === 'sidebar' || overlayMode === 'window';
 
   return (
     <div className="w-full h-full text-sans overflow-hidden relative">
@@ -1093,7 +1088,7 @@ export default function App() {
       <div
         className="w-full h-full overflow-hidden transition-all duration-200 ease-out bg-transparent flex flex-col"
       >
-        {expanded ? (
+        {overlayMode === 'sidebar' || overlayMode === 'window' ? (
           <div className="relative h-full w-full p-4 overflow-hidden mode-transition overlay-responsive">
             {/* Resize indicator in bottom-right corner */}
             {showResizeGrips && (
@@ -1168,7 +1163,7 @@ export default function App() {
                   thinkingStartTime={thinkingStartTime}
                   contextPaths={contextPaths}
                   onRemoveContext={handleRemoveContext}
-                  onCollapse={toggleExpand}
+                  onCollapse={handleShowCompact}
                   onOpenDashboard={handleOpenDashboard}
                   onNewChat={handleNewChat}
                   onToggleSidebar={handleToggleSpaces}
@@ -1238,7 +1233,7 @@ export default function App() {
                   onChatMenuOpenChange={setChatMenuOpen}
                   onNewChat={handleNewChat}
                   onOpenDashboard={handleOpenDashboard}
-                  onToggleExpand={toggleExpand}
+                  onToggleExpand={handleShowWindow}
                   onToggleSidebar={handleToggleSpaces}
                   sidebarOpen={false}
                   plannerData={plannerData}
@@ -1277,8 +1272,8 @@ export default function App() {
               onStopGeneration={stopGeneration}
               onChatMenuOpenChange={setChatMenuOpen}
               chatMenuOpen={chatMenuOpen}
-              expanded={expanded}
-              onToggleExpand={toggleExpand}
+              expanded={false}
+              onToggleExpand={handleShowWindow}
               onOpenDashboard={handleOpenDashboard}
               statusText={inputStatusText}
               statusIcon={inputStatusIcon}
@@ -1309,8 +1304,8 @@ export default function App() {
         {showTour && (
           <OnboardingFlow
             startAtTour={true}
-            expanded={expanded}
-            onExpand={toggleExpand}
+            expanded={overlayMode === 'sidebar' || overlayMode === 'window'}
+            onExpand={handleShowWindow}
             onComplete={() => setTourComplete(true)}
           />
         )}

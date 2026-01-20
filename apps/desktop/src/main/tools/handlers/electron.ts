@@ -138,3 +138,10 @@ export async function execEnd(args: any, ctx: RouterContext): Promise<any> {
   return { ok: true, action: 'end', terminated: true };
 }
 
+export async function execReturnValue(args: any, ctx: RouterContext): Promise<any> {
+  const value = (args && typeof args === 'object' && 'value' in args)
+    ? (args as any).value
+    : args;
+  return { ok: true, action: 'return', terminated: true, value };
+}
+

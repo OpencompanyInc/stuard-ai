@@ -12,6 +12,7 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'log': { kind: 'electron' },
   'wait': { kind: 'electron' },
   'end': { kind: 'electron' },  // Workflow terminator
+  'return_value': { kind: 'electron' },  // Workflow return value (terminates run with result)
   'invoke_workflow': { kind: 'electron' },  // Invoke workflow with args
   'test_run_steps': { kind: 'electron' },  // Test run workflow steps
   'play_audio': { kind: 'electron' },

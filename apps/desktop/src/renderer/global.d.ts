@@ -6,7 +6,7 @@ declare global {
       show: () => Promise<void>;
       hide: () => Promise<void>;
       toggle: () => Promise<void>;
-      setMode: (mode: 'compact' | 'expanded' | 'sidebar' | 'window') => Promise<void>;
+      setMode: (mode: 'compact' | 'sidebar' | 'window') => Promise<void>;
       resize: (w: number, h: number) => Promise<void>;
       moveBy: (dx: number, dy: number) => Promise<void>;
       getSize: () => Promise<{ width: number; height: number; mode: string }>;

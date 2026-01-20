@@ -23,7 +23,7 @@ export function setupIpc() {
   ipcMain.handle("overlay:show", () => showWindow());
   ipcMain.handle("overlay:hide", () => hideWindow());
   ipcMain.handle("overlay:toggle", () => toggleWindow());
-  ipcMain.handle("overlay:setMode", (_e, mode: "compact" | "expanded" | "sidebar" | "window") => setOverlayMode(mode));
+  ipcMain.handle("overlay:setMode", (_e, mode: "compact" | "sidebar" | "window") => setOverlayMode(mode));
   ipcMain.handle("overlay:resize", (_e, w: number, h: number) => setOverlaySize(w, h, false));
   ipcMain.handle("overlay:moveBy", (_e, dx: number, dy: number) => moveOverlayBy(dx, dy));
   ipcMain.handle("overlay:getSize", () => getOverlaySize());
@@ -444,7 +444,7 @@ export function setupIpc() {
   // Open chat in overlay
   ipcMain.handle('overlay:openChat', (_e, conversationId: string) => {
     try {
-      setOverlayMode('expanded');
+      setOverlayMode('window');
       showWindow();
       // Send event to renderer to open the specific chat
       const wins = BrowserWindow.getAllWindows();

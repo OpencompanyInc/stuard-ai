@@ -69,11 +69,112 @@ let baseOuterHeight = 0;
 // When changing size programmatically (expand/collapse), temporarily disable the size lock
 let resizingProgrammatically = false;
 
-type OverlayMode = "compact" | "expanded" | "sidebar" | "window";
+type OverlayMode = "compact" | "sidebar" | "window";
 let currentMode: OverlayMode = "compact";
 
 // Track the last active window handle (for split-screen in sidebar mode)
 let lastActiveWindowHandle: string | null = null;
+
+type SplitTargetSnapshot = {
+  handle: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  wasMaximized: boolean;
+  wasMinimized: boolean;
+};
+
+let lastSplitTarget: SplitTargetSnapshot | null = null;
+
+function captureWindowSnapshotByHandle(handle: string): SplitTargetSnapshot | null {
+  if (process.platform !== "win32") return null;
+  if (!handle || handle === "0") return null;
+  try {
+    const { execSync } = require("child_process");
+    const tmpDir = require("os").tmpdir();
+    const scriptPath = path.join(tmpDir, "stuard_get_bounds.ps1");
+    const ps = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32Bounds {
+  [StructLayout(LayoutKind.Sequential)]
+  public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+  [DllImport("user32.dll")]
+  public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+  [DllImport("user32.dll")]
+  public static extern bool IsZoomed(IntPtr hWnd);
+  [DllImport("user32.dll")]
+  public static extern bool IsIconic(IntPtr hWnd);
+}
+"@
+$h = [IntPtr]${handle}
+$rect = New-Object Win32Bounds+RECT
+$ok = [Win32Bounds]::GetWindowRect($h, [ref]$rect)
+if (-not $ok) { exit 2 }
+$w = $rect.Right - $rect.Left
+$hgt = $rect.Bottom - $rect.Top
+$isMax = [Win32Bounds]::IsZoomed($h)
+$isMin = [Win32Bounds]::IsIconic($h)
+Write-Output "x=$($rect.Left) y=$($rect.Top) w=$w h=$hgt max=$isMax min=$isMin"
+`;
+    fs.writeFileSync(scriptPath, ps, "utf8");
+    const out = execSync(`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`, { encoding: "utf8", timeout: 2000 }).trim();
+    try { fs.unlinkSync(scriptPath); } catch { }
+
+    const m = /x=([-\d]+)\s+y=([-\d]+)\s+w=(\d+)\s+h=(\d+)\s+max=(True|False)\s+min=(True|False)/.exec(out);
+    if (!m) return null;
+    return {
+      handle,
+      x: Number(m[1]),
+      y: Number(m[2]),
+      width: Number(m[3]),
+      height: Number(m[4]),
+      wasMaximized: m[5] === "True",
+      wasMinimized: m[6] === "True",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function restoreWindowSnapshot(snapshot: SplitTargetSnapshot) {
+  if (process.platform !== "win32") return;
+  if (!snapshot?.handle || snapshot.handle === "0") return;
+  try {
+    const { execFile } = require('child_process');
+    const tmpDir = require('os').tmpdir();
+    const scriptPath = path.join(tmpDir, 'stuard_restore_split.ps1');
+    const ps = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32Restore {
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+  [DllImport("user32.dll")]
+  public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@
+$hwnd = [IntPtr]${snapshot.handle}
+if ($hwnd -eq 0) { exit 2 }
+[Win32Restore]::SetWindowPos($hwnd, [IntPtr]::Zero, ${snapshot.x}, ${snapshot.y}, ${snapshot.width}, ${snapshot.height}, 0x14) | Out-Null
+if (${snapshot.wasMaximized ? '$true' : '$false'}) {
+  [Win32Restore]::ShowWindow($hwnd, 3) | Out-Null
+} elseif (${snapshot.wasMinimized ? '$true' : '$false'}) {
+  [Win32Restore]::ShowWindow($hwnd, 6) | Out-Null
+} else {
+  [Win32Restore]::ShowWindow($hwnd, 9) | Out-Null
+}
+`;
+    fs.writeFileSync(scriptPath, ps, 'utf8');
+    execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], () => {
+      try { fs.unlinkSync(scriptPath); } catch { }
+    });
+  } catch { }
+}
 
 function getNativeWindowHandleString(target: BrowserWindow | null) {
   if (!target) return null;
@@ -89,13 +190,16 @@ function getNativeWindowHandleString(target: BrowserWindow | null) {
   }
 }
 
-function captureForegroundWindowHandle(excludeHandle?: string | null) {
+function captureForegroundWindowHandle(excludeHandles?: Array<string | null>) {
   if (process.platform !== "win32") return null;
   try {
     const { execSync } = require("child_process");
     const tmpDir = require("os").tmpdir();
     const getHandleScript = path.join(tmpDir, "stuard_get_handle.ps1");
-    const excluded = excludeHandle && excludeHandle !== "0" ? excludeHandle : "0";
+    const excludes = (excludeHandles || [])
+      .map((h) => (h && h !== "0" ? h : null))
+      .filter((h): h is string => !!h);
+    const excludedList = excludes.length ? excludes.join(",") : "0";
     const getHandlePsScript = `
 Add-Type @"
 using System;
@@ -105,13 +209,37 @@ public class Win32GetHandle {
   public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")]
   public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
 }
 "@
-$exclude = [IntPtr]${excluded}
+$excludeCsv = "${excludedList}"
+$exclude = @()
+try {
+  foreach ($p in $excludeCsv.Split(',') ) {
+    $t = $p.Trim()
+    if ($t -and $t -ne '0') { $exclude += [Int64]$t }
+  }
+} catch { }
 $foreground = [Win32GetHandle]::GetForegroundWindow()
 $target = $foreground
-if ($exclude -ne 0 -and $foreground -eq $exclude) {
-  $target = [Win32GetHandle]::GetWindow($foreground, 3)
+if ($exclude.Count -gt 0) {
+  # If the foreground is one of our windows (overlay/spaces/etc), walk the z-order to find the next real app window.
+  if ($exclude -contains $foreground.ToInt64()) {
+    $cursor = $foreground
+    for ($i = 0; $i -lt 20; $i++) {
+      $cursor = [Win32GetHandle]::GetWindow($cursor, 2)
+      if ($cursor -eq [IntPtr]::Zero) { break }
+      if (-not ($exclude -contains $cursor.ToInt64())) {
+        $target = $cursor
+        break
+      }
+    }
+  }
+}
+if ($target -ne [IntPtr]::Zero) {
+  $root = [Win32GetHandle]::GetAncestor($target, 2)
+  if ($root -ne [IntPtr]::Zero) { $target = $root }
 }
 $target.ToInt64()
 `;
@@ -136,7 +264,12 @@ $target.ToInt64()
 
 function updateLastActiveWindowHandle(source: string) {
   const overlayHandle = getNativeWindowHandleString(win);
-  const handle = captureForegroundWindowHandle(overlayHandle);
+  const handle = captureForegroundWindowHandle([
+    overlayHandle,
+    getNativeWindowHandleString(spacesWin),
+    getNativeWindowHandleString(hudWin),
+    getNativeWindowHandleString(onboardingWin),
+  ]);
   if (!handle) return;
   if (overlayHandle && handle === overlayHandle) return;
   lastActiveWindowHandle = handle;
@@ -146,24 +279,36 @@ function updateLastActiveWindowHandle(source: string) {
 // User-customized sizes per mode (persisted preferences)
 interface ModeSizePrefs {
   compact: { width: number; height: number };
-  expanded: { width: number; height: number };
   window: { width: number; height: number };
 }
 
 // Default sizes for each mode
 const DEFAULT_MODE_SIZES: ModeSizePrefs = {
   compact: { width: 520, height: 140 },  // Compact is a small pill-shaped input bar
-  expanded: { width: 520, height: 800 },
   window: { width: 800, height: 600 },
 };
 
 // Min/max constraints per mode for user resizing
 const MODE_SIZE_CONSTRAINTS = {
   compact: { minW: 400, maxW: 800, minH: 100, maxH: 800 },  // Increased to 800 to avoid cut-off
-  expanded: { minW: 400, maxW: 1200, minH: 400, maxH: 1200 },
   sidebar: { minW: 400, maxW: 700, minH: 400, maxH: 2000 },  // Thicker sidebar
   window: { minW: 500, maxW: 1400, minH: 400, maxH: 1000 },
 };
+
+function applyOverlayChrome(mode: OverlayMode) {
+  if (!win) return;
+  try {
+    if (mode === 'window') {
+      try { win.setAlwaysOnTop(false); } catch { }
+      try { win.setSkipTaskbar(false); } catch { }
+      try { win.setHasShadow(true); } catch { }
+    } else {
+      try { win.setSkipTaskbar(true); } catch { }
+      try { win.setAlwaysOnTop(true, 'screen-saver'); } catch { }
+      try { win.setHasShadow(false); } catch { }
+    }
+  } catch { }
+}
 
 // Current user-preferred sizes (loaded from store on init)
 let userModeSizes: ModeSizePrefs = { ...DEFAULT_MODE_SIZES };
@@ -846,7 +991,6 @@ export function showWindow() {
   if (!win.isFocused()) {
     updateLastActiveWindowHandle('showWindow');
   }
-  setOverlayMode('compact');
   repositionTopCenter(win);
   const bounds = win.getBounds();
   logger.info("Window bounds:", bounds);
@@ -921,6 +1065,13 @@ export function setOverlayMode(mode: OverlayMode) {
   const prevMode = currentMode;
   currentMode = mode;
 
+  applyOverlayChrome(mode);
+
+  if (prevMode === 'sidebar' && mode !== 'sidebar' && lastSplitTarget) {
+    restoreWindowSnapshot(lastSplitTarget);
+    lastSplitTarget = null;
+  }
+
   // Update size constraints for the new mode
   updateSizeConstraints(mode);
 
@@ -942,11 +1093,22 @@ export function setOverlayMode(mode: OverlayMode) {
 
       let capturedHandle = lastActiveWindowHandle;
       if (!capturedHandle || (overlayHandle && capturedHandle === overlayHandle)) {
-        capturedHandle = captureForegroundWindowHandle(overlayHandle);
+        capturedHandle = captureForegroundWindowHandle([
+          overlayHandle,
+          getNativeWindowHandleString(spacesWin),
+          getNativeWindowHandleString(hudWin),
+          getNativeWindowHandleString(onboardingWin),
+        ]);
         if (capturedHandle) lastActiveWindowHandle = capturedHandle;
       }
       if (capturedHandle) {
         logger.info('Using foreground window handle for split-screen:', capturedHandle);
+      }
+
+      if (capturedHandle && capturedHandle !== '0') {
+        lastSplitTarget = captureWindowSnapshotByHandle(capturedHandle);
+      } else {
+        lastSplitTarget = null;
       }
 
       // Now position Stuard on the right side
@@ -972,6 +1134,8 @@ public class Win32Split {
   public static extern bool IsZoomed(IntPtr hWnd);
   [DllImport("user32.dll")]
   public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
   [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
   public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
   [DllImport("user32.dll")]
@@ -980,6 +1144,8 @@ public class Win32Split {
 "@
 $targetWindow = [IntPtr]${capturedHandle}
 if ($targetWindow -ne 0) {
+  $root = [Win32Split]::GetAncestor($targetWindow, 2)
+  if ($root -ne 0) { $targetWindow = $root }
   $len = [Win32Split]::GetWindowTextLength($targetWindow)
   $title = ""
   if ($len -gt 0) {
