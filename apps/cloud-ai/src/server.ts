@@ -231,6 +231,8 @@ wss.on('connection', (ws: WebSocket) => {
     // This moves auth, routing, and agent setup into the non-blocking bridge context
     withClientBridge(ws, async () => {
       let abortController: AbortController | null = null;
+      let hardTimeout: NodeJS.Timeout | null = null;
+      let didSendFinal = false;
       let aggregatedText = '';
       let routedTier: ModelChoice = 'balanced';
       let chosenModelId: string | undefined;
@@ -512,7 +514,6 @@ wss.on('connection', (ws: WebSocket) => {
           }
         } catch {}
 
-
         // Apply user's persona and tone/style preferences if provided by the client
         try {
           const ctx: any = (msg as any)?.context || {};
@@ -626,6 +627,30 @@ wss.on('connection', (ws: WebSocket) => {
         // Create AbortController for this stream so it can be cancelled
         abortController = new AbortController();
         wsAbortControllers.set(ws, abortController);
+        const hardTimeoutMs = (() => {
+          const raw = Number(process.env.CLOUD_CHAT_HARD_TIMEOUT_MS || process.env.CLOUD_STREAM_HARD_TIMEOUT_MS || '');
+          if (!isNaN(raw) && raw > 0) return raw;
+          return agentType === 'workflow' ? 12 * 60 * 1000 : 8 * 60 * 1000;
+        })();
+        hardTimeout = setTimeout(() => {
+          if (didSendFinal) return;
+          didSendFinal = true;
+          try { abortController?.abort(); } catch {}
+          try { wsAbortControllers.delete(ws); } catch {}
+          const timeoutText = (aggregatedText || '').trim() || 'Request timed out. Please retry.';
+          send(
+            ws,
+            {
+              type: 'final',
+              origin: 'cloud-ai',
+              model: chosenModelId || routedTier,
+              conversationId,
+              result: { text: timeoutText, steps: [], finishReason: 'timeout' },
+              timedOut: true,
+            },
+            requestId
+          );
+        }, hardTimeoutMs);
 
         // fast/balanced use Grok models that don't support reasoningEffort
         const stream: any = await agent.stream(inputMessages, {
@@ -634,6 +659,12 @@ wss.on('connection', (ws: WebSocket) => {
           providerOptions,
           abortSignal: abortController.signal,
           onFinish: async ({ text, steps, finishReason, usage }: any) => {
+            if (didSendFinal) {
+              try { if (hardTimeout) clearTimeout(hardTimeout); } catch {}
+              return;
+            }
+            didSendFinal = true;
+            try { if (hardTimeout) clearTimeout(hardTimeout); } catch {}
             try {
               console.log('[cloud-ai] onFinish reason:', finishReason, 'usage:', usage);
             } catch {}
@@ -922,22 +953,47 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
         // Check if we broke out of the loop due to abort
         if (abortController?.signal.aborted) {
           console.log('[cloud-ai] Stream aborted by user (loop break)');
+          didSendFinal = true;
+          try { if (hardTimeout) clearTimeout(hardTimeout); } catch {}
           wsAbortControllers.delete(ws);
           const partialText = aggregatedText ? aggregatedText.trim() : '';
-          send(ws, {
-            type: 'final',
-            origin: 'cloud-ai',
-            model: chosenModelId || routedTier,
-            conversationId,
-            result: { text: partialText || '(Stopped)', steps: [], finishReason: 'aborted' },
-            aborted: true
-          }, requestId);
+          send(
+            ws,
+            {
+              type: 'final',
+              origin: 'cloud-ai',
+              model: chosenModelId || routedTier,
+              conversationId,
+              result: { text: partialText || '(Stopped)', steps: [], finishReason: 'aborted' },
+              aborted: true,
+            },
+            requestId
+          );
           return;
         }
 
+        if (!didSendFinal) {
+          didSendFinal = true;
+          try { if (hardTimeout) clearTimeout(hardTimeout); } catch {}
+          const finalText = aggregatedText ? aggregatedText.trim() : '';
+          send(
+            ws,
+            {
+              type: 'final',
+              origin: 'cloud-ai',
+              model: chosenModelId || routedTier,
+              conversationId,
+              result: { text: finalText, steps: [], finishReason: 'done' },
+            },
+            requestId
+          );
+        }
+
         // Clean up abort controller after stream completes
+        try { if (hardTimeout) clearTimeout(hardTimeout); } catch {}
         wsAbortControllers.delete(ws);
       } catch (e: any) {
+        try { if (hardTimeout) clearTimeout(hardTimeout); } catch {}
         // Clean up abort controller on error
         wsAbortControllers.delete(ws);
 

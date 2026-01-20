@@ -15,6 +15,8 @@ interface UserData {
   preferences: {
     marketingEmails: boolean;
   };
+  plan?: string;
+  stripeCustomerId?: string | null;
 }
 
 export const useAuth = () => {
@@ -55,7 +57,9 @@ export const useAuth = () => {
               createdAt: data.created_at ? new Date(data.created_at) : new Date(),
               preferences: {
                 marketingEmails: Boolean(data.marketing_emails)
-              }
+              },
+              plan: data.plan || 'free',
+              stripeCustomerId: data.stripe_customer_id
             });
           }
         }
@@ -89,7 +93,9 @@ export const useAuth = () => {
             createdAt: data.created_at ? new Date(data.created_at) : new Date(),
             preferences: {
               marketingEmails: Boolean(data.marketing_emails)
-            }
+            },
+            plan: data.plan || 'free',
+            stripeCustomerId: data.stripe_customer_id
           });
         } else {
           setUserData(null);
@@ -158,6 +164,7 @@ export const useAuth = () => {
           emailVerified: false,
           createdAt: new Date(),
           preferences: { marketingEmails },
+          plan: 'free',
         });
       }
 
