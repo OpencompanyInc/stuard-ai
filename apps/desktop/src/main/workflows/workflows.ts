@@ -446,7 +446,7 @@ export function executeWorkflowFromTrigger(flowId: string, origin: string, paylo
     const stuardsDir = path.join(app.getPath('userData'), 'stuards');
     const engineCtx: EngineContext = {
       stuardsDir,
-      agentWsUrl: process.env.AGENT_WS_URL || 'ws://127.0.0.1:8765/ws',
+      agentWsUrl: process.env.AGENT_WS || process.env.AGENT_WS_URL || 'ws://127.0.0.1:8765/ws',
       cloudAiUrl: process.env.CLOUD_AI_HTTP || process.env.CLOUD_PUBLIC_URL || process.env.CLOUD_AI_URL || 'http://localhost:8082',
       logFn: (msg: string) => logFlow(safe, msg),
     };
@@ -1098,7 +1098,7 @@ export function workflows_run(id: string, triggerId?: string, options?: { access
     const stuardsDir = path.join(app.getPath('userData'), 'stuards');
     const engineCtx: EngineContext = {
       stuardsDir,
-      agentWsUrl: process.env.AGENT_WS_URL || 'ws://127.0.0.1:8765/ws',
+      agentWsUrl: process.env.AGENT_WS || process.env.AGENT_WS_URL || 'ws://127.0.0.1:8765/ws',
       cloudAiUrl: process.env.CLOUD_AI_HTTP || process.env.CLOUD_PUBLIC_URL || process.env.CLOUD_AI_URL || 'http://localhost:8082',
       logFn: (msg: string) => logFlow(safe, msg),
       accessToken: options?.accessToken,
@@ -1168,7 +1168,7 @@ export async function workflows_runStep(id: string, options: { step: { id: strin
     const stuardsDir = path.join(app.getPath('userData'), 'stuards');
     const ctx = {
       stuardsDir,
-      agentWsUrl: process.env.AGENT_WS_URL || 'ws://127.0.0.1:8765/ws',
+      agentWsUrl: process.env.AGENT_WS || process.env.AGENT_WS_URL || 'ws://127.0.0.1:8765/ws',
       cloudAiUrl: process.env.CLOUD_AI_HTTP || process.env.CLOUD_PUBLIC_URL || process.env.CLOUD_AI_URL || 'http://localhost:8082',
       logFn: (msg: string) => logFlow(safe, msg),
       accessToken,
@@ -1231,7 +1231,7 @@ export function workflows_runFromStep(id: string, options: { startStepId: string
     const stuardsDir = path.join(app.getPath('userData'), 'stuards');
     const engineCtx: EngineContext = {
       stuardsDir,
-      agentWsUrl: process.env.AGENT_WS_URL || 'ws://127.0.0.1:8765/ws',
+      agentWsUrl: process.env.AGENT_WS || process.env.AGENT_WS_URL || 'ws://127.0.0.1:8765/ws',
       cloudAiUrl: process.env.CLOUD_AI_HTTP || process.env.CLOUD_PUBLIC_URL || process.env.CLOUD_AI_URL || 'http://localhost:8082',
       logFn: (msg: string) => logFlow(safe, msg),
       accessToken,

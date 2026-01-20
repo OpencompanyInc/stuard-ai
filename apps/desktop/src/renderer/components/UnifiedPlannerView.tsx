@@ -428,16 +428,13 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
           )}
 
           {calendarError && (
-            <div className="flex-1 flex items-center justify-center flex-col gap-2 text-center p-8">
-              <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center border border-red-500/20">
-                <span className="text-xl text-red-500">⚠️</span>
-              </div>
-              <p className="text-[13px] font-bold text-theme-fg">{calendarError}</p>
-              <p className="text-[12px] text-theme-muted">Check your integration settings.</p>
+            <div className="shrink-0 px-4 py-2 border-b border-theme bg-theme-card">
+              <div className="text-[12px] font-bold text-theme-fg">{calendarError}</div>
+              <div className="text-[11px] text-theme-muted">Local tasks and reminders are still available offline.</div>
             </div>
           )}
 
-          {!calendarError && calendarView === "today" && (
+          {calendarView === "today" && (
             <div
               className="flex-1 overflow-y-auto custom-scrollbar relative flex flex-col bg-theme-bg"
               ref={timelineRef}
@@ -539,7 +536,7 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
             </div>
           )}
 
-          {!calendarError && calendarView === "month" && (
+          {calendarView === "month" && (
             <div className="flex-1 flex flex-col p-4 bg-theme-bg">
               <div className="grid grid-cols-7 mb-3">
                 {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(day => (

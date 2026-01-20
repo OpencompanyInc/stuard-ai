@@ -4,6 +4,12 @@ import { contextBridge, ipcRenderer } from "electron";
 const __cloudBase = process.env.CLOUD_AI_HTTP || process.env.CLOUD_PUBLIC_URL || "";
 try { contextBridge.exposeInMainWorld('__CLOUD_AI_HTTP__', __cloudBase); } catch { }
 
+const __agentHttp = process.env.AGENT_HTTP || "";
+try { contextBridge.exposeInMainWorld('__AGENT_HTTP__', __agentHttp); } catch { }
+
+const __agentWs = process.env.AGENT_WS || process.env.AGENT_WS_URL || "";
+try { contextBridge.exposeInMainWorld('__AGENT_WS__', __agentWs); } catch { }
+
 contextBridge.exposeInMainWorld("desktopAPI", {
   show: () => ipcRenderer.invoke("overlay:show"),
   hide: () => ipcRenderer.invoke("overlay:hide"),

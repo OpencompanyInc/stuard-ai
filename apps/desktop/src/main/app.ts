@@ -82,7 +82,7 @@ app.whenReady().then(async () => {
 
   try {
     logger.info("Starting agent...");
-    startAgentIfNeeded();
+    await startAgentIfNeeded();
     logger.info("Agent start requested");
   } catch (e) {
     logger.error("Failed to start agent:", e);
@@ -147,7 +147,7 @@ app.whenReady().then(async () => {
   try {
     logger.info("Initializing custom UI IPC...");
     // Initialize custom UI IPC with a function to get the router context
-    const agentWsUrl = String(process.env.AGENT_WS || '').trim() || 'ws://127.0.0.1:8765/ws';
+    const agentWsUrl = String(process.env.AGENT_WS || process.env.AGENT_WS_URL || '').trim() || 'ws://127.0.0.1:8765/ws';
     const cloudAiUrl = String(
       process.env.CLOUD_AI_HTTP ||
       process.env.CLOUD_PUBLIC_URL ||

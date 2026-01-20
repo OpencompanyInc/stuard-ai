@@ -497,7 +497,7 @@ function DashboardApp() {
       if (!accessToken) {
         setCalendarBlocks([]);
         setCalendarRange(null);
-        setCalendarError('Not signed in');
+        setCalendarError('Cloud calendar unavailable (not signed in).');
         return;
       }
       setCalendarLoading(true);
@@ -518,7 +518,7 @@ function DashboardApp() {
           } else if (err === 'unauthorized') {
             setCalendarError('Session expired. Please sign in again.');
           } else {
-            setCalendarError((j as any)?.message || 'Unable to load calendar.');
+            setCalendarError((j as any)?.message || 'Cloud calendar unavailable.');
           }
           setCalendarBlocks([]);
           setCalendarRange(null);
@@ -537,7 +537,7 @@ function DashboardApp() {
           return null;
         });
       } catch {
-        setCalendarError('Unable to load calendar.');
+        setCalendarError('Cloud calendar unavailable.');
         setCalendarBlocks([]);
         setCalendarRange(null);
       } finally {

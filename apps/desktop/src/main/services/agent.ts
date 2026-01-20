@@ -15,6 +15,18 @@ interface AgentInstance {
 const agents = new Map<string, AgentInstance>();
 const DEFAULT_PORT = 8765;
 
+function setAgentProcessEnv(port: number) {
+  try {
+    const host = "127.0.0.1";
+    if (!port || port <= 0) return;
+    process.env.AGENT_HOST = host;
+    process.env.AGENT_PORT = String(port);
+    process.env.AGENT_HTTP = `http://${host}:${port}`;
+    process.env.AGENT_WS_URL = `ws://${host}:${port}/ws`;
+    process.env.AGENT_WS = process.env.AGENT_WS_URL;
+  } catch { }
+}
+
 function getAgentBinaryPath() {
   const base = process.resourcesPath;
   const name = process.platform === "win32" ? "Stuard AI Agent.exe" : "stuard-agent";
@@ -46,13 +58,17 @@ export async function startAgent(id: string = 'default', port?: number): Promise
   // If already running, return port
   if (agents.has(id)) {
     logger.info(`Agent ${id} already running on port ${agents.get(id)!.port}`);
-    return agents.get(id)!.port;
+    const existingPort = agents.get(id)!.port;
+    setAgentProcessEnv(existingPort);
+    return existingPort;
   }
 
   // In dev mode, we don't spawn the binary, but we assume default is running
   if (isDev) {
     logger.info("Dev mode - not spawning agent binary");
-    return id === 'default' ? DEFAULT_PORT : 0;
+    const p = id === 'default' ? DEFAULT_PORT : 0;
+    setAgentProcessEnv(p);
+    return p;
   }
 
   const bin = getAgentBinaryPath();
@@ -105,6 +121,8 @@ export async function startAgent(id: string = 'default', port?: number): Promise
   if (!env.AGENT_HOST) env.AGENT_HOST = "127.0.0.1";
   env.AGENT_PORT = targetPort.toString();
 
+  setAgentProcessEnv(targetPort);
+
   const cwd = path.join(process.resourcesPath, "agent");
   const logPath = path.join(app.getPath('userData'), `agent-${id}.log`);
   
@@ -137,12 +155,15 @@ export async function startAgent(id: string = 'default', port?: number): Promise
   return targetPort;
 }
 
-export function startAgentIfNeeded() {
+export async function startAgentIfNeeded() {
   logger.info("startAgentIfNeeded called");
   // Start default agent
-  startAgent('default', DEFAULT_PORT)
-    .then(port => logger.info(`Default agent started on port ${port}`))
-    .catch(e => logger.error("Failed to start default agent:", e));
+  try {
+    const p = await startAgent('default', DEFAULT_PORT);
+    logger.info(`Default agent started on port ${p}`);
+  } catch (e) {
+    logger.error("Failed to start default agent:", e);
+  }
 }
 
 export async function stopAgent(id: string = 'default'): Promise<void> {

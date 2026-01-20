@@ -555,7 +555,22 @@ export function useAgent(options?: string | UseAgentOptions) {
     setAI({ phase: 'connecting', statusText: 'Connecting…' });
 
     try {
-      const target = customAgentUrl || 'ws://127.0.0.1:8765/ws';
+      const w: any = window as any;
+      const hintedWs = String(w.__AGENT_WS__ || '').trim();
+      const hintedHttp = String(w.__AGENT_HTTP__ || '').trim();
+      const httpToWs = (httpUrl: string) => {
+        try {
+          let wsBase = httpUrl.replace(/\/+$/, '');
+          if (wsBase.startsWith('https://')) wsBase = 'wss://' + wsBase.slice('https://'.length);
+          else if (wsBase.startsWith('http://')) wsBase = 'ws://' + wsBase.slice('http://'.length);
+          if (!wsBase.endsWith('/ws')) wsBase = wsBase + '/ws';
+          return wsBase;
+        } catch {
+          return '';
+        }
+      };
+      const hinted = hintedWs || (hintedHttp ? httpToWs(hintedHttp) : '');
+      const target = customAgentUrl || hinted || 'ws://127.0.0.1:8765/ws';
       const ws = new WebSocket(target);
       wsRef.current = ws;
 

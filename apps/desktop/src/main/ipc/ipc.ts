@@ -417,8 +417,9 @@ export function setupIpc() {
   // Tools execution (Renderer -> Main -> Local Agent/System)
   ipcMain.handle('tools:exec', async (_e, tool: string, args: any) => {
     try {
-      // Unified tool router: routes to Electron-native tools, cloud, or local agent.
-      const agentWsUrl = String(process.env.AGENT_WS || '').trim() || 'ws://127.0.0.1:8765/ws';
+      logger.info("Initializing custom UI IPC...");
+      // Initialize custom UI IPC with a function to get the router context
+      const agentWsUrl = String(process.env.AGENT_WS || process.env.AGENT_WS_URL || '').trim() || 'ws://127.0.0.1:8765/ws';
       const cloudAiUrl = String(
         process.env.CLOUD_AI_HTTP ||
         process.env.CLOUD_PUBLIC_URL ||

@@ -13,7 +13,14 @@ import * as fs from "fs";
 import logger from "../utils/logger";
 
 // Agent bridge for local tool execution
-const AGENT_HTTP = "http://127.0.0.1:8765";
+const getAgentHttp = () => {
+  try {
+    const raw = String(process.env.AGENT_HTTP || "http://127.0.0.1:8765");
+    return raw.replace(/\/+$/, "");
+  } catch {
+    return "http://127.0.0.1:8765";
+  }
+};
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
 
@@ -76,7 +83,7 @@ async function checkAgentAvailable(): Promise<boolean> {
   }
 
   try {
-    const resp = await fetch(`${AGENT_HTTP}/health`, {
+    const resp = await fetch(`${getAgentHttp()}/health`, {
       method: "GET",
       signal: AbortSignal.timeout(2000),
     });
@@ -116,7 +123,7 @@ async function execAgentTool(tool: string, args: Record<string, any>): Promise<a
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const resp = await fetch(`${AGENT_HTTP}/v1/tools/exec`, {
+      const resp = await fetch(`${getAgentHttp()}/v1/tools/exec`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tool, args }),
