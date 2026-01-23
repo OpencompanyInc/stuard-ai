@@ -82,7 +82,7 @@ async def handle_cloud_tool_request(
                 except Exception:
                     pass
 
-        await emit("started", {"args": args})
+        await emit("started", {"args": args, "startedAtMsMono": int(asyncio.get_event_loop().time() * 1000)})
 
         # Approval gate for sensitive tools
         if tool in SENSITIVE_TOOLS or tool in SENSITIVE_CLIENT_TOOLS:
@@ -188,10 +188,11 @@ async def handle_tool_exec(msg: Dict[str, Any], session: WebSocketSession) -> No
             payload.update(extra)
         await session.send_json(payload)
 
-    await emit("started", {"args": args})
+    await emit("started", {"args": args, "startedAtMsMono": int(asyncio.get_event_loop().time() * 1000)})
 
     try:
-        result = await dispatch_execute(tool, args, emit)
+        async with session.tool_semaphore:
+            result = await dispatch_execute(tool, args, emit)
     except Exception as e:
         logger.exception("tool_exec_error id=%s tool=%s", req_id, tool)
         result = {"ok": False, "error": str(e)}

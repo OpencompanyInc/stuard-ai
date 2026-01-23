@@ -170,6 +170,7 @@ export interface MessageMetadata {
   mode?: string;
   tier?: string;
   modelId?: string;
+  contextPaths?: Array<{ path: string; name: string; isDirectory: boolean }>;
   toolCalls?: Array<{
     id: string;
     tool: string;

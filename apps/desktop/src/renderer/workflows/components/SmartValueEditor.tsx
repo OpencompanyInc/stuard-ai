@@ -41,6 +41,8 @@ const TOOL_OUTPUT_FIELDS: Record<string, string[]> = {
   'set_variable': ['ok'],
   'list_open_windows': ['ok', 'windows'],
   'bring_window_to_foreground': ['ok'],
+  'get_window_info': ['ok', 'bounds'],
+  'set_window_bounds': ['ok', 'bounds'],
   'capture_media': ['ok', 'path', 'base64'],
   'launch_application_or_uri': ['ok'],
   'memory_retrieval': ['ok', 'memories', 'facts'],

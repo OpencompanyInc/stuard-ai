@@ -5,6 +5,8 @@ import { getBridgeSecrets, execLocalTool } from './bridge';
 import { buildProviderModel } from '../utils/models';
 import { getDefaultModelForCategory } from '../pricing';
 
+export { computer_use_agent } from './computer-use-agent';
+
 // Cloud-side LLM extraction for memory texts using Gemini 2.5 Flash
 export const memory_extract_texts = createTool({
   id: 'memory_extract_texts',
@@ -35,6 +37,7 @@ export const memory_extract_texts = createTool({
 // GUI Interaction & Automation
 export {
   get_mouse_position,
+  computer_use,
   click_at_coordinates,
   double_click_at_coordinates,
   type_text,
@@ -107,6 +110,7 @@ export {
   bring_window_to_foreground,
   get_window_info,
   smart_bring_window_to_foreground,
+  set_window_bounds,
 } from './device/windows';
 
 // Workflows / Stuards metadata (desktop-side JSON files)
@@ -171,6 +175,17 @@ export {
   stop_system_audio,
   describe_system_audio_capabilities,
 } from './device/screen-capture';
+
+export {
+  ffmpeg_status,
+  ffmpeg_setup,
+  ffmpeg_run,
+  ffmpeg_convert_media,
+  ffmpeg_extract_audio,
+  ffmpeg_trim_media,
+  ffmpeg_probe_media,
+  ffmpeg_extract_frames,
+} from './device/ffmpeg';
 
 // Canvas / Container Manager
 export { canvas_manager } from './device/canvas';

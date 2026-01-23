@@ -357,14 +357,6 @@ function SelectInput({
   );
 }
 
-/** Workflow-level variable for suggestions */
-export interface WorkflowVariableSuggestion {
-  name: string;
-  type: 'string' | 'number' | 'boolean' | 'json' | 'list';
-  defaultValue?: any;
-  description?: string;
-}
-
 // Text input with variable suggestions
 export function TextInputWithVariables({
   value,
@@ -677,7 +669,7 @@ function ParallelStepsEditor({
   value: any[];
   onChange: (v: any[]) => void;
   upstreamNodes?: UpstreamNode[];
-  workflowVariables?: WorkflowVariableSuggestion[];
+  workflowVariables?: WorkflowVariable[];
   isParallel?: boolean;
 }) {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);

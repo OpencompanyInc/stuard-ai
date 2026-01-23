@@ -6,6 +6,7 @@
 // imports `node-pty`. This bridges the module name for TypeScript.
 
 declare module 'node-pty' {
-  export * from '@homebridge/node-pty-prebuilt-multiarch';
+  const pty: any;
+  export = pty;
 }
 

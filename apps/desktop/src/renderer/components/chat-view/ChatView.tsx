@@ -24,6 +24,8 @@ interface ChatViewProps {
   onOpenDashboard: () => void;
   onNewChat: () => void;
 
+  overlayMode?: 'compact' | 'sidebar' | 'window';
+
   // Sidebar
   onToggleSidebar?: () => void;
   sidebarOpen?: boolean;
@@ -92,6 +94,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   onCollapse,
   onOpenDashboard,
   onNewChat,
+  overlayMode = 'compact',
   onToggleSidebar,
   sidebarOpen,
   query,

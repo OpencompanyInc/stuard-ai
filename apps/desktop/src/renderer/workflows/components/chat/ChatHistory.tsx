@@ -6,6 +6,7 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import clsx from "clsx";
 import { User, Bot, AlertCircle, CheckCircle2, RotateCw, Zap, Sparkles, X, Undo2 } from "lucide-react";
+import { ModelSelector } from "../../../components/ModelSelector";
 import { AudioPlayer } from "../../../components/AudioPlayer";
 import { ReasoningBlock } from "../../../components/ReasoningBlock";
 import type { Message, StreamItem, ToolEvent } from "../../hooks/useWorkflowChat";
@@ -37,7 +38,7 @@ function toMediaSrc(src: string): string {
 
 function preprocessMessageContent(content: string): string {
   if (!content) return '';
-  let processed = content.replace(/<<([^<>]+)>>/g, '![attachment]($1)');
+  let processed = content.replace(/<<([^<>]+)>>/g, '![attachment](<$1>)');
 
   // Comprehensive regex for media paths (Windows and Unix)
   // Matches files ending in common media extensions that are not already in markdown
@@ -48,7 +49,7 @@ function preprocessMessageContent(content: string): string {
     let type = 'image';
     if (['mp4', 'webm', 'mov'].includes(ext)) type = 'video';
     else if (['wav', 'mp3', 'ogg', 'm4a', 'aac'].includes(ext)) type = 'audio';
-    return `${prefix}![${type}](${path})`;
+    return `${prefix}![${type}](<${path}>)`;
   });
 
   return processed;
@@ -324,6 +325,8 @@ export function ChatHistory({
   setShowReasoning,
   busy,
   onUndo,
+  selectedModelId,
+  onSelectModel,
 }: {
   messages: Message[];
   streamItems: StreamItem[];
@@ -332,19 +335,29 @@ export function ChatHistory({
   setShowReasoning: (v: boolean) => void;
   busy: boolean;
   onUndo?: (snapshot: any) => void;
+  selectedModelId: string | 'auto';
+  onSelectModel: (id: string | 'auto') => void;
 }) {
   return (
     <div className="flex flex-col h-full min-h-0 bg-[#fdfdfd]">
       <div className="px-4 py-3 border-b border-slate-200 bg-white/50 backdrop-blur-sm sticky top-0 z-10">
         <div className="flex items-center justify-between">
           <div className="text-[13px] font-semibold text-slate-800">Workflow Chat</div>
-          <button
-            type="button"
-            className="text-[12px] text-slate-500 hover:text-slate-800 transition-colors"
-            onClick={() => setShowReasoning(!showReasoning)}
-          >
-            {showReasoning ? "Hide reasoning" : "Show reasoning"}
-          </button>
+          <div className="flex items-center gap-2">
+            <ModelSelector
+              selectedModelId={selectedModelId}
+              onSelectModel={onSelectModel}
+              side="bottom"
+              align="end"
+            />
+            <button
+              type="button"
+              className="text-[12px] text-slate-500 hover:text-slate-800 transition-colors"
+              onClick={() => setShowReasoning(!showReasoning)}
+            >
+              {showReasoning ? "Hide reasoning" : "Show reasoning"}
+            </button>
+          </div>
         </div>
       </div>
 

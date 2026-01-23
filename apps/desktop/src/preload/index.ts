@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   // System helpers
   openExternal: (url: string) => ipcRenderer.invoke('system:openExternal', url),
   getLinkPreview: (url: string) => ipcRenderer.invoke('system:getLinkPreview', url),
+  getFileIcon: (filePath: string, options?: { size?: 'small' | 'normal' | 'large' }) => ipcRenderer.invoke('system:getFileIcon', filePath, options),
   notify: (title: string, body: string) => ipcRenderer.invoke('system:notify', { title, body }),
   webhooksLocalUrl: (id?: string) => ipcRenderer.invoke('webhooks:localUrl', id),
   connectOutlook: () => ipcRenderer.invoke('outlook:connect'),

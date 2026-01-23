@@ -17,12 +17,16 @@ import { list_local_workflows, list_local_stuards, show_json_workflow_code, stop
 import { testStep, testCustomTool } from './tools';
 
 const GOOGLE_API_KEY = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || '';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const XAI_API_KEY = process.env.XAI_API_KEY || '';
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
+const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY || '';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SYSTEM PROMPT - Comprehensive workflow engine context
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const WORKFLOW_SYSTEM_PROMPT = `You are the Workflow Architect for StuardAI.
+export const WORKFLOW_SYSTEM_PROMPT = `You are the Workflow Architect for StuardAI.
 
 Your role is to design, test, and modify local automations (workflows) through conversation.
 The user provides the current workflow JSON in their message. You modify it using tools.
@@ -611,14 +615,40 @@ export function workflowAgentLog(event: string, data?: Record<string, any>) {
 /**
  * Get the Workflow Agent configured with Gemini 3 Pro Preview.
  */
-export function getWorkflowAgent(): Agent {
-  if (!GOOGLE_API_KEY) {
-    workflowAgentLog('error', { message: 'GOOGLE_GENERATIVE_AI_API_KEY or GEMINI_API_KEY not set' });
-    throw new Error('GOOGLE_GENERATIVE_AI_API_KEY or GEMINI_API_KEY is required for workflow agent');
+export function getWorkflowAgent(modelIdOverride?: string): Agent {
+  const modelId =
+    (typeof modelIdOverride === 'string' && modelIdOverride.trim())
+      ? modelIdOverride.trim()
+      : (process.env.WORKFLOW_MODEL_ID || 'google/gemini-3-pro-preview');
+
+  const provider = String(modelId.split('/')[0] || '').toLowerCase();
+
+  if (provider === 'google' && !GOOGLE_API_KEY) {
+    workflowAgentLog('error', { message: 'GOOGLE_GENERATIVE_AI_API_KEY or GEMINI_API_KEY not set', modelId });
+    throw new Error('GOOGLE_GENERATIVE_AI_API_KEY or GEMINI_API_KEY is required for google workflow models');
+  }
+  if (provider === 'openai' && !OPENAI_API_KEY) {
+    workflowAgentLog('error', { message: 'OPENAI_API_KEY not set', modelId });
+    throw new Error('OPENAI_API_KEY is required for openai workflow models');
+  }
+  if (provider === 'xai' && !XAI_API_KEY) {
+    workflowAgentLog('error', { message: 'XAI_API_KEY not set', modelId });
+    throw new Error('XAI_API_KEY is required for xai workflow models');
+  }
+  if (provider === 'deepseek' && !DEEPSEEK_API_KEY) {
+    workflowAgentLog('error', { message: 'DEEPSEEK_API_KEY not set', modelId });
+    throw new Error('DEEPSEEK_API_KEY is required for deepseek workflow models');
+  }
+  if (provider === 'perplexity' && !PERPLEXITY_API_KEY) {
+    workflowAgentLog('error', { message: 'PERPLEXITY_API_KEY not set', modelId });
+    throw new Error('PERPLEXITY_API_KEY is required for perplexity workflow models');
   }
 
-  const modelId = 'google/gemini-3-pro-preview';
   const model = buildProviderModel(modelId);
+  if (!model) {
+    workflowAgentLog('error', { message: 'Failed to build provider model', modelId });
+    throw new Error(`Unsupported workflow modelId: ${modelId}`);
+  }
 
   workflowAgentLog('init', { model: modelId });
 
@@ -666,14 +696,16 @@ export function getWorkflowAgent(): Agent {
       {
         role: 'system',
         content: WORKFLOW_SYSTEM_PROMPT,
-        providerOptions: {
-          google: {
-            thinkingConfig: {
-              includeThoughts: true,
-              thinkingLevel: 'high',
+        providerOptions: (provider === 'google' && modelId.includes('gemini-3'))
+          ? {
+            google: {
+              thinkingConfig: {
+                includeThoughts: true,
+                thinkingLevel: 'high',
+              },
             },
-          },
-        },
+          }
+          : undefined,
       },
     ] as any,
     model: model as any,

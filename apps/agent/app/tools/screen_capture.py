@@ -203,6 +203,45 @@ async def capture_screen(
             recording_info["error"] = f"Missing dependency: {e}"
             return
 
+        def _try_writer_mp4_h264(out_path: str):
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*"H264")
+                out = cv2.VideoWriter(out_path, cv2.CAP_MSMF, fourcc, fps, (out_width, out_height))
+                if out.isOpened():
+                    return out
+                try:
+                    out.release()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*"avc1")
+                out = cv2.VideoWriter(out_path, cv2.CAP_MSMF, fourcc, fps, (out_width, out_height))
+                if out.isOpened():
+                    return out
+                try:
+                    out.release()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            return None
+
+        def _try_writer_webm_vp8(out_path: str):
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*"VP80")
+                out = cv2.VideoWriter(out_path, fourcc, fps, (out_width, out_height))
+                if out.isOpened():
+                    return out
+                try:
+                    out.release()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            return None
+
         print(f"[screen_capture] Starting session '{session_id}', target={target}, fps={fps}")
 
         # Determine capture region
@@ -244,20 +283,18 @@ async def capture_screen(
         out_width = out_width if out_width % 2 == 0 else out_width + 1
         out_height = out_height if out_height % 2 == 0 else out_height + 1
 
-        # Initialize video writer
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        out = cv2.VideoWriter(path, fourcc, fps, (out_width, out_height))
+        used_path = path
+        out = _try_writer_mp4_h264(path)
 
-        if not out.isOpened():
-            # Fallback to AVI
-            fallback_path = path.rsplit(".", 1)[0] + ".avi"
-            fourcc = cv2.VideoWriter_fourcc(*"XVID")
-            out = cv2.VideoWriter(fallback_path, fourcc, fps, (out_width, out_height))
-            recording_info["path"] = fallback_path
+        if out is None:
+            used_path = path.rsplit(".", 1)[0] + ".webm"
+            out = _try_writer_webm_vp8(used_path)
 
-        if not out.isOpened():
+        if out is None:
             recording_info["error"] = "video_writer_failed"
             return
+
+        recording_info["path"] = used_path
 
         # Start audio capture if requested
         audio_thread = None
@@ -265,6 +302,7 @@ async def capture_screen(
         audio_stop_event = threading.Event()
         if include_audio:
             audio_path = path.rsplit(".", 1)[0] + "_audio.wav"
+            recording_info["audioFilePath"] = audio_path
             audio_thread = threading.Thread(
                 target=_capture_system_audio_worker,
                 args=(audio_path, duration_ms, audio_stop_event, session_id + "_audio", emit, loop, None, silence_threshold, silence_duration_ms),
@@ -330,25 +368,8 @@ async def capture_screen(
                 audio_stop_event.set()
                 audio_thread.join(timeout=2.0)
 
-            # Merge audio and video if both exist
             if include_audio and audio_path and os.path.isfile(audio_path):
-                final_path = recording_info["path"]
-                merged_path = final_path.rsplit(".", 1)[0] + "_merged.mp4"
-                try:
-                    _merge_audio_video(recording_info["path"], audio_path, merged_path)
-                    # Replace original with merged
-                    if os.path.isfile(merged_path):
-                        os.replace(merged_path, final_path)
-                        recording_info["hasAudio"] = True
-                except Exception as e:
-                    print(f"[screen_capture] Failed to merge audio: {e}")
-                    recording_info["hasAudio"] = False
-
-                # Clean up temp audio
-                try:
-                    os.remove(audio_path)
-                except Exception:
-                    pass
+                recording_info["hasAudio"] = True
 
         recording_info["completed"] = True
         print(f"[screen_capture] Saved to {recording_info['path']}")
@@ -362,21 +383,35 @@ async def capture_screen(
         thread = threading.Thread(target=_background_screen_work, daemon=True)
         thread.start()
 
+        resolved_path = path
+        for _ in range(20):
+            try:
+                rp = recording_info.get("path")
+                if isinstance(rp, str) and rp:
+                    resolved_path = rp
+                    break
+            except Exception:
+                pass
+            await asyncio.sleep(0.01)
+
+        mime = "video/webm" if str(resolved_path).lower().endswith(".webm") else "video/mp4"
+
         if emit:
             await emit("recording", {
                 "sessionId": session_id,
                 "mode": mode,
-                "filePath": path,
+                "filePath": resolved_path,
             })
 
         return {
             "ok": True,
             "sessionId": session_id,
-            "filePath": path,
+            "filePath": resolved_path,
             "mode": mode,
             "status": "recording",
-            "mimeType": "video/mp4",
+            "mimeType": mime,
             "hasAudio": include_audio,
+            "audioFilePath": recording_info.get("audioFilePath"),
         }
 
     # For fixed mode, run synchronously
@@ -428,8 +463,10 @@ async def stop_screen_capture(
 
     # Wait for recording to finish
     file_path = None
+    audio_file_path = None
     if recording_info:
         file_path = recording_info.get("path")
+        audio_file_path = recording_info.get("audioFilePath")
         for _ in range(40):  # Wait up to 2 seconds
             if recording_info.get("completed") or recording_info.get("error"):
                 break
@@ -446,6 +483,7 @@ async def stop_screen_capture(
         "sessionId": session_id,
         "wasActive": was_active,
         "filePath": file_path,
+        "audioFilePath": audio_file_path,
     }
 
 
@@ -1035,30 +1073,7 @@ def _capture_generic_loopback(
         else:
             if recording_info:
                 recording_info["error"] = "No audio data captured"
-
     except Exception as e:
         print(f"[system_audio] Error: {e}")
         if recording_info:
             recording_info["error"] = str(e)
-
-
-def _merge_audio_video(video_path: str, audio_path: str, output_path: str) -> None:
-    """Merge audio and video files using ffmpeg."""
-    import subprocess
-
-    try:
-        subprocess.run([
-            "ffmpeg", "-y",
-            "-i", video_path,
-            "-i", audio_path,
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-shortest",
-            output_path
-        ], check=True, capture_output=True)
-    except FileNotFoundError:
-        print("[screen_capture] ffmpeg not found, skipping audio merge")
-        raise
-    except subprocess.CalledProcessError as e:
-        print(f"[screen_capture] ffmpeg error: {e.stderr.decode()}")
-        raise

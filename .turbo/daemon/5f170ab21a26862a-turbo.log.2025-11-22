@@ -1,0 +1,33 @@
+2025-11-22T14:35:04.286540Z  WARN daemon_server: turborepo_lib::commands::daemon: daemon already running
+2025-11-22T14:35:29.038837Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\cloud-ai\\src\\agents\\headless-agent.ts"), AnchoredSystemPathBuf("apps\\cloud-ai\\src\\agents\\stuard-agent.ts")}
+2025-11-22T14:35:29.038934Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }}))
+2025-11-22T15:21:20.133912Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\cloud-ai\\mastra-memory.db-wal"), AnchoredSystemPathBuf("apps\\cloud-ai\\mastra-memory.db-shm"), AnchoredSystemPathBuf("apps\\cloud-ai\\mastra-memory.db"), AnchoredSystemPathBuf("apps\\cloud-ai")}
+2025-11-22T15:21:20.134232Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }}))
+2025-11-22T16:12:00.730585Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\tsup.config.bundled_9zr7gsojz8t.mjs"), AnchoredSystemPathBuf("apps\\desktop")}
+2025-11-22T16:12:00.730690Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2025-11-22T16:12:01.260132Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\tsup.config.bundled_9zr7gsojz8t.mjs"), AnchoredSystemPathBuf("apps\\desktop")}
+2025-11-22T16:12:01.260176Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2025-11-22T16:12:01.260323Z  WARN turborepo_lib::package_changes_watcher: hashes are the same, no need to rerun
+2025-11-22T16:12:17.437875Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\agent\\app\\tools\\__pycache__"), AnchoredSystemPathBuf("apps\\agent\\app\\tools\\__pycache__\\memory.cpython-313.pyc.1840217316912"), AnchoredSystemPathBuf("apps\\agent\\app\\tools\\__pycache__\\memory.cpython-313.pyc")}
+2025-11-22T16:12:17.437921Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2025-11-22T16:14:41.838787Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\cloud-ai\\mastra-memory.db-wal"), AnchoredSystemPathBuf("apps\\cloud-ai\\mastra-memory.db-shm"), AnchoredSystemPathBuf("apps\\cloud-ai")}
+2025-11-22T16:14:41.838824Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }}))
+2025-11-22T16:14:53.436511Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\cloud-ai\\mastra-memory.db-wal")}
+2025-11-22T16:14:53.436546Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }}))
+2025-11-22T16:14:54.434939Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\cloud-ai\\mastra-memory.db-wal")}
+2025-11-22T16:14:54.434968Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }}))
+2025-11-22T16:14:54.435026Z  WARN turborepo_lib::package_changes_watcher: hashes are the same, no need to rerun
+2025-11-22T16:15:29.930670Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\cloud-ai\\mastra-memory.db-wal")}
+2025-11-22T16:15:29.930717Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }}))
+2025-11-22T16:15:30.720799Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\cloud-ai\\mastra-memory.db-shm"), AnchoredSystemPathBuf("apps\\cloud-ai\\mastra-memory.db"), AnchoredSystemPathBuf("apps\\cloud-ai"), AnchoredSystemPathBuf("apps\\cloud-ai\\mastra-memory.db-wal")}
+2025-11-22T16:15:30.720843Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }}))
+2025-11-22T16:15:30.721047Z  WARN turborepo_lib::package_changes_watcher: hashes are the same, no need to rerun
+2025-11-22T16:23:38.337417Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\website\\package-lock.json")}
+2025-11-22T16:23:38.337453Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("stuard-ai-website"), path: AnchoredSystemPathBuf("apps\\website") }}))
+2025-11-22T17:56:05.579477Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\cloud-ai"), AnchoredSystemPathBuf("apps\\cloud-ai\\mastra-memory.db-wal"), AnchoredSystemPathBuf("apps\\cloud-ai\\mastra-memory.db-shm")}
+2025-11-22T17:56:05.579637Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }}))
+2025-11-22T17:57:56.420611Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\cloud-ai\\mastra-memory.db-wal")}
+2025-11-22T17:57:56.420660Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }}))
+2025-11-22T17:57:57.453104Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\cloud-ai\\mastra-memory.db-wal")}
+2025-11-22T17:57:57.453145Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }}))
+2025-11-22T17:57:57.453237Z  WARN turborepo_lib::package_changes_watcher: hashes are the same, no need to rerun

@@ -129,6 +129,10 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
   const [fileError, setFileError] = useState('');
   const [indexStats, setIndexStats] = useState<any>(null);
 
+  const fileIconCacheRef = useRef<Record<string, string>>({});
+  const [fileIconDataUrls, setFileIconDataUrls] = useState<Record<string, string>>({});
+  const fileIconReqIdRef = useRef(0);
+
   const searchReqIdRef = useRef(0);
   const semanticReqIdRef = useRef(0);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -313,6 +317,43 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
       if (semanticDebounceRef.current) clearTimeout(semanticDebounceRef.current);
     };
   }, [query, expanded, doQuickFileSearch, doSemanticRefine]);
+
+  useEffect(() => {
+    const api = (window as any).desktopAPI;
+    if (!api?.getFileIcon) return;
+
+    const paths = Array.from(new Set(
+      (Array.isArray(fileResults) ? fileResults : [])
+        .filter((f: any) => f && String(f.kind || '').toLowerCase() === 'application')
+        .map((f: any) => String(f.path || '').trim())
+        .filter((p: string) => !!p)
+    ));
+    if (paths.length === 0) return;
+
+    const reqId = ++fileIconReqIdRef.current;
+    (async () => {
+      const updates: Record<string, string> = {};
+      await Promise.all(
+        paths.map(async (p: string) => {
+          if (fileIconCacheRef.current[p]) return;
+          const res = await api.getFileIcon(p, { size: 'small' }).catch(() => null);
+          if (fileIconReqIdRef.current !== reqId) return;
+          if (res?.ok && typeof res.dataUrl === 'string' && res.dataUrl) {
+            updates[p] = res.dataUrl;
+          }
+        })
+      );
+
+      if (fileIconReqIdRef.current !== reqId) return;
+      const keys = Object.keys(updates);
+      if (keys.length === 0) return;
+
+      for (const k of keys) {
+        fileIconCacheRef.current[k] = updates[k];
+      }
+      setFileIconDataUrls(prev => ({ ...prev, ...updates }));
+    })();
+  }, [fileResults]);
 
   // Handle adding a file result as context
   const handleAddFileAsContext = useCallback((file: any) => {
@@ -831,6 +872,10 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
                         };
                         const cfg = getFileKindConfig(kind);
                         const Icon = cfg.icon;
+                        const p = String(f.path || '').trim();
+                        const iconUrl = (kind === 'application' && p)
+                          ? (fileIconDataUrls[p] || fileIconCacheRef.current[p] || '')
+                          : '';
 
                         return (
                           <button
@@ -839,7 +884,11 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
                             className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-theme-hover transition-all group border border-transparent hover:border-theme/30 text-left"
                           >
                             <div className={clsx("w-8 h-8 rounded-lg border border-theme/20 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-all", cfg.bg, cfg.color)}>
-                              <Icon className="w-4 h-4" />
+                              {iconUrl ? (
+                                <img src={iconUrl} alt="" className="w-4 h-4 object-contain" />
+                              ) : (
+                                <Icon className="w-4 h-4" />
+                              )}
                             </div>
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2">

@@ -142,6 +142,8 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'local.tool', t: 'list_open_windows', label: 'List Windows', icon: List, args: {} },
       { k: 'local.tool', t: 'bring_window_to_foreground', label: 'Focus Window', icon: AppWindow, args: { title: '' } },
       { k: 'local.tool', t: 'smart_bring_window_to_foreground', label: 'Smart Focus', icon: Wand2, args: { hint: '' } },
+      { k: 'local.tool', t: 'get_window_info', label: 'Get Window Info', icon: AppWindow, args: { title: '' } },
+      { k: 'local.tool', t: 'set_window_bounds', label: 'Resize / Move', icon: AppWindow, args: { title: '', bounds: { x: 0, y: 0, width: 900, height: 700 }, bringToTop: true } },
     ],
   },
   {

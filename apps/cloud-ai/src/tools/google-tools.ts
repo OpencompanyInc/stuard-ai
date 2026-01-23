@@ -311,6 +311,34 @@ export const calendar_create_event = createTool({
   },
 });
 
+export const calendar_delete_event = createTool({
+  id: 'calendar_delete_event',
+  description: 'Delete a Google Calendar event. Requires calendar.events.',
+  inputSchema: z.object({
+    calendarId: z.string().default('primary'),
+    eventId: z.string().min(1),
+    sendUpdates: z.enum(['all', 'externalOnly', 'none']).optional(),
+  }),
+  execute: async ({ context }) => {
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/calendar.events']);
+    if ((gate as any).ok !== true) return gate;
+    const { calendarId, eventId, sendUpdates } = context as any;
+
+    const params = new URLSearchParams();
+    if (sendUpdates) params.set('sendUpdates', String(sendUpdates));
+    const qs = params.toString();
+
+    await googleAuthorizedFetch(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/events/${encodeURIComponent(eventId)}${qs ? `?${qs}` : ''}`,
+      {
+        method: 'DELETE',
+      } as any,
+    );
+
+    return { ok: true, calendarId: String(calendarId || 'primary'), eventId: String(eventId) };
+  },
+});
+
 export const tasks_list = createTool({
   id: 'tasks_list',
   description: 'List tasks from Google Tasks. If tasklist is not provided, uses the first list.',

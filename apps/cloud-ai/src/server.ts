@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { getWorkflowAgent } from './agents/workflow-agent';
+import { getWorkflowAgent, WORKFLOW_SYSTEM_PROMPT } from './agents/workflow-agent';
 import { withClientBridge, handleClientToolMessage } from './tools/bridge';
 import { routeModel, type ModelChoice } from './router/model-router';
 import { verifyAccessToken, AuthErrorCode } from './auth';
@@ -167,7 +167,23 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
 
 // Note: Server-side queuing removed - client handles per-tab queuing via requestId routing
 
-wss.on('connection', (ws: WebSocket) => {
+ wss.on('connection', (ws: WebSocket, req: any) => {
+  try {
+    const rawUrl = String(req?.url || '');
+    const qIndex = rawUrl.indexOf('?');
+    if (qIndex >= 0) {
+      const search = rawUrl.slice(qIndex + 1);
+      const parts = search.split('&');
+      for (const part of parts) {
+        const [k, v] = part.split('=');
+        if (decodeURIComponent(k || '') === 'client') {
+          (ws as any).__clientType = decodeURIComponent(v || '');
+          break;
+        }
+      }
+    }
+  } catch {}
+
   send(ws, { type: 'handshake', origin: 'cloud-ai', message: 'connected' });
   conversations.set(ws, []);
   writeLog('ws_connected');
@@ -358,15 +374,47 @@ wss.on('connection', (ws: WebSocket) => {
         }
 
         // Determine which agent/model to use
-        const agentType = String((msg as any)?.agent || 'stuard').toLowerCase();
-        const modelLabel = agentType === 'workflow' ? 'gemini-3-pro-preview' : (chosenModelId || routedTier);
+        const rawAgent = typeof (msg as any)?.agent === 'string' ? String((msg as any).agent) : '';
+        const rawAgentLower = rawAgent.toLowerCase().trim();
+        const clientType = typeof (ws as any)?.__clientType === 'string' ? String((ws as any).__clientType).toLowerCase().trim() : '';
+        const ctxMode = typeof (msg as any)?.context?.mode === 'string' ? String((msg as any).context.mode).toLowerCase().trim() : '';
+
+        const inferredWorkflow =
+          clientType === 'workflow_ui' ||
+          clientType === 'workflow' ||
+          clientType === 'workflows' ||
+          ctxMode === 'workflow_architect' ||
+          ctxMode === 'workflow';
+
+        const agentType =
+          rawAgentLower === 'workflow' ||
+          rawAgentLower === 'workflow_agent' ||
+          rawAgentLower === 'workflow-architect' ||
+          rawAgentLower === 'workflow_architect'
+            ? 'workflow'
+            : inferredWorkflow
+              ? 'workflow'
+              : 'stuard';
+
+        const workflowModelId = agentType === 'workflow'
+          ? (
+            (typeof (msg as any)?.modelId === 'string' && String((msg as any).modelId).trim())
+              ? String((msg as any).modelId).trim()
+              : (process.env.WORKFLOW_MODEL_ID || 'google/gemini-3-pro-preview')
+          )
+          : undefined;
+
+        const modelLabel = agentType === 'workflow' ? (workflowModelId || 'google/gemini-3-pro-preview') : (chosenModelId || routedTier);
+
+        const incomingCtxForMeta: any = (msg as any)?.context || {};
+        const contextPathsForMeta = Array.isArray(incomingCtxForMeta?.paths) ? incomingCtxForMeta.paths : undefined;
 
         // Select agent based on type
         let agent: any;
         if (agentType === 'workflow') {
           try {
-            agent = getWorkflowAgent();
-            console.log('[cloud-ai] Using workflow agent (Gemini 3 Pro Preview)');
+            agent = getWorkflowAgent(workflowModelId);
+            console.log('[cloud-ai] Using workflow agent', { rawAgent, clientType, ctxMode, modelId: workflowModelId });
           } catch (e: any) {
             console.error('[cloud-ai] Failed to get workflow agent:', e.message);
             send(ws, { type: 'error', message: 'Workflow agent unavailable: ' + e.message }, requestId);
@@ -390,7 +438,7 @@ wss.on('connection', (ws: WebSocket) => {
               authUser.userId,
               prompt,
               modelLabel,
-              { mode: requestedMode, tier: routedTier, modelId: chosenModelId }
+              { mode: requestedMode, tier: routedTier, modelId: chosenModelId, contextPaths: contextPathsForMeta }
             ) as any;
             if (conversationId) { 
               conversationCreatedNow = true;
@@ -482,6 +530,7 @@ wss.on('connection', (ws: WebSocket) => {
               mode: requestedMode,
               tier: routedTier,
               modelId: chosenModelId,
+              contextPaths: contextPathsForMeta,
             });
           } catch {}
         }
@@ -551,50 +600,54 @@ wss.on('connection', (ws: WebSocket) => {
         } catch {}
 
         // Retrieve knowledge context and inject into messages
-        try {
-          const knowledgeCtx = await buildKnowledgeContext(prompt, {
-            includeIdentity: true,
-            includeDirectives: true,
-            includeBio: true,
-            maxGlobalFacts: 8,
-            detectEntities: true,
-          });
-          if (knowledgeCtx.text.trim()) {
-            console.log('[cloud-ai] Knowledge context retrieved:', {
-              length: knowledgeCtx.text.length,
-              entities: knowledgeCtx.detectedEntities,
-              hasIdentity: knowledgeCtx.lenses.identity.length > 0,
-              hasDirectives: knowledgeCtx.lenses.directives.length > 0,
-              hasBio: knowledgeCtx.lenses.bio.length > 0,
-              globalFacts: knowledgeCtx.lenses.globalSearch.length,
+        if (agentType !== 'workflow') {
+          try {
+            const knowledgeCtx = await buildKnowledgeContext(prompt, {
+              includeIdentity: true,
+              includeDirectives: true,
+              includeBio: true,
+              maxGlobalFacts: 8,
+              detectEntities: true,
             });
-            inputMessages = [{ role: 'system', content: knowledgeCtx.text }, ...inputMessages];
+            if (knowledgeCtx.text.trim()) {
+              console.log('[cloud-ai] Knowledge context retrieved:', {
+                length: knowledgeCtx.text.length,
+                entities: knowledgeCtx.detectedEntities,
+                hasIdentity: knowledgeCtx.lenses.identity.length > 0,
+                hasDirectives: knowledgeCtx.lenses.directives.length > 0,
+                hasBio: knowledgeCtx.lenses.bio.length > 0,
+                globalFacts: knowledgeCtx.lenses.globalSearch.length,
+              });
+              inputMessages = [{ role: 'system', content: knowledgeCtx.text }, ...inputMessages];
+            }
+          } catch (knowledgeErr) {
+            console.error('[cloud-ai] Knowledge context retrieval failed:', knowledgeErr);
           }
-        } catch (knowledgeErr) {
-          console.error('[cloud-ai] Knowledge context retrieval failed:', knowledgeErr);
-        }
 
-        // Semantic search over past conversation segments (summary + conversation id)
-        try {
-          const query = String(prompt || '').trim();
-          if (query) {
-            const matches = await memoryService.searchSegments(query, { limit: 6, threshold: 0.5 });
-            const similar = matches.filter(({ score }) => score >= 0.5);
-            if (similar.length > 0) {
-              const lines = ['[SIMILAR CONVERSATIONS]'];
-              for (const { segment } of similar) {
-                const summary = String(segment.summary || '').trim();
-                if (!summary) continue;
-                lines.push(`- ${segment.conversation_id}: ${summary}`);
-              }
-              if (lines.length > 1) {
-                inputMessages = [{ role: 'system', content: lines.join('\n') }, ...inputMessages];
+          // Semantic search over past conversation segments (summary + conversation id)
+          try {
+            const query = String(prompt || '').trim();
+            if (query) {
+              const matches = await memoryService.searchSegments(query, { limit: 6, threshold: 0.5 });
+              const similar = matches.filter(({ score }) => score >= 0.5);
+              if (similar.length > 0) {
+                const lines = ['[SIMILAR CONVERSATIONS]'];
+                for (const { segment } of similar) {
+                  const summary = String(segment.summary || '').trim();
+                  if (!summary) continue;
+                  lines.push(`- ${segment.conversation_id}: ${summary}`);
+                }
+                if (lines.length > 1) {
+                  inputMessages = [{ role: 'system', content: lines.join('\n') }, ...inputMessages];
+                }
               }
             }
+          } catch (searchErr) {
+            console.error('[cloud-ai] Semantic conversation search failed:', searchErr);
           }
-        } catch (searchErr) {
-          console.error('[cloud-ai] Semantic conversation search failed:', searchErr);
         }
+
+        
 
         // Log system prompt for debugging
         const systemMessages = inputMessages.filter((m: any) => m.role === 'system');
@@ -615,7 +668,14 @@ wss.on('connection', (ws: WebSocket) => {
 
         // Enable thinking for Google Gemini 3 models to support tool calling with thought signatures.
         // Gemini 3 models require thought parts to be preserved and passed back with function responses.
-        if (chosenModelId?.includes('google/gemini-3') || modelLabel?.includes('google/gemini-3')) {
+        // NOTE: For workflow agent, chosenModelId is often empty (agent is configured with gemini-3-pro-preview internally),
+        // so we must enable this based on agentType/modelLabel too.
+        if (
+          (agentType === 'workflow' && typeof workflowModelId === 'string' && workflowModelId.includes('google/gemini-3')) ||
+          chosenModelId?.includes('google/gemini-3') ||
+          modelLabel?.includes('google/gemini-3') ||
+          modelLabel?.includes('gemini-3')
+        ) {
           providerOptions.google = {
             thinkingConfig: {
               includeThoughts: true,
@@ -653,8 +713,7 @@ wss.on('connection', (ws: WebSocket) => {
         }, hardTimeoutMs);
 
         // fast/balanced use Grok models that don't support reasoningEffort
-        const stream: any = await agent.stream(inputMessages, {
-          memory: { resource, thread },
+        const streamOptions: any = {
           maxSteps,
           providerOptions,
           abortSignal: abortController.signal,
@@ -764,25 +823,34 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               console.error('[cloud-ai] Local memory storage import failed:', memoryErr);
             }
           },
-        });
+        };
+
+        if (agentType !== 'workflow') {
+          streamOptions.memory = { resource, thread };
+        }
+
+        const stream: any = await agent.stream(inputMessages, streamOptions);
 
         const hasFull = !!(stream as any)?.fullStream;
         const fullStream = (stream as any)?.fullStream || stream;
         try { console.log('[cloud-ai] Stream obtained. hasFullStream:', hasFull, 'type:', typeof fullStream); } catch {}
-        for await (const chunk of fullStream as any) {
-          // Check if aborted - break loop immediately
-          if (abortController.signal.aborted) {
-            console.log('[cloud-ai] Stream loop detected abort, breaking');
-            break;
-          }
-          try {
-            const chunkKeys = Object.keys(chunk || {});
-            const evType = (chunk as any)?.type;
-            if (process.env.CLOUD_DEBUG_STREAM === '1' && chunkKeys.length > 0 && !(chunk as any).textDelta) {
-              console.log('[cloud-ai] Stream chunk keys:', chunkKeys, chunk);
+
+        let streamIterationError: any = null;
+        try {
+          for await (const chunk of fullStream as any) {
+            // Check if aborted - break loop immediately
+            if (abortController.signal.aborted) {
+              console.log('[cloud-ai] Stream loop detected abort, breaking');
+              break;
             }
-            let handledChunk = false;
-            let sentToolEventTopLevel = false;
+            try {
+              const chunkKeys = Object.keys(chunk || {});
+              const evType = (chunk as any)?.type;
+              if (process.env.CLOUD_DEBUG_STREAM === '1' && chunkKeys.length > 0 && !(chunk as any).textDelta) {
+                console.log('[cloud-ai] Stream chunk keys:', chunkKeys, chunk);
+              }
+              let handledChunk = false;
+              let sentToolEventTopLevel = false;
             
             // Handle Mastra chunk types explicitly
             if (evType) {
@@ -889,7 +957,26 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                   break;
                 }
                   
-                case 'finish':
+                case 'finish': {
+                  const text =
+                    (chunk as any)?.payload?.text ||
+                    (chunk as any)?.payload?.response?.text ||
+                    (chunk as any)?.text ||
+                    '';
+                  if (typeof text === 'string' && text) {
+                    sawAnyTextDelta = true;
+                    aggregatedText += text;
+                    const lastChunk = streamChunks[streamChunks.length - 1];
+                    if (lastChunk?.type === 'text') {
+                      lastChunk.content += text;
+                    } else {
+                      streamChunks.push({ type: 'text', content: text });
+                    }
+                  }
+                  handledChunk = true;
+                  break;
+                }
+
                 case 'step-finish':
                 case 'step-start':
                 case 'response-metadata':
@@ -925,29 +1012,69 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                 writeLog('delta', { length: textDelta.length });
               }
             }
-            // Legacy AI SDK toolCall/toolResult shapes (only if not already handled)
-            if (!handledChunk) {
-              const toolCall = (chunk as any)?.toolCall;
-              if (toolCall?.name) {
-                sawToolCall = true;
-                console.log(`[cloud-ai] Tool called: ${toolCall.name}`, toolCall.args);
+              // Legacy AI SDK toolCall/toolResult shapes (only if not already handled)
+              if (!handledChunk) {
+                const toolCall = (chunk as any)?.toolCall;
+                if (toolCall?.name) {
+                  sawToolCall = true;
+                  console.log(`[cloud-ai] Tool called: ${toolCall.name}`, toolCall.args);
 
-                // Only send to UI if not a SIS meta-tool
-                if (!isSISMetaTool(toolCall.name)) {
-                  send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolCall.name, status: 'called', args: toolCall.args } }, requestId);
+                  // Only send to UI if not a SIS meta-tool
+                  if (!isSISMetaTool(toolCall.name)) {
+                    send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolCall.name, status: 'called', args: toolCall.args } }, requestId);
+                  }
+                  writeLog('tool_call', { name: toolCall.name });
                 }
-                writeLog('tool_call', { name: toolCall.name });
+                const toolResult = (chunk as any)?.toolResult;
+                if (toolResult) {
+                  sawToolCall = true;
+                  console.log(`[cloud-ai] Tool result:`, toolResult);
+                }
               }
-              const toolResult = (chunk as any)?.toolResult;
-              if (toolResult) {
-                sawToolCall = true;
-                console.log(`[cloud-ai] Tool result:`, toolResult);
-              }
+            } catch (e) {
+              console.error('[cloud-ai] Stream chunk error:', e);
+              writeLog('stream_chunk_error', { message: (e as any)?.message || String(e) });
             }
-          } catch (e) {
-            console.error('[cloud-ai] Stream chunk error:', e);
-            writeLog('stream_chunk_error', { message: (e as any)?.message || String(e) });
           }
+        } catch (e: any) {
+          streamIterationError = e;
+          console.error('[cloud-ai] Stream iteration error:', e);
+          writeLog('stream_iteration_error', { message: e?.message || String(e) });
+        }
+
+        if (streamIterationError && !didSendFinal) {
+          didSendFinal = true;
+          try { if (hardTimeout) clearTimeout(hardTimeout); } catch {}
+          wsAbortControllers.delete(ws);
+          const msgText = String(streamIterationError?.message || streamIterationError || 'Agent stream failed');
+          send(
+            ws,
+            {
+              type: 'final',
+              origin: 'cloud-ai',
+              model: chosenModelId || routedTier,
+              conversationId,
+              result: { text: `Error: ${msgText}`, steps: [], finishReason: 'error' },
+              error: true,
+            },
+            requestId
+          );
+          return;
+        }
+
+        if (!didSendFinal) {
+          try {
+            const maybe = (stream as any)?.text;
+            const maybeText =
+              typeof maybe === 'string'
+                ? maybe
+                : maybe && typeof maybe?.then === 'function'
+                  ? await maybe
+                  : '';
+            if (!aggregatedText && typeof maybeText === 'string' && maybeText.trim()) {
+              aggregatedText = maybeText;
+            }
+          } catch {}
         }
 
         // Check if we broke out of the loop due to abort
@@ -973,20 +1100,40 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
         }
 
         if (!didSendFinal) {
-          didSendFinal = true;
-          try { if (hardTimeout) clearTimeout(hardTimeout); } catch {}
-          const finalText = aggregatedText ? aggregatedText.trim() : '';
-          send(
-            ws,
-            {
-              type: 'final',
-              origin: 'cloud-ai',
-              model: chosenModelId || routedTier,
-              conversationId,
-              result: { text: finalText, steps: [], finishReason: 'done' },
-            },
-            requestId
-          );
+          let finalText = aggregatedText ? aggregatedText.trim() : '';
+          let emptyOutput = !finalText && !sawAnyTextDelta && !sawToolCall;
+
+          if (emptyOutput && agentType === 'workflow' && typeof (agent as any)?.generate === 'function') {
+            try {
+              const genRes: any = await (agent as any).generate(inputMessages);
+              const genText = String(genRes?.text || '').trim();
+              if (genText) {
+                finalText = genText;
+                emptyOutput = false;
+              }
+            } catch {}
+          }
+
+          if (!didSendFinal) {
+            didSendFinal = true;
+            try { if (hardTimeout) clearTimeout(hardTimeout); } catch {}
+            send(
+              ws,
+              {
+                type: 'final',
+                origin: 'cloud-ai',
+                model: chosenModelId || routedTier,
+                conversationId,
+                result: {
+                  text: emptyOutput ? 'Error: Model returned no output. Please retry.' : finalText,
+                  steps: [],
+                  finishReason: emptyOutput ? 'empty' : 'done'
+                },
+                error: emptyOutput ? true : undefined,
+              },
+              requestId
+            );
+          }
         }
 
         // Clean up abort controller after stream completes

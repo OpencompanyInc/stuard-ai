@@ -2,7 +2,7 @@ import { RouterContext } from './types';
 import { getToolKind } from './registry';
 import { execCloudTool } from './handlers/cloud';
 import { execLocalTool, calcToolTimeout } from './handlers/local';
-import { execCustomUi, execCloseCustomUi, execPlayAudio, execLog, execWait, execEnd, execReturnValue, execUpdateCustomUi, execGetClipboardContent, execSetClipboardContent, execSendUiEvent, execRunUiScript, execListCustomUiWindows, initCustomUiIpc } from './handlers/electron';
+import { execCustomUi, execCloseCustomUi, execPlayAudio, execLog, execWait, execEnd, execReturnValue, execUpdateCustomUi, execGetClipboardContent, execSetClipboardContent, execSendUiEvent, execRunUiScript, execListCustomUiWindows, initCustomUiIpc, execListOpenWindows, execBringWindowToForeground, execGetWindowInfo, execSmartBringWindowToForeground, execSetWindowBounds } from './handlers/electron';
 import { execSetVariable, execGetVariable, execToggleVariable, execIncrementVariable, execAppendToList, execListVariables, execDeleteVariable } from './handlers/variables';
 import { execTerminalCreate, execTerminalList, execTerminalGet, execTerminalSendInput, execTerminalSendRaw, execTerminalSendKeys, execTerminalRead, execTerminalWaitFor, execTerminalDestroy } from './handlers/terminal';
 import { execInvokeWorkflow, execTestRunSteps } from './handlers/workflow';
@@ -55,6 +55,12 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'test_run_steps') return execTestRunSteps(args, ctx);
       if (toolName === 'get_clipboard_content') return execGetClipboardContent(args, ctx);
       if (toolName === 'set_clipboard_content') return execSetClipboardContent(args, ctx);
+
+      if (toolName === 'list_open_windows') return execListOpenWindows(args, ctx);
+      if (toolName === 'bring_window_to_foreground') return execBringWindowToForeground(args, ctx);
+      if (toolName === 'get_window_info') return execGetWindowInfo(args, ctx);
+      if (toolName === 'smart_bring_window_to_foreground') return execSmartBringWindowToForeground(args, ctx);
+      if (toolName === 'set_window_bounds') return execSetWindowBounds(args, ctx);
 
       // Variable management tools
       if (toolName === 'set_variable') return execSetVariable(args, ctx);

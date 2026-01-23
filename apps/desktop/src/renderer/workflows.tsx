@@ -96,7 +96,14 @@ function WorkflowsApp() {
   type RightPanel = 'none' | 'inspector' | 'code' | 'ai';
   const [viewMode, setViewMode] = useState<'ai' | 'manual'>('ai');
   const [rightPanel, setRightPanel] = useState<RightPanel>('none');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      const raw = window.localStorage.getItem('workflow.sidebarCollapsed');
+      return raw === '1' || raw === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [selectedNodeId, setSelectedNodeId] = useState("");
   const [connectingFrom, setConnectingFrom] = useState("");
 
@@ -127,6 +134,30 @@ function WorkflowsApp() {
   const [credits, setCredits] = useState<{ remaining: number; limit: number; plan: string } | null>(null);
 
   const [chatInput, setChatInput] = useState("");
+
+  const [workflowChatModelId, setWorkflowChatModelId] = useState<string | 'auto'>(() => {
+    try {
+      const raw = window.localStorage.getItem('workflow.chat_model_id');
+      const v = raw ? String(raw).trim() : 'auto';
+      return v ? (v as any) : 'auto';
+    } catch {
+      return 'auto';
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('workflow.chat_model_id', String(workflowChatModelId || 'auto'));
+    } catch {
+    }
+  }, [workflowChatModelId]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('workflow.sidebarCollapsed', sidebarCollapsed ? '1' : '0');
+    } catch {
+    }
+  }, [sidebarCollapsed]);
 
   const [aiLeftWidth, setAiLeftWidth] = useState(() => {
     try {
@@ -224,6 +255,7 @@ function WorkflowsApp() {
     onApplyModel: applyModel,
     cloudAiHttp: CLOUD_AI_HTTP,
     errors,
+    selectedModelId: workflowChatModelId,
   });
 
   // Fetch credits on mount
@@ -1197,6 +1229,8 @@ function WorkflowsApp() {
                       setShowReasoning={chat.setShowReasoning}
                       busy={chat.busy}
                       onUndo={applyModel}
+                      selectedModelId={workflowChatModelId}
+                      onSelectModel={setWorkflowChatModelId}
                     />
                   </div>
 

@@ -15,6 +15,8 @@ interface UserData {
   preferences: {
     marketingEmails: boolean;
   };
+  plan?: string;
+  stripeCustomerId?: string | null;
 }
 
 interface SessionData {

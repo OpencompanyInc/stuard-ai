@@ -83,6 +83,7 @@ export const capture_screen = makeLocalTool(
     filePath: z.string().optional().describe('Path to the recorded video file'),
     mimeType: z.string().optional().describe('MIME type of the output file'),
     sessionId: z.string().optional().describe('Session ID for this capture'),
+    audioFilePath: z.string().optional().describe('Path to the recorded system audio WAV (when includeSystemAudio is true)'),
     stoppedBy: z
       .enum(['stop_signal', 'max_duration', 'silence'])
       .optional()
@@ -117,6 +118,7 @@ export const stop_screen_capture = makeLocalTool(
     sessionId: z.string(),
     wasActive: z.boolean().describe('Whether the session was actively capturing when stopped'),
     filePath: z.string().optional().describe('Path to the recorded file'),
+    audioFilePath: z.string().optional().describe('Path to the recorded system audio WAV (when includeSystemAudio was true)'),
   }),
 );
 

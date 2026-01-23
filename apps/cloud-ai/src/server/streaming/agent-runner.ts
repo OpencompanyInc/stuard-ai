@@ -1,7 +1,7 @@
 
 import { WebSocket } from 'ws';
 import { getAgent as getStuardAgent } from '../../agents/stuard-agent';
-import { getWorkflowAgent } from '../../agents/workflow-agent';
+import { getWorkflowAgent, WORKFLOW_SYSTEM_PROMPT } from '../../agents/workflow-agent';
 import { withClientBridge } from '../../tools/bridge';
 import { routeModel, ModelChoice } from '../../router/model-router';
 import { writeLog } from '../../utils/logger';
@@ -107,7 +107,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage): Promise<{ 
     try {
       // Select agent based on type
       const agent = agentType === 'workflow'
-        ? getWorkflowAgent()
+        ? getWorkflowAgent(chosenModelId)
         : getStuardAgent(model as ModelChoice, undefined, integrations, {}, chosenModelId);
 
       // Build context prefix for paths
@@ -121,9 +121,19 @@ export async function runAgent(ws: WebSocket, message: AgentMessage): Promise<{ 
 
       // Prepare input with context
       const userContent = contextPrefix + message.text;
-      const input = history.length > 0 
-        ? [...history, { role: 'user', content: userContent }]
-        : userContent;
+      const input = (() => {
+        if (history.length > 0) {
+          const base = [...history, { role: 'user', content: userContent }];
+          if (agentType === 'workflow') {
+            return [{ role: 'system', content: WORKFLOW_SYSTEM_PROMPT }, ...base];
+          }
+          return base;
+        }
+        if (agentType === 'workflow') {
+          return [{ role: 'system', content: WORKFLOW_SYSTEM_PROMPT }, { role: 'user', content: userContent }];
+        }
+        return userContent;
+      })();
 
       // Notify start
       send(ws, { type: 'progress', event: 'start', data: {} });
@@ -137,7 +147,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage): Promise<{ 
       };
 
       // Enable thinking for Google Gemini 3 models and workflow agent
-      if (agentType === 'workflow' || chosenModelId?.includes('google/gemini-3')) {
+      if (chosenModelId?.includes('google/gemini-3')) {
         streamOptions.providerOptions = {
           google: {
             thinkingConfig: {

@@ -3,17 +3,24 @@ import { runSequentialTool, runParallelTool } from '../../tools/workflow-system'
 import { analyzeMediaTool } from '../../tools/analyze-media';
 import { outlook_get_me, outlook_list_messages, outlook_search_messages, outlook_send_mail } from '../../tools/outlook-tools';
 import { github_get_me, github_list_repos, github_list_issues, github_create_issue } from '../../tools/github-tools';
-import { google_get_userinfo, gmail_send_message, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, gmail_modify_message, gmail_delete_message, gmail_archive_message, gmail_mark_as_read, gmail_mark_as_unread, calendar_list_events, calendar_create_event, tasks_list, drive_list_files, sheets_read_range, docs_get_document, docs_create_document, docs_write_text } from '../../tools/google-tools';
-import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, canvas_manager, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, stop_system_audio, describe_system_audio_capabilities, run_command, run_system_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, list_local_workflows, list_local_stuards, show_json_workflow_code, execute_workflow, find_workflow_semantic, import_workflow, run_automation, stop_automation, invoke_workflow, search_past_conversations, get_conversation_context, list_user_spaces, get_space_contents, add_to_space, ensure_space_path, list_space_path, add_to_space_path, get_space_tree, create_space, add_source_to_space, add_note_to_space, add_code_snippet_to_space, link_conversation_to_space, find_or_create_space, update_space_item, delete_space_item, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, browser_get_content, browser_click_element, browser_type_text, browser_find_text, browser_get_element_position, browser_find_clickable, browser_hover, browser_select_option, browser_press_key, browser_get_form_fields, browser_fill_form, browser_wait_for_element, browser_scroll_to, browser_get_page_info, browser_execute_script, agent_todo, get_mouse_position, click_at_coordinates, double_click_at_coordinates, type_text, scroll, drag_and_drop } from '../../tools/device-tools';
+import { google_get_userinfo, gmail_send_message, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, gmail_modify_message, gmail_delete_message, gmail_archive_message, gmail_mark_as_read, gmail_mark_as_unread, calendar_list_events, calendar_create_event, calendar_delete_event, tasks_list, drive_list_files, sheets_read_range, docs_get_document, docs_create_document, docs_write_text } from '../../tools/google-tools';
+import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, canvas_manager, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, stop_system_audio, describe_system_audio_capabilities, run_command, run_system_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, list_local_workflows, list_local_stuards, show_json_workflow_code, execute_workflow, find_workflow_semantic, import_workflow, run_automation, stop_automation, invoke_workflow, search_past_conversations, get_conversation_context, list_user_spaces, get_space_contents, add_to_space, ensure_space_path, list_space_path, add_to_space_path, get_space_tree, create_space, add_source_to_space, add_note_to_space, add_code_snippet_to_space, link_conversation_to_space, find_or_create_space, update_space_item, delete_space_item, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, get_window_info, set_window_bounds, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, browser_get_content, browser_click_element, browser_type_text, browser_find_text, browser_get_element_position, browser_find_clickable, browser_hover, browser_select_option, browser_press_key, browser_get_form_fields, browser_fill_form, browser_wait_for_element, browser_scroll_to, browser_get_page_info, browser_execute_script, agent_todo, get_mouse_position, computer_use, click_at_coordinates, double_click_at_coordinates, type_text, scroll, drag_and_drop } from '../../tools/device-tools';
+import { computer_use_agent } from '../../tools/device-tools';
 import { web_search } from '../../tools/perplexity-tools';
 import { scrape_url } from '../../tools/tavily-tools';
 import { deployHeadlessAgent } from '../../tools/deploy-headless-agent';
 import { getHeadlessAgentStatus } from '../../tools/get-headless-agent-status';
 import { listHeadlessAgentTasks } from '../../tools/list-headless-agent-tasks';
 import { stopHeadlessAgent } from '../../tools/stop-headless-agent';
-import { SIS } from 'sis-tools';
+import { ffmpeg_status, ffmpeg_setup, ffmpeg_run, ffmpeg_convert_media, ffmpeg_extract_audio, ffmpeg_trim_media, ffmpeg_probe_media, ffmpeg_extract_frames } from '../../tools/device-tools';
+import { createRequire } from 'node:module';
+import type { SIS as SISType } from 'sis-tools';
 import { searchToolsSemanticSupabase, isSupabaseSISEnabled } from '../../tools/sis-supabase';
 import { SIS_RUNTIME_TOOLS } from '../../tools/sis-runtime-tools';
+import { hasClientBridge } from '../../tools/bridge';
+
+const require = createRequire(import.meta.url);
+const { SIS: SISRuntime } = require('sis-tools') as { SIS: new (...args: any[]) => SISType };
 
 // Consolidated tool map
 export const ALL_TOOLS = {
@@ -50,6 +57,7 @@ export const ALL_TOOLS = {
   gmail_mark_as_unread,
   calendar_list_events,
   calendar_create_event,
+  calendar_delete_event,
   tasks_list,
   drive_list_files,
   sheets_read_range,
@@ -58,6 +66,8 @@ export const ALL_TOOLS = {
   docs_write_text,
   send_hotkey,
   get_mouse_position,
+  computer_use,
+  computer_use_agent,
   click_at_coordinates,
   double_click_at_coordinates,
   type_text,
@@ -74,6 +84,15 @@ export const ALL_TOOLS = {
   capture_system_audio,
   stop_system_audio,
   describe_system_audio_capabilities,
+
+  ffmpeg_status,
+  ffmpeg_setup,
+  ffmpeg_run,
+  ffmpeg_convert_media,
+  ffmpeg_extract_audio,
+  ffmpeg_trim_media,
+  ffmpeg_probe_media,
+  ffmpeg_extract_frames,
   run_system_command,
   run_command,
   run_python_script,
@@ -108,7 +127,9 @@ export const ALL_TOOLS = {
   // Window management
   list_open_windows,
   bring_window_to_foreground,
+  get_window_info,
   smart_bring_window_to_foreground,
+  set_window_bounds,
   // Local workflows / Stuards metadata
   list_local_workflows,
   list_local_stuards,
@@ -123,21 +144,7 @@ export const ALL_TOOLS = {
   // Memory + Spaces
   search_past_conversations,
   get_conversation_context,
-  list_user_spaces,
-  get_space_contents,
-  add_to_space,
-  ensure_space_path,
-  list_space_path,
-  add_to_space_path,
-  get_space_tree,
-  create_space,
-  add_source_to_space,
-  add_note_to_space,
-  add_code_snippet_to_space,
-  link_conversation_to_space,
-  find_or_create_space,
-  update_space_item,
-  delete_space_item,
+  // (Space management tools intentionally not exposed to the LLM)
   // GitHub tools (require user to have connected GitHub via dashboard)
   github_get_me,
   github_list_repos,
@@ -175,6 +182,24 @@ export const ALL_TOOLS = {
   browser_get_page_info,
   browser_execute_script,
   agent_todo,
+} as const;
+
+const _INTERNAL_SPACE_TOOLS = {
+  list_user_spaces,
+  get_space_contents,
+  add_to_space,
+  ensure_space_path,
+  list_space_path,
+  add_to_space_path,
+  get_space_tree,
+  create_space,
+  add_source_to_space,
+  add_note_to_space,
+  add_code_snippet_to_space,
+  link_conversation_to_space,
+  find_or_create_space,
+  update_space_item,
+  delete_space_item,
 } as const;
 
 /**
@@ -215,6 +240,8 @@ export const TIER_1_PARAMOUNT_TOOLS = [
 
   // Input/Automation (7)
   'send_hotkey',
+  'computer_use',
+  'computer_use_agent',
   'get_mouse_position',
   'click_at_coordinates',
   'double_click_at_coordinates',
@@ -252,12 +279,23 @@ export const TIER_1_PARAMOUNT_TOOLS = [
   'agent_todo',
 ] as const;
 
+const _FFMPEG_TIER_1_TOOLS = [
+  'ffmpeg_status',
+  'ffmpeg_setup',
+  'ffmpeg_run',
+  'ffmpeg_convert_media',
+  'ffmpeg_extract_audio',
+  'ffmpeg_trim_media',
+  'ffmpeg_probe_media',
+  'ffmpeg_extract_frames',
+] as const;
+
 const SIS_ESSENTIAL_TOOLS = ['wait', 'run_sequential', 'run_parallel'] as const;
 
-let _sis: SIS | null = null;
+let _sis: SISType | null = null;
 let _sisInitPromise: Promise<void> | null = null;
 
-async function getSis(): Promise<SIS | null> {
+async function getSis(): Promise<SISType | null> {
   if (_sis) return _sis;
   if (_sisInitPromise) {
     await _sisInitPromise;
@@ -266,7 +304,7 @@ async function getSis(): Promise<SIS | null> {
 
   if (process.env.SIS_ENABLE !== '1') return null;
 
-  _sis = new SIS({
+  _sis = new SISRuntime({
     embeddingProvider: 'openai',
     providerOptions: {
       apiKey: process.env.OPENAI_API_KEY,
@@ -313,7 +351,7 @@ async function getSis(): Promise<SIS | null> {
 export const CORE_TOOLS_LIST = [
   'wait', 'run_sequential', 'run_parallel', 'analyze_media', 'web_search', 'scrape_url',
   'deploy_headless_agent', 'get_headless_agent_status', 'list_headless_agent_tasks', 'stop_headless_agent',
-  'send_hotkey', 'canvas_manager', 'capture_media', 'stop_capture',
+  'send_hotkey', 'computer_use', 'computer_use_agent', 'canvas_manager', 'capture_media', 'stop_capture',
   'describe_media_capture_capabilities',
   // Screen recording & system audio
   'capture_screen', 'stop_screen_capture', 'describe_screen_capture_capabilities',
@@ -327,7 +365,7 @@ export const CORE_TOOLS_LIST = [
   'set_variable', 'get_variable', 'toggle_variable', 'increment_variable', 'append_to_list', 'list_variables', 'delete_variable',
   'calendar_crud', 'task_crud', 'task_reminders', 'planner_list_items',
   'list_directory', 'read_file', 'write_file', 'create_directory', 'open_file', 'move_file', 'copy_file', 'delete_file',
-  'list_open_windows', 'bring_window_to_foreground', 'smart_bring_window_to_foreground',
+  'list_open_windows', 'bring_window_to_foreground', 'get_window_info', 'smart_bring_window_to_foreground', 'set_window_bounds',
   'list_local_workflows', 'list_local_stuards', 'show_json_workflow_code',
   'import_workflow', 'run_automation', 'stop_automation', 'invoke_workflow',
   'search_past_conversations', 'get_conversation_context',
@@ -360,6 +398,14 @@ export function getTools(enabledIntegrations: string[] = [], mcpTools: Record<st
       tools[name] = (ALL_TOOLS as any)[name];
     }
   });
+
+  if (hasClientBridge()) {
+    for (const name of _FFMPEG_TIER_1_TOOLS) {
+      if ((ALL_TOOLS as any)[name]) {
+        tools[name] = (ALL_TOOLS as any)[name];
+      }
+    }
+  }
 
   // Integration-specific tools
   if (enabledIntegrations.includes('outlook')) {
@@ -414,7 +460,11 @@ export async function getToolsForQuery(
   // ALWAYS load Tier 1 paramount tools first
   // These are the most commonly used tools and should always be available
   // =========================================================================
-  for (const name of TIER_1_PARAMOUNT_TOOLS) {
+  const tier1Tools = hasClientBridge()
+    ? [...TIER_1_PARAMOUNT_TOOLS, ..._FFMPEG_TIER_1_TOOLS]
+    : TIER_1_PARAMOUNT_TOOLS;
+
+  for (const name of tier1Tools) {
     if ((ALL_TOOLS as any)[name]) {
       selected[name] = (ALL_TOOLS as any)[name];
     }

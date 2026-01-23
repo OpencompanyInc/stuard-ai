@@ -190,6 +190,7 @@ function DashboardApp() {
     intCategory,
     setIntCategory,
     pyStatus,
+    ffStatus,
     pyEnvId,
     setPyEnvId,
     pyPackages,
@@ -197,6 +198,7 @@ function DashboardApp() {
     pyReqTxt,
     setPyReqTxt,
     pyInstalling,
+    ffInstalling,
     pyRunning,
     pyRunCode,
     setPyRunCode,
@@ -208,6 +210,7 @@ function DashboardApp() {
     handleDisconnect,
     handleLearnMore,
     refreshPythonStatus,
+    refreshFfmpegStatus,
     setupPython,
     installPython,
     runPython,
@@ -1169,35 +1172,40 @@ function DashboardApp() {
                           )}
 
                           {tab === 'integrations' && userEmail && (
-                            <IntegrationsView
-                              connectedCount={connectedCount}
-                              filteredIntegrations={filteredIntegrations}
-                              intQuery={intQuery}
-                              setIntQuery={setIntQuery}
-                              intCategory={intCategory}
-                              setIntCategory={setIntCategory}
-                              intCategories={intCategories}
-                              connectedMap={connectedMap}
-                              handleConnect={handleConnect}
-                              handleDisconnect={handleDisconnect}
-                              handleLearnMore={handleLearnMore}
-                              pyStatus={pyStatus}
-                              pyEnvId={pyEnvId}
-                              setPyEnvId={setPyEnvId}
-                              pyPackages={pyPackages}
-                              setPyPackages={setPyPackages}
-                              pyReqTxt={pyReqTxt}
-                              setPyReqTxt={setPyReqTxt}
-                              pyRunCode={pyRunCode}
-                              setPyRunCode={setPyRunCode}
-                              pyInstalling={pyInstalling}
-                              pyRunning={pyRunning}
-                              pyRunResult={pyRunResult}
-                              refreshPythonStatus={refreshPythonStatus}
-                              setupPython={setupPython}
-                              installPython={installPython}
-                              runPython={runPython}
-                            />
+                            <>
+                              <IntegrationsView
+                                connectedCount={connectedCount}
+                                filteredIntegrations={filteredIntegrations}
+                                intQuery={intQuery}
+                                setIntQuery={setIntQuery}
+                                intCategory={intCategory}
+                                setIntCategory={setIntCategory}
+                                intCategories={intCategories}
+                                connectedMap={connectedMap}
+                                handleConnect={handleConnect}
+                                handleDisconnect={handleDisconnect}
+                                handleLearnMore={handleLearnMore}
+                                pyStatus={pyStatus}
+                                ffStatus={ffStatus}
+                                pyEnvId={pyEnvId}
+                                setPyEnvId={setPyEnvId}
+                                pyPackages={pyPackages}
+                                setPyPackages={setPyPackages}
+                                pyReqTxt={pyReqTxt}
+                                setPyReqTxt={setPyReqTxt}
+                                pyRunCode={pyRunCode}
+                                setPyRunCode={setPyRunCode}
+                                pyInstalling={pyInstalling}
+                                ffInstalling={ffInstalling}
+                                pyRunning={pyRunning}
+                                pyRunResult={pyRunResult}
+                                refreshPythonStatus={refreshPythonStatus}
+                                refreshFfmpegStatus={refreshFfmpegStatus}
+                                setupPython={setupPython}
+                                installPython={installPython}
+                                runPython={runPython}
+                              />
+                            </>
                           )}
                         </div>
                       </div>

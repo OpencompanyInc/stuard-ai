@@ -19,6 +19,12 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'get_clipboard_content': { kind: 'electron' },
   'set_clipboard_content': { kind: 'electron' },
 
+  'list_open_windows': { kind: 'electron' },
+  'bring_window_to_foreground': { kind: 'electron' },
+  'get_window_info': { kind: 'electron' },
+  'smart_bring_window_to_foreground': { kind: 'electron' },
+  'set_window_bounds': { kind: 'electron' },
+
   // Browser control tools
   'browser_get_content': { kind: 'electron' },
   'browser_click_element': { kind: 'electron' },

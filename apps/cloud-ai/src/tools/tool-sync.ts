@@ -125,6 +125,7 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
 
   // Calendar/Tasks
   calendar_crud: ['calendar', 'events', 'schedule', 'appointments'],
+  calendar_delete_event: ['delete calendar event', 'remove event', 'cancel meeting', 'cancel event', 'delete meeting'],
   task_crud: ['tasks', 'todos', 'reminders'],
   task_reminders: ['reminder', 'notification', 'alert'],
 
@@ -135,6 +136,8 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
 
   // Input
   send_hotkey: ['keyboard shortcut', 'hotkey', 'key combo'],
+  computer_use: ['computer use', 'control computer', 'use the computer', 'gui automation', 'mouse and keyboard', 'click and type', 'desktop control'],
+  computer_use_agent: ['autonomous computer use', 'take control', 'control my screen', 'do it for me', 'computer control loop', 'agentic computer use'],
   type_text: ['type', 'keyboard input', 'enter text'],
   click_at_coordinates: ['click', 'mouse click'],
   scroll: ['scroll page', 'scroll down', 'scroll up'],

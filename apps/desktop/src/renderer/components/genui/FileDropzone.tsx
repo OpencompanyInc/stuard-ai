@@ -1,12 +1,21 @@
 import React, { useRef, useState, useCallback } from 'react';
-import { UploadCloud, File, X } from 'lucide-react';
+import { UploadCloud, File as FileIcon, X } from 'lucide-react';
 import clsx from 'clsx';
+
+export interface DropzoneFile {
+  name: string;
+  size: number;
+  type: string;
+  path?: string;
+  data?: string;
+  mimeType?: string;
+}
 
 export interface FileDropzoneProps {
   label?: string;
   accept?: string;
   maxFiles?: number;
-  onDrop: (files: File[]) => void;
+  onDrop: (files: DropzoneFile[]) => void;
 }
 
 export const FileDropzone: React.FC<FileDropzoneProps> = ({
@@ -16,7 +25,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
   onDrop
 }) => {
   const [isDragOver, setIsDragOver] = useState(false);
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<DropzoneFile[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleContainerClick = useCallback((e: React.MouseEvent) => {
@@ -47,14 +56,44 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 
   const processFiles = (newFiles: File[]) => {
     const validFiles = newFiles.slice(0, maxFiles);
-    setFiles(validFiles);
-    onDrop(validFiles);
+    const mapped: DropzoneFile[] = validFiles.map((f) => ({
+      name: f.name,
+      size: f.size,
+      type: f.type,
+      path: (f as any).path,
+    }));
+    setFiles(mapped);
+    onDrop(mapped);
   };
 
-  const handleClick = (e: React.MouseEvent) => {
+  const handleClick = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
+    try {
+      const api: any = (window as any).desktopAPI;
+      if (api?.pickFiles) {
+        const shouldPickImages = typeof accept === 'string' && /image\//i.test(accept);
+        const res = await api.pickFiles({
+          multiple: maxFiles > 1,
+          includeData: false,
+          type: shouldPickImages ? 'images' : 'files',
+        });
+        const picked = Array.isArray(res?.files) ? res.files : [];
+        if (res?.ok && picked.length > 0) {
+          const mapped: DropzoneFile[] = picked.slice(0, maxFiles).map((f: any) => ({
+            name: String(f?.name || ''),
+            path: typeof f?.path === 'string' ? f.path : undefined,
+            size: 0,
+            type: typeof f?.mimeType === 'string' ? f.mimeType : '',
+            mimeType: typeof f?.mimeType === 'string' ? f.mimeType : undefined,
+          }));
+          setFiles(mapped);
+          onDrop(mapped);
+          return;
+        }
+      }
+    } catch { }
     inputRef.current?.click();
-  };
+  }, [accept, maxFiles, onDrop]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -112,7 +151,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
             {files.map((file, i) => (
               <div key={i} className="flex items-center gap-3 p-2 bg-theme-card border border-theme/20 rounded-lg shadow-sm">
                 <div className="p-2 bg-primary/10 text-primary rounded">
-                  <File className="w-4 h-4" />
+                  <FileIcon className="w-4 h-4" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-theme-fg truncate">{file.name}</p>

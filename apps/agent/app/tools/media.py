@@ -720,20 +720,59 @@ async def _start_background_video(
         if fps < 1 or fps > 120:
             fps = 20.0
         
-        # Try MP4V codec
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        out = cv2.VideoWriter(path, fourcc, fps, (width, height))
-        used_path = path
-        if not out.isOpened():
+        def _try_writer_mp4_h264(out_path: str):
             try:
-                out.release()
+                fourcc = cv2.VideoWriter_fourcc(*"H264")
+                out = cv2.VideoWriter(out_path, cv2.CAP_MSMF, fourcc, fps, (width, height))
+                if out.isOpened():
+                    return out
+                try:
+                    out.release()
+                except Exception:
+                    pass
             except Exception:
                 pass
-            # Fallback to XVID AVI
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*"avc1")
+                out = cv2.VideoWriter(out_path, cv2.CAP_MSMF, fourcc, fps, (width, height))
+                if out.isOpened():
+                    return out
+                try:
+                    out.release()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            return None
+
+        def _try_writer_webm_vp8(out_path: str):
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*"VP80")
+                out = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
+                if out.isOpened():
+                    return out
+                try:
+                    out.release()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            return None
+
+        used_path = path
+        out = _try_writer_mp4_h264(path)
+        if out is None:
+            used_path = path.rsplit(".", 1)[0] + ".webm"
+            out = _try_writer_webm_vp8(used_path)
+        if out is None:
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            out = cv2.VideoWriter(path, fourcc, fps, (width, height))
+            used_path = path
+        if out is None or not out.isOpened():
             used_path = os.path.join(_tmp_dir(), f"video_{int(time.time()*1000)}.avi")
             fourcc = cv2.VideoWriter_fourcc(*"XVID")
             out = cv2.VideoWriter(used_path, fourcc, fps, (width, height))
-            recording_info["path"] = used_path
+        recording_info["path"] = used_path
         
         if not out.isOpened():
             try:
@@ -784,6 +823,7 @@ async def _start_background_video(
                 pass
         
         recording_info["completed"] = True
+
         print(f"[background_video] Saved to {used_path}")
         
         # Clean up session
@@ -1062,16 +1102,55 @@ async def _capture_video_with_stop(
         if fps < 1 or fps > 120:
             fps = 20.0
 
-        # Try MP4V
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        out = cv2.VideoWriter(preferred_path, fourcc, fps, (width, height))
-        used_path = preferred_path
-        if not out.isOpened():
-            # Fallback to XVID AVI
+        def _try_writer_mp4_h264(out_path: str):
             try:
-                out.release()
+                fourcc = cv2.VideoWriter_fourcc(*"H264")
+                out = cv2.VideoWriter(out_path, cv2.CAP_MSMF, fourcc, fps, (width, height))
+                if out.isOpened():
+                    return out
+                try:
+                    out.release()
+                except Exception:
+                    pass
             except Exception:
                 pass
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*"avc1")
+                out = cv2.VideoWriter(out_path, cv2.CAP_MSMF, fourcc, fps, (width, height))
+                if out.isOpened():
+                    return out
+                try:
+                    out.release()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            return None
+
+        def _try_writer_webm_vp8(out_path: str):
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*"VP80")
+                out = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
+                if out.isOpened():
+                    return out
+                try:
+                    out.release()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            return None
+
+        used_path = preferred_path
+        out = _try_writer_mp4_h264(preferred_path)
+        if out is None:
+            used_path = preferred_path.rsplit(".", 1)[0] + ".webm"
+            out = _try_writer_webm_vp8(used_path)
+        if out is None:
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            out = cv2.VideoWriter(preferred_path, fourcc, fps, (width, height))
+            used_path = preferred_path
+        if out is None or not out.isOpened():
             used_path = (explicit_path and explicit_path) or os.path.join(out_dir, f"video_{int(time.time()*1000)}.avi")
             fourcc = cv2.VideoWriter_fourcc(*"XVID")
             out = cv2.VideoWriter(used_path, fourcc, fps, (width, height))
@@ -1116,7 +1195,9 @@ async def _capture_video_with_stop(
                 cap.release()
             except Exception:
                 pass
-        return {"ok": True, "filePath": used_path, "mimeType": "video/mp4" if used_path.endswith(".mp4") else "video/x-msvideo"}
+
+        mime = "video/webm" if used_path.lower().endswith(".webm") else ("video/mp4" if used_path.lower().endswith(".mp4") else "video/x-msvideo")
+        return {"ok": True, "filePath": used_path, "mimeType": mime}
 
     if emit:
         await emit("capturing", {"target": preferred_path, "mode": mode})

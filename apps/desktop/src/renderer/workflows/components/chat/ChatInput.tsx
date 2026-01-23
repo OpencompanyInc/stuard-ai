@@ -1,28 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { Link2, Youtube } from "lucide-react";
-
-// Helper to extract YouTube URL from dropped data
-function extractYouTubeUrl(text: string): string | null {
-  if (!text) return null;
-  // Match various YouTube URL formats
-  const patterns = [
-    /(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})/,
-    /(?:https?:\/\/)?(?:www\.)?youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/,
-    /(?:https?:\/\/)?(?:www\.)?youtube\.com\/v\/([a-zA-Z0-9_-]{11})/,
-    /(?:https?:\/\/)?youtu\.be\/([a-zA-Z0-9_-]{11})/,
-    /(?:https?:\/\/)?(?:www\.)?youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
-  ];
-
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match) {
-      // Return the full URL found in the text
-      const fullUrlMatch = text.match(/https?:\/\/[^\s<>"{}|\\^`[\]]+/);
-      return fullUrlMatch ? fullUrlMatch[0] : `https://youtube.com/watch?v=${match[1]}`;
-    }
-  }
-  return null;
-}
+import { Link2 } from "lucide-react";
 
 // Check if any URL is present
 function extractAnyUrl(text: string): string | null {
@@ -40,7 +17,7 @@ export function ChatInput({
 }) {
   const [text, setText] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
-  const [dragType, setDragType] = useState<'youtube' | 'link' | null>(null);
+  const [hasDragUrl, setHasDragUrl] = useState(false);
 
   const send = useCallback(() => {
     const t = text.trim();
@@ -56,8 +33,7 @@ export function ChatInput({
     // Check what's being dragged
     const textData = e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text/uri-list');
     if (textData) {
-      const ytUrl = extractYouTubeUrl(textData);
-      setDragType(ytUrl ? 'youtube' : 'link');
+      setHasDragUrl(!!extractAnyUrl(textData));
     }
     setIsDragOver(true);
   }, []);
@@ -77,7 +53,7 @@ export function ChatInput({
     const y = e.clientY;
     if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
       setIsDragOver(false);
-      setDragType(null);
+      setHasDragUrl(false);
     }
   }, []);
 
@@ -85,7 +61,7 @@ export function ChatInput({
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(false);
-    setDragType(null);
+    setHasDragUrl(false);
 
     // Try to get URL from various data types
     const uriList = e.dataTransfer.getData('text/uri-list');
@@ -97,22 +73,19 @@ export function ChatInput({
 
     // First try uri-list (most reliable for dragged links)
     if (uriList) {
-      const ytUrl = extractYouTubeUrl(uriList);
-      droppedUrl = ytUrl || extractAnyUrl(uriList);
+      droppedUrl = extractAnyUrl(uriList);
     }
 
     // Then try plain text
     if (!droppedUrl && plainText) {
-      const ytUrl = extractYouTubeUrl(plainText);
-      droppedUrl = ytUrl || extractAnyUrl(plainText);
+      droppedUrl = extractAnyUrl(plainText);
     }
 
     // Try to extract from HTML if available
     if (!droppedUrl && htmlText) {
       const hrefMatch = htmlText.match(/href=["']([^"']+)["']/);
       if (hrefMatch) {
-        const ytUrl = extractYouTubeUrl(hrefMatch[1]);
-        droppedUrl = ytUrl || hrefMatch[1];
+        droppedUrl = hrefMatch[1];
       }
     }
 
@@ -128,10 +101,8 @@ export function ChatInput({
   return (
     <div
       className={`w-full bg-white/90 backdrop-blur-sm border rounded-2xl shadow-xl shadow-slate-200/50 overflow-hidden ring-1 transition-all duration-200 ${
-        isDragOver
-          ? dragType === 'youtube'
-            ? 'border-red-400 ring-red-400/30 bg-red-50/50'
-            : 'border-indigo-400 ring-indigo-400/30 bg-indigo-50/50'
+        isDragOver && hasDragUrl
+          ? 'border-indigo-400 ring-indigo-400/30 bg-indigo-50/50'
           : 'border-slate-200/80 ring-slate-900/5'
       }`}
       onDragOver={handleDragOver}
@@ -140,28 +111,17 @@ export function ChatInput({
       onDrop={handleDrop}
     >
       {/* Drop indicator overlay */}
-      {isDragOver && (
-        <div className={`flex items-center justify-center gap-2 px-3 py-2 text-[12px] font-medium ${
-          dragType === 'youtube' ? 'bg-red-100/80 text-red-700' : 'bg-indigo-100/80 text-indigo-700'
-        }`}>
-          {dragType === 'youtube' ? (
-            <>
-              <Youtube className="w-4 h-4" />
-              Drop YouTube video here
-            </>
-          ) : (
-            <>
-              <Link2 className="w-4 h-4" />
-              Drop link here
-            </>
-          )}
+      {isDragOver && hasDragUrl && (
+        <div className="flex items-center justify-center gap-2 px-3 py-2 text-[12px] font-medium bg-indigo-100/80 text-indigo-700">
+          <Link2 className="w-4 h-4" />
+          Drop link here
         </div>
       )}
 
       <div className="flex items-end gap-2 p-2.5">
         <textarea
           className="flex-1 resize-none outline-none text-[13px] text-slate-800 placeholder:text-slate-400 bg-transparent min-h-[44px] max-h-[140px] py-2.5 px-2 scrollbar-minimal"
-          placeholder={busy ? "Working..." : "Describe what to change... (drag YouTube links here)"}
+          placeholder={busy ? "Working..." : "Describe what to change..."}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {

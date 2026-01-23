@@ -142,6 +142,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   onCloseTab,
   onAddTab,
   onSubmitToolOutput,
+  onGenUIResponse,
   pendingMemories = [],
   onConfirmPendingMemory,
   onRejectPendingMemory,
@@ -431,6 +432,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                     thinkingStartTime={thinkingStartTime}
                     className="h-full px-2.5 py-2 scrollbar-hidden"
                     onSubmitToolOutput={onSubmitToolOutput}
+                    onGenUIResponse={onGenUIResponse}
                   />
                 )}
               </div>
@@ -579,6 +581,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                     thinkingStartTime={thinkingStartTime}
                     className="h-full px-5 py-4 scrollbar-hidden"
                     onSubmitToolOutput={onSubmitToolOutput}
+                    onGenUIResponse={onGenUIResponse}
                   />
                 )}
               </div>

@@ -231,7 +231,7 @@ async def scan_root(
                 for entry in entries:
                     try:
                         # Skip ignored patterns
-                        if entry.name in db.IGNORE_PATTERNS:
+                        if entry.name in db.IGNORE_PATTERNS and db.should_skip_path(entry.path):
                             continue
                         
                         if entry.is_dir(follow_symlinks=False):

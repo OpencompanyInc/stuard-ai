@@ -721,7 +721,8 @@ export default function App() {
       sendMessage({
         text: responseText,
         attachments: [],
-        context: { genui_response: true, component, result }
+        context: { genui_response: true, component, result },
+        silent: true
       });
     }
   }, [sendMessage]);

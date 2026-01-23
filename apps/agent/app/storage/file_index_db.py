@@ -512,9 +512,13 @@ def get_file_kind(extension: str) -> FileKind:
 
 def should_skip_path(path: str) -> bool:
     """Check if a path should be skipped based on ignore patterns."""
+    normalized = path.replace('\\', '/').lower()
+    allow_appdata = (sys.platform == 'win32') and ('/microsoft/windows/start menu/programs' in normalized)
     parts = path.replace('\\', '/').split('/')
     for part in parts:
         if part in IGNORE_PATTERNS:
+            if allow_appdata and part == 'AppData':
+                continue
             return True
     return False
 

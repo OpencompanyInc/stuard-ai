@@ -19,8 +19,7 @@
     "clean": "rimraf dist",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest",
-    "test:run": "vitest run",
-    "postinstall": "electron-rebuild"
+    "test:run": "vitest run"
   },
   "dependencies": {
     "@polar-sh/sdk": "^0.42.1",
@@ -43,8 +42,8 @@
     "lucide-react": "^0.554.0",
     "node-cron": "^3.0.3",
     "node-notifier": "^10.0.1",
-    "node-pty": "1.0.0",
     "node-record-lpcm16": "^1.0.1",
+    "node-window-manager": "^2.2.4",
     "posthog-js": "^1.194.0",
     "react": "18.2.0",
     "react-dom": "18.2.0",
@@ -104,7 +103,7 @@
     ],
     "asar": true,
     "asarUnpack": [
-      "node_modules/node-pty/**"
+      "node_modules/node-window-manager/**"
     ],
     "extraResources": [
       {

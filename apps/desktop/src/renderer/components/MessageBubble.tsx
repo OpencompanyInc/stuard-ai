@@ -195,17 +195,28 @@ function toMediaSrc(src: string): string {
   }
   // Convert Windows/Unix path to local-file:// URL
   let path = src.trim();
+  const encodePath = (inputPath: string, preserveDrive: boolean) => {
+    const parts = inputPath.split('/');
+    return parts
+      .map((part, idx) => {
+        if (preserveDrive && idx === 0 && /^[a-zA-Z]:$/.test(part)) return part;
+        return encodeURIComponent(part);
+      })
+      .join('/');
+  };
   // Handle Windows paths (C:\... or C:/...)
   if (/^[a-zA-Z]:[/\\]/.test(path)) {
     path = path.replace(/\\/g, '/');
-    return `local-file:///${path}`;
+    return `local-file:///${encodePath(path, true)}`;
   }
   // Handle Unix absolute paths
   if (path.startsWith('/')) {
-    return `local-file://${path}`;
+    path = path.replace(/\\/g, '/');
+    return `local-file://${encodePath(path, false)}`;
   }
   // Relative path - assume local
-  return `local-file://${path.replace(/\\/g, '/')}`;
+  path = path.replace(/\\/g, '/');
+  return `local-file:///${encodePath(path, false)}`;
 }
 
 // Image component that handles loading states and local/web URLs (memoized)
@@ -260,9 +271,42 @@ const InlineImage: React.FC<{ src: string; alt?: string }> = memo(({ src, alt })
   );
 });
 
+const InlineVideo: React.FC<{ src: string }> = memo(({ src }) => {
+  const [error, setError] = useState<string | null>(null);
+  const videoSrc = toMediaSrc(src || '');
+
+  useEffect(() => {
+    console.log(`[InlineVideo] Loading: "${src}" → "${videoSrc}"`);
+  }, [src, videoSrc]);
+
+  if (error) {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-red-500/10 border border-red-500/20 rounded-lg text-red-700 text-xs">
+        <span>⚠️</span>
+        <span>Failed: {error}</span>
+      </span>
+    );
+  }
+
+  return (
+    <video
+      src={videoSrc}
+      controls
+      playsInline
+      onError={(e) => {
+        const code = e.currentTarget?.error?.code;
+        console.error(`[InlineVideo] Failed(${code ?? 'unknown'}): "${src}" → "${videoSrc}"`);
+        setError(`${src}`);
+      }}
+      className="block my-2 max-w-full max-h-[300px] rounded-xl border border-theme/10 shadow-lg bg-black"
+    />
+  );
+});
+
 type ContentSegment =
   | { kind: 'text'; value: string }
   | { kind: 'image'; src: string }
+  | { kind: 'video'; src: string }
   | { kind: 'audio'; src: string }
   | { kind: 'youtube'; videoId: string; url: string }
   | { kind: 'link_preview'; url: string }
@@ -422,7 +466,7 @@ function extractContentSegments(inputText: string): ContentSegment[] {
     result.push({ kind: 'text', value: t });
   };
 
-  const allMatches: Array<{ type: 'image' | 'audio' | 'youtube' | 'link_preview' | 'genui' | 'genui_loading'; start: number; end: number; data: any }> = [];
+  const allMatches: Array<{ type: 'image' | 'video' | 'audio' | 'youtube' | 'link_preview' | 'genui' | 'genui_loading'; start: number; end: number; data: any }> = [];
 
   // Add GenUI matches first (highest priority)
   for (const g of genuiMatches) {
@@ -445,9 +489,10 @@ function extractContentSegments(inputText: string): ContentSegment[] {
 
   while ((match = mediaRegex.exec(inputText)) !== null) {
     const src = String(match[1] || '').trim();
-    const isAudio = /\.(wav|mp3|ogg|m4a|aac|webm)$/i.test(src);
+    const isAudio = /\.(wav|mp3|ogg|m4a|aac)$/i.test(src);
+    const isVideo = /\.(mp4|mov|m4v|webm)$/i.test(src);
     allMatches.push({
-      type: isAudio ? 'audio' : 'image',
+      type: isAudio ? 'audio' : isVideo ? 'video' : 'image',
       start: match.index,
       end: match.index + match[0].length,
       data: { src },
@@ -514,6 +559,8 @@ function extractContentSegments(inputText: string): ContentSegment[] {
       result.push({ kind: 'genui_loading', component: m.data.component, title: m.data.title });
     } else if (m.type === 'image' && m.data.src) {
       result.push({ kind: 'image', src: m.data.src });
+    } else if (m.type === 'video' && m.data.src) {
+      result.push({ kind: 'video', src: m.data.src });
     } else if (m.type === 'audio' && m.data.src) {
       result.push({ kind: 'audio', src: m.data.src });
     } else if (m.type === 'youtube') {
@@ -727,6 +774,10 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
       try {
         console.log('[MessageBubble] img node/url:', { src, nodeUrl, finalSrc });
       } catch { }
+      const isAudio = /\.(wav|mp3|ogg|m4a|aac)(\?|$)/i.test(finalSrc) || alt === 'audio';
+      const isVideo = /\.(mp4|mov|m4v|webm)(\?|$)/i.test(finalSrc) || alt === 'video';
+      if (isAudio) return <AudioPlayer src={toMediaSrc(finalSrc)} />;
+      if (isVideo) return <InlineVideo src={finalSrc} />;
       return <InlineImage src={finalSrc} alt={alt} />;
     },
     a: ({ href, children, ...props }: any) => {
@@ -921,7 +972,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
     };
 
     // Sort all matches by position
-    const allMatches: Array<{ type: 'image' | 'audio' | 'youtube' | 'link_preview' | 'genui' | 'genui_loading'; start: number; end: number; data: any }> = [];
+    const allMatches: Array<{ type: 'image' | 'video' | 'audio' | 'youtube' | 'link_preview' | 'genui' | 'genui_loading'; start: number; end: number; data: any }> = [];
 
     // Add GenUI matches first (highest priority)
     for (const g of genuiMatches) {
@@ -945,9 +996,10 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
     // Add media matches (<<...>>)
     while ((match = mediaRegex.exec(text)) !== null) {
       const src = String(match[1] || '').trim();
-      const isAudio = /\.(wav|mp3|ogg|m4a|aac|webm)$/i.test(src);
+      const isAudio = /\.(wav|mp3|ogg|m4a|aac)$/i.test(src);
+      const isVideo = /\.(mp4|mov|m4v|webm)$/i.test(src);
       allMatches.push({
-        type: isAudio ? 'audio' : 'image',
+        type: isAudio ? 'audio' : isVideo ? 'video' : 'image',
         start: match.index,
         end: match.index + match[0].length,
         data: { src },
@@ -1024,6 +1076,8 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
         result.push({ kind: 'genui_loading', component: m.data.component, title: m.data.title });
       } else if (m.type === 'image' && m.data.src) {
         result.push({ kind: 'image', src: m.data.src });
+      } else if (m.type === 'video' && m.data.src) {
+        result.push({ kind: 'video', src: m.data.src });
       } else if (m.type === 'audio' && m.data.src) {
         result.push({ kind: 'audio', src: m.data.src });
       } else if (m.type === 'youtube') {
@@ -1226,6 +1280,9 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                       if (seg.kind === 'image') {
                         return <InlineImage key={`img-${idx}-${segIdx}`} src={seg.src} />;
                       }
+                      if (seg.kind === 'video') {
+                        return <InlineVideo key={`vid-${idx}-${segIdx}`} src={seg.src} />;
+                      }
                       if (seg.kind === 'audio') {
                         return <AudioPlayer key={`aud-${idx}-${segIdx}`} src={toMediaSrc(seg.src)} />;
                       }
@@ -1330,6 +1387,9 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                   }
                   if (seg.kind === 'image') {
                     return <InlineImage key={`img-${idx}`} src={seg.src} />;
+                  }
+                  if (seg.kind === 'video') {
+                    return <InlineVideo key={`vid-${idx}`} src={seg.src} />;
                   }
                   if (seg.kind === 'audio') {
                     return <AudioPlayer key={`aud-${idx}`} src={toMediaSrc(seg.src)} />;

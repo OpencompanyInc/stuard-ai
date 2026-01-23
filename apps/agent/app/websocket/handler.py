@@ -65,7 +65,25 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 continue
                 
             elif kind == "tool_exec":
-                await handle_tool_exec(msg, session)
+                msg_for_task = msg
+
+                async def _run_tool_exec(msg_local: Dict[str, Any] = msg_for_task) -> None:
+                    try:
+                        await handle_tool_exec(msg_local, session)
+                    except Exception:
+                        logger.exception("tool_exec_task_failed")
+
+                t = asyncio.create_task(_run_tool_exec())
+                session.active_tool_tasks.add(t)
+                def _cleanup_tool(_t: asyncio.Task) -> None:
+                    try:
+                        session.active_tool_tasks.discard(_t)
+                    except Exception:
+                        pass
+                try:
+                    t.add_done_callback(_cleanup_tool)
+                except Exception:
+                    pass
                 continue
                 
             elif kind == "approval_response":
@@ -110,6 +128,11 @@ async def ws_endpoint(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         try:
             for t in list(session.active_chat_tasks):
+                try:
+                    t.cancel()
+                except Exception:
+                    pass
+            for t in list(session.active_tool_tasks):
                 try:
                     t.cancel()
                 except Exception:

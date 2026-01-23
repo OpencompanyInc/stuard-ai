@@ -272,6 +272,62 @@ export function setupIpc() {
     };
   });
 
+  ipcMain.handle('system:getFileIcon', async (_e, filePath: string, options?: { size?: 'small' | 'normal' | 'large' }) => {
+    try {
+      const p = String(filePath || '').trim();
+      if (!p) return { ok: false, error: 'invalid_path' };
+      const size = options?.size;
+
+      const normalizeCandidate = (s: string) => {
+        let v = String(s || '').trim();
+        if (!v) return '';
+        if (process.platform === 'win32') {
+          v = v.replace(/%([^%]+)%/g, (_m, name) => {
+            const key = String(name || '').trim();
+            if (!key) return _m;
+            return String(process.env[key] ?? _m);
+          });
+
+          if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+            v = v.slice(1, -1).trim();
+          }
+
+          const m = v.match(/^(.*?),\s*\d+$/);
+          if (m && m[1]) return String(m[1]).trim();
+        }
+        return v;
+      };
+
+      const candidates: string[] = [p];
+      if (process.platform === 'win32' && p.toLowerCase().endsWith('.lnk')) {
+        try {
+          const link = shell.readShortcutLink(p);
+          const icon = String((link as any)?.icon || '').trim();
+          const target = String((link as any)?.target || '').trim();
+          const iconPath = normalizeCandidate(icon);
+          const targetPath = normalizeCandidate(target);
+          if (iconPath) candidates.unshift(iconPath);
+          if (targetPath) candidates.unshift(targetPath);
+        } catch { }
+      }
+
+      for (const cand of candidates) {
+        const c = normalizeCandidate(cand);
+        if (!c) continue;
+        try {
+          const img = await app.getFileIcon(c, size ? { size } : undefined);
+          if (img && !img.isEmpty()) {
+            return { ok: true, dataUrl: img.toDataURL() };
+          }
+        } catch { }
+      }
+
+      return { ok: false, error: 'no_icon' };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+
   // Theme
   ipcMain.handle('prefs:applyTheme', (_e, data: any) => {
     try {

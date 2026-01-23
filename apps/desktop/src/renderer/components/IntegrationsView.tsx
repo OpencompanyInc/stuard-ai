@@ -15,6 +15,7 @@ interface IntegrationsViewProps {
   handleDisconnect: (slug: string) => Promise<void> | void;
   handleLearnMore: (url: string) => void;
   pyStatus: any;
+  ffStatus: any;
   pyEnvId: string;
   setPyEnvId: (v: string) => void;
   pyPackages: string;
@@ -24,9 +25,11 @@ interface IntegrationsViewProps {
   pyRunCode: string;
   setPyRunCode: (v: string) => void;
   pyInstalling: boolean;
+  ffInstalling: boolean;
   pyRunning: boolean;
   pyRunResult: any;
   refreshPythonStatus: () => Promise<void> | void;
+  refreshFfmpegStatus: () => Promise<void> | void;
   setupPython: () => Promise<void> | void;
   installPython: () => Promise<void> | void;
   runPython: () => Promise<void> | void;
@@ -45,6 +48,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
   handleDisconnect,
   handleLearnMore,
   pyStatus,
+  ffStatus,
   pyEnvId,
   setPyEnvId,
   pyPackages,
@@ -54,9 +58,11 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
   pyRunCode,
   setPyRunCode,
   pyInstalling,
+  ffInstalling,
   pyRunning,
   pyRunResult,
   refreshPythonStatus,
+  refreshFfmpegStatus,
   setupPython,
   installPython,
   runPython,
@@ -114,6 +120,8 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
           filteredIntegrations.map((i: any) => {
             const isConnected = !!connectedMap[i.slug];
             const isPython = i.slug === 'python';
+            const isFfmpeg = i.slug === 'ffmpeg';
+            const ffAvailable = !!(ffStatus && (ffStatus as any).available);
             
             return (
               <div key={i.slug} className="group relative flex flex-col bg-theme-card rounded-theme-card border border-theme p-5 shadow-sm hover:border-theme hover:shadow-md transition-all duration-300">
@@ -171,31 +179,77 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
                   </div>
                 )}
 
+                {isFfmpeg && (
+                  <div className="mb-5 p-3 bg-theme-bg rounded-theme-card border border-theme space-y-3">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-semibold text-theme-muted uppercase tracking-wide">Status</span>
+                      <span className={clsx("font-mono", ffAvailable ? "text-emerald-400" : "text-theme-muted")}>
+                        {ffInstalling ? 'Installing…' : ffAvailable ? 'Ready' : 'Not installed'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-semibold text-theme-muted uppercase tracking-wide">Source</span>
+                      <span className="font-mono text-theme-muted">{String((ffStatus as any)?.source || '—')}</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={refreshFfmpegStatus}
+                        disabled={ffInstalling}
+                        className="px-3 py-1.5 rounded-theme-button border border-theme bg-transparent text-[11px] font-bold text-theme-muted hover:bg-theme-hover hover:text-theme-fg transition-all shadow-sm disabled:opacity-50"
+                        title="Refresh"
+                      >
+                        <RefreshCw className={clsx("w-4 h-4", ffInstalling && "animate-spin")} />
+                      </button>
+                      <div className="flex-1" />
+                    </div>
+                  </div>
+                )}
+
                 <div className="pt-4 border-t border-theme flex items-center gap-2 mt-auto">
                   {i.available ? (
                     isConnected ? (
-                      <>
-                        <button 
-                          onClick={() => handleDisconnect(i.slug)}
-                          className="flex-1 px-3 py-2 rounded-theme-button border border-theme bg-transparent text-[11px] font-bold text-theme-muted hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30 transition-all shadow-sm active:scale-95"
-                        >
-                          Disconnect
-                        </button>
-                        <button 
-                          onClick={() => handleLearnMore(i.homepage)}
-                          className="px-3 py-2 rounded-theme-button text-theme-muted hover:text-theme-fg hover:bg-theme-hover border border-transparent hover:border-theme transition-all"
-                          title="Documentation"
-                        >
-                          <Link2 className="w-4 h-4" />
-                        </button>
-                      </>
+                      isFfmpeg ? (
+                        <>
+                          <button
+                            onClick={() => handleConnect(i.slug)}
+                            disabled={ffInstalling}
+                            className="flex-1 px-3 py-2 rounded-theme-button bg-primary text-primary-fg text-[11px] font-bold hover:opacity-90 shadow-sm transition-all active:scale-95 disabled:opacity-50"
+                          >
+                            {ffInstalling ? 'Installing…' : 'Repair'}
+                          </button>
+                          <button
+                            onClick={() => handleLearnMore(i.homepage)}
+                            className="px-3 py-2 rounded-theme-button text-theme-muted hover:text-theme-fg hover:bg-theme-hover border border-transparent hover:border-theme transition-all"
+                            title="Documentation"
+                          >
+                            <Link2 className="w-4 h-4" />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button 
+                            onClick={() => handleDisconnect(i.slug)}
+                            className="flex-1 px-3 py-2 rounded-theme-button border border-theme bg-transparent text-[11px] font-bold text-theme-muted hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30 transition-all shadow-sm active:scale-95"
+                          >
+                            Disconnect
+                          </button>
+                          <button 
+                            onClick={() => handleLearnMore(i.homepage)}
+                            className="px-3 py-2 rounded-theme-button text-theme-muted hover:text-theme-fg hover:bg-theme-hover border border-transparent hover:border-theme transition-all"
+                            title="Documentation"
+                          >
+                            <Link2 className="w-4 h-4" />
+                          </button>
+                        </>
+                      )
                     ) : (
                       <>
                         <button 
                           onClick={() => handleConnect(i.slug)}
-                          className="flex-1 px-3 py-2 rounded-theme-button bg-primary text-primary-fg text-[11px] font-bold hover:opacity-90 shadow-sm transition-all active:scale-95"
+                          disabled={isFfmpeg && ffInstalling}
+                          className="flex-1 px-3 py-2 rounded-theme-button bg-primary text-primary-fg text-[11px] font-bold hover:opacity-90 shadow-sm transition-all active:scale-95 disabled:opacity-50"
                         >
-                          Connect
+                          {isFfmpeg ? (ffInstalling ? 'Installing…' : 'Setup') : 'Connect'}
                         </button>
                         <button 
                           onClick={() => handleLearnMore(i.homepage)}

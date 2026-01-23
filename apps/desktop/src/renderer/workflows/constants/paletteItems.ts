@@ -69,6 +69,8 @@ export const LOCAL_TOOL_ITEMS: PaletteItem[] = [
   { k: 'local.tool', t: 'list_open_windows', label: 'List Open Windows', args: {} },
   { k: 'local.tool', t: 'bring_window_to_foreground', label: 'Focus Window', args: { title: 'Untitled - Notepad' } },
   { k: 'local.tool', t: 'smart_bring_window_to_foreground', label: 'Smart Focus Window', args: { hint: 'Epic Games Launcher' } },
+  { k: 'local.tool', t: 'get_window_info', label: 'Get Window Info', args: { title: 'Untitled - Notepad' } },
+  { k: 'local.tool', t: 'set_window_bounds', label: 'Resize/Move Window', args: { title: 'Untitled - Notepad', bounds: { x: 0, y: 0, width: 900, height: 700 }, bringToTop: true } },
 
   // File system
   { k: 'local.tool', t: 'read_file', label: 'Read File', args: { path: 'C:/file.txt' } },

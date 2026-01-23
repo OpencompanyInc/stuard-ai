@@ -19,6 +19,34 @@ interface UserData {
   stripeCustomerId?: string | null;
 }
 
+async function fetchProfile(userId: string) {
+  const byUserId = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('user_id', userId)
+    .single();
+
+  if (!byUserId.error && byUserId.data) return byUserId;
+
+  return supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single();
+}
+
+async function upsertProfile(userId: string, row: Record<string, any>) {
+  const byUserId = await supabase
+    .from('profiles')
+    .upsert({ user_id: userId, ...row }, { onConflict: 'user_id' });
+
+  if (!byUserId.error) return byUserId;
+
+  return supabase
+    .from('profiles')
+    .upsert({ id: userId, ...row }, { onConflict: 'id' });
+}
+
 export const useAuth = () => {
   const [user, setUser] = useState<User | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
@@ -40,15 +68,11 @@ export const useAuth = () => {
         setUser(user ?? null);
 
         if (user) {
-          const { data, error } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', user.id)
-            .single();
+          const { data, error } = await fetchProfile(user.id);
           if (!isMounted) return;
           if (!error && data) {
             setUserData({
-              uid: data.id,
+              uid: user.id,
               email: data.email ?? user.email,
               displayName: data.display_name ?? user.user_metadata?.fullName ?? user.email?.split('@')[0] ?? null,
               phoneNumber: data.phone_number ?? null,
@@ -76,15 +100,11 @@ export const useAuth = () => {
       setUser(nextUser);
 
       if (nextUser) {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', nextUser.id)
-          .single();
+        const { data, error } = await fetchProfile(nextUser.id);
         if (!isMounted) return;
         if (!error && data) {
           setUserData({
-            uid: data.id,
+            uid: nextUser.id,
             email: data.email ?? nextUser.email,
             displayName: data.display_name ?? nextUser.user_metadata?.fullName ?? nextUser.email?.split('@')[0] ?? null,
             phoneNumber: data.phone_number ?? null,
@@ -145,7 +165,6 @@ export const useAuth = () => {
       const newUser = data.user;
       if (newUser) {
         const profile = {
-          id: newUser.id,
           email,
           display_name: fullName,
           phone_number: phone ?? null,
@@ -153,7 +172,7 @@ export const useAuth = () => {
           marketing_emails: marketingEmails,
           created_at: new Date().toISOString(),
         };
-        await supabase.from('profiles').upsert(profile, { onConflict: 'id' });
+        await upsertProfile(newUser.id, profile);
 
         setUserData({
           uid: newUser.id,
@@ -251,7 +270,7 @@ export const useAuth = () => {
         ...(updates.smsControlEnabled !== undefined ? { sms_control_enabled: updates.smsControlEnabled } : {}),
         ...(updates.preferences?.marketingEmails !== undefined ? { marketing_emails: updates.preferences.marketingEmails } : {}),
       };
-      const { error } = await supabase.from('profiles').upsert({ id: user.id, ...mapped }, { onConflict: 'id' });
+      const { error } = await upsertProfile(user.id, mapped);
       if (error) return { error: error.message, success: false };
       if (userData) setUserData({ ...userData, ...updates });
       return { success: true };
@@ -276,8 +295,8 @@ export const useAuth = () => {
       const sessionAuthData = {
         id: sessionId,
         uid: user.id,
-        email: user.email,
-        display_name: user.user_metadata?.fullName || user.email?.split('@')[0],
+        email: user.email ?? null,
+        display_name: (user.user_metadata?.fullName || user.email?.split('@')[0] || 'User') as string,
         token,
         authenticated: true,
         timestamp: new Date().toISOString(),

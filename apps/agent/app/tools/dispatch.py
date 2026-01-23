@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, Callable, Awaitable
 
-from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo
+from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg
 
 
 # Map tool names to handler functions
 _HANDLERS = {
     # GUI
     "get_mouse_position": gui.get_mouse_position,
+    "computer_use": gui.computer_use,
     "click_at_coordinates": gui.click_at_coordinates,
     "double_click_at_coordinates": gui.double_click_at_coordinates,
     "type_text": gui.type_text,
@@ -160,6 +161,16 @@ _HANDLERS = {
     "stop_system_audio": screen_capture.stop_system_audio,
     "describe_system_audio_capabilities": screen_capture.describe_system_audio_capabilities,
 
+    # FFmpeg (Media tools)
+    "ffmpeg_status": ffmpeg.ffmpeg_status,
+    "ffmpeg_setup": ffmpeg.ffmpeg_setup,
+    "ffmpeg_run": ffmpeg.ffmpeg_run,
+    "ffmpeg_convert_media": ffmpeg.ffmpeg_convert_media,
+    "ffmpeg_extract_audio": ffmpeg.ffmpeg_extract_audio,
+    "ffmpeg_trim_media": ffmpeg.ffmpeg_trim_media,
+    "ffmpeg_probe_media": ffmpeg.ffmpeg_probe_media,
+    "ffmpeg_extract_frames": ffmpeg.ffmpeg_extract_frames,
+
     # Canvas/Container manager
     "canvas_manager": canvas.canvas_manager,
 
@@ -264,6 +275,15 @@ async def execute(tool: str, args: Dict[str, Any], emit: Callable[[str, Dict[str
 
         # Workflow tools
         "show_json_workflow_code",
+
+        # FFmpeg tools
+        "ffmpeg_setup",
+        "ffmpeg_run",
+        "ffmpeg_convert_media",
+        "ffmpeg_extract_audio",
+        "ffmpeg_trim_media",
+        "ffmpeg_probe_media",
+        "ffmpeg_extract_frames",
     ):
         return await handler(args, emit)  # type: ignore[misc]
     else:

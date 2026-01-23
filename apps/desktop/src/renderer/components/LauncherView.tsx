@@ -190,6 +190,10 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   const [processingPending, setProcessingPending] = useState(false);
   const [processedPendingCount, setProcessedPendingCount] = useState(0);
 
+  const fileIconCacheRef = useRef<Record<string, string>>({});
+  const [fileIconDataUrls, setFileIconDataUrls] = useState<Record<string, string>>({});
+  const fileIconReqIdRef = useRef(0);
+
   const searchReqIdRef = useRef(0);
   const semanticReqIdRef = useRef(0);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -316,6 +320,43 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
       if (semanticDebounceRef.current) clearTimeout(semanticDebounceRef.current);
     };
   }, [query, selectedRootId, doQuickFileSearch, doSemanticRefine]);
+
+  useEffect(() => {
+    const api = (window as any).desktopAPI;
+    if (!api?.getFileIcon) return;
+
+    const paths = Array.from(new Set(
+      (Array.isArray(fileResults) ? fileResults : [])
+        .filter((f: any) => f && String(f.kind || '').toLowerCase() === 'application')
+        .map((f: any) => String(f.path || '').trim())
+        .filter((p: string) => !!p)
+    ));
+    if (paths.length === 0) return;
+
+    const reqId = ++fileIconReqIdRef.current;
+    (async () => {
+      const updates: Record<string, string> = {};
+      await Promise.all(
+        paths.map(async (p: string) => {
+          if (fileIconCacheRef.current[p]) return;
+          const res = await api.getFileIcon(p, { size: 'small' }).catch(() => null);
+          if (fileIconReqIdRef.current !== reqId) return;
+          if (res?.ok && typeof res.dataUrl === 'string' && res.dataUrl) {
+            updates[p] = res.dataUrl;
+          }
+        })
+      );
+
+      if (fileIconReqIdRef.current !== reqId) return;
+      const keys = Object.keys(updates);
+      if (keys.length === 0) return;
+
+      for (const k of keys) {
+        fileIconCacheRef.current[k] = updates[k];
+      }
+      setFileIconDataUrls(prev => ({ ...prev, ...updates }));
+    })();
+  }, [fileResults]);
 
   const handleOpenIndexedFile = useCallback(async (path: string) => {
     try {
@@ -566,7 +607,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                   onSelectModel={(id) => {
                     try { onChatModeChange?.(id as any); } catch { }
                   }}
-                  side="top"
+                  side="bottom"
                   align="end"
                 />
                 <button
@@ -652,6 +693,10 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                       const kind = String(f.kind || 'other').toLowerCase();
                       const cfg = getFileKindConfig(kind);
                       const Icon = cfg.icon;
+                      const p = String(f.path || '').trim();
+                      const iconUrl = (kind === 'application' && p)
+                        ? (fileIconDataUrls[p] || fileIconCacheRef.current[p] || '')
+                        : '';
                       return (
                         <button
                           key={String(f.id || f.path)}
@@ -659,7 +704,11 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-theme-hover transition-all group/file text-left border border-transparent hover:border-theme/30"
                         >
                           <div className={clsx("w-9 h-9 rounded-lg flex items-center justify-center border border-theme/20", cfg.bg, cfg.color)}>
-                            <Icon className="w-4 h-4" />
+                            {iconUrl ? (
+                              <img src={iconUrl} alt="" className="w-4 h-4 object-contain" />
+                            ) : (
+                              <Icon className="w-4 h-4" />
+                            )}
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="text-[13px] font-bold text-theme-fg truncate">{String(f.filename || '').trim() || String(f.path || '')}</div>

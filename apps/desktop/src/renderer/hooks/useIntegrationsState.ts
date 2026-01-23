@@ -12,6 +12,8 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   const [intQuery, setIntQuery] = useState("");
   const [intCategory, setIntCategory] = useState("All");
   const [pyStatus, setPyStatus] = useState<any | null>(null);
+  const [ffStatus, setFfStatus] = useState<any | null>(null);
+  const [ffInstalling, setFfInstalling] = useState<boolean>(false);
   const [pyEnvId, setPyEnvId] = useState<string>("default");
   const [pyPackages, setPyPackages] = useState<string>("");
   const [pyReqTxt, setPyReqTxt] = useState<string>("");
@@ -20,22 +22,16 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   const [pyRunCode, setPyRunCode] = useState<string>("print(\"hello from python\")");
   const [pyRunResult, setPyRunResult] = useState<any | null>(null);
 
-  // MCP state (separate from regular integrations)
-  const [connectedMCPs, setConnectedMCPs] = useState<Record<string, boolean>>({});
-  const [mcpTokens, setMcpTokens] = useState<Record<string, string>>({});
-
   useEffect(() => {
     try {
       const raw = localStorage.getItem("integrations.connected");
-      if (raw) setConnectedMap(JSON.parse(raw));
-    } catch {}
-    try {
-      const mcpRaw = localStorage.getItem("mcp.connected");
-      if (mcpRaw) setConnectedMCPs(JSON.parse(mcpRaw));
-    } catch {}
-    try {
-      const tokensRaw = localStorage.getItem("mcp.tokens");
-      if (tokensRaw) setMcpTokens(JSON.parse(tokensRaw));
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          try { delete (parsed as any)['browser-control']; } catch { }
+        }
+        setConnectedMap(parsed);
+      }
     } catch {}
   }, []);
 
@@ -77,6 +73,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
           const next: Record<string, boolean> = {};
           if (prev.python) next.python = true;
           if (prev.webhooks) next.webhooks = true;
+          if (prev.ffmpeg) next.ffmpeg = true;
           // Add server-confirmed integrations
           for (const [slug, connected] of Object.entries(serverConnected)) {
             if (connected) next[slug] = true;
@@ -94,6 +91,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   const integrationLibrary = useMemo(
     () => [
       { slug: "python", name: "Python", description: "Local Python runtime and managed envs.", category: "Local", homepage: "https://www.python.org/", available: true },
+      { slug: "ffmpeg", name: "FFmpeg", description: "Local media conversion and editing (auto-installs when needed).", category: "Local", homepage: "https://ffmpeg.org/", available: true },
       { slug: "outlook", name: "Outlook", description: "Connect Microsoft Outlook via PKCE to read mail (Mail.Read).", category: "Communication", homepage: "https://learn.microsoft.com/graph/", available: true },
       { slug: "github", name: "GitHub", description: "Read repos and issues.", category: "Development", homepage: "https://github.com/", available: true },
       { slug: "google-drive", name: "Google Drive", description: "Access and search files.", category: "Files", homepage: "https://drive.google.com/", available: true },
@@ -129,6 +127,42 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       const j = await resp.json().catch(() => null);
       if (j && typeof j === "object") setPyStatus(j);
     } catch {}
+  };
+
+  const refreshFfmpegStatus = async () => {
+    try {
+      const res = await (window as any).desktopAPI?.execTool?.('ffmpeg_status', {});
+      if (res && typeof res === 'object') setFfStatus(res);
+
+      const available = !!(res && (res as any).available);
+      setConnectedMap((prev) => {
+        const next = { ...prev } as Record<string, boolean>;
+        if (available) next.ffmpeg = true;
+        else delete next.ffmpeg;
+        try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
+        return next;
+      });
+    } catch {}
+  };
+
+  useEffect(() => {
+    (async () => {
+      try {
+        await refreshFfmpegStatus();
+      } catch {}
+    })();
+  }, []);
+
+  const setupFfmpeg = async () => {
+    setFfInstalling(true);
+    try {
+      const res = await (window as any).desktopAPI?.execTool?.('ffmpeg_setup', {});
+      if (res && typeof res === 'object') setFfStatus(res);
+    } catch {
+    } finally {
+      await refreshFfmpegStatus();
+      setFfInstalling(false);
+    }
   };
 
   const setupPython = async () => {
@@ -210,6 +244,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       return;
     }
 
+    if (slug === "ffmpeg") {
+      try {
+        await setupFfmpeg();
+      } catch {}
+      return;
+    }
+
     const token = session?.access_token;
     if (!token) {
       alert("Please sign in first.");
@@ -284,47 +325,6 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     });
   };
 
-  // MCP Handlers
-  const handleMCPConnect = (slug: string, mcpUrl: string, token: string) => {
-    // Store the token
-    setMcpTokens((prev) => {
-      const next = { ...prev, [slug]: token };
-      try {
-        localStorage.setItem("mcp.tokens", JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-    // Mark as connected
-    setConnectedMCPs((prev) => {
-      const next = { ...prev, [slug]: true };
-      try {
-        localStorage.setItem("mcp.connected", JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-  };
-
-  const handleMCPDisconnect = (slug: string) => {
-    // Remove token
-    setMcpTokens((prev) => {
-      const next = { ...prev };
-      delete next[slug];
-      try {
-        localStorage.setItem("mcp.tokens", JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-    // Mark as disconnected
-    setConnectedMCPs((prev) => {
-      const next = { ...prev };
-      delete next[slug];
-      try {
-        localStorage.setItem("mcp.connected", JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-  };
-
   return {
     // state
     connectedMap,
@@ -333,6 +333,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     intCategory,
     setIntCategory,
     pyStatus,
+    ffStatus,
     pyEnvId,
     setPyEnvId,
     pyPackages,
@@ -340,13 +341,11 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     pyReqTxt,
     setPyReqTxt,
     pyInstalling,
+    ffInstalling,
     pyRunning,
     pyRunCode,
     setPyRunCode,
     pyRunResult,
-    // MCP state
-    connectedMCPs,
-    mcpTokens,
     // derived
     intCategories,
     filteredIntegrations,
@@ -356,11 +355,10 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     handleDisconnect,
     handleLearnMore,
     refreshPythonStatus,
+    refreshFfmpegStatus,
     setupPython,
+    setupFfmpeg,
     installPython,
     runPython,
-    // MCP actions
-    handleMCPConnect,
-    handleMCPDisconnect,
   };
 }

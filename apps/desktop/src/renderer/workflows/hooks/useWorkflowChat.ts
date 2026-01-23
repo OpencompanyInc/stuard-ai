@@ -19,6 +19,7 @@ interface UseWorkflowChatProps {
   cloudAiHttp: string;
   initialMessages?: Message[];
   errors?: any[];
+  selectedModelId?: string | 'auto';
 }
 
 export function useWorkflowChat({
@@ -26,7 +27,8 @@ export function useWorkflowChat({
   onApplyModel,
   cloudAiHttp,
   initialMessages = [],
-  errors = []
+  errors = [],
+  selectedModelId = 'auto'
 }: UseWorkflowChatProps) {
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [streamItems, setStreamItems] = useState<StreamItem[]>([]);
@@ -165,8 +167,13 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
               type: "chat",
               agent: "workflow",
               messages: messagesWithContext,
-              context: { mode: 'workflow_architect' }
+              context: { mode: 'workflow_architect' },
+              model: 'auto',
             };
+
+            if (selectedModelId && selectedModelId !== 'auto') {
+              payload.modelId = selectedModelId;
+            }
             if (accessToken) payload.auth = { accessToken };
             if (attachedImages.length > 0) {
               payload.images = attachedImages.map((img: any) => ({

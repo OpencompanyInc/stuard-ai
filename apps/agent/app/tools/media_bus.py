@@ -654,7 +654,9 @@ async def unsubscribe_media_bus(
     
     # Save recording if needed
     if was_recording and save_recording and file_path and recorded_chunks:
-        await _save_recording(kind, file_path, recorded_chunks, bus)
+        saved_path = await _save_recording(kind, file_path, recorded_chunks, bus)
+        if saved_path:
+            file_path = saved_path
     
     # Stop bus if no subscribers
     bus_stopped = False
@@ -686,10 +688,10 @@ async def unsubscribe_media_bus(
     return result
 
 
-async def _save_recording(kind: str, file_path: str, chunks: List[Any], bus: MediaBus) -> None:
+async def _save_recording(kind: str, file_path: str, chunks: List[Any], bus: MediaBus) -> Optional[str]:
     """Save accumulated recording chunks to file."""
     if not chunks:
-        return
+        return None
     
     def _save_audio():
         try:
@@ -705,28 +707,72 @@ async def _save_recording(kind: str, file_path: str, chunks: List[Any], bus: Med
         except Exception as e:
             print(f"[media_bus] Failed to save audio: {e}")
     
-    def _save_video():
+    def _save_video() -> Optional[str]:
         try:
             import cv2  # type: ignore
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            out = cv2.VideoWriter(file_path, fourcc, bus.fps, (bus.width, bus.height))
-            if not out.isOpened():
-                # Fallback to XVID AVI
-                avi_path = file_path.replace(".mp4", ".avi")
-                fourcc = cv2.VideoWriter_fourcc(*"XVID")
-                out = cv2.VideoWriter(avi_path, fourcc, bus.fps, (bus.width, bus.height))
-            
+            desired_path = file_path
+            output_path = desired_path
+            out = None
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*"H264")
+                out = cv2.VideoWriter(output_path, cv2.CAP_MSMF, fourcc, bus.fps, (bus.width, bus.height))
+                if not out.isOpened():
+                    try:
+                        out.release()
+                    except Exception:
+                        pass
+                    out = None
+            except Exception:
+                out = None
+
+            if out is None:
+                try:
+                    fourcc = cv2.VideoWriter_fourcc(*"avc1")
+                    out = cv2.VideoWriter(output_path, cv2.CAP_MSMF, fourcc, bus.fps, (bus.width, bus.height))
+                    if not out.isOpened():
+                        try:
+                            out.release()
+                        except Exception:
+                            pass
+                        out = None
+                except Exception:
+                    out = None
+
+            if out is None:
+                try:
+                    output_path = desired_path.rsplit(".", 1)[0] + ".webm"
+                    fourcc = cv2.VideoWriter_fourcc(*"VP80")
+                    out = cv2.VideoWriter(output_path, fourcc, bus.fps, (bus.width, bus.height))
+                    if not out.isOpened():
+                        try:
+                            out.release()
+                        except Exception:
+                            pass
+                        out = None
+                except Exception:
+                    out = None
+
+            if out is None:
+                output_path = desired_path
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                out = cv2.VideoWriter(output_path, fourcc, bus.fps, (bus.width, bus.height))
+
             for frame in chunks:
                 out.write(frame)
             out.release()
-            print(f"[media_bus] Saved video recording: {file_path} ({len(chunks)} frames)")
+            print(f"[media_bus] Saved video recording: {output_path} ({len(chunks)} frames)")
+            return output_path
         except Exception as e:
             print(f"[media_bus] Failed to save video: {e}")
+            return None
     
     if kind == "audio":
         await asyncio.to_thread(_save_audio)
+        return file_path
     elif kind == "video":
-        await asyncio.to_thread(_save_video)
+        return await asyncio.to_thread(_save_video)
+
+    return None
 
 
 async def get_bus_status(
@@ -931,7 +977,9 @@ async def stop_bus_recording(
     
     # Save recording
     if save_recording and file_path and recorded_chunks:
-        await _save_recording(kind, file_path, recorded_chunks, bus)
+        saved_path = await _save_recording(kind, file_path, recorded_chunks, bus)
+        if saved_path:
+            file_path = saved_path
     
     if emit:
         await emit("recording_stopped", {

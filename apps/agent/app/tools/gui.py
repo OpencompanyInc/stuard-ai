@@ -158,6 +158,208 @@ async def drag_and_drop(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True}
 
 
+async def computer_use(args: Dict[str, Any]) -> Dict[str, Any]:
+    action = str(args.get("action") or "").strip().lower()
+    action = action.replace("-", "_").replace(" ", "_")
+    action = {
+        "click": "left_click",
+        "tap": "left_click",
+        "leftclick": "left_click",
+        "doubleclick": "double_click",
+        "rightclick": "right_click",
+        "middleclick": "middle_click",
+        "mousemove": "mouse_move",
+        "move": "mouse_move",
+        "drag": "left_click_drag",
+        "press": "key",
+        "hotkey": "key",
+        "shortcut": "key",
+        "type_text": "type",
+        "input": "type",
+        "write": "type",
+    }.get(action, action)
+    monitor_index = int(args.get("monitorIndex") or 1)
+    coordinate = args.get("coordinate")
+    if coordinate is None and args.get("x") is not None and args.get("y") is not None:
+        coordinate = [args.get("x"), args.get("y")]
+    keys = args.get("keys") or []
+    if isinstance(keys, str):
+        keys = [k for k in keys.replace("+", " ").replace(",", " ").split() if k]
+    if (not keys) and isinstance(args.get("hotkey"), str):
+        keys = [k for k in str(args.get("hotkey") or "").replace("+", " ").replace(",", " ").split() if k]
+    if (not keys) and isinstance(args.get("key"), str):
+        keys = [str(args.get("key") or "").strip()]
+    text = args.get("text") if args.get("text") is not None else args.get("answer")
+    term_status = args.get("status") if args.get("status") is not None else args.get("result")
+    pixels = args.get("pixels") if args.get("pixels") is not None else (args.get("deltaY") if args.get("deltaY") is not None else args.get("delta"))
+    wait_s = args.get("time") if args.get("time") is not None else (args.get("seconds") if args.get("seconds") is not None else args.get("duration"))
+    include_screenshot = bool(args.get("includeScreenshot", True))
+    mouse_move_duration = float(args.get("mouseMoveDuration") or 0.0)
+    drag_duration = float(args.get("dragDuration") or 0.15)
+    return_data_url = bool(args.get("returnDataUrl") or False)
+    image_quality = int(args.get("imageQuality") or 60)
+    image_max_pixels = int(args.get("imageMaxPixels") or 2_000_000)
+
+    try:
+        import pyautogui as pag  # type: ignore
+    except Exception:
+        raise RuntimeError("pyautogui not installed")
+
+    try:
+        import mss  # type: ignore
+        from mss import tools as msstools  # type: ignore
+    except Exception:
+        raise RuntimeError("mss not installed")
+
+    def _coord_to_abs(x_in: float, y_in: float, mon: Dict[str, Any]) -> tuple[int, int]:
+        x = float(x_in)
+        y = float(y_in)
+        if 0 <= x <= 1000 and 0 <= y <= 1000:
+            abs_x = int(mon["left"] + (x / 1000.0) * mon["width"])
+            abs_y = int(mon["top"] + (y / 1000.0) * mon["height"])
+            return abs_x, abs_y
+        return int(x), int(y)
+
+    def _get_monitor() -> Dict[str, Any]:
+        with mss.mss() as sct:
+            mons = sct.monitors
+            if monitor_index < 0 or monitor_index >= len(mons):
+                mi = 1 if len(mons) > 1 else 0
+            else:
+                mi = monitor_index
+            return dict(mons[mi])
+
+    def _get_xy() -> tuple[int, int] | None:
+        if not coordinate or not isinstance(coordinate, (list, tuple)) or len(coordinate) != 2:
+            return None
+        mon = _get_monitor()
+        return _coord_to_abs(float(coordinate[0]), float(coordinate[1]), mon)
+
+    xy = _get_xy()
+
+    if action == "mouse_move":
+        if not xy:
+            raise ValueError("coordinate=[x,y] required for mouse_move")
+        pag.moveTo(xy[0], xy[1], duration=mouse_move_duration)
+
+    elif action == "left_click":
+        if xy:
+            pag.moveTo(xy[0], xy[1], duration=mouse_move_duration)
+            pag.click(x=xy[0], y=xy[1], clicks=1, button="left")
+        else:
+            pag.click(button="left")
+
+    elif action == "right_click":
+        if xy:
+            pag.moveTo(xy[0], xy[1], duration=mouse_move_duration)
+            pag.click(x=xy[0], y=xy[1], clicks=1, button="right")
+        else:
+            pag.click(button="right")
+
+    elif action == "middle_click":
+        if xy:
+            pag.moveTo(xy[0], xy[1], duration=mouse_move_duration)
+            pag.click(x=xy[0], y=xy[1], clicks=1, button="middle")
+        else:
+            pag.click(button="middle")
+
+    elif action == "double_click":
+        if not xy:
+            raise ValueError("coordinate=[x,y] required for double_click")
+        pag.moveTo(xy[0], xy[1], duration=mouse_move_duration)
+        pag.doubleClick(x=xy[0], y=xy[1])
+
+    elif action == "left_click_drag":
+        if not xy:
+            raise ValueError("coordinate=[x,y] required for left_click_drag")
+        pag.dragTo(xy[0], xy[1], duration=drag_duration, button="left")
+
+    elif action == "scroll":
+        amount = int(float(pixels or 0))
+        pag.scroll(amount)
+
+    elif action == "hscroll":
+        amount = int(float(pixels or 0))
+        try:
+            pag.hscroll(amount)
+        except Exception:
+            pass
+
+    elif action == "type":
+        if text is None:
+            raise ValueError("text is required for action=type")
+        await type_text({"text": str(text), "useClipboardFallback": bool(args.get("useClipboardFallback") or False)})
+
+    elif action == "key":
+        if not keys:
+            raise ValueError("keys is required for action=key")
+        await send_hotkey({"keys": [str(k) for k in keys]})
+
+    elif action == "wait":
+        if wait_s is None:
+            raise ValueError("time is required for action=wait")
+        time.sleep(float(wait_s))
+
+    elif action == "answer":
+        return {"ok": True, "action": action, "text": str(text or "")}
+
+    elif action == "terminate":
+        status = str(term_status or "").strip().lower()
+        if status not in {"success", "failure"}:
+            raise ValueError("status must be success or failure for action=terminate")
+        return {"ok": True, "action": action, "result": status}
+
+    else:
+        raise ValueError(f"Unsupported action: {action}")
+
+    result: Dict[str, Any] = {"ok": True, "action": action}
+
+    if not include_screenshot:
+        return result
+
+    mon = _get_monitor()
+    with mss.mss() as sct:
+        sct_img = sct.grab(mon)
+        tmpdir = os.path.join(tempfile.gettempdir(), "stuardai")
+        if not os.path.exists(tmpdir):
+            os.makedirs(tmpdir, exist_ok=True)
+        file_path = os.path.join(tmpdir, f"computer_use_{int(time.time()*1000)}.png")
+        msstools.to_png(sct_img.rgb, sct_img.size, output=file_path)
+
+    pos = pag.position()
+    result.update(
+        {
+            "filePath": file_path,
+            "cursor": {"x": pos.x, "y": pos.y},
+            "display": {"width": int(mon.get("width") or 0), "height": int(mon.get("height") or 0)},
+        }
+    )
+
+    if return_data_url:
+        try:
+            from PIL import Image  # type: ignore
+        except Exception:
+            raise RuntimeError("pillow not installed")
+        with Image.open(file_path) as im:
+            im = im.convert("RGB")
+            w, h = im.size
+            area = max(1, int(w) * int(h))
+            max_pixels = max(4096, int(image_max_pixels))
+            scale = (min(area, max_pixels) / float(area)) ** 0.5
+            if scale < 1.0:
+                nw = max(1, int(w * scale))
+                nh = max(1, int(h * scale))
+                im = im.resize((nw, nh), Image.LANCZOS)
+            buf = io.BytesIO()
+            q = max(1, min(95, int(image_quality)))
+            im.save(buf, format="JPEG", quality=q, optimize=True)
+            import base64
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            result["screenshot"] = f"data:image/jpeg;base64,{b64}"
+
+    return result
+
+
 async def take_screenshot(args: Dict[str, Any]) -> Dict[str, Any]:
     region = args.get("region") or {}
     try:

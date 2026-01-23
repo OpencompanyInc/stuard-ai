@@ -18,6 +18,35 @@ import { resolveEmbedder, cosineSimilarity } from '../utils/embeddings';
 import { embedMany } from 'ai';
 import { getSupabaseService } from '../supabase';
 
+const MEMORY_AI_TOOL_IDS = new Set([
+    'memory_retrieval',
+    'group_management',
+    'memory_summarization',
+    'memory_classify_texts',
+    'memory_auto_ingest',
+    'memory_extract_texts',
+    'search_past_conversations',
+    'get_conversation_context',
+    'list_user_spaces',
+    'get_space_contents',
+    'add_to_space',
+    'ensure_space_path',
+    'list_space_path',
+    'add_to_space_path',
+    'get_space_tree',
+    'create_space',
+    'get_memory_stats',
+    'add_source_to_space',
+    'add_note_to_space',
+    'add_code_snippet_to_space',
+    'link_conversation_to_space',
+    'find_or_create_space',
+    'update_space_item',
+    'delete_space_item',
+]);
+
+const MEMORY_AI_ALLOWLIST = new Set(['search_past_conversations', 'get_conversation_context']);
+
 // 1. Build Registry
 const TOOL_REGISTRY = new Map<string, any>();
 const TOOL_CATEGORIES = new Map<string, string[]>();
@@ -153,19 +182,25 @@ Object.values(deviceTools).forEach(t => {
     const name = (t as any)?.id || (t as any)?.name;
     if (!name) return;
 
+    if (MEMORY_AI_TOOL_IDS.has(name) && !MEMORY_AI_ALLOWLIST.has(name)) {
+        return;
+    }
+
     if (['list_directory', 'read_file', 'write_file', 'create_directory', 'move_file', 'copy_file', 'delete_file'].includes(name)) {
         register(t, 'FileSystem');
     } else if (['file_index_add_root', 'file_index_remove_root', 'file_index_list_roots', 'file_index_scan', 'file_index_get_pending', 'file_index_stats', 'file_index_update', 'file_search', 'file_search_by_filename', 'file_search_by_kind', 'file_search_recent', 'file_search_details', 'file_search_similar', 'process_pending_file_index', 'process_pending_file_index_batch', 'sync_file_index_batch_jobs', 'semantic_file_search'].includes(name)) {
         register(t, 'FileSearch');
-    } else if (['run_command', 'run_system_command', 'list_terminals', 'read_terminal', 'launch_application_or_uri', 'list_open_windows', 'get_window_info', 'smart_bring_window_to_foreground', 'python_status', 'python_setup', 'python_install', 'run_python_script', 'run_node_script'].includes(name)) {
+    } else if (['run_command', 'run_system_command', 'list_terminals', 'read_terminal', 'launch_application_or_uri', 'list_open_windows', 'bring_window_to_foreground', 'get_window_info', 'smart_bring_window_to_foreground', 'set_window_bounds', 'python_status', 'python_setup', 'python_install', 'run_python_script', 'run_node_script'].includes(name)) {
         register(t, 'System');
-    } else if (['click_at_coordinates', 'double_click_at_coordinates', 'type_text', 'send_hotkey', 'scroll', 'drag_and_drop', 'take_screenshot', 'capture_screen_to_file', 'find_and_click_text', 'get_screen_text', 'read_image_optimized'].includes(name)) {
+    } else if (['computer_use', 'computer_use_agent', 'click_at_coordinates', 'double_click_at_coordinates', 'type_text', 'send_hotkey', 'scroll', 'drag_and_drop', 'take_screenshot', 'capture_screen_to_file', 'find_and_click_text', 'get_screen_text', 'read_image_optimized'].includes(name)) {
         register(t, 'GUI');
     } else if (['capture_media', 'stop_capture', 'list_active_captures', 'describe_media_capture_capabilities', 'stream_speech', 'stop_stream_speech'].includes(name)) {
         register(t, 'Media');
+    } else if (['ffmpeg_status', 'ffmpeg_setup', 'ffmpeg_run', 'ffmpeg_convert_media', 'ffmpeg_extract_audio', 'ffmpeg_trim_media', 'ffmpeg_probe_media', 'ffmpeg_extract_frames'].includes(name)) {
+        register(t, 'Media');
     } else if (['list_local_workflows', 'list_local_stuards', 'show_json_workflow_code', 'import_workflow', 'run_automation', 'stop_automation', 'create_workflow', 'workflow_modify', 'retrieve_tool_format'].includes(name)) {
         register(t, 'Workflow');
-    } else if (['memory_retrieval', 'group_management', 'memory_summarization', 'memory_classify_texts', 'memory_auto_ingest', 'memory_extract_texts', 'search_past_conversations', 'get_conversation_context', 'list_user_spaces', 'get_space_contents', 'add_to_space', 'ensure_space_path', 'list_space_path', 'add_to_space_path', 'get_space_tree', 'create_space', 'get_memory_stats', 'add_source_to_space', 'add_note_to_space', 'add_code_snippet_to_space', 'link_conversation_to_space', 'find_or_create_space', 'update_space_item', 'delete_space_item'].includes(name)) {
+    } else if (['search_past_conversations', 'get_conversation_context'].includes(name)) {
         register(t, 'Memory');
     } else if (['knowledge_add_instruction', 'knowledge_remember_about_user', 'knowledge_update_profile', 'knowledge_add_project_fact', 'knowledge_stats'].includes(name)) {
         register(t, 'Knowledge');

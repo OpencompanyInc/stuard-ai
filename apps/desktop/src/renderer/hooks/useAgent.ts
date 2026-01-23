@@ -139,6 +139,7 @@ interface SendMessageOptions {
   mode?: string;
   modelId?: string;
   modelConfig?: any;
+  silent?: boolean;
 }
 
 interface ConversationTab {
@@ -295,7 +296,7 @@ export function useAgent(options?: string | UseAgentOptions) {
   const waitingQueuedStartRef = useRef<boolean>(false);
   const [queuedMessages, setQueuedMessages] = useState<Array<{ id: string; text: string; timestamp: number }>>([]);
   const queuedMessagesRef = useRef<Array<{ id: string; text: string; timestamp: number }>>([]);
-  const pendingSendRef = useRef<Array<{ id: string; text: string; timestamp: number; payload?: any; tabId?: string }>>([]);
+  const pendingSendRef = useRef<Array<{ id: string; text: string; timestamp: number; payload?: any; tabId?: string; silent?: boolean }>>([]);
   const outboundQueueRef = useRef<Array<{ id: string; text: string; timestamp: number; payload: any; tabId: string }>>([]);
   const runningTabsRef = useRef<Set<string>>(new Set());
   const reasoningStartTimeRef = useRef<number | null>(null); // Track when reasoning started
@@ -723,11 +724,13 @@ export function useAgent(options?: string | UseAgentOptions) {
               } else {
                 const p = pendingSendRef.current.shift();
                 if (p) {
-                  updateStreamingTab(t => {
-                    // Avoid duplicates if message was added optimistically
-                    if (t.messages.some(m => m.id === p.id)) return t;
-                    return { ...t, messages: [...t.messages, { id: p.id, role: 'user', text: p.text, timestamp: p.timestamp }] };
-                  });
+                  if (!p.silent) {
+                    updateStreamingTab(t => {
+                      // Avoid duplicates if message was added optimistically
+                      if (t.messages.some(m => m.id === p.id)) return t;
+                      return { ...t, messages: [...t.messages, { id: p.id, role: 'user', text: p.text, timestamp: p.timestamp }] };
+                    });
+                  }
                 }
               }
               setLastError(null);
@@ -989,8 +992,12 @@ export function useAgent(options?: string | UseAgentOptions) {
             const pos = Number(msg.position || 0);
             const queuedText = msg.text || '';
             const queueId = msg.id || `q-${Date.now()}`;
-            waitingQueuedStartRef.current = true;
+            const peek = pendingSendRef.current[0];
+            if (peek?.silent) {
+              return;
+            }
             const p = pendingSendRef.current.shift();
+            waitingQueuedStartRef.current = true;
             const fullText = (p?.text && p.text.trim()) ? p.text : queuedText;
             const ts = typeof p?.timestamp === 'number' ? p!.timestamp : Date.now();
             setQueuedMessages((prev) => {
@@ -1234,6 +1241,8 @@ export function useAgent(options?: string | UseAgentOptions) {
         try { connect(); } catch { }
       }
 
+      const isSilent = options.silent === true;
+
       const userMsg: Message = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         role: 'user',
@@ -1257,7 +1266,7 @@ export function useAgent(options?: string | UseAgentOptions) {
       // If this tab is not currently running, show the user's message immediately
       // The message will NOT be re-added on progress:start because it's already in the tab
       // Use setTabs directly with targetTabId to avoid issues if active tab changes
-      if (!isTabRunning) {
+      if (!isTabRunning && !isSilent) {
         setTabs(prev => prev.map(t =>
           t.id === targetTabId ? { ...t, messages: [...t.messages, userMsg] } : t
         ));
@@ -1308,7 +1317,8 @@ export function useAgent(options?: string | UseAgentOptions) {
         text: userMsg.text,
         timestamp: userMsg.timestamp!,
         payload,
-        tabId: targetTabId
+        tabId: targetTabId,
+        silent: isSilent
       };
       outboundQueueRef.current.push(pendingItem);
       pendingSendRef.current.push(pendingItem);
@@ -1383,6 +1393,7 @@ export function useAgent(options?: string | UseAgentOptions) {
             reasoningDuration: meta.reasoningDuration,
             toolCalls: meta.toolCalls,
             streamChunks: meta.streamChunks,
+            contextPaths: Array.isArray(meta?.contextPaths) ? meta.contextPaths : undefined,
             timestamp: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
           };
         });

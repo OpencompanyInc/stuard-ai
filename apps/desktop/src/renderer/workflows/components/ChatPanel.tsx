@@ -31,10 +31,16 @@ function toMediaSrc(src: string): string {
   let path = src.trim();
   if (/^[a-zA-Z]:[/\\]/.test(path)) {
     path = path.replace(/\\/g, '/');
-    return `file:///${path}`;
+    const parts = path.split('/');
+    const encodedPath = parts.map((p, i) => (i === 0 ? p : encodeURIComponent(p))).join('/');
+    return `file:///${encodedPath}`;
   }
-  if (path.startsWith('/')) return `file://${path}`;
-  return `file:///${path.replace(/\\/g, '/')}`;
+  if (path.startsWith('/')) {
+    const encodedPath = path.split('/').map(p => encodeURIComponent(p)).join('/');
+    return `file://${encodedPath}`;
+  }
+  const encodedPath = path.replace(/\\/g, '/').split('/').map(p => encodeURIComponent(p)).join('/');
+  return `file:///${encodedPath}`;
 }
 
 // Pre-process text to convert <<...>> and raw audio paths to Markdown image syntax
@@ -43,14 +49,14 @@ function preprocessMessageContent(content: string): string {
   if (!content) return '';
   
   // 1. Replace <<path>> with ![attachment](path)
-  let processed = content.replace(/<<([^<>]+)>>/g, '![attachment]($1)');
+  let processed = content.replace(/<<([^<>]+)>>/g, '![attachment](<$1>)');
   
   // 2. Replace raw audio paths with ![audio](path)
   // Look for standalone paths at start of line or preceded by whitespace
   // Regex matches: Drive:\... or /... ending in audio ext
-  const rawAudioRegex = /(^|[\s\n])((?:[a-zA-Z]:\\[^<>:"|?*\n\r]+\.(?:wav|mp3|ogg|m4a|aac|webm))|(?:\/[^<>:"|?*\n\r]+\.(?:wav|mp3|ogg|m4a|aac|webm)))(?=$|[\s\n])/gmi;
+  const rawAudioRegex = /(^|[\s\n])((?:[a-zA-Z]:\\[^<>:"|?*\n\r]+\.(?:wav|mp3|ogg|m4a|aac))|(?:\/[^<>:"|?*\n\r]+\.(?:wav|mp3|ogg|m4a|aac)))(?=$|[\s\n])/gmi;
   
-  processed = processed.replace(rawAudioRegex, '$1![audio]($2)');
+  processed = processed.replace(rawAudioRegex, '$1![audio](<$2>)');
   
   return processed;
 }
@@ -62,10 +68,29 @@ export const ChatImage: React.FC<{ src: string; alt?: string }> = ({ src, alt })
   const imageSrc = toMediaSrc(src || '');
   
   // Check if it's an audio file based on extension or alt text
-  const isAudio = /\.(wav|mp3|ogg|m4a|aac|webm)(\?|$)/i.test(imageSrc) || alt === 'audio';
+  const isAudio = /\.(wav|mp3|ogg|m4a|aac)(\?|$)/i.test(imageSrc) || alt === 'audio';
+  const isVideo = /\.(mp4|mov|m4v|webm)(\?|$)/i.test(imageSrc) || alt === 'video';
   
   if (isAudio) {
     return <AudioPlayer src={imageSrc} className="my-2 max-w-sm" />;
+  }
+
+  if (isVideo) {
+    return (
+      <span className="block my-2">
+        <video
+          src={imageSrc}
+          controls
+          playsInline
+          onError={(e) => {
+            const code = e.currentTarget?.error?.code;
+            console.error(`[ChatImage video] Failed(${code ?? 'unknown'}): "${src}" → "${imageSrc}"`);
+            setError(true);
+          }}
+          className="max-w-full max-h-[240px] rounded-lg border border-slate-200 shadow-sm object-contain bg-black"
+        />
+      </span>
+    );
   }
 
   if (error) {

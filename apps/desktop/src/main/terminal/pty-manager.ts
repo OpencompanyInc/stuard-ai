@@ -1,10 +1,20 @@
-import * as pty from 'node-pty';
 import { BrowserWindow } from 'electron';
 import { TerminalSession, TerminalCreateOptions, TerminalOutputChunk } from './types';
 import logger from '../utils/logger';
 
+let _pty: any = null;
+function getPty(): any {
+  if (_pty) return _pty;
+  try {
+    _pty = require('node-pty');
+  } catch {
+    _pty = null;
+  }
+  return _pty;
+}
+
 interface PtyEntry {
-  pty: pty.IPty;
+  pty: any;
   session: TerminalSession;
   buffer: TerminalOutputChunk[];
   seq: number;
@@ -40,6 +50,10 @@ class PtyManager {
   }
 
   create(options: TerminalCreateOptions = {}): TerminalSession {
+    const pty = getPty();
+    if (!pty) {
+      throw new Error('pty_not_available');
+    }
     const id = `pty-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const shell = this.resolveShell(options.shell);
     const cwd = options.cwd || process.cwd();

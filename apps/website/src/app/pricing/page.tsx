@@ -13,35 +13,28 @@ export default function PricingPage() {
 
   console.log('PricingPage auth status:', { user: !!user, loading });
 
-  const handleGetStarted = async (e: React.MouseEvent, productId?: string) => {
+  const handleGetStarted = async (e: React.MouseEvent, productId: string | undefined, planName: string) => {
     if (user) {
       e.preventDefault();
 
       if (!productId) {
-        console.log('No product ID, redirecting to settings');
-        router.push('/settings');
+        if (planName.toLowerCase() === 'free') {
+          router.push('/dashboard');
+          return;
+        }
+        console.error('Missing Polar product id for plan', planName);
         return;
       }
 
-      try {
-        const response = await fetch('/api/polar/checkout', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ productId }),
-        });
+      const metadata = JSON.stringify({ userId: user.id });
+      const qs = new URLSearchParams({
+        products: productId,
+        customerEmail: user.email || '',
+        customerExternalId: user.id,
+        metadata,
+      });
 
-        const data = await response.json();
-
-        if (data.url) {
-          router.push(data.url);
-        } else {
-          console.error('No checkout URL returned', data);
-        }
-      } catch (error) {
-        console.error('Error creating checkout session', error);
-      }
+      window.location.href = `/api/polar/checkout?${qs.toString()}`;
     }
   };
   // 65% of plan price goes to usage budget. 100 credits per $1.
@@ -53,7 +46,7 @@ export default function PricingPage() {
   const plans = [
     {
       name: 'Free',
-      productId: process.env.NEXT_PUBLIC_POLAR_PRODUCT_FREE_ID,
+      productId: process.env.NEXT_PUBLIC_POLAR_PRODUCT_FREE_ID || undefined,
       price: '$0',
       period: '',
       description: 'Get started with Stuard AI',
@@ -222,7 +215,7 @@ export default function PricingPage() {
                       </li>
                     ))}
                   </ul>
-                  <Link href="/signup" onClick={(e) => handleGetStarted(e, plan.productId)} className="block w-full">
+                  <Link href="/signup" onClick={(e) => handleGetStarted(e, plan.productId, plan.name)} className="block w-full">
                     <button className="w-full py-3 rounded-xl bg-primary text-white font-bold hover:opacity-90 transition-all shadow-sm active:scale-[0.98]">
                       {user ? 'Upgrade Now' : 'Get Started'}
                     </button>

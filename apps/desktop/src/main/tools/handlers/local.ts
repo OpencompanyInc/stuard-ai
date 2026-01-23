@@ -66,6 +66,7 @@ export async function execLocalTool(tool: string, args: any, ctx: RouterContext,
   return new Promise((resolve) => {
     let done = false;
     let timeoutId: NodeJS.Timeout | undefined;
+    let lastMediaToolsPercent = -1;
     
     const resetTimeout = (ms: number) => {
       if (done) return;
@@ -139,6 +140,25 @@ export async function execLocalTool(tool: string, args: any, ctx: RouterContext,
             }
           } else if (status === 'preparing') {
             ctx.logFn(`🎤 Preparing ${data.kind || 'media'} capture...`);
+          } else if (status === 'media_tools_preparing') {
+            ctx.logFn(`🧰 Preparing media tools...`);
+          } else if (status === 'media_tools_downloading') {
+            const p = Number((data as any)?.percent);
+            if (Number.isFinite(p)) {
+              const pi = Math.max(0, Math.min(100, Math.round(p)));
+              if (pi !== lastMediaToolsPercent && (pi === 0 || pi === 100 || pi % 10 === 0)) {
+                lastMediaToolsPercent = pi;
+                ctx.logFn(`⬇ Downloading media tools... ${pi}%`);
+              }
+            } else {
+              ctx.logFn(`⬇ Downloading media tools...`);
+            }
+          } else if (status === 'media_tools_installing') {
+            ctx.logFn(`🧰 Installing media tools...`);
+          } else if (status === 'media_tools_ready') {
+            ctx.logFn(`✓ Media tools ready`);
+          } else if (status === 'media_tools_error') {
+            ctx.logFn(`❌ Media tools error: ${(data as any)?.error || 'unknown'}`);
           } else if (status === 'approval_required') {
             if (timeoutId) clearTimeout(timeoutId);
             ws.off('message', onMessage);
@@ -227,6 +247,27 @@ export function calcToolTimeout(tool: string, args: any): number {
   // analyze_media: can take a while for transcription/analysis
   if (tool === 'analyze_media') {
     return 600000; // 10 min for long media files
+  }
+
+  // ffmpeg_setup: download/extract can be slow on first run
+  if (tool === 'ffmpeg_setup') {
+    return 1200000; // 20 min
+  }
+
+  // ffmpeg operations: respect timeoutMs when provided, otherwise use a reasonable default
+  if (
+    tool === 'ffmpeg_run' ||
+    tool === 'ffmpeg_convert_media' ||
+    tool === 'ffmpeg_extract_audio' ||
+    tool === 'ffmpeg_trim_media' ||
+    tool === 'ffmpeg_probe_media' ||
+    tool === 'ffmpeg_extract_frames'
+  ) {
+    const ms = Number(args?.timeoutMs);
+    if (Number.isFinite(ms) && ms > 0) {
+      return Math.min(ms + 30000, 1800000);
+    }
+    return 600000;
   }
   
   // Default: 5 minutes for most tools

@@ -17,8 +17,9 @@
     "typescript": "^5.3.3"
   },
   "pnpm": {
-    "patchedDependencies": {
-      "node-pty@1.0.0": "patches/node-pty@1.0.0.patch"
+    "overrides": {
+      "@types/react": "18.2.21",
+      "@types/react-dom": "18.2.7"
     }
   }
 }

@@ -1,5 +1,7 @@
-import { app, globalShortcut, protocol, net } from "electron";
+import { app, globalShortcut, protocol } from "electron";
+import fs from "node:fs";
 import path from "path";
+import { Readable } from "node:stream";
 import { initEnv } from "./env";
 import { createWindow, registerGlobalShortcuts, createTray, showWindow } from "./windows/index";
 import { setupIpc } from "./ipc/index";
@@ -34,7 +36,7 @@ setupSingleInstance();
 
 app.whenReady().then(async () => {
   // Register local-file:// protocol handler to serve local files in renderer
-  protocol.handle('local-file', (request) => {
+  protocol.handle('local-file', async (request) => {
     // URL format: local-file://C:/path or local-file:///C:/path
     // When using local-file://C:/path, the browser treats "C:" as hostname
     const url = new URL(request.url);
@@ -55,7 +57,91 @@ app.whenReady().then(async () => {
     filePath = filePath.replace(/\\/g, '/');
 
     logger.debug('[local-file protocol] Serving:', filePath);
-    return net.fetch(`file:///${filePath}`);
+
+    const ext = path.extname(filePath).toLowerCase();
+    const contentType =
+      ext === '.mp4' ? 'video/mp4' :
+      ext === '.webm' ? 'video/webm' :
+      ext === '.mov' ? 'video/quicktime' :
+      ext === '.m4v' ? 'video/x-m4v' :
+      ext === '.mp3' ? 'audio/mpeg' :
+      ext === '.wav' ? 'audio/wav' :
+      ext === '.ogg' ? 'audio/ogg' :
+      ext === '.m4a' ? 'audio/mp4' :
+      ext === '.aac' ? 'audio/aac' :
+      ext === '.png' ? 'image/png' :
+      ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
+      ext === '.gif' ? 'image/gif' :
+      ext === '.webp' ? 'image/webp' :
+      'application/octet-stream';
+
+    try {
+      const stat = await fs.promises.stat(filePath);
+      if (!stat.isFile()) {
+        return new Response('Not Found', { status: 404 });
+      }
+
+      const totalSize = stat.size;
+      const range = request.headers.get('range');
+      const method = (request.method || 'GET').toUpperCase();
+
+      if (range) {
+        const match = /^bytes=(\d*)-(\d*)$/i.exec(range.trim());
+        if (!match) {
+          return new Response('Range Not Satisfiable', {
+            status: 416,
+            headers: {
+              'Content-Range': `bytes */${totalSize}`,
+            },
+          });
+        }
+
+        const start = match[1] ? Number(match[1]) : 0;
+        const end = match[2] ? Number(match[2]) : totalSize - 1;
+
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= totalSize) {
+          return new Response('Range Not Satisfiable', {
+            status: 416,
+            headers: {
+              'Content-Range': `bytes */${totalSize}`,
+            },
+          });
+        }
+
+        const chunkSize = end - start + 1;
+        const headers: Record<string, string> = {
+          'Content-Type': contentType,
+          'Accept-Ranges': 'bytes',
+          'Content-Range': `bytes ${start}-${end}/${totalSize}`,
+          'Content-Length': String(chunkSize),
+        };
+
+        if (method === 'HEAD') {
+          return new Response(null, { status: 206, headers });
+        }
+
+        const nodeStream = fs.createReadStream(filePath, { start, end });
+        const webStream = Readable.toWeb(nodeStream);
+        return new Response(webStream as any, { status: 206, headers });
+      }
+
+      const headers: Record<string, string> = {
+        'Content-Type': contentType,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': String(totalSize),
+      };
+
+      if (method === 'HEAD') {
+        return new Response(null, { status: 200, headers });
+      }
+
+      const nodeStream = fs.createReadStream(filePath);
+      const webStream = Readable.toWeb(nodeStream);
+      return new Response(webStream as any, { status: 200, headers });
+    } catch (e) {
+      logger.error('[local-file protocol] Failed to serve:', filePath, e);
+      return new Response('Not Found', { status: 404 });
+    }
   });
 
   // Log startup info (after app is ready so userData path is available)

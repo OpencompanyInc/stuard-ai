@@ -1,5 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import logger from '../utils/logger';
 
 let wss: WebSocketServer | null = null;
@@ -72,6 +72,15 @@ export function stopBrowserExtensionServer() {
     }
 }
 
+export function getBrowserExtensionStatus() {
+    const clients = connectedClients.size;
+    return {
+        ok: true,
+        connected: clients > 0,
+        clients,
+    };
+}
+
 /**
  * Send a request to the browser extension and wait for a response
  */
@@ -80,7 +89,7 @@ export async function sendRequestToBrowser(action: string, payload: any = {}, ti
         throw new Error('Browser extension not connected');
     }
 
-    const requestId = uuidv4();
+    const requestId = randomUUID();
     const ws = Array.from(connectedClients)[0]; // Just use first for now
 
     return new Promise((resolve, reject) => {

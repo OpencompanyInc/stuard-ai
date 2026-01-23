@@ -17,6 +17,7 @@ import { Chart } from './Chart';
 import { InfoCard } from './InfoCard';
 import { EmailView } from './EmailView';
 import { AgentTodoList } from './AgentTodoList';
+import type { DropzoneFile } from './FileDropzone';
 
 export interface GenUIProps {
   toolName: string;
@@ -90,7 +91,14 @@ export const GenUIContainer: React.FC<GenUIProps> = ({
           accept={args.accept}
           maxFiles={args.maxFiles}
           onDrop={(files) => {
-            const fileData = files.map(f => ({ name: f.name, path: (f as any).path, size: f.size, type: f.type }));
+            const fileData = (files as DropzoneFile[]).map((f) => ({
+              name: f.name,
+              path: f.path,
+              size: f.size,
+              type: f.type,
+              data: f.data,
+              mimeType: f.mimeType,
+            }));
             onResult({ files: fileData });
           }}
         />
