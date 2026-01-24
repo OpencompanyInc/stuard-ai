@@ -16,8 +16,7 @@ async function resolveFolderPath(
   spaceId: string,
   rawPath: unknown,
   options?: { create?: boolean }
-): Promise<{ ok: boolean; folder_id?: string | null; created?: boolean; error?: string }>
-{
+): Promise<{ ok: boolean; folder_id?: string | null; created?: boolean; error?: string }> {
   const create = options?.create ?? false;
   const parts = normalizePath(rawPath);
 
@@ -181,7 +180,7 @@ export const search_past_conversations = createTool({
               msgs.map((m) => ({ role: m.role, content: m.content })),
             );
           }
-        } catch {}
+        } catch { }
       }
 
       const segmentResults2 =
@@ -192,18 +191,18 @@ export const search_past_conversations = createTool({
       const segmentResults3 =
         since || before
           ? segmentResults2.filter(({ segment }) => {
-              const t = Date.parse(String(segment.created_at || ''));
-              if (!Number.isFinite(t)) return true;
-              if (since) {
-                const s = Date.parse(String(since));
-                if (Number.isFinite(s) && t < s) return false;
-              }
-              if (before) {
-                const b = Date.parse(String(before));
-                if (Number.isFinite(b) && t > b) return false;
-              }
-              return true;
-            })
+            const t = Date.parse(String(segment.created_at || ''));
+            if (!Number.isFinite(t)) return true;
+            if (since) {
+              const s = Date.parse(String(since));
+              if (Number.isFinite(s) && t < s) return false;
+            }
+            if (before) {
+              const b = Date.parse(String(before));
+              if (Number.isFinite(b) && t > b) return false;
+            }
+            return true;
+          })
           : segmentResults2;
 
       const results = segmentResults3.map(({ segment, score }) => ({
@@ -307,7 +306,7 @@ export const add_to_space_path = createTool({
     space_id: z.string().describe('The space ID to add to'),
     path: z.string().optional().default('').describe('Folder path within the space. Empty means root.'),
     type: z.enum(['note', 'source', 'link', 'file', 'fact', 'snippet']).describe('Type of item to add'),
-    title: z.string().optional().describe('Optional title for the item'),
+    title: z.string().describe('The title/name for the item'),
     content: z.string().describe('The content to add'),
   }),
   outputSchema: z.object({
@@ -529,7 +528,7 @@ export const add_to_space = createTool({
     space_id: z.string().describe('The space ID to add to'),
     type: z.enum(['note', 'source', 'link', 'fact', 'snippet']).describe('Type of item'),
     content: z.string().describe('The content to add'),
-    title: z.string().optional().describe('Optional title for the item'),
+    title: z.string().describe('The title/name for the item'),
   }),
   outputSchema: z.object({
     ok: z.boolean(),

@@ -1,4 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import './scrollbar.css';
 
 @tailwind base;
 @tailwind components;
@@ -267,11 +268,9 @@ body {
 }
 
 .genui-scrollbar::-webkit-scrollbar-thumb {
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--primary, #007acc) 40%, transparent),
-    color-mix(in srgb, var(--primary, #007acc) 60%, transparent)
-  );
+  background: linear-gradient(135deg,
+      color-mix(in srgb, var(--primary, #007acc) 40%, transparent),
+      color-mix(in srgb, var(--primary, #007acc) 60%, transparent));
   border-radius: 10px;
   border: 1px solid transparent;
   background-clip: padding-box;
@@ -279,11 +278,9 @@ body {
 }
 
 .genui-scrollbar:hover::-webkit-scrollbar-thumb {
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--primary, #007acc) 60%, transparent),
-    color-mix(in srgb, var(--primary, #007acc) 80%, transparent)
-  );
+  background: linear-gradient(135deg,
+      color-mix(in srgb, var(--primary, #007acc) 60%, transparent),
+      color-mix(in srgb, var(--primary, #007acc) 80%, transparent));
 }
 
 .genui-scrollbar::-webkit-scrollbar-thumb:active {
@@ -296,19 +293,15 @@ body {
 }
 
 [data-theme='dark'] .genui-scrollbar::-webkit-scrollbar-thumb {
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.15),
-    rgba(255, 255, 255, 0.25)
-  );
+  background: linear-gradient(135deg,
+      rgba(255, 255, 255, 0.15),
+      rgba(255, 255, 255, 0.25));
 }
 
 [data-theme='dark'] .genui-scrollbar:hover::-webkit-scrollbar-thumb {
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.25),
-    rgba(255, 255, 255, 0.35)
-  );
+  background: linear-gradient(135deg,
+      rgba(255, 255, 255, 0.25),
+      rgba(255, 255, 255, 0.35));
 }
 
 [data-theme='dark'] .genui-scrollbar::-webkit-scrollbar-thumb:active {

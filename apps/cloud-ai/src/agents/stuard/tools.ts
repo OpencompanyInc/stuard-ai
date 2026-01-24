@@ -144,7 +144,22 @@ export const ALL_TOOLS = {
   // Memory + Spaces
   search_past_conversations,
   get_conversation_context,
-  // (Space management tools intentionally not exposed to the LLM)
+  // Space management tools
+  list_user_spaces,
+  get_space_contents,
+  add_to_space,
+  ensure_space_path,
+  list_space_path,
+  add_to_space_path,
+  get_space_tree,
+  create_space,
+  add_source_to_space,
+  add_note_to_space,
+  add_code_snippet_to_space,
+  link_conversation_to_space,
+  find_or_create_space,
+  update_space_item,
+  delete_space_item,
   // GitHub tools (require user to have connected GitHub via dashboard)
   github_get_me,
   github_list_repos,

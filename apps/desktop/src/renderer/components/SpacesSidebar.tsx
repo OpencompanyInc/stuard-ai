@@ -37,7 +37,9 @@ import {
   Lock,
   Users,
   MoveRight,
-  GripVertical
+  GripVertical,
+  List,
+  FolderTree
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -183,14 +185,15 @@ const EmptyState: React.FC<{ title: string; description: string; icon: React.Ele
 const TreeItem: React.FC<{
   item: SpaceItem;
   depth: number;
-  isExpanded: boolean;
-  onToggle: () => void;
+  expandedIds: Set<string>;
+  onToggle: (id: string) => void;
   onClick: () => void;
   onMove?: (itemId: string, newParentId: string | null) => void;
   selectedId?: string | null;
-}> = ({ item, depth, isExpanded, onToggle, onClick, onMove, selectedId }) => {
+}> = ({ item, depth, expandedIds, onToggle, onClick, onMove, selectedId }) => {
   const isFolder = item.type === 'folder';
   const hasChildren = isFolder && item.children && item.children.length > 0;
+  const isExpanded = expandedIds.has(item.id);
 
   const getTypeColor = () => {
     const colors: Record<string, string> = {
@@ -217,7 +220,7 @@ const TreeItem: React.FC<{
         style={{ paddingLeft: `${8 + depth * 16}px` }}
         onClick={(e) => {
           if (isFolder) {
-            onToggle();
+            onToggle(item.id);
           } else {
             onClick();
           }
@@ -226,7 +229,7 @@ const TreeItem: React.FC<{
         {/* Expand/collapse for folders */}
         {isFolder ? (
           <button
-            onClick={(e) => { e.stopPropagation(); onToggle(); }}
+            onClick={(e) => { e.stopPropagation(); onToggle(item.id); }}
             className="p-0.5 hover:bg-theme-active rounded transition-colors"
           >
             {isExpanded ? (
@@ -245,8 +248,12 @@ const TreeItem: React.FC<{
         </div>
 
         {/* Title */}
-        <span className="flex-1 text-[13px] text-theme-fg truncate">
-          {item.title || (item.type === 'link' ? item.content : 'Untitled')}
+        <span className="flex-1 text-[13px] text-theme-fg truncate" title={item.title || item.content}>
+          {item.title || (
+            item.type === 'link' ? item.content :
+              item.type === 'file' ? item.content.split(/[/\\]/).pop() :
+                'Untitled'
+          )}
         </span>
 
         {/* Pin indicator */}
@@ -254,12 +261,7 @@ const TreeItem: React.FC<{
           <Star className="w-3 h-3 text-amber-500 fill-amber-500 flex-shrink-0" />
         )}
 
-        {/* Item count for folders */}
-        {isFolder && item.children && (
-          <span className="text-[10px] text-theme-muted bg-theme-hover px-1.5 py-0.5 rounded">
-            {item.children.length}
-          </span>
-        )}
+        {/* Removed item count for folders as requested */}
       </div>
 
       {/* Children */}
@@ -270,8 +272,8 @@ const TreeItem: React.FC<{
               key={child.id}
               item={child}
               depth={depth + 1}
-              isExpanded={false}
-              onToggle={() => {}}
+              expandedIds={expandedIds}
+              onToggle={onToggle}
               onClick={onClick}
               onMove={onMove}
               selectedId={selectedId}
@@ -492,7 +494,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [expandedTypes, setExpandedTypes] = useState<Set<string>>(new Set(['project', 'topic', 'research', 'reference', 'custom']));
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
-  const [viewMode, setViewMode] = useState<'list' | 'tree'>('list');
+  const [viewMode, setViewMode] = useState<'list' | 'tree'>('tree');
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [folderPath, setFolderPath] = useState<SpaceItem[]>([]);
 
@@ -611,6 +613,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
   const handleSelectSpace = (space: Space) => {
     setSelectedSpace(space);
     setContentFilter('all');
+    setViewMode('tree');
     setCurrentFolderId(null);
     setFolderPath([]);
     onSelectSpace?.(space);
@@ -803,7 +806,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
         loadFolderTree(selectedSpace);
         // Update viewing item if it's the same item
         if (viewingItem?.id === editingItem.id) {
-          setViewingItem({...editingItem, title: editItemTitle, content: editItemContent});
+          setViewingItem({ ...editingItem, title: editItemTitle, content: editItemContent });
         }
       } else {
         setToastMessage('Failed to update item');
@@ -1340,7 +1343,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
         </div>
 
         {/* Space List */}
-        <div className="flex-1 overflow-y-auto px-3 pb-4">
+        <div className="flex-1 overflow-y-auto px-3 pb-4 slick-scrollbar">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-16">
               <Loader2 className="w-6 h-6 text-primary animate-spin" />
@@ -1507,20 +1510,61 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                 </div>
               )}
 
-              {/* Filter Tabs */}
-              <div className="flex items-center gap-1 mt-4 p-1 bg-theme-hover/50 rounded-xl">
-                <FilterTab label="All" count={itemCounts.all} isActive={contentFilter === 'all'} onClick={() => setContentFilter('all')} />
-                <FilterTab label="Notes" count={itemCounts.notes} isActive={contentFilter === 'notes'} onClick={() => setContentFilter('notes')} />
-                <FilterTab label="Links" count={itemCounts.links} isActive={contentFilter === 'links'} onClick={() => setContentFilter('links')} />
-                <FilterTab label="Code" count={itemCounts.code} isActive={contentFilter === 'code'} onClick={() => setContentFilter('code')} />
+              <div className="flex items-center justify-between mt-4">
+                <div className="flex items-center gap-1 p-1 bg-theme-hover/50 rounded-xl">
+                  <FilterTab label="All" count={itemCounts.all} isActive={contentFilter === 'all'} onClick={() => setContentFilter('all')} />
+                  <FilterTab label="Notes" count={itemCounts.notes} isActive={contentFilter === 'notes'} onClick={() => setContentFilter('notes')} />
+                  <FilterTab label="Links" count={itemCounts.links} isActive={contentFilter === 'links'} onClick={() => setContentFilter('links')} />
+                  <FilterTab label="Code" count={itemCounts.code} isActive={contentFilter === 'code'} onClick={() => setContentFilter('code')} />
+                </div>
+                <div className="flex items-center gap-1 p-1 bg-theme-hover/50 rounded-xl">
+                  <button
+                    onClick={() => setViewMode('tree')}
+                    className={clsx(
+                      "p-1.5 rounded-lg transition-all",
+                      viewMode === 'tree' ? "bg-theme-card shadow-sm text-theme-fg" : "text-theme-muted hover:text-theme-fg"
+                    )}
+                    title="Tree View"
+                  >
+                    <FolderTree className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setViewMode('list')}
+                    className={clsx(
+                      "p-1.5 rounded-lg transition-all",
+                      viewMode === 'list' ? "bg-theme-card shadow-sm text-theme-fg" : "text-theme-muted hover:text-theme-fg"
+                    )}
+                    title="List View"
+                  >
+                    <List className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             </div>
 
             {/* Content */}
-            <div className="flex-1 overflow-y-auto px-5 py-4">
+            <div className="flex-1 overflow-y-auto px-5 py-4 slick-scrollbar">
               {itemsLoading ? (
                 <div className="flex flex-col items-center justify-center py-16">
                   <Loader2 className="w-6 h-6 text-primary animate-spin" />
+                </div>
+              ) : viewMode === 'tree' && treeItems.length > 0 ? (
+                <div className="space-y-0.5">
+                  {treeItems.map(item => (
+                    <TreeItem
+                      key={item.id}
+                      item={item}
+                      depth={0}
+                      expandedIds={expandedFolders}
+                      onToggle={toggleFolder}
+                      onClick={() => handleItemClick(item)}
+                      onMove={item.type !== 'folder' ? (itemId, newParentId) => {
+                        // Handle drag and drop if implemented, or context menu move
+                        setItemToMove(item); setIsMoveItemOpen(true);
+                      } : undefined}
+                      selectedId={viewingItem?.id}
+                    />
+                  ))}
                 </div>
               ) : filteredItems.length === 0 ? (
                 <EmptyState
@@ -1605,8 +1649,8 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                 <div className={clsx(
                   "w-10 h-10 rounded-xl flex items-center justify-center",
                   viewingItem.type === 'note' ? "bg-blue-500/10 text-blue-500" :
-                  viewingItem.type === 'snippet' ? "bg-amber-500/10 text-amber-500" :
-                  "bg-emerald-500/10 text-emerald-500"
+                    viewingItem.type === 'snippet' ? "bg-amber-500/10 text-amber-500" :
+                      "bg-emerald-500/10 text-emerald-500"
                 )}>
                   <ItemIcon type={viewingItem.type} className="w-5 h-5" />
                 </div>

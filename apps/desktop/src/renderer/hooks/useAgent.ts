@@ -73,6 +73,7 @@ export interface ToolCall {
   result?: any;
   error?: any;
   timestamp: number;
+  description?: string; // User-friendly description of what the tool is doing
 }
 
 export interface PendingMemory {
@@ -796,6 +797,8 @@ export function useAgent(options?: string | UseAgentOptions) {
               const humanTool = humanizeToolName(tool);
               const normalizedStatus = typeof toolStatus === 'string' ? toolStatus.toLowerCase() : '';
               const toolCallId = evt.data?.toolCallId || evt.data?.id || `tc-${Date.now()}`;
+              // Get description from args.description or generate from tool name
+              const toolDescription = evt.data?.args?.description || evt.data?.description || humanTool;
               const isHiddenTool = HIDDEN_TOOL_NAMES.has(tool) || HIDDEN_WRAPPER_TOOL_NAMES.has(tool);
 
               const requestIdKey = String(msg.requestId || activeRequestIdRef.current || '');
@@ -888,6 +891,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                         status: 'called',
                         args: d.args,
                         timestamp: Date.now(),
+                        description: toolDescription,
                       };
                       return {
                         ...t,

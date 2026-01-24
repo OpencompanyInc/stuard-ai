@@ -906,7 +906,18 @@ export default function App() {
       return m ? `Routing (${m})` : 'Routing...';
     }
     if (p === 'responding') return 'Responding...';
-    if (p === 'tool') return 'Running tool...';
+    if (p === 'tool') {
+      // Show description or humanized tool name from AI state
+      const toolName = (ai as any)?.tool || '';
+      const statusText = ai?.statusText || '';
+      // If statusText contains tool info, use it; otherwise show humanized name
+      if (statusText && statusText !== 'Running tool...') return statusText;
+      if (toolName) {
+        const humanName = toolName.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+        return `${humanName}...`;
+      }
+      return 'Running tool...';
+    }
     return ai?.statusText || 'Ready';
   }, [ai]);
 
