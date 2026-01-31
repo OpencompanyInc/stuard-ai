@@ -17,9 +17,24 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({
   onCloseTab,
   onAddTab,
 }) => {
+  const scrollContainerRef = React.useRef<HTMLDivElement>(null);
+
+  const handleWheel = (e: React.WheelEvent) => {
+    if (scrollContainerRef.current) {
+      if (e.deltaY !== 0) {
+        scrollContainerRef.current.scrollLeft += e.deltaY;
+        e.preventDefault();
+      }
+    }
+  };
+
   return (
-    <div className="flex items-center flex-1 min-w-0 mr-2 relative">
-      <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hidden mask-linear-fade flex-1 py-1 pl-3 pr-12">
+    <div className="flex items-center w-full h-full relative overflow-hidden">
+      <div
+        ref={scrollContainerRef}
+        onWheel={handleWheel}
+        className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar no-drag mask-linear-fade w-full h-full py-1 pl-1 pr-1 min-w-0"
+      >
         {tabs.map(tab => (
           <div
             key={tab.id}
@@ -43,17 +58,17 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({
             </button>
           </div>
         ))}
-      </div>
 
-      {/* Fixed New Tab Button */}
-      <div className="flex-shrink-0 pl-1 border-l border-theme/10 ml-1">
-        <button
-          onClick={onAddTab}
-          className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-theme-hover text-theme-muted hover:text-theme-fg transition-colors"
-          title="New Tab"
-        >
-          <Plus className="w-4 h-4" />
-        </button>
+        {/* New Tab Button at the end of the list */}
+        <div className="flex-shrink-0 pl-1 border-l border-theme/10 ml-1">
+          <button
+            onClick={onAddTab}
+            className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-theme-hover text-theme-muted hover:text-theme-fg transition-colors"
+            title="New Tab"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
       </div>
     </div>
   );

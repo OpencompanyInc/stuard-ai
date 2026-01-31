@@ -24,10 +24,10 @@ const baseUrl = process.env.NODE_ENV === 'development'
 export const metadata: Metadata = {
   metadataBase: new URL(baseUrl),
   title: {
-    default: "Stuard AI - Your Private Desktop Assistant",
+    default: "Stuard AI - Desktop AI Assistant That Builds Its Own Tools",
     template: "%s | Stuard AI",
   },
-  description: "Stuard is a local-first desktop assistant that handles computer chores, builds tools, and automates workflows while keeping your data private.",
+  description: "Stuard AI is a local-first desktop assistant that automates workflows, builds custom tools, and replaces your AI subscriptions. Like n8n meets ChatGPT - private, powerful, and personal.",
   applicationName: "Stuard AI",
   appleWebApp: {
     capable: true,
@@ -47,14 +47,25 @@ export const metadata: Metadata = {
     "secure AI assistant",
     "AI automation",
     "productivity AI",
-    "AI waitlist",
-    "early access AI",
+    "workflow automation",
+    "n8n alternative",
+    "Zapier alternative",
+    "automation platform",
+    "AI workflow builder",
+    "desktop automation",
+    "Windows automation",
+    "AI tool builder",
+    "custom AI tools",
+    "AI marketplace",
+    "workflow marketplace",
+    "automation templates",
+    "no-code automation",
+    "AI personal assistant",
+    "offline AI assistant",
     "steward ai",
     "stuart ai",
     "steward ai assistant",
-    "stuart ai assistant",
-    "steward",
-    "stuart"
+    "stuart ai assistant"
   ],
   authors: [{ name: "Stuard AI Team" }],
   creator: "Stuard AI",
@@ -126,7 +137,24 @@ export default function RootLayout({
               "@type": "WebSite",
               "name": "Stuard AI",
               "url": baseUrl,
-              "alternateName": ["Stuard", "Steward AI", "Stuart AI"]
+              "alternateName": ["Stuard", "Steward AI", "Stuart AI"],
+              "description": "The AI Assistant That Builds Its Own Tools. A local-first desktop AI that automates workflows and keeps your data private.",
+              "potentialAction": {
+                "@type": "SearchAction",
+                "target": {
+                  "@type": "EntryPoint",
+                  "urlTemplate": `${baseUrl}/marketplace?q={search_term_string}`
+                },
+                "query-input": "required name=search_term_string"
+              },
+              "publisher": {
+                "@type": "Organization",
+                "name": "Stuard AI",
+                "logo": {
+                  "@type": "ImageObject",
+                  "url": `${baseUrl}/icon.svg`
+                }
+              }
             })
           }}
         />

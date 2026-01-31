@@ -2,6 +2,7 @@ import 'dotenv/config';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { getWorkflowAgent, WORKFLOW_SYSTEM_PROMPT } from './agents/workflow-agent';
+import { setSessionWorkflow, clearSessionWorkflow } from './tools/workflow';
 import { withClientBridge, handleClientToolMessage } from './tools/bridge';
 import { routeModel, type ModelChoice } from './router/model-router';
 import { verifyAccessToken, AuthErrorCode } from './auth';
@@ -19,6 +20,7 @@ import { normalizeMessages, contentToText, buildAttachmentParts } from './utils/
 import { buildKnowledgeContext } from './knowledge/retrieval';
 import { ensureToolEmbeddings } from './tools/meta-tools';
 import * as memoryService from './memory/conversations';
+import { registerWebhookClient, deliverQueuedWebhooks } from './webhooks/dispatch';
 
 import { getAgentForQuery } from './agents/stuard/index';
 
@@ -289,6 +291,15 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
           }
           // Count this chat request towards daily usage
           try { await incrementDailyRequestCounter(authUser.userId); } catch {}
+          
+          // Register for webhook delivery and deliver any queued webhooks
+          try {
+            registerWebhookClient(authUser.userId, ws);
+            const delivered = await deliverQueuedWebhooks(authUser.userId, ws);
+            if (delivered > 0) {
+              writeLog('queued_webhooks_delivered', { userId: authUser.userId, count: delivered });
+            }
+          } catch {}
         }
 
         const requestedMode = normalizeTierChoice((msg as any)?.model);
@@ -415,6 +426,79 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
           try {
             agent = getWorkflowAgent(workflowModelId);
             console.log('[cloud-ai] Using workflow agent', { rawAgent, clientType, ctxMode, modelId: workflowModelId });
+            
+            // Pre-store workflow in session for modify_workflow tool
+            // Prefer explicit workflow from payload context (no parsing needed)
+            clearSessionWorkflow();
+            const incomingCtx = (msg as any)?.context || {};
+            const directWorkflow = incomingCtx?.workflow;
+            let sessionLoaded = false;
+            if (directWorkflow && typeof directWorkflow === 'object' && !Array.isArray(directWorkflow)) {
+              setSessionWorkflow(directWorkflow);
+              sessionLoaded = true;
+              console.log('[cloud-ai] Pre-stored workflow from context:', { id: directWorkflow.id, nodes: directWorkflow.nodes?.length, triggers: directWorkflow.triggers?.length });
+            }
+
+            // Fallback: Extract workflow JSON from system context message
+            if (!sessionLoaded) {
+              const workflowMsg = providedMessages?.find((m: any) =>
+                m?.role === 'system' &&
+                typeof m?.content === 'string' &&
+                m.content.includes('CURRENT WORKFLOW')
+              );
+              if (workflowMsg && typeof workflowMsg.content === 'string') {
+                const content = workflowMsg.content;
+                // Find "CURRENT WORKFLOW" marker and extract the JSON that follows
+                const marker = content.indexOf('CURRENT WORKFLOW');
+                if (marker >= 0) {
+                  // Find the first { after the marker
+                  const jsonStart = content.indexOf('{', marker);
+                  if (jsonStart >= 0) {
+                    // Count brackets to find matching }, ignoring braces inside strings
+                    let depth = 0;
+                    let jsonEnd = -1;
+                    let inString = false;
+                    let escaped = false;
+                    for (let i = jsonStart; i < content.length; i++) {
+                      const ch = content[i];
+                      if (escaped) {
+                        escaped = false;
+                        continue;
+                      }
+                      if (ch === '\\' && inString) {
+                        escaped = true;
+                        continue;
+                      }
+                      if (ch === '"') {
+                        inString = !inString;
+                        continue;
+                      }
+                      if (inString) continue;
+                      if (ch === '{') depth++;
+                      else if (ch === '}') {
+                        depth--;
+                        if (depth === 0) {
+                          jsonEnd = i + 1;
+                          break;
+                        }
+                      }
+                    }
+                    if (jsonEnd > jsonStart) {
+                      const jsonStr = content.slice(jsonStart, jsonEnd);
+                      try {
+                        const workflowJson = JSON.parse(jsonStr);
+                        if (workflowJson && (workflowJson.id || workflowJson.triggers || workflowJson.nodes)) {
+                          setSessionWorkflow(workflowJson);
+                          console.log('[cloud-ai] Pre-stored workflow in session:', { id: workflowJson.id, nodes: workflowJson.nodes?.length, triggers: workflowJson.triggers?.length });
+                        }
+                      } catch (parseErr) {
+                        console.warn('[cloud-ai] Failed to parse workflow JSON:', parseErr);
+                      }
+                    }
+                  }
+                }
+              }
+            }
           } catch (e: any) {
             console.error('[cloud-ai] Failed to get workflow agent:', e.message);
             send(ws, { type: 'error', message: 'Workflow agent unavailable: ' + e.message }, requestId);

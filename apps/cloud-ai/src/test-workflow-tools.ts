@@ -4,7 +4,7 @@
  */
 
 import { search_tools } from './tools/meta-tools';
-import { retrieveToolFormat } from './tools/workflow-system';
+import { retrieveToolFormat, listAllToolFormats } from './tools/workflow-system';
 
 async function testSearchTools() {
   console.log('\n=== Testing search_tools ===\n');
@@ -22,26 +22,44 @@ async function testSearchTools() {
   }
 }
 
-async function testRetrieveToolFormat() {
-  console.log('\n=== Testing retrieve_tool_format ===\n');
+async function testGetToolSchema() {
+  console.log('\n=== Testing get_tool_schema (single tool lookup) ===\n');
+
+  const toolNames = ['take_screenshot', 'run_command', 'modify_workflow', 'nonexistent_tool'];
+
+  for (const toolName of toolNames) {
+    console.log(`\n--- Lookup: "${toolName}" ---`);
+    try {
+      const result = await retrieveToolFormat.execute({ context: { toolName } } as any);
+      if (result.found && result.tool) {
+        console.log(`  Found: ${result.tool.id}`);
+        console.log(`  Desc: ${result.tool.description?.slice(0, 80)}...`);
+        console.log(`  Args: ${JSON.stringify(result.tool.argsTemplate)}`);
+      } else {
+        console.log(`  Not found: ${result.error}`);
+      }
+    } catch (e: any) {
+      console.error('Error:', e.message);
+    }
+  }
+}
+
+async function testListAllToolFormats() {
+  console.log('\n=== Testing list_all_tool_formats ===\n');
 
   try {
-    const result = await retrieveToolFormat.execute({ context: {} } as any);
+    const result = await listAllToolFormats.execute({ context: {} } as any);
 
     console.log('--- Triggers ---');
     for (const t of result.triggers) {
       console.log(`  ${t.type}: ${t.description}`);
-      console.log(`    args: ${JSON.stringify(t.argsTemplate)}`);
-    }
-
-    console.log('\n--- Tools (first 20) ---');
-    for (const tool of result.tools.slice(0, 20)) {
-      console.log(`  [${tool.kind}] ${tool.id}`);
-      console.log(`    desc: ${tool.description?.slice(0, 80)}...`);
-      console.log(`    args: ${JSON.stringify(tool.argsTemplate)}`);
     }
 
     console.log(`\n--- Total tools: ${result.tools.length} ---`);
+    console.log('First 5 tools:');
+    for (const tool of result.tools.slice(0, 5)) {
+      console.log(`  [${tool.kind}] ${tool.id}`);
+    }
   } catch (e: any) {
     console.error('Error:', e.message);
   }
@@ -52,7 +70,8 @@ async function main() {
   console.log('============================');
 
   await testSearchTools();
-  await testRetrieveToolFormat();
+  await testGetToolSchema();
+  await testListAllToolFormats();
 
   console.log('\n\nDone!');
 }

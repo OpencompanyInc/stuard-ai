@@ -202,6 +202,7 @@ export type FlowRuntime = { id: string; fsWatchers: any[]; cronJobs: any[]; hotk
 const flowRuntimes = new Map<string, FlowRuntime>();
 // Map of flowId -> triggerId for webhook-enabled flows
 const webhookEnabledFlows = new Map<string, string>();
+const cloudWebhookEnabledFlows = new Map<string, string>();
 const simRuns = new Map<string, NodeJS.Timeout>();
 const runningFlows = new Map<string, NodeJS.Timeout>();
 const runCounts = new Map<string, number>();
@@ -279,8 +280,27 @@ export function designerModelToStuardSpec(m: any, triggerId?: string): StuardSpe
         }
       }
       const label = (w as any)?.label;
+      const loop = (w as any)?.loop;
+      const loopBreak = (w as any)?.loopBreak;
       const edge: any = { to, guard };
       if (label) edge.label = String(label);
+      // Include loop configuration if present
+      if (loop && typeof loop === 'object' && loop.type) {
+        edge.loop = {
+          type: loop.type, // 'forEach', 'repeat', 'while'
+          items: loop.items,
+          itemVar: loop.itemVar || 'item',
+          indexVar: loop.indexVar || 'index',
+          count: loop.count,
+          conditionText: loop.conditionText,
+          maxIterations: loop.maxIterations || 100,
+          delayMs: loop.delayMs || 0,
+        };
+      }
+      // Include loopBreak flag if present
+      if (loopBreak) {
+        edge.loopBreak = true;
+      }
       return edge;
     });
     const step: any = { id: fromId, tool: String(n?.tool || 'noop'), args: n?.args || {}, next };
@@ -344,9 +364,23 @@ export function designerModelToStuardSpec(m: any, triggerId?: string): StuardSpe
     const startNode = nodes.find((n: any) => !inbound.has(String(n?.id || ''))) || nodes[0];
     startNodeId = startNode ? String(startNode.id) : undefined;
   }
-  const triggers = triggersIn.map((t: any) => ({ type: String(t?.type || ''), args: t?.args || {} }));
+  // Map triggers with their IDs and start nodes for call_function support
+  const triggers = triggersIn.map((t: any) => {
+    const tid = String(t?.id || '');
+    // Find the wire from this trigger to its start node
+    const triggerWire = wires.find((w: any) => String(w?.from || '') === tid);
+    const triggerStart = triggerWire ? String(triggerWire.to || '') : undefined;
+    
+    return { 
+      id: tid,
+      type: String(t?.type || ''), 
+      args: t?.args || {},
+      inputParams: Array.isArray(t?.inputParams) ? t.inputParams : undefined,
+      start: triggerStart // Start node for this trigger (used by call_function)
+    };
+  });
 
-  return {
+  const spec: StuardSpec = {
     id,
     name,
     version,
@@ -355,6 +389,13 @@ export function designerModelToStuardSpec(m: any, triggerId?: string): StuardSpe
     steps,
     start: startNodeId
   };
+
+  // Add output schema if defined
+  if (Array.isArray(m?.outputSchema) && m.outputSchema.length > 0) {
+    (spec as any).outputSchema = m.outputSchema;
+  }
+
+  return spec;
 }
 
 // Emit step execution events for visual flow highlighting
@@ -465,6 +506,42 @@ export function executeWorkflowFromTrigger(flowId: string, origin: string, paylo
     console.error('[Workflows] executeWorkflowFromTrigger error:', e);
   }
 }
+
+ export function handleCloudWebhookEvent(msg: any) {
+   try {
+     const t = String(msg?.type || '');
+     const data = msg?.data;
+
+     const workflowId = typeof msg?.workflow?.id === 'string' ? msg.workflow.id : '';
+     const triggerId = typeof msg?.workflow?.triggerId === 'string' ? msg.workflow.triggerId : undefined;
+
+     if (workflowId) {
+       executeWorkflowFromTrigger(workflowId, t || 'webhook.cloud', data, triggerId);
+       return { ok: true, delivered: 1 };
+     }
+
+     if (t === 'webhook_trigger') {
+       const slug = typeof msg?.webhook?.slug === 'string' ? msg.webhook.slug : '';
+       const candidate = safeFlowId(slug);
+       if (candidate && cloudWebhookEnabledFlows.has(candidate)) {
+         const tId = cloudWebhookEnabledFlows.get(candidate);
+         executeWorkflowFromTrigger(candidate, 'webhook.cloud', data, tId);
+         return { ok: true, delivered: 1 };
+       }
+     }
+
+     let delivered = 0;
+     for (const [fid, tId] of cloudWebhookEnabledFlows.entries()) {
+       try {
+         executeWorkflowFromTrigger(fid, 'webhook.cloud', data, tId);
+         delivered++;
+       } catch { }
+     }
+     return { ok: true, delivered };
+   } catch (e: any) {
+     return { ok: false, error: String(e?.message || 'failed') };
+   }
+ }
 
 export function startLocalWebhookServer() {
   try {
@@ -631,6 +708,9 @@ export function startFlowRuntime(id: string) {
     } else if (type === 'webhook.local') {
       webhookEnabledFlows.set(safe, triggerId);
       started++;
+     } else if (type === 'webhook.cloud') {
+       cloudWebhookEnabledFlows.set(safe, triggerId);
+       started++;
     } else if (type === 'hotkey') {
       const accel = String(args?.accelerator || 'CommandOrControl+Alt+K');
       const passthrough = Boolean(args?.passthrough);
@@ -759,6 +839,7 @@ export function stopFlowRuntime(id: string) {
   try { for (const t of rt.intervals) { try { clearInterval(t as any); } catch { } } } catch { }
   try { for (const p of rt.procs) { try { if (p && !p.killed) { if (process.platform === 'win32') { try { process.kill((p as any).pid); } catch { } } else { try { p.kill('SIGTERM'); } catch { } } } } catch { } } } catch { }
   webhookEnabledFlows.delete(safe);
+  cloudWebhookEnabledFlows.delete(safe);
   flowRuntimes.delete(safe);
 
   // Cleanup workflow variables (only non-persistent ones)

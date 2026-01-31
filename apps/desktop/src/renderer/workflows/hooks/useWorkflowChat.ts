@@ -98,7 +98,7 @@ ${wiresSummary}
         : '';
 
       // Build context as a separate system message, and keep user request clean
-      const workflowContext = `${debugSection ? debugSection + '\n' : ''}CURRENT WORKFLOW (for reference only - do NOT modify unless user requests):
+      const workflowContextText = `${debugSection ? debugSection + '\n' : ''}CURRENT WORKFLOW (for reference only - do NOT modify unless user requests):
 ${JSON.stringify(designerModel, null, 2)}
 
 ${structureSummary}
@@ -158,16 +158,21 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
             
             // Insert workflow context as a system message before the conversation
             const messagesWithContext = [
-              { role: 'system', content: workflowContext },
+              { role: 'system', content: workflowContextText },
               ...conversationMessages.slice(0, -1), // All messages except the last user message
               { role: 'user', content: userRequest } // The actual user request
             ];
             
+            const payloadContext: any = { mode: 'workflow_architect' };
+            if (designerModel && (designerModel.id || designerModel.triggers || designerModel.nodes)) {
+              payloadContext.workflow = designerModel;
+              if (designerModel.id) payloadContext.workflowId = designerModel.id;
+            }
             const payload: any = {
               type: "chat",
               agent: "workflow",
               messages: messagesWithContext,
-              context: { mode: 'workflow_architect' },
+              context: payloadContext,
               model: 'auto',
             };
 
@@ -306,9 +311,9 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
                   } catch (e) { }
                 }
 
-                // Handle workflow_modify - returns modified workflow directly
+                // Handle workflow_modify / modify_workflow - returns modified workflow directly
                 // IMPORTANT: Apply immediately when we receive the completed event, don't wait for stream end
-                if (tool === 'workflow_modify' && (normalizedStatus === 'completed' || normalizedStatus === 'error')) {
+                if ((tool === 'workflow_modify' || tool === 'modify_workflow') && (normalizedStatus === 'completed' || normalizedStatus === 'error')) {
                   console.log('[useWorkflowChat] Received workflow_modify event:', { 
                     status: normalizedStatus, 
                     hasResult: !!d.result,
@@ -358,10 +363,10 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
                 
                 // FALLBACK: If no ID match and this is a completed workflow_modify with result,
                 // find any pending workflow_modify entry and update it
-                if (idx < 0 && tool === 'workflow_modify' && normalizedStatus === 'completed' && d.result) {
+                if (idx < 0 && (tool === 'workflow_modify' || tool === 'modify_workflow') && normalizedStatus === 'completed' && d.result) {
                   idx = currentItems.findIndex(item => 
                     item.type === 'tool' && 
-                    item.event.tool === 'workflow_modify' && 
+                    (item.event.tool === 'workflow_modify' || item.event.tool === 'modify_workflow') && 
                     !item.event.result // Find one without a result yet
                   );
                   if (idx >= 0) {
@@ -392,7 +397,7 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
                   };
                 } else if (id) {
                   // For workflow modification tools, capture current model as snapshot for undo
-                  const isModifyTool = tool === 'workflow_modify' || tool === 'create_workflow';
+                  const isModifyTool = tool === 'workflow_modify' || tool === 'modify_workflow' || tool === 'create_workflow';
                   const workflowSnapshot = isModifyTool && model
                     ? JSON.parse(JSON.stringify(model))
                     : undefined;

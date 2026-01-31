@@ -17,5 +17,5 @@ export default defineConfig({
   dts: false,
   shims: false,
   skipNodeModulesBundle: true,
-  external: ["electron", "electron-updater"],
+  external: ["electron", "electron-updater", "node-pty-prebuilt-multiarch"],
 });

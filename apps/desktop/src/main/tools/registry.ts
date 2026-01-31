@@ -14,7 +14,11 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'end': { kind: 'electron' },  // Workflow terminator
   'return_value': { kind: 'electron' },  // Workflow return value (terminates run with result)
   'invoke_workflow': { kind: 'electron' },  // Invoke workflow with args
+  'call_workflow': { kind: 'electron' },  // Call external workflow as function (waits for result)
+  'call_function': { kind: 'electron' },  // Call function trigger within same workflow
   'test_run_steps': { kind: 'electron' },  // Test run workflow steps
+  'list_local_workflows': { kind: 'electron' },  // List saved workflows
+  'list_local_stuards': { kind: 'electron' },  // List saved stuards
   'play_audio': { kind: 'electron' },
   'get_clipboard_content': { kind: 'electron' },
   'set_clipboard_content': { kind: 'electron' },
@@ -51,6 +55,19 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'list_variables': { kind: 'electron' },
   'delete_variable': { kind: 'electron' },
 
+  // Canvas document tools (sidebar canvas)
+  'canvas_list': { kind: 'electron' },
+  'canvas_read': { kind: 'electron' },
+  'canvas_write': { kind: 'electron' },
+  'canvas_create': { kind: 'electron' },
+  'canvas_delete': { kind: 'electron' },
+  // Backward compatibility aliases
+  'sidebar_canvas_list': { kind: 'electron' },
+  'sidebar_canvas_read': { kind: 'electron' },
+  'sidebar_canvas_write': { kind: 'electron' },
+  'sidebar_canvas_create': { kind: 'electron' },
+  'sidebar_canvas_delete': { kind: 'electron' },
+
   // Terminal tools (PTY-based, electron-native)
   'terminal_create': { kind: 'electron' },
   'terminal_list': { kind: 'electron' },
@@ -73,6 +90,7 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'analyze_image': { kind: 'cloud', handler: '/inference/ai/analyze-image' },
   'analyze_current_screen': { kind: 'cloud', handler: '/inference/ai/vision-structured' },
   'web_search': { kind: 'cloud', handler: '/tools/web_search' },
+  'scrape_url': { kind: 'cloud', handler: '/tools/scrape_url' },
   'text_to_speech': { kind: 'cloud', handler: '/tools/text_to_speech' },
   'list_tts_voices': { kind: 'cloud', handler: '/tools/list_tts_voices' },
   'youtube_get_video': { kind: 'cloud' },

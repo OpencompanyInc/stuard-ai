@@ -142,7 +142,9 @@ export async function execReturnValue(args: any, ctx: RouterContext): Promise<an
   const value = (args && typeof args === 'object' && 'value' in args)
     ? (args as any).value
     : args;
-  return { ok: true, action: 'return', terminated: true, value };
+  const success = args?.success !== false; // Default to true
+  const message = args?.message || '';
+  return { ok: true, action: 'return', terminated: true, value, success, message };
 }
 
 let _nwm: any | null = null;

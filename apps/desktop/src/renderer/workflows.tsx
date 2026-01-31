@@ -19,6 +19,7 @@ import { PublishModal, MarketplaceBrowser, WorkflowUpdateModal, MyPublishedWorkf
 import { ToolPalette } from "./workflows/components/ToolPalette";
 import { type StepExecutionStatus } from "./workflows/components/WorkflowNodeCard";
 import { InspectorPanel } from "./workflows/components/InspectorPanel";
+import { WireInspectorPanel } from "./workflows/components/WireInspectorPanel";
 import { CodePanel } from "./workflows/components/CodePanel";
 import { DeployPanelModal } from "./workflows/components/DeployPanelModal";
 import { ImportJsonModal } from "./workflows/components/ImportJsonModal";
@@ -1266,12 +1267,12 @@ function WorkflowsApp() {
                         onMouseUp={() => { setDragging(null); setAlignmentGuides([]); }}
                         onMouseLeave={() => { setDragging(null); setAlignmentGuides([]); }}
                         onCanvasClick={() => { setSelectedNodeId(""); setConnectingFrom(""); setSelectedWireIndex(null); }}
-                        onNodeSelect={setSelectedNodeId}
+                        onNodeSelect={(id: string) => { setSelectedNodeId(id); setSelectedWireIndex(null); }}
                         onNodeMouseDown={handleNodeMD}
                         onNodeContextMenu={handleNodeContextMenu}
                         onNodeConnect={handleConnect}
-                        onWireSelect={setSelectedWireIndex}
-                        onWireDelete={(i: number) => { if (model) updateModel({ ...model, wires: model.wires.filter((_, j) => j !== i) }); }}
+                        onWireSelect={(i: number) => { setSelectedWireIndex(i); setSelectedNodeId(""); setRightPanel('inspector'); }}
+                        onWireDelete={(i: number) => { if (model) updateModel({ ...model, wires: model.wires.filter((_, j) => j !== i) }); setSelectedWireIndex(null); }}
                         onCanvasContextMenu={handleCanvasContextMenu}
                       />
                     </div>
@@ -1312,7 +1313,17 @@ function WorkflowsApp() {
                       >
                         {rightPanel === 'inspector' && (
                           <PanelErrorBoundary name="Inspector">
-                            <InspectorPanel model={model} selectedNodeId={selectedNodeId} onUpdate={updateModel} onDelete={delNode} onClose={() => setRightPanel('none')} />
+                            {selectedWireIndex !== null ? (
+                              <WireInspectorPanel
+                                model={model}
+                                wireIndex={selectedWireIndex}
+                                onUpdate={updateModel}
+                                onDelete={() => { updateModel({ ...model, wires: model.wires.filter((_, j) => j !== selectedWireIndex) }); setSelectedWireIndex(null); }}
+                                onClose={() => { setRightPanel('none'); setSelectedWireIndex(null); }}
+                              />
+                            ) : (
+                              <InspectorPanel model={model} selectedNodeId={selectedNodeId} onUpdate={updateModel} onDelete={delNode} onClose={() => setRightPanel('none')} />
+                            )}
                           </PanelErrorBoundary>
                         )}
                         {rightPanel === 'code' && (
@@ -1363,12 +1374,12 @@ function WorkflowsApp() {
                         onMouseUp={() => { setDragging(null); setAlignmentGuides([]); }}
                         onMouseLeave={() => { setDragging(null); setAlignmentGuides([]); }}
                         onCanvasClick={() => { setSelectedNodeId(""); setConnectingFrom(""); setSelectedWireIndex(null); }}
-                        onNodeSelect={setSelectedNodeId}
+                        onNodeSelect={(id: string) => { setSelectedNodeId(id); setSelectedWireIndex(null); }}
                         onNodeMouseDown={handleNodeMD}
                         onNodeContextMenu={handleNodeContextMenu}
                         onNodeConnect={handleConnect}
-                        onWireSelect={setSelectedWireIndex}
-                        onWireDelete={(i: number) => { if (model) updateModel({ ...model, wires: model.wires.filter((_, j) => j !== i) }); }}
+                        onWireSelect={(i: number) => { setSelectedWireIndex(i); setSelectedNodeId(""); setRightPanel('inspector'); }}
+                        onWireDelete={(i: number) => { if (model) updateModel({ ...model, wires: model.wires.filter((_, j) => j !== i) }); setSelectedWireIndex(null); }}
                         onCanvasContextMenu={handleCanvasContextMenu}
                       />
                     </div>
@@ -1400,7 +1411,17 @@ function WorkflowsApp() {
                       >
                         {rightPanel === 'inspector' && (
                           <PanelErrorBoundary name="Inspector">
-                            <InspectorPanel model={model} selectedNodeId={selectedNodeId} onUpdate={updateModel} onDelete={delNode} onClose={() => setRightPanel('none')} />
+                            {selectedWireIndex !== null ? (
+                              <WireInspectorPanel
+                                model={model}
+                                wireIndex={selectedWireIndex}
+                                onUpdate={updateModel}
+                                onDelete={() => { updateModel({ ...model, wires: model.wires.filter((_, j) => j !== selectedWireIndex) }); setSelectedWireIndex(null); }}
+                                onClose={() => { setRightPanel('none'); setSelectedWireIndex(null); }}
+                              />
+                            ) : (
+                              <InspectorPanel model={model} selectedNodeId={selectedNodeId} onUpdate={updateModel} onDelete={delNode} onClose={() => setRightPanel('none')} />
+                            )}
                           </PanelErrorBoundary>
                         )}
                         {rightPanel === 'code' && (

@@ -1111,6 +1111,42 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     outputSchema: { ok: 'boolean' },
   },
 
+  // --- WORKFLOW MODIFICATION ---
+  {
+    id: 'modify_workflow',
+    category: 'flow',
+    kind: 'cloud',
+    description: 'Modify a workflow using high-level operations. The workflow is auto-loaded from session - DO NOT pass the full workflow JSON. Triggers are steps: use update_node/remove_node with the trigger id (trig_*). Operations: add_node, update_node, remove_node, add_wire, remove_wire, set_path, add_variable, rename.',
+    argsTemplate: {
+      op: 'add_node | update_node | remove_node | add_wire | remove_wire | set_path | add_variable | rename',
+      // For add_node:
+      tool: 'tool_name',
+      args: {},
+      label: 'Step Label',
+      connectFrom: 'trig_0',
+      // For update_node/remove_node:
+      nodeId: 'step_abc (or trig_0 for trigger)',
+      stepId: 'alias for nodeId',
+      // For trigger steps (add/update):
+      triggerType: 'manual | hotkey | keystroke | schedule.cron | webhook.local | fs.watch',
+      triggerArgs: {},
+      // For add_wire/remove_wire:
+      from: 'source_id',
+      to: 'target_id',
+      guard: { if: 'condition' },
+      // For set_path:
+      path: 'triggers[0].args.sequence',
+      value: 'new_value',
+      // For add_variable:
+      varName: 'counter',
+      varType: 'number',
+      varDefault: 0,
+      // For rename:
+      name: 'New Workflow Name',
+    },
+    outputSchema: { ok: 'boolean', workflow: 'object', message: 'string', error: 'string' },
+  },
+
   // --- WORKFLOW CONTROL ---
   {
     id: 'end',
@@ -1372,6 +1408,115 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description: 'Stops a running headless sub-agent. Use this when you need to cancel a background task that was started with deploy_headless_agent.',
     argsTemplate: { task_id: 'task-uuid' },
     outputSchema: { ok: 'boolean', task_id: 'string', message: 'string', error: 'string' },
+  },
+
+  // --- FEEDBACK ---
+  {
+    id: 'submit_feedback',
+    category: 'integrations',
+    kind: 'cloud',
+    description: 'Submit a bug report or feature request. Shows a confirmation dialog before submitting.',
+    argsTemplate: {
+      type: 'bug',
+      title: 'Short summary of the issue',
+      description: 'Detailed explanation...',
+      severity: 'medium',
+      screenshots: ['C:/path/to/screenshot.png'],
+      labels: ['ui', 'bug'],
+      skipConfirmation: false,
+    },
+    outputSchema: { ok: 'boolean', feedbackId: 'string', type: 'string', title: 'string', status: 'string', cancelled: 'boolean', error: 'string' },
+  },
+  {
+    id: 'report_bug',
+    category: 'integrations',
+    kind: 'cloud',
+    description: 'Quick way to report a bug. Shortcut for submit_feedback with type="bug".',
+    argsTemplate: {
+      title: 'Short bug summary',
+      description: 'Steps to reproduce, expected vs actual behavior',
+      severity: 'medium',
+      screenshots: [],
+    },
+    outputSchema: { ok: 'boolean', feedbackId: 'string', error: 'string', cancelled: 'boolean' },
+  },
+  {
+    id: 'suggest_feature',
+    category: 'integrations',
+    kind: 'cloud',
+    description: 'Quick way to suggest a feature. Shortcut for submit_feedback with type="feature".',
+    argsTemplate: {
+      title: 'Feature title',
+      description: 'Describe the feature, use case, and benefits',
+      screenshots: [],
+    },
+    outputSchema: { ok: 'boolean', feedbackId: 'string', error: 'string', cancelled: 'boolean' },
+  },
+  {
+    id: 'list_my_feedback',
+    category: 'integrations',
+    kind: 'cloud',
+    description: 'List your submitted bug reports and feature requests.',
+    argsTemplate: { type: 'all', status: 'all', limit: 10 },
+    outputSchema: { ok: 'boolean', feedback: 'any[]', count: 'number', error: 'string' },
+  },
+  {
+    id: 'get_feedback_details',
+    category: 'integrations',
+    kind: 'cloud',
+    description: 'Get full details of a specific feedback item including comments.',
+    argsTemplate: { feedbackId: 'uuid' },
+    outputSchema: { ok: 'boolean', feedback: 'any', comments: 'any[]', error: 'string' },
+  },
+
+  // --- TOOL DISCOVERY (SIS) ---
+  {
+    id: 'sis_search_tools',
+    category: 'core',
+    kind: 'cloud',
+    description: 'Search for available tools by describing what you need. Returns matching tools with their full schemas. Use this when you need a capability that isn\'t in your current toolset.',
+    argsTemplate: { query: 'send an email', category: 'integrations', limit: 10 },
+    outputSchema: { success: 'boolean', query: 'string', count: 'number', tools: 'array', searchMethod: 'string', hint: 'string' },
+  },
+  {
+    id: 'sis_execute_tool',
+    category: 'core',
+    kind: 'cloud',
+    description: 'Execute any tool by name after discovering it with sis_search_tools. Pass tool_name and args matching the tool\'s schema.',
+    argsTemplate: { tool_name: 'gmail_send_message', args: { to: ['user@example.com'], subject: 'Hello', body: 'Message' } },
+    outputSchema: { success: 'boolean', tool: 'string', result: 'any', source: 'string', error: 'string' },
+  },
+  {
+    id: 'sis_list_categories',
+    category: 'core',
+    kind: 'cloud',
+    description: 'List all available tool categories to help narrow down tool searches.',
+    argsTemplate: {},
+    outputSchema: { categories: 'array', hint: 'string' },
+  },
+  {
+    id: 'list_tools',
+    category: 'core',
+    kind: 'local',
+    description: 'List all tools available on the local agent with optional category filter.',
+    argsTemplate: { category: 'system' },
+    outputSchema: { ok: 'boolean', count: 'number', tools: 'array' },
+  },
+  {
+    id: 'get_tool_info',
+    category: 'core',
+    kind: 'local',
+    description: 'Get detailed information about a specific tool by name.',
+    argsTemplate: { name: 'run_command' },
+    outputSchema: { ok: 'boolean', name: 'string', category: 'string', description: 'string', kind: 'string', available: 'boolean' },
+  },
+  {
+    id: 'list_tool_categories',
+    category: 'core',
+    kind: 'local',
+    description: 'List all tool categories available on the local agent with counts.',
+    argsTemplate: {},
+    outputSchema: { ok: 'boolean', categories: 'array' },
   },
 ];
 

@@ -8,6 +8,7 @@ const Footer = () => {
           © 2025 Stuard AI. All rights reserved.
         </div>
         <div className="flex gap-6 text-sm font-medium">
+          <Link href="/marketplace" className="hover:text-black transition-colors">Marketplace</Link>
           <Link href="/privacy" className="hover:text-black transition-colors">Privacy</Link>
           <Link href="/terms" className="hover:text-black transition-colors">Terms</Link>
           <Link href="/twitter" className="hover:text-black transition-colors">Twitter</Link>

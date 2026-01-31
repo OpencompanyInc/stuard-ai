@@ -1,0 +1,426 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - beta
+          - staging
+          - production
+        default: 'beta'
+      deploy_cloud:
+        description: 'Deploy Cloud AI backend'
+        type: boolean
+        default: true
+      deploy_website:
+        description: 'Deploy Website'
+        type: boolean
+        default: false
+      build_desktop:
+        description: 'Build & Upload Desktop App'
+        type: boolean
+        default: true
+      ref:
+        description: 'Branch or commit (leave empty for default branch)'
+        required: false
+        default: ''
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ secrets.GCP_REGION }}
+  GAR_REPO: ${{ secrets.GAR_REPO }}
+  GAR_HOST: ${{ secrets.GCP_REGION }}-docker.pkg.dev
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # CI Checks - Gatekeeper for all deployments
+  # ═══════════════════════════════════════════════════════════════════════════
+  ci-checks:
+    name: "CI Checks"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - name: Install Dependencies
+        run: pnpm install
+      - name: Lint
+        run: pnpm turbo run lint
+      - name: Typecheck
+        run: pnpm turbo run typecheck
+      - name: Unit Tests
+        run: pnpm turbo run test
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Cloud AI Backend Deployment
+  # ═══════════════════════════════════════════════════════════════════════════
+  deploy-cloud:
+    name: "Cloud AI (${{ inputs.environment }})"
+    runs-on: ubuntu-latest
+    needs: ci-checks
+    if: ${{ inputs.deploy_cloud }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set Environment Variables
+        id: env
+        run: |
+          if [ "${{ inputs.environment }}" = "production" ]; then
+            echo "SERVICE_NAME=stuard-cloud-ai-prod" >> $GITHUB_OUTPUT
+            echo "IMAGE_TAG=latest" >> $GITHUB_OUTPUT
+            echo "NODE_ENV=production" >> $GITHUB_OUTPUT
+            echo "API_URL=https://api.stuard.ai" >> $GITHUB_OUTPUT
+            echo "WEBSITE_URL=https://stuard.ai" >> $GITHUB_OUTPUT
+          elif [ "${{ inputs.environment }}" = "staging" ]; then
+            echo "SERVICE_NAME=stuard-cloud-ai-staging" >> $GITHUB_OUTPUT
+            echo "IMAGE_TAG=staging" >> $GITHUB_OUTPUT
+            echo "NODE_ENV=staging" >> $GITHUB_OUTPUT
+            echo "API_URL=https://staging-api.stuard.ai" >> $GITHUB_OUTPUT
+            echo "WEBSITE_URL=https://staging.stuard.ai" >> $GITHUB_OUTPUT
+          else
+            echo "SERVICE_NAME=stuard-cloud-ai-beta" >> $GITHUB_OUTPUT
+            echo "IMAGE_TAG=beta" >> $GITHUB_OUTPUT
+            echo "NODE_ENV=beta" >> $GITHUB_OUTPUT
+            echo "API_URL=https://beta-api.stuard.ai" >> $GITHUB_OUTPUT
+            echo "WEBSITE_URL=https://beta.stuard.ai" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Auth to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for GAR
+        run: gcloud auth configure-docker $GAR_HOST --quiet
+
+      - name: Build & Push Container
+        working-directory: apps/cloud-ai
+        run: |
+          IMAGE="$GAR_HOST/$GCP_PROJECT_ID/$GAR_REPO/stuard-cloud-ai:${{ steps.env.outputs.IMAGE_TAG }}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          # Also tag with commit SHA for rollback
+          docker tag "$IMAGE" "$GAR_HOST/$GCP_PROJECT_ID/$GAR_REPO/stuard-cloud-ai:${{ github.sha }}"
+          docker push "$GAR_HOST/$GCP_PROJECT_ID/$GAR_REPO/stuard-cloud-ai:${{ github.sha }}"
+
+      - name: Deploy to Cloud Run
+        run: |
+          IMAGE="$GAR_HOST/$GCP_PROJECT_ID/$GAR_REPO/stuard-cloud-ai:${{ steps.env.outputs.IMAGE_TAG }}"
+          gcloud run deploy ${{ steps.env.outputs.SERVICE_NAME }} \
+            --image "$IMAGE" \
+            --region "$GCP_REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --service-account "${{ secrets.GCP_RUN_SA }}" \
+            --set-env-vars NODE_ENV=${{ steps.env.outputs.NODE_ENV }},CLOUD_PUBLIC_URL=${{ steps.env.outputs.API_URL }},WEBSITE_BASE_URL=${{ steps.env.outputs.WEBSITE_URL }},SUPABASE_URL=${{ secrets.SUPABASE_URL }} \
+            --set-secrets XAI_API_KEY=XAI_API_KEY:latest,GOOGLE_GENERATIVE_AI_API_KEY=GOOGLE_GENERATIVE_AI_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,SUPABASE_PUBLISHABLE_KEY=SUPABASE_PUBLISHABLE_KEY:latest,SUPABASE_SECRET_KEY=SUPABASE_SECRET_KEY:latest,PERPLEXITY_API_KEY=PERPLEXITY_API_KEY:latest,ASSEMBLYAI_API_KEY=ASSEMBLYAI_API_KEY:latest,OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest
+
+      - name: Output Deployment Info
+        run: |
+          echo "## ☁️ Cloud AI Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | \`${{ inputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | \`${{ steps.env.outputs.SERVICE_NAME }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| URL | ${{ steps.env.outputs.API_URL }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Website Deployment (Vercel)
+  # ═══════════════════════════════════════════════════════════════════════════
+  deploy-website:
+    name: "Website (${{ inputs.environment }})"
+    runs-on: ubuntu-latest
+    needs: ci-checks
+    if: ${{ inputs.deploy_website }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Set Environment
+        id: env
+        run: |
+          if [ "${{ inputs.environment }}" = "production" ]; then
+            echo "VERCEL_ENV=production" >> $GITHUB_OUTPUT
+            echo "VERCEL_PROD_FLAG=--prod" >> $GITHUB_OUTPUT
+          else
+            echo "VERCEL_ENV=preview" >> $GITHUB_OUTPUT
+            echo "VERCEL_PROD_FLAG=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Pull Vercel environment
+        working-directory: apps/website
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel pull --yes --environment=${{ steps.env.outputs.VERCEL_ENV }} --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build with Vercel
+        working-directory: apps/website
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel build ${{ steps.env.outputs.VERCEL_PROD_FLAG }} --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy to Vercel
+        working-directory: apps/website
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel deploy --prebuilt ${{ steps.env.outputs.VERCEL_PROD_FLAG }} --token=${{ secrets.VERCEL_TOKEN }}
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Desktop App Build (Matrix: Windows, macOS Intel, macOS Silicon, Linux)
+  # ═══════════════════════════════════════════════════════════════════════════
+  build-desktop:
+    name: "Desktop (${{ inputs.environment }} - ${{ matrix.os }}${{ matrix.arch && format(' {0}', matrix.arch) || '' }})"
+    needs: ci-checks
+    if: ${{ inputs.build_desktop }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: macos-13
+            platform: mac
+            arch: x64
+          - os: macos-latest
+            platform: mac
+            arch: arm64
+          - os: ubuntu-latest
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set Environment Variables
+        id: env
+        shell: bash
+        run: |
+          if [ "${{ inputs.environment }}" = "production" ]; then
+            echo "UPDATE_CHANNEL=stable" >> $GITHUB_OUTPUT
+            echo "API_URL=https://api.stuard.ai" >> $GITHUB_OUTPUT
+            echo "CHANNEL_FOLDER=stable" >> $GITHUB_OUTPUT
+          elif [ "${{ inputs.environment }}" = "staging" ]; then
+            echo "UPDATE_CHANNEL=staging" >> $GITHUB_OUTPUT
+            echo "API_URL=https://staging-api.stuard.ai" >> $GITHUB_OUTPUT
+            echo "CHANNEL_FOLDER=staging" >> $GITHUB_OUTPUT
+          else
+            echo "UPDATE_CHANNEL=beta" >> $GITHUB_OUTPUT
+            echo "API_URL=https://beta-api.stuard.ai" >> $GITHUB_OUTPUT
+            echo "CHANNEL_FOLDER=beta" >> $GITHUB_OUTPUT
+          fi
+
+      # ─── Build Python Agent ───
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk python3-dev scrot xvfb libportaudio2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'apps/agent/requirements.txt'
+
+      - name: Install Python dependencies
+        working-directory: apps/agent
+        run: pip install -r requirements.txt
+
+      - name: Build Python Agent
+        working-directory: apps/agent
+        run: python build-agent.py
+
+      - name: Verify Agent Binary
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            ls -la dist/stuard-agent.exe
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            ls -la dist/stuard-agent-macos
+          else
+            ls -la dist/stuard-agent-linux
+          fi
+
+      # ─── Build Electron App ───
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Desktop Dependencies
+        working-directory: apps/desktop
+        run: npm install
+
+      - name: Write Build Config
+        shell: bash
+        run: |
+          mkdir -p apps/desktop/build/agent
+          cat > apps/desktop/build/.env << EOF
+          CLOUD_PUBLIC_URL=${{ steps.env.outputs.API_URL }}
+          CLOUD_AI_HTTP=${{ steps.env.outputs.API_URL }}
+          UPDATE_CHANNEL=${{ steps.env.outputs.UPDATE_CHANNEL }}
+          STUARD_UPDATE_BASE_URL=https://updates.stuard.ai/desktop
+          EOF
+          cp apps/desktop/build/.env apps/desktop/build/agent/.env
+
+      - name: Build Desktop App
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.arch }}" ]; then
+            npm run build && npm run prepare:agent && npx electron-builder --${{ matrix.arch }}
+          else
+            npm run dist
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLOUD_PUBLIC_URL: ${{ steps.env.outputs.API_URL }}
+          # PostHog analytics (not in prod for privacy)
+          VITE_PUBLIC_POSTHOG_KEY: ${{ inputs.environment != 'production' && secrets.POSTHOG_API_KEY || '' }}
+          VITE_PUBLIC_POSTHOG_HOST: ${{ inputs.environment != 'production' && 'https://us.i.posthog.com' || '' }}
+
+      # ─── Windows: Inno Setup ───
+      - name: Get App Version
+        if: runner.os == 'Windows'
+        id: version
+        shell: bash
+        run: echo "version=$(node -p "require('./apps/desktop/package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Compile Inno Setup Installer
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMY_APP_VERSION=${{ steps.version.outputs.version }} apps\desktop\inno\setup.iss
+
+      # ─── Generate Update Manifest ───
+      - name: Get Version (non-Windows)
+        if: runner.os != 'Windows'
+        id: version_unix
+        run: echo "version=$(node -p "require('./apps/desktop/package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Generate Update Manifest
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version || steps.version_unix.outputs.version }}"
+          node apps/desktop/scripts/generate-update-manifest.cjs "$VERSION" "${{ steps.env.outputs.UPDATE_CHANNEL }}" "${{ matrix.platform }}"
+
+      # ─── Upload to R2 ───
+      - name: Configure R2 credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          aws-region: auto
+
+      - name: Upload to R2 (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          ENDPOINT="https://${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          CACHE_ASSET="public, max-age=31536000, immutable"
+          CACHE_MANIFEST="public, max-age=60"
+          CHANNEL="${{ steps.env.outputs.CHANNEL_FOLDER }}"
+          aws s3 cp apps/desktop/release/StuardAI-Setup-*.exe "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/$CHANNEL/" --endpoint-url "$ENDPOINT" --cache-control "$CACHE_ASSET"
+          aws s3 cp apps/desktop/release/latest.yml "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/$CHANNEL/latest.yml" --endpoint-url "$ENDPOINT" --cache-control "$CACHE_MANIFEST"
+
+      - name: Upload to R2 (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          ENDPOINT="https://${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          CHANNEL="${{ steps.env.outputs.CHANNEL_FOLDER }}"
+          for f in apps/desktop/release/*.dmg; do
+            filename=$(basename "$f" .dmg)
+            aws s3 cp "$f" "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/$CHANNEL/${filename}-${{ matrix.arch }}.dmg" --endpoint-url "$ENDPOINT"
+          done
+          for f in apps/desktop/release/*.zip; do
+            filename=$(basename "$f" .zip)
+            aws s3 cp "$f" "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/$CHANNEL/${filename}-${{ matrix.arch }}.zip" --endpoint-url "$ENDPOINT"
+          done || true
+          aws s3 cp apps/desktop/release/latest-mac.yml "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/$CHANNEL/latest-mac-${{ matrix.arch }}.yml" --endpoint-url "$ENDPOINT"
+
+      - name: Upload to R2 (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          ENDPOINT="https://${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          CACHE_ASSET="public, max-age=31536000, immutable"
+          CACHE_MANIFEST="public, max-age=60"
+          CHANNEL="${{ steps.env.outputs.CHANNEL_FOLDER }}"
+          aws s3 cp apps/desktop/release/*.AppImage "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/$CHANNEL/" --endpoint-url "$ENDPOINT" --cache-control "$CACHE_ASSET"
+          aws s3 cp apps/desktop/release/latest-linux.yml "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/$CHANNEL/latest-linux.yml" --endpoint-url "$ENDPOINT" --cache-control "$CACHE_MANIFEST"
+
+      - name: Output Build Info
+        shell: bash
+        run: |
+          echo "## 🖥️ Desktop Build Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | \`${{ inputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | \`${{ matrix.platform }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Channel | \`${{ steps.env.outputs.UPDATE_CHANNEL }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | \`${{ steps.version.outputs.version || steps.version_unix.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Summary Job
+  # ═══════════════════════════════════════════════════════════════════════════
+  summary:
+    name: "Release Summary"
+    runs-on: ubuntu-latest
+    needs: [ci-checks, deploy-cloud, deploy-website, build-desktop]
+    if: always()
+    steps:
+      - name: Generate Summary
+        run: |
+          echo "# 🚀 Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** \`${{ inputs.environment }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Ref:** \`${{ inputs.ref || github.ref }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Status" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| CI Checks | ${{ needs.ci-checks.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cloud AI | ${{ needs.deploy-cloud.result == 'success' && '✅' || needs.deploy-cloud.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Website | ${{ needs.deploy-website.result == 'success' && '✅' || needs.deploy-website.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Desktop | ${{ needs.build-desktop.result == 'success' && '✅' || needs.build-desktop.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY

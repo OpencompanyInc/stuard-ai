@@ -1,0 +1,440 @@
+import { Metadata } from 'next';
+import Link from 'next/link';
+import { Suspense } from 'react';
+
+export const metadata: Metadata = {
+  title: 'Workflow Marketplace - Free AI Automation Templates',
+  description: 'Discover free workflow automations and AI tools built by the Stuard AI community. Browse templates for productivity, data processing, integrations, and more. One-click install to your desktop.',
+  keywords: [
+    'workflow marketplace',
+    'automation templates',
+    'AI workflows',
+    'free automation',
+    'workflow templates',
+    'n8n templates',
+    'Zapier alternatives',
+    'automation library',
+    'AI tools',
+    'productivity workflows',
+    'desktop automation',
+    'no-code automation',
+  ],
+  openGraph: {
+    title: 'Stuard AI Workflow Marketplace - Free Automation Templates',
+    description: 'Discover free workflow automations and AI tools built by the community. One-click install.',
+    type: 'website',
+    url: 'https://stuard.ai/marketplace',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Stuard AI Workflow Marketplace',
+    description: 'Discover free workflow automations and AI tools built by the community.',
+  },
+  alternates: {
+    canonical: 'https://stuard.ai/marketplace',
+  },
+};
+
+const CATEGORIES = [
+  { id: 'productivity', name: 'Productivity', icon: '📋', description: 'Task management, scheduling, and efficiency tools' },
+  { id: 'automation', name: 'Automation', icon: '⚙️', description: 'File processing, system tasks, and repetitive workflows' },
+  { id: 'data', name: 'Data Processing', icon: '📊', description: 'Data extraction, transformation, and analysis' },
+  { id: 'integration', name: 'Integrations', icon: '🔗', description: 'Connect apps and services together' },
+  { id: 'ai', name: 'AI & ML', icon: '🤖', description: 'Workflows using AI models and machine learning' },
+  { id: 'media', name: 'Media', icon: '🎬', description: 'Image, video, and audio processing' },
+  { id: 'developer', name: 'Developer', icon: '💻', description: 'Development and DevOps workflows' },
+  { id: 'communication', name: 'Communication', icon: '💬', description: 'Email, messaging, and notifications' },
+];
+
+interface Workflow {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  category: string;
+  tags: string[];
+  icon?: string;
+  rating_avg: number;
+  rating_count: number;
+  download_count: number;
+  publisher_name: string;
+  created_at: string;
+}
+
+async function getWorkflows(category?: string, query?: string): Promise<Workflow[]> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://api.stuard.ai';
+  const params = new URLSearchParams();
+  if (category) params.set('category', category);
+  if (query) params.set('q', query);
+  params.set('limit', '50');
+
+  try {
+    const res = await fetch(`${baseUrl}/v1/marketplace/search?${params.toString()}`, {
+      next: { revalidate: 300 }, // Cache for 5 minutes
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.results || [];
+  } catch {
+    return [];
+  }
+}
+
+function WorkflowCard({ workflow }: { workflow: Workflow }) {
+  const categoryInfo = CATEGORIES.find(c => c.id === workflow.category);
+  
+  return (
+    <Link 
+      href={`/marketplace/${workflow.slug}`}
+      className="group block bg-white rounded-xl border border-gray-200 p-5 hover:border-blue-300 hover:shadow-lg transition-all duration-200"
+    >
+      <div className="flex items-start gap-4">
+        <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center text-2xl flex-shrink-0">
+          {workflow.icon || categoryInfo?.icon || '📦'}
+        </div>
+        <div className="flex-1 min-w-0">
+          <h3 className="font-semibold text-gray-900 group-hover:text-blue-600 transition-colors truncate">
+            {workflow.name}
+          </h3>
+          <p className="text-sm text-gray-600 mt-1 line-clamp-2">
+            {workflow.description}
+          </p>
+        </div>
+      </div>
+      
+      <div className="mt-4 flex items-center justify-between text-sm">
+        <div className="flex items-center gap-3 text-gray-500">
+          {workflow.rating_count > 0 && (
+            <span className="flex items-center gap-1">
+              <span className="text-yellow-500">★</span>
+              {workflow.rating_avg.toFixed(1)}
+            </span>
+          )}
+          <span className="flex items-center gap-1">
+            ↓ {workflow.download_count}
+          </span>
+        </div>
+        <span className="text-xs text-gray-400">
+          by {workflow.publisher_name}
+        </span>
+      </div>
+      
+      {workflow.tags?.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1">
+          {workflow.tags.slice(0, 3).map(tag => (
+            <span key={tag} className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full">
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+    </Link>
+  );
+}
+
+function WorkflowGrid({ workflows }: { workflows: Workflow[] }) {
+  if (workflows.length === 0) {
+    return (
+      <div className="text-center py-16">
+        <div className="text-6xl mb-4">📭</div>
+        <h3 className="text-xl font-semibold text-gray-900 mb-2">No workflows yet</h3>
+        <p className="text-gray-600 mb-6">Be the first to publish a workflow to the marketplace!</p>
+        <Link 
+          href="/download" 
+          className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          Download Stuard AI
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {workflows.map(workflow => (
+        <WorkflowCard key={workflow.id} workflow={workflow} />
+      ))}
+    </div>
+  );
+}
+
+async function WorkflowList({ category, query }: { category?: string; query?: string }) {
+  const workflows = await getWorkflows(category, query);
+  return <WorkflowGrid workflows={workflows} />;
+}
+
+export default async function MarketplacePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ category?: string; q?: string }>;
+}) {
+  const params = await searchParams;
+  const selectedCategory = params.category;
+  const searchQuery = params.q;
+
+  // JSON-LD for marketplace
+  const marketplaceSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'CollectionPage',
+    name: 'Stuard AI Workflow Marketplace',
+    description: 'Discover free workflow automations and AI tools built by the Stuard AI community.',
+    url: 'https://stuard.ai/marketplace',
+    isPartOf: {
+      '@type': 'WebSite',
+      name: 'Stuard AI',
+      url: 'https://stuard.ai',
+    },
+    about: {
+      '@type': 'SoftwareApplication',
+      name: 'Stuard AI',
+      applicationCategory: 'ProductivityApplication',
+    },
+  };
+
+  // FAQ Schema for SEO
+  const faqSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: [
+      {
+        '@type': 'Question',
+        name: 'What is the Stuard AI Workflow Marketplace?',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: 'The Stuard AI Workflow Marketplace is a community-driven platform where users can discover, share, and download automation workflows. These workflows can automate tasks on your desktop, integrate with apps, and leverage AI capabilities.',
+        },
+      },
+      {
+        '@type': 'Question',
+        name: 'Are the workflows free to use?',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: 'Yes! All workflows in the marketplace are free to download and use. Simply install Stuard AI on your desktop and import any workflow with one click.',
+        },
+      },
+      {
+        '@type': 'Question',
+        name: 'How do I install a workflow from the marketplace?',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: 'Download Stuard AI for your desktop, then browse the marketplace either in the app or on the website. Click "Install" on any workflow to add it to your automation library.',
+        },
+      },
+      {
+        '@type': 'Question',
+        name: 'Can I publish my own workflows?',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: 'Absolutely! Create workflows in Stuard AI using the visual builder or AI assistant, then publish them to the marketplace to share with the community.',
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(marketplaceSchema) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+
+      <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
+        {/* Hero Section */}
+        <section className="pt-12 pb-8 px-4">
+          <div className="max-w-6xl mx-auto text-center">
+            <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
+              Workflow Marketplace
+            </h1>
+            <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
+              Discover free automation workflows built by the community. 
+              One-click install to your desktop.
+            </p>
+
+            {/* Search Bar */}
+            <form action="/marketplace" method="GET" className="max-w-xl mx-auto mb-8">
+              <div className="relative">
+                <input
+                  type="search"
+                  name="q"
+                  defaultValue={searchQuery}
+                  placeholder="Search workflows... (e.g., 'email automation', 'screenshot tool')"
+                  className="w-full px-5 py-4 pr-12 text-lg border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm"
+                />
+                <button 
+                  type="submit"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-gray-500 hover:text-blue-600"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </button>
+              </div>
+              {selectedCategory && (
+                <input type="hidden" name="category" value={selectedCategory} />
+              )}
+            </form>
+
+            {/* CTA */}
+            <div className="flex flex-wrap items-center justify-center gap-4">
+              <Link
+                href="/download"
+                className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Download Stuard AI
+              </Link>
+              <span className="text-gray-500">to install workflows</span>
+            </div>
+          </div>
+        </section>
+
+        {/* Categories */}
+        <section className="py-8 px-4 border-b border-gray-200">
+          <div className="max-w-6xl mx-auto">
+            <div className="flex flex-wrap gap-2 justify-center">
+              <Link
+                href="/marketplace"
+                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                  !selectedCategory 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                All
+              </Link>
+              {CATEGORIES.map(cat => (
+                <Link
+                  key={cat.id}
+                  href={`/marketplace?category=${cat.id}`}
+                  className={`px-4 py-2 rounded-full text-sm font-medium transition-colors flex items-center gap-1 ${
+                    selectedCategory === cat.id 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  <span>{cat.icon}</span>
+                  <span>{cat.name}</span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* Workflow Grid */}
+        <section className="py-12 px-4">
+          <div className="max-w-6xl mx-auto">
+            {searchQuery && (
+              <p className="text-gray-600 mb-6">
+                Showing results for &quot;{searchQuery}&quot;
+                {selectedCategory && ` in ${CATEGORIES.find(c => c.id === selectedCategory)?.name}`}
+              </p>
+            )}
+            
+            <Suspense fallback={
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {[...Array(6)].map((_, i) => (
+                  <div key={i} className="bg-white rounded-xl border border-gray-200 p-5 animate-pulse">
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 rounded-lg bg-gray-200" />
+                      <div className="flex-1">
+                        <div className="h-5 bg-gray-200 rounded w-3/4 mb-2" />
+                        <div className="h-4 bg-gray-200 rounded w-full" />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            }>
+              <WorkflowList category={selectedCategory} query={searchQuery} />
+            </Suspense>
+          </div>
+        </section>
+
+        {/* SEO Content Section */}
+        <section className="py-16 px-4 bg-gray-50 border-t border-gray-200">
+          <div className="max-w-4xl mx-auto">
+            <h2 className="text-2xl font-bold text-gray-900 mb-6 text-center">
+              Why Use Stuard AI Workflow Marketplace?
+            </h2>
+            <div className="grid md:grid-cols-3 gap-8">
+              <div className="text-center">
+                <div className="text-4xl mb-3">🚀</div>
+                <h3 className="font-semibold text-gray-900 mb-2">One-Click Install</h3>
+                <p className="text-gray-600 text-sm">
+                  No coding required. Import any workflow directly into Stuard AI and start automating immediately.
+                </p>
+              </div>
+              <div className="text-center">
+                <div className="text-4xl mb-3">🔒</div>
+                <h3 className="font-semibold text-gray-900 mb-2">Runs Locally</h3>
+                <p className="text-gray-600 text-sm">
+                  All workflows run on your desktop. Your data never leaves your machine unless you want it to.
+                </p>
+              </div>
+              <div className="text-center">
+                <div className="text-4xl mb-3">🤝</div>
+                <h3 className="font-semibold text-gray-900 mb-2">Community Built</h3>
+                <p className="text-gray-600 text-sm">
+                  Built and shared by users like you. Contribute your own workflows or customize existing ones.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* FAQ Section for SEO */}
+        <section className="py-16 px-4">
+          <div className="max-w-3xl mx-auto">
+            <h2 className="text-2xl font-bold text-gray-900 mb-8 text-center">
+              Frequently Asked Questions
+            </h2>
+            <div className="space-y-6">
+              <details className="group bg-white rounded-lg border border-gray-200 p-4">
+                <summary className="font-semibold text-gray-900 cursor-pointer list-none flex justify-between items-center">
+                  What is the Stuard AI Workflow Marketplace?
+                  <span className="text-gray-500 group-open:rotate-180 transition-transform">▼</span>
+                </summary>
+                <p className="mt-3 text-gray-600">
+                  The Stuard AI Workflow Marketplace is a community-driven platform where users can discover, share, and download automation workflows. These workflows can automate tasks on your desktop, integrate with apps, and leverage AI capabilities.
+                </p>
+              </details>
+              <details className="group bg-white rounded-lg border border-gray-200 p-4">
+                <summary className="font-semibold text-gray-900 cursor-pointer list-none flex justify-between items-center">
+                  Are the workflows free to use?
+                  <span className="text-gray-500 group-open:rotate-180 transition-transform">▼</span>
+                </summary>
+                <p className="mt-3 text-gray-600">
+                  Yes! All workflows in the marketplace are free to download and use. Simply install Stuard AI on your desktop and import any workflow with one click.
+                </p>
+              </details>
+              <details className="group bg-white rounded-lg border border-gray-200 p-4">
+                <summary className="font-semibold text-gray-900 cursor-pointer list-none flex justify-between items-center">
+                  How is this different from n8n or Zapier?
+                  <span className="text-gray-500 group-open:rotate-180 transition-transform">▼</span>
+                </summary>
+                <p className="mt-3 text-gray-600">
+                  Unlike cloud-based automation tools, Stuard AI runs entirely on your desktop. This means faster execution, better privacy, and the ability to automate local apps and files. Plus, it has an AI assistant that can build workflows for you through natural conversation.
+                </p>
+              </details>
+              <details className="group bg-white rounded-lg border border-gray-200 p-4">
+                <summary className="font-semibold text-gray-900 cursor-pointer list-none flex justify-between items-center">
+                  Can I publish my own workflows?
+                  <span className="text-gray-500 group-open:rotate-180 transition-transform">▼</span>
+                </summary>
+                <p className="mt-3 text-gray-600">
+                  Absolutely! Create workflows in Stuard AI using the visual builder or AI assistant, then publish them to the marketplace to share with the community.
+                </p>
+              </details>
+            </div>
+          </div>
+        </section>
+      </div>
+    </>
+  );
+}

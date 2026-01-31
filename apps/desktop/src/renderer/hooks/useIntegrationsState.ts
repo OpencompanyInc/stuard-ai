@@ -22,6 +22,12 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   const [pyRunCode, setPyRunCode] = useState<string>("print(\"hello from python\")");
   const [pyRunResult, setPyRunResult] = useState<any | null>(null);
 
+  const emitConnectedChanged = () => {
+    try {
+      window.dispatchEvent(new Event('integrations.connected.changed'));
+    } catch {}
+  };
+
   useEffect(() => {
     try {
       const raw = localStorage.getItem("integrations.connected");
@@ -81,6 +87,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
           try {
             localStorage.setItem("integrations.connected", JSON.stringify(next));
           } catch {}
+          emitConnectedChanged();
           return next;
         });
       } catch {}
@@ -140,6 +147,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
         if (available) next.ffmpeg = true;
         else delete next.ffmpeg;
         try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
+        emitConnectedChanged();
         return next;
       });
     } catch {}
@@ -216,6 +224,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       try {
         localStorage.setItem("integrations.connected", JSON.stringify(next));
       } catch {}
+      emitConnectedChanged();
       return next;
     });
   };
@@ -237,6 +246,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
           try {
             localStorage.setItem("integrations.connected", JSON.stringify(next));
           } catch {}
+          emitConnectedChanged();
           return next;
         });
         if (!pyStatus) await refreshPythonStatus();
@@ -283,6 +293,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
               try {
                 localStorage.setItem("integrations.connected", JSON.stringify(next));
               } catch {}
+              emitConnectedChanged();
               return next;
             });
           }
@@ -321,6 +332,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       try {
         localStorage.setItem("integrations.connected", JSON.stringify(next));
       } catch {}
+      emitConnectedChanged();
       return next;
     });
   };

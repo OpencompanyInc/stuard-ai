@@ -8,6 +8,7 @@ import { handleOutlookRoutes } from './integrations/outlook';
 import { handleCalendarRoutes } from './calendar';
 import { handleInferenceRoutes } from './inference';
 import { handleBetaRoutes } from './beta';
+import { handleOpsRoutes } from './ops';
 import { handleMarketplaceRoutes } from './marketplace';
 import { handleToolsRoutes } from './tools';
 import { handleKnowledgeRoutes } from './knowledge';
@@ -23,6 +24,7 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleModelsRoutes(req, res, parsedUrl)) return true;
   if (await handleCredits(req, res, parsedUrl)) return true;
   if (await handleBetaRoutes(req, res, parsedUrl)) return true;
+  if (await handleOpsRoutes(req, res, parsedUrl)) return true;
   if (await handleGithubRoutes(req, res, parsedUrl)) return true;
   if (await handleGoogleRoutes(req, res, parsedUrl)) return true;
   if (await handleOutlookRoutes(req, res, parsedUrl)) return true;

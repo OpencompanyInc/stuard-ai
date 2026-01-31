@@ -3,12 +3,76 @@
  *
  * Meta-tools that allow agents to dynamically discover and execute tools at runtime.
  * Instead of pre-loading all tools, agents use these to find what they need on demand.
+ * 
+ * Features:
+ * - Semantic search via Supabase pgvector (when enabled)
+ * - Keyword fallback search (always available)
+ * - Query agent for local tools via client bridge
  */
 
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { searchToolsSemanticSupabase, isSupabaseSISEnabled, ResolvedTool } from './sis-supabase';
+import { TOOL_DEFINITIONS, ToolDefinition } from './definitions';
 import { ALL_TOOLS } from '../agents/stuard/tools';
+import { execLocalTool, hasClientBridge } from './bridge';
+
+/**
+ * Fallback keyword search when Supabase SIS is not available.
+ * Searches tool names and descriptions for matching keywords.
+ */
+function searchToolsKeyword(
+  query: string,
+  options: { category?: string | null; limit?: number } = {}
+): Array<{ name: string; description: string; category: string; kind: string; score: number; schema: any }> {
+  const { category = null, limit = 10 } = options;
+  const queryLower = query.toLowerCase();
+  const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
+  
+  const results: Array<{ name: string; description: string; category: string; kind: string; score: number; schema: any }> = [];
+  
+  for (const tool of TOOL_DEFINITIONS) {
+    // Filter by category if specified
+    if (category && tool.category !== category) continue;
+    
+    const nameLower = tool.id.toLowerCase();
+    const descLower = (tool.description || '').toLowerCase();
+    
+    // Calculate relevance score based on keyword matches
+    let score = 0;
+    
+    // Exact name match is highest priority
+    if (nameLower === queryLower) {
+      score = 1.0;
+    } else if (nameLower.includes(queryLower)) {
+      score = 0.9;
+    } else {
+      // Check each query word
+      for (const word of queryWords) {
+        if (nameLower.includes(word)) score += 0.3;
+        if (descLower.includes(word)) score += 0.2;
+      }
+      // Normalize score
+      score = Math.min(score / Math.max(queryWords.length * 0.5, 1), 0.85);
+    }
+    
+    if (score > 0.1) {
+      results.push({
+        name: tool.id,
+        description: tool.description,
+        category: tool.category,
+        kind: tool.kind,
+        score: Math.round(score * 100) / 100,
+        schema: { args: tool.argsTemplate, output: tool.outputSchema },
+      });
+    }
+  }
+  
+  // Sort by score descending
+  results.sort((a, b) => b.score - a.score);
+  
+  return results.slice(0, limit);
+}
 
 /**
  * Search for tools semantically. Returns tool names, descriptions, and full schemas.
@@ -53,55 +117,101 @@ Use this when you need a capability that isn't in your current toolset. IMPORTAN
   execute: async ({ context }) => {
     const { query, category, limit = 10 } = context as { query: string; category?: string; limit?: number };
 
-    // Check if Supabase SIS is available
-    if (!isSupabaseSISEnabled()) {
-      return {
-        success: false,
-        error: 'Tool search not available. SIS_USE_SUPABASE is not enabled. Contact the system administrator.',
-        tools: [],
-        hint: 'SIS dynamic tool discovery is not configured.',
-      };
+    let tools: Array<{ name: string; description: string; category: string; kind: string; score: number; schema: any }> = [];
+    let searchMethod = 'keyword';
+
+    // Try Supabase semantic search first (if enabled)
+    if (isSupabaseSISEnabled()) {
+      try {
+        const results = await searchToolsSemanticSupabase(query, {
+          topK: limit,
+          threshold: 0.2,
+          category: category || null,
+        });
+
+        tools = results.map((t: ResolvedTool) => ({
+          name: t.name,
+          description: t.description,
+          category: t.category,
+          kind: t.kind,
+          score: Math.round(t.score * 100) / 100,
+          schema: t.schema,
+        }));
+        searchMethod = 'semantic';
+
+        if (process.env.SIS_DEBUG === '1') {
+          console.log(`[sis_search_tools] Semantic search: "${query}" -> ${tools.length} tools`);
+        }
+      } catch (error: any) {
+        console.warn('[sis_search_tools] Semantic search failed, falling back to keyword:', error.message);
+        // Fall through to keyword search
+      }
     }
 
-    try {
-      const results = await searchToolsSemanticSupabase(query, {
-        topK: limit,
-        threshold: 0.2, // Lower threshold for discovery
-        category: category || null,
-      });
-
-      // Format results for agent consumption
-      const tools = results.map((t: ResolvedTool) => ({
-        name: t.name,
-        description: t.description,
-        category: t.category,
-        kind: t.kind, // 'local', 'cloud', or 'orchestration'
-        score: Math.round(t.score * 100) / 100, // Round to 2 decimals
-        schema: t.schema, // { args: {...}, output: {...} }
-      }));
+    // Fallback to keyword search if semantic search didn't return results or isn't available
+    if (tools.length === 0) {
+      tools = searchToolsKeyword(query, { category, limit });
+      searchMethod = 'keyword';
 
       if (process.env.SIS_DEBUG === '1') {
-        console.log(`[sis_search_tools] Query: "${query}" -> Found ${tools.length} tools`);
+        console.log(`[sis_search_tools] Keyword search: "${query}" -> ${tools.length} tools`);
       }
-
-      return {
-        success: true,
-        query,
-        count: tools.length,
-        tools,
-        hint: tools.length > 0
-          ? `Found ${tools.length} tools matching "${query}". Use sis_execute_tool with the tool name and required args to execute any of these tools.`
-          : `No matching tools found for "${query}". Try rephrasing your query or use sis_list_categories to see available tool categories.`,
-      };
-    } catch (error: any) {
-      console.error('[sis_search_tools] Error:', error);
-      return {
-        success: false,
-        error: `Search failed: ${error.message || 'Unknown error'}`,
-        tools: [],
-        hint: 'Tool search encountered an error. Check system logs for details.',
-      };
     }
+
+    // Also try querying the local agent for tools (if connected)
+    if (hasClientBridge() && tools.length < limit) {
+      try {
+        const agentResult = await execLocalTool('list_tools', { category }) as any;
+        if (agentResult?.ok && Array.isArray(agentResult.tools)) {
+          // Add local agent tools not already in results
+          const existingNames = new Set(tools.map(t => t.name));
+          const queryLower = query.toLowerCase();
+          
+          for (const agentTool of agentResult.tools) {
+            if (existingNames.has(agentTool.name)) continue;
+            
+            // Simple keyword match for agent tools
+            const nameLower = agentTool.name.toLowerCase();
+            const descLower = (agentTool.description || '').toLowerCase();
+            
+            if (nameLower.includes(queryLower) || descLower.includes(queryLower)) {
+              tools.push({
+                name: agentTool.name,
+                description: agentTool.description,
+                category: agentTool.category || 'local',
+                kind: 'local',
+                score: 0.5, // Default score for agent tools
+                schema: {}, // Agent tools don't expose schema through list_tools
+              });
+            }
+          }
+          
+          if (process.env.SIS_DEBUG === '1') {
+            console.log(`[sis_search_tools] Added agent tools, total: ${tools.length}`);
+          }
+        }
+      } catch (e) {
+        // Agent query failed, continue with existing results
+        if (process.env.SIS_DEBUG === '1') {
+          console.log('[sis_search_tools] Agent query failed:', e);
+        }
+      }
+    }
+
+    // Sort by score and limit
+    tools.sort((a, b) => b.score - a.score);
+    tools = tools.slice(0, limit);
+
+    return {
+      success: true,
+      query,
+      count: tools.length,
+      tools,
+      searchMethod,
+      hint: tools.length > 0
+        ? `Found ${tools.length} tools matching "${query}" (${searchMethod} search). Use the tool directly by name, or use sis_execute_tool for dynamic execution.`
+        : `No matching tools found for "${query}". Try rephrasing your query or use sis_list_categories to see available tool categories.`,
+    };
   },
 });
 
@@ -144,66 +254,70 @@ Example:
       console.log(`[sis_execute_tool] Executing tool: ${tool_name}`, { args });
     }
 
-    // Look up the tool in ALL_TOOLS
+    // Look up the tool in ALL_TOOLS (cloud tools)
     const toolFn = (ALL_TOOLS as any)[tool_name];
 
-    if (!toolFn) {
-      const errorMsg = `Tool '${tool_name}' not found in system. Use sis_search_tools to find available tools. Make sure you use the exact tool name returned by sis_search_tools.`;
+    if (toolFn) {
+      // Found in cloud tools, execute it
+      try {
+        if (typeof toolFn.execute === 'function') {
+          const result = await toolFn.execute({ context: args, runId, writer });
+          if (process.env.SIS_DEBUG === '1') {
+            console.log(`[sis_execute_tool] Tool '${tool_name}' executed successfully (cloud)`);
+          }
+          return { success: true, tool: tool_name, result };
+        } else if (typeof toolFn === 'function') {
+          const result = await toolFn(args);
+          if (process.env.SIS_DEBUG === '1') {
+            console.log(`[sis_execute_tool] Tool '${tool_name}' (function) executed successfully`);
+          }
+          return { success: true, tool: tool_name, result };
+        } else {
+          const errorMsg = `Tool '${tool_name}' exists but is not executable`;
+          console.error(`[sis_execute_tool] ${errorMsg}`);
+          return { success: false, error: errorMsg };
+        }
+      } catch (error: any) {
+        const errorMsg = `Tool '${tool_name}' execution failed: ${error.message || 'Unknown error'}`;
+        console.error(`[sis_execute_tool] ${errorMsg}`, error);
+        return { success: false, tool: tool_name, error: errorMsg };
+      }
+    }
+
+    // Tool not found in cloud tools, try executing via local agent bridge
+    if (hasClientBridge()) {
       if (process.env.SIS_DEBUG === '1') {
-        console.error(`[sis_execute_tool] ${errorMsg}`);
+        console.log(`[sis_execute_tool] Tool '${tool_name}' not in cloud, trying local agent...`);
       }
-      return {
-        success: false,
-        error: errorMsg,
-      };
-    }
-
-    try {
-      // Execute the tool with full context including writer for proper streaming
-      // Tools from ALL_TOOLS are typically @mastra/core tools with an execute function
-      if (typeof toolFn.execute === 'function') {
-        // Pass through all execution context: args as context, runId, and writer
-        const result = await toolFn.execute({ context: args, runId, writer });
-
-        if (process.env.SIS_DEBUG === '1') {
-          console.log(`[sis_execute_tool] Tool '${tool_name}' executed successfully`);
+      try {
+        const result = await execLocalTool(tool_name, args);
+        
+        // Check if the tool was found
+        if (result && typeof result === 'object' && (result as any).error === 'unknown_tool') {
+          const errorMsg = `Tool '${tool_name}' not found in cloud or local agent. Use sis_search_tools to find available tools.`;
+          if (process.env.SIS_DEBUG === '1') {
+            console.error(`[sis_execute_tool] ${errorMsg}`);
+          }
+          return { success: false, error: errorMsg };
         }
 
-        return {
-          success: true,
-          tool: tool_name,
-          result,
-        };
-      } else if (typeof toolFn === 'function') {
-        // Some tools might be plain functions
-        const result = await toolFn(args);
-
         if (process.env.SIS_DEBUG === '1') {
-          console.log(`[sis_execute_tool] Tool '${tool_name}' (function) executed successfully`);
+          console.log(`[sis_execute_tool] Tool '${tool_name}' executed successfully (local)`);
         }
-
-        return {
-          success: true,
-          tool: tool_name,
-          result,
-        };
-      } else {
-        const errorMsg = `Tool '${tool_name}' exists but is not executable (no execute function or is not a function)`;
-        console.error(`[sis_execute_tool] ${errorMsg}`);
-        return {
-          success: false,
-          error: errorMsg,
-        };
+        return { success: true, tool: tool_name, result, source: 'local' };
+      } catch (error: any) {
+        const errorMsg = `Tool '${tool_name}' local execution failed: ${error.message || 'Unknown error'}`;
+        console.error(`[sis_execute_tool] ${errorMsg}`, error);
+        return { success: false, tool: tool_name, error: errorMsg };
       }
-    } catch (error: any) {
-      const errorMsg = `Tool '${tool_name}' execution failed: ${error.message || 'Unknown error'}`;
-      console.error(`[sis_execute_tool] ${errorMsg}`, error);
-      return {
-        success: false,
-        tool: tool_name,
-        error: errorMsg,
-      };
     }
+
+    // No cloud tool and no bridge available
+    const errorMsg = `Tool '${tool_name}' not found. Use sis_search_tools to find available tools.`;
+    if (process.env.SIS_DEBUG === '1') {
+      console.error(`[sis_execute_tool] ${errorMsg}`);
+    }
+    return { success: false, error: errorMsg };
   },
 });
 

@@ -9,6 +9,8 @@ import * as githubTools from './github-tools';
 import * as youtubeTools from './youtube-tools';
 import * as marketplaceTools from './marketplace-tools';
 import * as ttsTools from './tts-tools';
+import * as feedbackTools from './feedback-tools';
+import * as webhookTools from './webhook-tools';
 import { waitTool } from './wait';
 import { analyzeMediaTool } from './analyze-media';
 import { aiInferenceTool } from './ai-inference';
@@ -204,12 +206,16 @@ Object.values(deviceTools).forEach(t => {
         register(t, 'Memory');
     } else if (['knowledge_add_instruction', 'knowledge_remember_about_user', 'knowledge_update_profile', 'knowledge_add_project_fact', 'knowledge_stats'].includes(name)) {
         register(t, 'Knowledge');
-    } else if (['calendar_crud', 'task_crud', 'task_reminders', 'planner_list_items', 'canvas_manager'].includes(name)) {
+    } else if (['calendar_crud', 'task_crud', 'task_reminders', 'planner_list_items'].includes(name)) {
         register(t, 'Productivity');
+    } else if (['canvas_list', 'canvas_read', 'canvas_write', 'canvas_create', 'canvas_delete'].includes(name)) {
+        register(t, 'Canvas');
     } else if (['set_variable', 'get_variable', 'toggle_variable', 'increment_variable', 'append_to_list', 'list_variables', 'delete_variable'].includes(name)) {
         register(t, 'Variables');
     } else if (['name_conversation'].includes(name)) {
         register(t, 'Core');
+    } else if (name.startsWith('math_')) {
+        register(t, 'Math');
     } else {
         register(t, 'Other');
     }
@@ -243,6 +249,12 @@ Object.values(marketplaceTools).forEach(t => {
 Object.values(ttsTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') register(t, 'Media');
 });
+Object.values(feedbackTools).forEach(t => {
+    if (typeof (t as any)?.execute === 'function') register(t, 'Feedback');
+});
+Object.values(webhookTools).forEach(t => {
+    if (typeof (t as any)?.execute === 'function') register(t, 'Webhooks');
+});
 
 // 2. Meta Tools
 
@@ -250,7 +262,7 @@ export const search_tools = createTool({
     id: 'search_tools',
     description: 'Search for available tools by category or query string. Returns tool names and descriptions.',
     inputSchema: z.object({
-        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Workflow', 'Memory', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'YouTube', 'Marketplace', 'Variables', 'Other']).optional(),
+        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Workflow', 'Memory', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'YouTube', 'Marketplace', 'Variables', 'Math', 'Feedback', 'Webhooks', 'Other']).optional(),
         query: z.string().optional(),
     }),
     outputSchema: z.object({

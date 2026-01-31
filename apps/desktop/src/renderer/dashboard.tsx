@@ -14,6 +14,7 @@ import { AutomationsView } from "./components/AutomationsView";
 import { SettingsView } from "./components/SettingsView";
 import { IntegrationsView } from "./components/IntegrationsView";
 import { MemoriesView } from "./components/MemoriesView";
+import { TasksView } from "./components/TasksView";
 import {
   LayoutDashboard,
   Clock,
@@ -24,7 +25,8 @@ import {
   LogOut,
   RefreshCw,
   Archive,
-  User
+  User,
+  ListTodo
 } from "lucide-react";
 import { clsx } from 'clsx';
 import 'katex/dist/katex.min.css';
@@ -161,7 +163,7 @@ function DashboardApp() {
     try {
       const params = new URLSearchParams(window.location.search);
       const initialTab = params.get('tab');
-      if (initialTab && ['overview', 'history', 'planner', 'memories', 'automations', 'integrations', 'settings'].includes(initialTab)) {
+      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'memories', 'automations', 'integrations', 'settings'].includes(initialTab)) {
         return initialTab;
       }
     } catch { }
@@ -228,16 +230,11 @@ function DashboardApp() {
   const [calendarRange, setCalendarRange] = useState<{ start: string; end: string } | null>(null);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [calendarReloadToken, setCalendarReloadToken] = useState(0);
-  const [plannerTasks, setPlannerTasks] = useState<any[]>([]);
-  const [plannerReminders, setPlannerReminders] = useState<any[]>([]);
+  
+  // Unified Tasks (New System)
+  const [unifiedTasks, setUnifiedTasks] = useState<any[]>([]);
   const [plannerLoading, setPlannerLoading] = useState(false);
-  const [plannerAddOpen, setPlannerAddOpen] = useState(false);
-  const [plannerAddType, setPlannerAddType] = useState<'task' | 'reminder'>('task');
-  const [plannerAddTitle, setPlannerAddTitle] = useState('');
-  const [plannerAddWhen, setPlannerAddWhen] = useState<string>('');
-  const [plannerAddPriority, setPlannerAddPriority] = useState<'low' | 'normal' | 'high'>('normal');
-  const [plannerAddSaving, setPlannerAddSaving] = useState(false);
-  const [plannerAddError, setPlannerAddError] = useState<string | null>(null);
+
   const creditsFallback = useMemo(() => {
     const planKey = (p: string) => String(p || '').trim().toLowerCase();
     const limitForPlan = (p?: string) => {
@@ -275,6 +272,9 @@ function DashboardApp() {
     await fetchData();
     if (tab === 'automations') {
       await loadStuards();
+    }
+    if (tab === 'planner') {
+      await loadPlannerData();
     }
   };
 
@@ -462,26 +462,21 @@ function DashboardApp() {
     return { ok: false } as any;
   };
 
-  const loadPlannerTasks = async () => {
-    const j = await firstOkJsonPlanner([`${AGENT_HTTP}/v1/tasks/list`, `${AGENT_HTTP}/tasks/list`]);
-    if (j?.ok) {
-      const items = Array.isArray(j.items) ? j.items : [];
-      setPlannerTasks(items);
-    }
-  };
-
-  const loadPlannerReminders = async () => {
-    const j = await firstOkJsonPlanner([`${AGENT_HTTP}/v1/reminders/list`, `${AGENT_HTTP}/reminders/list`]);
-    if (j?.ok) {
-      const items = Array.isArray(j.items) ? j.items : [];
-      setPlannerReminders(items);
+  const loadUnifiedTasks = async () => {
+    try {
+      const res = await (window as any).desktopAPI?.unifiedTasksList?.();
+      if (res?.ok) {
+        setUnifiedTasks(res.tasks || []);
+      }
+    } catch (e) {
+      console.error("Failed to load unified tasks", e);
     }
   };
 
   const loadPlannerData = async () => {
     setPlannerLoading(true);
     try {
-      await Promise.all([loadPlannerTasks(), loadPlannerReminders()]);
+      await loadUnifiedTasks();
     } finally {
       setPlannerLoading(false);
     }
@@ -558,46 +553,6 @@ function DashboardApp() {
       }
     }
     return new Date(iso);
-  };
-
-  const handlePlannerAddSubmit = async () => {
-    const title = plannerAddTitle.trim();
-    if (!title) {
-      setPlannerAddError('Please enter a title.');
-      return;
-    }
-    if (!plannerAddWhen) {
-      setPlannerAddError(plannerAddType === 'task' ? 'Please pick a due time.' : 'Please pick a reminder time.');
-      return;
-    }
-    setPlannerAddSaving(true);
-    setPlannerAddError(null);
-    try {
-      if (plannerAddType === 'task') {
-        const payload: any = { title, priority: plannerAddPriority };
-        if (plannerAddWhen) payload.due = plannerAddWhen;
-        const j = await postJsonPlanner([`${AGENT_HTTP}/v1/tasks/create`, `${AGENT_HTTP}/tasks/create`], payload);
-        if (!j?.ok) {
-          setPlannerAddError('Failed to create task.');
-          return;
-        }
-      } else {
-        const payload: any = { when: String(plannerAddWhen), message: title };
-        const j = await postJsonPlanner([`${AGENT_HTTP}/v1/reminders/schedule`, `${AGENT_HTTP}/reminders/schedule`], payload);
-        if (!j?.ok) {
-          setPlannerAddError('Failed to schedule reminder.');
-          return;
-        }
-      }
-      setPlannerAddTitle('');
-      setPlannerAddWhen('');
-      setPlannerAddPriority('normal');
-      setPlannerAddError(null);
-      setPlannerAddOpen(false);
-      await loadPlannerData();
-    } finally {
-      setPlannerAddSaving(false);
-    }
   };
 
   const handleRescheduleBlock = async (block: any, newDateIso: string) => {
@@ -678,58 +633,15 @@ function DashboardApp() {
         return;
       }
 
-      // Stuard task reschedule (updates due)
-      if (block?.type === 'task' && block?.original) {
-        const t = block.original;
-        const newDue = computeNewIso();
-        if (!newDue) return;
-        const payload: any = { id: t.id, due: newDue };
-        const j = await postJsonPlanner([
-          `${AGENT_HTTP}/v1/tasks/update`,
-          `${AGENT_HTTP}/tasks/update`,
-        ], payload);
-        if (j?.ok) {
-          setPlannerTasks((prev) =>
-            prev.map((it) =>
-              String(it.id) === String(t.id) ? { ...it, due: newDue } : it
-            )
-          );
-          setCalendarReloadToken((token) => token + 1);
-        }
-        return;
-      }
-
-      // Stuard reminder reschedule (cancel + schedule new)
-      if (block?.type === 'reminder' && block?.original) {
-        const r = block.original;
-        const newWhen = computeNewIso();
-        if (!newWhen) return;
-        try {
-          await postJsonPlanner([
-            `${AGENT_HTTP}/v1/reminders/cancel`,
-            `${AGENT_HTTP}/reminders/cancel`,
-          ], { id: r.id });
-        } catch { }
-        const payload: any = {
-          when: newWhen,
-          message: String(r.message || 'Reminder'),
-        };
-        if (r.taskId) payload.taskId = r.taskId;
-        const j = await postJsonPlanner([
-          `${AGENT_HTTP}/v1/reminders/schedule`,
-          `${AGENT_HTTP}/reminders/schedule`,
-        ], payload);
-        if (j?.ok) {
-          setPlannerReminders((prev) =>
-            prev.map((it) =>
-              String(it.id) === String(r.id)
-                ? { ...it, whenIso: newWhen }
-                : it
-            )
-          );
-          setCalendarReloadToken((token) => token + 1);
-        }
-        return;
+      // Unified Task reschedule
+      if (block?.type === 'task' && block?.source === 'unified-tasks') {
+         // Call update
+         try {
+           const updated = { id: block.id.replace('task:', ''), dueDate: newTimeIso };
+           await (window as any).desktopAPI?.unifiedTasksUpdate?.(updated);
+           await loadUnifiedTasks();
+         } catch { }
+         return;
       }
     } catch {
       // ignore
@@ -814,56 +726,43 @@ function DashboardApp() {
       }
       return true;
     };
-    for (const t of Array.isArray(plannerTasks) ? plannerTasks : []) {
-      if (!t || !t.due) continue;
+    
+    // Unified Tasks
+    for (const t of unifiedTasks) {
+      if (!t || !t.dueDate || t.status === 'completed' || t.status === 'cancelled') continue;
+      if (t.showInCalendar === false) continue;
+
       let dt: Date | null = null;
       try {
-        dt = new Date(t.due);
+        dt = new Date(t.dueDate);
         if (Number.isNaN(dt.getTime())) dt = null;
       } catch { dt = null; }
+
       if (!dt || !inRange(dt)) continue;
+      
       const iso = dt.toISOString();
+      const isAllDay = t.allDay || iso.includes('T00:00:00.000Z'); // Heuristic if allDay prop missing
+      
       blocks.push({
-        id: `task:${String(t.id ?? '')}`,
-        source: 'stuard',
+        id: `task:${String(t.id)}`,
+        source: 'unified-tasks',
         type: 'task',
         title: String(t.title || '(task)'),
+        description: t.description,
         start: iso,
-        end: iso,
-        allDay: false,
-        attendees: [],
-        location: undefined,
-        htmlLink: undefined,
+        end: isAllDay ? iso : new Date(dt.getTime() + 30 * 60000).toISOString(), // 30 min duration for timed tasks
+        allDay: isAllDay,
+        priority: t.priority,
         original: t,
       });
     }
-    for (const r of Array.isArray(plannerReminders) ? plannerReminders : []) {
-      if (!r) continue;
-      let dt: Date | null = null;
-      try {
-        if (r.whenIso) dt = new Date(r.whenIso);
-        else if (r.whenEpochMs) dt = new Date(r.whenEpochMs);
-        else if (r.when) dt = new Date(r.when);
-        if (dt && Number.isNaN(dt.getTime())) dt = null;
-      } catch { dt = null; }
-      if (!dt || !inRange(dt)) continue;
-      const iso = dt.toISOString();
-      blocks.push({
-        id: `reminder:${String(r.id ?? '')}`,
-        source: 'stuard',
-        type: 'reminder',
-        title: String(r.message || 'Reminder'),
-        start: iso,
-        end: iso,
-        allDay: false,
-        attendees: [],
-        location: undefined,
-        htmlLink: undefined,
-        original: r,
-      });
-    }
-    return blocks;
-  }, [calendarBlocks, calendarRange, plannerTasks, plannerReminders]);
+
+    return blocks.sort((a, b) => {
+      const ta = a.start ? new Date(a.start).getTime() : 0;
+      const tb = b.start ? new Date(b.start).getTime() : 0;
+      return ta - tb;
+    });
+  }, [calendarBlocks, unifiedTasks, calendarRange]);
 
   const calendarBlocksSorted = useMemo(() => {
     const arr = Array.isArray(unifiedBlocks) ? [...unifiedBlocks] : [];
@@ -975,6 +874,7 @@ function DashboardApp() {
             <SidebarItem id="overview" label="Overview" icon={LayoutDashboard} current={tab} onClick={setTab} />
             <SidebarItem id="history" label="History" icon={Clock} current={tab} onClick={setTab} />
             <SidebarItem id="planner" label="Planner" icon={Calendar} current={tab} onClick={setTab} />
+            <SidebarItem id="tasks" label="Tasks" icon={ListTodo} current={tab} onClick={setTab} />
 
             <div className="text-[10px] font-black text-theme-muted uppercase tracking-[0.2em] px-4 mt-6 mb-2 opacity-40">Intelligence</div>
             <SidebarItem id="memories" label="Memories" icon={Archive} current={tab} onClick={setTab} />
@@ -1114,22 +1014,13 @@ function DashboardApp() {
                               onSelectBlock={setSelectedBlockId}
                               onRescheduleBlock={handleRescheduleBlock}
                               onRefresh={() => setCalendarReloadToken(t => t + 1)}
-                              plannerAddOpen={plannerAddOpen}
-                              setPlannerAddOpen={setPlannerAddOpen}
-                              plannerAddType={plannerAddType}
-                              setPlannerAddType={setPlannerAddType}
-                              plannerAddTitle={plannerAddTitle}
-                              setPlannerAddTitle={setPlannerAddTitle}
-                              plannerAddWhen={plannerAddWhen}
-                              setPlannerAddWhen={setPlannerAddWhen}
-                              plannerAddPriority={plannerAddPriority}
-                              setPlannerAddPriority={setPlannerAddPriority}
-                              plannerAddSaving={plannerAddSaving}
-                              plannerAddError={plannerAddError}
-                              setPlannerAddError={setPlannerAddError}
-                              onSubmitAdd={handlePlannerAddSubmit}
                               AGENT_HTTP={AGENT_HTTP}
+                              tasks={unifiedTasks}
                             />
+                          )}
+
+                          {tab === 'tasks' && (
+                            <TasksView />
                           )}
 
                           {tab === 'settings' && userEmail && (

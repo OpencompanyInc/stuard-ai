@@ -9,7 +9,8 @@ import { ChatTabs } from './chat-view/ChatTabs';
 import { ChatHeaderActions } from './chat-view/ChatHeaderActions';
 import { ChatInputArea } from './chat-view/ChatInputArea';
 import { FileNavigatorOverlay } from './chat-view/FileNavigatorOverlay';
-import { SubAgentsView } from './SubAgentsView';
+import { SidebarTabsPanel } from './SidebarTabsPanel';
+import { TasksView, TaskSubTab } from './TasksView';
 
 interface ChatViewProps {
   messages: any[];
@@ -98,6 +99,13 @@ interface ChatViewProps {
 
   // Translucent mode
   translucentMode?: boolean;
+
+  // Internal Sidebar
+  internalSidebarOpen?: boolean;
+  activeSidebarTab?: 'spaces' | 'canvas' | 'terminal';
+  onToggleInternalSidebar?: () => void;
+  onCloseInternalSidebar?: () => void;
+  onSwitchSidebarTab?: (tab: 'spaces' | 'canvas' | 'terminal') => void;
 }
 
 const ChatViewInner: React.FC<ChatViewProps> = ({
@@ -153,7 +161,14 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   onDrop,
   queueDepth = 0,
   queuedMessages = [],
-  translucentMode = false
+  translucentMode = false,
+
+  // Internal Sidebar
+  internalSidebarOpen = false,
+  activeSidebarTab = 'spaces',
+  onToggleInternalSidebar,
+  onCloseInternalSidebar,
+  onSwitchSidebarTab,
 }) => {
   // Responsive layout based on overlay mode
   const isSidebarMode = overlayMode === 'sidebar';
@@ -163,6 +178,34 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
 
   // View Mode State (Chat vs Tasks)
   const [viewMode, setViewMode] = useState<'chat' | 'tasks'>('chat');
+  const [tasksSubTab, setTasksSubTab] = useState<TaskSubTab>('todo');
+
+  // Listen for view mode change events (e.g., from bookmark shortcuts)
+  useEffect(() => {
+    const handler = (_e: any, data: { mode: 'chat' | 'tasks'; subTab?: TaskSubTab }) => {
+      if (data?.mode) {
+        setViewMode(data.mode);
+        if (data.subTab) setTasksSubTab(data.subTab);
+      }
+    };
+    const unsubscribe = (window as any).desktopAPI?.onViewModeChange?.(handler);
+    // Also listen via IPC renderer
+    const ipcHandler = (event: any, data: any) => {
+      if (data?.mode) {
+        setViewMode(data.mode);
+        if (data.subTab) setTasksSubTab(data.subTab);
+      }
+    };
+    try {
+      (window as any).require?.('electron')?.ipcRenderer?.on?.('overlay:view-mode', ipcHandler);
+    } catch {}
+    return () => {
+      unsubscribe?.();
+      try {
+        (window as any).require?.('electron')?.ipcRenderer?.off?.('overlay:view-mode', ipcHandler);
+      } catch {}
+    };
+  }, []);
 
   const selectedModelLabel = (() => {
     if (selectedModelId === 'auto') return 'Auto';
@@ -310,18 +353,26 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
         onClose={() => setShowFileNav(false)}
         onNavigate={handleNavigate}
       />
-      <div
-        className={clsx(
-          "flex flex-col h-full bg-transparent relative font-sans smooth-resize min-h-0",
-          isSidebarMode ? "gap-2" : "gap-4"
-        )}
-      >
+      <div className="flex h-full bg-transparent relative font-sans smooth-resize min-h-0">
+        {/* Internal Sidebar - outside main container for proper corner rendering */}
+        <SidebarTabsPanel
+          isOpen={internalSidebarOpen}
+          onClose={onCloseInternalSidebar || (() => { })}
+          activeTab={activeSidebarTab}
+          onSwitchTab={onSwitchSidebarTab || (() => { })}
+          translucentMode={translucentMode}
+        />
+
         {(overlayMode === 'window' || overlayMode === 'sidebar') ? (
-          <div className="flex-1 min-h-0 flex flex-col gap-3 p-3 bg-theme-bg backdrop-blur-3xl rounded-[28px] border border-theme/10">
+          <div className={clsx(
+            "flex-1 min-h-0 flex flex-col gap-3 p-3 bg-theme-bg backdrop-blur-3xl border border-theme/10",
+            // Seamless sidebar: no left rounding when sidebar is open
+            internalSidebarOpen ? "rounded-r-[28px] rounded-l-none border-l-0" : "rounded-[28px]"
+          )}>
             {/* Top Card: Header & Messages */}
             <div
               className={clsx(
-                "flex-1 min-h-0 flex flex-col overflow-hidden relative transition-all duration-300",
+                "flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden relative transition-all duration-300",
                 isSidebarMode ? "rounded-[16px]" : "rounded-[24px]",
                 translucentMode
                   ? "bg-theme-bg backdrop-blur-xl border border-theme/5"
@@ -329,17 +380,19 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               )}
             >
               {/* Top Header */}
-              <div className="flex items-center justify-between px-2 py-2 border-b border-theme/10 bg-theme-hover/40 backdrop-blur-sm">
-                <ChatTabs
-                  tabs={tabs}
-                  activeTabId={activeTabId}
-                  onSwitchTab={onSwitchTab}
-                  onCloseTab={onCloseTab}
-                  onAddTab={onAddTab}
-                />
+              <div className="flex items-center justify-between px-2 py-2 border-b border-theme/10 bg-theme-hover/40 backdrop-blur-sm w-full min-w-0">
+                <div className="flex-1 w-0 min-w-0 overflow-hidden mr-2">
+                  <ChatTabs
+                    tabs={tabs}
+                    activeTabId={activeTabId}
+                    onSwitchTab={onSwitchTab}
+                    onCloseTab={onCloseTab}
+                    onAddTab={onAddTab}
+                  />
+                </div>
                 <ChatHeaderActions
-                  onToggleSidebar={onToggleSidebar}
-                  sidebarOpen={sidebarOpen}
+                  onToggleSidebar={onToggleInternalSidebar}
+                  sidebarOpen={internalSidebarOpen}
                   onOpenDashboard={onOpenDashboard}
                   onCollapse={onCollapse}
                   overlayMode={overlayMode}
@@ -419,8 +472,8 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               {/* Messages or Tasks View */}
               <div className="flex-1 min-h-0 overflow-hidden relative">
                 {viewMode === 'tasks' ? (
-                  <div className="h-full overflow-y-auto custom-scrollbar p-2">
-                    <SubAgentsView compact parentId={conversations.find(c => c.id === messages[0]?.conversation_id)?.id} />
+                  <div className="h-full overflow-y-auto custom-scrollbar">
+                    <TasksView compact defaultSubTab={tasksSubTab} onSubTabChange={setTasksSubTab} />
                   </div>
                 ) : (
                   <MessageList
@@ -430,7 +483,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                     currentToolCalls={currentToolCalls}
                     currentStreamChunks={currentStreamChunks}
                     thinkingStartTime={thinkingStartTime}
-                    className="h-full px-2.5 py-2 scrollbar-hidden"
+                    className="h-full px-4 py-3 scrollbar-hidden"
                     onSubmitToolOutput={onSubmitToolOutput}
                     onGenUIResponse={onGenUIResponse}
                   />
@@ -470,7 +523,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
             {/* Top Card: Header & Messages */}
             <div
               className={clsx(
-                "flex-1 min-h-0 flex flex-col overflow-hidden relative transition-all duration-300 shadow-2xl",
+                "flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden relative transition-all duration-300 shadow-2xl",
                 isSidebarMode ? "rounded-[16px]" : "rounded-[28px]",
                 translucentMode
                   ? "bg-theme-bg/25 backdrop-blur-2xl border border-theme/20"
@@ -478,17 +531,19 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               )}
             >
               {/* Top Header */}
-              <div className="flex items-center justify-between px-2 py-2 border-b border-black/5 bg-white/40 backdrop-blur-sm">
-                <ChatTabs
-                  tabs={tabs}
-                  activeTabId={activeTabId}
-                  onSwitchTab={onSwitchTab}
-                  onCloseTab={onCloseTab}
-                  onAddTab={onAddTab}
-                />
+              <div className="flex items-center justify-between px-2 py-2 border-b border-black/5 bg-white/40 backdrop-blur-sm w-full min-w-0">
+                <div className="flex-1 w-0 min-w-0 overflow-hidden mr-2">
+                  <ChatTabs
+                    tabs={tabs}
+                    activeTabId={activeTabId}
+                    onSwitchTab={onSwitchTab}
+                    onCloseTab={onCloseTab}
+                    onAddTab={onAddTab}
+                  />
+                </div>
                 <ChatHeaderActions
-                  onToggleSidebar={onToggleSidebar}
-                  sidebarOpen={sidebarOpen}
+                  onToggleSidebar={onToggleInternalSidebar}
+                  sidebarOpen={internalSidebarOpen}
                   onOpenDashboard={onOpenDashboard}
                   onCollapse={onCollapse}
                   overlayMode={overlayMode}
@@ -568,8 +623,8 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               {/* Messages or Tasks View */}
               <div className="flex-1 min-h-0 overflow-hidden relative">
                 {viewMode === 'tasks' ? (
-                  <div className="h-full overflow-y-auto custom-scrollbar p-2">
-                    <SubAgentsView compact parentId={conversations.find(c => c.id === messages[0]?.conversation_id)?.id} />
+                  <div className="h-full overflow-y-auto custom-scrollbar">
+                    <TasksView compact defaultSubTab={tasksSubTab} onSubTabChange={setTasksSubTab} />
                   </div>
                 ) : (
                   <MessageList

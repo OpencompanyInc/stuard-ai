@@ -302,6 +302,72 @@ async def task_reminders(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
     return {"ok": False, "error": "unknown_action"}
 
 
+async def unified_task_assignments(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
+    """
+    Manage user task assignments from the desktop unified tasks system.
+    This tool allows the agent to interact with tasks assigned by the user.
+    """
+    action = str(args.get("action") or "").lower()
+    task_id = str(args.get("taskId") or "").strip()
+    assignment_id = str(args.get("assignmentId") or "").strip()
+
+    # This tool communicates with the desktop app via IPC
+    # The desktop app exposes the unified tasks API
+    
+    if action == "list_pending":
+        # Request pending assignments from desktop
+        try:
+            await manager.broadcast(__import__('json').dumps({
+                "type": "request",
+                "event": "unified_tasks_get_pending",
+                "data": {},
+            }))
+            return {"ok": True, "message": "Requested pending assignments from desktop. Check context for results."}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    if action == "mark_triggered":
+        if not task_id or not assignment_id:
+            return {"ok": False, "error": "taskId and assignmentId are required"}
+        try:
+            await manager.broadcast(__import__('json').dumps({
+                "type": "request",
+                "event": "unified_tasks_mark_triggered",
+                "data": {"taskId": task_id, "assignmentId": assignment_id},
+            }))
+            return {"ok": True, "message": f"Marked assignment {assignment_id} as triggered."}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    if action == "mark_completed":
+        if not task_id or not assignment_id:
+            return {"ok": False, "error": "taskId and assignmentId are required"}
+        try:
+            await manager.broadcast(__import__('json').dumps({
+                "type": "request",
+                "event": "unified_tasks_mark_completed",
+                "data": {"taskId": task_id, "assignmentId": assignment_id},
+            }))
+            return {"ok": True, "message": f"Marked assignment {assignment_id} as completed."}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    if action == "get_task":
+        if not task_id:
+            return {"ok": False, "error": "taskId is required"}
+        try:
+            await manager.broadcast(__import__('json').dumps({
+                "type": "request",
+                "event": "unified_tasks_get_task",
+                "data": {"taskId": task_id},
+            }))
+            return {"ok": True, "message": f"Requested task {task_id} details from desktop."}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    return {"ok": False, "error": "unknown_action"}
+
+
 async def send_notification(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
     title = str(args.get("title") or "")
     body = str(args.get("body") or "")

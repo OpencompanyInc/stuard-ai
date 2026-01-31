@@ -1,7 +1,7 @@
 /**
  * Tool Palette Sidebar Component for the workflow builder
  */
-import React, { useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { Search, X, ChevronRight, GripVertical, Box, Lock } from "lucide-react";
 import { PALETTE_CATEGORIES, CATEGORY_COLORS } from "../constants/paletteCategories";
 
@@ -13,6 +13,52 @@ interface ToolPaletteProps {
 export function ToolPalette({ onDragStart, disabled }: ToolPaletteProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['triggers', 'flow']));
+
+  const [ffmpegConnected, setFfmpegConnected] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem('integrations.connected');
+      const parsed = raw ? JSON.parse(raw) : null;
+      return !!(parsed && (parsed as any).ffmpeg);
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    const refresh = () => {
+      try {
+        const raw = localStorage.getItem('integrations.connected');
+        const parsed = raw ? JSON.parse(raw) : null;
+        setFfmpegConnected(!!(parsed && (parsed as any).ffmpeg));
+      } catch {
+        setFfmpegConnected(false);
+      }
+    };
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'integrations.connected') refresh();
+    };
+
+    const onConnectedChanged = () => {
+      refresh();
+    };
+
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('integrations.connected.changed' as any, onConnectedChanged);
+    window.addEventListener('focus', refresh);
+    refresh();
+
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('integrations.connected.changed' as any, onConnectedChanged);
+      window.removeEventListener('focus', refresh);
+    };
+  }, []);
+
+  const paletteCategories = useMemo(() => {
+    if (ffmpegConnected) return PALETTE_CATEGORIES;
+    return PALETTE_CATEGORIES.filter((c) => c.id !== 'ffmpeg');
+  }, [ffmpegConnected]);
   
   const toggleCategory = (id: string) => {
     setExpandedCategories(prev => {
@@ -24,16 +70,16 @@ export function ToolPalette({ onDragStart, disabled }: ToolPaletteProps) {
   };
   
   const filteredCategories = useMemo(() => {
-    if (!searchQuery.trim()) return PALETTE_CATEGORIES;
+    if (!searchQuery.trim()) return paletteCategories;
     const q = searchQuery.toLowerCase();
-    return PALETTE_CATEGORIES.map(cat => ({
+    return paletteCategories.map(cat => ({
       ...cat,
       items: cat.items.filter(item => 
         item.label.toLowerCase().includes(q) || 
         item.t.toLowerCase().includes(q)
       ),
     })).filter(cat => cat.items.length > 0);
-  }, [searchQuery]);
+  }, [searchQuery, paletteCategories]);
   
   return (
     <div className="flex flex-col h-full bg-[#fdfdfd] border-r border-slate-100">

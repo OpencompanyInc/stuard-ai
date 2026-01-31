@@ -3,14 +3,64 @@
  * Redesigned for beginner-friendliness and Scratch-like UX
  */
 import React, { useMemo, useState, useEffect, useCallback } from "react";
-import { X, Settings, Trash2, ArrowRight, Sparkles, Info, ChevronDown, ChevronRight, Hash, Activity, GitBranch, GitMerge, FileText, Zap, Power, Paintbrush } from "lucide-react";
+import { X, Settings, Trash2, ArrowRight, Sparkles, Info, ChevronDown, ChevronRight, Hash, Activity, GitBranch, GitMerge, FileText, Zap, Power, Paintbrush, Repeat, RotateCw, List, Plus, GripVertical, Package, ArrowRightFromLine } from "lucide-react";
 import { ToolArgsEditor, TextInputWithVariables, type UpstreamNode } from "./SmartArgEditor";
 import { getToolSchema, getToolOutputs } from "../constants/tool-schemas";
 import { getToolIcon, getToolColor, CATEGORY_COLORS } from "../constants/paletteCategories";
 import { parseGuard, guardToString } from "../builder/guards";
 import { VariablesPanel } from "./VariablesPanel";
-import type { DesignerModel, WorkflowVariable } from "../types";
+import type { DesignerModel, WorkflowVariable, DesignerWire, WorkflowInputParam, WorkflowOutputField } from "../types";
 import { UIBuilderModal } from "../../ui-builder";
+
+/**
+ * Compute chain indices for all nodes based on the flow of connections.
+ * Triggers start at index 0, and each step downstream gets a higher index.
+ */
+function computeChainIndices(
+  triggers: { id: string }[],
+  nodes: { id: string }[],
+  wires: DesignerWire[]
+): Map<string, number> {
+  const indices = new Map<string, number>();
+  const queue: { id: string; index: number }[] = triggers.map(t => ({ id: t.id, index: 0 }));
+  
+  while (queue.length > 0) {
+    const { id, index } = queue.shift()!;
+    const existingIndex = indices.get(id);
+    if (existingIndex !== undefined && existingIndex <= index) continue;
+    indices.set(id, index);
+    
+    for (const w of wires) {
+      if (w.from === id) {
+        const targetIndex = indices.get(w.to);
+        if (targetIndex === undefined || targetIndex > index + 1) {
+          queue.push({ id: w.to, index: index + 1 });
+        }
+      }
+    }
+  }
+  
+  let maxIndex = Math.max(0, ...indices.values());
+  for (const node of nodes) {
+    if (!indices.has(node.id)) {
+      indices.set(node.id, ++maxIndex);
+    }
+  }
+  return indices;
+}
+
+/**
+ * Check if a wire is a back edge based on chain indices.
+ */
+function isBackEdgeByChain(
+  chainIndices: Map<string, number>,
+  from: string,
+  to: string
+): boolean {
+  const fromIndex = chainIndices.get(from) ?? 0;
+  const toIndex = chainIndices.get(to) ?? 0;
+  return fromIndex >= toIndex;
+}
 
 interface InspectorPanelProps {
   model: DesignerModel;
@@ -89,7 +139,31 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
   // Calculate upstream nodes for variable suggestions
   const upstreamNodes = useMemo(() => {
     if (!selectedNodeId || isTrigger) return [];
-    return getUpstreamNodes(model, selectedNodeId);
+    const nodes = getUpstreamNodes(model, selectedNodeId);
+    
+    // Check if this node receives a loop wire (explicit config) - add loop variables
+    const incomingLoopWire = (model.wires || []).find(
+      w => w.to === selectedNodeId && (w as any).loop
+    );
+    
+    // Also check if any incoming wire forms a back edge based on chain index
+    const chainIndices = computeChainIndices(model.triggers, model.nodes, model.wires || []);
+    const incomingBackEdge = (model.wires || []).find(w => {
+      if (w.to !== selectedNodeId) return false;
+      return isBackEdgeByChain(chainIndices, w.from, w.to);
+    });
+    
+    if (incomingLoopWire || incomingBackEdge) {
+      const loop = incomingLoopWire ? (incomingLoopWire as any).loop : null;
+      // Add loop context as a pseudo-node for variable suggestions
+      nodes.unshift({
+        id: 'loop',
+        label: 'Loop Context',
+        tool: '__loop__', // Special marker for loop variables
+      });
+    }
+    
+    return nodes;
   }, [model, selectedNodeId, isTrigger]);
 
   // Find outgoing wires for this node
@@ -208,6 +282,13 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
           <VariablesPanel
             variables={model.variables || []}
             onChange={(variables) => onUpdate({ ...model, variables })}
+            disabled={model.locked}
+          />
+
+          {/* Output Schema - for workflow-as-function */}
+          <OutputSchemaEditor
+            fields={model.outputSchema || []}
+            onChange={(outputSchema) => onUpdate({ ...model, outputSchema })}
             disabled={model.locked}
           />
 
@@ -334,6 +415,60 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
                 </div>
               );
             })()}
+
+            {/* Incoming Loop Info - Show when this node receives a loop wire */}
+            {!isTrigger && (() => {
+              const incomingLoopWires = (model.wires || []).filter(
+                w => w.to === selectedNodeId && (w as any).loop
+              );
+              if (incomingLoopWires.length === 0) return null;
+
+              return (
+                <div className="border border-purple-200 rounded-lg overflow-hidden bg-purple-50/30">
+                  <div className="px-3 py-2.5 flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-purple-100 flex items-center justify-center text-purple-600">
+                      <Repeat className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-xs font-semibold text-slate-700">Loop Execution</div>
+                      <div className="text-[10px] text-slate-500">This step will run multiple times</div>
+                    </div>
+                  </div>
+                  <div className="px-3 py-2 border-t border-purple-100 bg-white/50 space-y-2">
+                    {incomingLoopWires.map((wire, i) => {
+                      const loop = (wire as any).loop;
+                      const sourceNode = [...model.triggers, ...model.nodes].find(n => n.id === wire.from);
+                      return (
+                        <div key={i} className="flex items-start gap-2 text-[10px]">
+                          <div className="w-4 h-4 rounded bg-purple-100 flex items-center justify-center text-purple-600 shrink-0 mt-0.5">
+                            {loop.type === 'forEach' ? <List className="w-2.5 h-2.5" /> : 
+                             loop.type === 'repeat' ? <Repeat className="w-2.5 h-2.5" /> : 
+                             <RotateCw className="w-2.5 h-2.5" />}
+                          </div>
+                          <div className="flex-1">
+                            <span className="font-medium text-purple-700">
+                              {loop.type === 'forEach' ? 'For Each' : 
+                               loop.type === 'repeat' ? `Repeat ${loop.count}x` : 
+                               'While'}
+                            </span>
+                            <span className="text-slate-500"> from </span>
+                            <span className="font-medium text-slate-600">{sourceNode?.label || wire.from}</span>
+                            {loop.type === 'forEach' && loop.itemVar && (
+                              <div className="text-slate-500 mt-0.5">
+                                Access item as <code className="bg-purple-100 px-1 rounded text-purple-700">{'{{loop.' + loop.itemVar + '}}'}</code>
+                              </div>
+                            )}
+                            {loop.maxIterations && (
+                              <div className="text-slate-400">Max: {loop.maxIterations} iterations</div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Quick Action for custom_ui tool */}
@@ -368,6 +503,15 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
               />
             </div>
           </div>
+
+          {/* Input Parameters - for triggers (workflow-as-function) */}
+          {isTrigger && (
+            <InputParamsEditor
+              params={(item as any).inputParams || []}
+              onChange={(inputParams) => updateItem({ inputParams })}
+              disabled={model.locked}
+            />
+          )}
 
           {/* Available Variables (Scratch-like tokens) */}
           {!isTrigger && upstreamNodes.length > 0 && (
@@ -483,6 +627,211 @@ function VariableIcon({ className }: { className?: string }) {
       <path d="M4 7C4 5.34315 5.34315 4 7 4H17C18.6569 4 20 5.34315 20 7V17C20 18.6569 18.6569 20 17 20H7C5.34315 20 4 18.6569 4 17V7Z" stroke="currentColor" strokeWidth="2" />
       <path d="M9 12L11 12M15 12L13 12M12 9L12 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
+  );
+}
+
+/**
+ * WireLoopEditor - Configure loop behavior for a wire connection
+ * Supports: forEach (iterate items), repeat (N times), while (condition-based)
+ */
+function WireLoopEditor({
+  wire,
+  index,
+  onUpdate,
+  nodesForSuggestions,
+  workflowVariables
+}: {
+  wire: any;
+  index: number;
+  onUpdate: (i: number, u: any) => void;
+  nodesForSuggestions: UpstreamNode[];
+  workflowVariables?: any[];
+}) {
+  const hasLoop = !!wire.loop;
+  const loopType = wire.loop?.type || 'forEach';
+  
+  const [isExpanded, setIsExpanded] = useState(hasLoop);
+  
+  // Sync expansion state with hasLoop
+  useEffect(() => {
+    if (hasLoop) setIsExpanded(true);
+  }, [hasLoop]);
+
+  const handleLoopTypeChange = (newType: string) => {
+    if (newType === 'none') {
+      // Remove loop config
+      onUpdate(index, { loop: undefined });
+      setIsExpanded(false);
+    } else {
+      // Set up default loop config based on type
+      const baseLoop = {
+        type: newType as 'forEach' | 'while' | 'repeat',
+        maxIterations: 100,
+        delayMs: 0,
+      };
+      
+      if (newType === 'forEach') {
+        onUpdate(index, { loop: { ...baseLoop, items: '', itemVar: 'item', indexVar: 'index' } });
+      } else if (newType === 'repeat') {
+        onUpdate(index, { loop: { ...baseLoop, count: 5 } });
+      } else if (newType === 'while') {
+        onUpdate(index, { loop: { ...baseLoop, condition: { '==': [{ var: '' }, true] } } });
+      }
+      setIsExpanded(true);
+    }
+  };
+
+  const updateLoopField = (field: string, value: any) => {
+    onUpdate(index, { loop: { ...wire.loop, [field]: value } });
+  };
+
+  const loopTypeIcon = loopType === 'forEach' ? List : loopType === 'repeat' ? Repeat : RotateCw;
+  const LoopIcon = loopTypeIcon;
+
+  return (
+    <div className={`rounded-lg p-2.5 border transition-colors mb-3 ${hasLoop ? 'bg-purple-50/50 border-purple-200' : 'bg-slate-50 border-slate-100'}`}>
+      <div className="flex items-center justify-between mb-2">
+        <label className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${hasLoop ? 'text-purple-600' : 'text-slate-400'}`}>
+          <LoopIcon className="w-3 h-3" />
+          Loop
+        </label>
+        <select
+          value={hasLoop ? loopType : 'none'}
+          onChange={(e) => handleLoopTypeChange(e.target.value)}
+          className={`text-xs border-none bg-transparent font-medium focus:ring-0 cursor-pointer rounded px-1 -mr-1 transition-colors ${hasLoop ? 'text-purple-700 hover:bg-purple-100' : 'text-slate-500 hover:bg-slate-200'}`}
+        >
+          <option value="none">No Loop</option>
+          <option value="forEach">For Each Item</option>
+          <option value="repeat">Repeat N Times</option>
+          <option value="while">While Condition</option>
+        </select>
+      </div>
+
+      {hasLoop && isExpanded && (
+        <div className="animate-in fade-in slide-in-from-top-1 duration-200 space-y-3">
+          {/* For Each Loop */}
+          {loopType === 'forEach' && (
+            <>
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 block">
+                  Items to iterate
+                </label>
+                <TextInputWithVariables
+                  value={wire.loop?.items || ''}
+                  onChange={(v) => updateLoopField('items', v)}
+                  placeholder="{{step.results}} or [1, 2, 3]"
+                  upstreamNodes={nodesForSuggestions}
+                  workflowVariables={workflowVariables}
+                  suggestFrom={['*.*']}
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Array or list to loop through</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 block">
+                    Item variable
+                  </label>
+                  <input
+                    type="text"
+                    value={wire.loop?.itemVar || 'item'}
+                    onChange={(e) => updateLoopField('itemVar', e.target.value)}
+                    placeholder="item"
+                    className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 block">
+                    Index variable
+                  </label>
+                  <input
+                    type="text"
+                    value={wire.loop?.indexVar || 'index'}
+                    onChange={(e) => updateLoopField('indexVar', e.target.value)}
+                    placeholder="index"
+                    className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300 font-mono"
+                  />
+                </div>
+              </div>
+              <div className="p-2 bg-purple-50 rounded-lg border border-purple-100">
+                <p className="text-[10px] text-purple-600">
+                  Access current item as <code className="bg-white px-1 rounded">{'{{loop.' + (wire.loop?.itemVar || 'item') + '}}'}</code> and index as <code className="bg-white px-1 rounded">{'{{loop.' + (wire.loop?.indexVar || 'index') + '}}'}</code>
+                </p>
+              </div>
+            </>
+          )}
+
+          {/* Repeat N Times */}
+          {loopType === 'repeat' && (
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 block">
+                Number of times
+              </label>
+              <input
+                type="number"
+                value={wire.loop?.count || 5}
+                onChange={(e) => updateLoopField('count', parseInt(e.target.value) || 1)}
+                min={1}
+                max={10000}
+                className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+              />
+              <p className="text-[10px] text-slate-400 mt-1">
+                Access iteration number as <code className="bg-slate-100 px-1 rounded">{'{{loop.index}}'}</code>
+              </p>
+            </div>
+          )}
+
+          {/* While Loop */}
+          {loopType === 'while' && (
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 block">
+                Continue while
+              </label>
+              <TextInputWithVariables
+                value={wire.loop?.conditionText || ''}
+                onChange={(v: string) => updateLoopField('conditionText', v)}
+                placeholder="{{workflow.counter}} < 10"
+                upstreamNodes={nodesForSuggestions}
+                workflowVariables={workflowVariables}
+                suggestFrom={['*.*']}
+              />
+              <p className="text-[10px] text-slate-400 mt-1">Loop continues while this condition is true</p>
+            </div>
+          )}
+
+          {/* Common Loop Settings */}
+          <div className="pt-2 border-t border-slate-200/50 space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 block">
+                  Max iterations
+                </label>
+                <input
+                  type="number"
+                  value={wire.loop?.maxIterations || 100}
+                  onChange={(e) => updateLoopField('maxIterations', parseInt(e.target.value) || 100)}
+                  min={1}
+                  max={10000}
+                  className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 block">
+                  Delay (ms)
+                </label>
+                <input
+                  type="number"
+                  value={wire.loop?.delayMs || 0}
+                  onChange={(e) => updateLoopField('delayMs', parseInt(e.target.value) || 0)}
+                  min={0}
+                  className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+                />
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-400">Safety limit to prevent infinite loops</p>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -706,6 +1055,15 @@ function WireConditionEditor({
         </button>
       </div>
 
+      {/* Loop Section */}
+      <WireLoopEditor
+        wire={wire}
+        index={index}
+        onUpdate={onUpdate}
+        nodesForSuggestions={nodesForSuggestions}
+        workflowVariables={workflowVariables}
+      />
+
       {/* Condition Section */}
       <div className={`rounded-lg p-2.5 border transition-colors ${isConditional ? 'bg-amber-50/50 border-amber-100' : 'bg-slate-50 border-slate-100'}`}>
         <div className="flex items-center justify-between mb-2">
@@ -791,7 +1149,7 @@ function WireConditionEditor({
                     <div className="space-y-2">
                       <TextInputWithVariables
                         value={builderRhs}
-                        onChange={(v) => handleBuilderChange('rhs', v)}
+                        onChange={(v: string) => handleBuilderChange('rhs', v)}
                         placeholder="value or {{ref}}"
                         upstreamNodes={nodesForSuggestions}
                         workflowVariables={workflowVariables}
@@ -843,6 +1201,296 @@ function WireConditionEditor({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * InputParamsEditor - Configure input parameters for workflow-as-function
+ */
+function InputParamsEditor({
+  params,
+  onChange,
+  disabled
+}: {
+  params: WorkflowInputParam[];
+  onChange: (params: WorkflowInputParam[]) => void;
+  disabled?: boolean;
+}) {
+  const [isExpanded, setIsExpanded] = useState(params.length > 0);
+
+  const addParam = () => {
+    onChange([...params, { name: '', type: 'string', required: false }]);
+    setIsExpanded(true);
+  };
+
+  const updateParam = (index: number, updates: Partial<WorkflowInputParam>) => {
+    const newParams = [...params];
+    newParams[index] = { ...newParams[index], ...updates };
+    onChange(newParams);
+  };
+
+  const removeParam = (index: number) => {
+    onChange(params.filter((_, i) => i !== index));
+  };
+
+  return (
+    <div className="border border-slate-200 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full flex items-center justify-between px-4 py-3 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 rounded-lg bg-blue-100 text-blue-600">
+            <Package className="w-4 h-4" />
+          </div>
+          <div className="text-left">
+            <div className="text-sm font-semibold text-slate-700">Input Parameters</div>
+            <div className="text-[10px] text-slate-500">
+              {params.length === 0 ? 'Define inputs for this workflow' : `${params.length} parameter${params.length !== 1 ? 's' : ''}`}
+            </div>
+          </div>
+        </div>
+        {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+      </button>
+
+      {isExpanded && (
+        <div className="p-4 space-y-3 bg-white">
+          {params.length === 0 ? (
+            <div className="text-center py-4">
+              <p className="text-xs text-slate-500 mb-3">
+                Add input parameters to use this workflow as a reusable function
+              </p>
+              <button
+                onClick={addParam}
+                disabled={disabled}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors disabled:opacity-50"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add Parameter
+              </button>
+            </div>
+          ) : (
+            <>
+              {params.map((param, i) => (
+                <div key={i} className="flex items-start gap-2 p-3 bg-slate-50 rounded-lg border border-slate-100">
+                  <div className="flex-1 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        value={param.name}
+                        onChange={(e) => updateParam(i, { name: e.target.value.replace(/[^a-zA-Z0-9_]/g, '') })}
+                        placeholder="paramName"
+                        disabled={disabled}
+                        className="px-2 py-1.5 text-xs border border-slate-200 rounded-md font-mono focus:border-blue-300 focus:ring-2 focus:ring-blue-100 outline-none disabled:opacity-50"
+                      />
+                      <select
+                        value={param.type}
+                        onChange={(e) => updateParam(i, { type: e.target.value as any })}
+                        disabled={disabled}
+                        className="px-2 py-1.5 text-xs border border-slate-200 rounded-md focus:border-blue-300 focus:ring-2 focus:ring-blue-100 outline-none disabled:opacity-50"
+                      >
+                        <option value="string">String</option>
+                        <option value="number">Number</option>
+                        <option value="boolean">Boolean</option>
+                        <option value="json">JSON Object</option>
+                        <option value="array">Array</option>
+                      </select>
+                    </div>
+                    <input
+                      type="text"
+                      value={param.description || ''}
+                      onChange={(e) => updateParam(i, { description: e.target.value })}
+                      placeholder="Description (optional)"
+                      disabled={disabled}
+                      className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-md focus:border-blue-300 focus:ring-2 focus:ring-blue-100 outline-none disabled:opacity-50"
+                    />
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={param.required || false}
+                          onChange={(e) => updateParam(i, { required: e.target.checked })}
+                          disabled={disabled}
+                          className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        Required
+                      </label>
+                      {!param.required && (
+                        <input
+                          type="text"
+                          value={param.defaultValue ?? ''}
+                          onChange={(e) => updateParam(i, { defaultValue: e.target.value })}
+                          placeholder="Default value"
+                          disabled={disabled}
+                          className="flex-1 px-2 py-1 text-xs border border-slate-200 rounded-md focus:border-blue-300 focus:ring-2 focus:ring-blue-100 outline-none disabled:opacity-50"
+                        />
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => removeParam(i)}
+                    disabled={disabled}
+                    className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors disabled:opacity-50"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+              <button
+                onClick={addParam}
+                disabled={disabled}
+                className="w-full py-2 text-xs font-medium text-blue-600 hover:bg-blue-50 border border-dashed border-blue-200 rounded-lg transition-colors disabled:opacity-50"
+              >
+                <Plus className="w-3.5 h-3.5 inline mr-1" />
+                Add Parameter
+              </button>
+            </>
+          )}
+
+          {params.length > 0 && (
+            <div className="pt-2 border-t border-slate-100">
+              <p className="text-[10px] text-slate-500">
+                Access inputs via <code className="bg-slate-100 px-1 rounded">{'{{input.paramName}}'}</code> or <code className="bg-slate-100 px-1 rounded">{'{{args.paramName}}'}</code>
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * OutputSchemaEditor - Configure output schema for workflow return value
+ */
+function OutputSchemaEditor({
+  fields,
+  onChange,
+  disabled
+}: {
+  fields: WorkflowOutputField[];
+  onChange: (fields: WorkflowOutputField[]) => void;
+  disabled?: boolean;
+}) {
+  const [isExpanded, setIsExpanded] = useState(fields.length > 0);
+
+  const addField = () => {
+    onChange([...fields, { name: '', type: 'string' }]);
+    setIsExpanded(true);
+  };
+
+  const updateField = (index: number, updates: Partial<WorkflowOutputField>) => {
+    const newFields = [...fields];
+    newFields[index] = { ...newFields[index], ...updates };
+    onChange(newFields);
+  };
+
+  const removeField = (index: number) => {
+    onChange(fields.filter((_, i) => i !== index));
+  };
+
+  return (
+    <div className="border border-slate-200 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full flex items-center justify-between px-4 py-3 bg-gradient-to-r from-emerald-50 to-teal-50 hover:from-emerald-100 hover:to-teal-100 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 rounded-lg bg-emerald-100 text-emerald-600">
+            <ArrowRightFromLine className="w-4 h-4" />
+          </div>
+          <div className="text-left">
+            <div className="text-sm font-semibold text-slate-700">Output Schema</div>
+            <div className="text-[10px] text-slate-500">
+              {fields.length === 0 ? 'Define what this workflow returns' : `${fields.length} field${fields.length !== 1 ? 's' : ''}`}
+            </div>
+          </div>
+        </div>
+        {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+      </button>
+
+      {isExpanded && (
+        <div className="p-4 space-y-3 bg-white">
+          {fields.length === 0 ? (
+            <div className="text-center py-4">
+              <p className="text-xs text-slate-500 mb-3">
+                Define output fields to document what this workflow returns
+              </p>
+              <button
+                onClick={addField}
+                disabled={disabled}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-colors disabled:opacity-50"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add Output Field
+              </button>
+            </div>
+          ) : (
+            <>
+              {fields.map((field, i) => (
+                <div key={i} className="flex items-start gap-2 p-3 bg-slate-50 rounded-lg border border-slate-100">
+                  <div className="flex-1 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        value={field.name}
+                        onChange={(e) => updateField(i, { name: e.target.value.replace(/[^a-zA-Z0-9_]/g, '') })}
+                        placeholder="fieldName"
+                        disabled={disabled}
+                        className="px-2 py-1.5 text-xs border border-slate-200 rounded-md font-mono focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100 outline-none disabled:opacity-50"
+                      />
+                      <select
+                        value={field.type}
+                        onChange={(e) => updateField(i, { type: e.target.value as any })}
+                        disabled={disabled}
+                        className="px-2 py-1.5 text-xs border border-slate-200 rounded-md focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100 outline-none disabled:opacity-50"
+                      >
+                        <option value="string">String</option>
+                        <option value="number">Number</option>
+                        <option value="boolean">Boolean</option>
+                        <option value="json">JSON Object</option>
+                        <option value="array">Array</option>
+                      </select>
+                    </div>
+                    <input
+                      type="text"
+                      value={field.description || ''}
+                      onChange={(e) => updateField(i, { description: e.target.value })}
+                      placeholder="Description (optional)"
+                      disabled={disabled}
+                      className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-md focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100 outline-none disabled:opacity-50"
+                    />
+                  </div>
+                  <button
+                    onClick={() => removeField(i)}
+                    disabled={disabled}
+                    className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors disabled:opacity-50"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+              <button
+                onClick={addField}
+                disabled={disabled}
+                className="w-full py-2 text-xs font-medium text-emerald-600 hover:bg-emerald-50 border border-dashed border-emerald-200 rounded-lg transition-colors disabled:opacity-50"
+              >
+                <Plus className="w-3.5 h-3.5 inline mr-1" />
+                Add Output Field
+              </button>
+            </>
+          )}
+
+          {fields.length > 0 && (
+            <div className="pt-2 border-t border-slate-100">
+              <p className="text-[10px] text-slate-500">
+                Use the <code className="bg-slate-100 px-1 rounded">return_value</code> node to return data matching this schema
+              </p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

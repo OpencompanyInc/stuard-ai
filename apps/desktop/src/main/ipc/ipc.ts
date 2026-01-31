@@ -1,8 +1,8 @@
 
 import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut } from "electron";
 import { selectFiles, selectImages, listDirectory, selectFolder } from "../utils/files";
-import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, setOverlayMode, setOverlaySize, moveOverlayBy, showWindow, hideWindow, toggleWindow, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode } from "../windows";
-import { getLocalWebhookPort, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition } from "../workflows";
+import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, getInternalSidebarState } from "../windows";
+import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition } from "../workflows";
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
 import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } from "../integrations/outlook";
@@ -24,10 +24,15 @@ export function setupIpc() {
   ipcMain.handle("overlay:hide", () => hideWindow());
   ipcMain.handle("overlay:toggle", () => toggleWindow());
   ipcMain.handle("overlay:setMode", (_e, mode: "compact" | "sidebar" | "window") => setOverlayMode(mode));
-  ipcMain.handle("overlay:resize", (_e, w: number, h: number) => setOverlaySize(w, h, false));
+  ipcMain.handle("overlay:resize", (_e, w: number, h: number, anchor?: 'top' | 'bottom') => setOverlaySize(w, h, false, anchor));
+  ipcMain.handle("overlay:setBounds", (_e, bounds: any) => setOverlayBounds(bounds));
   ipcMain.handle("overlay:moveBy", (_e, dx: number, dy: number) => moveOverlayBy(dx, dy));
   ipcMain.handle("overlay:getSize", () => getOverlaySize());
   ipcMain.handle("overlay:getMode", () => getOverlayMode());
+  
+  // Internal sidebar (rendered inside overlay window, expands window width)
+  ipcMain.handle("overlay:toggleInternalSidebar", (_e, open?: boolean) => toggleInternalSidebar(open));
+  ipcMain.handle("overlay:getInternalSidebarState", () => getInternalSidebarState());
 
   // System windows
   ipcMain.handle("system:openDashboard", (_e, options?: { tab?: string }) => openDashboardWindow(options));
@@ -35,10 +40,111 @@ export function setupIpc() {
   ipcMain.handle("system:openOnboarding", () => openOnboardingWindow());
   ipcMain.handle("system:closeOnboarding", () => closeOnboardingWindow());
 
-  // Spaces window
+  // Spaces window (legacy - redirects to sidebar)
   ipcMain.handle('spaces:open', () => openSpacesWindow());
   ipcMain.handle('spaces:close', () => closeSpacesWindow());
   ipcMain.handle('spaces:toggle', () => toggleSpacesWindow());
+
+  // Sidebar window (new unified sidebar with Spaces, Canvas, Terminal)
+  ipcMain.handle('sidebar:open', (_e, options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) => openSidebarWindow(options));
+  ipcMain.handle('sidebar:close', () => closeSidebarWindow());
+  ipcMain.handle('sidebar:toggle', (_e, options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) => toggleSidebarWindow(options));
+  ipcMain.handle('sidebar:navigate', (_e, tab: 'spaces' | 'canvas' | 'terminal') => {
+    const sidebar = getSidebarWindow();
+    if (sidebar && !sidebar.isDestroyed()) {
+      sidebar.webContents.send('sidebar:navigate', { tab });
+    }
+  });
+  ipcMain.handle('sidebar:toggleExpanded', () => {
+    const { toggleSidebarExpanded } = require('../windows');
+    return toggleSidebarExpanded();
+  });
+  ipcMain.handle('sidebar:isExpanded', () => {
+    const { isSidebarExpanded } = require('../windows');
+    return { expanded: isSidebarExpanded() };
+  });
+
+  // Canvas document storage (persisted locally)
+  const canvasDocsPath = () => {
+    const userDataPath = app.getPath('userData');
+    const docsPath = require('path').join(userDataPath, 'canvas-documents.json');
+    return docsPath;
+  };
+
+  const loadCanvasDocs = (): any[] => {
+    try {
+      const p = canvasDocsPath();
+      if (fs.existsSync(p)) {
+        return JSON.parse(fs.readFileSync(p, 'utf-8'));
+      }
+    } catch (e) {
+      logger.warn('Failed to load canvas documents:', e);
+    }
+    return [];
+  };
+
+  const saveCanvasDocs = (docs: any[]) => {
+    try {
+      fs.writeFileSync(canvasDocsPath(), JSON.stringify(docs, null, 2), 'utf-8');
+    } catch (e) {
+      logger.warn('Failed to save canvas documents:', e);
+    }
+  };
+
+  ipcMain.handle('canvas:listDocuments', () => {
+    return { ok: true, documents: loadCanvasDocs() };
+  });
+
+  ipcMain.handle('canvas:createDocument', (_e, doc: any) => {
+    const docs = loadCanvasDocs();
+    docs.unshift(doc);
+    saveCanvasDocs(docs);
+    return { ok: true };
+  });
+
+  ipcMain.handle('canvas:saveDocument', (_e, doc: any) => {
+    const docs = loadCanvasDocs();
+    const idx = docs.findIndex((d: any) => d.id === doc.id);
+    if (idx >= 0) {
+      docs[idx] = doc;
+    } else {
+      docs.unshift(doc);
+    }
+    saveCanvasDocs(docs);
+    return { ok: true };
+  });
+
+  ipcMain.handle('canvas:deleteDocument', (_e, docId: string) => {
+    const docs = loadCanvasDocs();
+    const filtered = docs.filter((d: any) => d.id !== docId);
+    saveCanvasDocs(filtered);
+    return { ok: true };
+  });
+
+  ipcMain.handle('canvas:getDocument', (_e, docId: string) => {
+    const docs = loadCanvasDocs();
+    const doc = docs.find((d: any) => d.id === docId);
+    return { ok: true, document: doc || null };
+  });
+
+  // Canvas AI read/write (for AI to access canvas content)
+  ipcMain.handle('canvas:read', (_e, docId?: string) => {
+    const docs = loadCanvasDocs();
+    if (docId) {
+      const doc = docs.find((d: any) => d.id === docId);
+      return { ok: true, document: doc || null };
+    }
+    // Return the most recent document if no ID specified
+    return { ok: true, document: docs[0] || null };
+  });
+
+  ipcMain.handle('canvas:write', (_e, data: { documentId?: string; content?: string; title?: string; action?: 'append' | 'replace' | 'insert'; position?: number }) => {
+    const sidebar = getSidebarWindow();
+    if (sidebar && !sidebar.isDestroyed()) {
+      sidebar.webContents.send('canvas:update', data);
+    }
+    return { ok: true };
+  });
 
   // Local webhook URL
   ipcMain.handle('webhooks:localUrl', (_e, id?: string) => {
@@ -46,6 +152,11 @@ export function setupIpc() {
     const topic = (typeof id === 'string' && id) ? `/${id}` : '';
     const port = getLocalWebhookPort();
     return { ok: true, url: `http://127.0.0.1:${port}/webhooks/incoming${topic}${token ? `?token=${encodeURIComponent(token)}` : ''}` };
+  });
+
+  // Cloud webhook events (received via cloud-ai websocket -> renderer -> preload -> main)
+  ipcMain.handle('webhooks:cloudEvent', async (_e, payload: any) => {
+    return handleCloudWebhookEvent(payload);
   });
 
   // Files
@@ -469,6 +580,10 @@ export function setupIpc() {
   ipcMain.handle('updates:install', async () => updates_install());
   ipcMain.handle('updates:setChannel', async (_e, channel: string) => updates_setChannel(channel as any));
   ipcMain.handle('updates:onState', (_e) => { try { return updates_getState(); } catch { return { status: 'idle' }; } });
+  ipcMain.handle('updates:getApiEndpoint', () => {
+    const { getCurrentApiEndpoint } = require('../services/updates');
+    return { ok: true, endpoint: getCurrentApiEndpoint() };
+  });
 
   // Tools execution (Renderer -> Main -> Local Agent/System)
   ipcMain.handle('tools:exec', async (_e, tool: string, args: any) => {
@@ -661,6 +776,490 @@ export function setupIpc() {
     try {
       return await purchaseCredits(options);
     } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  // Quick Shortcuts / Bookmarks
+  const bookmarksPath = () => {
+    const userDataPath = app.getPath('userData');
+    return require('path').join(userDataPath, 'quick-shortcuts.json');
+  };
+
+  const loadBookmarks = (): any[] => {
+    try {
+      const p = bookmarksPath();
+      if (fs.existsSync(p)) {
+        return JSON.parse(fs.readFileSync(p, 'utf-8'));
+      }
+    } catch (e) {
+      logger.warn('Failed to load bookmarks:', e);
+    }
+    return [];
+  };
+
+  const saveBookmarks = (bookmarks: any[]) => {
+    try {
+      fs.writeFileSync(bookmarksPath(), JSON.stringify(bookmarks, null, 2), 'utf-8');
+    } catch (e) {
+      logger.warn('Failed to save bookmarks:', e);
+    }
+  };
+
+  ipcMain.handle('bookmarks:list', () => {
+    return { ok: true, bookmarks: loadBookmarks() };
+  });
+
+  ipcMain.handle('bookmarks:save', (_e, bookmarks: any[]) => {
+    saveBookmarks(bookmarks);
+    return { ok: true };
+  });
+
+  ipcMain.handle('bookmarks:add', (_e, bookmark: any) => {
+    const bookmarks = loadBookmarks();
+    bookmarks.push(bookmark);
+    saveBookmarks(bookmarks);
+    return { ok: true, bookmarks };
+  });
+
+  ipcMain.handle('bookmarks:update', (_e, bookmark: any) => {
+    const bookmarks = loadBookmarks();
+    const idx = bookmarks.findIndex((b: any) => b.id === bookmark.id);
+    if (idx >= 0) {
+      bookmarks[idx] = bookmark;
+      saveBookmarks(bookmarks);
+      return { ok: true, bookmarks };
+    }
+    return { ok: false, error: 'Bookmark not found' };
+  });
+
+  ipcMain.handle('bookmarks:delete', (_e, bookmarkId: string) => {
+    const bookmarks = loadBookmarks();
+    const filtered = bookmarks.filter((b: any) => b.id !== bookmarkId);
+    saveBookmarks(filtered);
+    return { ok: true, bookmarks: filtered };
+  });
+
+  ipcMain.handle('bookmarks:reorder', (_e, bookmarkIds: string[]) => {
+    const bookmarks = loadBookmarks();
+    const ordered = bookmarkIds
+      .map(id => bookmarks.find((b: any) => b.id === id))
+      .filter(Boolean);
+    // Add any bookmarks not in the order list at the end
+    const orderedIds = new Set(bookmarkIds);
+    for (const b of bookmarks) {
+      if (!orderedIds.has(b.id)) {
+        ordered.push(b);
+      }
+    }
+    saveBookmarks(ordered);
+    return { ok: true, bookmarks: ordered };
+  });
+
+  // ==========================================
+  // UNIFIED TASKS SYSTEM
+  // ==========================================
+  const unifiedTasksPath = () => {
+    const userDataPath = app.getPath('userData');
+    return require('path').join(userDataPath, 'unified-tasks.json');
+  };
+
+  const loadUnifiedTasks = (): any[] => {
+    try {
+      const p = unifiedTasksPath();
+      if (fs.existsSync(p)) {
+        return JSON.parse(fs.readFileSync(p, 'utf-8'));
+      }
+    } catch (e) {
+      logger.warn('Failed to load unified tasks:', e);
+    }
+    return [];
+  };
+
+  const saveUnifiedTasks = (tasks: any[]) => {
+    try {
+      fs.writeFileSync(unifiedTasksPath(), JSON.stringify(tasks, null, 2), 'utf-8');
+    } catch (e) {
+      logger.warn('Failed to save unified tasks:', e);
+    }
+  };
+
+  ipcMain.handle('unified-tasks:list', () => {
+    return { ok: true, tasks: loadUnifiedTasks() };
+  });
+
+  ipcMain.handle('unified-tasks:get', (_e, taskId: string) => {
+    const tasks = loadUnifiedTasks();
+    const task = tasks.find((t: any) => t.id === taskId);
+    return task ? { ok: true, task } : { ok: false, error: 'Task not found' };
+  });
+
+  ipcMain.handle('unified-tasks:add', (_e, task: any) => {
+    const tasks = loadUnifiedTasks();
+    const now = new Date().toISOString();
+    const newTask = {
+      ...task,
+      id: task.id || `task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      createdAt: now,
+      updatedAt: now,
+      status: task.status || 'pending',
+      priority: task.priority || 'normal',
+      subTodos: task.subTodos || [],
+      agentAssignments: task.agentAssignments || [],
+      showInCalendar: task.showInCalendar !== false,
+    };
+    tasks.unshift(newTask);
+    saveUnifiedTasks(tasks);
+    return { ok: true, task: newTask, tasks };
+  });
+
+  ipcMain.handle('unified-tasks:update', (_e, task: any) => {
+    const tasks = loadUnifiedTasks();
+    const idx = tasks.findIndex((t: any) => t.id === task.id);
+    if (idx >= 0) {
+      tasks[idx] = { ...tasks[idx], ...task, updatedAt: new Date().toISOString() };
+      saveUnifiedTasks(tasks);
+      return { ok: true, task: tasks[idx], tasks };
+    }
+    return { ok: false, error: 'Task not found' };
+  });
+
+  ipcMain.handle('unified-tasks:delete', (_e, taskId: string) => {
+    const tasks = loadUnifiedTasks();
+    const filtered = tasks.filter((t: any) => t.id !== taskId);
+    saveUnifiedTasks(filtered);
+    return { ok: true, tasks: filtered };
+  });
+
+  ipcMain.handle('unified-tasks:toggle-status', (_e, taskId: string) => {
+    const tasks = loadUnifiedTasks();
+    const idx = tasks.findIndex((t: any) => t.id === taskId);
+    if (idx >= 0) {
+      const task = tasks[idx];
+      const isCompleted = task.status === 'completed';
+      tasks[idx] = {
+        ...task,
+        status: isCompleted ? 'pending' : 'completed',
+        completedAt: isCompleted ? null : new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      saveUnifiedTasks(tasks);
+      return { ok: true, task: tasks[idx], tasks };
+    }
+    return { ok: false, error: 'Task not found' };
+  });
+
+  ipcMain.handle('unified-tasks:add-subtodo', (_e, taskId: string, subtodo: any) => {
+    const tasks = loadUnifiedTasks();
+    const idx = tasks.findIndex((t: any) => t.id === taskId);
+    if (idx >= 0) {
+      const newSubtodo = {
+        id: `subtodo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        content: subtodo.content || '',
+        completed: false,
+        createdAt: new Date().toISOString(),
+      };
+      tasks[idx].subTodos = [...(tasks[idx].subTodos || []), newSubtodo];
+      tasks[idx].updatedAt = new Date().toISOString();
+      saveUnifiedTasks(tasks);
+      return { ok: true, subtodo: newSubtodo, task: tasks[idx] };
+    }
+    return { ok: false, error: 'Task not found' };
+  });
+
+  ipcMain.handle('unified-tasks:toggle-subtodo', (_e, taskId: string, subtodoId: string) => {
+    const tasks = loadUnifiedTasks();
+    const idx = tasks.findIndex((t: any) => t.id === taskId);
+    if (idx >= 0) {
+      const subIdx = (tasks[idx].subTodos || []).findIndex((s: any) => s.id === subtodoId);
+      if (subIdx >= 0) {
+        const sub = tasks[idx].subTodos[subIdx];
+        tasks[idx].subTodos[subIdx] = {
+          ...sub,
+          completed: !sub.completed,
+          completedAt: sub.completed ? null : new Date().toISOString(),
+        };
+        tasks[idx].updatedAt = new Date().toISOString();
+        saveUnifiedTasks(tasks);
+        return { ok: true, task: tasks[idx] };
+      }
+    }
+    return { ok: false, error: 'Subtodo not found' };
+  });
+
+  ipcMain.handle('unified-tasks:delete-subtodo', (_e, taskId: string, subtodoId: string) => {
+    const tasks = loadUnifiedTasks();
+    const idx = tasks.findIndex((t: any) => t.id === taskId);
+    if (idx >= 0) {
+      tasks[idx].subTodos = (tasks[idx].subTodos || []).filter((s: any) => s.id !== subtodoId);
+      tasks[idx].updatedAt = new Date().toISOString();
+      saveUnifiedTasks(tasks);
+      return { ok: true, task: tasks[idx] };
+    }
+    return { ok: false, error: 'Task not found' };
+  });
+
+  ipcMain.handle('unified-tasks:add-agent-assignment', (_e, taskId: string, assignment: any) => {
+    const tasks = loadUnifiedTasks();
+    const idx = tasks.findIndex((t: any) => t.id === taskId);
+    if (idx >= 0) {
+      const newAssignment = {
+        id: `assign_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        type: assignment.type || 'reminder',
+        scheduledAt: assignment.scheduledAt,
+        message: assignment.message || '',
+        recurring: assignment.recurring || 'none',
+        status: 'pending',
+      };
+      tasks[idx].agentAssignments = [...(tasks[idx].agentAssignments || []), newAssignment];
+      tasks[idx].updatedAt = new Date().toISOString();
+      saveUnifiedTasks(tasks);
+      return { ok: true, assignment: newAssignment, task: tasks[idx] };
+    }
+    return { ok: false, error: 'Task not found' };
+  });
+
+  ipcMain.handle('unified-tasks:update-agent-assignment', (_e, taskId: string, assignmentId: string, updates: any) => {
+    const tasks = loadUnifiedTasks();
+    const idx = tasks.findIndex((t: any) => t.id === taskId);
+    if (idx >= 0) {
+      const aIdx = (tasks[idx].agentAssignments || []).findIndex((a: any) => a.id === assignmentId);
+      if (aIdx >= 0) {
+        tasks[idx].agentAssignments[aIdx] = { ...tasks[idx].agentAssignments[aIdx], ...updates };
+        tasks[idx].updatedAt = new Date().toISOString();
+        saveUnifiedTasks(tasks);
+        return { ok: true, task: tasks[idx] };
+      }
+    }
+    return { ok: false, error: 'Assignment not found' };
+  });
+
+  ipcMain.handle('unified-tasks:delete-agent-assignment', (_e, taskId: string, assignmentId: string) => {
+    const tasks = loadUnifiedTasks();
+    const idx = tasks.findIndex((t: any) => t.id === taskId);
+    if (idx >= 0) {
+      tasks[idx].agentAssignments = (tasks[idx].agentAssignments || []).filter((a: any) => a.id !== assignmentId);
+      tasks[idx].updatedAt = new Date().toISOString();
+      saveUnifiedTasks(tasks);
+      return { ok: true, task: tasks[idx] };
+    }
+    return { ok: false, error: 'Task not found' };
+  });
+
+  ipcMain.handle('unified-tasks:get-pending-assignments', () => {
+    const tasks = loadUnifiedTasks();
+    const now = new Date().getTime();
+    const pending: any[] = [];
+    for (const task of tasks) {
+      if (task.status === 'completed' || task.status === 'cancelled') continue;
+      for (const assignment of (task.agentAssignments || [])) {
+        if (assignment.status !== 'pending') continue;
+        const scheduledTime = new Date(assignment.scheduledAt).getTime();
+        if (scheduledTime <= now) {
+          pending.push({ task, assignment });
+        }
+      }
+    }
+    return { ok: true, pending };
+  });
+
+  ipcMain.handle('unified-tasks:get-calendar-items', () => {
+    const tasks = loadUnifiedTasks();
+    const items = tasks
+      .filter((t: any) => t.showInCalendar && (t.dueDate || t.startDate) && t.status !== 'completed' && t.status !== 'cancelled')
+      .map((t: any) => ({
+        id: t.id,
+        title: t.title,
+        start: t.startDate || t.dueDate,
+        end: t.dueDate || t.startDate,
+        allDay: t.allDay ?? true,
+        source: 'unified-tasks',
+        type: 'task',
+        priority: t.priority,
+        status: t.status,
+        subTodosTotal: (t.subTodos || []).length,
+        subTodosCompleted: (t.subTodos || []).filter((s: any) => s.completed).length,
+      }));
+    return { ok: true, items };
+  });
+
+  // Legacy User To-Do List (for backwards compatibility)
+  const todosPath = () => {
+    const userDataPath = app.getPath('userData');
+    return require('path').join(userDataPath, 'user-todos.json');
+  };
+
+  const loadTodos = (): any[] => {
+    try {
+      const p = todosPath();
+      if (fs.existsSync(p)) {
+        return JSON.parse(fs.readFileSync(p, 'utf-8'));
+      }
+    } catch (e) {
+      logger.warn('Failed to load todos:', e);
+    }
+    return [];
+  };
+
+  const saveTodos = (todos: any[]) => {
+    try {
+      fs.writeFileSync(todosPath(), JSON.stringify(todos, null, 2), 'utf-8');
+    } catch (e) {
+      logger.warn('Failed to save todos:', e);
+    }
+  };
+
+  ipcMain.handle('todos:list', () => {
+    return { ok: true, todos: loadTodos() };
+  });
+
+  ipcMain.handle('todos:save', (_e, todos: any[]) => {
+    saveTodos(todos);
+    return { ok: true };
+  });
+
+  ipcMain.handle('todos:add', (_e, todo: any) => {
+    const todos = loadTodos();
+    todos.unshift(todo);
+    saveTodos(todos);
+    return { ok: true, todos };
+  });
+
+  ipcMain.handle('todos:update', (_e, todo: any) => {
+    const todos = loadTodos();
+    const idx = todos.findIndex((t: any) => t.id === todo.id);
+    if (idx >= 0) {
+      todos[idx] = todo;
+      saveTodos(todos);
+      return { ok: true, todos };
+    }
+    return { ok: false, error: 'Todo not found' };
+  });
+
+  ipcMain.handle('todos:delete', (_e, todoId: string) => {
+    const todos = loadTodos();
+    const filtered = todos.filter((t: any) => t.id !== todoId);
+    saveTodos(filtered);
+    return { ok: true, todos: filtered };
+  });
+
+  ipcMain.handle('todos:toggle', (_e, todoId: string) => {
+    const todos = loadTodos();
+    const idx = todos.findIndex((t: any) => t.id === todoId);
+    if (idx >= 0) {
+      todos[idx].completed = !todos[idx].completed;
+      todos[idx].completedAt = todos[idx].completed ? new Date().toISOString() : null;
+      saveTodos(todos);
+      return { ok: true, todos };
+    }
+    return { ok: false, error: 'Todo not found' };
+  });
+
+  ipcMain.handle('todos:reorder', (_e, todoIds: string[]) => {
+    const todos = loadTodos();
+    const ordered = todoIds
+      .map(id => todos.find((t: any) => t.id === id))
+      .filter(Boolean);
+    const orderedIds = new Set(todoIds);
+    for (const t of todos) {
+      if (!orderedIds.has(t.id)) {
+        ordered.push(t);
+      }
+    }
+    saveTodos(ordered);
+    return { ok: true, todos: ordered };
+  });
+
+  ipcMain.handle('bookmarks:execute', async (_e, bookmark: any) => {
+    try {
+      const type = String(bookmark.type || '').toLowerCase();
+      const target = String(bookmark.target || '').trim();
+
+      const sendSidebarSelectItem = (payload: { type: 'space' | 'canvas'; id: string }) => {
+        try {
+          const sidebar = getSidebarWindow();
+          if (!sidebar || sidebar.isDestroyed()) return;
+          const wc = sidebar.webContents;
+          const send = () => {
+            try { wc.send('sidebar:selectItem', payload); } catch { }
+          };
+          if (typeof (wc as any).isLoadingMainFrame === 'function' && (wc as any).isLoadingMainFrame()) {
+            wc.once('did-finish-load', send);
+          } else {
+            send();
+          }
+        } catch { }
+      };
+
+      switch (type) {
+        case 'url':
+          if (target) shell.openExternal(target);
+          return { ok: true };
+
+        case 'app':
+          if (target) shell.openPath(target);
+          return { ok: true };
+
+        case 'file':
+        case 'folder':
+          if (target) shell.openPath(target);
+          return { ok: true };
+
+        case 'workflow':
+          // Run a workflow by ID
+          if (target) {
+            const result = await workflows_run(target);
+            return result;
+          }
+          return { ok: false, error: 'No workflow ID specified' };
+
+        case 'space':
+          // Open sidebar to spaces tab in expanded mode and select specific space
+          openSidebarWindow({ tab: 'spaces', expanded: true });
+          // Navigate to specific space if target is space ID
+          if (target && target !== 'spaces') {
+            sendSidebarSelectItem({ type: 'space', id: target });
+          }
+          return { ok: true };
+
+        case 'canvas':
+          // Open sidebar to canvas tab in expanded mode and select specific document
+          openSidebarWindow({ tab: 'canvas', expanded: true });
+          // Handle special '_new' target to create a fresh canvas
+          if (target === '_new') {
+            const newId = `canvas_${Date.now()}`;
+            const now = new Date().toISOString();
+            const newDoc = { id: newId, title: 'Untitled', content: '', createdAt: now, updatedAt: now };
+            const docs = loadCanvasDocs();
+            docs.unshift(newDoc);
+            saveCanvasDocs(docs);
+            sendSidebarSelectItem({ type: 'canvas', id: newId });
+          } else if (target && target !== 'canvas') {
+            // Navigate to specific canvas document if target is document ID
+            sendSidebarSelectItem({ type: 'canvas', id: target });
+          }
+          return { ok: true };
+
+        case 'dashboard':
+          openDashboardWindow({ tab: target || undefined });
+          return { ok: true };
+
+        case 'tasks':
+          // Open overlay in window mode and switch to tasks view with subtab
+          setOverlayMode('window');
+          showWindow();
+          // target can be 'todo' or 'agent' for subtab selection
+          const tasksSubTab = target === 'agent' ? 'agent' : 'todo';
+          for (const w of BrowserWindow.getAllWindows()) {
+            try { w.webContents.send('overlay:view-mode', { mode: 'tasks', subTab: tasksSubTab }); } catch { }
+          }
+          return { ok: true };
+
+        default:
+          return { ok: false, error: `Unknown bookmark type: ${type}` };
+      }
+    } catch (e: any) {
+      logger.error('Failed to execute bookmark:', e);
       return { ok: false, error: String(e?.message || e) };
     }
   });

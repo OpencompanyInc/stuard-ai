@@ -1,12 +1,76 @@
 /**
  * WorkflowCanvas - The visual canvas for rendering workflow nodes and wires
  */
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { MousePointer2, ZoomIn, ZoomOut, Maximize2, Trash2, LayoutGrid } from "lucide-react";
 import { WorkflowNode } from "./WorkflowNodeCard";
-import type { DesignerModel } from "../types";
+import type { DesignerModel, DesignerWire } from "../types";
 import type { StepExecutionStatus } from "./WorkflowNodeCard";
 import type { AlignmentGuide } from "../utils/alignment";
+
+/**
+ * Compute chain indices for all nodes based on the flow of connections.
+ * Triggers start at index 0, and each step downstream gets a higher index.
+ * This creates a topological ordering that ignores back edges.
+ */
+function computeChainIndices(
+  triggers: { id: string }[],
+  nodes: { id: string }[],
+  wires: DesignerWire[]
+): Map<string, number> {
+  const indices = new Map<string, number>();
+  const visited = new Set<string>();
+  
+  // Start with triggers at index 0
+  const queue: { id: string; index: number }[] = triggers.map(t => ({ id: t.id, index: 0 }));
+  
+  while (queue.length > 0) {
+    const { id, index } = queue.shift()!;
+    
+    // If already visited with a lower or equal index, skip
+    // If visited with higher index, update to lower (closer to source)
+    const existingIndex = indices.get(id);
+    if (existingIndex !== undefined && existingIndex <= index) continue;
+    
+    indices.set(id, index);
+    
+    // Find all outgoing wires and queue their targets with index + 1
+    for (const w of wires) {
+      if (w.from === id) {
+        const targetIndex = indices.get(w.to);
+        // Only queue if not visited or if we found a shorter path
+        if (targetIndex === undefined || targetIndex > index + 1) {
+          queue.push({ id: w.to, index: index + 1 });
+        }
+      }
+    }
+  }
+  
+  // Assign indices to any disconnected nodes (shouldn't happen but just in case)
+  let maxIndex = Math.max(0, ...indices.values());
+  for (const node of nodes) {
+    if (!indices.has(node.id)) {
+      indices.set(node.id, ++maxIndex);
+    }
+  }
+  
+  return indices;
+}
+
+/**
+ * Check if a wire is a back edge based on chain indices.
+ * A back edge goes from a higher index to a lower or equal index in the chain.
+ */
+function isBackEdgeByChain(
+  chainIndices: Map<string, number>,
+  from: string,
+  to: string
+): boolean {
+  const fromIndex = chainIndices.get(from) ?? 0;
+  const toIndex = chainIndices.get(to) ?? 0;
+  // Back edge if going from higher index to lower or equal index
+  return fromIndex >= toIndex;
+}
 
 interface ExecutionState {
   flowId: string;
@@ -160,6 +224,12 @@ export function WorkflowCanvas({
             <marker id="ah-loop" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
               <path d="M0,0 L6,2 L0,4" fill="#f59e0b" />
             </marker>
+            <marker id="ah-loop-config" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+              <path d="M0,0 L6,2 L0,4" fill="#a855f7" />
+            </marker>
+            <marker id="ah-loop-break" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+              <path d="M0,0 L6,2 L0,4" fill="#f97316" />
+            </marker>
 
             {/* Animated Gradients */}
             <linearGradient id="flow-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -173,7 +243,11 @@ export function WorkflowCanvas({
             </linearGradient>
           </defs>
 
-          {model.wires.map((w, i) => {
+          {(() => {
+            // Compute chain indices once for all nodes based on connection flow
+            const chainIndices = computeChainIndices(model.triggers, model.nodes, model.wires);
+            
+            return model.wires.map((w, i) => {
             const all = [...model.triggers, ...model.nodes];
             const f = all.find(n => n.id === w.from);
             const t = all.find(n => n.id === w.to);
@@ -186,8 +260,9 @@ export function WorkflowCanvas({
             const x2 = t.position.x;
             const y2 = t.position.y + 40;
 
-            // Detect if this is a back edge (loop wire) - target is to the left of or close to source
-            const isBackEdge = x2 <= x1 + 50;
+            // Detect if this is a back edge based on chain index
+            // A back edge goes from a higher index to a lower index in the chain
+            const isBackEdge = isBackEdgeByChain(chainIndices, w.from, w.to);
 
             let pathD: string;
             let midX: number;
@@ -246,18 +321,45 @@ export function WorkflowCanvas({
             const isCompletedWire = sourceStatus === 'completed' && (targetStatus === 'completed' || targetStatus === 'running');
             const isSelected = selectedWireIndex === i;
             const isHovered = hoveredWireIndex === i;
+            
+            // Check if this wire has a loop configuration
+            const hasLoop = !!(w as any).loop;
+            const loopType = (w as any).loop?.type;
+            const hasLoopBreak = !!(w as any).loopBreak;
+            
+            // Check if source node is inside a loop (for "continue in loop" styling)
+            const isInsideLoop = (() => {
+              if (hasLoop || hasLoopBreak) return false; // Already handled
+              const visited = new Set<string>();
+              const checkUpstream = (nodeId: string): boolean => {
+                if (visited.has(nodeId)) return false;
+                visited.add(nodeId);
+                const incoming = (model.wires || []).filter((wire: any) => wire.to === nodeId);
+                for (const wire of incoming) {
+                  if ((wire as any).loop) return true;
+                  if (checkUpstream(wire.from)) return true;
+                }
+                return false;
+              };
+              return checkUpstream(w.from);
+            })();
 
-            // Special colors for back edges
+            // Special colors for back edges, loop wires, and loop breaks
+            // Orange = continues in loop, Grey = exits loop (loopBreak)
             const wireColor = isSelected ? '#ef4444'
               : isActiveWire ? '#6366f1'
               : isCompletedWire ? '#10b981'
               : isHovered ? '#94a3b8'
-              : isBackEdge ? '#f59e0b' // Amber for loop wires
-              : '#cbd5e1';
+              : isInsideLoop ? '#f97316' // Orange for wires that continue in loop
+              : hasLoop ? '#a855f7' // Purple for configured loops (entry)
+              : isBackEdge ? '#f59e0b' // Amber for back edges
+              : '#cbd5e1'; // Grey for normal and loopBreak
 
             const markerEnd = isSelected ? 'url(#ah-selected)'
               : isActiveWire ? 'url(#ah-active)'
               : isCompletedWire ? 'url(#ah-completed)'
+              : isInsideLoop ? 'url(#ah-loop-break)' // Reuse orange marker
+              : hasLoop ? 'url(#ah-loop-config)'
               : isBackEdge ? 'url(#ah-loop)'
               : 'url(#ah)';
 
@@ -290,14 +392,60 @@ export function WorkflowCanvas({
                   style={{ pointerEvents: 'none' }}
                 />
 
-                {/* Loop indicator icon for back edges */}
-                {isBackEdge && !isSelected && !isHovered && (
+                {/* Loop indicator icon for configured loops */}
+                {hasLoop && !isSelected && !isHovered && (
+                  <g transform={`translate(${midX}, ${midY})`}>
+                    <circle r="10" fill="white" stroke="#a855f7" strokeWidth="1.5" className="drop-shadow-sm" />
+                    {loopType === 'forEach' && (
+                      // List icon for forEach
+                      <g transform="translate(-5, -5)" stroke="#a855f7" strokeWidth="1.5" fill="none">
+                        <line x1="2" y1="3" x2="8" y2="3" />
+                        <line x1="2" y1="6" x2="8" y2="6" />
+                        <line x1="2" y1="9" x2="8" y2="9" />
+                      </g>
+                    )}
+                    {loopType === 'repeat' && (
+                      // Repeat icon
+                      <text x="0" y="4" textAnchor="middle" fontSize="8" fontWeight="bold" fill="#a855f7">
+                        {(w as any).loop?.count || 'N'}
+                      </text>
+                    )}
+                    {loopType === 'while' && (
+                      // While loop icon (circular arrow)
+                      <path
+                        d="M-4 0 A4 4 0 1 1 4 0 M4 0 L2 -2 M4 0 L2 2"
+                        fill="none"
+                        stroke="#a855f7"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                      />
+                    )}
+                  </g>
+                )}
+                
+                {/* Loop indicator icon for back edges (no explicit config) */}
+                {isBackEdge && !hasLoop && !isSelected && !isHovered && (
                   <g transform={`translate(${midX}, ${midY})`}>
                     <circle r="8" fill="white" stroke="#f59e0b" strokeWidth="1.5" className="drop-shadow-sm" />
                     <path
                       d="M-3 0 A3 3 0 1 1 3 0 M3 0 L1 -2 M3 0 L1 2"
                       fill="none"
                       stroke="#f59e0b"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                    />
+                  </g>
+                )}
+
+                {/* Continue in loop indicator icon (orange) */}
+                {isInsideLoop && !isSelected && !isHovered && (
+                  <g transform={`translate(${midX}, ${midY})`}>
+                    <circle r="10" fill="white" stroke="#f97316" strokeWidth="1.5" className="drop-shadow-sm" />
+                    {/* Loop arrow icon */}
+                    <path
+                      d="M-3 0 A3 3 0 1 1 3 0 M3 0 L1 -2 M3 0 L1 2"
+                      fill="none"
+                      stroke="#f97316"
                       strokeWidth="1.5"
                       strokeLinecap="round"
                     />
@@ -323,7 +471,7 @@ export function WorkflowCanvas({
                 {(isSelected || isHovered) && onWireDelete && (
                   <g
                     transform={`translate(${midX}, ${midY})`}
-                    className="cursor-pointer group"
+                    className="cursor-pointer"
                     style={{ pointerEvents: 'all' }}
                     onClick={(e) => {
                       e.preventDefault();
@@ -332,21 +480,25 @@ export function WorkflowCanvas({
                     }}
                   >
                     {/* Invisible larger hit area */}
-                    <circle r="16" fill="transparent" />
+                    <circle r="18" fill="transparent" />
                     {/* Visible button */}
-                    <circle r="10" fill="white" stroke={isSelected ? '#ef4444' : '#94a3b8'} strokeWidth="1.5" className="drop-shadow-sm transition-colors group-hover:stroke-red-500" />
-                    <g transform="translate(-6, -6)">
-                      <path d="M3 6h12M8 6V4a1 1 0 011-1h2a1 1 0 011 1v2m2 0v8a1 1 0 01-1 1H7a1 1 0 01-1-1V6h10"
-                        fill="none" stroke={isSelected ? '#ef4444' : '#64748b'} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
-                        transform="scale(0.75) translate(2, 2)"
-                        className="transition-colors group-hover:stroke-red-500"
-                      />
+                    <circle 
+                      r="12" 
+                      fill={isSelected ? '#fef2f2' : 'white'} 
+                      stroke={isSelected ? '#ef4444' : '#cbd5e1'} 
+                      strokeWidth="2" 
+                      className="drop-shadow-md hover:fill-red-50 hover:stroke-red-400 transition-all"
+                    />
+                    {/* X icon - simple and clean */}
+                    <g stroke={isSelected ? '#ef4444' : '#64748b'} strokeWidth="2" strokeLinecap="round" className="hover:stroke-red-500 transition-colors">
+                      <line x1="-4" y1="-4" x2="4" y2="4" />
+                      <line x1="4" y1="-4" x2="-4" y2="4" />
                     </g>
                   </g>
                 )}
               </g>
             );
-          })}
+          })})()}
 
           {/* Connection Line Preview */}
           {connectingFrom && (

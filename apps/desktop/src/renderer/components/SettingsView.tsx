@@ -17,7 +17,14 @@ interface UpdateState {
   releaseNotes?: string;
   downloadProgress?: number;
   error?: string;
+  apiEndpoint?: string;
 }
+
+const CHANNEL_INFO: Record<UpdateChannel, { color: string; bgColor: string; borderColor: string; label: string; apiUrl: string }> = {
+  stable: { color: "text-emerald-600 dark:text-emerald-400", bgColor: "bg-emerald-500/5", borderColor: "border-emerald-500/50", label: "Stable", apiUrl: "api.stuard.ai" },
+  beta: { color: "text-amber-600 dark:text-amber-400", bgColor: "bg-amber-500/5", borderColor: "border-amber-500/50", label: "Beta", apiUrl: "beta-api.stuard.ai" },
+  staging: { color: "text-primary", bgColor: "bg-primary/5", borderColor: "border-primary/50", label: "Staging", apiUrl: "staging-api.stuard.ai" },
+};
 
 interface BetaAccess {
   hasBetaAccess: boolean;
@@ -147,11 +154,32 @@ const UpdateManager: React.FC = () => {
   const [changingChannel, setChangingChannel] = useState(false);
   const [betaAccess, setBetaAccess] = useState<BetaAccess>({ hasBetaAccess: false, hasStagingAccess: false, loading: true });
   const [showRestartModal, setShowRestartModal] = useState(false);
+  const [apiEndpoint, setApiEndpoint] = useState<string>("");
+  
   useEffect(() => {
-    (window as any).desktopAPI?.updatesGetState?.().then((s: UpdateState) => { if (s) setState(s); });
-    const unsub = (window as any).desktopAPI?.onUpdatesState?.((s: UpdateState) => { if (s) setState(s); });
+    (window as any).desktopAPI?.updatesGetState?.().then((s: UpdateState) => { 
+      if (s) {
+        setState(s);
+        if (s.apiEndpoint) setApiEndpoint(s.apiEndpoint);
+      }
+    });
+    (window as any).desktopAPI?.updatesGetApiEndpoint?.().then((r: any) => {
+      if (r?.ok && r?.endpoint) setApiEndpoint(r.endpoint);
+    });
+    const unsub = (window as any).desktopAPI?.onUpdatesState?.((s: UpdateState) => { 
+      if (s) {
+        setState(s);
+        if (s.apiEndpoint) setApiEndpoint(s.apiEndpoint);
+      }
+    });
+    const unsubEndpoint = (window as any).desktopAPI?.onApiEndpointChanged?.((endpoint: string) => {
+      setApiEndpoint(endpoint);
+    });
     checkBetaAccess().then(setBetaAccess);
-    return () => { if (typeof unsub === "function") unsub(); };
+    return () => { 
+      if (typeof unsub === "function") unsub(); 
+      if (typeof unsubEndpoint === "function") unsubEndpoint();
+    };
   }, []);
   const handleCheck = async () => { await (window as any).desktopAPI?.updatesCheck?.(); };
   const handleDownload = async () => { await (window as any).desktopAPI?.updatesDownload?.(); };
@@ -192,7 +220,7 @@ const UpdateManager: React.FC = () => {
     <>
       <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm mb-8">
         <SectionHeader title="Updates" description="Manage application updates and release channels." />
-        <div className="flex items-center justify-between p-4 bg-theme-hover rounded-theme-button mb-6 border border-theme">
+        <div className="flex items-center justify-between p-4 bg-theme-hover rounded-theme-button mb-4 border border-theme">
           <div>
             <div className="text-[10px] font-black text-theme-muted uppercase tracking-widest mb-1 pl-1">Current Version</div>
             <div className="text-2xl font-black text-theme-fg tracking-tight pl-1 font-stuard">{state.currentVersion}</div>
@@ -200,6 +228,22 @@ const UpdateManager: React.FC = () => {
           <div className="flex items-center gap-3 bg-theme-card px-4 py-2 rounded-theme-button border border-theme shadow-sm">
             {statusIcon()}
             <span className="text-xs font-bold text-theme-fg">{statusText()}</span>
+          </div>
+        </div>
+        
+        {/* Environment Badge */}
+        <div className={`flex items-center justify-between p-3 rounded-theme-button mb-6 border-2 ${CHANNEL_INFO[state.channel].borderColor} ${CHANNEL_INFO[state.channel].bgColor}`}>
+          <div className="flex items-center gap-3">
+            <div className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${CHANNEL_INFO[state.channel].color} bg-theme-card border border-theme`}>
+              {CHANNEL_INFO[state.channel].label}
+            </div>
+            <div className="text-xs text-theme-muted font-medium">
+              Connected to <span className="font-mono text-theme-fg">{apiEndpoint || CHANNEL_INFO[state.channel].apiUrl}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase">Live</span>
           </div>
         </div>
         <div className="mb-6">

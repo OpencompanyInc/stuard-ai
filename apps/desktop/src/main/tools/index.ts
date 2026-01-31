@@ -5,7 +5,14 @@ import { execLocalTool, calcToolTimeout } from './handlers/local';
 import { execCustomUi, execCloseCustomUi, execPlayAudio, execLog, execWait, execEnd, execReturnValue, execUpdateCustomUi, execGetClipboardContent, execSetClipboardContent, execSendUiEvent, execRunUiScript, execListCustomUiWindows, initCustomUiIpc, execListOpenWindows, execBringWindowToForeground, execGetWindowInfo, execSmartBringWindowToForeground, execSetWindowBounds } from './handlers/electron';
 import { execSetVariable, execGetVariable, execToggleVariable, execIncrementVariable, execAppendToList, execListVariables, execDeleteVariable } from './handlers/variables';
 import { execTerminalCreate, execTerminalList, execTerminalGet, execTerminalSendInput, execTerminalSendRaw, execTerminalSendKeys, execTerminalRead, execTerminalWaitFor, execTerminalDestroy } from './handlers/terminal';
-import { execInvokeWorkflow, execTestRunSteps } from './handlers/workflow';
+import { execCallWorkflow, execInvokeWorkflow, execTestRunSteps, execListLocalWorkflows, execListLocalStuards } from './handlers/workflow';
+import {
+  execCanvasList,
+  execCanvasRead,
+  execCanvasWrite,
+  execCanvasCreate,
+  execCanvasDelete,
+} from './handlers/canvas';
 import {
   execBrowserGetContent,
   execBrowserClickElement,
@@ -52,7 +59,10 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'end') return execEnd(args, ctx);
       if (toolName === 'return_value') return execReturnValue(args, ctx);
       if (toolName === 'invoke_workflow') return execInvokeWorkflow(args, ctx);
+      if (toolName === 'call_workflow') return execCallWorkflow(args, ctx);
       if (toolName === 'test_run_steps') return execTestRunSteps(args, ctx);
+      if (toolName === 'list_local_workflows') return execListLocalWorkflows(args, ctx);
+      if (toolName === 'list_local_stuards') return execListLocalStuards(args, ctx);
       if (toolName === 'get_clipboard_content') return execGetClipboardContent(args, ctx);
       if (toolName === 'set_clipboard_content') return execSetClipboardContent(args, ctx);
 
@@ -61,6 +71,13 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'get_window_info') return execGetWindowInfo(args, ctx);
       if (toolName === 'smart_bring_window_to_foreground') return execSmartBringWindowToForeground(args, ctx);
       if (toolName === 'set_window_bounds') return execSetWindowBounds(args, ctx);
+
+      // Canvas document tools
+      if (toolName === 'canvas_list' || toolName === 'sidebar_canvas_list') return execCanvasList(args, ctx);
+      if (toolName === 'canvas_read' || toolName === 'sidebar_canvas_read') return execCanvasRead(args, ctx);
+      if (toolName === 'canvas_write' || toolName === 'sidebar_canvas_write') return execCanvasWrite(args, ctx);
+      if (toolName === 'canvas_create' || toolName === 'sidebar_canvas_create') return execCanvasCreate(args, ctx);
+      if (toolName === 'canvas_delete' || toolName === 'sidebar_canvas_delete') return execCanvasDelete(args, ctx);
 
       // Variable management tools
       if (toolName === 'set_variable') return execSetVariable(args, ctx);

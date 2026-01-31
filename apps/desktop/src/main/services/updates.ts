@@ -7,11 +7,22 @@ import { spawn } from "child_process";
 // ─────────────────────────────────────────────────────────────────────────────
 // SEAMLESS CROSS-PLATFORM, STAGE-BASED UPDATE SYSTEM
 // Supports: Windows (Inno Setup), macOS (DMG/ZIP), Linux (AppImage)
-// Channels: stable, beta
+// Channels: stable, beta, staging
+// 
+// KEY FEATURE: Single exe that dynamically switches API endpoints with channels
+// - Channel switching also changes the Cloud AI API endpoint
+// - Beta/staging access is gated by the beta_users table
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type UpdateChannel = "stable" | "beta" | "staging";
 export type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "downloaded" | "error" | "up-to-date";
+
+// API endpoints for each channel
+const CHANNEL_API_ENDPOINTS: Record<UpdateChannel, string> = {
+  stable: "https://api.stuard.ai",
+  beta: "https://beta-api.stuard.ai",
+  staging: "https://staging-api.stuard.ai",
+};
 
 interface UpdateState {
   status: UpdateStatus;
@@ -22,6 +33,7 @@ interface UpdateState {
   downloadProgress?: number;
   error?: string;
   downloadUrl?: string;
+  apiEndpoint?: string; // Current API endpoint based on channel
 }
 
 const DEFAULT_UPDATE_BASE_URL = "https://storage.googleapis.com/stuardai-updates/desktop";
@@ -59,9 +71,31 @@ let state: UpdateState = {
   status: "idle",
   channel: DEFAULT_CHANNEL,
   currentVersion: "0.0.0", // Will be set properly in initUpdates
+  apiEndpoint: CHANNEL_API_ENDPOINTS[DEFAULT_CHANNEL],
 };
 let winInstallerPath: string | null = null;
 let checkTimer: NodeJS.Timeout | null = null;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// API Endpoint Management
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function getApiEndpointForChannel(channel: UpdateChannel): string {
+  return CHANNEL_API_ENDPOINTS[channel] || CHANNEL_API_ENDPOINTS.stable;
+}
+
+export function getCurrentApiEndpoint(): string {
+  return state.apiEndpoint || CHANNEL_API_ENDPOINTS[state.channel] || CHANNEL_API_ENDPOINTS.stable;
+}
+
+function notifyApiEndpointChange(endpoint: string) {
+  // Notify all windows about the API endpoint change
+  for (const w of BrowserWindow.getAllWindows()) {
+    try {
+      w.webContents.send("updates:api-endpoint-changed", endpoint);
+    } catch {}
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -333,6 +367,7 @@ function setupElectronUpdater() {
 export function initUpdates() {
   state.channel = getChannelFromPrefs();
   state.currentVersion = safeGetVersion();
+  state.apiEndpoint = getApiEndpointForChannel(state.channel);
   
   if (process.platform !== "win32") {
     setupElectronUpdater();
@@ -347,6 +382,8 @@ export function initUpdates() {
   checkTimer = setInterval(() => {
     updates_check().catch(() => {});
   }, 3600000);
+  
+  console.log(`[Updates] Initialized: channel=${state.channel}, apiEndpoint=${state.apiEndpoint}`);
 }
 
 export function disposeUpdates() {
@@ -360,13 +397,23 @@ export function updates_getState(): UpdateState {
   return { ...state };
 }
 
-export async function updates_setChannel(channel: UpdateChannel): Promise<{ ok: boolean }> {
+export async function updates_setChannel(channel: UpdateChannel): Promise<{ ok: boolean; apiEndpoint?: string }> {
   if (channel !== "beta" && channel !== "stable" && channel !== "staging") {
     return { ok: false };
   }
 
+  const newApiEndpoint = getApiEndpointForChannel(channel);
   saveChannelToPrefs(channel);
-  setState({ channel, status: "idle", latestVersion: undefined, error: undefined });
+  setState({ 
+    channel, 
+    status: "idle", 
+    latestVersion: undefined, 
+    error: undefined,
+    apiEndpoint: newApiEndpoint,
+  });
+
+  // Notify renderers about API endpoint change
+  notifyApiEndpointChange(newApiEndpoint);
 
   // Reconfigure electron-updater for macOS/Linux
   if (process.platform !== "win32") {
@@ -381,7 +428,7 @@ export async function updates_setChannel(channel: UpdateChannel): Promise<{ ok: 
     winInstallerPath = null;
   }
 
-  return { ok: true };
+  return { ok: true, apiEndpoint: newApiEndpoint };
 }
 
 export async function updates_check(): Promise<{ ok: boolean; error?: string }> {

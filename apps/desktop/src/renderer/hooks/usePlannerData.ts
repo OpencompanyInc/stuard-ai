@@ -12,9 +12,13 @@ export interface PlannerTask {
   id: string;
   title: string;
   due?: string;
-  priority: 'low' | 'normal' | 'high';
+  priority: 'low' | 'normal' | 'high' | 'urgent';
   completed: boolean;
   tags?: string[];
+  source?: 'agent' | 'unified'; // Where the task came from
+  description?: string;
+  subTodosTotal?: number;
+  subTodosCompleted?: number;
 }
 
 export interface PlannerReminder {
@@ -235,11 +239,35 @@ export function usePlannerData(accessToken?: string | null): UsePlannerDataResul
     return [];
   };
 
+  const fetchUnifiedTasks = async (): Promise<PlannerTask[]> => {
+    try {
+      const res = await (window as any).desktopAPI?.unifiedTasksGetCalendarItems?.();
+      if (res?.ok && Array.isArray(res.items)) {
+        return res.items
+          .filter((t: any) => t.start || t.end)
+          .map((t: any) => ({
+            id: t.id,
+            title: t.title,
+            due: t.end || t.start,
+            priority: t.priority || 'normal',
+            completed: t.status === 'completed',
+            source: 'unified' as const,
+            subTodosTotal: t.subTodosTotal,
+            subTodosCompleted: t.subTodosCompleted,
+          }));
+      }
+    } catch (e) {
+      console.warn('Failed to fetch unified tasks:', e);
+    }
+    return [];
+  };
+
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const eventsPromise = fetchCalendarEvents();
+      const unifiedTasksPromise = fetchUnifiedTasks();
 
       let ok = agentOnline;
       let baseUrl = agentHttp;
@@ -252,17 +280,25 @@ export function usePlannerData(accessToken?: string | null): UsePlannerDataResul
       if (baseUrl !== agentHttp) setAgentHttp(baseUrl);
       if (ok !== agentOnline) setAgentOnline(ok);
 
-      const [t, r, e] = await Promise.all([
+      const [agentTasks, r, e, unifiedTasks] = await Promise.all([
         ok ? fetchTasks(baseUrl) : Promise.resolve(null),
         ok ? fetchReminders(baseUrl) : Promise.resolve(null),
         eventsPromise,
+        unifiedTasksPromise,
       ]);
 
-      if (t !== null) setTasks(t);
+      // Merge agent tasks with unified tasks
+      const mergedTasks: PlannerTask[] = [];
+      if (agentTasks !== null) {
+        mergedTasks.push(...agentTasks.map((t: any) => ({ ...t, source: 'agent' as const })));
+      }
+      mergedTasks.push(...unifiedTasks);
+      setTasks(mergedTasks);
+
       if (r !== null) setReminders(r);
       setEvents(e);
 
-      if (ok && t === null && r === null) {
+      if (ok && agentTasks === null && r === null) {
         setAgentOnline(false);
       }
     } catch (err: any) {

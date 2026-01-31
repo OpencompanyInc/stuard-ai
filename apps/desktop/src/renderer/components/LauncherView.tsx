@@ -14,7 +14,6 @@ import {
   X,
   Calendar,
   Bell,
-  CheckSquare,
   ChevronRight,
   FolderPlus,
   Folder,
@@ -41,7 +40,9 @@ import {
   Send,
   FolderSearch,
   MessageSquare,
-  PanelRight
+  ListTodo,
+  PanelRight,
+  PanelLeft
 } from 'lucide-react';
 import type { UsePlannerDataResult, NextUpItem, PlannerTask } from '../hooks/usePlannerData';
 import { CommandItem } from './CommandPalette';
@@ -49,6 +50,8 @@ import { clsx } from 'clsx';
 import type { ChatMode, ChatModelsConfig } from '../hooks/usePreferences';
 import { ModelSelector } from './ModelSelector';
 import { useModelRegistry } from '../hooks/useModelRegistry';
+import { SidebarTabsPanel } from './SidebarTabsPanel';
+import { QuickShortcutsGrid, BookmarkEditor, useBookmarks, type Bookmark } from './QuickShortcuts';
 
 interface LauncherViewProps {
   query: string;
@@ -86,6 +89,11 @@ interface LauncherViewProps {
   onChatModeChange?: (mode: ChatMode) => void;
   chatModels?: ChatModelsConfig;
   onChatModelsChange?: (cfg: ChatModelsConfig) => void;
+
+  // Internal Sidebar
+  activeSidebarTab?: 'spaces' | 'canvas' | 'terminal';
+  onCloseInternalSidebar?: () => void;
+  onSwitchSidebarTab?: (tab: 'spaces' | 'canvas' | 'terminal') => void;
 }
 
 // Helper to get icon for next up item
@@ -93,18 +101,16 @@ const NextUpIcon: React.FC<{ type: NextUpItem['icon'] }> = ({ type }) => {
   switch (type) {
     case 'calendar': return <Calendar className="w-3.5 h-3.5 text-white" />;
     case 'bell': return <Bell className="w-3.5 h-3.5 text-white" />;
-    case 'task': return <CheckSquare className="w-3.5 h-3.5 text-white" />;
+    case 'task': return <ListTodo className="w-3.5 h-3.5 text-white" />;
     default: return <Video className="w-3.5 h-3.5 text-white" />;
   }
 };
 
 // Helper to get background color for next up item based on urgency
 const getNextUpBgColor = (item: NextUpItem) => {
-  // Urgency takes precedence
   if (item.urgency === 'now') return 'bg-red-500 animate-pulse';
   if (item.urgency === 'soon') return 'bg-amber-500';
 
-  // Default by type
   switch (item.icon) {
     case 'calendar': return 'bg-blue-500';
     case 'bell': return 'bg-amber-500';
@@ -150,13 +156,18 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   onOpenDashboard,
   onToggleExpand,
   onToggleSidebar,
-  sidebarOpen,
+  sidebarOpen = false,
   plannerData,
   translucentMode = false,
   chatMode,
   onChatModeChange,
   chatModels,
-  onChatModelsChange
+  onChatModelsChange,
+
+  // Internal Sidebar
+  activeSidebarTab = 'spaces',
+  onCloseInternalSidebar,
+  onSwitchSidebarTab,
 }) => {
   const { modelById } = useModelRegistry();
   const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
@@ -177,6 +188,10 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   const tasks = plannerData?.tasks ?? [];
 
   const showConnSpinner = connectionStatus === 'connecting';
+
+  // Bookmarks
+  const { bookmarks, saveBookmarks, executeBookmark } = useBookmarks();
+  const [showBookmarkEditor, setShowBookmarkEditor] = useState(false);
 
   // File search / indexing state
   const [fileResults, setFileResults] = useState<any[]>([]);
@@ -305,12 +320,10 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
       return;
     }
 
-    // Quick search (instant-ish)
     searchDebounceRef.current = setTimeout(() => {
       doQuickFileSearch(q, selectedRootId || undefined);
     }, 150);
 
-    // Semantic refine (slower, only if embeddings exist)
     semanticDebounceRef.current = setTimeout(() => {
       doSemanticRefine(q, selectedRootId || undefined);
     }, 650);
@@ -365,18 +378,6 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
     } catch { }
   }, []);
 
-  const handleRevealIndexedFile = useCallback(async (path: string) => {
-    try {
-      await window.desktopAPI?.showItemInFolder?.(path);
-    } catch { }
-  }, []);
-
-  const handleCopyPath = useCallback(async (path: string) => {
-    try {
-      await navigator.clipboard.writeText(path);
-    } catch { }
-  }, []);
-
   const handleQuickAction = useCallback((actionId: string) => {
     switch (actionId) {
       case 'workflows':
@@ -390,12 +391,10 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
         break;
       case 'chat':
       default:
-        // Focus the input
         break;
     }
   }, [onToggleSidebar, setQuery]);
 
-  // Build status text from next up item
   const displayStatus = nextUp
     ? `${nextUp.title} ${nextUp.timeLabel}`
     : (statusText || 'Ready');
@@ -418,412 +417,407 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   };
 
   return (
-    <div
-      className={clsx(
-        "flex flex-col h-full overflow-hidden transition-all duration-300 rounded-3xl shadow-2xl",
-        translucentMode
-          ? "bg-theme-bg/25 backdrop-blur-2xl border border-theme/20"
-          : "bg-theme-card border border-theme/50"
-      )}
-    >
-      {/* Top Bar */}
-      <div className="flex items-center justify-between px-5 py-4 border-b border-theme/10">
-        {/* Status */}
-        <button
-          type="button"
-          onClick={() => nextUp && window.desktopAPI?.openDashboard?.({ tab: 'planner' })}
-          className={clsx(
-            "flex items-center gap-3 min-w-0",
-            nextUp && "cursor-pointer hover:opacity-80 transition-opacity"
-          )}
-          title={nextUp ? 'View in Planner' : undefined}
-        >
-          <div className={clsx(
-            "w-6 h-6 rounded-full flex items-center justify-center transition-all",
-            nextUp ? getNextUpBgColor(nextUp) : (
-              connectionStatus === 'connected' ? 'bg-primary' :
-                connectionStatus === 'connecting' ? 'bg-amber-500 animate-pulse' :
-                  connectionStatus === 'error' ? 'bg-red-500' :
-                    'bg-theme-muted/50'
-            )
-          )}>
-            {nextUp ? <NextUpIcon type={nextUp.icon} /> : (
-              showConnSpinner ? <div className="w-3.5 h-3.5 border-2 border-white/90 border-t-transparent rounded-full animate-spin" /> :
-                <Video className="w-3.5 h-3.5 text-white" />
-            )}
-          </div>
-          <span className={clsx(
-            "font-bold text-sm truncate transition-colors",
-            nextUp ? getNextUpTextColor(nextUp) : (
-              connectionStatus === 'connected' ? 'text-theme-fg' :
-                connectionStatus === 'connecting' ? 'text-amber-700 dark:text-amber-500' :
-                  connectionStatus === 'error' ? 'text-red-600' :
-                    'text-theme-muted'
-            )
-          )}>
-            {displayStatus}
-          </span>
-        </button>
+    <div className="flex h-full overflow-hidden">
+      {/* Internal Sidebar - outside main container for proper corner rendering */}
+      <SidebarTabsPanel
+        isOpen={sidebarOpen}
+        onClose={onCloseInternalSidebar || (() => { })}
+        activeTab={activeSidebarTab}
+        onSwitchTab={onSwitchSidebarTab || (() => { })}
+        translucentMode={translucentMode}
+      />
 
-        {/* Right Actions */}
-        <div className="flex items-center gap-2">
-          {onToggleSidebar && (
+      <div
+        className={clsx(
+          "flex-1 flex flex-col overflow-hidden transition-all duration-300",
+          // Seamless sidebar: no left rounding when sidebar is open
+          sidebarOpen ? "rounded-r-3xl rounded-l-none border-l-0" : "rounded-3xl",
+          translucentMode
+            ? "bg-theme-bg/25 backdrop-blur-2xl border border-theme/20"
+            : "bg-theme-card border border-theme/50"
+        )}
+      >
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Top Bar */}
+          <div className="flex items-center justify-between px-5 py-4 border-b border-theme/10 shrink-0">
+            {/* Status */}
             <button
-              onClick={onToggleSidebar}
+              type="button"
+              onClick={() => nextUp && window.desktopAPI?.openDashboard?.({ tab: 'planner' })}
               className={clsx(
-                "p-2 rounded-xl hover:scale-105 transition-transform border border-theme/10",
-                sidebarOpen ? "bg-primary/10 text-primary" : "bg-theme-card text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
+                "flex items-center gap-3 min-w-0",
+                nextUp && "cursor-pointer hover:opacity-80 transition-opacity"
               )}
-              title="Spaces"
+              title={nextUp ? 'View in Planner' : undefined}
             >
-              <LayoutGrid className="w-4 h-4" />
-            </button>
-          )}
-
-          {overlayMode !== 'sidebar' && (
-            <button
-              onClick={() => window.desktopAPI.setMode('sidebar')}
-              className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
-              title="Sidebar"
-            >
-              <PanelRight className="w-4 h-4" />
-            </button>
-          )}
-
-          {overlayMode !== 'window' && (
-            <button
-              onClick={onToggleExpand}
-              className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
-              title="Window"
-            >
-              <AppWindow className="w-4 h-4" />
-            </button>
-          )}
-
-          <button
-            onClick={() => (window as any).desktopAPI?.openWorkflows?.()}
-            className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
-            title="Workflows"
-          >
-            <Wand2 className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={onOpenDashboard}
-            className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
-            title="Dashboard"
-          >
-            <Home className="w-4 h-4" />
-          </button>
-
-          <DropdownMenu.Root open={chatMenuOpen} onOpenChange={onChatMenuOpenChange}>
-            <DropdownMenu.Trigger asChild>
-              <button
-                className={clsx(
-                  "p-2 rounded-xl border border-theme/10 transition-all hover:scale-105",
-                  chatMenuOpen ? "bg-theme-active text-theme-fg" : "bg-theme-card text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
+              <div className={clsx(
+                "w-6 h-6 rounded-full flex items-center justify-center transition-all",
+                nextUp ? getNextUpBgColor(nextUp) : (
+                  connectionStatus === 'connected' ? 'bg-primary' :
+                    connectionStatus === 'connecting' ? 'bg-amber-500 animate-pulse' :
+                      connectionStatus === 'error' ? 'bg-red-500' :
+                        'bg-theme-muted/50'
+                )
+              )}>
+                {nextUp ? <NextUpIcon type={nextUp.icon} /> : (
+                  showConnSpinner ? <div className="w-3.5 h-3.5 border-2 border-white/90 border-t-transparent rounded-full animate-spin" /> :
+                    <Video className="w-3.5 h-3.5 text-white" />
                 )}
-                title="History"
-              >
-                <Clock className="w-4 h-4" />
-              </button>
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content className="DropdownContent z-[10002] w-72 bg-theme-card rounded-xl border border-theme p-2 shadow-2xl backdrop-blur-xl" sideOffset={8} align="end" collisionPadding={10}>
-                <DropdownMenu.Item
-                  onSelect={onNewChat}
-                  className="text-[13px] text-primary font-bold flex items-center gap-2 px-3 py-2.5 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors mb-1"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>New chat</span>
-                </DropdownMenu.Item>
-
-                <div className="h-px bg-theme opacity-50 my-1" />
-
-                <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
-                  {loadingConversations ? (
-                    <div className="px-3 py-2 text-[12px] text-theme-muted">Loading...</div>
-                  ) : conversations.length === 0 ? (
-                    <div className="px-3 py-2 text-[12px] text-theme-muted italic">No recent chats</div>
-                  ) : (
-                    conversations.map(c => (
-                      <DropdownMenu.Item
-                        key={c.id}
-                        onSelect={() => onSelectConversation(String(c.id))}
-                        className="text-[13px] text-theme-fg flex flex-col px-3 py-2.5 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors border-l-2 border-transparent hover:border-primary/50"
-                      >
-                        <span className="truncate w-full font-bold">{c.title || 'Untitled Chat'}</span>
-                        <span className="text-[10px] text-theme-muted font-bold mt-0.5">{c.created_at ? new Date(c.created_at).toLocaleDateString() : ''}</span>
-                      </DropdownMenu.Item>
-                    ))
-                  )}
-                </div>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col items-center justify-center px-5 pb-5 overflow-hidden">
-        {/* Hero Section */}
-        <div className="w-full max-w-2xl flex flex-col h-full">
-          {/* Greeting */}
-          <div className="text-center py-6 shrink-0">
-            <h1 className="text-2xl font-black text-theme-fg mb-2">
-              What can I help with?
-            </h1>
-            <p className="text-theme-muted text-sm font-medium">
-              Ask anything, search files, or run automations
-            </p>
-          </div>
-
-          {/* Search Input */}
-          <div className="relative group mb-5 shrink-0">
-            <div className={clsx(
-              "relative flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-300",
-              "bg-theme-hover/50 border border-theme",
-              "group-focus-within:bg-theme-active/50 group-focus-within:border-primary/30 group-focus-within:ring-2 group-focus-within:ring-primary/10"
-            )}>
-              <Search className="w-5 h-5 text-theme-muted flex-shrink-0" />
-              <TextareaAutosize
-                className="flex-1 bg-transparent outline-none text-theme-fg placeholder:text-theme-muted resize-none py-0 overflow-y-auto font-bold text-[15px]"
-                placeholder="Ask Stuard anything..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if ((e.nativeEvent as any)?.isComposing) return;
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    onSend();
-                  }
-                }}
-                minRows={1}
-                maxRows={4}
-              />
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <ModelSelector
-                  selectedModelId={selectedModelId}
-                  onSelectModel={(id) => {
-                    try { onChatModeChange?.(id as any); } catch { }
-                  }}
-                  side="bottom"
-                  align="end"
-                />
-                <button
-                  onClick={onMicClick}
-                  className={clsx(
-                    "p-2.5 rounded-xl transition-all hover:scale-105 active:scale-95",
-                    isRecording
-                      ? "bg-red-500 text-white animate-pulse"
-                      : "bg-theme-hover border border-theme/10 text-theme-muted hover:text-theme-fg"
-                  )}
-                >
-                  <Mic className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={onSend}
-                  disabled={!query.trim()}
-                  className={clsx(
-                    "p-2.5 rounded-xl transition-all hover:scale-105 active:scale-95",
-                    query.trim()
-                      ? "bg-primary text-primary-fg"
-                      : "bg-theme-hover/50 text-theme-muted/50 cursor-not-allowed"
-                  )}
-                >
-                  <Send className="w-4 h-4" />
-                </button>
               </div>
-            </div>
-          </div>
-
-          {/* Quick Actions Grid - Only show when no results */}
-          {!showResults && (
-            <div className="grid grid-cols-4 gap-3 mb-5 shrink-0">
-              {quickActions.map((action) => (
-                <button
-                  key={action.id}
-                  onClick={() => handleQuickAction(action.id)}
-                  className="group flex flex-col items-center gap-2.5 p-4 rounded-2xl bg-theme-hover/30 hover:bg-theme-hover border border-theme/10 hover:border-theme/30 transition-all duration-300 hover:-translate-y-0.5"
-                >
-                  <div className={clsx(
-                    "w-10 h-10 rounded-xl flex items-center justify-center transition-all group-hover:scale-110",
-                    action.bgLight, action.textColor
-                  )}>
-                    <action.icon className="w-5 h-5" />
-                  </div>
-                  <span className="text-xs font-bold text-theme-muted group-hover:text-theme-fg transition-colors">{action.label}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Results - Scrollable area */}
-          {showResults && (
-            <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-4 min-h-0">
-              {/* Ask Stuard - Primary */}
-              <button
-                onClick={onSend}
-                className="w-full flex items-center gap-4 px-4 py-3 rounded-2xl hover:bg-theme-hover transition-all group border border-transparent hover:border-theme/30 relative overflow-hidden bg-theme-hover/30"
-              >
-                <div className="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 group-hover:scale-110 transition-all ring-1 ring-primary/20 group-hover:ring-primary/50 z-10">
-                  <MessageSquare className="w-5 h-5 text-primary" />
-                </div>
-                <div className="flex-1 text-left z-10">
-                  <div className="text-[14px] font-black text-theme-fg group-hover:text-primary transition-colors">Ask Stuard</div>
-                  <div className="text-[11px] text-theme-muted font-bold">Get an AI assistant response</div>
-                </div>
-                <div className="text-[10px] font-black text-theme-muted bg-theme-hover px-2.5 py-1.5 rounded-lg border border-theme/10 group-hover:bg-primary group-hover:text-primary-fg group-hover:border-primary transition-all z-10">Enter</div>
-              </button>
-
-              {/* File Results */}
-              {fileResults.length > 0 && (
-                <div className="bg-theme-hover/30 rounded-2xl border border-theme/10 p-4">
-                  <div className="flex items-center gap-2 mb-3">
-                    <FolderSearch className="w-4 h-4 text-emerald-500" />
-                    <span className="text-[11px] font-black uppercase tracking-wider text-theme-muted">Files Found</span>
-                    {(fileLoading || fileSemanticLoading) && (
-                      <Loader2 className="w-3 h-3 text-primary animate-spin" />
-                    )}
-                    <span className="text-[10px] text-theme-muted font-bold ml-auto">{fileSearchMode === 'hybrid' ? 'Semantic' : 'Quick'}</span>
-                  </div>
-                  <div className="space-y-1">
-                    {fileResults.map((f: any) => {
-                      const kind = String(f.kind || 'other').toLowerCase();
-                      const cfg = getFileKindConfig(kind);
-                      const Icon = cfg.icon;
-                      const p = String(f.path || '').trim();
-                      const iconUrl = (kind === 'application' && p)
-                        ? (fileIconDataUrls[p] || fileIconCacheRef.current[p] || '')
-                        : '';
-                      return (
-                        <button
-                          key={String(f.id || f.path)}
-                          onClick={() => handleOpenIndexedFile(String(f.path || ''))}
-                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-theme-hover transition-all group/file text-left border border-transparent hover:border-theme/30"
-                        >
-                          <div className={clsx("w-9 h-9 rounded-lg flex items-center justify-center border border-theme/20", cfg.bg, cfg.color)}>
-                            {iconUrl ? (
-                              <img src={iconUrl} alt="" className="w-4 h-4 object-contain" />
-                            ) : (
-                              <Icon className="w-4 h-4" />
-                            )}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="text-[13px] font-bold text-theme-fg truncate">{String(f.filename || '').trim() || String(f.path || '')}</div>
-                            <div className="text-[10px] text-theme-muted truncate font-medium">{String(f.path || '')}</div>
-                          </div>
-                          <ExternalLink className="w-3.5 h-3.5 text-theme-muted opacity-0 group-hover/file:opacity-100 transition-opacity" />
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Command Results */}
-              {filteredCommands.length > 0 && (
-                <div className="bg-theme-hover/30 rounded-2xl border border-theme/10 p-4">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Zap className="w-4 h-4 text-amber-500" />
-                    <span className="text-[11px] font-black uppercase tracking-wider text-theme-muted">Actions</span>
-                  </div>
-                  <div className="space-y-1">
-                    {filteredCommands.map((cmd) => (
-                      <button
-                        key={cmd.id}
-                        onClick={cmd.run}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-theme-hover transition-all group/cmd text-left border border-transparent hover:border-theme/30"
-                      >
-                        <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-theme-active/50 text-theme-muted group-hover/cmd:text-primary transition-colors border border-theme/10">
-                          {cmd.icon || <Zap className="w-4 h-4" />}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-[13px] font-bold text-theme-fg">{cmd.title}</div>
-                          {cmd.description && (
-                            <div className="text-[10px] text-theme-muted font-medium">{cmd.description}</div>
-                          )}
-                        </div>
-                        {cmd.shortcut && (
-                          <div className="text-[10px] text-primary font-black bg-primary/10 px-2 py-1 rounded border border-primary/20">
-                            {cmd.shortcut}
-                          </div>
-                        )}
-                        <ArrowRight className="w-3.5 h-3.5 text-theme-muted opacity-0 group-hover/cmd:opacity-100 transition-opacity" />
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Bottom Tasks Bar */}
-      <div className="shrink-0 flex items-center justify-between px-5 pb-4">
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild>
-            <button className="flex items-center gap-2 px-4 py-2 rounded-xl bg-theme-hover/30 hover:bg-theme-hover border border-theme/10 transition-all text-sm text-theme-muted hover:text-theme-fg">
-              <CheckSquare className="w-4 h-4 text-primary" />
-              <span className="font-bold">Tasks</span>
-              {tasksCount > 0 && (
-                <span className="bg-primary text-primary-fg text-[10px] px-1.5 py-0.5 rounded-full min-w-[18px] text-center font-black">{tasksCount}</span>
-              )}
+              <span className={clsx(
+                "font-semibold text-sm truncate transition-colors",
+                nextUp ? getNextUpTextColor(nextUp) : (
+                  connectionStatus === 'connected' ? 'text-theme-fg' :
+                    connectionStatus === 'connecting' ? 'text-amber-700 dark:text-amber-500' :
+                      connectionStatus === 'error' ? 'text-red-600' :
+                        'text-theme-muted'
+                )
+              )}>
+                {displayStatus}
+              </span>
             </button>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content
-              className="DropdownContent z-[10002] w-72 bg-theme-card rounded-xl border border-theme p-3 shadow-2xl backdrop-blur-xl"
-              sideOffset={8}
-              align="start"
-            >
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-[11px] font-black text-theme-muted uppercase tracking-wider">Active Tasks</span>
+
+            {/* Right Actions */}
+            <div className="flex items-center gap-2">
+              {/* Internal Sidebar toggle for window/sidebar modes */}
+              {(overlayMode === 'window' || overlayMode === 'sidebar') && onToggleSidebar && (
                 <button
-                  onClick={onOpenDashboard}
-                  className="text-[11px] font-black text-primary hover:text-primary/80 uppercase tracking-wider flex items-center gap-1"
+                  onClick={onToggleSidebar}
+                  className={clsx(
+                    "p-2 rounded-xl hover:scale-105 transition-transform border border-theme/10",
+                    sidebarOpen ? "bg-primary/10 text-primary border-primary/20" : "bg-theme-card text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
+                  )}
+                  title="Sidebar (Spaces, Canvas, Terminal)"
                 >
-                  View All <ChevronRight className="w-3 h-3" />
+                  <PanelLeft className="w-4 h-4" />
                 </button>
-              </div>
-              <div className="max-h-[200px] overflow-y-auto custom-scrollbar space-y-1">
-                {tasks.length === 0 ? (
-                  <div className="px-2 py-4 text-[12px] text-theme-muted text-center italic bg-theme-hover/20 rounded-lg">No pending tasks</div>
-                ) : (
-                  tasks.slice(0, 5).map(task => (
-                    <div
-                      key={task.id}
-                      className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-theme-hover transition-all group/task"
+              )}
+
+              {overlayMode !== 'sidebar' && (
+                <button
+                  onClick={() => window.desktopAPI.setMode('sidebar')}
+                  className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
+                  title="Sidebar Mode"
+                >
+                  <PanelRight className="w-4 h-4" />
+                </button>
+              )}
+
+              {overlayMode !== 'window' && (
+                <button
+                  onClick={onToggleExpand}
+                  className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
+                  title="Window Mode"
+                >
+                  <AppWindow className="w-4 h-4" />
+                </button>
+              )}
+
+              <button
+                onClick={() => (window as any).desktopAPI?.openWorkflows?.()}
+                className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
+                title="Workflows"
+              >
+                <Wand2 className="w-4 h-4" />
+              </button>
+
+              <button
+                onClick={onOpenDashboard}
+                className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
+                title="Dashboard"
+              >
+                <Home className="w-4 h-4" />
+              </button>
+
+              <DropdownMenu.Root open={chatMenuOpen} onOpenChange={onChatMenuOpenChange}>
+                <DropdownMenu.Trigger asChild>
+                  <button
+                    className={clsx(
+                      "p-2 rounded-xl border border-theme/10 transition-all hover:scale-105",
+                      chatMenuOpen ? "bg-theme-active text-theme-fg" : "bg-theme-card text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
+                    )}
+                    title="History"
+                  >
+                    <Clock className="w-4 h-4" />
+                  </button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content className="DropdownContent z-[10002] w-72 bg-theme-card rounded-xl border border-theme p-2 shadow-2xl backdrop-blur-xl" sideOffset={8} align="end" collisionPadding={10}>
+                    <DropdownMenu.Item
+                      onSelect={onNewChat}
+                      className="text-[13px] text-primary font-semibold flex items-center gap-2 px-3 py-2.5 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors mb-1"
                     >
-                      <div className={clsx(
-                        "w-2.5 h-2.5 rounded-full flex-shrink-0",
-                        task.priority === 'high' ? 'bg-red-500' :
-                          task.priority === 'low' ? 'bg-theme-muted/30' : 'bg-primary'
-                      )} />
-                      <span className="text-[13px] text-theme-fg font-bold truncate flex-1 group-hover/task:text-primary transition-colors">{task.title}</span>
-                      {task.due && (
-                        <span className="text-[10px] text-theme-muted font-black uppercase flex-shrink-0 bg-theme-hover/50 px-1.5 py-0.5 rounded">
-                          {new Date(task.due).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-                        </span>
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>New chat</span>
+                    </DropdownMenu.Item>
+                    <div className="h-px bg-theme opacity-50 my-1" />
+                    <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
+                      {loadingConversations ? (
+                        <div className="px-3 py-2 text-[12px] text-theme-muted">Loading...</div>
+                      ) : conversations.length === 0 ? (
+                        <div className="px-3 py-2 text-[12px] text-theme-muted italic">No recent chats</div>
+                      ) : (
+                        conversations.map(c => (
+                          <DropdownMenu.Item
+                            key={c.id}
+                            onSelect={() => onSelectConversation(String(c.id))}
+                            className="text-[13px] text-theme-fg flex flex-col px-3 py-2.5 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors border-l-2 border-transparent hover:border-primary/50"
+                          >
+                            <span className="truncate w-full font-semibold">{c.title || 'Untitled Chat'}</span>
+                            <span className="text-[10px] text-theme-muted font-medium mt-0.5">{c.created_at ? new Date(c.created_at).toLocaleDateString() : ''}</span>
+                          </DropdownMenu.Item>
+                        ))
                       )}
                     </div>
-                  ))
-                )}
-              </div>
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+            </div>
+          </div>
 
-        <button
-          onClick={() => { try { (window as any).desktopAPI?.hide?.(); } catch { } }}
-          className="p-2 rounded-xl bg-theme-hover/30 hover:bg-red-500/10 border border-theme/10 hover:border-red-500/20 text-theme-muted hover:text-red-500 transition-all"
-          title="Hide Stuard"
-        >
-          <Power className="w-4 h-4" />
-        </button>
+          {/* Main Content Area */}
+          <div className="flex-1 flex flex-col items-center justify-center px-5 pb-5 overflow-hidden">
+            <div className="w-full max-w-2xl flex flex-col h-full">
+              {/* Greeting */}
+              <div className="text-center py-6 shrink-0">
+                <h1 className="text-2xl font-bold text-theme-fg mb-2">What can I help with?</h1>
+                <p className="text-theme-muted text-sm font-medium">Ask anything, search files, or run automations</p>
+              </div>
+
+              {/* Search Input */}
+              <div className="relative group mb-5 shrink-0">
+                <div className={clsx(
+                  "relative flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-300",
+                  "bg-theme-hover/50 border border-theme",
+                  "group-focus-within:bg-theme-active/50 group-focus-within:border-primary/30 group-focus-within:ring-2 group-focus-within:ring-primary/10"
+                )}>
+                  <Search className="w-5 h-5 text-theme-muted flex-shrink-0" />
+                  <TextareaAutosize
+                    className="flex-1 bg-transparent outline-none text-theme-fg placeholder:text-theme-muted resize-none py-0 overflow-y-auto font-semibold text-[15px]"
+                    placeholder="Ask Stuard anything..."
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if ((e.nativeEvent as any)?.isComposing) return;
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        onSend();
+                      }
+                    }}
+                    minRows={1}
+                    maxRows={4}
+                  />
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <ModelSelector
+                      selectedModelId={selectedModelId}
+                      onSelectModel={(id) => onChatModeChange?.(id as any)}
+                      side="bottom"
+                      align="end"
+                    />
+                    <button
+                      onClick={onMicClick}
+                      className={clsx(
+                        "p-2.5 rounded-xl transition-all hover:scale-105 active:scale-95",
+                        isRecording ? "bg-red-500 text-white animate-pulse" : "bg-theme-hover border border-theme/10 text-theme-muted hover:text-theme-fg"
+                      )}
+                    >
+                      <Mic className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={onSend}
+                      disabled={!query.trim()}
+                      className={clsx(
+                        "p-2.5 rounded-xl transition-all hover:scale-105 active:scale-95",
+                        query.trim() ? "bg-primary text-primary-fg" : "bg-theme-hover/50 text-theme-muted/50 cursor-not-allowed"
+                      )}
+                    >
+                      <Send className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Quick Actions Grid */}
+              {!showResults && (
+                <div className="grid grid-cols-4 gap-3 mb-4 shrink-0">
+                  {quickActions.map((action) => (
+                    <button
+                      key={action.id}
+                      onClick={() => handleQuickAction(action.id)}
+                      className="group flex flex-col items-center gap-2.5 p-4 rounded-2xl bg-theme-hover/30 hover:bg-theme-hover border border-theme/10 hover:border-theme/30 transition-all duration-300 hover:-translate-y-0.5"
+                    >
+                      <div className={clsx("w-10 h-10 rounded-xl flex items-center justify-center transition-all group-hover:scale-110", action.bgLight, action.textColor)}>
+                        <action.icon className="w-5 h-5" />
+                      </div>
+                      <span className="text-xs font-semibold text-theme-muted group-hover:text-theme-fg transition-colors">{action.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Quick Shortcuts / Bookmarks */}
+              {!showResults && (
+                <div className="bg-theme-hover/20 rounded-2xl border border-theme/10 shrink-0">
+                  <QuickShortcutsGrid
+                    bookmarks={bookmarks}
+                    onExecute={executeBookmark}
+                    onEdit={() => setShowBookmarkEditor(true)}
+                    onAdd={() => setShowBookmarkEditor(true)}
+                    maxVisible={6}
+                  />
+                </div>
+              )}
+
+              {/* Results */}
+              {showResults && (
+                <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-4 min-h-0">
+                  <button onClick={onSend} className="w-full flex items-center gap-4 px-4 py-3 rounded-2xl hover:bg-theme-hover transition-all group border border-transparent hover:border-theme/30 relative overflow-hidden bg-theme-hover/30">
+                    <div className="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 group-hover:scale-110 transition-all ring-1 ring-primary/20 group-hover:ring-primary/50 z-10">
+                      <MessageSquare className="w-5 h-5 text-primary" />
+                    </div>
+                    <div className="flex-1 text-left z-10">
+                      <div className="text-[14px] font-bold text-theme-fg group-hover:text-primary transition-colors">Ask Stuard</div>
+                      <div className="text-[11px] text-theme-muted font-semibold">Get an AI assistant response</div>
+                    </div>
+                    <div className="text-[10px] font-bold text-theme-muted bg-theme-hover px-2.5 py-1.5 rounded-lg border border-theme/10 group-hover:bg-primary group-hover:text-primary-fg group-hover:border-primary transition-all z-10">Enter</div>
+                  </button>
+
+                  {fileResults.length > 0 && (
+                    <div className="bg-theme-hover/30 rounded-2xl border border-theme/10 p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <FolderSearch className="w-4 h-4 text-emerald-500" />
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">Files Found</span>
+                      </div>
+                      <div className="space-y-1">
+                        {fileResults.map((f: any) => {
+                          const cfg = getFileKindConfig(String(f.kind || 'other').toLowerCase());
+                          return (
+                            <button key={f.path} onClick={() => handleOpenIndexedFile(f.path)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-theme-hover transition-all group/file text-left border border-transparent hover:border-theme/30">
+                              <div className={clsx("w-9 h-9 rounded-lg flex items-center justify-center border border-theme/20", cfg.bg, cfg.color)}>
+                                <cfg.icon className="w-4 h-4" />
+                              </div>
+                              <div className="min-w-0 flex-1 text-[13px] font-semibold text-theme-fg truncate">{f.filename || f.path}</div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Bottom Bar */}
+          <div className="shrink-0 flex items-center justify-between px-5 pb-4">
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button className="flex items-center gap-2 px-4 py-2 rounded-xl bg-theme-hover/30 hover:bg-theme-hover border border-theme/10 transition-all text-sm text-theme-muted hover:text-theme-fg">
+                  <ListTodo className="w-4 h-4 text-primary" />
+                  <span className="font-semibold">Tasks</span>
+                  {tasksCount > 0 && <span className="bg-primary text-primary-fg text-[10px] px-1.5 py-0.5 rounded-full min-w-[18px] text-center font-bold">{tasksCount}</span>}
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content className="DropdownContent z-[10002] w-80 bg-theme-card rounded-xl border border-theme p-3 shadow-2xl backdrop-blur-xl" sideOffset={8} align="start">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-[11px] font-bold text-theme-muted uppercase tracking-wider">Active Tasks</span>
+                    <button
+                      onClick={() => window.desktopAPI?.openDashboard?.({ tab: 'tasks' })}
+                      className="text-[10px] font-bold text-primary hover:text-primary/80 transition-colors"
+                    >
+                      View All
+                    </button>
+                  </div>
+                  <div className="max-h-[280px] overflow-y-auto custom-scrollbar space-y-1.5">
+                    {tasks.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-8 text-center">
+                        <div className="w-12 h-12 bg-theme-muted/5 rounded-full flex items-center justify-center mb-3">
+                          <ListTodo className="w-6 h-6 text-theme-muted/30" />
+                        </div>
+                        <p className="text-[12px] text-theme-muted">No pending tasks</p>
+                        <p className="text-[10px] text-theme-muted/70 mt-1">Add tasks from the dashboard</p>
+                      </div>
+                    ) : tasks.slice(0, 6).map(task => {
+                      const isOverdue = task.due && new Date(task.due) < new Date();
+                      const priorityColors: Record<string, string> = {
+                        urgent: 'text-red-500 bg-red-500/10',
+                        high: 'text-orange-500 bg-orange-500/10',
+                        normal: 'text-blue-500 bg-blue-500/10',
+                        low: 'text-theme-muted bg-theme-muted/10',
+                      };
+                      return (
+                        <div 
+                          key={task.id} 
+                          className="flex items-start gap-3 p-2.5 rounded-xl hover:bg-theme-hover/50 transition-all group/task border border-transparent hover:border-theme/10"
+                        >
+                          <div className={clsx(
+                            "mt-0.5 w-4 h-4 rounded-full border-[1.5px] flex items-center justify-center shrink-0 transition-colors",
+                            "border-theme-muted/30 hover:border-primary cursor-pointer"
+                          )}>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-0.5">
+                              <span className="text-[12px] text-theme-fg font-semibold truncate">
+                                {task.title}
+                              </span>
+                              {task.priority && task.priority !== 'normal' && task.priority !== 'low' && (
+                                <span className={clsx(
+                                  "text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase",
+                                  priorityColors[task.priority] || priorityColors.normal
+                                )}>
+                                  {task.priority}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 text-[10px] text-theme-muted">
+                              {task.due && (
+                                <span className={clsx(
+                                  "flex items-center gap-1",
+                                  isOverdue && "text-red-500"
+                                )}>
+                                  <Calendar className="w-3 h-3" />
+                                  {new Date(task.due).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                </span>
+                              )}
+                              {(task.subTodosTotal || 0) > 0 && (
+                                <span className="flex items-center gap-1">
+                                  <ListTodo className="w-3 h-3" />
+                                  {task.subTodosCompleted || 0}/{task.subTodosTotal}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {tasks.length > 6 && (
+                      <button
+                        onClick={() => window.desktopAPI?.openDashboard?.({ tab: 'tasks' })}
+                        className="w-full text-center text-[11px] font-semibold text-primary hover:text-primary/80 py-2 transition-colors"
+                      >
+                        +{tasks.length - 6} more tasks
+                      </button>
+                    )}
+                  </div>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+            <button onClick={() => (window as any).desktopAPI?.hide?.()} className="p-2 rounded-xl bg-theme-hover/30 hover:bg-red-500/10 border border-theme/10 text-theme-muted hover:text-red-500 transition-all">
+              <Power className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
       </div>
+
+      {/* Bookmark Editor Modal */}
+      <BookmarkEditor
+        isOpen={showBookmarkEditor}
+        onClose={() => setShowBookmarkEditor(false)}
+        bookmarks={bookmarks}
+        onSave={saveBookmarks}
+      />
     </div>
   );
 };

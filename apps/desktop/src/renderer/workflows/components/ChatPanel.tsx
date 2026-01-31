@@ -22,6 +22,7 @@ const HIDDEN_TOOL_NAMES = new Set([
   // Hide internal discovery tools from workflow agent
   'retrieve_tool_format',
   'search_tools',
+  'get_tool_schema',
 ]);
 
 // Convert local file path to file:// URL for Electron
@@ -198,230 +199,276 @@ function parseModifyWorkflowArgs(jsonStr: string) {
 
 // Helper to format tool names for display
 function formatToolName(name: string): string {
-  if (name === 'workflow_modify') return 'Modify Workflow';
+  if (name === 'workflow_modify' || name === 'modify_workflow') return 'Modify Workflow';
   if (name === 'create_workflow') return 'Create Workflow';
+  if (name === 'execute_step' || name === 'test_step') return 'Test Step';
   return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
-// Operation specific details
+// Operation badge component
+const OpBadge = ({ icon: Icon, color, children }: { icon: any; color: string; children: React.ReactNode }) => {
+  const colors: Record<string, string> = {
+    emerald: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    amber: 'bg-amber-100 text-amber-700 border-amber-200',
+    red: 'bg-red-100 text-red-700 border-red-200',
+    blue: 'bg-blue-100 text-blue-700 border-blue-200',
+    indigo: 'bg-indigo-100 text-indigo-700 border-indigo-200',
+    slate: 'bg-slate-100 text-slate-600 border-slate-200',
+  };
+  return (
+    <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium border ${colors[color]}`}>
+      <Icon className="w-3 h-3" />
+      {children}
+    </div>
+  );
+};
+
+// Format a value for display (avoid raw JSON)
+const formatValue = (val: any): string => {
+  if (val === undefined || val === null) return '';
+  if (typeof val === 'string') return val;
+  if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+  if (typeof val === 'object') {
+    // For simple objects, show key=value pairs
+    const entries = Object.entries(val).slice(0, 3);
+    if (entries.length === 0) return '{}';
+    const formatted = entries.map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ');
+    return entries.length < Object.keys(val).length ? `${formatted}, ...` : formatted;
+  }
+  return String(val);
+};
+
+// Operation specific details - supports both old `operation` and new `op` params
 const OperationDetails = ({ args }: { args: any }) => {
-  const { operation } = args;
+  const op = args.op || args.operation;
   
-  switch (operation) {
+  switch (op) {
     case 'add_node':
       return (
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2 text-emerald-700 font-medium">
-            <div className="p-1 bg-emerald-100 rounded text-emerald-600">
-              <Plus className="w-3 h-3" />
-            </div>
-            <span>Adding step: <span className="text-slate-900">{args.label || args.tool}</span></span>
+        <div className="space-y-1.5">
+          <OpBadge icon={Plus} color="emerald">Add Step</OpBadge>
+          <div className="text-[12px] text-slate-700 pl-1">
+            <span className="font-semibold">{args.label || args.tool}</span>
+            {args.tool && args.label && <span className="text-slate-400 ml-1">({args.tool})</span>}
           </div>
+          {args.args && Object.keys(args.args).length > 0 && (
+            <div className="text-[10px] pl-1 space-y-0.5">
+              {Object.entries(args.args).map(([k, v]) => (
+                <div key={k} className="text-emerald-600">+ {k}: {formatValue(v)}</div>
+              ))}
+            </div>
+          )}
           {args.connectFrom && (
-            <div className="flex items-center gap-1.5 text-slate-500 pl-8 text-[10px]">
-              <Link className="w-3 h-3" />
-              <span>Connecting from {args.connectFrom}</span>
+            <div className="flex items-center gap-1 text-slate-500 text-[10px] pl-1">
+              <ArrowRight className="w-3 h-3" /> from {args.connectFrom}
             </div>
           )}
         </div>
       );
-    case 'add_trigger':
-      return (
-        <div className="flex items-center gap-2 text-emerald-700 font-medium">
-          <div className="p-1 bg-emerald-100 rounded text-emerald-600">
-            <Zap className="w-3 h-3" />
-          </div>
-          <span>Adding trigger: <span className="text-slate-900">{args.type}</span></span>
-        </div>
-      );
-    case 'replace_trigger':
-      return (
-        <div className="flex items-center gap-2 text-amber-700 font-medium">
-          <div className="p-1 bg-amber-100 rounded text-amber-600">
-            <RotateCw className="w-3 h-3" />
-          </div>
-          <span>Changing trigger to: <span className="text-slate-900">{args.type}</span></span>
-        </div>
-      );
-    case 'connect':
-      return (
-        <div className="flex items-center gap-2 text-indigo-700 font-medium">
-          <div className="p-1 bg-indigo-100 rounded text-indigo-600">
-            <Link className="w-3 h-3" />
-          </div>
-          <span>Connecting <span className="text-slate-900">{args.from}</span> to <span className="text-slate-900">{args.to}</span></span>
-        </div>
-      );
-    case 'disconnect':
-      return (
-        <div className="flex items-center gap-2 text-slate-600 font-medium">
-          <div className="p-1 bg-slate-100 rounded text-slate-500">
-            <Unlink className="w-3 h-3" />
-          </div>
-          <span>Disconnecting <span className="text-slate-900">{args.from}</span> from <span className="text-slate-900">{args.to}</span></span>
-        </div>
-      );
-    case 'remove_node':
-      return (
-        <div className="flex items-center gap-2 text-red-700 font-medium">
-          <div className="p-1 bg-red-100 rounded text-red-600">
-            <Trash2 className="w-3 h-3" />
-          </div>
-          <span>Removing step: <span className="text-slate-900">{args.nodeId}</span></span>
-        </div>
-      );
+
     case 'update_node':
       return (
-        <div className="flex items-center gap-2 text-blue-700 font-medium">
-          <div className="p-1 bg-blue-100 rounded text-blue-600">
-            <Edit className="w-3 h-3" />
+        <div className="space-y-1.5">
+          <OpBadge icon={Edit} color="blue">Update Step</OpBadge>
+          <div className="text-[12px] text-slate-700 pl-1">
+            <span className="font-mono text-slate-500">{args.nodeId}</span>
           </div>
-          <span>Updating step: <span className="text-slate-900">{args.nodeId}</span></span>
+          {(args.args || args.label || args.tool) && (
+            <div className="text-[10px] pl-1 space-y-0.5">
+              {args.label && <div className="text-emerald-600">+ label: "{args.label}"</div>}
+              {args.tool && <div className="text-emerald-600">+ tool: {args.tool}</div>}
+              {args.args && Object.entries(args.args).map(([k, v]) => (
+                <div key={k} className="text-emerald-600">+ {k}: {formatValue(v)}</div>
+              ))}
+            </div>
+          )}
         </div>
       );
+
+    case 'remove_node':
+      return (
+        <div className="space-y-1.5">
+          <OpBadge icon={Trash2} color="red">Remove Step</OpBadge>
+          <div className="text-[12px] text-slate-700 pl-1">
+            <span className="font-mono text-red-600 line-through">{args.nodeId}</span>
+          </div>
+        </div>
+      );
+
+    case 'set_trigger':
+    case 'replace_trigger':
+    case 'add_trigger':
+      const triggerType = args.triggerType || args.type;
+      return (
+        <div className="space-y-1.5">
+          <OpBadge icon={Zap} color="amber">
+            {op === 'add_trigger' ? 'Add Trigger' : 'Set Trigger'}
+          </OpBadge>
+          <div className="text-[12px] text-slate-700 pl-1">
+            <span className="font-semibold">{triggerType}</span>
+          </div>
+          {(args.triggerArgs || args.args) && Object.keys(args.triggerArgs || args.args).length > 0 && (
+            <div className="text-[10px] pl-1 space-y-0.5">
+              {Object.entries(args.triggerArgs || args.args).map(([k, v]) => (
+                <div key={k} className="text-emerald-600">+ {k}: {formatValue(v)}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+
+    case 'add_wire':
+    case 'connect':
+      return (
+        <div className="space-y-1.5">
+          <OpBadge icon={Link} color="indigo">Connect</OpBadge>
+          <div className="text-[12px] text-slate-700 pl-1 flex items-center gap-1.5">
+            <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded">{args.from}</span>
+            <ArrowRight className="w-3 h-3 text-slate-400" />
+            <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded">{args.to}</span>
+          </div>
+          {args.guard && (
+            <div className="text-[10px] text-amber-600 pl-1">
+              guard: {formatValue(args.guard)}
+            </div>
+          )}
+        </div>
+      );
+
+    case 'remove_wire':
+    case 'disconnect':
+      return (
+        <div className="space-y-1.5">
+          <OpBadge icon={Unlink} color="slate">Disconnect</OpBadge>
+          <div className="text-[12px] text-slate-700 pl-1 flex items-center gap-1.5">
+            <span className="font-mono bg-red-50 text-red-600 px-1.5 py-0.5 rounded line-through">{args.from}</span>
+            <ArrowRight className="w-3 h-3 text-slate-300" />
+            <span className="font-mono bg-red-50 text-red-600 px-1.5 py-0.5 rounded line-through">{args.to}</span>
+          </div>
+        </div>
+      );
+
+    case 'set_path':
+    case 'set':
+      return (
+        <div className="space-y-1.5">
+          <OpBadge icon={Settings} color="slate">Set Value</OpBadge>
+          <div className="text-[11px] pl-1 font-mono">
+            <span className="text-slate-500">{args.path}</span>
+            <span className="text-slate-400 mx-1">=</span>
+            <span className="text-emerald-600">{formatValue(args.value)}</span>
+          </div>
+        </div>
+      );
+
+    case 'add_variable':
+      return (
+        <div className="space-y-1.5">
+          <OpBadge icon={Plus} color="indigo">Add Variable</OpBadge>
+          <div className="text-[12px] text-slate-700 pl-1">
+            <span className="font-mono">{args.varName}</span>
+            <span className="text-slate-400 ml-1">: {args.varType || 'string'}</span>
+          </div>
+          {args.varDefault !== undefined && (
+            <div className="text-[10px] text-slate-500 pl-1">default: {formatValue(args.varDefault)}</div>
+          )}
+        </div>
+      );
+
     case 'rename':
       return (
-        <div className="flex items-center gap-2 text-slate-700 font-medium">
-          <div className="p-1 bg-slate-100 rounded text-slate-600">
-            <Type className="w-3 h-3" />
+        <div className="space-y-1.5">
+          <OpBadge icon={Type} color="slate">Rename</OpBadge>
+          <div className="text-[12px] text-slate-700 pl-1">
+            → <span className="font-semibold">{args.name}</span>
           </div>
-          <span>Renaming to: <span className="text-slate-900">{args.name}</span></span>
         </div>
       );
+
     default:
-      // Fallback for low-level ops
+      // Unknown operation - show generic info
       return (
-        <div className="flex items-center gap-2 text-slate-600 font-medium">
-          <div className="p-1 bg-slate-100 rounded text-slate-500">
-            <Settings className="w-3 h-3" />
+        <div className="space-y-1.5">
+          <OpBadge icon={Settings} color="slate">{op || 'Modify'}</OpBadge>
+          <div className="text-[10px] pl-1 space-y-0.5">
+            {Object.entries(args).map(([k, v]) => (
+              <div key={k} className="text-slate-600">
+                <span className="font-semibold">{k}:</span> {formatValue(v)}
+              </div>
+            ))}
           </div>
-          <span>{args.operation || 'Modifying'}: <span className="text-slate-900">{args.path}</span></span>
         </div>
       );
   }
 };
 
-// UpdateWorkflowView shows the changes being applied
+// UpdateWorkflowView shows the changes being applied - cleaner diff-style
 const UpdateWorkflowView = ({ args, result }: { args: any, result?: any }) => {
   const resultWorkflow = result?.workflow;
-  const resultChanges = result?.changes;
+  const resultChanges = result?.changes || result?.message;
   const rawError = result?.error;
-  const errorDetails = result?.errorDetails;
   
-  // Handle old-style create_workflow result
-  const resultSpec = result?.spec;
-  const diff = result?.diff as Array<{ type: '+' | '-'; text: string }> | undefined;
-  
-  const resultError = typeof rawError === 'string' && rawError.trim().length > 0 ? rawError : undefined;
-  const resultOk = result?.ok === true || result?.ok === 'true';
-  const resultFailed = result?.ok === false || result?.ok === 'false';
+  const resultOk = result?.ok === true;
+  const resultFailed = result?.ok === false;
+  const errorMessage = rawError || (resultFailed ? 'Update failed' : null);
 
-  const hasError = resultError || resultFailed;
-  const errorMessage = resultError || (resultFailed ? 'Update failed' : null);
-
-  const showSuccess = resultOk;
-  const showError = hasError && errorMessage;
+  const showSuccess = resultOk && !errorMessage;
+  const showError = !!errorMessage;
   const showPending = !result;
 
+  // Determine status color
+  const statusBg = showSuccess ? 'bg-emerald-500' : showError ? 'bg-red-500' : 'bg-indigo-500';
+
   return (
-    <div className="mt-3 flex flex-col gap-px text-[11px] border border-slate-200 rounded-lg bg-white overflow-hidden shadow-sm max-w-md">
-      {/* Header */}
-      <div className="bg-slate-50/80 px-3 py-2 text-slate-700 text-[10px] font-semibold uppercase tracking-wider border-b border-slate-100 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="p-1 bg-white rounded-md border border-slate-200 shadow-sm">
-            <Sparkles className="w-3 h-3 text-indigo-500" />
-          </div>
-          <span>Workflow Update</span>
-        </div>
-        {showSuccess && <span className="text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">Applied</span>}
-        {showError && <span className="text-red-600 bg-red-50 px-1.5 py-0.5 rounded border border-red-100">Failed</span>}
+    <div className="mt-2 mb-3 rounded-xl border border-slate-200/80 bg-white shadow-sm overflow-hidden max-w-sm">
+      {/* Compact header with status indicator */}
+      <div className="flex items-center gap-2 px-3 py-2 bg-slate-50/50 border-b border-slate-100">
+        <div className={`w-2 h-2 rounded-full ${statusBg} ${showPending ? 'animate-pulse' : ''}`} />
+        <span className="text-[11px] font-medium text-slate-600">
+          {showPending ? 'Applying...' : showSuccess ? 'Applied' : showError ? 'Failed' : 'Update'}
+        </span>
       </div>
 
-      {/* Operation Request */}
-      <div className="px-3 py-2.5 bg-white border-b border-slate-50">
+      {/* Operation details */}
+      <div className="px-3 py-2.5">
         <OperationDetails args={args} />
       </div>
 
-      {/* Error State */}
+      {/* Error message */}
       {showError && (
-        <div className="bg-red-50/50 text-red-800 p-3 border-b border-red-100">
-          <div className="flex gap-2">
-            <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <div className="font-semibold text-[10px] uppercase mb-1 text-red-600">Error</div>
-              <div className="text-[11px] opacity-90 whitespace-pre-wrap">{errorMessage}</div>
-              {errorDetails?.validationErrors && (
-                <div className="mt-2 space-y-0.5">
-                  {errorDetails.validationErrors.map((err: string, i: number) => (
-                    <div key={i} className="text-[10px] font-mono bg-red-100/50 px-2 py-0.5 rounded">
-                      <span className="text-red-600 font-bold mr-1">-</span>{err}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+        <div className="px-3 py-2 bg-red-50 border-t border-red-100">
+          <div className="flex items-start gap-2 text-[11px] text-red-700">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span>{errorMessage}</span>
           </div>
         </div>
       )}
 
-      {/* Success State */}
-      {showSuccess && (
-        <div className="bg-emerald-50/30 text-emerald-900 p-3">
-          {/* Summary of changes */}
-          {resultChanges && (
-            <div className="flex gap-2 mb-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-              <div>
-                <div className="font-semibold text-[10px] uppercase mb-0.5 text-emerald-600">Changes</div>
-                <div className="text-[11px] opacity-90">{resultChanges}</div>
-              </div>
-            </div>
-          )}
-
-          {/* Workflow Stats */}
-          {(resultWorkflow || resultSpec) && (
-            <div className="mt-2 flex items-center gap-3 text-[10px] text-slate-500 font-medium">
-              <span className="flex items-center gap-1 bg-white px-1.5 py-0.5 rounded border border-slate-100">
-                <Zap className="w-3 h-3 text-amber-500" />
-                {(resultWorkflow?.triggers?.length || resultSpec?.triggers?.length || 0)} Triggers
-              </span>
-              <span className="flex items-center gap-1 bg-white px-1.5 py-0.5 rounded border border-slate-100">
-                <FileText className="w-3 h-3 text-indigo-500" />
-                {(resultWorkflow?.nodes?.length || resultSpec?.nodes?.length || 0)} Steps
-              </span>
-            </div>
-          )}
-
-          {/* Legacy Diff View (for create_workflow) */}
-          {diff && diff.length > 0 && (
-            <div className="mt-2 pt-2 border-t border-emerald-100">
-              <div className="font-mono text-[11px] space-y-0.5">
-                {diff.map((line, i) => (
-                  <div
-                    key={i}
-                    className={`px-2 py-0.5 rounded ${
-                      line.type === '+'
-                        ? 'bg-emerald-100/50 text-emerald-800'
-                        : 'bg-red-100/50 text-red-800'
-                    }`}
-                  >
-                    <span className="font-bold mr-1">{line.type}</span>
-                    {line.text}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+      {/* Success summary */}
+      {showSuccess && resultChanges && (
+        <div className="px-3 py-2 bg-emerald-50/50 border-t border-emerald-100">
+          <div className="flex items-start gap-2 text-[11px] text-emerald-700">
+            <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span>{resultChanges}</span>
+          </div>
         </div>
       )}
 
-      {/* Pending State */}
-      {showPending && (
-        <div className="bg-white p-3">
-          <div className="text-[11px] flex items-center gap-2 text-slate-500">
-            <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
-            Applying changes to workflow...
-          </div>
+      {/* Workflow stats badge */}
+      {showSuccess && resultWorkflow && (
+        <div className="px-3 py-1.5 bg-slate-50/50 border-t border-slate-100 flex items-center gap-2 text-[10px] text-slate-500">
+          <span className="flex items-center gap-1">
+            <Zap className="w-3 h-3 text-amber-500" />
+            {resultWorkflow.triggers?.length || 0}
+          </span>
+          <span className="flex items-center gap-1">
+            <FileText className="w-3 h-3 text-indigo-500" />
+            {resultWorkflow.nodes?.length || 0}
+          </span>
+          <span className="flex items-center gap-1">
+            <Link className="w-3 h-3 text-slate-400" />
+            {resultWorkflow.wires?.length || 0}
+          </span>
         </div>
       )}
     </div>
@@ -533,8 +580,9 @@ const TestStepResultView = ({ args, result }: { args: any, result?: any }) => {
 };
 
 export const ToolCallItem = ({ evt }: { evt: ToolEvent }) => {
-  const isWorkflowTool = evt.tool === 'workflow_modify' || evt.tool === 'create_workflow';
-  const isTestStep = evt.tool === 'test_step';
+  const toolName = (evt.tool || '').toLowerCase().trim();
+  const isWorkflowTool = toolName === 'workflow_modify' || toolName === 'modify_workflow' || toolName === 'create_workflow';
+  const isTestStep = toolName === 'test_step' || toolName === 'execute_step';
   const args = useMemo(() => {
     if (evt.args) return evt.args;
     if (evt.argsText) {
@@ -588,33 +636,149 @@ export const ToolCallItem = ({ evt }: { evt: ToolEvent }) => {
     );
   }
 
+  // Generate human-readable summary for tool results
+  const getToolSummary = (toolName: string, toolArgs: any, result: any): string | null => {
+    const ok = result?.ok;
+    
+    // File operations
+    if (toolName === 'write_file' || toolName === 'create_file') {
+      const path = toolArgs?.path || toolArgs?.filePath || '';
+      const fileName = path.split(/[/\\]/).pop() || path;
+      return ok ? `Created ${fileName}` : `Failed to create ${fileName}`;
+    }
+    if (toolName === 'read_file') {
+      const path = toolArgs?.path || toolArgs?.filePath || '';
+      const fileName = path.split(/[/\\]/).pop() || path;
+      const lines = result?.lines || result?.content?.split('\n')?.length;
+      return ok ? `Read ${fileName}${lines ? ` (${lines} lines)` : ''}` : `Failed to read ${fileName}`;
+    }
+    if (toolName === 'delete_file') {
+      return ok ? 'File deleted' : 'Delete failed';
+    }
+    
+    // Search/list operations
+    if (toolName === 'list_workflows' || toolName === 'list_local_workflows') {
+      const count = result?.workflows?.length || 0;
+      return `Found ${count} workflow${count !== 1 ? 's' : ''}`;
+    }
+    if (toolName === 'search_tools') {
+      const count = result?.tools?.length || result?.results?.length || 0;
+      return `Found ${count} tool${count !== 1 ? 's' : ''}`;
+    }
+    
+    // Custom UI
+    if (toolName === 'custom_ui') {
+      const action = result?.action;
+      if (action === 'submit') return 'User submitted form';
+      if (action === 'cancel' || action === 'close') return 'User closed window';
+      return result?.ok ? 'Window shown' : 'Failed to show window';
+    }
+    
+    // Variable operations  
+    if (toolName === 'set_variable') {
+      return `Set ${toolArgs?.name} = ${JSON.stringify(toolArgs?.value)}`;
+    }
+    if (toolName === 'get_variable') {
+      return `${toolArgs?.name} = ${JSON.stringify(result?.value ?? toolArgs?.default ?? 'undefined')}`;
+    }
+    if (toolName === 'toggle_variable') {
+      return `Toggled ${toolArgs?.name} → ${result?.value}`;
+    }
+    
+    // Web/API operations
+    if (toolName === 'web_search') {
+      const count = result?.results?.length || 0;
+      return `Found ${count} result${count !== 1 ? 's' : ''}`;
+    }
+    if (toolName === 'scrape_url') {
+      return ok ? 'Page scraped' : 'Scrape failed';
+    }
+    
+    // AI operations
+    if (toolName === 'ai_inference') {
+      const hasResponse = result?.text || result?.response || result?.content;
+      return hasResponse ? 'AI responded' : (ok ? 'Completed' : 'Failed');
+    }
+    
+    // Media operations
+    if (toolName === 'capture_media') {
+      return ok ? `Recording ${toolArgs?.kind || 'media'}` : 'Capture failed';
+    }
+    if (toolName === 'stop_capture') {
+      return ok ? 'Recording stopped' : 'Stop failed';
+    }
+    if (toolName === 'text_to_speech') {
+      return ok ? 'Audio generated' : 'TTS failed';
+    }
+    
+    // Clipboard
+    if (toolName === 'get_clipboard_content') {
+      const len = result?.content?.length || 0;
+      return ok ? `Clipboard: ${len} chars` : 'Failed';
+    }
+    if (toolName === 'set_clipboard_content') {
+      return ok ? 'Copied to clipboard' : 'Copy failed';
+    }
+    
+    // Generic fallback - show ok/error status
+    if (ok === true) return 'Completed';
+    if (ok === false) return result?.error ? `Error: ${result.error}` : 'Failed';
+    return null;
+  };
+
+  const summary = evt.result ? getToolSummary(evt.tool, args, evt.result) : null;
+  const [showDetails, setShowDetails] = React.useState(false);
+
   return (
-    <div className={`mb-3 rounded-lg border ${resultFailed ? 'border-amber-200 bg-amber-50/30' : 'border-slate-200 bg-white'} shadow-sm overflow-hidden transition-all group`}>
-      <div className={`px-3 py-2 ${resultFailed ? 'bg-amber-50' : 'bg-slate-50/50'} flex items-center justify-between`}>
-        <div className="flex items-center gap-2">
-          <div className={`w-6 h-6 rounded-md flex items-center justify-center text-[10px] border shadow-sm ${resultFailed ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-white text-indigo-600 border-slate-200'}`}>
+    <div className={`mb-3 rounded-lg border ${resultFailed ? 'border-amber-200 bg-amber-50/30' : 'border-slate-200 bg-white'} shadow-sm overflow-hidden transition-all`}>
+      <div 
+        className={`px-3 py-2 ${resultFailed ? 'bg-amber-50' : 'bg-slate-50/50'} flex items-center justify-between cursor-pointer hover:bg-slate-100/50 transition-colors`}
+        onClick={() => setShowDetails(!showDetails)}
+      >
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <div className={`w-6 h-6 rounded-md flex items-center justify-center text-[10px] border shadow-sm shrink-0 ${resultFailed ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-white text-indigo-600 border-slate-200'}`}>
             <Zap className="w-3 h-3" />
           </div>
-          <span className="text-[11px] font-semibold text-slate-700">{formatToolName(evt.tool)}</span>
+          <div className="flex flex-col min-w-0">
+            <span className="text-[11px] font-semibold text-slate-700">{formatToolName(evt.tool)}</span>
+            {summary && (
+              <span className={`text-[10px] truncate ${resultFailed ? 'text-amber-600' : 'text-slate-500'}`}>
+                {summary}
+              </span>
+            )}
+          </div>
         </div>
-        <span className={`text-[10px] font-medium flex items-center gap-1.5 opacity-80 ${statusColor}`}>
+        <span className={`text-[10px] font-medium flex items-center gap-1.5 opacity-80 shrink-0 ${statusColor}`}>
           {statusIcon}
         </span>
       </div>
 
-      <div className="px-3 py-2 hidden group-hover:block transition-all border-t border-slate-100">
-        {resultFailed && resultError && (
-          <div className="mb-2 p-2 bg-amber-50 border border-amber-100 rounded text-amber-800 text-[11px] flex gap-2">
-            <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
-            <div>
-              <span className="font-semibold">Error:</span> {resultError}
+      {showDetails && (
+        <div className="px-3 py-2 border-t border-slate-100 bg-slate-50/30">
+          {resultFailed && resultError && (
+            <div className="mb-2 p-2 bg-amber-50 border border-amber-100 rounded text-amber-800 text-[11px] flex gap-2">
+              <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-semibold">Error:</span> {resultError}
+              </div>
             </div>
+          )}
+          <div className="space-y-1.5">
+            <div className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Args</div>
+            <div className="text-[10px] font-mono text-slate-600 whitespace-pre-wrap break-all max-h-24 overflow-y-auto scrollbar-light bg-white rounded p-2 border border-slate-100">
+              {JSON.stringify(args, null, 2)}
+            </div>
+            {evt.result && (
+              <>
+                <div className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider mt-2">Result</div>
+                <div className="text-[10px] font-mono text-slate-600 whitespace-pre-wrap break-all max-h-24 overflow-y-auto scrollbar-light bg-white rounded p-2 border border-slate-100">
+                  {JSON.stringify(evt.result, null, 2)}
+                </div>
+              </>
+            )}
           </div>
-        )}
-        <div className="text-[10px] font-mono text-slate-500 whitespace-pre-wrap break-all max-h-32 overflow-y-auto scrollbar-light">
-          {JSON.stringify(args, null, 2)}
         </div>
-      </div>
+      )}
     </div>
   );
 };

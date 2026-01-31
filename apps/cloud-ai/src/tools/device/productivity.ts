@@ -28,6 +28,20 @@ export const task_reminders = makeLocalTool(
   }),
 );
 
+export const unified_task_assignments = makeLocalTool(
+  'unified_task_assignments',
+  'Manage user task assignments (reminders, actions, check-ins scheduled by the user for the agent). ' +
+  'Use this to list pending assignments, mark them as triggered/completed, or get assignment details.',
+  z.object({
+    action: z.enum(['list_pending', 'mark_triggered', 'mark_completed', 'get_task']).describe(
+      'Action: list_pending (get due assignments), mark_triggered (when you start handling), ' +
+      'mark_completed (when done), get_task (get full task details)'
+    ),
+    taskId: z.string().optional().describe('Task ID (required for mark_triggered, mark_completed, get_task).'),
+    assignmentId: z.string().optional().describe('Assignment ID (required for mark_triggered, mark_completed).'),
+  }),
+);
+
 // Unified planner helper: aggregate meetings (Google Calendar), local tasks, and local reminders
 export const planner_list_items = createTool({
   id: 'planner_list_items',

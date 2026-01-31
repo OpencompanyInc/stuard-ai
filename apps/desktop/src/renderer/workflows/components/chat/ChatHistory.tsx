@@ -132,7 +132,7 @@ function parseModifyWorkflowArgs(jsonStr: string) {
 }
 
 function formatToolName(name: string): string {
-  if (name === 'workflow_modify') return 'Modify Workflow';
+  if (name === 'workflow_modify' || name === 'modify_workflow') return 'Modify Workflow';
   if (name === 'create_workflow') return 'Create Workflow';
   return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
@@ -149,7 +149,7 @@ const ModifyWorkflowView = ({
   onUndo?: (snapshot: any) => void;
 }) => {
   const instructions = args?.instructions;
-  const resultSpec = result?.spec;
+  const resultSpec = result?.spec || result?.workflow;
   const rawError = result?.error;
   const resultError = typeof rawError === 'string' && rawError.trim().length > 0 ? rawError : undefined;
   const resultOk = result?.ok === true || result?.ok === 'true';
@@ -158,7 +158,7 @@ const ModifyWorkflowView = ({
   const hasError = resultError || resultFailed;
   const errorMessage = resultError || (resultFailed ? 'Modification failed' : null);
 
-  const showSuccess = resultOk && resultSpec;
+  const showSuccess = resultOk && (resultSpec || result?.changes);
   const showError = hasError && errorMessage;
   const showPending = !result;
   const showUnknown = result && !showSuccess && !showError;
@@ -209,8 +209,11 @@ const ModifyWorkflowView = ({
           <div>
             <div className="font-semibold text-[10px] uppercase mb-0.5 text-emerald-600">Success</div>
             <div className="text-[11px] opacity-90">
-              Updated: {resultSpec.nodes?.length || resultSpec.steps?.length || 0} nodes, {resultSpec.triggers?.length || 0} triggers
-              {result?.changes && <span className="ml-1 text-slate-500 italic">({result.changes})</span>}
+              {result?.message ? (
+                <span>{result.message}</span>
+              ) : (
+                <span>Updates applied successfully</span>
+              )}
             </div>
           </div>
         </div>
@@ -238,7 +241,8 @@ const ModifyWorkflowView = ({
 };
 
 const ToolCallItem = ({ evt, onUndo }: { evt: ToolEvent; onUndo?: (snapshot: any) => void }) => {
-  const isModify = evt.tool === 'workflow_modify' || evt.tool === 'create_workflow';
+  const toolName = (evt.tool || '').toLowerCase().trim();
+  const isModify = toolName === 'workflow_modify' || toolName === 'modify_workflow' || toolName === 'create_workflow';
   const args = useMemo(() => {
     if (evt.args) return evt.args;
     if (evt.argsText) {

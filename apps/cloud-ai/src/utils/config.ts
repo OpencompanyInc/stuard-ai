@@ -1,5 +1,39 @@
 import 'dotenv/config';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Environment Detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type Environment = 'development' | 'beta' | 'staging' | 'production';
+
+function detectEnvironment(): Environment {
+  const nodeEnv = (process.env.NODE_ENV || '').toLowerCase();
+  
+  // Direct mapping
+  if (nodeEnv === 'production' || nodeEnv === 'prod') return 'production';
+  if (nodeEnv === 'staging') return 'staging';
+  if (nodeEnv === 'beta') return 'beta';
+  if (nodeEnv === 'development' || nodeEnv === 'dev') return 'development';
+  
+  // Infer from CLOUD_PUBLIC_URL
+  const publicUrl = (process.env.CLOUD_PUBLIC_URL || '').toLowerCase();
+  if (publicUrl.includes('beta-api') || publicUrl.includes('beta.')) return 'beta';
+  if (publicUrl.includes('staging-api') || publicUrl.includes('staging.')) return 'staging';
+  if (publicUrl.includes('api.stuard.ai')) return 'production';
+  
+  return 'development';
+}
+
+export const ENVIRONMENT = detectEnvironment();
+export const IS_PRODUCTION = ENVIRONMENT === 'production';
+export const IS_BETA = ENVIRONMENT === 'beta';
+export const IS_STAGING = ENVIRONMENT === 'staging';
+export const IS_DEVELOPMENT = ENVIRONMENT === 'development';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Core Configuration
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const ENABLE_LOCAL_MEMORY = process.env.ENABLE_LOCAL_MEMORY !== '0'; // Enabled by default
 export const DEFAULT_EMBEDDER = process.env.MEMORY_EMBEDDER_MODEL || process.env.EMBEDDER_MODEL_ID || 'openai/text-embedding-3-large';
 

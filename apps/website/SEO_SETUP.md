@@ -5,9 +5,10 @@
 ### 1. Meta Tags & Metadata
 - ✅ Enhanced page titles with keywords and CTAs
 - ✅ Comprehensive meta descriptions (155-160 characters)
-- ✅ Updated keywords array with relevant search terms
+- ✅ Updated keywords array with relevant search terms (workflow automation, n8n alternative, etc.)
 - ✅ Added category and author metadata
 - ✅ Proper canonical URLs
+- ✅ SearchAction schema for marketplace search
 
 ### 2. Open Graph & Social Media
 - ✅ Open Graph tags for Facebook/LinkedIn
@@ -27,6 +28,10 @@
 - ✅ Offer schema for pricing
 - ✅ AggregateRating schema
 - ✅ Organization schema
+- ✅ WebSite schema with SearchAction
+- ✅ FAQPage schema for marketplace
+- ✅ BreadcrumbList schema for workflow pages
+- ✅ CollectionPage schema for marketplace
 
 ### 5. Performance & Accessibility
 - ✅ Next.js Image optimization
@@ -43,16 +48,20 @@
 ## 📊 SEO Metrics
 
 ### Target Keywords
-1. **Primary**: desktop AI assistant, private AI assistant, local AI
-2. **Secondary**: Windows AI assistant, voice AI assistant, AI with memory
-3. **Long-tail**: AI assistant that keeps data private, offline AI assistant
+1. **Primary**: desktop AI assistant, private AI assistant, local AI, workflow automation
+2. **Secondary**: Windows AI assistant, voice AI assistant, AI with memory, n8n alternative, Zapier alternative
+3. **Long-tail**: AI assistant that keeps data private, offline AI assistant, AI workflow builder, automation templates
+4. **Marketplace**: workflow marketplace, automation templates, AI tools, free automation
 
 ### Page Priorities (Sitemap)
 - Homepage: 1.0 (highest)
 - Pricing: 0.9
+- Marketplace: 0.85 (NEW - high traffic potential)
 - Features: 0.8
+- Marketplace Categories: 0.7
 - Download: 0.7
 - Blog: 0.6
+- Individual Workflows: 0.6
 
 ## 🔍 Post-Deployment Checklist
 
@@ -162,6 +171,33 @@
 
 ---
 
-**Last Updated**: October 2024
+## 🆕 Marketplace SEO (January 2025)
+
+### New Pages Created
+- `/marketplace` - Main marketplace listing with category filters
+- `/marketplace?category={cat}` - Category-specific pages (9 categories)
+- `/marketplace/{slug}` - Individual workflow detail pages (dynamic)
+
+### Marketplace SEO Features
+- **Dynamic Sitemap**: Auto-includes all published workflows
+- **Rich Snippets**: SoftwareApplication schema for each workflow
+- **Breadcrumbs**: Full breadcrumb navigation with schema
+- **FAQ Schema**: Common questions about the marketplace
+- **Internal Linking**: Header and footer links to marketplace
+- **Category Pages**: Each category is a separate indexable page
+- **Search Integration**: SearchAction schema for sitelinks search box
+
+### Keyword Strategy for Marketplace
+- workflow automation templates
+- free AI automation
+- n8n alternative free
+- Zapier alternative desktop
+- automation marketplace
+- AI workflow builder
+- no-code automation tools
+
+---
+
+**Last Updated**: January 2025
 **Next Review**: Monthly
 

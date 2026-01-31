@@ -618,6 +618,14 @@ export function useAgent(options?: string | UseAgentOptions) {
 
           if (msg.type === 'handshake') {
             console.log('[agent] Handshake:', msg.message);
+          } else if (msg.type === 'webhook_trigger' || msg.type === 'provider_webhook') {
+            // Cloud webhook received - forward to main process to trigger workflow
+            console.log('[agent] Cloud webhook received:', msg.type, msg);
+            if ((window as any).desktopAPI?.handleCloudWebhook) {
+              (window as any).desktopAPI.handleCloudWebhook(msg).catch((err: any) => {
+                console.error('[agent] Failed to handle cloud webhook:', err);
+              });
+            }
           } else if (msg.type === 'tool_request') {
             // Handle server-side tool execution requests (e.g. get_local_time)
             // This is critical for the "Bridge" to work without blocking

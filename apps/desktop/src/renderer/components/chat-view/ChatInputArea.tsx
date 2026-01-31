@@ -86,7 +86,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               ) : (
                 <File className="w-3.5 h-3.5 text-emerald-500" />
               )}
-              <span className="max-w-[160px] truncate font-bold">{att.name}</span>
+              <span className="max-w-[160px] truncate font-semibold">{att.name}</span>
               {onRemoveAttachment && (
                 <button
                   type="button"
@@ -116,7 +116,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             <div className="w-3.5 h-3.5 border-2 border-theme-muted/70 border-t-transparent rounded-full animate-spin" />
           ) : null}
           <span className={clsx(
-            "text-[11px] font-black uppercase tracking-widest",
+            "text-[11px] font-bold uppercase tracking-widest",
             connectionStatus === 'connected' ? 'text-theme-muted' :
               connectionStatus === 'connecting' ? 'text-amber-700 dark:text-amber-500' :
                 connectionStatus === 'error' ? 'text-red-600' :
@@ -127,7 +127,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         </div>
         <div className="flex items-center gap-2">
           <CheckpointManager />
-          <span className="text-[11px] font-black uppercase tracking-widest text-theme-muted truncate max-w-[240px]">{displayModelName}</span>
+          <span className="text-[11px] font-bold uppercase tracking-widest text-theme-muted truncate max-w-[240px]">{displayModelName}</span>
         </div>
       </div>
 
@@ -148,7 +148,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               <DropdownMenu.Item
                 onSelect={() => onAttachFiles?.()}
                 className={clsx(
-                  "group text-[13px] text-theme-fg font-bold flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors",
+                  "group text-[13px] text-theme-fg font-semibold flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors",
                   onAttachFiles ? "hover:bg-theme-hover cursor-pointer" : "opacity-40 cursor-not-allowed"
                 )}
               >
@@ -176,7 +176,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
           <TextareaAutosize
             ref={textareaRef}
             className={clsx(
-              "w-full bg-transparent outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-bold min-w-0 resize-none leading-5 py-0 overflow-y-auto custom-scrollbar px-2",
+              "w-full bg-transparent outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-semibold min-w-0 resize-none leading-5 py-0 overflow-y-auto custom-scrollbar px-2",
               showFileNav && "text-primary placeholder:text-primary/40"
             )}
             placeholder={showFileNav ? "Type to filter context..." : "Just ask Stuard"}

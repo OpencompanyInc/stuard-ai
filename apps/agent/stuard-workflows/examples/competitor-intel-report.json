@@ -1,0 +1,268 @@
+{
+  "id": "flow_competitor_intel",
+  "name": "Competitor Intel Report",
+  "version": "2",
+  "triggers": [
+    {
+      "id": "trigger_schedule",
+      "type": "schedule.cron",
+      "label": "Every 10 Hours",
+      "args": {
+        "cron": "0 */10 * * *"
+      },
+      "position": { "x": 50, "y": 200 }
+    },
+    {
+      "id": "trigger_manual",
+      "type": "manual",
+      "label": "Run Now",
+      "args": {},
+      "position": { "x": 50, "y": 320 }
+    }
+  ],
+  "variables": [
+    {
+      "name": "companyName",
+      "type": "string",
+      "defaultValue": "Salesoft",
+      "persistState": true,
+      "description": "Company being analyzed"
+    },
+    {
+      "name": "recipientEmail",
+      "type": "string",
+      "defaultValue": "",
+      "persistState": true,
+      "description": "Where to send the report"
+    },
+    {
+      "name": "maxCompetitors",
+      "type": "number",
+      "defaultValue": 5,
+      "persistState": true
+    },
+    {
+      "name": "focusAreas",
+      "type": "string",
+      "defaultValue": "pricing, features, positioning, customers",
+      "persistState": true
+    },
+    {
+      "name": "configured",
+      "type": "boolean",
+      "defaultValue": false,
+      "persistState": true
+    }
+  ],
+  "nodes": [
+    {
+      "id": "check_configured",
+      "tool": "get_variable",
+      "label": "Check Configured",
+      "args": {
+        "name": "configured",
+        "default": false
+      },
+      "position": { "x": 250, "y": 260 }
+    },
+    {
+      "id": "settings_ui",
+      "tool": "custom_ui",
+      "label": "Configure Settings",
+      "args": {
+        "id": "competitor-settings",
+        "title": "Competitor Intel Settings",
+        "blocking": true,
+        "timeoutMs": 300000,
+        "window": {
+          "width": 480,
+          "height": 520,
+          "position": "center",
+          "alwaysOnTop": true,
+          "borderRadius": 16
+        },
+        "data": {
+          "companyName": "{{workflow.companyName}}",
+          "recipientEmail": "{{workflow.recipientEmail}}",
+          "maxCompetitors": "{{workflow.maxCompetitors}}",
+          "focusAreas": "{{workflow.focusAreas}}"
+        },
+        "html": "<div class=\"glass min-h-full p-6 space-y-5\"><div class=\"flex items-center gap-3 mb-2\"><div class=\"w-10 h-10 rounded-xl bg-indigo-500/20 flex items-center justify-center\"><svg class=\"w-5 h-5 text-indigo-400\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z\"></path></svg></div><div><h1 class=\"text-xl font-semibold text-white\">Competitor Intelligence</h1><p class=\"text-sm text-slate-400\">Configure your report settings</p></div></div><div class=\"space-y-4\"><div class=\"space-y-1.5\"><label class=\"text-sm font-medium text-slate-300\">Your Company Name</label><input data-bind=\"companyName\" type=\"text\" placeholder=\"e.g. Salesoft\" class=\"w-full\" /></div><div class=\"space-y-1.5\"><label class=\"text-sm font-medium text-slate-300\">Report Recipient Email</label><input data-bind=\"recipientEmail\" type=\"email\" placeholder=\"you@company.com\" class=\"w-full\" /></div><div class=\"space-y-1.5\"><label class=\"text-sm font-medium text-slate-300\">Max Competitors to Analyze</label><input data-bind=\"maxCompetitors\" type=\"number\" min=\"1\" max=\"10\" class=\"w-full\" /></div><div class=\"space-y-1.5\"><label class=\"text-sm font-medium text-slate-300\">Focus Areas</label><input data-bind=\"focusAreas\" type=\"text\" placeholder=\"pricing, features, positioning\" class=\"w-full\" /></div></div><div class=\"flex gap-3 pt-4\"><button data-action=\"cancel\" class=\"btn btn-secondary flex-1\">Skip</button><button data-action=\"submit\" class=\"btn btn-primary flex-1\">Save & Run</button></div></div>"
+      },
+      "position": { "x": 480, "y": 180 }
+    },
+    {
+      "id": "save_settings",
+      "tool": "run_sequential",
+      "label": "Save Settings",
+      "args": {
+        "continueOnError": false,
+        "steps": [
+          { "id": "s1", "tool": "set_variable", "args": { "name": "companyName", "value": "{{settings_ui.data.companyName}}" } },
+          { "id": "s2", "tool": "set_variable", "args": { "name": "recipientEmail", "value": "{{settings_ui.data.recipientEmail}}" } },
+          { "id": "s3", "tool": "set_variable", "args": { "name": "maxCompetitors", "value": "{{settings_ui.data.maxCompetitors}}", "type": "number" } },
+          { "id": "s4", "tool": "set_variable", "args": { "name": "focusAreas", "value": "{{settings_ui.data.focusAreas}}" } },
+          { "id": "s5", "tool": "set_variable", "args": { "name": "configured", "value": true, "type": "boolean" } }
+        ]
+      },
+      "position": { "x": 720, "y": 180 }
+    },
+    {
+      "id": "search_competitors",
+      "tool": "web_search",
+      "label": "Search Competitors",
+      "args": {
+        "query": "Top direct competitors of {{workflow.companyName}} 2024 2025",
+        "max_results": 10
+      },
+      "position": { "x": 960, "y": 260 }
+    },
+    {
+      "id": "extract_names",
+      "tool": "ai_inference",
+      "label": "Extract Competitor Names",
+      "args": {
+        "mode": "json",
+        "model": "openai/gpt-4.1-mini",
+        "prompt": "From the search results, extract the names of direct competitors for {{workflow.companyName}}. Return ONLY company names that are actual competitors in the same market. Limit to {{workflow.maxCompetitors}} competitors.",
+        "input": "{{search_competitors.results}}",
+        "schema": {
+          "competitors": "string[]"
+        }
+      },
+      "position": { "x": 1200, "y": 260 }
+    },
+    {
+      "id": "analyze_competitor",
+      "tool": "ai_inference",
+      "label": "Analyze Competitor",
+      "args": {
+        "mode": "json",
+        "model": "openai/gpt-4.1-mini",
+        "prompt": "Analyze '{{loop.item}}' as a competitor to '{{workflow.companyName}}'.\n\nFocus areas: {{workflow.focusAreas}}\n\nProvide actionable competitive intelligence. Be specific and cite any known facts.",
+        "schema": {
+          "competitor": "string",
+          "positioning": "string",
+          "key_features": "string[]",
+          "pricing_signals": "string",
+          "target_customers": "string",
+          "differentiators": "string[]",
+          "weaknesses": "string[]",
+          "threat_level": "string",
+          "recommended_actions": "string[]"
+        }
+      },
+      "position": { "x": 1440, "y": 260 }
+    },
+    {
+      "id": "compile_report",
+      "tool": "ai_inference",
+      "label": "Compile Report",
+      "args": {
+        "mode": "text",
+        "model": "openai/gpt-4.1-mini",
+        "prompt": "Create a professional competitor intelligence report for {{workflow.companyName}}.\n\nInclude:\n1. Executive Summary (5 key bullets)\n2. Competitor Overview Table\n3. Threat Assessment\n4. Strategic Recommendations\n\nAnalyses:\n{{analyze_competitor_loop_results}}"
+      },
+      "position": { "x": 1680, "y": 260 }
+    },
+    {
+      "id": "check_email",
+      "tool": "get_variable",
+      "label": "Get Email",
+      "args": {
+        "name": "recipientEmail",
+        "default": ""
+      },
+      "position": { "x": 1920, "y": 260 }
+    },
+    {
+      "id": "send_email",
+      "tool": "gmail_send_message",
+      "label": "Send Report",
+      "args": {
+        "to": ["{{check_email.value}}"],
+        "subject": "Competitor Intelligence Report: {{workflow.companyName}}",
+        "body": "{{compile_report.text}}",
+        "contentType": "text/plain"
+      },
+      "position": { "x": 2160, "y": 180 }
+    },
+    {
+      "id": "notify_success",
+      "tool": "send_notification",
+      "label": "Notify Sent",
+      "args": {
+        "title": "Competitor Report Sent",
+        "body": "Report for {{workflow.companyName}} sent to {{check_email.value}}",
+        "severity": "info"
+      },
+      "position": { "x": 2400, "y": 180 }
+    },
+    {
+      "id": "notify_no_email",
+      "tool": "send_notification",
+      "label": "No Email Set",
+      "args": {
+        "title": "Report Ready (Not Sent)",
+        "body": "No recipient email configured. Run workflow and enter email in settings.",
+        "severity": "warning"
+      },
+      "position": { "x": 2160, "y": 360 }
+    }
+  ],
+  "wires": [
+    { "from": "trigger_schedule", "to": "check_configured" },
+    { "from": "trigger_manual", "to": "check_configured" },
+    {
+      "from": "check_configured",
+      "to": "settings_ui",
+      "guard": { "if": { "!": { "var": "check_configured.value" } } }
+    },
+    {
+      "from": "check_configured",
+      "to": "search_competitors",
+      "guard": { "if": { "var": "check_configured.value" } }
+    },
+    {
+      "from": "settings_ui",
+      "to": "save_settings",
+      "guard": { "if": { "==": [{ "var": "settings_ui.action" }, "submit"] } }
+    },
+    {
+      "from": "settings_ui",
+      "to": "search_competitors",
+      "guard": { "if": { "==": [{ "var": "settings_ui.action" }, "cancel"] } }
+    },
+    { "from": "save_settings", "to": "search_competitors" },
+    { "from": "search_competitors", "to": "extract_names" },
+    {
+      "from": "extract_names",
+      "to": "analyze_competitor",
+      "loop": {
+        "type": "forEach",
+        "items": "{{extract_names.json.competitors}}",
+        "itemVar": "item",
+        "indexVar": "index",
+        "maxIterations": 10,
+        "delayMs": 500
+      }
+    },
+    {
+      "from": "analyze_competitor",
+      "to": "compile_report",
+      "loopBreak": true
+    },
+    { "from": "compile_report", "to": "check_email" },
+    {
+      "from": "check_email",
+      "to": "send_email",
+      "guard": { "if": { "!=": [{ "var": "check_email.value" }, ""] } }
+    },
+    {
+      "from": "check_email",
+      "to": "notify_no_email",
+      "guard": { "if": { "==": [{ "var": "check_email.value" }, ""] } }
+    },
+    { "from": "send_email", "to": "notify_success" }
+  ]
+}

@@ -149,27 +149,164 @@ export const google_get_userinfo = createTool({
 
 export const gmail_send_message = createTool({
   id: 'gmail_send_message',
-  description: 'Send an email via Gmail. Requires gmail.send. Minimal RFC 2822 message is constructed.',
+  description: 'Send an email via Gmail with optional file attachments. Requires gmail.send.',
   inputSchema: z.object({
     to: z.array(z.string().email()).min(1),
     subject: z.string().min(1),
     body: z.string().min(1),
     contentType: z.enum(['text/plain', 'text/html']).default('text/plain'),
+    cc: z.array(z.string().email()).optional(),
+    bcc: z.array(z.string().email()).optional(),
+    attachments: z.array(z.object({
+      path: z.string().describe('Local file path to attach'),
+      filename: z.string().optional().describe('Override filename in email'),
+    })).optional().describe('Files to attach to the email'),
   }),
   execute: async ({ context }) => {
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.send']);
     if ((gate as any).ok !== true) return gate;
-    const { to, subject, body, contentType } = context as any;
-    const toLine = `To: ${to.join(', ')}`;
-    const subjectLine = `Subject: ${subject}`;
+    const { to, subject, body, contentType, cc, bcc, attachments } = context as any;
+    
+    const boundary = `boundary_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const mime = contentType || 'text/plain';
-    const contentTypeLine = `Content-Type: ${mime}; charset=UTF-8`;
-    const raw = Buffer.from(`${toLine}\n${subjectLine}\n${contentTypeLine}\n\n${body}`, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    
+    // Build headers
+    const headers: string[] = [
+      `To: ${to.join(', ')}`,
+      `Subject: ${subject}`,
+    ];
+    if (cc?.length) headers.push(`Cc: ${cc.join(', ')}`);
+    if (bcc?.length) headers.push(`Bcc: ${bcc.join(', ')}`);
+    
+    let rawMessage: string;
+    
+    // Check if we have attachments
+    const attachmentList = Array.isArray(attachments) ? attachments : [];
+    console.log(`[gmail_send_message] Sending email with ${attachmentList.length} attachment(s)`);
+    
+    let attachmentsIncluded = 0;
+    const attachmentErrors: string[] = [];
+    
+    if (attachmentList.length === 0) {
+      // Simple message without attachments
+      headers.push(`Content-Type: ${mime}; charset=UTF-8`);
+      rawMessage = `${headers.join('\r\n')}\r\n\r\n${body}`;
+    } else {
+      // Multipart message with attachments
+      headers.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
+      headers.push('MIME-Version: 1.0');
+      
+      const parts: string[] = [];
+      
+      // Body part
+      parts.push(`--${boundary}`);
+      parts.push(`Content-Type: ${mime}; charset=UTF-8`);
+      parts.push('Content-Transfer-Encoding: 7bit');
+      parts.push('');
+      parts.push(body);
+      
+      // Attachment parts - read files via bridge
+      const { execLocalTool, hasClientBridge } = await import('./bridge');
+      const hasBridge = hasClientBridge();
+      console.log(`[gmail_send_message] Client bridge available: ${hasBridge}`);
+      
+      for (const att of attachmentList) {
+        const filePath = String(att.path || '');
+        if (!filePath) {
+          console.log(`[gmail_send_message] Skipping attachment with empty path`);
+          continue;
+        }
+        
+        // Get filename
+        const pathParts = filePath.replace(/\\/g, '/').split('/');
+        const filename = att.filename || pathParts[pathParts.length - 1] || 'attachment';
+        console.log(`[gmail_send_message] Reading attachment: ${filename} from ${filePath}`);
+        
+        // Read file via local bridge using execLocalTool
+        let fileContent: string | null = null;
+        try {
+          const result = await execLocalTool('read_file_base64', { path: filePath }, undefined, 30000, { silent: true });
+          console.log(`[gmail_send_message] Read result for ${filename}: ok=${result?.ok}, hasData=${!!result?.data}, dataLen=${result?.data?.length || 0}`);
+          
+          if (result?.ok && result?.data) {
+            fileContent = result.data;
+          } else {
+            const errMsg = result?.error || 'no data returned';
+            console.error(`[gmail_send_message] Failed to read attachment ${filePath}:`, errMsg);
+            attachmentErrors.push(`${filename}: ${errMsg}`);
+          }
+        } catch (e: any) {
+          const errMsg = e?.message || String(e);
+          console.error(`[gmail_send_message] Exception reading attachment ${filePath}:`, errMsg);
+          attachmentErrors.push(`${filename}: ${errMsg}`);
+        }
+        
+        if (fileContent) {
+          attachmentsIncluded++;
+          console.log(`[gmail_send_message] Adding attachment: ${filename} (${fileContent.length} bytes base64)`);
+          // Guess MIME type from extension
+          const ext = filename.split('.').pop()?.toLowerCase() || '';
+          const mimeTypes: Record<string, string> = {
+            'pdf': 'application/pdf',
+            'doc': 'application/msword',
+            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'xls': 'application/vnd.ms-excel',
+            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'ppt': 'application/vnd.ms-powerpoint',
+            'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'png': 'image/png',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'gif': 'image/gif',
+            'webp': 'image/webp',
+            'svg': 'image/svg+xml',
+            'mp3': 'audio/mpeg',
+            'wav': 'audio/wav',
+            'mp4': 'video/mp4',
+            'zip': 'application/zip',
+            'txt': 'text/plain',
+            'csv': 'text/csv',
+            'json': 'application/json',
+            'xml': 'application/xml',
+            'html': 'text/html',
+          };
+          const attachMime = mimeTypes[ext] || 'application/octet-stream';
+          
+          parts.push(`--${boundary}`);
+          parts.push(`Content-Type: ${attachMime}; name="${filename}"`);
+          parts.push('Content-Transfer-Encoding: base64');
+          parts.push(`Content-Disposition: attachment; filename="${filename}"`);
+          parts.push('');
+          // Split base64 into 76-char lines for RFC compliance
+          const b64Lines = fileContent.match(/.{1,76}/g) || [fileContent];
+          parts.push(b64Lines.join('\r\n'));
+        }
+      }
+      
+      // Close boundary
+      parts.push(`--${boundary}--`);
+      
+      rawMessage = `${headers.join('\r\n')}\r\n\r\n${parts.join('\r\n')}`;
+    }
+    
+    const raw = Buffer.from(rawMessage, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    console.log(`[gmail_send_message] Sending email, raw message length: ${raw.length}`);
     const data = await googleAuthorizedFetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
       method: 'POST',
       body: JSON.stringify({ raw }),
     } as any);
-    return { message: data };
+    
+    // Build result with attachment details
+    const result: any = { 
+      message: data, 
+      attachmentsRequested: attachmentList.length,
+      attachmentsIncluded: attachmentList.length > 0 ? attachmentsIncluded : 0,
+    };
+    if (attachmentErrors.length > 0) {
+      result.attachmentErrors = attachmentErrors;
+    }
+    console.log(`[gmail_send_message] Email sent successfully. Attachments: ${attachmentsIncluded}/${attachmentList.length}`);
+    return result;
   },
 });
 

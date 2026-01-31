@@ -7,7 +7,8 @@ declare global {
       hide: () => Promise<void>;
       toggle: () => Promise<void>;
       setMode: (mode: 'compact' | 'sidebar' | 'window') => Promise<void>;
-      resize: (w: number, h: number) => Promise<void>;
+      resize: (w: number, h: number, anchor?: 'top' | 'bottom') => Promise<void>;
+      setBounds: (bounds: { x?: number; y?: number; width?: number; height?: number }) => Promise<void>;
       moveBy: (dx: number, dy: number) => Promise<void>;
       getSize: () => Promise<{ width: number; height: number; mode: string }>;
       getMode: () => Promise<string>;
@@ -21,10 +22,32 @@ declare global {
       openSpaces: () => Promise<void>;
       closeSpaces: () => Promise<void>;
       toggleSpaces: () => Promise<void>;
+      // Sidebar window (unified Spaces, Canvas, Terminal)
+      openSidebar: (options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) => Promise<void>;
+      closeSidebar: () => Promise<void>;
+      toggleSidebar: (options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) => Promise<void>;
+      toggleSidebarExpanded: () => Promise<{ expanded: boolean }>;
+      isSidebarExpanded: () => Promise<{ expanded: boolean }>;
+      onSidebarNavigate: (cb: (data: { tab: 'spaces' | 'canvas' | 'terminal' }) => void) => () => void;
+      onSidebarExpandedChange: (cb: (data: { expanded: boolean }) => void) => () => void;
+      onSidebarSelectItem: (cb: (data: { type: 'space' | 'canvas'; id: string }) => void) => () => void;
+      // Canvas document operations
+      canvasListDocuments: () => Promise<{ ok: boolean; documents?: any[]; error?: string }>;
+      canvasCreateDocument: (doc: any) => Promise<{ ok: boolean; error?: string }>;
+      canvasSaveDocument: (doc: any) => Promise<{ ok: boolean; error?: string }>;
+      canvasDeleteDocument: (docId: string) => Promise<{ ok: boolean; error?: string }>;
+      canvasGetDocument: (docId: string) => Promise<{ ok: boolean; document?: any; error?: string }>;
+      canvasRead: (docId?: string) => Promise<{ ok: boolean; document?: any; error?: string }>;
+      canvasWrite: (data: { documentId?: string; content?: string; title?: string; action?: 'append' | 'replace' | 'insert'; position?: number }) => Promise<{ ok: boolean; error?: string }>;
+      onCanvasUpdate: (cb: (data: { documentId?: string; content?: string; title?: string; action?: 'append' | 'replace' | 'insert'; position?: number }) => void) => () => void;
+      onCanvasRead: (cb: (data: { requestId: string }) => void) => () => void;
+      canvasReadResponse: (data: { requestId: string; documentId?: string | null; title?: string; content?: string }) => Promise<void>;
       closeOnboarding: () => Promise<void>;
       showItemInFolder: (filePath: string) => Promise<{ ok: boolean; error?: string }>;
       openExternal: (url: string) => Promise<void>;
       getLinkPreview: (url: string) => Promise<{ ok: boolean; data?: { title: string; description: string; image: string; url: string; siteName: string }; error?: string }>;
+      webhooksLocalUrl: (id?: string) => Promise<{ ok: boolean; url?: string; error?: string }>;
+      handleCloudWebhook: (payload: any) => Promise<any>;
       selectFiles: () => Promise<Array<{ name: string; path: string; data: string; mimeType: string }> | null>;
       selectImages: () => Promise<Array<{ name: string; path: string; data: string; mimeType: string }> | null>;
       listDirectory: (path: string) => Promise<{ ok: boolean; entries?: Array<{ name: string; path: string; isDirectory: boolean }>; error?: string }>;
@@ -103,6 +126,20 @@ declare global {
       billingListProducts: () => Promise<{ ok: boolean; products?: Array<{ id: string; name: string; description: string; prices: Array<{ id: string; amount: number; currency: string; type: string; recurringInterval?: string }>; isRecurring: boolean; benefits: string[] }>; error?: string }>;
       billingOpenPortal: (customerId: string) => Promise<{ ok: boolean; url?: string; error?: string }>;
       billingPurchaseCredits: (options: { productId: string; email: string; userId?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
+
+      // Terminal (PTY-based)
+      terminalCreate: (options?: { shell?: string; cwd?: string; cols?: number; rows?: number }) => Promise<{ ok: boolean; sessionId?: string; error?: string }>;
+      terminalWrite: (sessionId: string, data: string) => Promise<{ ok: boolean; error?: string }>;
+      terminalResize: (sessionId: string, cols: number, rows: number) => Promise<{ ok: boolean; error?: string }>;
+      terminalDestroy: (sessionId: string) => Promise<{ ok: boolean; error?: string }>;
+      terminalGet: (sessionId: string) => Promise<{ ok: boolean; session?: any; error?: string }>;
+      terminalList: () => Promise<{ ok: boolean; sessions?: any[]; error?: string }>;
+      terminalAiWrite: (sessionId: string, input: string) => Promise<{ ok: boolean; error?: string }>;
+      onTerminalData: (cb: (data: { sessionId: string; data: string }) => void) => () => void;
+      onTerminalExit: (cb: (data: { sessionId: string; exitCode: number }) => void) => () => void;
+
+      // File Icons
+      getFileIcon: (filePath: string, options?: { size?: 'small' | 'normal' | 'large' }) => Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
     };
   }
 }

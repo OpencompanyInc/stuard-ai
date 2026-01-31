@@ -28,6 +28,7 @@ export default defineConfig(() => ({
         board: resolve(__dirname, "src/renderer/board.html"),
         workflows: resolve(__dirname, "src/renderer/workflows.html"),
         spaces: resolve(__dirname, "src/renderer/spaces.html"),
+        sidebar: resolve(__dirname, "src/renderer/sidebar.html"),
       },
     },
   },

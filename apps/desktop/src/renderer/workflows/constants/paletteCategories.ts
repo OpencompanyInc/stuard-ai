@@ -8,7 +8,8 @@ import {
   Database, Calendar, FileSpreadsheet, GitMerge, ListOrdered, Workflow,
   Box, PenLine, BookOpen, ToggleLeft, PlusCircle, ListPlus, Trash2,
   Package, List, Layout, X, Wand2, Rocket, Terminal, Link2, Bell,
-  Monitor, Volume2, type LucideIcon
+  Monitor, Volume2, Search, Globe, Brain, Calculator, Sigma, Binary,
+  Grid3X3, Layers, Sparkles, BarChart3, Hash, type LucideIcon
 } from "lucide-react";
 
 export interface PaletteCategoryItem {
@@ -37,6 +38,7 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'trigger', t: 'hotkey', label: 'Hotkey (blocking)', icon: Keyboard, args: { accelerator: 'Ctrl+Alt+K', passthrough: false } },
       { k: 'trigger', t: 'hotkey', label: 'Hotkey (pass-through)', icon: Keyboard, args: { accelerator: 'Ctrl+C', passthrough: true } },
       { k: 'trigger', t: 'keystroke', label: 'Keystroke Sequence', icon: Command, args: { sequence: 'stuard' } },
+      { k: 'trigger', t: 'function', label: 'Function (callable workflow)', icon: Workflow, args: {} },
       { k: 'trigger', t: 'webhook.local', label: 'Webhook (Local)', icon: Link, args: {} },
       { k: 'trigger', t: 'webhook.cloud', label: 'Webhook (Cloud)', icon: Cloud, args: {} },
       { k: 'trigger', t: 'schedule.cron', label: 'Schedule', icon: Clock, args: { cron: '*/5 * * * *' } },
@@ -53,11 +55,13 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'local.tool', t: 'wait', label: 'Wait / Delay', icon: Clock, args: { ms: 1000 } },
       { k: 'local.tool', t: 'log', label: 'Log Message', icon: FileText, args: { message: '' } },
       { k: 'local.tool', t: 'send_notification', label: 'Send Notification', icon: Bell, args: { title: 'Stuard AI', body: 'Hello!', severity: 'info' } },
-      { k: 'local.tool', t: 'return_value', label: 'Return Value', icon: StopCircle, args: { value: {} } },
+      { k: 'local.tool', t: 'return_value', label: 'Return Value', icon: StopCircle, args: { value: '{{}}', success: true, message: '' } },
       { k: 'local.tool', t: 'end', label: 'End Flow', icon: StopCircle, args: {} },
       { k: 'local.tool', t: 'run_sequential', label: 'Run Sequential', icon: ListOrdered, args: { steps: [] } },
       { k: 'local.tool', t: 'run_parallel', label: 'Run Parallel', icon: Zap, args: { steps: [] } },
       { k: 'local.tool', t: 'invoke_workflow', label: 'Invoke Workflow', icon: Workflow, args: { id: '' } },
+      { k: 'local.tool', t: 'call_workflow', label: 'Call Workflow (external)', icon: Workflow, args: { workflowId: '', inputs: {} } },
+      { k: 'local.tool', t: 'call_function', label: 'Call Function (internal)', icon: Zap, args: { triggerId: '', inputs: {} } },
     ],
   },
   {
@@ -86,6 +90,7 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'local.tool', t: 'double_click_at_coordinates', label: 'Double Click', icon: MousePointer2, args: { x: 100, y: 100 } },
       { k: 'local.tool', t: 'scroll', label: 'Scroll', icon: Scroll, args: { deltaY: 120 } },
       { k: 'local.tool', t: 'drag_and_drop', label: 'Drag & Drop', icon: Move, args: { fromX: 100, fromY: 100, toX: 400, toY: 400 } },
+      { k: 'local.tool', t: 'get_mouse_position', label: 'Get Mouse Position', icon: MousePointer2, args: {} },
       { k: 'local.tool', t: 'get_clipboard_content', label: 'Get Clipboard', icon: Clipboard, args: {} },
       { k: 'local.tool', t: 'set_clipboard_content', label: 'Set Clipboard', icon: Clipboard, args: { text: '' } },
     ],
@@ -106,6 +111,20 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'local.tool', t: 'stop_capture', label: 'Stop Webcam/Mic', icon: StopCircle, args: { sessionId: 'rec' } },
       { k: 'local.tool', t: 'stop_screen_capture', label: 'Stop Screen', icon: StopCircle, args: { sessionId: '' } },
       { k: 'local.tool', t: 'stop_system_audio', label: 'Stop System Audio', icon: StopCircle, args: { sessionId: '' } },
+    ],
+  },
+  {
+    id: 'ffmpeg',
+    label: 'FFmpeg',
+    icon: Video,
+    color: 'yellow',
+    items: [
+      { k: 'local.tool', t: 'ffmpeg_convert_media', label: 'Convert Media', icon: Video, args: { inputPath: 'C:/input.mp4', outputPath: 'C:/output.mp3', overwrite: true, extraArgs: [], timeoutMs: 300000, cwd: '' } },
+      { k: 'local.tool', t: 'ffmpeg_extract_audio', label: 'Extract Audio', icon: Mic, args: { inputPath: 'C:/input.mp4', outputPath: 'C:/audio.mp3', overwrite: true, timeoutMs: 300000, cwd: '' } },
+      { k: 'local.tool', t: 'ffmpeg_trim_media', label: 'Trim Media', icon: Clock, args: { inputPath: 'C:/input.mp4', outputPath: 'C:/clip.mp4', startSeconds: 0, durationSeconds: 10, overwrite: true, timeoutMs: 300000, cwd: '' } },
+      { k: 'local.tool', t: 'ffmpeg_extract_frames', label: 'Extract Frames', icon: Camera, args: { inputPath: 'C:/input.mp4', outputPattern: 'C:/frames/%04d.jpg', overwrite: true, fps: 1, startSeconds: 0, durationSeconds: 5, timeoutMs: 300000, cwd: '' } },
+      { k: 'local.tool', t: 'ffmpeg_probe_media', label: 'Probe Media', icon: Eye, args: { inputPath: 'C:/input.mp4', timeoutMs: 300000, cwd: '' } },
+      { k: 'local.tool', t: 'ffmpeg_run', label: 'Run FFmpeg (Advanced)', icon: Terminal, args: { args: ['-i', 'C:/input.mp4', 'C:/output.mp3'], timeoutMs: 300000, cwd: '' } },
     ],
   },
   {
@@ -167,6 +186,29 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'cloud.tool', t: 'analyze_image', label: 'Analyze Image', icon: Eye, args: { path: '' } },
       { k: 'cloud.tool', t: 'analyze_media', label: 'Transcribe Audio', icon: Mic, args: { sources: [{ path: '' }], task: 'transcribe' } },
       { k: 'cloud.tool', t: 'cloud_ai_vision', label: 'AI Vision (JSON)', icon: Eye, args: { prompt: '', imagePath: '' } },
+      { k: 'cloud.tool', t: 'ai_inference', label: 'AI Inference', icon: Brain, args: { prompt: 'Summarize this', input: '', mode: 'text' } },
+    ],
+  },
+  {
+    id: 'math',
+    label: 'Math',
+    icon: Calculator,
+    color: 'rose',
+    items: [
+      { k: 'local.tool', t: 'math_add', label: 'Add', icon: PlusCircle, args: { a: 0, b: 0 } },
+      { k: 'local.tool', t: 'math_subtract', label: 'Subtract', icon: Calculator, args: { a: 0, b: 0 } },
+      { k: 'local.tool', t: 'math_multiply', label: 'Multiply', icon: Hash, args: { a: 0, b: 0 } },
+      { k: 'local.tool', t: 'math_divide', label: 'Divide', icon: Calculator, args: { a: 0, b: 1 } },
+      { k: 'local.tool', t: 'math_power', label: 'Power', icon: Sparkles, args: { a: 2, b: 2 } },
+      { k: 'local.tool', t: 'math_sqrt', label: 'Square Root', icon: Calculator, args: { x: 4 } },
+      { k: 'local.tool', t: 'math_abs', label: 'Absolute', icon: Calculator, args: { x: -5 } },
+      { k: 'local.tool', t: 'math_random', label: 'Random', icon: Sparkles, args: { min: 1, max: 10 } },
+      { k: 'local.tool', t: 'math_sum', label: 'Sum List', icon: Sigma, args: { x: [1, 2, 3] } },
+      { k: 'local.tool', t: 'math_mean', label: 'Average', icon: BarChart3, args: { x: [1, 2, 3] } },
+      { k: 'local.tool', t: 'math_max', label: 'Max', icon: BarChart3, args: { x: [1, 5, 3] } },
+      { k: 'local.tool', t: 'math_min', label: 'Min', icon: BarChart3, args: { x: [1, 5, 3] } },
+      { k: 'local.tool', t: 'math_compare', label: 'Compare', icon: Calculator, args: { a: 5, b: 3, op: 'gt' } },
+      { k: 'local.tool', t: 'math_range', label: 'Range', icon: ListOrdered, args: { start: 1, stop: 10 } },
     ],
   },
   {
@@ -175,6 +217,8 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
     icon: Link2,
     color: 'teal',
     items: [
+      { k: 'cloud.tool', t: 'web_search', label: 'Web Search', icon: Search, args: { query: 'latest AI news' } },
+      { k: 'cloud.tool', t: 'scrape_url', label: 'Scrape URL', icon: Globe, args: { urls: ['https://example.com'] } },
       { k: 'cloud.tool', t: 'gmail_send_message', label: 'Gmail Send', icon: Mail, args: { to: [], subject: '', body: '', contentType: 'text/plain' } },
       { k: 'cloud.tool', t: 'drive_list_files', label: 'Google Drive List', icon: Database, args: { q: '', pageSize: 20 } },
       { k: 'cloud.tool', t: 'calendar_list_events', label: 'Calendar Events', icon: Calendar, args: { calendarId: 'primary', maxResults: 10 } },
@@ -203,6 +247,7 @@ export const CATEGORY_COLORS: Record<string, { bg: string; border: string; hover
   fuchsia: { bg: 'bg-fuchsia-50', border: 'border-fuchsia-200', hover: 'hover:bg-fuchsia-100', text: 'text-fuchsia-800', icon: 'text-fuchsia-600' },
   teal: { bg: 'bg-teal-50', border: 'border-teal-200', hover: 'hover:bg-teal-100', text: 'text-teal-800', icon: 'text-teal-600' },
   sky: { bg: 'bg-sky-50', border: 'border-sky-200', hover: 'hover:bg-sky-100', text: 'text-sky-800', icon: 'text-sky-600' },
+  rose: { bg: 'bg-rose-50', border: 'border-rose-200', hover: 'hover:bg-rose-100', text: 'text-rose-800', icon: 'text-rose-600' },
 };
 
 /** Helper to find icon for a tool/trigger type */

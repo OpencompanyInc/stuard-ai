@@ -9,7 +9,7 @@
  * run: pnpm sync-tool-defs (or manually update TOOL_DEFINITIONS below)
  */
 
-export type ArgType = 'string' | 'number' | 'boolean' | 'select' | 'array' | 'object' | 'code' | 'path' | 'hotkey' | 'json' | 'cron';
+export type ArgType = 'string' | 'number' | 'boolean' | 'select' | 'array' | 'object' | 'code' | 'path' | 'hotkey' | 'json' | 'cron' | 'files';
 
 export interface ArgOption {
   value: string | number | boolean;
@@ -53,6 +53,7 @@ interface ToolDefinition {
   description: string;
   argsTemplate: any;
   outputSchema: any;
+  deprecated?: boolean;
 }
 
 const TOOL_DEFINITIONS: ToolDefinition[] = [
@@ -60,9 +61,13 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'wait', category: 'flow', kind: 'local', description: 'Delay execution for a number of milliseconds', argsTemplate: { ms: 1000 }, outputSchema: { ok: 'boolean', waitedMs: 'number' } },
   { id: 'run_sequential', category: 'flow', kind: 'orchestration', description: 'Run a list of tools in sequence', argsTemplate: { steps: [], continueOnError: false }, outputSchema: { results: 'any[]', combined: 'object', allOk: 'boolean' } },
   { id: 'run_parallel', category: 'flow', kind: 'orchestration', description: 'Run a list of tools in parallel', argsTemplate: { steps: [], concurrency: 2 }, outputSchema: { results: 'any[]', combined: 'object', allOk: 'boolean' } },
-  { id: 'loop_executor', category: 'flow', kind: 'orchestration', description: 'Execute a tool repeatedly (each, times, while, until)', argsTemplate: { mode: 'each', items: ['a', 'b'], item_var: 'item', count: 3 }, outputSchema: { results: 'any[]' } },
+  // DEPRECATED: loop_executor is deprecated - use wire loop configuration instead (wire.loop property)
+  // Kept for backwards compatibility with existing workflows
+  { id: 'loop_executor', category: 'flow', kind: 'orchestration', description: '[DEPRECATED] Use wire loops instead. Execute a tool repeatedly', argsTemplate: { mode: 'each', items: ['a', 'b'], item_var: 'item', count: 3 }, outputSchema: { results: 'any[]' }, deprecated: true },
   { id: 'end', category: 'flow', kind: 'local', description: 'Terminate the workflow gracefully', argsTemplate: {}, outputSchema: { ok: 'boolean', terminated: 'boolean' } },
-  { id: 'return_value', category: 'flow', kind: 'local', description: 'Return a value from a workflow and terminate execution', argsTemplate: { value: {} }, outputSchema: { ok: 'boolean', terminated: 'boolean', value: 'any' } },
+  { id: 'return_value', category: 'flow', kind: 'local', description: 'Return a value and terminate - use for workflow functions', argsTemplate: { value: '{{}}', success: true, message: '' }, outputSchema: { ok: 'boolean', terminated: 'boolean', value: 'any', success: 'boolean', message: 'string' } },
+  { id: 'call_workflow', category: 'flow', kind: 'local', description: 'Call another workflow file as a function with input parameters', argsTemplate: { workflowId: '', inputs: {} }, outputSchema: { ok: 'boolean', result: 'any', error: 'string' } },
+  { id: 'call_function', category: 'flow', kind: 'local', description: 'Call a function trigger within the same workflow by trigger ID', argsTemplate: { triggerId: '', inputs: {} }, outputSchema: { ok: 'boolean', result: 'any', error: 'string' } },
   { id: 'log', category: 'flow', kind: 'local', description: 'Log a message to the workflow execution log', argsTemplate: { message: 'Step completed' }, outputSchema: { ok: 'boolean', logged: 'string' } },
   { id: 'send_notification', category: 'flow', kind: 'local', description: 'Show a local desktop notification (OS toast)', argsTemplate: { title: 'Stuard AI', body: 'Hello!', severity: 'info', taskId: '', workflowRunId: '' }, outputSchema: { ok: 'boolean', notification: 'object', error: 'string' } },
 
@@ -115,6 +120,14 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'stream_speech', category: 'vision', kind: 'local', description: 'Stream microphone audio to the cloud speech proxy', argsTemplate: { accessToken: '', device: '', busId: 'default', durationMs: 60000, sampleRate: 16000 }, outputSchema: { ok: 'boolean', sessionId: 'string' } },
   { id: 'stop_stream_speech', category: 'vision', kind: 'local', description: 'Stop an active stream_speech audio session', argsTemplate: { busId: 'default' }, outputSchema: { ok: 'boolean', busId: 'string' } },
   { id: 'play_audio', category: 'vision', kind: 'local', description: 'Play an audio file (MP3, WAV, etc.)', argsTemplate: { path: '', block: true }, outputSchema: { ok: 'boolean', played: 'string', method: 'string', error: 'string' } },
+  { id: 'ffmpeg_status', category: 'vision', kind: 'local', description: 'Check if FFmpeg is available locally (downloaded or system-installed).', argsTemplate: {}, outputSchema: { ok: 'boolean', available: 'boolean', source: 'string', ffmpegPath: 'string', ffprobePath: 'string', meta: 'any' } },
+  { id: 'ffmpeg_setup', category: 'vision', kind: 'local', description: 'Ensure FFmpeg is available locally (auto-downloads if needed).', argsTemplate: {}, outputSchema: { ok: 'boolean', available: 'boolean', source: 'string', ffmpegPath: 'string', ffprobePath: 'string', meta: 'any', error: 'string', message: 'string' } },
+  { id: 'ffmpeg_run', category: 'vision', kind: 'local', description: 'Run FFmpeg with custom arguments. Use for advanced conversions and edits.', argsTemplate: { args: ['-hide_banner', '-i', 'C:/input.mp4', 'C:/output.mp4'], timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string' } },
+  { id: 'ffmpeg_convert_media', category: 'vision', kind: 'local', description: 'Convert media from one format to another using FFmpeg.', argsTemplate: { inputPath: 'C:/input.mp4', outputPath: 'C:/output.webm', overwrite: true, extraArgs: ['-c:v', 'libvpx-vp9', '-crf', 30, '-b:v', 0], timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string' } },
+  { id: 'ffmpeg_extract_audio', category: 'vision', kind: 'local', description: 'Extract audio from a media file into an audio-only output (e.g. mp3, wav).', argsTemplate: { inputPath: 'C:/input.mp4', outputPath: 'C:/output.mp3', overwrite: true, timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string' } },
+  { id: 'ffmpeg_trim_media', category: 'vision', kind: 'local', description: 'Trim a media file to a time range (fast copy mode).', argsTemplate: { inputPath: 'C:/input.mp4', outputPath: 'C:/clip.mp4', startSeconds: 0, durationSeconds: 10, overwrite: true, timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string' } },
+  { id: 'ffmpeg_probe_media', category: 'vision', kind: 'local', description: 'Inspect a media file using ffprobe and return JSON metadata.', argsTemplate: { inputPath: 'C:/input.mp4', timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', data: 'any', stdout: 'string', stderr: 'string', ffprobePath: 'string' } },
+  { id: 'ffmpeg_extract_frames', category: 'vision', kind: 'local', description: 'Extract image frames from a video to a numbered file pattern.', argsTemplate: { inputPath: 'C:/input.mp4', outputPattern: 'C:/frames/%04d.jpg', overwrite: true, fps: 1, startSeconds: 0, durationSeconds: 5, timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string' } },
   { id: 'text_to_speech', category: 'vision', kind: 'cloud', description: 'Convert text to speech audio', argsTemplate: { text: '', voice: 'alloy', speed: 1.0, format: 'mp3', save: true, play: false, outputPath: '' }, outputSchema: { ok: 'boolean', filePath: 'string', format: 'string', voice: 'string', textLength: 'number', played: 'boolean', error: 'string' } },
   { id: 'list_tts_voices', category: 'vision', kind: 'cloud', description: 'List all available text-to-speech voices', argsTemplate: {}, outputSchema: { ok: 'boolean', voices: 'any[]' } },
 
@@ -142,7 +155,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'show_progress', category: 'ui', kind: 'local', description: 'Display a progress bar for long-running tasks', argsTemplate: { progress: 50, label: '', sublabel: '', variant: 'download', status: 'active', color: 'blue' }, outputSchema: { ok: 'boolean' } },
 
   // --- INTEGRATIONS ---
-  { id: 'gmail_send_message', category: 'integrations', kind: 'cloud', description: 'Send an email via Gmail', argsTemplate: { to: [], subject: '', body: '', contentType: 'text/plain' }, outputSchema: { message: 'object' } },
+  { id: 'gmail_send_message', category: 'integrations', kind: 'cloud', description: 'Send an email via Gmail with optional file attachments', argsTemplate: { to: [], subject: '', body: '', contentType: 'text/plain', cc: [], bcc: [], attachments: [] }, outputSchema: { message: 'object', attachmentCount: 'number' } },
   { id: 'gmail_list_messages', category: 'integrations', kind: 'cloud', description: 'List Gmail messages', argsTemplate: { q: '', labelIds: [], maxResults: 10, includeSpamTrash: false }, outputSchema: { items: 'any[]', count: 'number', nextPageToken: 'string' } },
   { id: 'gmail_get_message_brief', category: 'integrations', kind: 'cloud', description: 'Get a Gmail message brief', argsTemplate: { id: '' }, outputSchema: { message: 'object' } },
   { id: 'gmail_get_message_full', category: 'integrations', kind: 'cloud', description: 'Get a Gmail message with full content', argsTemplate: { id: '' }, outputSchema: { message: 'object' } },
@@ -192,6 +205,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
 
 const TRIGGER_DEFINITIONS = [
   { type: 'manual', description: 'Manual trigger', argsTemplate: {} },
+  { type: 'function', description: 'Function trigger - allows this workflow to be called from other workflows with input parameters', argsTemplate: {} },
   { type: 'webhook.local', description: 'Local webhook trigger', argsTemplate: {} },
   { type: 'webhook.cloud', description: 'Cloud webhook trigger', argsTemplate: {} },
   { type: 'schedule.cron', description: 'Cron schedule trigger', argsTemplate: { cron: '* * * * *' } },
@@ -302,6 +316,60 @@ function inferLanguage(key: string, toolId: string): 'python' | 'javascript' | '
   return undefined;
 }
 
+// User-friendly descriptions for common argument keys
+const KNOWN_DESCRIPTIONS: Record<string, string> = {
+  'ms': 'How long to wait (in milliseconds). 1000 = 1 second.',
+  'timeoutMs': 'Maximum time to wait before giving up (in milliseconds).',
+  'command': 'The command to run in your terminal.',
+  'code': 'The code to execute.',
+  'text': 'The text content to use.',
+  'message': 'The message to display or send.',
+  'path': 'The file or folder path.',
+  'query': 'What to search for.',
+  'url': 'The web address (URL) to use.',
+  'target': 'Where to send or what to target.',
+  'title': 'A title or name to display.',
+  'body': 'The main content or message body.',
+  'value': 'The value to set or return.',
+  'inputs': 'Data to pass to the workflow (key-value pairs).',
+  'workflowId': 'The ID of an external workflow file to call.',
+  'triggerId': 'The ID of a function trigger within this workflow to call.',
+  'success': 'Whether the operation succeeded.',
+  'packages': 'Python packages to install before running.',
+  'cwd': 'The folder to run the command in.',
+  'shell': 'Which terminal shell to use.',
+  'background': 'Run in the background without waiting for completion.',
+  'accelerator': 'The keyboard shortcut (e.g., Ctrl+Shift+K).',
+  'keys': 'The key combination to press.',
+  'x': 'Horizontal position (pixels from left).',
+  'y': 'Vertical position (pixels from top).',
+  'width': 'Width in pixels.',
+  'height': 'Height in pixels.',
+  'html': 'The HTML content for your interface.',
+  'css': 'Custom styling for your interface.',
+  'js': 'JavaScript code to run in the interface.',
+  'prompt': 'Instructions for what the AI should do.',
+  'cron': 'When to run (cron schedule format).',
+  'sequence': 'The text sequence to trigger on.',
+  'pattern': 'The pattern to match files.',
+  'recursive': 'Also check inside subfolders.',
+  'events': 'Which file events to listen for.',
+  'passthrough': 'Let the key press continue to other apps.',
+};
+
+// User-friendly labels for argument keys  
+const KNOWN_LABELS: Record<string, string> = {
+  'ms': 'Wait Time (ms)',
+  'timeoutMs': 'Timeout (ms)',
+  'cwd': 'Working Folder',
+  'js': 'JavaScript',
+  'css': 'Styles (CSS)',
+  'html': 'Layout (HTML)',
+  'url': 'URL',
+  'workflowId': 'Workflow',
+  'inputs': 'Input Data',
+};
+
 function convertDefinition(def: ToolDefinition): ToolSchema {
   const args: Record<string, ArgSchema> = {};
 
@@ -309,7 +377,8 @@ function convertDefinition(def: ToolDefinition): ToolSchema {
     const type = inferArgType(key, value);
     const argSchema: ArgSchema = {
       type,
-      label: keyToLabel(key),
+      label: KNOWN_LABELS[key] || keyToLabel(key),
+      description: KNOWN_DESCRIPTIONS[key],
       default: value,
       placeholder: typeof value === 'string' ? value : undefined,
     };
@@ -417,7 +486,48 @@ if (TOOL_SCHEMAS['custom_ui']) {
     data: {
       type: 'json',
       label: 'Initial Data',
-      description: 'Data object passed to the UI components. Accessible in layout via {{data.fieldName}}',
+      description: 'Data object passed to the UI components. Use the key-value editor to add variables like {{stepId.field}}',
+    },
+    // Window settings (shown in collapsible section)
+    width: {
+      type: 'number',
+      label: 'Width',
+      description: 'Window width in pixels',
+      default: 400,
+      placeholder: '400',
+    },
+    height: {
+      type: 'number',
+      label: 'Height',
+      description: 'Window height in pixels',
+      default: 500,
+      placeholder: '500',
+    },
+    position: {
+      type: 'select',
+      label: 'Position',
+      description: 'Where the window appears on screen',
+      default: 'center',
+      options: [
+        { value: 'center', label: 'Center', description: 'Center of the screen' },
+        { value: 'top-left', label: 'Top Left' },
+        { value: 'top-right', label: 'Top Right' },
+        { value: 'bottom-left', label: 'Bottom Left' },
+        { value: 'bottom-right', label: 'Bottom Right' },
+        { value: 'cursor', label: 'Near Cursor', description: 'Appears near mouse pointer' },
+      ],
+    },
+    alwaysOnTop: {
+      type: 'boolean',
+      label: 'Always on Top',
+      description: 'Keep the window above other windows',
+      default: true,
+    },
+    frameless: {
+      type: 'boolean',
+      label: 'Frameless',
+      description: 'Hide the window title bar and borders',
+      default: false,
     },
     _uiDesign: {
       type: 'json',
@@ -509,6 +619,63 @@ if (TOOL_SCHEMAS['fs.watch']) {
   TOOL_SCHEMAS['fs.watch'].outputs = ['filePath', 'eventType', 'stats'];
 }
 
+// Gmail Send Message - Enhanced email composition
+if (TOOL_SCHEMAS['gmail_send_message']) {
+  TOOL_SCHEMAS['gmail_send_message'].args = {
+    to: {
+      type: 'array',
+      label: 'To',
+      description: 'Recipient email addresses',
+      required: true,
+      itemType: 'string',
+      placeholder: 'email@example.com',
+    },
+    subject: {
+      type: 'string',
+      label: 'Subject',
+      description: 'Email subject line',
+      required: true,
+      placeholder: 'Enter subject...',
+    },
+    body: {
+      type: 'string',
+      label: 'Body',
+      description: 'Email body content. Can be plain text or HTML depending on content type.',
+      required: true,
+      placeholder: 'Enter your message...',
+    },
+    contentType: {
+      type: 'select',
+      label: 'Content Type',
+      description: 'Format of the email body',
+      default: 'text/plain',
+      options: [
+        { value: 'text/plain', label: 'Plain Text', description: 'Simple text email' },
+        { value: 'text/html', label: 'HTML', description: 'Rich HTML formatted email' },
+      ],
+    },
+    cc: {
+      type: 'array',
+      label: 'CC',
+      description: 'Carbon copy recipients',
+      itemType: 'string',
+      placeholder: 'email@example.com',
+    },
+    bcc: {
+      type: 'array',
+      label: 'BCC',
+      description: 'Blind carbon copy recipients (hidden from other recipients)',
+      itemType: 'string',
+      placeholder: 'email@example.com',
+    },
+    attachments: {
+      type: 'files',
+      label: 'Attachments',
+      description: 'Files to attach to the email. Select local files to include.',
+    },
+  };
+}
+
 export { TOOL_SCHEMAS };
 
 export function getToolSchema(toolName: string): ToolSchema | undefined {
@@ -525,6 +692,10 @@ export function getCategories(): string[] {
 }
 
 export function getToolOutputs(toolName: string): string[] {
+  // Special case for loop context pseudo-tool
+  if (toolName === '__loop__') {
+    return ['item', 'index'];
+  }
   return TOOL_SCHEMAS[toolName]?.outputs || ['ok', 'result'];
 }
 

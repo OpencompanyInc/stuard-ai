@@ -125,9 +125,23 @@ function toPythonExpr(value: any, depth = 0): string {
   return JSON.stringify(String(value));
 }
 
+function escapePythonStringContent(value: string): string {
+  // Escape special characters that would break a Python string literal
+  // Does NOT add outer quotes - user provides those
+  return value
+    .replace(/\\/g, '\\\\')   // Backslash first
+    .replace(/"/g, '\\"')     // Double quotes
+    .replace(/'/g, "\\'")     // Single quotes
+    .replace(/\n/g, '\\n')    // Newlines
+    .replace(/\r/g, '\\r')    // Carriage returns
+    .replace(/\t/g, '\\t');   // Tabs
+}
+
 function toPythonInline(value: any): string {
   if (value === null || value === undefined) return 'None';
   if (typeof value === 'boolean') return value ? 'True' : 'False';
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'None';
+  if (typeof value === 'string') return escapePythonStringContent(value); // Escape special chars, no outer quotes
   if (typeof value === 'object') return toPythonExpr(value);
   return String(value);
 }

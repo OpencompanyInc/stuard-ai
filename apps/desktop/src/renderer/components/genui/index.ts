@@ -30,5 +30,9 @@ export { EmailView } from './EmailView';
 // === Agent Tools ===
 export { AgentTodoList } from './AgentTodoList';
 
+// === Feedback ===
+export { FeedbackForm } from './FeedbackForm';
+
 // === Container ===
 export { GenUIContainer } from './GenUIContainer';
+export { GenUIErrorBoundary } from './GenUIErrorBoundary';

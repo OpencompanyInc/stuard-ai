@@ -15,10 +15,19 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   hide: () => ipcRenderer.invoke("overlay:hide"),
   toggle: () => ipcRenderer.invoke("overlay:toggle"),
   setMode: (mode: 'compact' | 'sidebar' | 'window') => ipcRenderer.invoke('overlay:setMode', mode),
-  resize: (w: number, h: number) => ipcRenderer.invoke('overlay:resize', w, h),
+  resize: (w: number, h: number, anchor?: 'top' | 'bottom') => ipcRenderer.invoke('overlay:resize', w, h, anchor),
+  setBounds: (bounds: { x?: number; y?: number; width?: number; height?: number }) => ipcRenderer.invoke('overlay:setBounds', bounds),
   moveBy: (dx: number, dy: number) => ipcRenderer.invoke('overlay:moveBy', dx, dy),
   getSize: () => ipcRenderer.invoke('overlay:getSize'),
   getMode: () => ipcRenderer.invoke('overlay:getMode'),
+  // Internal sidebar (expands window width instead of separate window)
+  toggleInternalSidebar: (open?: boolean) => ipcRenderer.invoke('overlay:toggleInternalSidebar', open),
+  getInternalSidebarState: () => ipcRenderer.invoke('overlay:getInternalSidebarState'),
+  onInternalSidebarChanged: (cb: (data: { open: boolean; width: number }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('overlay:internalSidebarChanged', handler);
+    return () => { try { ipcRenderer.off('overlay:internalSidebarChanged', handler); } catch { } };
+  },
   // Resize events
   onResizing: (cb: (data: { width: number; height: number }) => void) => {
     const handler = (_e: any, data: any) => cb(data);
@@ -41,6 +50,48 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   openSpaces: () => ipcRenderer.invoke('spaces:open'),
   closeSpaces: () => ipcRenderer.invoke('spaces:close'),
   toggleSpaces: () => ipcRenderer.invoke('spaces:toggle'),
+  // Sidebar window (unified Spaces, Canvas, Terminal)
+  openSidebar: (options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:open', options),
+  closeSidebar: () => ipcRenderer.invoke('sidebar:close'),
+  toggleSidebar: (options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:toggle', options),
+  toggleSidebarExpanded: () => ipcRenderer.invoke('sidebar:toggleExpanded'),
+  isSidebarExpanded: () => ipcRenderer.invoke('sidebar:isExpanded'),
+  onSidebarNavigate: (cb: (data: { tab: 'spaces' | 'canvas' | 'terminal' }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('sidebar:navigate', handler);
+    return () => { try { ipcRenderer.off('sidebar:navigate', handler); } catch { } };
+  },
+  onSidebarExpandedChange: (cb: (data: { expanded: boolean }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('sidebar:expandedChange', handler);
+    return () => { try { ipcRenderer.off('sidebar:expandedChange', handler); } catch { } };
+  },
+  onSidebarSelectItem: (cb: (data: { type: 'space' | 'canvas'; id: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('sidebar:selectItem', handler);
+    return () => { try { ipcRenderer.off('sidebar:selectItem', handler); } catch { } };
+  },
+  // Canvas document operations (sidebar canvas panel)
+  canvasListDocuments: () => ipcRenderer.invoke('canvas:listDocuments'),
+  canvasCreateDocument: (doc: any) => ipcRenderer.invoke('canvas:createDocument', doc),
+  canvasSaveDocument: (doc: any) => ipcRenderer.invoke('canvas:saveDocument', doc),
+  canvasDeleteDocument: (docId: string) => ipcRenderer.invoke('canvas:deleteDocument', docId),
+  canvasGetDocument: (docId: string) => ipcRenderer.invoke('canvas:getDocument', docId),
+  canvasRead: (docId?: string) => ipcRenderer.invoke('canvas:read', docId),
+  canvasWrite: (data: { documentId?: string; content?: string; title?: string; action?: 'append' | 'replace' | 'insert'; position?: number }) => 
+    ipcRenderer.invoke('canvas:write', data),
+  onCanvasUpdate: (cb: (data: { documentId?: string; content?: string; title?: string; action?: 'append' | 'replace' | 'insert'; position?: number }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('canvas:update', handler);
+    return () => { try { ipcRenderer.off('canvas:update', handler); } catch { } };
+  },
+  onCanvasRead: (cb: (data: { requestId: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('canvas:read', handler);
+    return () => { try { ipcRenderer.off('canvas:read', handler); } catch { } };
+  },
+  canvasReadResponse: (data: { requestId: string; documentId?: string | null; title?: string; content?: string }) =>
+    ipcRenderer.invoke('canvas:readResponse', data),
   closeOnboarding: () => ipcRenderer.invoke('system:closeOnboarding'),
   // Files
   selectFiles: () => ipcRenderer.invoke('files:select'),
@@ -69,6 +120,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   getFileIcon: (filePath: string, options?: { size?: 'small' | 'normal' | 'large' }) => ipcRenderer.invoke('system:getFileIcon', filePath, options),
   notify: (title: string, body: string) => ipcRenderer.invoke('system:notify', { title, body }),
   webhooksLocalUrl: (id?: string) => ipcRenderer.invoke('webhooks:localUrl', id),
+  handleCloudWebhook: (payload: any) => ipcRenderer.invoke('webhooks:cloudEvent', payload),
   connectOutlook: () => ipcRenderer.invoke('outlook:connect'),
   getOutlookStatus: () => ipcRenderer.invoke('outlook:status'),
   getOutlookToken: () => ipcRenderer.invoke('outlook:getToken'),
@@ -174,10 +226,16 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   updatesDownload: () => ipcRenderer.invoke('updates:download'),
   updatesInstall: () => ipcRenderer.invoke('updates:install'),
   updatesSetChannel: (channel: 'stable' | 'beta' | 'staging') => ipcRenderer.invoke('updates:setChannel', channel),
+  updatesGetApiEndpoint: () => ipcRenderer.invoke('updates:getApiEndpoint'),
   onUpdatesState: (cb: (data: any) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('updates:state', handler);
     return () => { try { ipcRenderer.off('updates:state', handler); } catch { } };
+  },
+  onApiEndpointChanged: (cb: (endpoint: string) => void) => {
+    const handler = (_e: any, endpoint: string) => cb(endpoint);
+    ipcRenderer.on('updates:api-endpoint-changed', handler);
+    return () => { try { ipcRenderer.off('updates:api-endpoint-changed', handler); } catch { } };
   },
   // Speech
   startSpeechStream: (url: string, token: string) => ipcRenderer.invoke('speech:start', { url, token }),
@@ -284,4 +342,49 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   billingOpenPortal: (customerId: string) => ipcRenderer.invoke('billing:openPortal', customerId),
   billingPurchaseCredits: (options: { productId: string; email: string; userId?: string }) =>
     ipcRenderer.invoke('billing:purchaseCredits', options),
+
+  // Quick Shortcuts / Bookmarks
+  bookmarksList: () => ipcRenderer.invoke('bookmarks:list'),
+  bookmarksSave: (bookmarks: any[]) => ipcRenderer.invoke('bookmarks:save', bookmarks),
+  bookmarksAdd: (bookmark: any) => ipcRenderer.invoke('bookmarks:add', bookmark),
+  bookmarksUpdate: (bookmark: any) => ipcRenderer.invoke('bookmarks:update', bookmark),
+  bookmarksDelete: (bookmarkId: string) => ipcRenderer.invoke('bookmarks:delete', bookmarkId),
+  bookmarksReorder: (bookmarkIds: string[]) => ipcRenderer.invoke('bookmarks:reorder', bookmarkIds),
+  bookmarksExecute: (bookmark: any) => ipcRenderer.invoke('bookmarks:execute', bookmark),
+  selectFolder: (options?: { title?: string; multiple?: boolean }) => ipcRenderer.invoke('files:selectFolder', options),
+
+  // Unified Tasks System
+  unifiedTasksList: () => ipcRenderer.invoke('unified-tasks:list'),
+  unifiedTasksGet: (taskId: string) => ipcRenderer.invoke('unified-tasks:get', taskId),
+  unifiedTasksAdd: (task: any) => ipcRenderer.invoke('unified-tasks:add', task),
+  unifiedTasksUpdate: (task: any) => ipcRenderer.invoke('unified-tasks:update', task),
+  unifiedTasksDelete: (taskId: string) => ipcRenderer.invoke('unified-tasks:delete', taskId),
+  unifiedTasksToggleStatus: (taskId: string) => ipcRenderer.invoke('unified-tasks:toggle-status', taskId),
+  unifiedTasksAddSubtodo: (taskId: string, subtodo: any) => ipcRenderer.invoke('unified-tasks:add-subtodo', taskId, subtodo),
+  unifiedTasksToggleSubtodo: (taskId: string, subtodoId: string) => ipcRenderer.invoke('unified-tasks:toggle-subtodo', taskId, subtodoId),
+  unifiedTasksDeleteSubtodo: (taskId: string, subtodoId: string) => ipcRenderer.invoke('unified-tasks:delete-subtodo', taskId, subtodoId),
+  unifiedTasksAddAgentAssignment: (taskId: string, assignment: any) => ipcRenderer.invoke('unified-tasks:add-agent-assignment', taskId, assignment),
+  unifiedTasksUpdateAgentAssignment: (taskId: string, assignmentId: string, updates: any) => ipcRenderer.invoke('unified-tasks:update-agent-assignment', taskId, assignmentId, updates),
+  unifiedTasksDeleteAgentAssignment: (taskId: string, assignmentId: string) => ipcRenderer.invoke('unified-tasks:delete-agent-assignment', taskId, assignmentId),
+  // Reminder convenience aliases (reminders are agent assignments with type='reminder')
+  unifiedTasksAddReminder: (taskId: string, reminder: any) => ipcRenderer.invoke('unified-tasks:add-agent-assignment', taskId, { ...reminder, type: 'reminder' }),
+  unifiedTasksDeleteReminder: (taskId: string, reminderId: string) => ipcRenderer.invoke('unified-tasks:delete-agent-assignment', taskId, reminderId),
+  unifiedTasksGetPendingAssignments: () => ipcRenderer.invoke('unified-tasks:get-pending-assignments'),
+  unifiedTasksGetCalendarItems: () => ipcRenderer.invoke('unified-tasks:get-calendar-items'),
+
+  // Legacy User To-Do List (for backwards compatibility)
+  todosList: () => ipcRenderer.invoke('todos:list'),
+  todosSave: (todos: any[]) => ipcRenderer.invoke('todos:save', todos),
+  todosAdd: (todo: any) => ipcRenderer.invoke('todos:add', todo),
+  todosUpdate: (todo: any) => ipcRenderer.invoke('todos:update', todo),
+  todosDelete: (todoId: string) => ipcRenderer.invoke('todos:delete', todoId),
+  todosToggle: (todoId: string) => ipcRenderer.invoke('todos:toggle', todoId),
+  todosReorder: (todoIds: string[]) => ipcRenderer.invoke('todos:reorder', todoIds),
+
+  // View mode change events (for shortcuts to switch views)
+  onViewModeChange: (cb: (data: { mode: 'chat' | 'tasks'; subTab?: 'todo' | 'agent' }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('overlay:view-mode', handler);
+    return () => { try { ipcRenderer.off('overlay:view-mode', handler); } catch { } };
+  },
 });

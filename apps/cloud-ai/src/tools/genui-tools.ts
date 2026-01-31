@@ -245,6 +245,25 @@ export const showProgress = createTool({
   },
 });
 
+// === Feedback Form ===
+
+export const showFeedbackForm = createTool({
+  id: 'show_feedback_form',
+  description: 'Display an interactive feedback form for bug reports or feature requests. Blocks until user submits or cancels.',
+  inputSchema: z.object({
+    type: z.enum(['bug', 'feature']).optional().describe('Pre-selected feedback type'),
+    title: z.string().optional().describe('Pre-filled title'),
+    description: z.string().optional().describe('Pre-filled description'),
+    severity: z.enum(['low', 'medium', 'high', 'critical']).optional().describe('Pre-selected severity (bugs only)'),
+    labels: z.array(z.string()).optional().describe('Pre-selected labels'),
+    suggestedLabels: z.array(z.string()).optional().default(['ui', 'performance', 'workflow', 'bug', 'enhancement', 'documentation']).describe('Available label options'),
+    allowScreenshot: z.boolean().optional().default(true).describe('Show screenshot capture button'),
+  }),
+  execute: async (args) => {
+    return executeGenUI('show_feedback_form', args, true);
+  },
+});
+
 // Export all GenUI tools
 export const genuiTools = {
   ask_confirmation: askConfirmation,
@@ -260,5 +279,6 @@ export const genuiTools = {
   show_link: showLink,
   show_colors: showColors,
   show_progress: showProgress,
+  show_feedback_form: showFeedbackForm,
 };
 

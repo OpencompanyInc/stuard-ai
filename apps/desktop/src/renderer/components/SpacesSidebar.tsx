@@ -39,7 +39,9 @@ import {
   MoveRight,
   GripVertical,
   List,
-  FolderTree
+  FolderTree,
+  MessageSquare,
+  PenTool
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -64,7 +66,7 @@ export interface Space {
 export interface SpaceItem {
   id: string;
   space_id: string;
-  type: 'note' | 'source' | 'link' | 'file' | 'fact' | 'snippet' | 'folder';
+  type: 'note' | 'source' | 'link' | 'file' | 'fact' | 'snippet' | 'folder' | 'conversation' | 'image' | 'canvas';
   title?: string | null;
   content: string;
   added_by?: string;
@@ -74,6 +76,13 @@ export interface SpaceItem {
   children?: SpaceItem[];
   created_at?: string;
   updated_at?: string;
+  metadata?: {
+    conversationId?: string;
+    canvasId?: string;
+    filePath?: string;
+    mimeType?: string;
+    thumbnailUrl?: string;
+  };
 }
 
 export interface ShareInfo {
@@ -89,6 +98,8 @@ interface SpacesSidebarProps {
   translucentMode?: boolean;
   onSelectSpace?: (space: Space) => void;
   onClose?: () => void;
+  selectedSpaceId?: string;
+  onSelectedSpaceHandled?: () => void;
   accessToken?: string | null;
 }
 
@@ -117,14 +128,17 @@ const getSpaceAccent = (type: Space['type']) => {
 };
 
 const ItemIcon: React.FC<{ type: SpaceItem['type']; className?: string }> = ({ type, className }) => {
-  const icons = {
+  const icons: Record<string, React.FC<{ className?: string }>> = {
     note: FileText,
     link: Link2,
     source: Link2,
     snippet: Code,
     file: File,
     fact: Hash,
-    folder: Folder
+    folder: Folder,
+    conversation: MessageSquare,
+    image: FileImage,
+    canvas: PenTool
   };
   const Icon = icons[type] || FileText;
   return <Icon className={className} />;
@@ -203,7 +217,10 @@ const TreeItem: React.FC<{
       snippet: 'bg-amber-500/10 text-amber-500',
       file: 'bg-violet-500/10 text-violet-500',
       fact: 'bg-pink-500/10 text-pink-500',
-      folder: 'bg-yellow-500/10 text-yellow-600'
+      folder: 'bg-yellow-500/10 text-yellow-600',
+      conversation: 'bg-cyan-500/10 text-cyan-500',
+      image: 'bg-rose-500/10 text-rose-500',
+      canvas: 'bg-purple-500/10 text-purple-500'
     };
     return colors[item.type] || colors.note;
   };
@@ -379,7 +396,10 @@ const ContentCard: React.FC<{
       snippet: 'bg-amber-500/10 text-amber-500',
       file: 'bg-violet-500/10 text-violet-500',
       fact: 'bg-pink-500/10 text-pink-500',
-      folder: 'bg-yellow-500/10 text-yellow-600'
+      folder: 'bg-yellow-500/10 text-yellow-600',
+      conversation: 'bg-cyan-500/10 text-cyan-500',
+      image: 'bg-rose-500/10 text-rose-500',
+      canvas: 'bg-purple-500/10 text-purple-500'
     };
     return colors[item.type] || colors.note;
   };
@@ -478,6 +498,8 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
   translucentMode,
   onSelectSpace,
   onClose,
+  selectedSpaceId,
+  onSelectedSpaceHandled,
   accessToken
 }) => {
   // State
@@ -485,6 +507,17 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedSpace, setSelectedSpace] = useState<Space | null>(null);
+
+  // Handle external space selection (from bookmarks)
+  useEffect(() => {
+    if (selectedSpaceId && spaces.length > 0) {
+      const space = spaces.find(s => s.id === selectedSpaceId);
+      if (space) {
+        setSelectedSpace(space);
+        onSelectedSpaceHandled?.();
+      }
+    }
+  }, [selectedSpaceId, spaces, onSelectedSpaceHandled]);
   const [items, setItems] = useState<SpaceItem[]>([]);
   const [treeItems, setTreeItems] = useState<SpaceItem[]>([]);
   const [itemsLoading, setItemsLoading] = useState(false);
@@ -520,6 +553,14 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
   const [newItemType, setNewItemType] = useState<SpaceItem['type']>('note');
   const [isAddingItem, setIsAddingItem] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  
+  // Link item states
+  const [availableCanvases, setAvailableCanvases] = useState<Array<{ id: string; title: string }>>([]);
+  const [availableConversations, setAvailableConversations] = useState<Array<{ id: string; title: string; preview?: string }>>([]);
+  const [selectedCanvasId, setSelectedCanvasId] = useState<string>("");
+  const [selectedConversationId, setSelectedConversationId] = useState<string>("");
+  const [selectedFilePath, setSelectedFilePath] = useState<string>("");
+  const [isLoadingLinkOptions, setIsLoadingLinkOptions] = useState(false);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
 
   // Share state
@@ -647,21 +688,94 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
     }
   };
 
+  // Load link options when modal opens
+  const loadLinkOptions = async () => {
+    setIsLoadingLinkOptions(true);
+    try {
+      // Load canvases
+      const canvasResult = await (window as any).desktopAPI?.listCanvasDocuments?.();
+      if (Array.isArray(canvasResult)) {
+        setAvailableCanvases(canvasResult.map((c: any) => ({ id: c.id, title: c.title || 'Untitled' })));
+      }
+      // Load conversations
+      const convResult = await (window as any).desktopAPI?.listConversations?.();
+      if (Array.isArray(convResult)) {
+        setAvailableConversations(convResult.map((c: any) => ({
+          id: c.id,
+          title: c.title || c.preview?.slice(0, 50) || 'Untitled Chat',
+          preview: c.preview
+        })));
+      }
+    } catch (err) {
+      console.error('Failed to load link options:', err);
+    } finally {
+      setIsLoadingLinkOptions(false);
+    }
+  };
+
+  // Browse for file
+  const handleBrowseFile = async () => {
+    try {
+      const result = await (window as any).desktopAPI?.showOpenDialog?.({
+        properties: ['openFile'],
+        filters: [
+          { name: 'All Files', extensions: ['*'] },
+          { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] },
+          { name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'txt', 'md'] }
+        ]
+      });
+      if (result && !result.canceled && result.filePaths?.[0]) {
+        setSelectedFilePath(result.filePaths[0]);
+        const filename = result.filePaths[0].split(/[/\\]/).pop() || 'File';
+        if (!newItemTitle) setNewItemTitle(filename);
+      }
+    } catch (err) {
+      console.error('Failed to browse file:', err);
+    }
+  };
+
   const handleAddItem = async () => {
-    if (!selectedSpace || !newItemContent.trim()) return;
+    if (!selectedSpace) return;
+    
+    // Validate based on type
+    let content = newItemContent.trim();
+    let metadata: any = {};
+    
+    if (newItemType === 'canvas') {
+      if (!selectedCanvasId) return;
+      const canvas = availableCanvases.find(c => c.id === selectedCanvasId);
+      content = canvas?.title || 'Canvas Document';
+      metadata.canvasId = selectedCanvasId;
+    } else if (newItemType === 'conversation') {
+      if (!selectedConversationId) return;
+      const conv = availableConversations.find(c => c.id === selectedConversationId);
+      content = conv?.title || 'Conversation';
+      metadata.conversationId = selectedConversationId;
+    } else if (newItemType === 'file' || newItemType === 'image') {
+      if (!selectedFilePath) return;
+      content = selectedFilePath;
+      metadata.filePath = selectedFilePath;
+    } else {
+      if (!content) return;
+    }
+    
     setIsAddingItem(true);
     try {
       const result = await (window as any).desktopAPI?.execTool?.('space_item_add', {
         space_id: selectedSpace.id,
         type: newItemType,
-        content: newItemContent,
+        content,
         title: newItemTitle || undefined,
-        parent_id: currentFolderId || undefined
+        parent_id: currentFolderId || undefined,
+        metadata: Object.keys(metadata).length > 0 ? metadata : undefined
       });
       if (result?.ok) {
         setToastMessage('Added to space');
         setNewItemContent("");
         setNewItemTitle("");
+        setSelectedCanvasId("");
+        setSelectedConversationId("");
+        setSelectedFilePath("");
         setIsAddItemOpen(false);
         loadSpaceItems(selectedSpace);
         loadFolderTree(selectedSpace);
@@ -1005,34 +1119,45 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-theme-muted mb-2">Type</label>
-                <div className="flex gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   {[
                     { id: 'note', label: 'Note', icon: FileText },
                     { id: 'link', label: 'Link', icon: Link2 },
-                    { id: 'snippet', label: 'Code', icon: Code }
+                    { id: 'snippet', label: 'Code', icon: Code },
+                    { id: 'conversation', label: 'Chat', icon: MessageSquare },
+                    { id: 'file', label: 'File', icon: File },
+                    { id: 'canvas', label: 'Canvas', icon: PenTool }
                   ].map(t => (
                     <button
                       key={t.id}
-                      onClick={() => setNewItemType(t.id as any)}
+                      onClick={() => {
+                        setNewItemType(t.id as any);
+                        if (t.id === 'canvas' || t.id === 'conversation') {
+                          loadLinkOptions();
+                        }
+                      }}
                       className={clsx(
-                        "flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-medium border-2 transition-all",
+                        "flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-[11px] font-medium border-2 transition-all",
                         newItemType === t.id
                           ? "bg-primary/10 border-primary/30 text-primary"
                           : "bg-theme-hover border-transparent text-theme-muted hover:border-theme"
                       )}
                     >
-                      <t.icon className="w-4 h-4" />
+                      <t.icon className="w-3.5 h-3.5" />
                       {t.label}
                     </button>
                   ))}
                 </div>
               </div>
+
               {currentFolderId && (
                 <div className="flex items-center gap-2 text-xs text-theme-muted bg-theme-hover rounded-lg px-3 py-2">
                   <Folder className="w-3.5 h-3.5" />
                   Adding to: {folderPath[folderPath.length - 1]?.title || 'Current folder'}
                 </div>
               )}
+
+              {/* Title - always shown */}
               <div>
                 <label className="block text-xs font-medium text-theme-muted mb-2">Title <span className="opacity-50">(optional)</span></label>
                 <input
@@ -1042,29 +1167,131 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                   onChange={e => setNewItemTitle(e.target.value)}
                 />
               </div>
-              <div>
-                <label className="block text-xs font-medium text-theme-muted mb-2">Content</label>
-                <textarea
-                  className={clsx(
-                    "w-full bg-theme-hover border border-theme rounded-xl px-3.5 py-2.5 text-sm text-theme-fg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none resize-none h-32 transition-all",
-                    newItemType === 'snippet' && "font-mono text-xs"
+
+              {/* Content based on type */}
+              {(newItemType === 'note' || newItemType === 'link' || newItemType === 'snippet') && (
+                <div>
+                  <label className="block text-xs font-medium text-theme-muted mb-2">Content</label>
+                  <textarea
+                    className={clsx(
+                      "w-full bg-theme-hover border border-theme rounded-xl px-3.5 py-2.5 text-sm text-theme-fg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none resize-none h-32 transition-all",
+                      newItemType === 'snippet' && "font-mono text-xs"
+                    )}
+                    placeholder={newItemType === 'link' ? "https://..." : newItemType === 'snippet' ? "Paste your code..." : "Write your note..."}
+                    value={newItemContent}
+                    onChange={e => setNewItemContent(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+              )}
+
+              {/* Canvas dropdown */}
+              {newItemType === 'canvas' && (
+                <div>
+                  <label className="block text-xs font-medium text-theme-muted mb-2">Select Canvas</label>
+                  {isLoadingLinkOptions ? (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="w-5 h-5 animate-spin text-theme-muted" />
+                    </div>
+                  ) : availableCanvases.length === 0 ? (
+                    <div className="text-center py-4 text-sm text-theme-muted bg-theme-hover rounded-xl">
+                      <PenTool className="w-6 h-6 mx-auto mb-2 opacity-50" />
+                      No canvas documents yet
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedCanvasId}
+                      onChange={e => setSelectedCanvasId(e.target.value)}
+                      className="w-full bg-theme-hover border border-theme rounded-xl px-3.5 py-2.5 text-sm text-theme-fg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all cursor-pointer"
+                    >
+                      <option value="">Choose a canvas...</option>
+                      {availableCanvases.map(c => (
+                        <option key={c.id} value={c.id}>{c.title}</option>
+                      ))}
+                    </select>
                   )}
-                  placeholder={newItemType === 'link' ? "https://..." : newItemType === 'snippet' ? "Paste your code..." : "Write your note..."}
-                  value={newItemContent}
-                  onChange={e => setNewItemContent(e.target.value)}
-                  autoFocus
-                />
-              </div>
+                </div>
+              )}
+
+              {/* Conversation dropdown */}
+              {newItemType === 'conversation' && (
+                <div>
+                  <label className="block text-xs font-medium text-theme-muted mb-2">Select Conversation</label>
+                  {isLoadingLinkOptions ? (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="w-5 h-5 animate-spin text-theme-muted" />
+                    </div>
+                  ) : availableConversations.length === 0 ? (
+                    <div className="text-center py-4 text-sm text-theme-muted bg-theme-hover rounded-xl">
+                      <MessageSquare className="w-6 h-6 mx-auto mb-2 opacity-50" />
+                      No conversations yet
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedConversationId}
+                      onChange={e => setSelectedConversationId(e.target.value)}
+                      className="w-full bg-theme-hover border border-theme rounded-xl px-3.5 py-2.5 text-sm text-theme-fg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all cursor-pointer"
+                    >
+                      <option value="">Choose a conversation...</option>
+                      {availableConversations.map(c => (
+                        <option key={c.id} value={c.id}>{c.title}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
+
+              {/* File browser */}
+              {(newItemType === 'file' || newItemType === 'image') && (
+                <div>
+                  <label className="block text-xs font-medium text-theme-muted mb-2">
+                    {newItemType === 'image' ? 'Select Image' : 'Select File'}
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={selectedFilePath}
+                      placeholder="No file selected..."
+                      className="flex-1 bg-theme-hover border border-theme rounded-xl px-3.5 py-2.5 text-sm text-theme-fg outline-none truncate"
+                    />
+                    <button
+                      onClick={handleBrowseFile}
+                      className="px-4 py-2.5 bg-theme-hover hover:bg-theme-active border border-theme rounded-xl text-sm font-medium text-theme-fg transition-colors flex items-center gap-2"
+                    >
+                      <FolderOpen className="w-4 h-4" />
+                      Browse
+                    </button>
+                  </div>
+                  {selectedFilePath && (
+                    <p className="text-[10px] text-theme-muted mt-1.5 truncate">
+                      {selectedFilePath}
+                    </p>
+                  )}
+                </div>
+              )}
+
               <div className="flex justify-end gap-2 pt-2">
                 <button
-                  onClick={() => setIsAddItemOpen(false)}
+                  onClick={() => {
+                    setIsAddItemOpen(false);
+                    setSelectedCanvasId("");
+                    setSelectedConversationId("");
+                    setSelectedFilePath("");
+                  }}
                   className="px-4 py-2.5 text-sm font-medium text-theme-muted hover:bg-theme-hover rounded-xl transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleAddItem}
-                  disabled={!newItemContent.trim() || isAddingItem}
+                  disabled={
+                    isAddingItem ||
+                    (newItemType === 'canvas' && !selectedCanvasId) ||
+                    (newItemType === 'conversation' && !selectedConversationId) ||
+                    ((newItemType === 'file' || newItemType === 'image') && !selectedFilePath) ||
+                    ((newItemType === 'note' || newItemType === 'link' || newItemType === 'snippet') && !newItemContent.trim())
+                  }
                   className="px-5 py-2.5 text-sm font-medium text-primary-fg bg-primary hover:opacity-90 rounded-xl transition-all disabled:opacity-50 flex items-center gap-2"
                 >
                   {isAddingItem && <Loader2 className="w-4 h-4 animate-spin" />}

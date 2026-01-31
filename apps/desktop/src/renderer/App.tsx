@@ -1,5 +1,3 @@
-
-import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import posthog from "posthog-js";
 import 'katex/dist/katex.min.css'; // Global Katex styles
@@ -227,6 +225,16 @@ export default function App() {
     const unsubModeChanged = window.desktopAPI?.onModeChanged?.((data) => {
       setOverlayMode(data.mode as any);
       setWindowSize({ width: data.width, height: data.height });
+      // Close internal sidebar when switching to compact mode
+      if (data.mode === 'compact') {
+        setInternalSidebarOpen(false);
+      }
+    });
+    
+    // Listen for internal sidebar state changes from main process
+    const unsubInternalSidebar = (window.desktopAPI as any)?.onInternalSidebarChanged?.((data: { open: boolean; width: number }) => {
+      setInternalSidebarOpen(data.open);
+      setWindowSize(prev => ({ ...prev, width: data.width }));
     });
 
     // Get initial size
@@ -241,6 +249,7 @@ export default function App() {
       try { unsubResizing?.(); } catch { }
       try { unsubResized?.(); } catch { }
       try { unsubModeChanged?.(); } catch { }
+      try { unsubInternalSidebar?.(); } catch { }
     };
   }, []);
 
@@ -582,6 +591,10 @@ export default function App() {
       setLoadingConvs(false);
     }
   };
+  // --- Sidebar & Tabs State ---
+  const [internalSidebarOpen, setInternalSidebarOpen] = useState(false);
+  const [activeSidebarTab, setActiveSidebarTab] = useState<'spaces' | 'canvas' | 'terminal'>('spaces');
+
   useEffect(() => {
     if (chatMenuOpen) fetchConversations();
   }, [chatMenuOpen, signedIn]);
@@ -896,6 +909,45 @@ export default function App() {
   const handleRemoveContext = useCallback((idx: number) => setContextPaths(prev => prev.filter((_, i) => i !== idx)), []);
   const handleAddContext = useCallback((item: ContextItem) => setContextPaths(prev => prev.some(p => p.path === item.path) ? prev : [...prev, item]), []);
   const handleRemoveAttachment = useCallback((i: number) => setAttachments(p => p.filter((_, idx) => idx !== i)), []);
+
+  const handleToggleInternalSidebar = useCallback(async () => {
+    const nextState = !internalSidebarOpen;
+    
+    // Only expand/contract window in sidebar/window modes
+    if (overlayMode === 'sidebar' || overlayMode === 'window') {
+      // Let the main process handle window width expansion/contraction
+      try {
+        const result = await (window.desktopAPI as any).toggleInternalSidebar?.(nextState);
+        if (result) {
+          setInternalSidebarOpen(result.open);
+          return;
+        }
+      } catch (e) {
+        console.warn('toggleInternalSidebar failed, falling back:', e);
+      }
+    }
+    
+    // Fallback: just toggle state without window resize
+    setInternalSidebarOpen(nextState);
+  }, [internalSidebarOpen, overlayMode]);
+
+  const handleCloseInternalSidebar = useCallback(async () => {
+    // Contract window width when closing sidebar
+    if (overlayMode === 'sidebar' || overlayMode === 'window') {
+      try {
+        const result = await (window.desktopAPI as any).toggleInternalSidebar?.(false);
+        if (result) {
+          setInternalSidebarOpen(result.open);
+          return;
+        }
+      } catch (e) {
+        console.warn('toggleInternalSidebar(close) failed:', e);
+      }
+    }
+    setInternalSidebarOpen(false);
+  }, [overlayMode]);
+  const handleSwitchSidebarTab = useCallback((tab: 'spaces' | 'canvas' | 'terminal') => setActiveSidebarTab(tab), []);
+
   const handleClosePalette = useCallback(() => setShowPalette(false), []);
   const handleCloseHotkeys = useCallback(() => setShowHotkeys(false), []);
 
@@ -1221,13 +1273,6 @@ export default function App() {
                   onCollapse={handleShowCompact}
                   onOpenDashboard={handleOpenDashboard}
                   onNewChat={handleNewChat}
-                  onToggleSidebar={handleToggleSpaces}
-                  sidebarOpen={false}
-                  query={query}
-                  setQuery={setQuery}
-                  onSend={handleSend}
-                  onStop={stopGeneration}
-                  isStreaming={isStreaming}
                   isRecording={isRecording}
                   onMicClick={handleMicClick}
                   conversations={convList}
@@ -1243,8 +1288,6 @@ export default function App() {
                   chatModels={chatModels}
                   onChatModelsChange={setChatModels as any}
                   overlayMode={overlayMode}
-
-                  // Tabs
                   tabs={tabs}
                   activeTabId={activeTabId}
                   onSwitchTab={switchTab}
@@ -1253,15 +1296,10 @@ export default function App() {
                   translucentMode={translucentMode}
                   onSubmitToolOutput={submitToolOutput}
                   onGenUIResponse={handleGenUIResponse}
-
                   pendingMemories={pendingMemories}
                   onConfirmPendingMemory={confirmPendingMemory}
                   onRejectPendingMemory={rejectPendingMemory}
-
-                  // Context
                   onAddContext={handleAddContext}
-
-                  // Attachments
                   attachments={attachments}
                   onRemoveAttachment={handleRemoveAttachment}
                   onAttachFiles={handleAttachFiles}
@@ -1269,6 +1307,16 @@ export default function App() {
                   onDrop={handleDrop}
                   queueDepth={queueDepth}
                   queuedMessages={queuedMessages}
+                  query={query}
+                  setQuery={setQuery}
+                  onSend={handleSend}
+                  onStop={stopGeneration}
+                  isStreaming={isStreaming}
+                  internalSidebarOpen={internalSidebarOpen}
+                  activeSidebarTab={activeSidebarTab}
+                  onToggleInternalSidebar={handleToggleInternalSidebar}
+                  onCloseInternalSidebar={handleCloseInternalSidebar}
+                  onSwitchSidebarTab={handleSwitchSidebarTab}
                 />
               ) : (
                 <LauncherView
@@ -1290,14 +1338,19 @@ export default function App() {
                   onNewChat={handleNewChat}
                   onOpenDashboard={handleOpenDashboard}
                   onToggleExpand={handleShowWindow}
-                  onToggleSidebar={handleToggleSpaces}
-                  sidebarOpen={false}
+                  onToggleSidebar={handleToggleInternalSidebar}
+                  sidebarOpen={internalSidebarOpen}
                   plannerData={plannerData}
                   translucentMode={translucentMode}
                   chatMode={chatMode}
                   onChatModeChange={setChatMode as any}
                   chatModels={chatModels}
                   onChatModelsChange={setChatModels as any}
+
+                  // Internal Sidebar
+                  activeSidebarTab={activeSidebarTab}
+                  onCloseInternalSidebar={handleCloseInternalSidebar}
+                  onSwitchSidebarTab={handleSwitchSidebarTab}
                 />
               )}
             </div>

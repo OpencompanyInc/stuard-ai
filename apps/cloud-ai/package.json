@@ -22,7 +22,7 @@
   "dependencies": {
     "@ai-sdk/deepseek": "^1.0.31",
     "@ai-sdk/google": "^2.0.51",
-    "@ai-sdk/openai": "^2.0.80",
+    "@ai-sdk/openai": "^2.0.89",
     "@ai-sdk/xai": "^2.0.39",
     "@google-cloud/storage": "^7.13.0",
     "@mastra/core": "^0.24.9",

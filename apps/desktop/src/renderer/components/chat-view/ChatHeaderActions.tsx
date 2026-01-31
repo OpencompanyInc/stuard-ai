@@ -6,9 +6,10 @@ import {
   Home,
   Clock,
   Trash2,
-  Cpu,
+  ListTodo,
   AppWindow,
   PanelRight,
+  PanelLeftClose,
   Minimize2
 } from 'lucide-react';
 
@@ -45,30 +46,31 @@ export const ChatHeaderActions: React.FC<ChatHeaderActionsProps> = ({
 }) => {
   return (
     <div className="flex items-center gap-1 flex-shrink-0">
-      {onToggleSidebar && (
+      {/* Internal Sidebar (Spaces, Canvas, Terminal) - shown in window/sidebar modes */}
+      {(overlayMode === 'window' || overlayMode === 'sidebar') && onToggleSidebar && (
         <button
           onClick={onToggleSidebar}
           className={clsx(
             "w-8 h-8 rounded-lg flex items-center justify-center hover:bg-theme-hover transition-colors border border-theme/10",
-            sidebarOpen ? "bg-primary/10 text-primary" : "bg-theme-card/80 text-theme-muted"
+            sidebarOpen ? "bg-primary/10 text-primary border-primary/20" : "bg-theme-card/80 text-theme-muted"
           )}
-          title="Spaces"
+          title="Sidebar (Spaces, Canvas, Terminal)"
         >
-          <LayoutGrid className="w-3.5 h-3.5" />
+          <PanelLeftClose className="w-3.5 h-3.5" />
         </button>
       )}
 
-      {/* Tasks Toggle */}
+      {/* Tasks Toggle (To-Do List + Agent Tasks) */}
       {onViewModeChange && (
         <button
           onClick={() => onViewModeChange(viewMode === 'tasks' ? 'chat' : 'tasks')}
           className={clsx(
             "w-8 h-8 rounded-lg flex items-center justify-center hover:bg-theme-hover transition-colors border border-theme/10",
-            viewMode === 'tasks' ? "bg-amber-500/10 text-amber-500 border-amber-500/20" : "bg-theme-card/80 text-theme-muted"
+            viewMode === 'tasks' ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" : "bg-theme-card/80 text-theme-muted"
           )}
           title="Tasks"
         >
-          <Cpu className="w-3.5 h-3.5" />
+          <ListTodo className="w-3.5 h-3.5" />
         </button>
       )}
 
@@ -105,7 +107,7 @@ export const ChatHeaderActions: React.FC<ChatHeaderActionsProps> = ({
       <button className="w-8 h-8 bg-theme-card/80 rounded-lg flex items-center justify-center hover:bg-theme-hover transition-colors border border-theme/10" title="Dashboard" onClick={onOpenDashboard}>
         <Home className="w-3.5 h-3.5 text-theme-muted" />
       </button>
-      
+
       {/* History Dropdown */}
       <DropdownMenu.Root open={chatMenuOpen} onOpenChange={onChatMenuOpenChange}>
         <DropdownMenu.Trigger asChild>
@@ -133,8 +135,8 @@ export const ChatHeaderActions: React.FC<ChatHeaderActionsProps> = ({
                       onSelect={() => onSelectConversation(String(c.id))}
                       className="text-[13px] text-theme-fg flex flex-col px-2 py-2 pr-10 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors border-l-2 border-transparent hover:border-primary/50"
                     >
-                      <span className="truncate w-full font-bold">{c.title || 'Untitled Chat'}</span>
-                      <span className="text-[10px] text-theme-muted font-bold mt-0.5">{c.created_at ? new Date(c.created_at).toLocaleDateString() : ''}</span>
+                      <span className="truncate w-full font-semibold">{c.title || 'Untitled Chat'}</span>
+                      <span className="text-[10px] text-theme-muted font-medium mt-0.5">{c.created_at ? new Date(c.created_at).toLocaleDateString() : ''}</span>
                     </DropdownMenu.Item>
                     <button
                       onClick={(e) => {

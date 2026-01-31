@@ -21,12 +21,57 @@ export interface DesignerNode {
   waitForAll?: boolean;
 }
 
+/** Input parameter definition for workflow-as-function */
+export interface WorkflowInputParam {
+  name: string;
+  type: 'string' | 'number' | 'boolean' | 'json' | 'array';
+  description?: string;
+  required?: boolean;
+  defaultValue?: any;
+}
+
+/** Output field definition for workflow return value */
+export interface WorkflowOutputField {
+  name: string;
+  type: 'string' | 'number' | 'boolean' | 'json' | 'array';
+  description?: string;
+}
+
 export interface DesignerTrigger {
   id: string;
   type: string;
   label: string;
   args: any;
   position: { x: number; y: number };
+  /** Input parameters this workflow accepts (for workflow-as-function use) */
+  inputParams?: WorkflowInputParam[];
+}
+
+/** Loop configuration for a wire - defines how the target node should be executed repeatedly */
+export interface WireLoopConfig {
+  /** Loop type: 'forEach' iterates over items, 'while' continues while condition is true, 'repeat' runs N times */
+  type: 'forEach' | 'while' | 'repeat';
+  
+  /** For 'forEach': the array/list to iterate over (can be a variable reference like {{step.items}}) */
+  items?: string;
+  
+  /** For 'forEach': the variable name to store the current item (default: 'item') */
+  itemVar?: string;
+  
+  /** For 'forEach': the variable name to store the current index (default: 'index') */
+  indexVar?: string;
+  
+  /** For 'while': the condition to check before each iteration (JSONLogic format) */
+  condition?: any;
+  
+  /** For 'repeat': the number of times to repeat */
+  count?: number;
+  
+  /** Maximum iterations allowed (safety limit, default: 1000) */
+  maxIterations?: number;
+  
+  /** Delay in ms between iterations (default: 0) */
+  delayMs?: number;
 }
 
 export interface DesignerWire {
@@ -34,6 +79,10 @@ export interface DesignerWire {
   to: string;
   guard?: any;
   label?: string;
+  /** Optional loop configuration - when set, the target node will be executed in a loop */
+  loop?: WireLoopConfig;
+  /** When true, this wire marks the end of a loop scope - nodes after this wire run outside the loop */
+  loopBreak?: boolean;
 }
 
 /** A workflow-level variable that can be referenced by any step */
@@ -63,6 +112,8 @@ export interface DesignerModel {
   locked?: boolean;
   /** Slug of the marketplace workflow this was imported from (for tracking locked status) */
   marketplaceSlug?: string;
+  /** Output schema for workflow return value (for workflow-as-function use) */
+  outputSchema?: WorkflowOutputField[];
 }
 
 export interface StuardSpec {

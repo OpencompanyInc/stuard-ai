@@ -1,143 +1,152 @@
 from __future__ import annotations
 
-import asyncio
+"""
+Canvas Document Tools
+
+These tools manage sidebar canvas documents - a scratchpad where users can type notes
+and AI can read/modify content. Documents are stored locally and synced via IPC to desktop.
+"""
+
 import uuid
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 
-_CANVASES: Dict[str, Dict[str, Any]] = {}
+# In-memory storage for canvas documents
+# In production, these are forwarded to the desktop app via IPC
+_DOCUMENTS: Dict[str, Dict[str, Any]] = {}
 
 
 def _gen_id() -> str:
-    return f"canvas-{uuid.uuid4().hex[:8]}"
+    return f"doc-{uuid.uuid4().hex[:8]}"
 
 
-async def canvas_manager(args: Dict[str, Any], emit: Optional[Any] = None) -> Dict[str, Any]:
-    action = str(args.get("action") or "create").lower()
-    if action not in {"create", "update", "delete", "list", "show", "hide", "focus", "clear"}:
-        return {"ok": False, "error": "invalid_action"}
+def _now_iso() -> str:
+    return datetime.utcnow().isoformat() + "Z"
 
-    if action == "create":
-        cid = str(args.get("id") or _gen_id())
-        # Prefer 'info' template automatically when content is provided so Markdown/LaTeX renders
-        raw_content = args.get("content")
-        template = str(args.get("template") or ("info" if (isinstance(raw_content, str) and raw_content.strip()) else "notes"))
-        title = str(args.get("title") or "")
-        pos = args.get("position") or {}
-        size = args.get("size") or {}
-        content = raw_content
-        data = args.get("data")
-        item = {
-            "id": cid,
-            "template": template,
-            "title": title,
-            "position": {"x": int(pos.get("x") or 40), "y": int(pos.get("y") or 40)},
-            "size": {"width": int(size.get("width") or 320), "height": int(size.get("height") or 200)},
-            "visible": True,
-            "content": content,
-            "data": data,
-        }
-        _CANVASES[cid] = item
-        if emit:
-            try:
-                await emit("progress", {"kind": "canvas_action", "action": "create", "canvas": item})
-            except Exception:
-                pass
-        return {"ok": True, "id": cid}
 
-    if action == "update":
-        cid = str(args.get("id") or "").strip()
-        if not cid or cid not in _CANVASES:
-            return {"ok": False, "error": "not_found"}
-        it = _CANVASES[cid]
-        if "template" in args and args["template"]:
-            it["template"] = str(args["template"]) 
-        if "title" in args:
-            it["title"] = str(args.get("title") or "")
-        if "position" in args and isinstance(args.get("position"), dict):
-            p = args["position"] or {}
-            it["position"] = {"x": int(p.get("x") or it["position"]["x"]), "y": int(p.get("y") or it["position"]["y"]) }
-        if "size" in args and isinstance(args.get("size"), dict):
-            s = args["size"] or {}
-            it["size"] = {"width": int(s.get("width") or it["size"]["width"]), "height": int(s.get("height") or it["size"]["height"]) }
-        if "content" in args:
-            new_content = args.get("content")
-            it["content"] = new_content
-            # If content is being set and no explicit template was provided in this update,
-            # auto-switch a notes board to info so Markdown/LaTeX renders.
-            if ("template" not in args or not args.get("template")) and it.get("template") == "notes":
-                if isinstance(new_content, str) and new_content.strip():
-                    it["template"] = "info"
-        if "data" in args:
-            it["data"] = args.get("data")
-        if emit:
-            try:
-                await emit("progress", {"kind": "canvas_action", "action": "update", "canvas": it})
-            except Exception:
-                pass
-        return {"ok": True, "id": cid}
+async def canvas_list(args: Dict[str, Any], emit: Optional[Any] = None) -> Dict[str, Any]:
+    """List all canvas documents."""
+    documents = list(_DOCUMENTS.values())
+    return {"ok": True, "documents": documents}
 
-    if action == "delete":
-        cid = str(args.get("id") or "").strip()
-        if not cid or cid not in _CANVASES:
-            return {"ok": False, "error": "not_found"}
+
+async def canvas_read(args: Dict[str, Any], emit: Optional[Any] = None) -> Dict[str, Any]:
+    """Read content from a canvas document."""
+    doc_id = args.get("documentId")
+    
+    if doc_id:
+        doc = _DOCUMENTS.get(doc_id)
+        if not doc:
+            return {"ok": False, "error": "Document not found", "document": None}
+        return {"ok": True, "document": doc}
+    
+    # If no ID provided, return the most recently updated document
+    if not _DOCUMENTS:
+        return {"ok": True, "document": None}
+    
+    most_recent = max(_DOCUMENTS.values(), key=lambda d: d.get("updatedAt", ""))
+    return {"ok": True, "document": most_recent}
+
+
+async def canvas_write(args: Dict[str, Any], emit: Optional[Any] = None) -> Dict[str, Any]:
+    """Write or modify content in a canvas document."""
+    doc_id = args.get("documentId")
+    content = args.get("content")
+    title = args.get("title")
+    action = args.get("action", "replace")
+    position = args.get("position", 0)
+    
+    # Find target document
+    if doc_id:
+        doc = _DOCUMENTS.get(doc_id)
+        if not doc:
+            return {"ok": False, "error": "Document not found"}
+    else:
+        # Use most recent document or create new one
+        if not _DOCUMENTS:
+            # Auto-create a document
+            doc_id = _gen_id()
+            now = _now_iso()
+            doc = {
+                "id": doc_id,
+                "title": title or "Untitled",
+                "content": "",
+                "createdAt": now,
+                "updatedAt": now,
+            }
+            _DOCUMENTS[doc_id] = doc
+        else:
+            doc = max(_DOCUMENTS.values(), key=lambda d: d.get("updatedAt", ""))
+    
+    # Apply content changes
+    if content is not None:
+        current_content = doc.get("content", "")
+        if action == "replace":
+            doc["content"] = content
+        elif action == "append":
+            doc["content"] = current_content + content
+        elif action == "insert":
+            pos = max(0, min(position, len(current_content)))
+            doc["content"] = current_content[:pos] + content + current_content[pos:]
+    
+    # Update title if provided
+    if title is not None:
+        doc["title"] = title
+    
+    doc["updatedAt"] = _now_iso()
+    
+    if emit:
         try:
-            _CANVASES.pop(cid, None)
+            await emit("progress", {"kind": "canvas_write", "documentId": doc["id"], "action": action})
         except Exception:
             pass
-        if emit:
-            try:
-                await emit("progress", {"kind": "canvas_action", "action": "delete", "id": cid})
-            except Exception:
-                pass
-        return {"ok": True}
+    
+    return {"ok": True}
 
-    if action == "show":
-        cid = str(args.get("id") or "").strip()
-        if not cid or cid not in _CANVASES:
-            return {"ok": False, "error": "not_found"}
-        _CANVASES[cid]["visible"] = True
-        if emit:
-            try:
-                await emit("progress", {"kind": "canvas_action", "action": "show", "id": cid})
-            except Exception:
-                pass
-        return {"ok": True}
 
-    if action == "hide":
-        cid = str(args.get("id") or "").strip()
-        if not cid or cid not in _CANVASES:
-            return {"ok": False, "error": "not_found"}
-        _CANVASES[cid]["visible"] = False
-        if emit:
-            try:
-                await emit("progress", {"kind": "canvas_action", "action": "hide", "id": cid})
-            except Exception:
-                pass
-        return {"ok": True}
+async def canvas_create(args: Dict[str, Any], emit: Optional[Any] = None) -> Dict[str, Any]:
+    """Create a new canvas document."""
+    title = args.get("title", "Untitled")
+    content = args.get("content", "")
+    
+    doc_id = _gen_id()
+    now = _now_iso()
+    
+    doc = {
+        "id": doc_id,
+        "title": title,
+        "content": content,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    _DOCUMENTS[doc_id] = doc
+    
+    if emit:
+        try:
+            await emit("progress", {"kind": "canvas_create", "documentId": doc_id})
+        except Exception:
+            pass
+    
+    return {"ok": True, "documentId": doc_id}
 
-    if action == "focus":
-        cid = str(args.get("id") or "").strip()
-        if not cid or cid not in _CANVASES:
-            return {"ok": False, "error": "not_found"}
-        if emit:
-            try:
-                await emit("progress", {"kind": "canvas_action", "action": "focus", "id": cid})
-            except Exception:
-                pass
-        return {"ok": True}
 
-    if action == "clear":
-        _CANVASES.clear()
-        if emit:
-            try:
-                await emit("progress", {"kind": "canvas_action", "action": "clear"})
-            except Exception:
-                pass
-        return {"ok": True}
-
-    if action == "list":
-        items = list(_CANVASES.values())
-        return {"ok": True, "items": items}
-
-    return {"ok": False, "error": "unhandled"}
+async def canvas_delete(args: Dict[str, Any], emit: Optional[Any] = None) -> Dict[str, Any]:
+    """Delete a canvas document by ID."""
+    doc_id = args.get("documentId")
+    
+    if not doc_id:
+        return {"ok": False, "error": "documentId is required"}
+    
+    if doc_id not in _DOCUMENTS:
+        return {"ok": False, "error": "Document not found"}
+    
+    del _DOCUMENTS[doc_id]
+    
+    if emit:
+        try:
+            await emit("progress", {"kind": "canvas_delete", "documentId": doc_id})
+        except Exception:
+            pass
+    
+    return {"ok": True}

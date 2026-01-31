@@ -135,6 +135,24 @@ export const CLOUD_TOOL_ITEMS: PaletteItem[] = [
   },
 ];
 
+// Basic Math Operations (Scratch-like)
+export const MATH_ITEMS: PaletteItem[] = [
+  { k: 'local.tool', t: 'math_add', label: 'Add', args: { a: 0, b: 0 } },
+  { k: 'local.tool', t: 'math_subtract', label: 'Subtract', args: { a: 0, b: 0 } },
+  { k: 'local.tool', t: 'math_multiply', label: 'Multiply', args: { a: 0, b: 0 } },
+  { k: 'local.tool', t: 'math_divide', label: 'Divide', args: { a: 0, b: 1 } },
+  { k: 'local.tool', t: 'math_power', label: 'Power', args: { a: 2, b: 2 } },
+  { k: 'local.tool', t: 'math_sqrt', label: 'Square Root', args: { x: 4 } },
+  { k: 'local.tool', t: 'math_abs', label: 'Absolute', args: { x: -5 } },
+  { k: 'local.tool', t: 'math_random', label: 'Random', args: { min: 1, max: 10 } },
+  { k: 'local.tool', t: 'math_sum', label: 'Sum List', args: { x: [1, 2, 3] } },
+  { k: 'local.tool', t: 'math_mean', label: 'Average', args: { x: [1, 2, 3] } },
+  { k: 'local.tool', t: 'math_max', label: 'Max', args: { x: [1, 5, 3] } },
+  { k: 'local.tool', t: 'math_min', label: 'Min', args: { x: [1, 5, 3] } },
+  { k: 'local.tool', t: 'math_compare', label: 'Compare', args: { a: 5, b: 3, op: 'gt' } },
+  { k: 'local.tool', t: 'math_range', label: 'Range', args: { start: 1, stop: 10 } },
+];
+
 export const INTEGRATION_ITEMS: PaletteItem[] = [
   { k: 'cloud.tool', t: 'google_drive_list_files', label: 'Google Drive', args: {} },
   { k: 'cloud.tool', t: 'google_calendar_list_events', label: 'Google Calendar', args: {} },

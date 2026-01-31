@@ -1,6 +1,17 @@
 import { RouterContext } from '../tool-router';
 
-export type StuardEdge = { to: string; guard?: any; label?: string };
+export type LoopConfig = {
+  type: 'forEach' | 'repeat' | 'while';
+  items?: string;
+  itemVar?: string;
+  indexVar?: string;
+  count?: number;
+  conditionText?: string;
+  maxIterations?: number;
+  delayMs?: number;
+};
+
+export type StuardEdge = { to: string; guard?: any; label?: string; loop?: LoopConfig; loopBreak?: boolean };
 export type StuardStep = {
   id: string;
   tool?: string;

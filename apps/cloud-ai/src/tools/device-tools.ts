@@ -187,8 +187,20 @@ export {
   ffmpeg_extract_frames,
 } from './device/ffmpeg';
 
-// Canvas / Container Manager
-export { canvas_manager } from './device/canvas';
+// Canvas Document Tools (AI can read/write user's canvas notes)
+export {
+  canvas_list,
+  canvas_read,
+  canvas_write,
+  canvas_create,
+  canvas_delete,
+  // Backward compatibility aliases
+  sidebar_canvas_list,
+  sidebar_canvas_read,
+  sidebar_canvas_write,
+  sidebar_canvas_create,
+  sidebar_canvas_delete,
+} from './device/sidebar-canvas';
 
 // ============================================================================
 // Workflow Variables - Persistent state across workflow runs
@@ -298,6 +310,65 @@ Args:
 export { deployHeadlessAgent } from './deploy-headless-agent';
 export { listHeadlessAgentTasks } from './list-headless-agent-tasks';
 export { getHeadlessAgentStatus } from './get-headless-agent-status';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MATH & NEURAL NETWORK OPERATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  // Basic arithmetic
+  math_add,
+  math_subtract,
+  math_multiply,
+  math_divide,
+  math_power,
+  math_sqrt,
+  math_abs,
+  math_negate,
+  math_exp,
+  math_log,
+  // Aggregations
+  math_sum,
+  math_mean,
+  math_max,
+  math_min,
+  math_argmax,
+  math_argmin,
+  // Matrix operations
+  math_dot,
+  math_transpose,
+  math_reshape,
+  math_shape,
+  math_flatten,
+  // Tensor creation
+  math_zeros,
+  math_ones,
+  math_random,
+  math_range,
+  math_linspace,
+  // Activation functions
+  math_sigmoid,
+  math_relu,
+  math_leaky_relu,
+  math_tanh,
+  math_softmax,
+  math_gelu,
+  math_swish,
+  // Neural network layers
+  math_linear,
+  math_forward_pass,
+  math_cross_entropy_loss,
+  math_mse_loss,
+  // Comparison & logic
+  math_compare,
+  math_clip,
+  math_where,
+  // Array operations
+  math_concat,
+  math_stack,
+  math_slice,
+  math_get_index,
+  math_set_index,
+} from './device/math';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // FILE INDEX & SEARCH

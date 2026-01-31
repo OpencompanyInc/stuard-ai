@@ -419,41 +419,84 @@ EXAMPLE:
 });
 
 export const retrieveToolFormat = createTool({
-  id: 'retrieve_tool_format',
-  description: 'Return the canonical list of Stuard workflow triggers and tools with their argument formats.',
+  id: 'get_tool_schema',
+  description: 'Get the schema and argument format for a specific tool by name. Pass the exact tool name to get its args template.',
+  inputSchema: z.object({
+    toolName: z.string().describe('The exact tool name to look up (e.g., "take_screenshot", "run_command")'),
+  }),
+  outputSchema: z.object({
+    found: z.boolean(),
+    tool: z.object({
+      id: z.string(),
+      kind: z.string().optional(),
+      description: z.string().optional(),
+      argsTemplate: z.any().optional(),
+      outputSchema: z.any().optional(),
+      category: z.string().optional(),
+    }).optional(),
+    error: z.string().optional(),
+  }),
+  execute: async ({ context }) => {
+    const { toolName } = context as { toolName: string };
+    
+    if (!toolName) {
+      return { found: false, error: 'toolName is required' };
+    }
+
+    // Search in TOOL_DEFINITIONS
+    const tool = TOOL_DEFINITIONS.find(def => 
+      def.id === toolName || 
+      def.id.toLowerCase() === toolName.toLowerCase()
+    );
+
+    if (tool) {
+      return {
+        found: true,
+        tool: {
+          id: tool.id,
+          kind: tool.kind,
+          description: tool.description,
+          argsTemplate: tool.argsTemplate,
+          outputSchema: tool.outputSchema,
+          category: tool.category,
+        },
+      };
+    }
+
+    // Not found - suggest similar tools
+    const similar = TOOL_DEFINITIONS
+      .filter(def => def.id.toLowerCase().includes(toolName.toLowerCase()) || 
+                     toolName.toLowerCase().includes(def.id.toLowerCase().split('_')[0]))
+      .slice(0, 5)
+      .map(def => def.id);
+
+    return {
+      found: false,
+      error: `Tool "${toolName}" not found.${similar.length > 0 ? ` Similar: ${similar.join(', ')}` : ' Use search_tools to find available tools.'}`,
+    };
+  },
+});
+
+// Legacy: list all tools (for backward compatibility)
+export const listAllToolFormats = createTool({
+  id: 'list_all_tool_formats',
+  description: 'Return ALL workflow triggers and tools with their argument formats. Use get_tool_schema for a specific tool.',
   inputSchema: z.object({}),
   outputSchema: z.object({
-    triggers: z.array(
-      z.object({
-        type: z.string(),
-        description: z.string().optional(),
-        argsTemplate: z.any().optional(),
-      }),
-    ),
-    tools: z.array(
-      z.object({
-        id: z.string(),
-        kind: z.enum(['local', 'cloud', 'orchestration']),
-        description: z.string().optional(),
-        argsTemplate: z.any().optional(),
-        outputSchema: z.any().optional(),
-        category: z.string().optional(),
-      }),
-    ),
+    triggers: z.array(z.any()),
+    tools: z.array(z.any()),
   }),
   execute: async () => {
     const triggers = [
       { type: 'manual', description: 'Manual trigger - run workflow on demand', argsTemplate: {} },
-      { type: 'webhook.local', description: 'Local webhook trigger - receive HTTP requests at http://127.0.0.1:18080/webhooks/incoming/<workflowId> (port/path may vary; the Desktop app can provide the exact URL)', argsTemplate: {} },
+      { type: 'webhook.local', description: 'Local webhook trigger', argsTemplate: {} },
       { type: 'webhook.cloud', description: 'Cloud webhook trigger', argsTemplate: {} },
-      { type: 'schedule.cron', description: 'Cron schedule trigger - run on a schedule', argsTemplate: { cron: '0 9 * * *' } },
-      { type: 'hotkey', description: 'Global hotkey trigger - run when keyboard shortcut pressed', argsTemplate: { accelerator: 'Ctrl+Alt+K' } },
-      { type: 'keystroke', description: 'Keystroke sequence trigger - fires when user types a specific text sequence (e.g., "stuard" or "//help")', argsTemplate: { sequence: 'stuard' } },
-      { type: 'fs.watch', description: 'Filesystem watch trigger - run when files change', argsTemplate: { path: 'C:/path', pattern: '*.*' } },
-      { type: 'outlook.calendar.poll', description: 'Outlook calendar polling trigger', argsTemplate: { intervalMs: 60000 } },
+      { type: 'schedule.cron', description: 'Cron schedule trigger', argsTemplate: { cron: '0 9 * * *' } },
+      { type: 'hotkey', description: 'Global hotkey trigger', argsTemplate: { accelerator: 'Ctrl+Alt+K' } },
+      { type: 'keystroke', description: 'Keystroke sequence trigger', argsTemplate: { sequence: 'stuard' } },
+      { type: 'fs.watch', description: 'Filesystem watch trigger', argsTemplate: { path: 'C:/path', pattern: '*.*' } },
     ];
 
-    // Use TOOL_DEFINITIONS from definitions.ts - single source of truth!
     const tools = TOOL_DEFINITIONS.map(def => ({
       id: def.id,
       kind: def.kind,

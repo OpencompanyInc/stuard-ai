@@ -13,7 +13,7 @@ import type { ToolCall, StreamChunk } from '../hooks/useAgent';
 
 import { AudioPlayer } from './AudioPlayer';
 import { LinkPreview } from './LinkPreview';
-import { GenUIContainer } from './genui/GenUIContainer';
+import { GenUIContainer, GenUIErrorBoundary } from './genui';
 
 // GenUI tools that render interactive UI components
 const GENUI_TOOL_NAMES = new Set([
@@ -228,6 +228,7 @@ interface MessageBubbleProps {
   contextPaths?: ContextPath[];
   onSubmitToolOutput?: (id: string, result: any) => void;
   onGenUIResponse?: (component: string, result: any) => void; // For syntax-based GenUI (```genui:...) responses
+  compact?: boolean;
 }
 
 // Convert local file path to local-file:// URL for Electron (custom protocol)
@@ -782,7 +783,7 @@ function processCustomMarkdown(text: string): string {
   );
 }
 
-const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasoning, reasoningDuration, toolCalls, streamChunks, isStreaming, contextPaths, onSubmitToolOutput, onGenUIResponse }) => {
+const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasoning, reasoningDuration, toolCalls, streamChunks, isStreaming, contextPaths, onSubmitToolOutput, onGenUIResponse, compact }) => {
   const [reasoningExpanded, setReasoningExpanded] = useState(false);
   const reasoningRef = useRef<HTMLDivElement>(null);
   const [genUIResults, setGenUIResults] = useState<Record<string, any>>({});
@@ -1276,89 +1277,95 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                 return <ToolCallPill key={`t-${idx}`} tool={tc} />;
               }
               // Text chunk
-              const chunkSegments = extractContentSegments(chunk.content);
-              return (
-                <div
-                  key={`txt-${idx}`}
-                  className={clsx(
-                    "w-fit",
-                    "rounded-[22px] px-5 py-3.5 backdrop-blur-md text-[16px] leading-relaxed transition-all",
-                    "bg-gray-100 text-gray-900 rounded-tl-sm"
-                  )}
-                >
-                  <div className="select-text whitespace-pre-wrap break-normal font-medium">
-                    {chunkSegments.map((seg, segIdx) => {
-                      if (seg.kind === 'genui') {
-                        const isCompleted = genUIResults[seg.id] !== undefined;
-                        return (
-                          <div key={`genui-${idx}-${segIdx}`} className="my-3">
-                            <GenUIContainer
-                              toolName={seg.component}
-                              args={stripMarkdownFromArgs(seg.args)}
-                              isCompleted={isCompleted}
-                              result={genUIResults[seg.id]}
-                              onResult={(result) => {
-                                // Update local state
-                                setGenUIResults(prev => ({ ...prev, [seg.id]: result }));
-                                // For syntax-based GenUI, trigger a follow-up message to the AI
-                                if (onGenUIResponse) {
-                                  onGenUIResponse(seg.component, result);
-                                }
-                              }}
-                            />
-                          </div>
-                        );
-                      }
-                      if (seg.kind === 'genui_loading') {
-                        return (
-                          <div key={`genui-loading-${idx}-${segIdx}`} className="my-3 p-5 border border-theme/20 rounded-xl bg-theme-hover/30 animate-pulse shadow-inner">
-                            <div className="flex items-center gap-3">
-                              <Loader2 className="w-4 h-4 text-primary animate-spin" />
-                              <span className="text-[11px] font-black uppercase tracking-widest text-theme-muted">
-                                {seg.title || humanizeToolName(seg.component) || 'Loading component...'}
-                              </span>
+              if (chunk.type === 'text') {
+                const chunkSegments = extractContentSegments(chunk.content);
+                return (
+                  <div
+                    key={`txt-${idx}`}
+                    className={clsx(
+                      "w-fit",
+                      "rounded-[22px] px-5 py-3.5 backdrop-blur-md text-[16px] leading-relaxed transition-all",
+                      "bg-gray-100 text-gray-900 rounded-tl-sm",
+                      "max-w-[85%]"
+                    )}
+                  >
+                    <div className="select-text whitespace-pre-wrap font-medium break-words">
+                      {chunkSegments.map((seg, segIdx) => {
+                        if (seg.kind === 'genui') {
+                          const isCompleted = genUIResults[seg.id] !== undefined;
+                          return (
+                            <div key={`genui-${idx}-${segIdx}`} className="my-3">
+                              <GenUIErrorBoundary componentName={seg.component}>
+                                <GenUIContainer
+                                  toolName={seg.component}
+                                  args={stripMarkdownFromArgs(seg.args)}
+                                  isCompleted={isCompleted}
+                                  result={genUIResults[seg.id]}
+                                  onResult={(result) => {
+                                    // Update local state
+                                    setGenUIResults(prev => ({ ...prev, [seg.id]: result }));
+                                    // For syntax-based GenUI, trigger a follow-up message to the AI
+                                    if (onGenUIResponse) {
+                                      onGenUIResponse(seg.component, result);
+                                    }
+                                  }}
+                                />
+                              </GenUIErrorBoundary>
                             </div>
-                            <div className="mt-4 space-y-2">
-                              <div className="h-3 bg-theme-muted/20 rounded-full w-3/4" />
-                              <div className="h-3 bg-theme-muted/10 rounded-full w-1/2" />
+                          );
+                        }
+                        if (seg.kind === 'genui_loading') {
+                          return (
+                            <div key={`genui-loading-${idx}-${segIdx}`} className="my-3 p-5 border border-theme/20 rounded-xl bg-theme-hover/30 animate-pulse shadow-inner">
+                              <div className="flex items-center gap-3">
+                                <Loader2 className="w-4 h-4 text-primary animate-spin" />
+                                <span className="text-[11px] font-black uppercase tracking-widest text-theme-muted">
+                                  {seg.title || humanizeToolName(seg.component) || 'Loading component...'}
+                                </span>
+                              </div>
+                              <div className="mt-4 space-y-2">
+                                <div className="h-3 bg-theme-muted/20 rounded-full w-3/4" />
+                                <div className="h-3 bg-theme-muted/10 rounded-full w-1/2" />
+                              </div>
                             </div>
-                          </div>
-                        );
-                      }
-                      if (seg.kind === 'image') {
-                        return <InlineImage key={`img-${idx}-${segIdx}`} src={seg.src} />;
-                      }
-                      if (seg.kind === 'video') {
-                        return <InlineVideo key={`vid-${idx}-${segIdx}`} src={seg.src} />;
-                      }
-                      if (seg.kind === 'audio') {
-                        return <AudioPlayer key={`aud-${idx}-${segIdx}`} src={toMediaSrc(seg.src)} />;
-                      }
-                      if (seg.kind === 'youtube') {
-                        return <YouTubeEmbed key={`yt-${idx}-${segIdx}`} videoId={seg.videoId} url={seg.url} />;
-                      }
-                      if (seg.kind === 'link_preview') {
-                        return <LinkPreview key={`lp-${idx}-${segIdx}`} url={seg.url} />;
-                      }
-                      if (seg.kind === 'text') {
-                        return (
-                          <ReactMarkdown
-                            key={`md-${idx}-${segIdx}`}
-                            remarkPlugins={[remarkMath, remarkGfm]}
-                            rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
-                            urlTransform={(url) => url}
-                            components={markdownComponents}
-                          >
-                            {seg.value}
-                          </ReactMarkdown>
-                        );
-                      }
+                          );
+                        }
+                        if (seg.kind === 'image') {
+                          return <InlineImage key={`img-${idx}-${segIdx}`} src={seg.src} />;
+                        }
+                        if (seg.kind === 'video') {
+                          return <InlineVideo key={`vid-${idx}-${segIdx}`} src={seg.src} />;
+                        }
+                        if (seg.kind === 'audio') {
+                          return <AudioPlayer key={`aud-${idx}-${segIdx}`} src={toMediaSrc(seg.src)} />;
+                        }
+                        if (seg.kind === 'youtube') {
+                          return <YouTubeEmbed key={`yt-${idx}-${segIdx}`} videoId={seg.videoId} url={seg.url} />;
+                        }
+                        if (seg.kind === 'link_preview') {
+                          return <LinkPreview key={`lp-${idx}-${segIdx}`} url={seg.url} />;
+                        }
+                        if (seg.kind === 'text') {
+                          return (
+                            <ReactMarkdown
+                              key={`md-${idx}-${segIdx}`}
+                              remarkPlugins={[remarkMath, remarkGfm]}
+                              rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
+                              urlTransform={(url) => url}
+                              components={markdownComponents}
+                            >
+                              {seg.value}
+                            </ReactMarkdown>
+                          );
+                        }
 
-                      return null;
-                    })}
+                        return null;
+                      })}
+                    </div>
                   </div>
-                </div>
-              );
+                );
+              }
+              return null;
             })}
             {role === 'assistant' && !isStreaming && streamChunks && streamChunks.length > 0 && (
               <div className="flex items-center gap-2 mt-1 opacity-0 group-hover/bubble:opacity-100 transition-opacity ml-1">
@@ -1376,13 +1383,18 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
         ) : (
           // Fallback to single bubble for user messages or when no streamChunks
           <div className={clsx(
-            "rounded-2xl px-5 py-3.5 text-[15px] relative group/bubble leading-relaxed transition-all",
-            role === 'user'
-              ? "bg-primary text-primary-fg border-primary shadow-primary/5 ml-auto w-fit max-w-[85%] min-w-[56px] font-bold"
-              : "bg-gray-100 text-gray-900 mr-auto w-fit font-medium"
+            "text-[15px] relative group/bubble leading-relaxed transition-all",
+            compact
+              ? "w-full max-w-full bg-transparent px-4 py-3 text-theme-fg"
+              : clsx(
+                  "rounded-2xl px-5 py-3.5",
+                  role === 'user'
+                    ? "bg-primary text-primary-fg border-primary shadow-primary/5 ml-auto w-fit max-w-[85%] min-w-[56px] font-semibold"
+                    : "bg-gray-100 text-gray-900 mr-auto w-fit max-w-[85%] font-medium"
+                )
           )}>
             <div
-              className="select-text whitespace-pre-wrap break-normal"
+              className="select-text whitespace-pre-wrap break-words"
               aria-live={role === 'assistant' && isStreaming ? "polite" : "off"}
             >
               {segments.length === 0 ? (
@@ -1400,20 +1412,22 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                     const isCompleted = genUIResults[seg.id] !== undefined;
                     return (
                       <div key={`genui-${idx}`} className="my-3">
-                        <GenUIContainer
-                          toolName={seg.component}
-                          args={stripMarkdownFromArgs(seg.args)}
-                          isCompleted={isCompleted}
-                          result={genUIResults[seg.id]}
-                          onResult={(result) => {
-                            // Update local state
-                            setGenUIResults(prev => ({ ...prev, [seg.id]: result }));
-                            // For syntax-based GenUI, trigger a follow-up message to the AI
-                            if (onGenUIResponse) {
-                              onGenUIResponse(seg.component, result);
-                            }
-                          }}
-                        />
+                        <GenUIErrorBoundary componentName={seg.component}>
+                          <GenUIContainer
+                            toolName={seg.component}
+                            args={stripMarkdownFromArgs(seg.args)}
+                            isCompleted={isCompleted}
+                            result={genUIResults[seg.id]}
+                            onResult={(result) => {
+                              // Update local state
+                              setGenUIResults(prev => ({ ...prev, [seg.id]: result }));
+                              // For syntax-based GenUI, trigger a follow-up message to the AI
+                              if (onGenUIResponse) {
+                                onGenUIResponse(seg.component, result);
+                              }
+                            }}
+                          />
+                        </GenUIErrorBoundary>
                       </div>
                     );
                   }
@@ -1493,7 +1507,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
           <span className="inline-block w-[3px] h-4 bg-primary ml-1 animate-[blink_1s_step-end_infinite] align-middle rounded-full shadow-sm shadow-primary/20" />
         )}
       </div>
-    </div>
+    </div >
   );
 };
 

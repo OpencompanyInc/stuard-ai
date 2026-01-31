@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
-import { Calendar as CalendarIcon, Clock, Plus, RefreshCw, Link2, ChevronLeft, ChevronRight } from "lucide-react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
+import { Calendar as CalendarIcon, Clock, Plus, RefreshCw, Link2, ChevronLeft, ChevronRight, ListTodo, Bell, Trash2 } from "lucide-react";
 import { clsx } from 'clsx';
 
 export type PlannerViewMode = "today" | "month";
@@ -19,21 +19,11 @@ export interface UnifiedPlannerViewProps {
   onSelectBlock: (id: string) => void;
   onRescheduleBlock?: (block: any, newDateIso: string) => void | Promise<void>;
   onRefresh: () => void;
-  plannerAddOpen: boolean;
-  setPlannerAddOpen: (open: boolean) => void;
-  plannerAddType: "task" | "reminder";
-  setPlannerAddType: (type: "task" | "reminder") => void;
-  plannerAddTitle: string;
-  setPlannerAddTitle: (v: string) => void;
-  plannerAddWhen: string;
-  setPlannerAddWhen: (v: string) => void;
-  plannerAddPriority: "low" | "normal" | "high";
-  setPlannerAddPriority: (v: "low" | "normal" | "high") => void;
-  plannerAddSaving: boolean;
-  plannerAddError: string | null;
-  setPlannerAddError: (v: string | null) => void;
-  onSubmitAdd: () => void;
   AGENT_HTTP?: string;
+  // Tasks integration
+  tasks?: any[];
+  onAddReminder?: (taskId: string, reminder: { message: string; scheduledAt: string }) => void;
+  onDeleteReminder?: (taskId: string, reminderId: string) => void;
 }
 
 const HOUR_HEIGHT = 64;
@@ -50,13 +40,10 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
   calendarView, onChangeCalendarView, calendarRefDate, onMonthChange, calendarRange,
   calendarLoading, calendarError, calendarBlocksSorted, calendarDays = [],
   selectedBlock, selectedBlockId, onSelectBlock, onRescheduleBlock, onRefresh,
-  plannerAddOpen, setPlannerAddOpen,
-  plannerAddType, setPlannerAddType,
-  plannerAddTitle, setPlannerAddTitle,
-  plannerAddWhen, setPlannerAddWhen,
-  plannerAddPriority, setPlannerAddPriority,
-  plannerAddSaving, plannerAddError, setPlannerAddError,
-  onSubmitAdd,
+  AGENT_HTTP,
+  tasks = [],
+  onAddReminder,
+  onDeleteReminder,
 }) => {
 
   const [selectedDateKey, setSelectedDateKey] = React.useState<string | null>(null);
@@ -114,9 +101,32 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
     return "";
   };
 
+  // Convert tasks with due dates to calendar blocks
+  const taskBlocks = useMemo(() => {
+    return tasks
+      .filter(t => t.dueDate && t.status !== 'completed' && t.showInCalendar !== false)
+      .map(t => ({
+        id: `task_${t.id}`,
+        title: t.title,
+        start: t.dueDate,
+        end: t.dueDate,
+        allDay: t.allDay !== false,
+        source: 'task',
+        priority: t.priority,
+        taskId: t.id,
+        subTodosTotal: t.subTodos?.length || 0,
+        subTodosCompleted: t.subTodos?.filter((s: any) => s.completed).length || 0,
+      }));
+  }, [tasks]);
+
+  // Merge calendar blocks with task blocks
+  const mergedBlocks = useMemo(() => {
+    return [...calendarBlocksSorted, ...taskBlocks];
+  }, [calendarBlocksSorted, taskBlocks]);
+
   const dayBlocks = React.useMemo(() => {
-    if (!Array.isArray(calendarBlocksSorted)) return [];
-    return calendarBlocksSorted.filter(b => {
+    if (!Array.isArray(mergedBlocks)) return [];
+    return mergedBlocks.filter(b => {
       if (b.allDay) return false;
       try {
         const s = b.start ? new Date(b.start) : null;
@@ -130,11 +140,11 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
       } catch { }
       return false;
     });
-  }, [calendarBlocksSorted, viewDateIso]);
+  }, [mergedBlocks, viewDateIso]);
 
   const allDayBlocks = React.useMemo(() => {
-    if (!Array.isArray(calendarBlocksSorted)) return [];
-    return calendarBlocksSorted.filter(b => {
+    if (!Array.isArray(mergedBlocks)) return [];
+    return mergedBlocks.filter(b => {
       if (!b.allDay) return false;
       try {
         const raw = typeof b.start === 'string' ? b.start.slice(0, 10) : '';
@@ -150,14 +160,32 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
       } catch { }
       return false;
     });
-  }, [calendarBlocksSorted, viewDateIso]);
+  }, [mergedBlocks, viewDateIso]);
 
   const monthWeeks = React.useMemo(() => {
     if (calendarView !== "month") return [];
+    // Merge task blocks into calendarDays
+    const tasksByDate: Record<string, any[]> = {};
+    for (const tb of taskBlocks) {
+      try {
+        const s = tb.start ? new Date(tb.start) : null;
+        if (s && !isNaN(s.getTime())) {
+          const y = s.getFullYear();
+          const m = String(s.getMonth() + 1).padStart(2, '0');
+          const d = String(s.getDate()).padStart(2, '0');
+          const iso = `${y}-${m}-${d}`;
+          if (!tasksByDate[iso]) tasksByDate[iso] = [];
+          tasksByDate[iso].push(tb);
+        }
+      } catch { }
+    }
     if (Array.isArray(calendarDays) && calendarDays.length > 0) {
       const dayMap: Record<string, any[]> = {};
       for (const d of calendarDays) {
-        if (d && d.date) dayMap[d.date] = d.blocks || [];
+        if (d && d.date) {
+          const combined = [...(d.blocks || []), ...(tasksByDate[d.date] || [])];
+          dayMap[d.date] = combined;
+        }
       }
       let base: Date | null = null;
       try {
@@ -322,99 +350,8 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
           >
             <RefreshCw className={clsx("w-4 h-4", calendarLoading && "animate-spin")} />
           </button>
-          <button
-            onClick={() => { setPlannerAddOpen(true); setPlannerAddError(null); }}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-theme-button bg-primary text-primary-fg text-[12px] font-bold hover:opacity-90 transition-colors shadow-sm"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Add Item
-          </button>
         </div>
       </div>
-
-      {plannerAddOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-theme-card border border-theme rounded-theme-card shadow-2xl max-w-md w-full p-6 animate-in fade-in zoom-in duration-200">
-            <h3 className="text-xl font-stuard font-bold text-theme-fg mb-1">New {plannerAddType === 'task' ? 'Task' : 'Reminder'}</h3>
-            <p className="text-[12px] text-theme-muted mb-6">Plan your next move with Stuard.</p>
-
-            <div className="flex gap-2 mb-4 p-1 bg-theme-hover rounded-theme-button border border-theme">
-              <button
-                onClick={() => setPlannerAddType("task")}
-                className={clsx("flex-1 py-1.5 text-[12px] font-bold rounded-theme-button transition-all", plannerAddType === "task" ? "bg-theme-card text-theme-fg shadow-sm" : "text-theme-muted hover:text-theme-fg")}
-              >
-                Task
-              </button>
-              <button
-                onClick={() => setPlannerAddType("reminder")}
-                className={clsx("flex-1 py-1.5 text-[12px] font-bold rounded-theme-button transition-all", plannerAddType === "reminder" ? "bg-theme-card text-theme-fg shadow-sm" : "text-theme-muted hover:text-theme-fg")}
-              >
-                Reminder
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-[11px] font-bold text-theme-muted uppercase tracking-wide mb-1">Title</label>
-                <input
-                  autoFocus
-                  value={plannerAddTitle}
-                  onChange={(e) => setPlannerAddTitle(e.target.value)}
-                  placeholder={plannerAddType === "task" ? "What needs doing?" : "What to remind you about?"}
-                  className="w-full px-3 py-2 rounded-theme-button border border-theme bg-theme-hover text-theme-fg text-[13px] focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary placeholder:text-theme-muted"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-theme-muted uppercase tracking-wide mb-1">Date & Time</label>
-                <input
-                  type="datetime-local"
-                  value={plannerAddWhen}
-                  onChange={(e) => setPlannerAddWhen(e.target.value)}
-                  className="w-full px-3 py-2 rounded-theme-button border border-theme bg-theme-hover text-theme-fg text-[13px] focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-                />
-              </div>
-
-              {plannerAddType === "task" && (
-                <div>
-                  <label className="block text-[11px] font-bold text-theme-muted uppercase tracking-wide mb-1">Priority</label>
-                  <select
-                    value={plannerAddPriority}
-                    onChange={(e: any) => setPlannerAddPriority(e.target.value)}
-                    className="w-full px-3 py-2 rounded-theme-button border border-theme bg-theme-hover text-theme-fg text-[13px] focus:outline-none focus:border-primary"
-                  >
-                    <option value="low">Low</option>
-                    <option value="normal">Normal</option>
-                    <option value="high">High</option>
-                  </select>
-                </div>
-              )}
-
-              {plannerAddError && (
-                <div className="text-[11px] text-red-500 bg-red-500/10 px-3 py-2 rounded-theme-button border border-red-500/20">
-                  {plannerAddError}
-                </div>
-              )}
-            </div>
-
-            <div className="flex justify-end gap-2 mt-8">
-              <button
-                onClick={() => setPlannerAddOpen(false)}
-                className="px-4 py-2 rounded-theme-button text-[12px] font-medium text-theme-muted hover:bg-theme-hover transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={onSubmitAdd}
-                disabled={plannerAddSaving}
-                className="px-4 py-2 rounded-theme-button bg-primary text-primary-fg text-[12px] font-bold hover:opacity-90 disabled:opacity-50 transition-colors shadow-sm"
-              >
-                {plannerAddSaving ? "Saving..." : "Create Item"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       <div className="flex-1 flex gap-4 min-h-0">
         <div className="flex-1 bg-theme-card rounded-theme-card border border-theme shadow-sm overflow-hidden flex flex-col relative">
@@ -509,7 +446,9 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
                         "absolute left-16 right-4 rounded-theme-button border p-2.5 text-[11px] overflow-hidden cursor-pointer transition-all hover:z-20 cursor-move shadow-sm group/block",
                         isSelected
                           ? "bg-primary text-primary-fg border-primary z-20 shadow-xl scale-[1.01]"
-                          : "bg-theme-card text-theme-fg border-theme hover:border-primary/30 hover:bg-theme-hover z-10 border-l-4 border-l-primary"
+                          : b.source === 'task'
+                            ? "bg-emerald-500/10 text-theme-fg border-emerald-500/30 hover:border-emerald-500/50 hover:bg-emerald-500/15 z-10 border-l-4 border-l-emerald-500"
+                            : "bg-theme-card text-theme-fg border-theme hover:border-primary/30 hover:bg-theme-hover z-10 border-l-4 border-l-primary"
                       )}
                       style={{
                         top,
@@ -537,15 +476,15 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
           )}
 
           {calendarView === "month" && (
-            <div className="flex-1 flex flex-col p-4 bg-theme-bg">
-              <div className="grid grid-cols-7 mb-3">
+            <div className="flex-1 flex flex-col p-3 bg-theme-bg min-h-0 overflow-hidden">
+              <div className="grid grid-cols-7 mb-2 shrink-0">
                 {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(day => (
                   <div key={day} className="text-center text-[10px] font-black text-theme-muted uppercase tracking-widest">
                     {day}
                   </div>
                 ))}
               </div>
-              <div className="flex-1 grid grid-cols-7 grid-rows-6 gap-2">
+              <div className="flex-1 grid grid-cols-7 auto-rows-fr gap-1 min-h-0 overflow-y-auto custom-scrollbar">
                 {monthWeeks.map((week, i) => (
                   <React.Fragment key={i}>
                     {week.map((day) => {
@@ -568,26 +507,35 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
                             }
                           }}
                           className={clsx(
-                            "relative p-1.5 flex flex-col items-start justify-start rounded-theme-card border transition-all hover:z-10 cursor-pointer shadow-sm",
+                            "relative p-1.5 flex flex-col items-start rounded-lg border transition-all hover:z-10 cursor-pointer min-h-0 overflow-hidden",
                             isSelected
                               ? "border-primary bg-primary/5 ring-1 ring-primary/20"
-                              : day.isCurrentMonth ? "border-theme bg-theme-card hover:border-primary/40 hover:bg-theme-hover hover:shadow-md" : "border-transparent bg-transparent text-theme-muted opacity-30"
+                              : day.isCurrentMonth ? "border-theme/50 bg-theme-card/50 hover:border-primary/40 hover:bg-theme-hover" : "border-transparent bg-transparent text-theme-muted opacity-30"
                           )}
                         >
                           <span className={clsx(
-                            "text-[11px] font-black w-7 h-7 flex items-center justify-center rounded-full mb-1 transition-all",
+                            "text-[10px] font-black w-6 h-6 flex items-center justify-center rounded-full shrink-0 transition-all",
                             isToday ? "bg-primary text-primary-fg shadow-lg" : "text-theme-muted"
                           )}>
                             {dayNum}
                           </span>
-                          <div className="w-full space-y-1 overflow-hidden">
-                            {day.blocks.slice(0, 3).map((b: any) => (
-                              <div key={b.id} className="w-full text-[9px] px-2 py-1 rounded-theme-button bg-theme-hover text-theme-fg truncate text-left pointer-events-none border border-theme font-bold">
-                                {b.title}
+                          <div className="w-full space-y-0.5 overflow-hidden flex-1 min-h-0">
+                            {day.blocks.slice(0, 2).map((b: any) => (
+                              <div 
+                                key={b.id} 
+                                className={clsx(
+                                  "w-full text-[8px] px-1.5 py-0.5 rounded truncate text-left pointer-events-none font-semibold flex items-center gap-1",
+                                  b.source === 'task' 
+                                    ? "bg-emerald-500/15 text-emerald-600 border border-emerald-500/20" 
+                                    : "bg-theme-hover text-theme-fg border border-theme"
+                                )}
+                              >
+                                {b.source === 'task' && <ListTodo className="w-2.5 h-2.5 shrink-0" />}
+                                <span className="truncate">{b.title}</span>
                               </div>
                             ))}
-                            {day.blocks.length > 3 && (
-                              <div className="text-[9px] text-theme-muted pl-1 font-bold">+{day.blocks.length - 3} more</div>
+                            {day.blocks.length > 2 && (
+                              <div className="text-[8px] text-theme-muted pl-1 font-bold">+{day.blocks.length - 2}</div>
                             )}
                           </div>
                         </div>

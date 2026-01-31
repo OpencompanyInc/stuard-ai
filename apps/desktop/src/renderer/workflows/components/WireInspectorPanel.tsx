@@ -1,0 +1,948 @@
+/**
+ * WireInspectorPanel - Right panel for editing selected wire properties (conditions, loops)
+ */
+import React, { useMemo, useState, useEffect, useCallback } from "react";
+import { X, ArrowRight, GitBranch, Info, Repeat, RotateCw, List, Trash2, LogOut, ChevronDown, Check } from "lucide-react";
+import { TextInputWithVariables, type UpstreamNode } from "./SmartArgEditor";
+import { getToolOutputs } from "../constants/tool-schemas";
+import type { DesignerModel, DesignerWire, WorkflowVariable } from "../types";
+import { parseGuard, guardToString } from "../builder/guards";
+
+/**
+ * Compute chain indices for all nodes based on connection flow.
+ * Triggers start at index 0, downstream nodes get higher indices.
+ */
+function computeChainIndices(
+  triggers: { id: string }[],
+  nodes: { id: string }[],
+  wires: DesignerWire[]
+): Map<string, number> {
+  const indices = new Map<string, number>();
+  const queue: { id: string; index: number }[] = triggers.map(t => ({ id: t.id, index: 0 }));
+  
+  while (queue.length > 0) {
+    const { id, index } = queue.shift()!;
+    const existingIndex = indices.get(id);
+    if (existingIndex !== undefined && existingIndex <= index) continue;
+    indices.set(id, index);
+    
+    for (const w of wires) {
+      if (w.from === id) {
+        const targetIndex = indices.get(w.to);
+        if (targetIndex === undefined || targetIndex > index + 1) {
+          queue.push({ id: w.to, index: index + 1 });
+        }
+      }
+    }
+  }
+  
+  let maxIndex = Math.max(0, ...indices.values());
+  for (const node of nodes) {
+    if (!indices.has(node.id)) {
+      indices.set(node.id, ++maxIndex);
+    }
+  }
+  return indices;
+}
+
+/**
+ * Check if a wire is a back edge based on chain indices.
+ */
+function isBackEdgeByChain(
+  chainIndices: Map<string, number>,
+  from: string,
+  to: string
+): boolean {
+  const fromIndex = chainIndices.get(from) ?? 0;
+  const toIndex = chainIndices.get(to) ?? 0;
+  return fromIndex >= toIndex;
+}
+
+/** Styled dropdown to replace native selects */
+function StyledSelect({ 
+  value, 
+  onChange, 
+  options, 
+  placeholder = 'Select...',
+  size = 'sm'
+}: { 
+  value: string; 
+  onChange: (v: string) => void; 
+  options: Array<{ value: string; label: string; group?: string }>;
+  placeholder?: string;
+  size?: 'sm' | 'xs';
+}) {
+  const [open, setOpen] = React.useState(false);
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  
+  const selectedOption = options.find(o => o.value === value);
+  
+  // Group options
+  const groups = React.useMemo(() => {
+    const grouped = new Map<string, typeof options>();
+    for (const opt of options) {
+      const g = opt.group || '';
+      if (!grouped.has(g)) grouped.set(g, []);
+      grouped.get(g)!.push(opt);
+    }
+    return grouped;
+  }, [options]);
+  
+  React.useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+  
+  const sizeClasses = size === 'xs' 
+    ? 'px-2 py-1.5 text-[11px]' 
+    : 'px-3 py-2 text-xs';
+  
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className={`w-full ${sizeClasses} border border-slate-200 rounded-lg bg-white hover:bg-slate-50 hover:border-slate-300 flex items-center justify-between gap-2 transition-all shadow-sm font-medium`}
+      >
+        <span className={selectedOption ? 'text-slate-700' : 'text-slate-400 font-normal'}>
+          {selectedOption?.label || placeholder}
+        </span>
+        <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform shrink-0 ${open ? 'rotate-180' : ''}`} />
+      </button>
+      
+      {open && (
+        <div className="absolute z-50 w-full mt-1 bg-white border border-slate-100 rounded-xl shadow-xl max-h-64 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150">
+          <div className="p-1">
+            {Array.from(groups.entries()).map(([groupName, groupOpts]) => (
+              <div key={groupName || '__ungrouped__'}>
+                {groupName && (
+                  <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 sticky top-0 bg-white">
+                    {groupName}
+                  </div>
+                )}
+                {groupOpts.map(opt => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => { onChange(opt.value); setOpen(false); }}
+                    className={`w-full px-2.5 py-2 text-left text-xs rounded-lg flex items-center justify-between gap-2 transition-colors mb-0.5 ${
+                      opt.value === value
+                        ? 'bg-indigo-50 text-indigo-700 font-medium'
+                        : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>{opt.label}</span>
+                    {opt.value === value && <Check className="w-3.5 h-3.5 text-indigo-600 shrink-0" />}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface WireInspectorPanelProps {
+  model: DesignerModel;
+  wireIndex: number;
+  onUpdate: (m: DesignerModel) => void;
+  onDelete: () => void;
+  onClose: () => void;
+}
+
+// Find all upstream nodes by tracing wires backwards
+function getUpstreamNodes(model: DesignerModel, nodeId: string): UpstreamNode[] {
+  const visited = new Set<string>();
+  const result: UpstreamNode[] = [];
+
+  function traverse(id: string) {
+    if (visited.has(id)) return;
+    visited.add(id);
+
+    const incomingWires = model.wires?.filter(w => w.to === id) || [];
+    for (const wire of incomingWires) {
+      const sourceId = wire.from;
+      const trigger = model.triggers.find(t => t.id === sourceId);
+      if (trigger) {
+        result.push({ id: trigger.id, label: trigger.label || trigger.type || 'Trigger', tool: undefined });
+        continue;
+      }
+      const node = model.nodes.find(n => n.id === sourceId);
+      if (node) {
+        result.push({ id: node.id, label: node.label || node.tool || 'Step', tool: node.tool });
+        traverse(sourceId);
+      }
+    }
+  }
+
+  traverse(nodeId);
+  return result;
+}
+
+export function WireInspectorPanel({ model, wireIndex, onUpdate, onDelete, onClose }: WireInspectorPanelProps) {
+  const wire = model.wires[wireIndex];
+  
+  if (!wire) {
+    return (
+      <div className="flex flex-col h-full bg-white border-l border-slate-200 shadow-xl z-20 w-[400px]">
+        <div className="h-14 px-5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
+          <span className="font-semibold text-slate-800">Wire Properties</span>
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="flex-1 flex items-center justify-center text-slate-400">
+          Wire not found
+        </div>
+      </div>
+    );
+  }
+
+  // Get source and target nodes
+  const sourceNode = [...model.triggers, ...model.nodes].find(n => n.id === wire.from);
+  const targetNode = [...model.triggers, ...model.nodes].find(n => n.id === wire.to);
+
+  // Detect if this wire is a back edge (creates a loop in the flow)
+  const isBackEdge = useMemo(() => {
+    const chainIndices = computeChainIndices(model.triggers, model.nodes, model.wires || []);
+    return isBackEdgeByChain(chainIndices, wire.from, wire.to);
+  }, [model, wire.from, wire.to]);
+
+  // Get upstream nodes for variable suggestions (from source node's perspective)
+  const upstreamNodes = useMemo(() => {
+    if (!wire.from) return [];
+    // Include source node itself
+    const source = model.nodes.find(n => n.id === wire.from);
+    const trigger = model.triggers.find(t => t.id === wire.from);
+    const sourceItem = source || trigger;
+    
+    const upstream = getUpstreamNodes(model, wire.from);
+    if (sourceItem) {
+      const tool = 'tool' in sourceItem ? sourceItem.tool : undefined;
+      upstream.unshift({ 
+        id: sourceItem.id, 
+        label: sourceItem.label || (tool || sourceItem.type) || 'Source', 
+        tool 
+      });
+    }
+    return upstream;
+  }, [model, wire.from]);
+
+  const updateWire = (updates: Partial<DesignerWire>) => {
+    const newWires = [...model.wires];
+    newWires[wireIndex] = { ...newWires[wireIndex], ...updates };
+    onUpdate({ ...model, wires: newWires });
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-white border-l border-slate-200 shadow-xl z-20 w-[400px]">
+      {/* Header */}
+      <div className="h-14 px-5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
+        <div className="flex items-center gap-2.5">
+          <div className="p-1.5 rounded-lg bg-indigo-50 text-indigo-500">
+            <ArrowRight className="w-4 h-4" />
+          </div>
+          <span className="font-semibold text-slate-800">Connection</span>
+        </div>
+        <button
+          onClick={onClose}
+          className="p-2 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition-colors"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto scrollbar-minimal p-5 space-y-6">
+        {/* Connection Info */}
+        <div className="space-y-3">
+          <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
+            <div className="flex-1 text-center">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">From</div>
+              <div className="text-sm font-medium text-slate-700">{sourceNode?.label || wire.from}</div>
+              <div className="text-[10px] text-slate-400 font-mono">#{wire.from}</div>
+            </div>
+            <ArrowRight className="w-5 h-5 text-slate-300" />
+            <div className="flex-1 text-center">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">To</div>
+              <div className="text-sm font-medium text-slate-700">{targetNode?.label || wire.to}</div>
+              <div className="text-[10px] text-slate-400 font-mono">#{wire.to}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Loop Configuration */}
+        <WireLoopSection
+          wire={wire}
+          onUpdate={updateWire}
+          upstreamNodes={upstreamNodes}
+          workflowVariables={model.variables}
+          isBackEdge={isBackEdge}
+        />
+
+        {/* Loop Break - End loop scope */}
+        <LoopBreakSection
+          wire={wire}
+          onUpdate={updateWire}
+          model={model}
+        />
+
+        {/* Condition Configuration */}
+        <WireConditionSection
+          wire={wire}
+          onUpdate={updateWire}
+          upstreamNodes={upstreamNodes}
+          workflowVariables={model.variables}
+        />
+
+        {/* Delete Button */}
+        <div className="pt-4">
+          <button
+            onClick={onDelete}
+            className="w-full py-3 text-sm font-medium text-red-600 hover:bg-red-50 border border-red-100 hover:border-red-200 rounded-xl transition-all flex items-center justify-center gap-2 group"
+          >
+            <Trash2 className="w-4 h-4 transition-transform group-hover:scale-110" />
+            Delete Connection
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * WireLoopSection - Configure loop behavior for a wire
+ */
+function WireLoopSection({
+  wire,
+  onUpdate,
+  upstreamNodes,
+  workflowVariables,
+  isBackEdge = false
+}: {
+  wire: DesignerWire;
+  onUpdate: (updates: Partial<DesignerWire>) => void;
+  upstreamNodes: UpstreamNode[];
+  workflowVariables?: WorkflowVariable[];
+  isBackEdge?: boolean;
+}) {
+  const hasLoop = !!(wire as any).loop;
+  const loopType = (wire as any).loop?.type || 'repeat'; // Default to repeat for back edges
+
+  // Auto-configure loop for back edges that don't have a loop yet
+  React.useEffect(() => {
+    if (isBackEdge && !hasLoop) {
+      // Auto-set to repeat loop with default 5 iterations
+      onUpdate({ 
+        loop: { 
+          type: 'repeat', 
+          count: 5, 
+          maxIterations: 100, 
+          delayMs: 0 
+        } 
+      } as any);
+    }
+  }, [isBackEdge, hasLoop]);
+
+  const handleLoopTypeChange = (newType: string) => {
+    if (newType === 'none') {
+      onUpdate({ loop: undefined } as any);
+    } else {
+      const baseLoop = {
+        type: newType as 'forEach' | 'while' | 'repeat',
+        maxIterations: 100,
+        delayMs: 0,
+      };
+      
+      if (newType === 'forEach') {
+        onUpdate({ loop: { ...baseLoop, items: '', itemVar: 'item', indexVar: 'index' } } as any);
+      } else if (newType === 'repeat') {
+        onUpdate({ loop: { ...baseLoop, count: 5 } } as any);
+      } else if (newType === 'while') {
+        onUpdate({ loop: { ...baseLoop, conditionText: '' } } as any);
+      }
+    }
+  };
+
+  const updateLoopField = (field: string, value: any) => {
+    onUpdate({ loop: { ...(wire as any).loop, [field]: value } } as any);
+  };
+
+  const LoopIcon = loopType === 'forEach' ? List : loopType === 'repeat' ? Repeat : RotateCw;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-bold text-slate-800">Loop</span>
+        {isBackEdge && (
+          <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-700 rounded-full">
+            Back Edge Detected
+          </span>
+        )}
+        <div className="h-px bg-slate-100 flex-1" />
+      </div>
+
+      {/* Back edge info banner */}
+      {isBackEdge && (
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
+          <div className="flex items-start gap-2">
+            <RotateCw className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+            <div>
+              <p className="text-xs font-medium text-amber-800">This connection creates a loop</p>
+              <p className="text-[11px] text-amber-600 mt-0.5">Configure how many times the loop should repeat below.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className={`rounded-xl p-4 border transition-colors ${hasLoop ? 'bg-purple-50/50 border-purple-200' : isBackEdge ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${hasLoop ? 'bg-purple-100 text-purple-600' : 'bg-slate-100 text-slate-400'}`}>
+              <LoopIcon className="w-4 h-4" />
+            </div>
+            <div>
+              <div className={`text-sm font-medium ${hasLoop ? 'text-purple-700' : 'text-slate-600'}`}>
+                {hasLoop ? (loopType === 'forEach' ? 'For Each Item' : loopType === 'repeat' ? 'Repeat N Times' : 'While Condition') : 'No Loop'}
+              </div>
+              <div className="text-[10px] text-slate-400">
+                {hasLoop ? 'Target node runs multiple times' : 'Target node runs once'}
+              </div>
+            </div>
+          </div>
+          <div className="w-28">
+            <StyledSelect
+              value={hasLoop ? loopType : 'none'}
+              onChange={handleLoopTypeChange}
+              size="xs"
+              options={[
+                { value: 'none', label: 'No Loop' },
+                { value: 'forEach', label: 'For Each' },
+                { value: 'repeat', label: 'Repeat N' },
+                { value: 'while', label: 'While' },
+              ]}
+            />
+          </div>
+        </div>
+
+        {hasLoop && (
+          <div className="space-y-3 pt-3 border-t border-purple-100/50">
+            {/* For Each Loop */}
+            {loopType === 'forEach' && (
+              <>
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
+                    Items to iterate
+                  </label>
+                  <TextInputWithVariables
+                    value={(wire as any).loop?.items || ''}
+                    onChange={(v: string) => updateLoopField('items', v)}
+                    placeholder="{{step.results}} or [1, 2, 3]"
+                    upstreamNodes={upstreamNodes}
+                    workflowVariables={workflowVariables}
+                    suggestFrom={['*.*']}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
+                      Item variable
+                    </label>
+                    <input
+                      type="text"
+                      value={(wire as any).loop?.itemVar || 'item'}
+                      onChange={(e) => updateLoopField('itemVar', e.target.value)}
+                      placeholder="item"
+                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
+                      Index variable
+                    </label>
+                    <input
+                      type="text"
+                      value={(wire as any).loop?.indexVar || 'index'}
+                      onChange={(e) => updateLoopField('indexVar', e.target.value)}
+                      placeholder="index"
+                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300 font-mono"
+                    />
+                  </div>
+                </div>
+                <div className="p-2.5 bg-purple-100/50 rounded-lg">
+                  <p className="text-[11px] text-purple-700">
+                    Access current item as <code className="bg-white px-1.5 py-0.5 rounded font-mono text-purple-600">{'{{loop.' + ((wire as any).loop?.itemVar || 'item') + '}}'}</code>
+                  </p>
+                </div>
+              </>
+            )}
+
+            {/* Repeat N Times */}
+            {loopType === 'repeat' && (
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
+                  Number of times
+                </label>
+                <input
+                  type="number"
+                  value={(wire as any).loop?.count || 5}
+                  onChange={(e) => updateLoopField('count', parseInt(e.target.value) || 1)}
+                  min={1}
+                  max={10000}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+                />
+                <p className="text-[11px] text-slate-500 mt-1.5">
+                  Access iteration as <code className="bg-slate-100 px-1.5 py-0.5 rounded font-mono text-slate-600">{'{{loop.index}}'}</code>
+                </p>
+              </div>
+            )}
+
+            {/* While Loop */}
+            {loopType === 'while' && (
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
+                  Continue while
+                </label>
+                <TextInputWithVariables
+                  value={(wire as any).loop?.conditionText || ''}
+                  onChange={(v: string) => updateLoopField('conditionText', v)}
+                  placeholder="{{workflow.counter}} < 10"
+                  upstreamNodes={upstreamNodes}
+                  workflowVariables={workflowVariables}
+                  suggestFrom={['*.*']}
+                />
+                <p className="text-[11px] text-slate-500 mt-1.5">Loop continues while this condition is true</p>
+              </div>
+            )}
+
+            {/* Common Loop Settings */}
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
+                  Max iterations
+                </label>
+                <input
+                  type="number"
+                  value={(wire as any).loop?.maxIterations || 100}
+                  onChange={(e) => updateLoopField('maxIterations', parseInt(e.target.value) || 100)}
+                  min={1}
+                  max={10000}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
+                  Delay (ms)
+                </label>
+                <input
+                  type="number"
+                  value={(wire as any).loop?.delayMs || 0}
+                  onChange={(e) => updateLoopField('delayMs', parseInt(e.target.value) || 0)}
+                  min={0}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * WireConditionSection - Configure condition for a wire
+ */
+function WireConditionSection({
+  wire,
+  onUpdate,
+  upstreamNodes,
+  workflowVariables
+}: {
+  wire: DesignerWire;
+  onUpdate: (updates: Partial<DesignerWire>) => void;
+  upstreamNodes: UpstreamNode[];
+  workflowVariables?: WorkflowVariable[];
+}) {
+  const isConditional = wire.guard && wire.guard !== 'always';
+  const [editorMode, setEditorMode] = useState<'builder' | 'advanced'>('builder');
+
+  // Parse guard to extract builder fields
+  const parseGuardToBuilder = useCallback((g: any): { lhs: string; op: string; rhs: string } | null => {
+    if (!g || g === 'always') return null;
+    const raw = (g && typeof g === 'object' && 'if' in g) ? (g as any).if : g;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const op = Object.keys(raw)[0];
+    if (!op || !['==', '!=', '>', '>=', '<', '<=', 'in'].includes(op)) return null;
+    const val = (raw as any)[op];
+    if (!Array.isArray(val) || val.length < 2) return null;
+    const left = val[0];
+    const right = val[1];
+    if (!left || typeof left !== 'object' || !('var' in left) || typeof left.var !== 'string') return null;
+    const lhs = left.var as string;
+
+    if (right && typeof right === 'object' && 'var' in right && typeof (right as any).var === 'string') {
+      return { lhs, op, rhs: `{{${(right as any).var}}}` };
+    }
+
+    if (typeof right === 'string') return { lhs, op, rhs: right };
+    if (typeof right === 'number' || typeof right === 'boolean') return { lhs, op, rhs: String(right) };
+    if (right === null) return { lhs, op, rhs: 'null' };
+    if (right === undefined) return { lhs, op, rhs: '' };
+    // For any other type (array, object without var), try to stringify
+    try {
+      return { lhs, op, rhs: JSON.stringify(right) };
+    } catch {
+      return { lhs, op, rhs: '' };
+    }
+  }, []);
+
+  const initialBuilder = useMemo(() => parseGuardToBuilder(wire.guard), [wire.guard, parseGuardToBuilder]);
+  const [builderLhs, setBuilderLhs] = useState<string>(initialBuilder?.lhs || '');
+  const [builderOp, setBuilderOp] = useState<string>(initialBuilder?.op || '==');
+  const [builderRhs, setBuilderRhs] = useState<string>(initialBuilder?.rhs || '');
+
+  const initialText = useMemo(() => {
+    const s = guardToString(wire.guard);
+    return s === 'always' ? '' : s;
+  }, [wire.guard]);
+  const [localText, setLocalText] = useState(initialText);
+
+  // Sync when wire changes
+  useEffect(() => {
+    const parsed = parseGuardToBuilder(wire.guard);
+    if (parsed) {
+      setBuilderLhs(parsed.lhs);
+      setBuilderOp(parsed.op);
+      setBuilderRhs(parsed.rhs);
+    } else if (!wire.guard || wire.guard === 'always') {
+      // Reset to empty when guard is cleared
+      setBuilderLhs('');
+      setBuilderOp('==');
+      setBuilderRhs('');
+    }
+    setLocalText(initialText);
+  }, [wire.guard, parseGuardToBuilder, initialText]);
+
+  // Build operand options
+  const operandOptions = useMemo(() => {
+    const opts: Array<{ value: string; label: string; group: string }> = [];
+    if (Array.isArray(workflowVariables) && workflowVariables.length) {
+      for (const v of workflowVariables) {
+        if (!v?.name) continue;
+        opts.push({ value: `workflow.${v.name}`, label: `workflow.${v.name}`, group: 'Workflow Variables' });
+      }
+    }
+    for (const n of upstreamNodes) {
+      const outputs = n.tool ? getToolOutputs(n.tool) : ['ok', 'result'];
+      opts.push({ value: n.id, label: n.id, group: 'Step Outputs' });
+      for (const f of outputs) {
+        opts.push({ value: `${n.id}.${f}`, label: `${n.id}.${f}`, group: 'Step Outputs' });
+      }
+    }
+    return opts;
+  }, [workflowVariables, upstreamNodes]);
+
+  const parseRhsValue = useCallback((s: string): any => {
+    const t = String(s || '').trim();
+    if (t.startsWith('{{') && t.endsWith('}}')) return { var: t.slice(2, -2).trim() };
+    if (t === 'true') return true;
+    if (t === 'false') return false;
+    if (t === 'null') return null;
+    if (t && !Number.isNaN(Number(t)) && /^-?\d+(\.\d+)?$/.test(t)) return Number(t);
+    return t;
+  }, []);
+
+  const handleModeChange = (mode: string) => {
+    if (mode === 'always') {
+      onUpdate({ guard: 'always' });
+      setBuilderLhs('');
+      setBuilderOp('==');
+      setBuilderRhs('');
+    } else {
+      // Switch to conditional mode with empty condition
+      setBuilderLhs('');
+      setBuilderOp('==');
+      setBuilderRhs('');
+    }
+  };
+
+  const handleBuilderChange = useCallback((field: 'lhs' | 'op' | 'rhs', value: string) => {
+    const newLhs = field === 'lhs' ? value : builderLhs;
+    const newOp = field === 'op' ? value : builderOp;
+    const newRhs = field === 'rhs' ? value : builderRhs;
+
+    if (field === 'lhs') setBuilderLhs(value);
+    if (field === 'op') setBuilderOp(value);
+    if (field === 'rhs') setBuilderRhs(value);
+
+    if (newLhs) {
+      const logic = { if: { [newOp]: [{ var: newLhs }, parseRhsValue(newRhs)] } };
+      onUpdate({ guard: logic });
+    }
+  }, [builderLhs, builderOp, builderRhs, onUpdate, parseRhsValue]);
+
+  const handleTextChange = useCallback((text: string) => {
+    setLocalText(text);
+    if (!text.trim()) {
+      onUpdate({ guard: 'always' });
+    } else {
+      const parsed = parseGuard(text);
+      if (parsed) onUpdate({ guard: parsed });
+    }
+  }, [onUpdate]);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-bold text-slate-800">Condition</span>
+        <div className="h-px bg-slate-100 flex-1" />
+      </div>
+
+      <div className={`rounded-xl p-4 border transition-colors ${isConditional ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isConditional ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-400'}`}>
+              <GitBranch className="w-4 h-4" />
+            </div>
+            <div>
+              <div className={`text-sm font-medium ${isConditional ? 'text-amber-700' : 'text-slate-600'}`}>
+                {isConditional ? 'Conditional' : 'Always Run'}
+              </div>
+              <div className="text-[10px] text-slate-400">
+                {isConditional ? 'Runs only if condition is met' : 'Always executes this connection'}
+              </div>
+            </div>
+          </div>
+          <div className="w-24">
+            <StyledSelect
+              value={isConditional ? 'conditional' : 'always'}
+              onChange={handleModeChange}
+              size="xs"
+              options={[
+                { value: 'always', label: 'Always' },
+                { value: 'conditional', label: 'If...' },
+              ]}
+            />
+          </div>
+        </div>
+
+        {isConditional && (
+          <div className="space-y-3 pt-3 border-t border-amber-100/50">
+            {/* Mode Toggle */}
+            <div className="flex items-center gap-1 bg-white/60 border border-slate-200 rounded-lg p-1 w-fit">
+              <button
+                onClick={() => setEditorMode('builder')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${editorMode === 'builder' ? 'bg-amber-500 text-white' : 'text-slate-500 hover:bg-slate-100'}`}
+              >
+                Builder
+              </button>
+              <button
+                onClick={() => { setEditorMode('advanced'); setLocalText(initialText); }}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${editorMode === 'advanced' ? 'bg-amber-500 text-white' : 'text-slate-500 hover:bg-slate-100'}`}
+              >
+                Advanced
+              </button>
+            </div>
+
+            {editorMode === 'builder' ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Left</label>
+                    <StyledSelect
+                      value={builderLhs}
+                      onChange={(v) => handleBuilderChange('lhs', v)}
+                      placeholder="Select…"
+                      size="xs"
+                      options={[
+                        { value: '', label: 'Select…' },
+                        ...operandOptions
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Op</label>
+                    <StyledSelect
+                      value={builderOp}
+                      onChange={(v) => handleBuilderChange('op', v)}
+                      size="xs"
+                      options={[
+                        { value: '==', label: 'Equals' },
+                        { value: '!=', label: 'Not equals' },
+                        { value: '>', label: 'Greater' },
+                        { value: '>=', label: 'Greater or equal' },
+                        { value: '<', label: 'Less' },
+                        { value: '<=', label: 'Less or equal' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Right</label>
+                    <TextInputWithVariables
+                      value={builderRhs}
+                      onChange={(v: string) => handleBuilderChange('rhs', v)}
+                      placeholder="value"
+                      upstreamNodes={upstreamNodes}
+                      workflowVariables={workflowVariables}
+                      suggestFrom={['*.*']}
+                    />
+                  </div>
+                </div>
+
+                {/* Quick value buttons */}
+                <div className="flex gap-1.5">
+                  {['true', 'false'].map(val => (
+                    <button
+                      key={val}
+                      onClick={() => handleBuilderChange('rhs', val)}
+                      className={`px-2.5 py-1 text-[10px] font-medium rounded-md border transition-colors ${
+                        builderRhs === val
+                          ? 'bg-amber-50 border-amber-200 text-amber-700'
+                          : 'bg-white border-slate-200 text-slate-500 hover:border-amber-200 hover:bg-amber-50/50'
+                      }`}
+                    >
+                      {val}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Preview */}
+                <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-lg border border-slate-100">
+                  <code className="text-[11px] font-mono text-slate-600">
+                    {builderLhs ? `${builderLhs} ${builderOp} ${builderRhs || '?'}` : 'Select a variable...'}
+                  </code>
+                </div>
+              </div>
+            ) : (
+              <>
+                <TextInputWithVariables
+                  value={localText}
+                  onChange={handleTextChange}
+                  placeholder="e.g. step.success == true"
+                  upstreamNodes={upstreamNodes}
+                  workflowVariables={workflowVariables}
+                  suggestFrom={['*.*']}
+                />
+                <div className="flex items-center gap-1 text-[10px] text-slate-400">
+                  <Info className="w-3 h-3" />
+                  <span>Supports JS-like syntax: <code>==</code>, <code>!=</code>, <code>&gt;</code>, <code>&&</code></span>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * LoopBreakSection - Mark this wire as ending a loop scope
+ */
+function LoopBreakSection({
+  wire,
+  onUpdate,
+  model
+}: {
+  wire: DesignerWire;
+  onUpdate: (updates: Partial<DesignerWire>) => void;
+  model: DesignerModel;
+}) {
+  // Check if source node is inside an OPEN loop scope
+  // A loop scope is "open" if there's an upstream loop wire that hasn't been closed by a loopBreak
+  const isInsideLoop = useMemo(() => {
+    const wires = model.wires || [];
+    
+    // Walk upstream from nodeId, tracking open loop depth
+    // Returns the number of unclosed loop scopes at this node
+    function countOpenLoops(nodeId: string, visited: Set<string>): number {
+      if (visited.has(nodeId)) return 0;
+      visited.add(nodeId);
+      
+      const incomingWires = wires.filter(w => w.to === nodeId);
+      let maxOpenLoops = 0;
+      
+      for (const w of incomingWires) {
+        // Get open loops from further upstream
+        let openLoops = countOpenLoops(w.from, new Set(visited));
+        
+        // If this wire STARTS a loop, increment
+        if ((w as any).loop) {
+          openLoops++;
+        }
+        
+        // If this wire BREAKS a loop, decrement (but not below 0)
+        if ((w as any).loopBreak && openLoops > 0) {
+          openLoops--;
+        }
+        
+        maxOpenLoops = Math.max(maxOpenLoops, openLoops);
+      }
+      
+      return maxOpenLoops;
+    }
+    
+    return countOpenLoops(wire.from, new Set()) > 0;
+  }, [model, wire.from]);
+
+  const hasLoopBreak = !!(wire as any).loopBreak;
+
+  // Only show this section if source node is inside a loop
+  if (!isInsideLoop) return null;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <div className="p-1.5 rounded-lg bg-orange-50 text-orange-500">
+          <LogOut className="w-4 h-4" />
+        </div>
+        <div className="font-medium text-slate-700">End Loop</div>
+      </div>
+
+      <div className="rounded-xl border border-slate-100 overflow-hidden">
+        <button
+          onClick={() => onUpdate({ loopBreak: !hasLoopBreak } as any)}
+          className={`w-full px-4 py-3 flex items-center justify-between transition-colors ${
+            hasLoopBreak 
+              ? 'bg-orange-50 border-orange-200' 
+              : 'bg-white hover:bg-slate-50'
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-5 rounded-full transition-colors relative ${
+              hasLoopBreak ? 'bg-orange-500' : 'bg-slate-200'
+            }`}>
+              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                hasLoopBreak ? 'left-5' : 'left-0.5'
+              }`} />
+            </div>
+            <span className="text-sm font-medium text-slate-700">
+              {hasLoopBreak ? 'Exit loop after this connection' : 'Continue in loop'}
+            </span>
+          </div>
+        </button>
+        
+        {hasLoopBreak && (
+          <div className="px-4 py-2.5 bg-orange-50/50 border-t border-orange-100">
+            <div className="flex items-start gap-2 text-[11px] text-orange-700">
+              <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span>
+                Nodes after this connection will run <strong>once</strong> after all loop iterations complete, 
+                not on each iteration.
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

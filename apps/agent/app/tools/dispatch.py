@@ -2,7 +2,289 @@ from __future__ import annotations
 
 from typing import Any, Dict, Callable, Awaitable
 
-from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg
+from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops
+
+
+# Tool metadata for discovery (category and description)
+# Format: tool_name -> (category, description)
+_TOOL_METADATA: Dict[str, tuple[str, str]] = {
+    # GUI
+    "get_mouse_position": ("input", "Get the current mouse cursor position on screen"),
+    "computer_use": ("input", "Perform GUI actions (mouse/keyboard) and optionally capture a screenshot"),
+    "click_at_coordinates": ("input", "Click at specific screen coordinates"),
+    "double_click_at_coordinates": ("input", "Double-click at specific screen coordinates"),
+    "type_text": ("input", "Type text at cursor position"),
+    "send_hotkey": ("input", "Send keyboard hotkey combinations"),
+    "scroll": ("input", "Scroll the mouse wheel vertically and optionally horizontally"),
+    "drag_and_drop": ("input", "Drag from one coordinate to another"),
+    "take_screenshot": ("vision", "Capture screenshot and return a local file path"),
+    "capture_screen_to_file": ("vision", "Capture screen to a specific file path"),
+    "prepare_image_for_model": ("vision", "Prepare an image for model analysis"),
+
+    # Windows
+    "get_foreground_window": ("system", "Get info about the currently focused window"),
+    "list_open_windows": ("system", "List all open windows and their basic properties"),
+    "bring_window_to_foreground": ("system", "Activate and focus a window by title"),
+
+    # Filesystem
+    "list_directory": ("system", "List directory contents"),
+    "read_file": ("system", "Read text file contents"),
+    "write_file": ("system", "Write text content to a file"),
+    "create_directory": ("system", "Create a directory on disk"),
+    "move_file": ("system", "Move or rename files and directories"),
+    "copy_file": ("system", "Copy a file to a new location"),
+    "delete_file": ("system", "Delete a file or directory"),
+    "open_file": ("system", "Open a file or folder with the default application"),
+    "read_file_binary": ("system", "Read binary file contents"),
+    "read_file_base64": ("system", "Read file as base64 encoded string"),
+    "file_read": ("system", "Read file contents with line numbers for AI agents"),
+    "file_edit": ("system", "Edit file contents using string-based matching"),
+
+    # Filesystem Checkpoints
+    "checkpoint_create": ("system", "Create a checkpoint of files for rollback"),
+    "checkpoint_restore": ("system", "Restore files from a checkpoint"),
+    "checkpoint_list": ("system", "List available checkpoints"),
+
+    # Clipboard
+    "get_clipboard_content": ("input", "Read text from the clipboard"),
+    "set_clipboard_content": ("input", "Set text into the clipboard"),
+
+    # System
+    "launch_application_or_uri": ("system", "Launch desktop applications or open URLs"),
+    "run_system_command": ("system", "Execute system commands with shell"),
+    "run_command": ("system", "Run shell commands cross-platform with timeout"),
+    "list_terminals": ("system", "List active terminal sessions"),
+    "read_terminal": ("system", "Read incremental terminal output"),
+    "get_local_time": ("system", "Get the current local time"),
+    "python_status": ("system", "Check Python environment status"),
+    "python_setup": ("system", "Setup a Python environment"),
+    "python_install": ("system", "Install Python packages in an environment"),
+    "run_python_script": ("system", "Run Python code inline or from file"),
+    "run_node_script": ("system", "Run Node.js code inline or from file"),
+
+    # Memory (Knowledge Graph)
+    "memory_retrieval": ("memory", "Retrieve memories by query"),
+    "group_management": ("memory", "Manage memory groups"),
+    "context_manager": ("memory", "Manage conversation context"),
+
+    # Knowledge
+    "knowledge_upsert_core": ("knowledge", "Update core profile knowledge"),
+    "knowledge_add_fact": ("knowledge", "Add a fact to the knowledge graph"),
+    "knowledge_upsert_procedural": ("knowledge", "Add procedural knowledge"),
+    "knowledge_create_entity": ("knowledge", "Create an entity in the knowledge graph"),
+    "knowledge_find_entity": ("knowledge", "Find an entity by name"),
+    "knowledge_list_entities": ("knowledge", "List all entities"),
+    "knowledge_get_entity_context": ("knowledge", "Get context for an entity"),
+    "knowledge_get_identity": ("knowledge", "Get user identity information"),
+    "knowledge_get_directives": ("knowledge", "Get system directives"),
+    "knowledge_get_bio": ("knowledge", "Get user biography information"),
+    "knowledge_search_facts": ("knowledge", "Search facts in knowledge graph"),
+    "knowledge_stats": ("knowledge", "Get knowledge graph statistics"),
+    "knowledge_delete_fact": ("knowledge", "Delete a fact"),
+    "knowledge_invalidate_fact": ("knowledge", "Invalidate a fact"),
+    "knowledge_delete_entity": ("knowledge", "Delete an entity"),
+    "knowledge_update_entity": ("knowledge", "Update an entity"),
+    "knowledge_build_context": ("knowledge", "Build context from knowledge graph"),
+    "knowledge_get_procedural": ("knowledge", "Get procedural knowledge"),
+    "knowledge_get_events": ("knowledge", "Get event history"),
+    "knowledge_get_graph": ("knowledge", "Get knowledge graph visualization data"),
+
+    # Pending Memories
+    "pending_memory_create": ("memory", "Create a pending memory for confirmation"),
+    "pending_memory_list": ("memory", "List pending memories"),
+    "pending_memory_get": ("memory", "Get a pending memory"),
+    "pending_memory_confirm": ("memory", "Confirm a pending memory"),
+    "pending_memory_reject": ("memory", "Reject a pending memory"),
+    "pending_memory_delete": ("memory", "Delete a pending memory"),
+
+    # Memory (Conversations & Spaces)
+    "conversation_create": ("memory", "Create a new conversation"),
+    "conversation_get": ("memory", "Get a conversation"),
+    "conversation_list": ("memory", "List conversations"),
+    "conversation_update": ("memory", "Update a conversation"),
+    "conversation_search": ("memory", "Search conversations"),
+    "message_add": ("memory", "Add a message to a conversation"),
+    "message_list": ("memory", "List messages in a conversation"),
+    "segment_create": ("memory", "Create a conversation segment"),
+    "segment_update": ("memory", "Update a conversation segment"),
+    "segment_list": ("memory", "List conversation segments"),
+    "segment_list_recent": ("memory", "List recent segments"),
+    "segment_search": ("memory", "Search segments"),
+    "space_create": ("data", "Create a new space"),
+    "space_get": ("data", "Get a space"),
+    "space_list": ("data", "List spaces"),
+    "space_update": ("data", "Update a space"),
+    "space_delete": ("data", "Delete a space"),
+    "space_item_add": ("data", "Add an item to a space"),
+    "space_item_list": ("data", "List items in a space"),
+    "space_item_get": ("data", "Get a space item"),
+    "space_item_update": ("data", "Update a space item"),
+    "space_item_delete": ("data", "Delete a space item"),
+    "space_item_move": ("data", "Move a space item"),
+    "space_folder_create": ("data", "Create a folder in a space"),
+    "space_get_tree": ("data", "Get space folder tree"),
+    "space_share": ("data", "Share a space"),
+    "space_unshare": ("data", "Unshare a space"),
+    "space_share_info": ("data", "Get space sharing info"),
+    "space_link_conversation": ("data", "Link a conversation to a space"),
+    "space_unlink_conversation": ("data", "Unlink a conversation from a space"),
+    "space_get_conversations": ("data", "Get conversations linked to a space"),
+    "conversation_get_spaces": ("data", "Get spaces linked to a conversation"),
+    "security_get_settings": ("system", "Get security settings"),
+    "security_set_password": ("system", "Set security password"),
+    "security_verify_password": ("system", "Verify security password"),
+    "security_update_settings": ("system", "Update security settings"),
+    "security_remove_password": ("system", "Remove security password"),
+    "memory_stats": ("memory", "Get memory statistics"),
+
+    # Media capture
+    "capture_media": ("vision", "Capture photos, videos, or audio"),
+    "stop_capture": ("vision", "Stop an active capture session"),
+    "list_active_captures": ("vision", "List active capture sessions"),
+    "describe_media_capture_capabilities": ("vision", "Describe media capture capabilities"),
+    "upload_file_to_url": ("data", "Upload a file to a URL"),
+
+    # Media Bus
+    "subscribe_media_bus": ("vision", "Subscribe to a media bus"),
+    "unsubscribe_media_bus": ("vision", "Unsubscribe from a media bus"),
+    "get_bus_status": ("vision", "Get media bus status"),
+    "list_media_buses": ("vision", "List active media buses"),
+    "start_bus_recording": ("vision", "Start recording from a media bus"),
+    "stop_bus_recording": ("vision", "Stop recording from a media bus"),
+    "get_bus_frames": ("vision", "Get frames from a media bus"),
+
+    # Screen Recording & System Audio
+    "capture_screen": ("vision", "Capture screen recording"),
+    "stop_screen_capture": ("vision", "Stop screen recording"),
+    "describe_screen_capture_capabilities": ("vision", "Describe screen capture capabilities"),
+    "capture_system_audio": ("vision", "Capture system audio"),
+    "stop_system_audio": ("vision", "Stop system audio capture"),
+    "describe_system_audio_capabilities": ("vision", "Describe system audio capabilities"),
+
+    # FFmpeg
+    "ffmpeg_status": ("vision", "Check FFmpeg availability"),
+    "ffmpeg_setup": ("vision", "Setup FFmpeg"),
+    "ffmpeg_run": ("vision", "Run FFmpeg with custom arguments"),
+    "ffmpeg_convert_media": ("vision", "Convert media formats"),
+    "ffmpeg_extract_audio": ("vision", "Extract audio from media"),
+    "ffmpeg_trim_media": ("vision", "Trim media to time range"),
+    "ffmpeg_probe_media": ("vision", "Probe media file metadata"),
+    "ffmpeg_extract_frames": ("vision", "Extract frames from video"),
+
+    # Canvas
+    "canvas_list": ("ui", "List canvas documents"),
+    "canvas_read": ("ui", "Read a canvas document"),
+    "canvas_write": ("ui", "Write to a canvas document"),
+    "canvas_create": ("ui", "Create a canvas document"),
+    "canvas_delete": ("ui", "Delete a canvas document"),
+
+    # Calendar / Tasks / Reminders
+    "calendar_crud": ("integrations", "Manage calendar events"),
+    "task_crud": ("integrations", "Manage tasks"),
+    "task_reminders": ("integrations", "Manage task reminders"),
+    "unified_task_assignments": ("integrations", "Manage user task assignments (reminders, actions, check-ins scheduled for the agent)"),
+    "send_notification": ("ui", "Send a desktop notification"),
+
+    # Agent Todo
+    "agent_todo": ("core", "Manage agent's internal todo list"),
+
+    # Workflow Utilities
+    "parallel_executor": ("flow", "Execute tools in parallel"),
+    "transform_data": ("flow", "Transform data between steps"),
+    "loop_executor": ("flow", "Execute tools in a loop"),
+
+    # Workflows / Stuards
+    "list_local_workflows": ("flow", "List local workflow files"),
+    "list_local_stuards": ("flow", "List local Stuard automations"),
+    "import_workflow": ("flow", "Import a workflow from JSON"),
+    "export_workflow": ("flow", "Export a workflow to JSON"),
+    "validate_workflow_requirements": ("flow", "Validate workflow requirements"),
+    "stuards_import_workflow": ("flow", "Import a Stuard workflow"),
+    "run_automation": ("flow", "Run an automation"),
+    "stuards_run": ("flow", "Run a Stuard automation"),
+    "stop_automation": ("flow", "Stop an automation"),
+    "stuards_stop": ("flow", "Stop a Stuard automation"),
+    "invoke_workflow": ("flow", "Invoke a workflow with arguments"),
+    "test_run_steps": ("flow", "Test run workflow steps"),
+    "show_json_workflow_code": ("flow", "Display workflow JSON code"),
+
+    # Wakeword
+    "wakeword_start": ("system", "Start wakeword detection"),
+    "wakeword_stop": ("system", "Stop wakeword detection"),
+    "wakeword_status": ("system", "Get wakeword detection status"),
+
+    # File Index & Search
+    "file_index_add_root": ("data", "Add a root directory to file index"),
+    "file_index_remove_root": ("data", "Remove a root from file index"),
+    "file_index_list_roots": ("data", "List file index roots"),
+    "file_index_scan": ("data", "Scan a file index root"),
+    "file_index_get_pending": ("data", "Get pending files for indexing"),
+    "file_index_stats": ("data", "Get file index statistics"),
+    "file_index_update": ("data", "Update file index data"),
+    "file_index_mark_error": ("data", "Mark a file index error"),
+    "file_index_purge_deleted": ("data", "Purge deleted files from index"),
+    "file_search": ("data", "Search files semantically"),
+    "file_search_by_filename": ("data", "Search files by filename"),
+    "file_search_by_extension": ("data", "Search files by extension"),
+    "file_search_by_kind": ("data", "Search files by kind"),
+    "file_search_recent": ("data", "Get recently indexed files"),
+    "file_search_details": ("data", "Get file details"),
+    "file_search_folder": ("data", "Get folder contents"),
+    "file_search_similar": ("data", "Find similar files"),
+
+    # Sub-agents
+    "subagent_spawn": ("core", "Spawn a sub-agent"),
+    "subagent_status": ("core", "Get sub-agent status"),
+    "subagent_list": ("core", "List sub-agents"),
+    "subagent_update": ("core", "Update sub-agent"),
+
+    # Math & Neural Network Operations
+    "math_add": ("math", "Add two values/tensors elementwise"),
+    "math_subtract": ("math", "Subtract b from a elementwise"),
+    "math_multiply": ("math", "Multiply two values/tensors elementwise"),
+    "math_divide": ("math", "Divide a by b elementwise"),
+    "math_power": ("math", "Raise a to power b elementwise"),
+    "math_sqrt": ("math", "Square root elementwise"),
+    "math_abs": ("math", "Absolute value elementwise"),
+    "math_negate": ("math", "Negate values elementwise"),
+    "math_exp": ("math", "Exponential (e^x) elementwise"),
+    "math_log": ("math", "Natural logarithm elementwise"),
+    "math_sum": ("math", "Sum all elements or along an axis"),
+    "math_mean": ("math", "Mean of all elements or along an axis"),
+    "math_max": ("math", "Maximum value"),
+    "math_min": ("math", "Minimum value"),
+    "math_argmax": ("math", "Index of maximum value"),
+    "math_argmin": ("math", "Index of minimum value"),
+    "math_dot": ("math", "Dot product / matrix multiplication"),
+    "math_transpose": ("math", "Transpose a 2D matrix"),
+    "math_reshape": ("math", "Reshape tensor to new shape"),
+    "math_shape": ("math", "Get shape of a tensor"),
+    "math_flatten": ("math", "Flatten tensor to 1D"),
+    "math_zeros": ("math", "Create tensor of zeros"),
+    "math_ones": ("math", "Create tensor of ones"),
+    "math_random": ("math", "Create tensor of random values"),
+    "math_range": ("math", "Create a range of values"),
+    "math_linspace": ("math", "Create linearly spaced values"),
+    "math_sigmoid": ("math", "Sigmoid activation function"),
+    "math_relu": ("math", "ReLU activation function"),
+    "math_leaky_relu": ("math", "Leaky ReLU activation function"),
+    "math_tanh": ("math", "Tanh activation function"),
+    "math_softmax": ("math", "Softmax activation function"),
+    "math_gelu": ("math", "GELU activation function"),
+    "math_swish": ("math", "Swish activation function"),
+    "math_linear": ("math", "Linear layer: y = Wx + b"),
+    "math_forward_pass": ("math", "Run forward pass through neural network layers"),
+    "math_cross_entropy_loss": ("math", "Cross-entropy loss for classification"),
+    "math_mse_loss": ("math", "Mean squared error loss"),
+    "math_compare": ("math", "Compare two values (eq, ne, lt, le, gt, ge)"),
+    "math_clip": ("math", "Clip values to [min, max] range"),
+    "math_where": ("math", "Conditional selection: where(condition, x, y)"),
+    "math_concat": ("math", "Concatenate arrays along axis"),
+    "math_stack": ("math", "Stack arrays along new axis"),
+    "math_slice": ("math", "Slice a tensor"),
+    "math_get_index": ("math", "Get element at index"),
+    "math_set_index": ("math", "Set element at index"),
+}
 
 
 # Map tool names to handler functions
@@ -35,6 +317,7 @@ _HANDLERS = {
     "delete_file": fs.delete_file,
     "open_file": fs.open_file,
     "read_file_binary": fs.read_file_binary,
+    "read_file_base64": fs.read_file_binary,  # Alias - returns base64 in 'data' field
 
     # Agentic File Tools (for AI agents)
     "file_read": fs.file_read,
@@ -171,13 +454,18 @@ _HANDLERS = {
     "ffmpeg_probe_media": ffmpeg.ffmpeg_probe_media,
     "ffmpeg_extract_frames": ffmpeg.ffmpeg_extract_frames,
 
-    # Canvas/Container manager
-    "canvas_manager": canvas.canvas_manager,
+    # Canvas Document Tools
+    "canvas_list": canvas.canvas_list,
+    "canvas_read": canvas.canvas_read,
+    "canvas_write": canvas.canvas_write,
+    "canvas_create": canvas.canvas_create,
+    "canvas_delete": canvas.canvas_delete,
 
     # Calendar / Tasks / Reminders
     "calendar_crud": tasks.calendar_crud,
     "task_crud": tasks.task_crud,
     "task_reminders": tasks.task_reminders,
+    "unified_task_assignments": tasks.unified_task_assignments,
 
     # Notifications
     "send_notification": tasks.send_notification,
@@ -234,7 +522,83 @@ _HANDLERS = {
     "subagent_status": subagents.subagent_status,
     "subagent_list": subagents.subagent_list,
     "subagent_update": subagents.subagent_update,
+
+    # Math & Neural Network Operations
+    "math_add": math_ops.math_add,
+    "math_subtract": math_ops.math_subtract,
+    "math_multiply": math_ops.math_multiply,
+    "math_divide": math_ops.math_divide,
+    "math_power": math_ops.math_power,
+    "math_sqrt": math_ops.math_sqrt,
+    "math_abs": math_ops.math_abs,
+    "math_negate": math_ops.math_negate,
+    "math_exp": math_ops.math_exp,
+    "math_log": math_ops.math_log,
+    "math_sum": math_ops.math_sum,
+    "math_mean": math_ops.math_mean,
+    "math_max": math_ops.math_max,
+    "math_min": math_ops.math_min,
+    "math_argmax": math_ops.math_argmax,
+    "math_argmin": math_ops.math_argmin,
+    "math_dot": math_ops.math_dot,
+    "math_transpose": math_ops.math_transpose,
+    "math_reshape": math_ops.math_reshape,
+    "math_shape": math_ops.math_shape,
+    "math_flatten": math_ops.math_flatten,
+    "math_zeros": math_ops.math_zeros,
+    "math_ones": math_ops.math_ones,
+    "math_random": math_ops.math_random,
+    "math_range": math_ops.math_range,
+    "math_linspace": math_ops.math_linspace,
+    "math_sigmoid": math_ops.math_sigmoid,
+    "math_relu": math_ops.math_relu,
+    "math_leaky_relu": math_ops.math_leaky_relu,
+    "math_tanh": math_ops.math_tanh,
+    "math_softmax": math_ops.math_softmax,
+    "math_gelu": math_ops.math_gelu,
+    "math_swish": math_ops.math_swish,
+    "math_linear": math_ops.math_linear,
+    "math_forward_pass": math_ops.math_forward_pass,
+    "math_cross_entropy_loss": math_ops.math_cross_entropy_loss,
+    "math_mse_loss": math_ops.math_mse_loss,
+    "math_compare": math_ops.math_compare,
+    "math_clip": math_ops.math_clip,
+    "math_where": math_ops.math_where,
+    "math_concat": math_ops.math_concat,
+    "math_stack": math_ops.math_stack,
+    "math_slice": math_ops.math_slice,
+    "math_get_index": math_ops.math_get_index,
+    "math_set_index": math_ops.math_set_index,
 }
+
+
+# Tool discovery handlers (added dynamically after definition)
+async def _list_tools_handler(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Handler for list_tools tool."""
+    category = args.get("category")
+    return list_tools(category)
+
+
+async def _get_tool_info_handler(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Handler for get_tool_info tool."""
+    tool_name = args.get("name") or args.get("tool_name") or ""
+    return get_tool_info(tool_name)
+
+
+async def _list_tool_categories_handler(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Handler for list_tool_categories tool."""
+    return get_all_categories()
+
+
+# Register discovery tools
+_HANDLERS["list_tools"] = _list_tools_handler
+_HANDLERS["get_tool_info"] = _get_tool_info_handler
+_HANDLERS["list_tool_categories"] = _list_tool_categories_handler
+
+# Add metadata for discovery tools
+_TOOL_METADATA["list_tools"] = ("core", "List all available tools with optional category filter")
+_TOOL_METADATA["get_tool_info"] = ("core", "Get detailed information about a specific tool")
+_TOOL_METADATA["list_tool_categories"] = ("core", "List all tool categories with counts")
 
 
 async def execute(tool: str, args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None) -> Dict[str, Any]:
@@ -249,7 +613,11 @@ async def execute(tool: str, args: Dict[str, Any], emit: Callable[[str, Dict[str
         "capture_media",
         "stop_capture",
         "list_active_captures",
-        "canvas_manager",
+        "canvas_list",
+        "canvas_read",
+        "canvas_write",
+        "canvas_create",
+        "canvas_delete",
         "task_reminders",
         "python_install",
         "run_python_script",
@@ -288,3 +656,90 @@ async def execute(tool: str, args: Dict[str, Any], emit: Callable[[str, Dict[str
         return await handler(args, emit)  # type: ignore[misc]
     else:
         return await handler(args)  # type: ignore[misc]
+
+
+def list_tools(category: str | None = None) -> Dict[str, Any]:
+    """
+    List all available tools with their metadata.
+    
+    Args:
+        category: Optional category filter (e.g., 'system', 'input', 'vision')
+    
+    Returns:
+        Dictionary with list of tools and their metadata
+    """
+    tools = []
+    for name in _HANDLERS.keys():
+        meta = _TOOL_METADATA.get(name, ("other", name.replace("_", " ").title()))
+        tool_category, description = meta
+        
+        # Filter by category if specified
+        if category and tool_category != category:
+            continue
+            
+        tools.append({
+            "name": name,
+            "category": tool_category,
+            "description": description,
+            "kind": "local",  # All agent tools are local
+        })
+    
+    # Sort by category then name
+    tools.sort(key=lambda t: (t["category"], t["name"]))
+    
+    return {
+        "ok": True,
+        "count": len(tools),
+        "tools": tools,
+    }
+
+
+def get_tool_info(tool_name: str) -> Dict[str, Any]:
+    """
+    Get detailed info about a specific tool.
+    
+    Args:
+        tool_name: Name of the tool to get info for
+    
+    Returns:
+        Dictionary with tool info or error if not found
+    """
+    if tool_name not in _HANDLERS:
+        return {"ok": False, "error": f"Tool '{tool_name}' not found"}
+    
+    meta = _TOOL_METADATA.get(tool_name, ("other", tool_name.replace("_", " ").title()))
+    category, description = meta
+    
+    return {
+        "ok": True,
+        "name": tool_name,
+        "category": category,
+        "description": description,
+        "kind": "local",
+        "available": True,
+    }
+
+
+def get_all_categories() -> Dict[str, Any]:
+    """
+    Get all available tool categories with counts.
+    
+    Returns:
+        Dictionary with categories and their tool counts
+    """
+    category_counts: Dict[str, int] = {}
+    
+    for name in _HANDLERS.keys():
+        meta = _TOOL_METADATA.get(name, ("other", ""))
+        category = meta[0]
+        category_counts[category] = category_counts.get(category, 0) + 1
+    
+    categories = [
+        {"id": cat, "count": count}
+        for cat, count in sorted(category_counts.items())
+    ]
+    
+    return {
+        "ok": True,
+        "categories": categories,
+    }

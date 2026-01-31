@@ -7,10 +7,11 @@ export const scrape_url = createTool({
   description: 'Extract/scrape raw page content from one or more URLs using Tavily Extract.',
   inputSchema: z.object({
     urls: z
-      .array(z.string().min(1))
-      .min(1)
-      .max(20)
-      .describe('List of URLs to extract content from (max 20).'),
+      .union([
+        z.string().min(1).transform(s => [s]), // Single URL string -> array
+        z.array(z.string().min(1)).min(1).max(20), // Array of URLs
+      ])
+      .describe('URL or list of URLs to extract content from (max 20).'),
     includeImages: z.boolean().optional().default(false).describe('If true, include images in the response.'),
     extractDepth: z
       .enum(['basic', 'advanced'])

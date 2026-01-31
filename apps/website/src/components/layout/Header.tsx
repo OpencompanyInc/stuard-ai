@@ -22,9 +22,10 @@ const Header = () => {
           />
         </Link>
 
-        {/* Desktop Nav - Grayed Out */}
+        {/* Desktop Nav */}
         <nav className="hidden lg:flex items-center gap-6 text-[15px] font-medium text-gray-500 select-none">
           <span className="cursor-not-allowed text-gray-400">Features</span>
+          <Link href="/marketplace" className="hover:text-black transition-colors">Marketplace</Link>
           <Link href="/pricing" className="hover:text-black transition-colors">Pricing</Link>
           <span className="cursor-not-allowed text-gray-400">Blog</span>
         </nav>

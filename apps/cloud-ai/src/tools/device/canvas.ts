@@ -1,18 +1,10 @@
-import { z } from 'zod';
-import { makeLocalTool } from './shared';
+// Canvas tools - re-exported from sidebar-canvas.ts (renamed)
+// The old canvas_manager overlay system has been removed in favor of the sidebar canvas documents.
 
-export const canvas_manager = makeLocalTool(
-  'canvas_manager',
-  'Manage overlay canvas containers (create, update, delete, list, show/hide, focus, clear). Templates include notes (input) and info (display).',
-  z.object({
-    action: z.enum(['create', 'update', 'delete', 'list', 'show', 'hide', 'focus', 'clear']).default('create'),
-    id: z.string().optional(),
-    template: z.enum(['notes', 'info']).optional(),
-    title: z.string().optional(),
-    position: z.object({ x: z.number().int(), y: z.number().int() }).partial().optional(),
-    size: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }).partial().optional(),
-    content: z.string().optional(),
-    data: z.any().optional(),
-  }),
-  z.any(),
-);
+export {
+  canvas_list,
+  canvas_read,
+  canvas_write,
+  canvas_create,
+  canvas_delete,
+} from './sidebar-canvas';

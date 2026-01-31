@@ -5,12 +5,12 @@ module.exports = {
     extend: {
       fontFamily: {
         sans: [
-          '"Indie Flower"',
-          '"Nunito"',
+          '"Bricolage Grotesque"',
+          '"Figtree"',
           '"Plus Jakarta Sans"',
           '"Geist"',
+          '"Inter"',
           '"Segoe UI Variable"',
-          'Inter',
           'system-ui',
           '-apple-system',
           '"Segoe UI"',
@@ -30,10 +30,6 @@ module.exports = {
           'Consolas',
           'Monaco',
           'monospace',
-        ],
-        handwriting: [
-          '"Indie Flower"',
-          'cursive',
         ],
       },
       colors: {

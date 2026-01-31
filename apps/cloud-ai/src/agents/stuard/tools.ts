@@ -4,7 +4,7 @@ import { analyzeMediaTool } from '../../tools/analyze-media';
 import { outlook_get_me, outlook_list_messages, outlook_search_messages, outlook_send_mail } from '../../tools/outlook-tools';
 import { github_get_me, github_list_repos, github_list_issues, github_create_issue } from '../../tools/github-tools';
 import { google_get_userinfo, gmail_send_message, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, gmail_modify_message, gmail_delete_message, gmail_archive_message, gmail_mark_as_read, gmail_mark_as_unread, calendar_list_events, calendar_create_event, calendar_delete_event, tasks_list, drive_list_files, sheets_read_range, docs_get_document, docs_create_document, docs_write_text } from '../../tools/google-tools';
-import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, canvas_manager, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, stop_system_audio, describe_system_audio_capabilities, run_command, run_system_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, list_local_workflows, list_local_stuards, show_json_workflow_code, execute_workflow, find_workflow_semantic, import_workflow, run_automation, stop_automation, invoke_workflow, search_past_conversations, get_conversation_context, list_user_spaces, get_space_contents, add_to_space, ensure_space_path, list_space_path, add_to_space_path, get_space_tree, create_space, add_source_to_space, add_note_to_space, add_code_snippet_to_space, link_conversation_to_space, find_or_create_space, update_space_item, delete_space_item, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, get_window_info, set_window_bounds, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, browser_get_content, browser_click_element, browser_type_text, browser_find_text, browser_get_element_position, browser_find_clickable, browser_hover, browser_select_option, browser_press_key, browser_get_form_fields, browser_fill_form, browser_wait_for_element, browser_scroll_to, browser_get_page_info, browser_execute_script, agent_todo, get_mouse_position, computer_use, click_at_coordinates, double_click_at_coordinates, type_text, scroll, drag_and_drop } from '../../tools/device-tools';
+import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, canvas_list, canvas_read, canvas_write, canvas_create, canvas_delete, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, stop_system_audio, describe_system_audio_capabilities, run_command, run_system_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, list_local_workflows, list_local_stuards, show_json_workflow_code, execute_workflow, find_workflow_semantic, import_workflow, run_automation, stop_automation, invoke_workflow, search_past_conversations, get_conversation_context, list_user_spaces, get_space_contents, add_to_space, ensure_space_path, list_space_path, add_to_space_path, get_space_tree, create_space, add_source_to_space, add_note_to_space, add_code_snippet_to_space, link_conversation_to_space, find_or_create_space, update_space_item, delete_space_item, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, get_window_info, set_window_bounds, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, browser_get_content, browser_click_element, browser_type_text, browser_find_text, browser_get_element_position, browser_find_clickable, browser_hover, browser_select_option, browser_press_key, browser_get_form_fields, browser_fill_form, browser_wait_for_element, browser_scroll_to, browser_get_page_info, browser_execute_script, agent_todo, get_mouse_position, computer_use, click_at_coordinates, double_click_at_coordinates, type_text, scroll, drag_and_drop } from '../../tools/device-tools';
 import { computer_use_agent } from '../../tools/device-tools';
 import { web_search } from '../../tools/perplexity-tools';
 import { scrape_url } from '../../tools/tavily-tools';
@@ -13,6 +13,7 @@ import { getHeadlessAgentStatus } from '../../tools/get-headless-agent-status';
 import { listHeadlessAgentTasks } from '../../tools/list-headless-agent-tasks';
 import { stopHeadlessAgent } from '../../tools/stop-headless-agent';
 import { ffmpeg_status, ffmpeg_setup, ffmpeg_run, ffmpeg_convert_media, ffmpeg_extract_audio, ffmpeg_trim_media, ffmpeg_probe_media, ffmpeg_extract_frames } from '../../tools/device-tools';
+import { submitFeedback, reportBug, suggestFeature, listMyFeedback, getFeedbackDetails } from '../../tools/feedback-tools';
 import { createRequire } from 'node:module';
 import type { SIS as SISType } from 'sis-tools';
 import { searchToolsSemanticSupabase, isSupabaseSISEnabled } from '../../tools/sis-supabase';
@@ -73,7 +74,11 @@ export const ALL_TOOLS = {
   type_text,
   scroll,
   drag_and_drop,
-  canvas_manager,
+  canvas_list,
+  canvas_read,
+  canvas_write,
+  canvas_create,
+  canvas_delete,
   capture_media,
   stop_capture,
   describe_media_capture_capabilities,
@@ -197,6 +202,12 @@ export const ALL_TOOLS = {
   browser_get_page_info,
   browser_execute_script,
   agent_todo,
+  // Feedback tools
+  submit_feedback: submitFeedback,
+  report_bug: reportBug,
+  suggest_feature: suggestFeature,
+  list_my_feedback: listMyFeedback,
+  get_feedback_details: getFeedbackDetails,
 } as const;
 
 const _INTERNAL_SPACE_TOOLS = {
@@ -249,9 +260,11 @@ export const TIER_1_PARAMOUNT_TOOLS = [
   'read_file', 'write_file', 'list_directory', 'create_directory',
   'file_read', 'file_edit', 'open_file', 'move_file',
 
-  // System Commands (6)
+  // System Commands (13)
   'run_command', 'run_system_command', 'list_terminals', 'read_terminal',
-  'terminal_create', 'terminal_list',
+  'terminal_create', 'terminal_list', 'terminal_get', 'terminal_read',
+  'terminal_send_input', 'terminal_send_raw', 'terminal_send_keys',
+  'terminal_wait_for', 'terminal_destroy',
 
   // Input/Automation (7)
   'send_hotkey',
@@ -292,6 +305,26 @@ export const TIER_1_PARAMOUNT_TOOLS = [
 
   // Agent Todo Management (1)
   'agent_todo',
+
+  // Productivity (4)
+  'calendar_crud',
+  'task_crud',
+  'task_reminders',
+  'planner_list_items',
+
+  // Canvas Documents (5) - AI can read/write user's canvas notes
+  'canvas_list',
+  'canvas_read',
+  'canvas_write',
+  'canvas_create',
+  'canvas_delete',
+
+  // Feedback (5) - Bug reports and feature requests
+  'submit_feedback',
+  'report_bug',
+  'suggest_feature',
+  'list_my_feedback',
+  'get_feedback_details',
 ] as const;
 
 const _FFMPEG_TIER_1_TOOLS = [
@@ -366,7 +399,7 @@ async function getSis(): Promise<SISType | null> {
 export const CORE_TOOLS_LIST = [
   'wait', 'run_sequential', 'run_parallel', 'analyze_media', 'web_search', 'scrape_url',
   'deploy_headless_agent', 'get_headless_agent_status', 'list_headless_agent_tasks', 'stop_headless_agent',
-  'send_hotkey', 'computer_use', 'computer_use_agent', 'canvas_manager', 'capture_media', 'stop_capture',
+  'send_hotkey', 'computer_use', 'computer_use_agent', 'canvas_list', 'canvas_read', 'canvas_write', 'canvas_create', 'canvas_delete', 'capture_media', 'stop_capture',
   'describe_media_capture_capabilities',
   // Screen recording & system audio
   'capture_screen', 'stop_screen_capture', 'describe_screen_capture_capabilities',
@@ -485,45 +518,23 @@ export async function getToolsForQuery(
     }
   }
 
-  // Check if SIS runtime discovery is enabled
-  const useSISRuntime = isSupabaseSISEnabled();
+  // =========================================================================
+  // ALWAYS add SIS runtime tools for dynamic discovery
+  // These tools now have proper fallback (keyword search) when Supabase isn't available
+  // =========================================================================
+  selected.sis_search_tools = SIS_RUNTIME_TOOLS.sis_search_tools;
+  selected.sis_execute_tool = SIS_RUNTIME_TOOLS.sis_execute_tool;
+  selected.sis_list_categories = SIS_RUNTIME_TOOLS.sis_list_categories;
 
-  if (useSISRuntime) {
-    // =========================================================================
-    // SIS RUNTIME MODE: Add discovery tools on top of Tier 1
-    // Agent uses sis_search_tools to find additional tools on demand
-    // =========================================================================
+  if (process.env.SIS_DEBUG === '1') {
+    const searchMode = isSupabaseSISEnabled() ? 'semantic (Supabase)' : 'keyword (fallback)';
+    console.log(`[sis-runtime] Loaded ${Object.keys(selected).length} tools (Tier 1 + SIS discovery)`);
+    console.log(`[sis-runtime] Search mode: ${searchMode}`);
+    console.log('[sis-runtime] SIS tools added: sis_search_tools, sis_execute_tool, sis_list_categories');
+  }
 
-    // Add SIS runtime tools for dynamic discovery
-    selected.sis_search_tools = SIS_RUNTIME_TOOLS.sis_search_tools;
-    selected.sis_execute_tool = SIS_RUNTIME_TOOLS.sis_execute_tool;
-    selected.sis_list_categories = SIS_RUNTIME_TOOLS.sis_list_categories;
-
-    if (process.env.SIS_DEBUG === '1') {
-      console.log(`[sis-runtime] Loaded ${Object.keys(selected).length} tools (Tier 1 + SIS discovery)`);
-      console.log('[sis-runtime] SIS tools added: sis_search_tools, sis_execute_tool, sis_list_categories');
-      console.log('[sis-runtime] Agent can discover additional tools using sis_search_tools');
-
-      // Verify tools are properly formed
-      const sisToolNames = ['sis_search_tools', 'sis_execute_tool', 'sis_list_categories'];
-      for (const name of sisToolNames) {
-        const tool = selected[name];
-        if (!tool) {
-          console.error(`[sis-runtime] ERROR: ${name} is not defined!`);
-        } else if (typeof tool.execute !== 'function') {
-          console.error(`[sis-runtime] ERROR: ${name} does not have an execute function!`);
-        } else {
-          console.log(`[sis-runtime] ✓ ${name} is properly configured`);
-        }
-      }
-    }
-
-  } else {
-    // =========================================================================
-    // LEGACY MODE: Try in-memory SIS for query-based tool selection
-    // =========================================================================
-
-    // Try in-memory SIS for additional tools
+  // Also try in-memory SIS for additional query-based tools if enabled
+  if (process.env.SIS_ENABLE === '1') {
     const sis = await getSis();
     if (sis) {
       try {
@@ -534,17 +545,13 @@ export async function getToolsForQuery(
           }
         }
         if (process.env.SIS_DEBUG === '1') {
-          console.log('[sis-memory] Added tools from in-memory SIS');
+          console.log('[sis-memory] Added additional tools from in-memory SIS');
         }
       } catch (e) {
         if (process.env.SIS_DEBUG === '1') {
           console.warn('[sis-memory] In-memory resolve failed:', e);
         }
       }
-    }
-
-    if (process.env.SIS_DEBUG === '1') {
-      console.log(`[sis-legacy] Loaded ${Object.keys(selected).length} tools (Tier 1 + query-based)`);
     }
   }
 

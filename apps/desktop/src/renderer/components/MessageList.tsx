@@ -306,7 +306,7 @@ const MessageList: React.FC<MessageListProps> = ({
   // Auto-scroll to bottom on new messages or streaming response (only if user hasn't scrolled up)
   useLayoutEffect(() => {
     if (!userHasScrolledUp) {
-      endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      endRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
     }
   }, [messages.length, currentResponse, currentReasoning, userHasScrolledUp]);
 
@@ -314,7 +314,7 @@ const MessageList: React.FC<MessageListProps> = ({
   const lastMessageId = messages[messages.length - 1]?.id;
   useEffect(() => {
     if (!userHasScrolledUp && lastMessageId) {
-      endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      endRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
     }
   }, [lastMessageId, userHasScrolledUp]);
 

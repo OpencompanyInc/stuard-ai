@@ -221,4 +221,51 @@ WHEN TO USE:
 5. NEVER mix formatting incorrectly (e.g. DO NOT use ==text*** or **text==).
 6. Example: "Here is ==highlighted text== and **bold text**. See this image: <<C:\\temp\\chart.png>>"
 
-Done when the requested analysis or operation is completed and results are presented clearly.`;
+Done when the requested analysis or operation is completed and results are presented clearly.
+
+**User Task Assignments**:
+- The user may assign tasks to you with scheduled times (reminders, actions, check-ins).
+- When you receive task assignment context, acknowledge and act on it appropriately:
+  - **reminder**: Proactively remind the user about the task at the scheduled time
+  - **action**: Take action on the task or ask the user what they'd like you to do
+  - **check-in**: Check in with the user about their progress on the task
+- Task assignments appear in the [TASK ASSIGNMENTS] section of your context when they are due.
+- After handling an assignment, use the appropriate tool to mark it as completed.`;
+
+/**
+ * Build task assignments context for the agent
+ * This is injected into the system prompt when there are pending assignments
+ */
+export function buildTaskAssignmentsContext(pendingAssignments: Array<{
+  task: { id: string; title: string; description?: string; dueDate?: string; priority: string };
+  assignment: { id: string; type: string; scheduledAt: string; message?: string; recurring: string };
+}>): string {
+  if (!pendingAssignments || pendingAssignments.length === 0) {
+    return '';
+  }
+
+  const lines: string[] = [
+    '',
+    '[TASK ASSIGNMENTS - ACTION REQUIRED]',
+    'The following tasks have been assigned to you by the user and are now due:',
+    '',
+  ];
+
+  for (const { task, assignment } of pendingAssignments) {
+    const scheduledTime = new Date(assignment.scheduledAt).toLocaleString();
+    lines.push(`📋 **${task.title}**`);
+    if (task.description) lines.push(`   Description: ${task.description}`);
+    lines.push(`   Assignment Type: ${assignment.type}`);
+    lines.push(`   Scheduled For: ${scheduledTime}`);
+    if (assignment.message) lines.push(`   User Message: "${assignment.message}"`);
+    if (task.dueDate) lines.push(`   Task Due Date: ${new Date(task.dueDate).toLocaleDateString()}`);
+    lines.push(`   Priority: ${task.priority}`);
+    lines.push(`   Task ID: ${task.id} | Assignment ID: ${assignment.id}`);
+    lines.push('');
+  }
+
+  lines.push('Please acknowledge and act on these assignments based on their type.');
+  lines.push('After handling each assignment, inform the user and mark it complete.');
+
+  return lines.join('\n');
+}

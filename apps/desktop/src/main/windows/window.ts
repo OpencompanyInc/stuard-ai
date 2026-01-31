@@ -9,56 +9,18 @@ let win: BrowserWindow | null = null;
 let onboardingWin: BrowserWindow | null = null;
 let workflowsWin: BrowserWindow | null = null;
 let hudWin: BrowserWindow | null = null;
-let spacesWin: BrowserWindow | null = null;
+let sidebarWin: BrowserWindow | null = null;
+let spacesWin: BrowserWindow | null = null; // Legacy alias
 let dashboardWin: BrowserWindow | null = null;
 let tray: Tray | null = null;
+let sidebarExpanded = false;
 
-const SPACES_WINDOW_WIDTH = 450;
-const SPACES_WINDOW_MARGIN = 12;
+// Standalone sidebar window dimensions
+const SIDEBAR_EXPANDED_WIDTH = 900;
+const SIDEBAR_EXPANDED_HEIGHT = 700;
 
-function getSpacesWindowBounds(): { x: number; y: number; width: number; height: number } {
-  const fallbackDisplay = screen.getPrimaryDisplay();
-  const fallbackWorkArea = fallbackDisplay.workArea;
-
-  const mainBounds = win && !win.isDestroyed() && win.isVisible() ? win.getBounds() : null;
-  const display = mainBounds ? screen.getDisplayMatching(mainBounds) : fallbackDisplay;
-  const workArea = display.workArea;
-
-  const height = Math.min(mainBounds?.height ?? 640, workArea.height);
-  const y = Math.max(workArea.y, Math.min(mainBounds?.y ?? (workArea.y + Math.round(workArea.height * 0.12)), workArea.y + workArea.height - height));
-
-  let x = mainBounds
-    ? mainBounds.x + mainBounds.width + SPACES_WINDOW_MARGIN
-    : workArea.x + workArea.width - SPACES_WINDOW_WIDTH - SPACES_WINDOW_MARGIN;
-
-  // If it doesn't fit on the right, flip to the left
-  if (mainBounds && x + SPACES_WINDOW_WIDTH > workArea.x + workArea.width) {
-    x = mainBounds.x - SPACES_WINDOW_WIDTH - SPACES_WINDOW_MARGIN;
-  }
-
-  // Clamp to visible work area
-  x = Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - SPACES_WINDOW_WIDTH));
-
-  // If we somehow can't fit, fall back to a safe right dock
-  if (workArea.width < SPACES_WINDOW_WIDTH + 20) {
-    x = Math.max(fallbackWorkArea.x, fallbackWorkArea.x + fallbackWorkArea.width - SPACES_WINDOW_WIDTH);
-  }
-
-  return {
-    x: Math.round(x),
-    y: Math.round(y),
-    width: SPACES_WINDOW_WIDTH,
-    height: Math.round(height),
-  };
-}
-
-function repositionSpacesWindow() {
-  if (!spacesWin || spacesWin.isDestroyed()) return;
-  const b = getSpacesWindowBounds();
-  try {
-    spacesWin.setBounds(b);
-  } catch { }
-}
+// Internal sidebar (rendered inside overlay window)
+const INTERNAL_SIDEBAR_WIDTH = 320;
 
 // Keep a stable record of the intended content size to prevent drift from DPI rounding
 let baseContentWidth = 520;
@@ -291,9 +253,12 @@ const DEFAULT_MODE_SIZES: ModeSizePrefs = {
 // Min/max constraints per mode for user resizing
 const MODE_SIZE_CONSTRAINTS = {
   compact: { minW: 400, maxW: 800, minH: 100, maxH: 800 },  // Increased to 800 to avoid cut-off
-  sidebar: { minW: 400, maxW: 700, minH: 400, maxH: 2000 },  // Thicker sidebar
+  sidebar: { minW: 400, maxW: 1100, minH: 400, maxH: 2000 },  // Allow for internal sidebar (320px)
   window: { minW: 500, maxW: 1400, minH: 400, maxH: 1000 },
 };
+
+// Track internal sidebar state for width management
+let internalSidebarOpen = false;
 
 function applyOverlayChrome(mode: OverlayMode) {
   if (!win) return;
@@ -339,7 +304,7 @@ export function getPreloadPath() {
   return fallback;
 }
 
-export function getRendererUrl(entry: "index" | "dashboard" | "onboarding" | "board" | "workflows" | "hud-test" | "spaces" = "index") {
+export function getRendererUrl(entry: "index" | "dashboard" | "onboarding" | "board" | "workflows" | "hud-test" | "spaces" | "sidebar" = "index") {
   if (isDev) return `http://localhost:5173/${entry}.html`;
   return `file://${path.join(__dirname, `../../renderer/${entry}.html`)}`;
 }
@@ -377,12 +342,14 @@ function handleUserResize() {
   const height = Math.max(constraints.minH, Math.min(constraints.maxH, b.height));
 
   // Save user's preferred size for this mode (except sidebar which is special)
+  // Subtract internal sidebar width if open, so we save the base content width
   if (currentMode !== 'sidebar') {
-    userModeSizes[currentMode] = { width, height };
+    const savedWidth = internalSidebarOpen ? Math.max(width - INTERNAL_SIDEBAR_WIDTH, constraints.minW) : width;
+    userModeSizes[currentMode] = { width: savedWidth, height };
     // Persist to main process memory (could also use electron-store)
-    baseContentWidth = width;
+    baseContentWidth = savedWidth;
     baseContentHeight = height;
-    baseOuterWidth = b.width;
+    baseOuterWidth = internalSidebarOpen ? savedWidth + INTERNAL_SIDEBAR_WIDTH : savedWidth;
     baseOuterHeight = b.height;
   }
 
@@ -577,11 +544,10 @@ export function createWindow() {
     win = null;
   });
   // Handle resize events - allow user resizing while enforcing constraints
-  win.on('move', () => { repositionSpacesWindow(); });
+  win.on('move', () => { /* No longer repositioning external sidebar */ });
   win.on('resize', () => {
     assertOverlaySize();
     handleUserResize();
-    repositionSpacesWindow();
   });
   win.on('will-resize', (_event, newBounds) => {
     // Notify renderer of incoming resize for smooth animations
@@ -589,16 +555,27 @@ export function createWindow() {
       win?.webContents.send('overlay:resizing', { width: newBounds.width, height: newBounds.height });
     } catch { }
   });
-  win.on('focus', () => { unregisterMoveShortcuts(); clearMoveTimer(); });
+  win.on('focus', () => {
+    unregisterMoveShortcuts();
+    clearMoveTimer();
+  });
   win.on('blur', () => {
     updateLastActiveWindowHandle('blur');
     registerMoveShortcuts();
   });
-  win.on('hide', () => { unregisterMoveShortcuts(); clearMoveTimer(); });
+  win.on('hide', () => {
+    unregisterMoveShortcuts();
+    clearMoveTimer();
+  });
   win.on('show', () => {
     if (win?.isFocused()) unregisterMoveShortcuts();
     else registerMoveShortcuts();
-    repositionSpacesWindow();
+  });
+  win.on('move', () => {
+    // No longer repositioning external sidebar - using internal sidebar
+  });
+  win.on('resize', () => {
+    // No longer repositioning external sidebar - using internal sidebar
   });
 }
 
@@ -814,87 +791,148 @@ export function openWorkflowsWindow(options?: { marketplaceSlug?: string }) {
   workflowsWin = d;
 }
 
-export function openSpacesWindow() {
-  if (spacesWin && !spacesWin.isDestroyed()) {
-    repositionSpacesWindow();
-    spacesWin.show();
-    spacesWin.focus();
-    spacesWin.moveTop();
+// Standalone Sidebar Window (Spaces, Canvas, Terminal) - always opens as standalone window
+export function openSidebarWindow(options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) {
+  // Always open as standalone expanded window (ignore expanded flag, always expanded)
+  
+  if (sidebarWin && !sidebarWin.isDestroyed()) {
+    sidebarWin.show();
+    sidebarWin.focus();
+    sidebarWin.moveTop();
+    if (options?.tab) {
+      sidebarWin.webContents.send('sidebar:navigate', { tab: options.tab });
+    }
     return;
   }
 
-  const { x, y, width, height } = getSpacesWindowBounds();
-
-  spacesWin = new BrowserWindow({
+  // Always open as standalone centered window
+  const display = screen.getPrimaryDisplay();
+  const workArea = display.workArea;
+  
+  const width = Math.min(SIDEBAR_EXPANDED_WIDTH, workArea.width - 100);
+  const height = Math.min(SIDEBAR_EXPANDED_HEIGHT, workArea.height - 100);
+  const initialBounds = {
+    x: Math.round(workArea.x + (workArea.width - width) / 2),
+    y: Math.round(workArea.y + (workArea.height - height) / 2),
     width,
-    height,
-    x,
-    y,
+    height
+  };
+  sidebarExpanded = true; // Always expanded
+
+  sidebarWin = new BrowserWindow({
+    width: initialBounds.width,
+    height: initialBounds.height,
+    x: initialBounds.x,
+    y: initialBounds.y,
     show: true,
     frame: false,
     transparent: true,
     hasShadow: false,
-    resizable: false,
+    resizable: true,
     movable: true,
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
-    skipTaskbar: true,
-    alwaysOnTop: true,
+    skipTaskbar: false,  // Always show in taskbar (standalone window)
+    alwaysOnTop: false,   // Not always on top (standalone window)
     useContentSize: true,
     focusable: true,
+    minWidth: 380,
+    minHeight: 400,
     webPreferences: {
       preload: getPreloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      devTools: isDev,
+      devTools: true,
     },
     backgroundColor: "#00000000",
   });
 
-  spacesWin.setMenu(null);
-  try { spacesWin.setAlwaysOnTop(true, 'screen-saver'); } catch { }
-  repositionSpacesWindow();
+  sidebarWin.setMenu(null);
+  // Always standalone mode - no special always-on-top handling needed
 
+  // Build URL/file with tab and expanded params (always expanded)
+  const queryParams: Record<string, string> = { expanded: 'true' };
+  if (options?.tab) queryParams.tab = options.tab;
+  
   if (isDev) {
-    spacesWin.loadURL(getRendererUrl("spaces"));
+    const params = new URLSearchParams(queryParams).toString();
+    const url = params ? `${getRendererUrl("sidebar")}?${params}` : getRendererUrl("sidebar");
+    sidebarWin.loadURL(url);
   } else {
     const candidates = [
-      path.join(__dirname, "../renderer/spaces.html"),
-      path.join(__dirname, "../../renderer/spaces.html"),
+      path.join(__dirname, "../renderer/sidebar.html"),
+      path.join(__dirname, "../../renderer/sidebar.html"),
     ];
     for (const p of candidates) {
       if (fs.existsSync(p)) {
-        spacesWin.loadFile(p);
+        if (Object.keys(queryParams).length > 0) {
+          sidebarWin.loadFile(p, { query: queryParams });
+        } else {
+          sidebarWin.loadFile(p);
+        }
         break;
       }
     }
   }
 
-  spacesWin.on('closed', () => { spacesWin = null; });
-  // spacesWin.on('blur', () => {
-  //   try { spacesWin?.hide(); } catch { }
-  // });
+  sidebarWin.on('closed', () => {
+    sidebarWin = null;
+    sidebarExpanded = false;
+  });
+
+  // Standalone window - no auto-hide behavior
+}
+
+export function closeSidebarWindow() {
+  try { sidebarWin?.close(); } catch { }
+}
+
+export function toggleSidebarWindow(options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) {
+  if (!sidebarWin || sidebarWin.isDestroyed()) {
+    openSidebarWindow(options);
+    return;
+  }
+  if (sidebarWin.isVisible()) {
+    try { sidebarWin.hide(); } catch { }
+    return;
+  }
+  
+  // Always standalone mode - just show and focus
+  sidebarWin.show();
+  sidebarWin.focus();
+  sidebarWin.moveTop();
+  if (options?.tab) {
+    sidebarWin.webContents.send('sidebar:navigate', { tab: options.tab });
+  }
+}
+
+export function getSidebarWindow() {
+  return sidebarWin;
+}
+
+export function isSidebarExpanded() {
+  return sidebarExpanded;
+}
+
+export function toggleSidebarExpanded() {
+  // Sidebar is now always expanded/standalone - this is a no-op
+  // Kept for API compatibility
+  return { expanded: true };
+}
+
+// Legacy Spaces Window functions - now redirect to sidebar
+export function openSpacesWindow() {
+  openSidebarWindow({ tab: 'spaces' });
 }
 
 export function closeSpacesWindow() {
-  try { spacesWin?.close(); } catch { }
+  closeSidebarWindow();
 }
 
 export function toggleSpacesWindow() {
-  if (!spacesWin || spacesWin.isDestroyed()) {
-    openSpacesWindow();
-    return;
-  }
-  if (spacesWin.isVisible()) {
-    try { spacesWin.hide(); } catch { }
-    return;
-  }
-  repositionSpacesWindow();
-  spacesWin.show();
-  spacesWin.focus();
-  spacesWin.moveTop();
+  toggleSidebarWindow({ tab: 'spaces' });
 }
 
 // HUD Window - 3D Curved Launcher
@@ -1031,17 +1069,32 @@ export function toggleWindow() {
   }
 }
 
-export function setOverlaySize(width: number, height: number, reposition = false) {
+export function setOverlaySize(width: number, height: number, reposition = false, anchor: 'top' | 'bottom' = 'top') {
   if (!win) return;
   resizingProgrammatically = true;
   baseContentWidth = width;
   baseContentHeight = height;
 
-  // Only reposition to center-top if explicitly requested or if window isn't visible yet
-  if (reposition || !win.isVisible()) {
-    centerTopWithContentSize(win, width, height);
+  if (anchor === 'bottom') {
+    // Math must be done on *outer* bounds to be accurate
+    const currentBounds = win.getBounds();
+    // We can't easily predict the new outer height from content height without setContentSize...
+    // But setContentSize is top-anchored.
+    // Cleanest way: set size, see difference, fix position? No, that causes flash.
+    // Better: use setBounds if we know the frame differences. The frame is transparent/frameless, so content size ~= outer size usually?
+    // Electron's useContentSize: true means width/height in constructor are content.
+    // win.getBounds() is outer.
+    // Let's assume for this frameless window, setBounds width/height is close enough or use setBounds directly.
+    const dy = height - currentBounds.height; // Approximation if mixing content/outer, but for frameless it's 1:1 usually
+    const newY = currentBounds.y - dy;
+    win.setBounds({ x: currentBounds.x, y: newY, width: width, height: height });
   } else {
-    win.setContentSize(width, height);
+    // Only reposition to center-top if explicitly requested or if window isn't visible yet
+    if (reposition || !win.isVisible()) {
+      centerTopWithContentSize(win, width, height);
+    } else {
+      win.setContentSize(width, height);
+    }
   }
 
   setTimeout(() => {
@@ -1065,6 +1118,23 @@ export function setOverlayMode(mode: OverlayMode) {
   currentMode = mode;
 
   applyOverlayChrome(mode);
+
+  // Close internal sidebar when switching modes to reset width properly
+  if (internalSidebarOpen) {
+    internalSidebarOpen = false;
+    // Reset userModeSizes for current mode to remove expanded width
+    if (prevMode !== 'sidebar' && userModeSizes[prevMode]) {
+      const constraints = MODE_SIZE_CONSTRAINTS[prevMode];
+      const currentWidth = userModeSizes[prevMode].width;
+      // If width seems expanded (larger than default + some buffer), reset to default
+      if (currentWidth > DEFAULT_MODE_SIZES[prevMode].width + 100) {
+        userModeSizes[prevMode] = { ...DEFAULT_MODE_SIZES[prevMode] };
+      }
+    }
+    try {
+      win?.webContents.send('overlay:internalSidebarChanged', { open: false, width: 0 });
+    } catch { }
+  }
 
   if (prevMode === 'sidebar' && mode !== 'sidebar' && lastSplitTarget) {
     restoreWindowSnapshot(lastSplitTarget);
@@ -1229,6 +1299,109 @@ export function moveOverlayBy(dx: number, dy: number) {
   const targetOuterY = clamp(outer.y + dy, wa.y, wa.y + wa.height - outer.height);
   // Lock the outer width/height absolutely when moving
   win.setBounds({ x: targetOuterX, y: targetOuterY, width: baseOuterWidth, height: baseOuterHeight });
+}
+
+export function setOverlayBounds(bounds: { x?: number; y?: number; width?: number; height?: number }) {
+  if (!win) return;
+  resizingProgrammatically = true;
+  try {
+    const current = win.getBounds();
+    const target = { ...current, ...bounds };
+
+    // Update baselines if size changes (essential for keeping lock on future moves)
+    if (bounds.width !== undefined) {
+      baseContentWidth = bounds.width;
+      baseOuterWidth = bounds.width;
+    }
+    if (bounds.height !== undefined) {
+      baseContentHeight = bounds.height;
+      baseOuterHeight = bounds.height;
+    }
+
+    win.setBounds(target);
+  } finally {
+    setTimeout(() => { resizingProgrammatically = false; }, 0);
+  }
+}
+
+/**
+ * Toggle internal sidebar - expands/contracts overlay window width
+ * This keeps sidebar as part of the main overlay window (not a separate window)
+ */
+export function toggleInternalSidebar(open?: boolean): { open: boolean; width: number } {
+  const shouldOpen = typeof open === 'boolean' ? open : !internalSidebarOpen;
+  
+  if (!win || win.isDestroyed()) {
+    internalSidebarOpen = shouldOpen;
+    return { open: shouldOpen, width: 0 };
+  }
+
+  const current = win.getBounds();
+  const display = screen.getDisplayMatching(current);
+  const workArea = display.workArea;
+
+  resizingProgrammatically = true;
+
+  try {
+    if (shouldOpen && !internalSidebarOpen) {
+      // Opening sidebar - expand width
+      const newWidth = Math.min(current.width + INTERNAL_SIDEBAR_WIDTH, workArea.width - 40);
+      
+      // Adjust x position if expanding would go off-screen
+      let newX = current.x;
+      if (current.x + newWidth > workArea.x + workArea.width) {
+        newX = Math.max(workArea.x, workArea.x + workArea.width - newWidth);
+      }
+
+      win.setBounds({ x: newX, y: current.y, width: newWidth, height: current.height });
+      baseContentWidth = newWidth;
+      baseOuterWidth = newWidth;
+
+      // Update max width constraint to allow the expanded size
+      const constraints = MODE_SIZE_CONSTRAINTS[currentMode];
+      try {
+        win.setMaximumSize(Math.max(constraints.maxW, newWidth + 100), constraints.maxH);
+      } catch { }
+
+    } else if (!shouldOpen && internalSidebarOpen) {
+      // Closing sidebar - contract width
+      const newWidth = Math.max(current.width - INTERNAL_SIDEBAR_WIDTH, MODE_SIZE_CONSTRAINTS[currentMode].minW);
+      
+      win.setBounds({ x: current.x, y: current.y, width: newWidth, height: current.height });
+      baseContentWidth = newWidth;
+      baseOuterWidth = newWidth;
+
+      // Update userModeSizes to the contracted width so mode switches use correct size
+      if (currentMode !== 'sidebar') {
+        userModeSizes[currentMode] = { width: newWidth, height: current.height };
+      }
+
+      // Restore normal max width constraint
+      const constraints = MODE_SIZE_CONSTRAINTS[currentMode];
+      try {
+        win.setMaximumSize(constraints.maxW, constraints.maxH);
+      } catch { }
+    }
+
+    internalSidebarOpen = shouldOpen;
+
+    // Notify renderer of the change
+    try {
+      win.webContents.send('overlay:internalSidebarChanged', { 
+        open: internalSidebarOpen, 
+        width: win.getBounds().width 
+      });
+    } catch { }
+
+  } finally {
+    setTimeout(() => { resizingProgrammatically = false; }, 0);
+  }
+
+  return { open: internalSidebarOpen, width: win.getBounds().width };
+}
+
+export function getInternalSidebarState(): { open: boolean } {
+  return { open: internalSidebarOpen };
 }
 
 export function registerGlobalShortcuts() {

@@ -1,15 +1,16 @@
 import { execTool, getToolKind } from '../tool-router';
-import { EngineContext, StuardSpec, StuardStep } from './types';
+import { EngineContext, StuardSpec, StuardStep, LoopConfig } from './types';
 import { interpolateForTool, deepMerge, evalIfGuard } from './utils';
 import { aiDecideNext } from './ai';
 import { execRunSequential, execRunParallel, execLoopExecutor } from './orchestration';
+import { executeFromTrigger } from './function-call';
 
 export async function executeStep(
   spec: StuardSpec,
   step: StuardStep,
   ctx: any,
   engineCtx: EngineContext
-): Promise<{ nextId?: string; nextIds?: string[]; ctx: any; ok: boolean; error?: string }> {
+): Promise<{ nextId?: string; nextIds?: string[]; loop?: LoopConfig; loopBreak?: boolean; ctx: any; ok: boolean; error?: string }> {
   try {
     // Merge any arg patches from AI routing
     const patchForThis = ctx?.__argsPatch?.[step.id];
@@ -29,6 +30,15 @@ export async function executeStep(
         result = await execLoopExecutor(mergedArgs, ctx, engineCtx);
       } else {
         result = { ok: false, error: `unknown_orchestration_tool: ${toolName}` };
+      }
+    } else if (toolName === 'call_function') {
+      // Handle call_function inline since it needs access to the current spec
+      const triggerId = String(mergedArgs?.triggerId || '').trim();
+      const inputs = mergedArgs?.inputs || {};
+      if (!triggerId) {
+        result = { ok: false, error: 'missing triggerId for call_function' };
+      } else {
+        result = await executeFromTrigger(spec, triggerId, inputs, ctx, engineCtx);
       }
     } else if (toolName === 'noop' || !toolName) {
       result = { ok: true };
@@ -87,7 +97,7 @@ async function decideNext(
   step: StuardStep,
   ctx: any,
   engineCtx: EngineContext
-): Promise<{ nextId?: string; nextIds?: string[]; ctx: any; ok: boolean; error?: string }> {
+): Promise<{ nextId?: string; nextIds?: string[]; loop?: LoopConfig; loopBreak?: boolean; ctx: any; ok: boolean; error?: string }> {
   const rawEdges = Array.isArray(step.next) ? step.next : [];
 
   // Separate unconditional edges (always/no guard) from conditional ones
@@ -124,7 +134,7 @@ async function decideNext(
 
     // No guard or 'always' → take this edge
     if (!g || g === 'always') {
-      return { ok: true, nextId: edge.to, ctx };
+      return { ok: true, nextId: edge.to, loop: edge.loop, loopBreak: edge.loopBreak, ctx };
     }
 
     // JSONLogic guard
@@ -132,7 +142,7 @@ async function decideNext(
       try {
         // { if: true } is a catch-all, always matches
         if (g.if === true || evalIfGuard(g.if, ctx)) {
-          return { ok: true, nextId: edge.to, ctx };
+          return { ok: true, nextId: edge.to, loop: edge.loop, loopBreak: edge.loopBreak, ctx };
         }
       } catch { }
     }
@@ -156,7 +166,9 @@ async function decideNext(
         ctx.__argsPatch[out.next] = deepMerge(ctx.__argsPatch[out.next] || {}, out.argsPatch);
       }
 
-      return { ok: true, nextId: out.next, ctx };
+      // Find the matching edge to get its loop config
+      const matchedEdge = edges.find(e => e.to === out.next);
+      return { ok: true, nextId: out.next, loop: matchedEdge?.loop, loopBreak: matchedEdge?.loopBreak, ctx };
     }
   }
 
