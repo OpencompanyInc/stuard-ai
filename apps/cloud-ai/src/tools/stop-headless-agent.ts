@@ -22,8 +22,8 @@ export const stopHeadlessAgent = createTool({
     message: z.string().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const { task_id } = context;
+  execute: async (inputData, context) => {
+    const { task_id  } = inputData as any;
 
     if (!task_id) {
       return { ok: false, error: 'task_id is required' };
@@ -90,8 +90,8 @@ export const listHeadlessAgents = createTool({
     running_on_cloud: z.array(z.string()).optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const { parent_id, status } = context;
+  execute: async (inputData, context) => {
+    const { parent_id, status  } = inputData as any;
 
     try {
       // Get tasks from local Python agent

@@ -29,6 +29,7 @@ export default defineConfig(() => ({
         workflows: resolve(__dirname, "src/renderer/workflows.html"),
         spaces: resolve(__dirname, "src/renderer/spaces.html"),
         sidebar: resolve(__dirname, "src/renderer/sidebar.html"),
+        notification: resolve(__dirname, "src/renderer/notification.html"),
       },
     },
   },

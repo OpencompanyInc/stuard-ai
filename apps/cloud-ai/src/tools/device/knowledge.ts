@@ -12,8 +12,8 @@ export const knowledge_add_instruction = createTool({
       .describe('The instruction to remember (e.g., "Always be concise", "Use Python for scripts")'),
   }),
   outputSchema: z.object({ ok: z.boolean(), fact: z.any().optional(), error: z.string().optional() }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
     return execLocalTool(
       'knowledge_add_fact',
@@ -39,8 +39,8 @@ export const knowledge_remember_about_user = createTool({
       .describe('The fact to remember (e.g., "Has a dog named Max", "Prefers dark mode")'),
   }),
   outputSchema: z.object({ ok: z.boolean(), fact: z.any().optional(), error: z.string().optional() }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
     return execLocalTool(
       'knowledge_add_fact',
@@ -65,8 +65,8 @@ export const knowledge_update_profile = createTool({
     value: z.string().describe('The new value'),
   }),
   outputSchema: z.object({ ok: z.boolean(), fact: z.any().optional(), error: z.string().optional() }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
     return execLocalTool(
       'knowledge_upsert_core',
@@ -95,8 +95,8 @@ export const knowledge_add_project_fact = createTool({
     entity: z.any().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     // Find or create entity

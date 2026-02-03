@@ -14,7 +14,7 @@ async function testSearchTools() {
   for (const query of queries) {
     console.log(`\n--- Search: "${query}" ---`);
     try {
-      const result = await search_tools.execute({ context: { query } } as any);
+      const result = await search_tools.execute?.({ query } as any, {} as any);
       console.log('Results:', JSON.stringify(result, null, 2));
     } catch (e: any) {
       console.error('Error:', e.message);
@@ -30,8 +30,12 @@ async function testGetToolSchema() {
   for (const toolName of toolNames) {
     console.log(`\n--- Lookup: "${toolName}" ---`);
     try {
-      const result = await retrieveToolFormat.execute({ context: { toolName } } as any);
-      if (result.found && result.tool) {
+      const result = await retrieveToolFormat.execute?.({ toolName } as any, {} as any);
+      if (!result) {
+        console.log('  Tool not executable');
+        continue;
+      }
+      if (result && 'found' in result && result.found && result.tool) {
         console.log(`  Found: ${result.tool.id}`);
         console.log(`  Desc: ${result.tool.description?.slice(0, 80)}...`);
         console.log(`  Args: ${JSON.stringify(result.tool.argsTemplate)}`);
@@ -48,7 +52,15 @@ async function testListAllToolFormats() {
   console.log('\n=== Testing list_all_tool_formats ===\n');
 
   try {
-    const result = await listAllToolFormats.execute({ context: {} } as any);
+    const result = await listAllToolFormats.execute?.({} as any, {} as any);
+    if (!result || ('error' in result && result.error)) {
+      console.error('Error:', (result as any)?.error || 'Failed to list tools');
+      return;
+    }
+    if (!('triggers' in result) || !('tools' in result)) {
+      console.error('Error: Invalid result format');
+      return;
+    }
 
     console.log('--- Triggers ---');
     for (const t of result.triggers) {

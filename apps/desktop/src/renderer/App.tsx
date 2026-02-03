@@ -14,8 +14,10 @@ import './scrollbar.css';
 import { supabase } from './lib/supabaseClient';
 import { startBrowserSignIn } from './auth/browserSignIn';
 import OnboardingFlow from './components/onboarding/OnboardingFlow';
+import { OnboardingProvider, OnboardingTooltipContainer } from './components/onboarding';
 import EnvironmentBadge from './components/EnvironmentBadge';
 import { WorkflowOverlay } from './components/WorkflowOverlay/WorkflowOverlay';
+import { NotificationProvider, NotificationController } from './components/NotificationSystem';
 
 import { useSpeechToText } from './hooks/useSpeechToText';
 import { usePlannerData } from './hooks/usePlannerData';
@@ -196,10 +198,8 @@ export default function App() {
     // Safety check for API
     if (!window.desktopAPI) return;
 
-    window.desktopAPI.onShow(() => {
+    const unsubShow = window.desktopAPI.onShow(() => {
       setShowMiniOutput(false);
-      setOverlayMode('compact');
-      window.desktopAPI.setMode('compact');
       setTimeout(() => inputRef.current?.focus(), 0);
     });
 
@@ -211,7 +211,10 @@ export default function App() {
         loadConversation(id);
       }
     });
-    return () => { try { unsubOpen && unsubOpen(); } catch { } };
+    return () => {
+      try { unsubShow?.(); } catch { }
+      try { unsubOpen && unsubOpen(); } catch { }
+    };
   }, []);
 
   // Listen for resize events from main process
@@ -230,7 +233,7 @@ export default function App() {
         setInternalSidebarOpen(false);
       }
     });
-    
+
     // Listen for internal sidebar state changes from main process
     const unsubInternalSidebar = (window.desktopAPI as any)?.onInternalSidebarChanged?.((data: { open: boolean; width: number }) => {
       setInternalSidebarOpen(data.open);
@@ -499,7 +502,8 @@ export default function App() {
           }
         }
 
-        // Notifications
+        // Notifications - Handled by NotificationController
+        /*
         if (evt.event === 'reminder_triggered') {
           const m = evt.data?.message || 'Reminder';
           await (window as any).desktopAPI?.notify?.('Reminder', String(m));
@@ -509,6 +513,7 @@ export default function App() {
           const body = evt.data?.body || '';
           await (window as any).desktopAPI?.notify?.(String(title), String(body));
         }
+        */
       } catch { }
     });
     return () => { try { unsub?.(); } catch { } };
@@ -912,7 +917,7 @@ export default function App() {
 
   const handleToggleInternalSidebar = useCallback(async () => {
     const nextState = !internalSidebarOpen;
-    
+
     // Only expand/contract window in sidebar/window modes
     if (overlayMode === 'sidebar' || overlayMode === 'window') {
       // Let the main process handle window width expansion/contraction
@@ -926,7 +931,7 @@ export default function App() {
         console.warn('toggleInternalSidebar failed, falling back:', e);
       }
     }
-    
+
     // Fallback: just toggle state without window resize
     setInternalSidebarOpen(nextState);
   }, [internalSidebarOpen, overlayMode]);
@@ -1173,263 +1178,269 @@ export default function App() {
   }, [currentResponse]);
 
   return (
-    <div className="w-full h-full text-sans overflow-hidden relative">
-      {/* Resize handles for user-resizable window - invisible but draggable edges */}
-      {showResizeGrips && (
-        <>
-          {/* Top edge */}
-          <div className="absolute top-0 left-2 right-2 h-1 cursor-ns-resize z-[100]" style={{ WebkitAppRegion: 'no-drag' } as any} />
-          {/* Bottom edge */}
-          <div className="absolute bottom-0 left-2 right-2 h-1 cursor-ns-resize z-[100]" style={{ WebkitAppRegion: 'no-drag' } as any} />
-          {/* Left edge */}
-          <div className="absolute top-2 bottom-2 left-0 w-1 cursor-ew-resize z-[100]" style={{ WebkitAppRegion: 'no-drag' } as any} />
-          {/* Right edge */}
-          <div className="absolute top-2 bottom-2 right-0 w-1 cursor-ew-resize z-[100]" style={{ WebkitAppRegion: 'no-drag' } as any} />
-          {/* Corner handles - larger for easier grabbing */}
-          <div className="absolute top-0 left-0 w-3 h-3 cursor-nwse-resize z-[101]" style={{ WebkitAppRegion: 'no-drag' } as any} />
-          <div className="absolute top-0 right-0 w-3 h-3 cursor-nesw-resize z-[101]" style={{ WebkitAppRegion: 'no-drag' } as any} />
-          <div className="absolute bottom-0 left-0 w-3 h-3 cursor-nesw-resize z-[101]" style={{ WebkitAppRegion: 'no-drag' } as any} />
-          <div className="absolute bottom-0 right-0 w-3 h-3 cursor-nwse-resize z-[101]" style={{ WebkitAppRegion: 'no-drag' } as any} />
-        </>
-      )}
-      <div
-        className="w-full h-full overflow-hidden transition-all duration-200 ease-out bg-transparent flex flex-col"
-      >
-        {overlayMode === 'sidebar' || overlayMode === 'window' ? (
-          <div className="relative h-full w-full p-4 overflow-hidden mode-transition overlay-responsive">
-            {/* Resize indicator in bottom-right corner */}
-            {showResizeGrips && (
-              <div className="resize-indicator" title="Drag corner to resize" />
-            )}
-            {/* Main Content - Full Width */}
-            <div className="flex flex-col h-full w-full relative smooth-resize">
-              {/* Permission Approval Overlay */}
-              {approvalPrompt && (
-                <PermissionDialog
-                  isOpen={!!approvalPrompt}
-                  tool={approvalPrompt.tool}
-                  args={approvalPrompt.args}
-                  description={approvalPrompt.description}
-                  onAllow={() => {
-                    respondToApproval(approvalPrompt.id, true);
-                    setApprovalPrompt(null);
-                  }}
-                  onDeny={() => {
-                    respondToApproval(approvalPrompt.id, false);
-                    setApprovalPrompt(null);
-                  }}
-                />
+    <NotificationProvider>
+      <NotificationController subscribeProgress={subscribeProgress} />
+      <div className="w-full h-full text-sans overflow-hidden relative">
+        {/* Resize handles for user-resizable window - invisible but draggable edges */}
+        {showResizeGrips && (
+          <>
+            {/* Top edge */}
+            <div className="absolute top-0 left-2 right-2 h-1 cursor-ns-resize z-[100]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+            {/* Bottom edge */}
+            <div className="absolute bottom-0 left-2 right-2 h-1 cursor-ns-resize z-[100]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+            {/* Left edge */}
+            <div className="absolute top-2 bottom-2 left-0 w-1 cursor-ew-resize z-[100]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+            {/* Right edge */}
+            <div className="absolute top-2 bottom-2 right-0 w-1 cursor-ew-resize z-[100]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+            {/* Corner handles - larger for easier grabbing */}
+            <div className="absolute top-0 left-0 w-3 h-3 cursor-nwse-resize z-[101]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+            <div className="absolute top-0 right-0 w-3 h-3 cursor-nesw-resize z-[101]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+            <div className="absolute bottom-0 left-0 w-3 h-3 cursor-nesw-resize z-[101]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+            <div className="absolute bottom-0 right-0 w-3 h-3 cursor-nwse-resize z-[101]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+          </>
+        )}
+        <div
+          className="w-full h-full overflow-hidden transition-all duration-200 ease-out bg-transparent flex flex-col"
+        >
+          {overlayMode === 'sidebar' || overlayMode === 'window' ? (
+            <div className="relative h-full w-full p-4 overflow-hidden mode-transition overlay-responsive">
+              {/* Resize indicator in bottom-right corner */}
+              {showResizeGrips && (
+                <div className="resize-indicator" title="Drag corner to resize" />
               )}
+              {/* Main Content - Full Width */}
+              <div className="flex flex-col h-full w-full relative smooth-resize">
+                {/* Permission Approval Overlay */}
+                {approvalPrompt && (
+                  <PermissionDialog
+                    isOpen={!!approvalPrompt}
+                    tool={approvalPrompt.tool}
+                    args={approvalPrompt.args}
+                    description={approvalPrompt.description}
+                    onAllow={() => {
+                      respondToApproval(approvalPrompt.id, true);
+                      setApprovalPrompt(null);
+                    }}
+                    onDeny={() => {
+                      respondToApproval(approvalPrompt.id, false);
+                      setApprovalPrompt(null);
+                    }}
+                  />
+                )}
 
-              {/* Environment Badge */}
-              <EnvironmentBadge variant="overlay" className="absolute top-14 right-3 z-50 pointer-events-none" />
+                {/* Environment Badge */}
+                <EnvironmentBadge variant="overlay" className="absolute top-14 right-3 z-50 pointer-events-none" />
 
-              {/* Error Notifications */}
-              {lastError?.code === 'monthly_credit_limit_exceeded' && (
-                <div className="absolute left-4 right-4 bottom-4 z-50 animate-in slide-in-from-bottom-2 duration-300">
-                  <div className="rounded-lg border border-rose-500/30 bg-black/90 backdrop-blur-md p-4">
-                    <h3 className="text-rose-400 font-semibold text-sm">Monthly Credits Exceeded</h3>
-                    <p className="text-white/70 text-xs mt-1 mb-3">You have used all your credits for this month.</p>
-                    <button onClick={() => { try { (window as any).desktopAPI?.openExternal?.('https://stuard.ai/pricing'); } catch { } }} className="w-full py-1.5 bg-rose-500 hover:bg-rose-400 rounded text-xs text-black font-bold">Upgrade Plan</button>
+                {/* Error Notifications */}
+                {lastError?.code === 'monthly_credit_limit_exceeded' && (
+                  <div className="absolute left-4 right-4 bottom-4 z-50 animate-in slide-in-from-bottom-2 duration-300">
+                    <div className="rounded-lg border border-rose-500/30 bg-black/90 backdrop-blur-md p-4">
+                      <h3 className="text-rose-400 font-semibold text-sm">Monthly Credits Exceeded</h3>
+                      <p className="text-white/70 text-xs mt-1 mb-3">You have used all your credits for this month.</p>
+                      <button onClick={() => { try { (window as any).desktopAPI?.openExternal?.('https://stuard.ai/pricing'); } catch { } }} className="w-full py-1.5 bg-rose-500 hover:bg-rose-400 rounded text-xs text-black font-bold">Upgrade Plan</button>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* Session Expired Notification */}
-              {(lastError?.code === 'session_expired' || lastError?.data?.requiresSignIn) && (
-                <div className="absolute left-4 right-4 bottom-4 z-50 animate-in slide-in-from-bottom-2 duration-300">
-                  <div className="rounded-lg border border-amber-500/30 bg-black/90 backdrop-blur-md p-4">
-                    <h3 className="text-amber-400 font-semibold text-sm">Session Expired</h3>
-                    <p className="text-white/70 text-xs mt-1 mb-3">Your session has expired. Please sign in again to continue.</p>
-                    <button onClick={handleSignIn} className="w-full py-1.5 bg-amber-500 hover:bg-amber-400 rounded text-xs text-black font-bold flex items-center justify-center gap-2">
-                      <LogIn className="w-3 h-3" />
-                      Sign In
-                    </button>
+                {/* Session Expired Notification */}
+                {(lastError?.code === 'session_expired' || lastError?.data?.requiresSignIn) && (
+                  <div className="absolute left-4 right-4 bottom-4 z-50 animate-in slide-in-from-bottom-2 duration-300">
+                    <div className="rounded-lg border border-amber-500/30 bg-black/90 backdrop-blur-md p-4">
+                      <h3 className="text-amber-400 font-semibold text-sm">Session Expired</h3>
+                      <p className="text-white/70 text-xs mt-1 mb-3">Your session has expired. Please sign in again to continue.</p>
+                      <button onClick={handleSignIn} className="w-full py-1.5 bg-amber-500 hover:bg-amber-400 rounded text-xs text-black font-bold flex items-center justify-center gap-2">
+                        <LogIn className="w-3 h-3" />
+                        Sign In
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* Session Refreshed Notification */}
-              {lastError?.code === 'session_refreshed' && (
-                <div className="absolute left-4 right-4 bottom-4 z-50 animate-in slide-in-from-bottom-2 duration-300">
-                  <div className="rounded-lg border border-emerald-500/30 bg-black/90 backdrop-blur-md p-4">
-                    <h3 className="text-emerald-400 font-semibold text-sm">Session Refreshed</h3>
-                    <p className="text-white/70 text-xs mt-1">Your session was refreshed. Please try your request again.</p>
+                {/* Session Refreshed Notification */}
+                {lastError?.code === 'session_refreshed' && (
+                  <div className="absolute left-4 right-4 bottom-4 z-50 animate-in slide-in-from-bottom-2 duration-300">
+                    <div className="rounded-lg border border-emerald-500/30 bg-black/90 backdrop-blur-md p-4">
+                      <h3 className="text-emerald-400 font-semibold text-sm">Session Refreshed</h3>
+                      <p className="text-white/70 text-xs mt-1">Your session was refreshed. Please try your request again.</p>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* View Switcher */}
-              {hasMessages ? (
-                <ChatView
-                  messages={messages}
-                  currentResponse={currentResponse}
-                  currentReasoning={currentReasoning}
-                  currentToolCalls={currentToolCalls}
-                  currentStreamChunks={currentStreamChunks}
-                  thinkingStartTime={thinkingStartTime}
-                  contextPaths={contextPaths}
-                  onRemoveContext={handleRemoveContext}
-                  onCollapse={handleShowCompact}
-                  onOpenDashboard={handleOpenDashboard}
-                  onNewChat={handleNewChat}
-                  isRecording={isRecording}
-                  onMicClick={handleMicClick}
-                  conversations={convList}
-                  loadingConversations={loadingConvs}
-                  onSelectConversation={handleSelectConversation}
-                  chatMenuOpen={chatMenuOpen}
-                  onChatMenuOpenChange={setChatMenuOpen}
-                  statusText={chatStatusText}
-                  modelName={typeof (ai as any)?.model === 'string' ? (ai as any).model : ''}
-                  connectionStatus={connectionStatus}
-                  chatMode={chatMode}
-                  onChatModeChange={setChatMode as any}
-                  chatModels={chatModels}
-                  onChatModelsChange={setChatModels as any}
-                  overlayMode={overlayMode}
-                  tabs={tabs}
-                  activeTabId={activeTabId}
-                  onSwitchTab={switchTab}
-                  onCloseTab={closeTab}
-                  onAddTab={addTab}
-                  translucentMode={translucentMode}
-                  onSubmitToolOutput={submitToolOutput}
-                  onGenUIResponse={handleGenUIResponse}
-                  pendingMemories={pendingMemories}
-                  onConfirmPendingMemory={confirmPendingMemory}
-                  onRejectPendingMemory={rejectPendingMemory}
-                  onAddContext={handleAddContext}
-                  attachments={attachments}
-                  onRemoveAttachment={handleRemoveAttachment}
-                  onAttachFiles={handleAttachFiles}
-                  onAttachImages={handleAttachImages}
-                  onDrop={handleDrop}
-                  queueDepth={queueDepth}
-                  queuedMessages={queuedMessages}
-                  query={query}
-                  setQuery={setQuery}
-                  onSend={handleSend}
-                  onStop={stopGeneration}
-                  isStreaming={isStreaming}
-                  internalSidebarOpen={internalSidebarOpen}
-                  activeSidebarTab={activeSidebarTab}
-                  onToggleInternalSidebar={handleToggleInternalSidebar}
-                  onCloseInternalSidebar={handleCloseInternalSidebar}
-                  onSwitchSidebarTab={handleSwitchSidebarTab}
-                />
-              ) : (
-                <LauncherView
-                  query={query}
-                  setQuery={setQuery}
-                  onSend={handleSend}
-                  commands={commands}
-                  statusText={inputStatusText}
-                  connectionStatus={connectionStatus}
-                  onMicClick={handleMicClick}
-                  isRecording={isRecording}
-                  accessToken={accessToken}
-                  overlayMode={overlayMode}
-                  conversations={convList}
-                  loadingConversations={loadingConvs}
-                  onSelectConversation={handleSelectConversation}
-                  chatMenuOpen={chatMenuOpen}
-                  onChatMenuOpenChange={setChatMenuOpen}
-                  onNewChat={handleNewChat}
-                  onOpenDashboard={handleOpenDashboard}
-                  onToggleExpand={handleShowWindow}
-                  onToggleSidebar={handleToggleInternalSidebar}
-                  sidebarOpen={internalSidebarOpen}
-                  plannerData={plannerData}
-                  translucentMode={translucentMode}
-                  chatMode={chatMode}
-                  onChatModeChange={setChatMode as any}
-                  chatModels={chatModels}
-                  onChatModelsChange={setChatModels as any}
+                {/* View Switcher */}
+                {hasMessages ? (
+                  <ChatView
+                    messages={messages}
+                    currentResponse={currentResponse}
+                    currentReasoning={currentReasoning}
+                    currentToolCalls={currentToolCalls}
+                    currentStreamChunks={currentStreamChunks}
+                    thinkingStartTime={thinkingStartTime}
+                    contextPaths={contextPaths}
+                    onRemoveContext={handleRemoveContext}
+                    onCollapse={handleShowCompact}
+                    onOpenDashboard={handleOpenDashboard}
+                    onNewChat={handleNewChat}
+                    isRecording={isRecording}
+                    onMicClick={handleMicClick}
+                    conversations={convList}
+                    loadingConversations={loadingConvs}
+                    onSelectConversation={handleSelectConversation}
+                    chatMenuOpen={chatMenuOpen}
+                    onChatMenuOpenChange={setChatMenuOpen}
+                    statusText={chatStatusText}
+                    modelName={typeof (ai as any)?.model === 'string' ? (ai as any).model : ''}
+                    connectionStatus={connectionStatus}
+                    chatMode={chatMode}
+                    onChatModeChange={setChatMode as any}
+                    chatModels={chatModels}
+                    onChatModelsChange={setChatModels as any}
+                    overlayMode={overlayMode}
+                    tabs={tabs}
+                    activeTabId={activeTabId}
+                    onSwitchTab={switchTab}
+                    onCloseTab={closeTab}
+                    onAddTab={addTab}
+                    translucentMode={translucentMode}
+                    onSubmitToolOutput={submitToolOutput}
+                    onGenUIResponse={handleGenUIResponse}
+                    pendingMemories={pendingMemories}
+                    onConfirmPendingMemory={confirmPendingMemory}
+                    onRejectPendingMemory={rejectPendingMemory}
+                    onAddContext={handleAddContext}
+                    attachments={attachments}
+                    onRemoveAttachment={handleRemoveAttachment}
+                    onAttachFiles={handleAttachFiles}
+                    onAttachImages={handleAttachImages}
+                    onDrop={handleDrop}
+                    queueDepth={queueDepth}
+                    queuedMessages={queuedMessages}
+                    query={query}
+                    setQuery={setQuery}
+                    onSend={handleSend}
+                    onStop={stopGeneration}
+                    isStreaming={isStreaming}
+                    internalSidebarOpen={internalSidebarOpen}
+                    activeSidebarTab={activeSidebarTab}
+                    onToggleInternalSidebar={handleToggleInternalSidebar}
+                    onCloseInternalSidebar={handleCloseInternalSidebar}
+                    onSwitchSidebarTab={handleSwitchSidebarTab}
+                  />
+                ) : (
+                  <LauncherView
+                    query={query}
+                    setQuery={setQuery}
+                    onSend={handleSend}
+                    commands={commands}
+                    statusText={inputStatusText}
+                    connectionStatus={connectionStatus}
+                    onMicClick={handleMicClick}
+                    isRecording={isRecording}
+                    accessToken={accessToken}
+                    overlayMode={overlayMode}
+                    conversations={convList}
+                    loadingConversations={loadingConvs}
+                    onSelectConversation={handleSelectConversation}
+                    chatMenuOpen={chatMenuOpen}
+                    onChatMenuOpenChange={setChatMenuOpen}
+                    onNewChat={handleNewChat}
+                    onOpenDashboard={handleOpenDashboard}
+                    onToggleExpand={handleShowWindow}
+                    onToggleSidebar={handleToggleInternalSidebar}
+                    sidebarOpen={internalSidebarOpen}
+                    plannerData={plannerData}
+                    translucentMode={translucentMode}
+                    chatMode={chatMode}
+                    onChatModeChange={setChatMode as any}
+                    chatModels={chatModels}
+                    onChatModelsChange={setChatModels as any}
 
-                  // Internal Sidebar
-                  activeSidebarTab={activeSidebarTab}
-                  onCloseInternalSidebar={handleCloseInternalSidebar}
-                  onSwitchSidebarTab={handleSwitchSidebarTab}
-                />
-              )}
+                    // Internal Sidebar
+                    activeSidebarTab={activeSidebarTab}
+                    onCloseInternalSidebar={handleCloseInternalSidebar}
+                    onSwitchSidebarTab={handleSwitchSidebarTab}
+                  />
+                )}
+              </div>
             </div>
-          </div>
-        ) : (
-          <div className="flex-1 flex flex-col relative">
-            {/* Environment Badge - compact mode (top-right) */}
-            <EnvironmentBadge variant="minimal" className="absolute top-1 right-1 z-50" />
-            <InputArea
-              ref={inputRef}
-              query={query}
-              setQuery={setQuery}
-              onSend={handleSend}
-              attachments={attachments}
-              onRemoveAttachment={handleRemoveAttachment}
-              onAttachFiles={handleAttachFiles}
-              onAttachImages={handleAttachImages}
-              onPaste={handlePaste}
-              onDrop={handleDrop}
-              signedIn={signedIn}
-              onSignIn={handleSignIn}
-              conversationTitle={conversationTitle}
-              conversations={convList}
-              loadingConversations={loadingConvs}
-              onSelectConversation={handleSelectConversation}
-              onDeleteConversation={handleDeleteConversation}
-              onNewChat={handleNewChat}
-              onStopGeneration={stopGeneration}
-              onChatMenuOpenChange={setChatMenuOpen}
-              chatMenuOpen={chatMenuOpen}
-              expanded={false}
-              onToggleExpand={handleShowWindow}
-              onOpenDashboard={handleOpenDashboard}
-              overlayMode={overlayMode}
-              statusText={inputStatusText}
-              statusIcon={inputStatusIcon}
-              statusUrgency={inputStatusUrgency}
-              connectionStatus={connectionStatus}
-              queueDepth={queueDepth}
-              queuedMessages={queuedMessages}
-              isRecording={isRecording}
-              onMicClick={handleMicClick}
-              contextPaths={contextPaths}
-              setContextPaths={setContextPaths}
-              translucentMode={translucentMode}
-              accessToken={accessToken}
-              miniOutputText={miniOutputText}
-              miniOutputHasContent={miniOutputHasContent}
-              miniOutputStreaming={isStreaming && !!(currentResponse || '').trim()}
-              showMiniOutput={showMiniOutput}
-              setShowMiniOutput={setShowMiniOutput}
-              onSubmitToolOutput={submitToolOutput}
-              onGenUIResponse={handleGenUIResponse}
-            />
-          </div>
-        )}
+          ) : (
+            <div className="flex-1 flex flex-col relative">
+              {/* Environment Badge - compact mode (top-right) */}
+              <EnvironmentBadge variant="minimal" className="absolute top-1 right-1 z-50" />
+              <InputArea
+                ref={inputRef}
+                query={query}
+                setQuery={setQuery}
+                onSend={handleSend}
+                attachments={attachments}
+                onRemoveAttachment={handleRemoveAttachment}
+                onAttachFiles={handleAttachFiles}
+                onAttachImages={handleAttachImages}
+                onPaste={handlePaste}
+                onDrop={handleDrop}
+                signedIn={signedIn}
+                onSignIn={handleSignIn}
+                conversationTitle={conversationTitle}
+                conversations={convList}
+                loadingConversations={loadingConvs}
+                onSelectConversation={handleSelectConversation}
+                onDeleteConversation={handleDeleteConversation}
+                onNewChat={handleNewChat}
+                onStopGeneration={stopGeneration}
+                onChatMenuOpenChange={setChatMenuOpen}
+                chatMenuOpen={chatMenuOpen}
+                expanded={false}
+                onToggleExpand={handleShowWindow}
+                onOpenDashboard={handleOpenDashboard}
+                overlayMode={overlayMode}
+                statusText={inputStatusText}
+                statusIcon={inputStatusIcon}
+                statusUrgency={inputStatusUrgency}
+                connectionStatus={connectionStatus}
+                queueDepth={queueDepth}
+                queuedMessages={queuedMessages}
+                isRecording={isRecording}
+                onMicClick={handleMicClick}
+                contextPaths={contextPaths}
+                setContextPaths={setContextPaths}
+                translucentMode={translucentMode}
+                accessToken={accessToken}
+                miniOutputText={miniOutputText}
+                miniOutputHasContent={miniOutputHasContent}
+                miniOutputStreaming={isStreaming && !!(currentResponse || '').trim()}
+                showMiniOutput={showMiniOutput}
+                setShowMiniOutput={setShowMiniOutput}
+                onSubmitToolOutput={submitToolOutput}
+                onGenUIResponse={handleGenUIResponse}
+              />
+            </div>
+          )}
 
-        <CommandPalette
-          open={showPalette}
-          onClose={handleClosePalette}
-          commands={commands}
-          onQueryChange={setPaletteQuery}
-          loading={isMarketplaceSearching}
-        />
-        <HotkeysHelp open={showHotkeys} onClose={handleCloseHotkeys} />
-
-        {/* Spotlight tour after wizard */}
-        {showTour && (
-          <OnboardingFlow
-            startAtTour={true}
-            expanded={overlayMode === 'sidebar' || overlayMode === 'window'}
-            onExpand={handleShowWindow}
-            onComplete={() => setTourComplete(true)}
+          <CommandPalette
+            open={showPalette}
+            onClose={handleClosePalette}
+            commands={commands}
+            onQueryChange={setPaletteQuery}
+            loading={isMarketplaceSearching}
           />
-        )}
-      </div>
+          <HotkeysHelp open={showHotkeys} onClose={handleCloseHotkeys} />
 
-      {/* Stuard Workflow Overlay - renders native UI panels from automations */}
-      <WorkflowOverlay />
-    </div>
+          {/* Spotlight tour after wizard */}
+          {showTour && (
+            <OnboardingFlow
+              startAtTour={true}
+              expanded={overlayMode === 'sidebar' || overlayMode === 'window'}
+              onExpand={handleShowWindow}
+              onComplete={() => setTourComplete(true)}
+            />
+          )}
+        </div>
+
+        {/* Stuard Workflow Overlay - renders native UI panels from automations */}
+        <WorkflowOverlay />
+
+        {/* Onboarding Tooltips */}
+        <OnboardingTooltipContainer />
+      </div>
+    </NotificationProvider>
   );
 }

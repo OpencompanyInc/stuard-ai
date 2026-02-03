@@ -25,6 +25,7 @@ interface WorkflowNode {
   position: Position;
   type?: string;
   fallbackTo?: string;
+  waitForAll?: boolean;
 }
 
 interface WorkflowTrigger {
@@ -35,11 +36,24 @@ interface WorkflowTrigger {
   position: Position;
 }
 
+interface LoopConfig {
+  type: 'forEach' | 'repeat' | 'while';
+  items?: string;
+  itemVar?: string;
+  indexVar?: string;
+  count?: number;
+  conditionText?: string;
+  maxIterations?: number;
+  delayMs?: number;
+}
+
 interface WorkflowWire {
   from: string;
   to: string;
   guard?: any;
   label?: string;
+  loop?: LoopConfig;
+  loopBreak?: boolean;
 }
 
 interface WorkflowVariable {
@@ -72,6 +86,224 @@ function log(event: string, data?: any) {
 
 function genId(prefix = 'step'): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// ============================================================================
+// Diagrammatic Representation Generator
+// ============================================================================
+
+/**
+ * Generate an ASCII diagram of the workflow structure.
+ * Shows triggers, nodes, wires, loops, guards, and parallel branches.
+ */
+function generateWorkflowDiagram(wf: Workflow): string {
+  const lines: string[] = [];
+  const triggers = wf.triggers || [];
+  const nodes = wf.nodes || [];
+  const wires = wf.wires || [];
+  const variables = wf.variables || [];
+
+  // Build adjacency map: nodeId -> outgoing wires
+  const outgoing = new Map<string, WorkflowWire[]>();
+  const incoming = new Map<string, string[]>();
+  
+  for (const wire of wires) {
+    if (!outgoing.has(wire.from)) outgoing.set(wire.from, []);
+    outgoing.get(wire.from)!.push(wire);
+    
+    if (!incoming.has(wire.to)) incoming.set(wire.to, []);
+    incoming.get(wire.to)!.push(wire.from);
+  }
+
+  // Header
+  lines.push(`╔══════════════════════════════════════════════════════════════════════╗`);
+  lines.push(`║  WORKFLOW: ${wf.name || 'Untitled'}`.padEnd(74) + `║`);
+  lines.push(`║  ID: ${wf.id}`.padEnd(74) + `║`);
+  lines.push(`╠══════════════════════════════════════════════════════════════════════╣`);
+
+  // Variables summary
+  if (variables.length > 0) {
+    lines.push(`║  VARIABLES: ${variables.map(v => `${v.name}:${v.type}`).join(', ')}`.padEnd(74) + `║`);
+    lines.push(`╠══════════════════════════════════════════════════════════════════════╣`);
+  }
+
+  // Flow diagram
+  lines.push(`║  FLOW DIAGRAM:`.padEnd(74) + `║`);
+  lines.push(`║`.padEnd(74) + `║`);
+
+  // Process each trigger and its chain
+  for (const trigger of triggers) {
+    const triggerLabel = `[${trigger.type.toUpperCase()}]`;
+    const triggerStr = `  ◆ ${trigger.id} ${triggerLabel}`;
+    
+    // Check for inputParams
+    const inputParams = (trigger as any).inputParams;
+    if (inputParams && Array.isArray(inputParams) && inputParams.length > 0) {
+      const paramNames = inputParams.map((p: any) => p.name).join(', ');
+      lines.push(`║${triggerStr} (inputs: ${paramNames})`.padEnd(74) + `║`);
+    } else {
+      lines.push(`║${triggerStr}`.padEnd(74) + `║`);
+    }
+
+    // Get outgoing wires from this trigger
+    const triggerWires = outgoing.get(trigger.id) || [];
+    
+    if (triggerWires.length === 0) {
+      lines.push(`║     └── (no connections)`.padEnd(74) + `║`);
+    } else if (triggerWires.length === 1) {
+      const wire = triggerWires[0];
+      const wireLabel = formatWireLabel(wire);
+      lines.push(`║     │`.padEnd(74) + `║`);
+      lines.push(`║     ▼ ${wireLabel}`.padEnd(74) + `║`);
+      renderNodeChain(wire.to, '     ', new Set());
+    } else {
+      // Multiple outgoing wires (parallel or conditional)
+      lines.push(`║     │`.padEnd(74) + `║`);
+      lines.push(`║     ├──┬── PARALLEL/CONDITIONAL BRANCHES ──┐`.padEnd(74) + `║`);
+      for (let i = 0; i < triggerWires.length; i++) {
+        const wire = triggerWires[i];
+        const wireLabel = formatWireLabel(wire);
+        const prefix = i === triggerWires.length - 1 ? '     │  └' : '     │  ├';
+        lines.push(`║${prefix}── ${wireLabel} → ${wire.to}`.padEnd(74) + `║`);
+      }
+      lines.push(`║     │`.padEnd(74) + `║`);
+    }
+    lines.push(`║`.padEnd(74) + `║`);
+  }
+
+  // Render node details
+  lines.push(`╠══════════════════════════════════════════════════════════════════════╣`);
+  lines.push(`║  NODE DETAILS:`.padEnd(74) + `║`);
+  
+  for (const node of nodes) {
+    const nodeWires = outgoing.get(node.id) || [];
+    const incomingCount = incoming.get(node.id)?.length || 0;
+    
+    let nodeIcon = '○';
+    if (node.waitForAll) nodeIcon = '◎'; // Convergence point
+    if (node.fallbackTo) nodeIcon = '◇'; // Has fallback
+    
+    const nodeHeader = `  ${nodeIcon} ${node.id}: ${node.tool || 'noop'}`;
+    lines.push(`║${nodeHeader}`.padEnd(74) + `║`);
+    
+    // Show label if different from tool
+    if (node.label && node.label !== node.tool) {
+      lines.push(`║      label: "${node.label}"`.padEnd(74) + `║`);
+    }
+    
+    // Show key args (abbreviated)
+    if (node.args && Object.keys(node.args).length > 0) {
+      const argKeys = Object.keys(node.args).slice(0, 3);
+      const argsStr = argKeys.map(k => `${k}: ${abbrev(node.args[k])}`).join(', ');
+      lines.push(`║      args: { ${argsStr} }`.padEnd(74) + `║`);
+    }
+    
+    // Show incoming count for convergence points
+    if (incomingCount > 1) {
+      const converge = node.waitForAll ? ' [WAITS FOR ALL]' : ' [FIRST WINS]';
+      lines.push(`║      ← ${incomingCount} incoming branches${converge}`.padEnd(74) + `║`);
+    }
+    
+    // Show outgoing wires
+    if (nodeWires.length > 0) {
+      for (const wire of nodeWires) {
+        const wireLabel = formatWireLabel(wire);
+        lines.push(`║      → ${wire.to} ${wireLabel}`.padEnd(74) + `║`);
+      }
+    } else {
+      lines.push(`║      → (END)`.padEnd(74) + `║`);
+    }
+  }
+
+  lines.push(`╚══════════════════════════════════════════════════════════════════════╝`);
+
+  // Helper function to format wire labels
+  function formatWireLabel(wire: WorkflowWire): string {
+    const parts: string[] = [];
+    
+    if (wire.loop) {
+      if (wire.loop.type === 'forEach') {
+        parts.push(`🔄forEach(${wire.loop.items || 'items'})`);
+      } else if (wire.loop.type === 'repeat') {
+        parts.push(`🔄repeat(${wire.loop.count || '?'}x)`);
+      } else if (wire.loop.type === 'while') {
+        parts.push(`🔄while(${wire.loop.conditionText || 'cond'})`);
+      }
+    }
+    
+    if (wire.loopBreak) {
+      parts.push(`⏹️loopBreak`);
+    }
+    
+    if (wire.guard) {
+      if (typeof wire.guard === 'object' && wire.guard.if) {
+        const guardStr = typeof wire.guard.if === 'string' 
+          ? wire.guard.if 
+          : JSON.stringify(wire.guard.if).slice(0, 20);
+        parts.push(`[if: ${guardStr}]`);
+      } else if (typeof wire.guard === 'object' && wire.guard.ai) {
+        parts.push(`[AI: ${abbrev(wire.guard.ai.instruction || 'route')}]`);
+      }
+    }
+    
+    if (wire.label) {
+      parts.push(`"${wire.label}"`);
+    }
+    
+    return parts.join(' ');
+  }
+
+  // Helper to abbreviate long values
+  function abbrev(val: any, maxLen = 15): string {
+    if (val === null || val === undefined) return 'null';
+    if (typeof val === 'string') {
+      return val.length > maxLen ? val.slice(0, maxLen) + '...' : val;
+    }
+    if (typeof val === 'object') {
+      const str = JSON.stringify(val);
+      return str.length > maxLen ? str.slice(0, maxLen) + '...' : str;
+    }
+    return String(val);
+  }
+
+  // Helper to render node chain (for simple linear flows)
+  function renderNodeChain(nodeId: string, indent: string, visited: Set<string>) {
+    if (visited.has(nodeId)) {
+      lines.push(`║${indent}⟲ (back to ${nodeId})`.padEnd(74) + `║`);
+      return;
+    }
+    visited.add(nodeId);
+    
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) return;
+    
+    const nodeIcon = node.waitForAll ? '◎' : '○';
+    lines.push(`║${indent}${nodeIcon} ${node.id} [${node.tool || 'noop'}]`.padEnd(74) + `║`);
+    
+    const nodeWires = outgoing.get(nodeId) || [];
+    if (nodeWires.length === 0) {
+      lines.push(`║${indent}   └── (END)`.padEnd(74) + `║`);
+    } else if (nodeWires.length === 1) {
+      const wire = nodeWires[0];
+      const wireLabel = formatWireLabel(wire);
+      if (wireLabel) {
+        lines.push(`║${indent}   │ ${wireLabel}`.padEnd(74) + `║`);
+      }
+      lines.push(`║${indent}   ▼`.padEnd(74) + `║`);
+      renderNodeChain(wire.to, indent + '   ', visited);
+    } else {
+      // Multiple branches
+      lines.push(`║${indent}   ├──┬── BRANCHES ──┐`.padEnd(74) + `║`);
+      for (let i = 0; i < nodeWires.length; i++) {
+        const wire = nodeWires[i];
+        const wireLabel = formatWireLabel(wire);
+        const prefix = i === nodeWires.length - 1 ? '   │  └' : '   │  ├';
+        lines.push(`║${indent}${prefix}── ${wireLabel} → ${wire.to}`.padEnd(74) + `║`);
+      }
+    }
+  }
+
+  return lines.join('\n');
 }
 
 function cloneWorkflow(wf: any): Workflow {
@@ -172,9 +404,11 @@ ADD_NODE - Add a new step (or a trigger if triggerType is provided)
   { op: "add_node", tool: "log", args: { message: "hi" }, connectFrom: "trig_0" }
   { op: "add_node", triggerType: "keystroke", triggerArgs: { sequence: "go" } }
 
-UPDATE_NODE - Update existing node or trigger
+UPDATE_NODE - Update existing node or trigger (MUST provide changes!)
   { op: "update_node", nodeId: "step_abc", args: { message: "new" } }
+  { op: "update_node", nodeId: "step_abc", path: "message", value: "new" }  // Single field
   { op: "update_node", nodeId: "trig_0", triggerArgs: { sequence: "cats" } }
+  NOTE: You MUST provide args, path/value, label, or tool - otherwise it will fail!
 
 REMOVE_NODE - Delete a node or trigger (and its wires)
   { op: "remove_node", nodeId: "step_abc" }
@@ -240,10 +474,11 @@ RENAME - Change workflow name
     workflow: z.any().optional(),
     message: z.string().optional(),
     error: z.string().optional(),
+    diagram: z.string().optional().describe('ASCII diagram of the workflow structure'),
   }),
 
-  execute: async ({ context, writer }) => {
-    const ctx = context as any;
+  execute: async (inputData, { writer }) => {
+    const ctx = inputData as any;
     const { op, workflowId } = ctx;
     let { workflow } = ctx;
 
@@ -351,17 +586,42 @@ RENAME - Change workflow name
         // ==================================================================
         case 'update_node': {
           const nodeId = ctx.nodeId || ctx.stepId;
-          const { args, label, tool, triggerType, triggerArgs } = ctx;
+          const { args, label, tool, triggerType, triggerArgs, path, value } = ctx;
           if (!nodeId) return { ok: false, error: 'nodeId is required for update_node' };
 
           const idx = nodeIndex(wf, nodeId);
           if (idx >= 0) {
             const node = wf.nodes[idx];
-            if (args) node.args = { ...node.args, ...args };
-            if (label) node.label = label;
-            if (tool) node.tool = tool;
+            let changed = false;
 
-            message = `Updated node "${node.label}"`;
+            // Support path/value for single-field updates (e.g., path: "args.message", value: "Hello")
+            if (path !== undefined && value !== undefined) {
+              // path can be "args.message" or just "message" (assumes args)
+              const normalizedPath = path.startsWith('args.') ? path : 
+                                     (path === 'label' || path === 'tool' || path === 'id') ? path : `args.${path}`;
+              setPath(node, normalizedPath, value);
+              changed = true;
+              message = `Updated node "${node.label}": ${normalizedPath} = ${JSON.stringify(value)}`;
+            }
+
+            if (args) {
+              node.args = { ...node.args, ...args };
+              changed = true;
+            }
+            if (label) {
+              node.label = label;
+              changed = true;
+            }
+            if (tool) {
+              node.tool = tool;
+              changed = true;
+            }
+
+            if (!changed) {
+              return { ok: false, error: `update_node called for "${nodeId}" but no changes specified. Provide args, label, tool, or path/value.` };
+            }
+
+            if (!message) message = `Updated node "${node.label}"`;
             break;
           }
 
@@ -370,13 +630,37 @@ RENAME - Change workflow name
           if (trigIdx < 0) return { ok: false, error: `Step not found: ${nodeId}` };
 
           const trigger = wf.triggers[trigIdx];
-          const nextArgs = triggerArgs || args;
-          if (nextArgs) trigger.args = { ...trigger.args, ...nextArgs };
-          if (label) trigger.label = label;
-          const nextType = triggerType || (tool ? String(tool) : undefined);
-          if (nextType) trigger.type = nextType;
+          let changed = false;
 
-          message = `Updated trigger "${trigger.label}"`;
+          // Support path/value for triggers too
+          if (path !== undefined && value !== undefined) {
+            const normalizedPath = path.startsWith('args.') ? path : 
+                                   (path === 'label' || path === 'type' || path === 'id') ? path : `args.${path}`;
+            setPath(trigger, normalizedPath, value);
+            changed = true;
+            message = `Updated trigger "${trigger.label}": ${normalizedPath} = ${JSON.stringify(value)}`;
+          }
+
+          const nextArgs = triggerArgs || args;
+          if (nextArgs) {
+            trigger.args = { ...trigger.args, ...nextArgs };
+            changed = true;
+          }
+          if (label) {
+            trigger.label = label;
+            changed = true;
+          }
+          const nextType = triggerType || (tool ? String(tool) : undefined);
+          if (nextType) {
+            trigger.type = nextType;
+            changed = true;
+          }
+
+          if (!changed) {
+            return { ok: false, error: `update_node called for trigger "${nodeId}" but no changes specified. Provide args, triggerArgs, label, triggerType, or path/value.` };
+          }
+
+          if (!message) message = `Updated trigger "${trigger.label}"`;
           break;
         }
 
@@ -495,7 +779,10 @@ RENAME - Change workflow name
       workflowMap.set(wf.id, wf);
       _sessionWorkflow = wf;
 
-      const result = { ok: true as const, workflow: wf, message };
+      // Generate diagram for visual understanding
+      const diagram = generateWorkflowDiagram(wf);
+
+      const result = { ok: true as const, workflow: wf, message, diagram };
 
       log('success', { workflowId: wf.id, message });
 

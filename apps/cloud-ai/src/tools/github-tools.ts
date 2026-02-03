@@ -51,9 +51,9 @@ export const github_list_repos = createTool({
     per_page: z.number().int().min(1).max(100).default(30),
     page: z.number().int().min(1).default(1),
   }),
-  execute: async ({ context }) => {
+  execute: async (inputData, context) => {
     const token = await requireGithubToken();
-    const { visibility, per_page, page } = context as any;
+    const { visibility, per_page, page  } = inputData as any;
     const params = new URLSearchParams();
     params.set('visibility', visibility || 'all');
     params.set('per_page', String(per_page || 30));
@@ -73,9 +73,9 @@ export const github_list_issues = createTool({
     per_page: z.number().int().min(1).max(100).default(30),
     page: z.number().int().min(1).default(1),
   }),
-  execute: async ({ context }) => {
+  execute: async (inputData, context) => {
     const token = await requireGithubToken();
-    const { owner, repo, state, per_page, page } = context as any;
+    const { owner, repo, state, per_page, page  } = inputData as any;
     const params = new URLSearchParams();
     params.set('state', state || 'open');
     params.set('per_page', String(per_page || 30));
@@ -96,9 +96,9 @@ export const github_create_issue = createTool({
     labels: z.array(z.string()).optional(),
     assignees: z.array(z.string()).optional(),
   }),
-  execute: async ({ context }) => {
+  execute: async (inputData, context) => {
     const token = await requireGithubToken();
-    const { owner, repo, title, body, labels, assignees } = context as any;
+    const { owner, repo, title, body, labels, assignees  } = inputData as any;
     const payload: any = { title };
     if (typeof body === 'string' && body) payload.body = body;
     if (Array.isArray(labels) && labels.length) payload.labels = labels;

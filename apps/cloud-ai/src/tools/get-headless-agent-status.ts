@@ -13,8 +13,8 @@ export const getHeadlessAgentStatus = createTool({
     task: z.any().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const { taskId } = context;
+  execute: async (inputData, context) => {
+    const { taskId  } = inputData as any;
     const secrets = getBridgeSecrets();
     const userId = secrets?.userId;
 

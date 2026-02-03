@@ -2,7 +2,7 @@
 /**
  * Tool Sync CLI
  *
- * Syncs tool definitions from TOOL_DEFINITIONS to Supabase tool_embeddings table.
+ * Syncs tool definitions from the tool registry (dynamic) to Supabase tool_embeddings table.
  *
  * Usage:
  *   npm run sync:tools              # Incremental sync (only new tools)

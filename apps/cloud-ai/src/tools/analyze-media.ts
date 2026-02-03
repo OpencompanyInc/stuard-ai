@@ -87,27 +87,27 @@ export const analyzeMediaTool = createTool({
     mode: z.enum(['fast', 'detailed']).default('fast').describe('fast = Gemini 2.5 Flash, detailed = Gemini 2.5 Pro with thinking'),
   }),
   outputSchema: z.object({ summary: z.string() }),
-  execute: async ({ context, writer }: any) => {
-    const { task, sources, mode } = context as {
-      task: string;
-      sources: Array<{ url?: string; path?: string; data?: string; mimeType?: string; captureScreen?: boolean }>;
-      mode: 'fast' | 'detailed';
+  execute: async (inputData: any, { writer }: any) => {
+    const { task, sources, mode } = (inputData || {}) as {
+      task?: string;
+      sources?: Array<{ url?: string; path?: string; data?: string; mimeType?: string; captureScreen?: boolean }>;
+      mode?: 'fast' | 'detailed';
     };
 
     await safeToolWrite(writer as any, {
       type: 'tool_event',
       tool: 'analyze_media',
       status: 'started',
-      count: sources.length,
-      mode,
+      count: sources?.length ?? 0,
+      mode: mode ?? 'fast',
     });
 
     const isDetailed = mode === 'detailed';
     const modelId = isDetailed ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
-    const parts: any[] = [{ type: 'text', text: task }];
+    const parts: any[] = [{ type: 'text', text: task || 'Analyze this media and provide key observations, details, and any relevant information.' }];
     const uploadedObjects: string[] = [];
 
-    for (const s of sources) {
+    for (const s of sources || []) {
       // Handle screen capture request
       if (s.captureScreen) {
         await safeToolWrite(writer as any, {

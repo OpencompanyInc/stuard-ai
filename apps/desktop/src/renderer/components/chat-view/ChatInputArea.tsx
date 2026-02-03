@@ -175,6 +175,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         )}>
           <TextareaAutosize
             ref={textareaRef}
+            data-onboarding="chat-input"
             className={clsx(
               "w-full bg-transparent outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-semibold min-w-0 resize-none leading-5 py-0 overflow-y-auto custom-scrollbar px-2",
               showFileNav && "text-primary placeholder:text-primary/40"

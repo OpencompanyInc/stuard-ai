@@ -21,8 +21,8 @@ export function compileDesignerModel(model: DesignerModel): StuardSpec {
   const nodes = model.nodes || [];
   const wires = model.wires || [];
 
-  // Build wire lookup: from_id → [{ to, guard, label }]
-  const wiresByFrom = new Map<string, Array<{ to: string; guard: any; label?: string }>>();
+  // Build wire lookup: from_id → [{ to, guard, label, loop, loopBreak, loopFanoutMode }]
+  const wiresByFrom = new Map<string, Array<{ to: string; guard: any; label?: string; loop?: any; loopBreak?: boolean; loopFanoutMode?: 'wait' | 'parallel' }>>();
   for (const wire of wires) {
     const fromId = wire.from;
     if (!wiresByFrom.has(fromId)) {
@@ -32,6 +32,9 @@ export function compileDesignerModel(model: DesignerModel): StuardSpec {
       to: wire.to,
       guard: wire.guard || 'always',
       label: wire.label,
+      loop: (wire as any).loop,
+      loopBreak: (wire as any).loopBreak,
+      loopFanoutMode: (wire as any).loopFanoutMode,
     });
   }
 
@@ -42,6 +45,9 @@ export function compileDesignerModel(model: DesignerModel): StuardSpec {
       to: w.to,
       guard: w.guard,
       ...(w.label ? { label: w.label } : {}),
+      ...(w.loop ? { loop: w.loop } : {}),
+      ...(w.loopBreak ? { loopBreak: true } : {}),
+      ...(w.loopFanoutMode ? { loopFanoutMode: w.loopFanoutMode } : {}),
     })) : undefined;
 
     return {
@@ -106,6 +112,9 @@ export function decompileToDesignerModel(spec: StuardSpec): DesignerModel {
           to: edge.to,
           guard: edge.guard,
           label: edge.label,
+          loop: (edge as any).loop,
+          loopBreak: (edge as any).loopBreak,
+          loopFanoutMode: (edge as any).loopFanoutMode,
         });
       }
     }

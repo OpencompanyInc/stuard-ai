@@ -3,24 +3,34 @@ import { motion, AnimatePresence } from "framer-motion";
 import { usePreferences, TonePreset } from "../../hooks/usePreferences";
 import { supabase } from "../../lib/supabaseClient";
 import { startBrowserSignIn } from "../../auth/browserSignIn";
+import { MockOverlay } from "./MockOverlay";
 import {
   ArrowRight,
   Check,
   Keyboard,
   Mic,
-  Paperclip,
   Settings,
   Sparkles,
   X,
   AtSign,
-  History,
-  LayoutGrid,
-  Minimize2,
+  Home,
+  PanelRight,
+  AppWindow,
+  Plus,
+  Video,
+  MessageSquare,
+  Zap,
+  ExternalLink,
+  Play,
+  Calendar,
+  Mail,
+  FileText,
+  Globe,
 } from "lucide-react";
 
 type Phase = "modal" | "tour";
 type ModalStep = "welcome" | "tone" | "shortcut";
-type TourStep = "mentions" | "attachments" | "voice" | "history" | "dashboard" | "collapse" | "done";
+type TourStep = "try-input" | "try-attach" | "try-mention" | "layouts" | "shortcuts" | "marketplace" | "done";
 
 interface OnboardingFlowProps {
   onComplete: () => void;
@@ -34,7 +44,7 @@ export default function OnboardingFlow({ onComplete, expanded, onExpand, modalOn
   const { setOnboardingComplete, tone, setTone, customTone, setCustomTone } = usePreferences();
   const [phase, setPhase] = useState<Phase>(startAtTour ? "tour" : "modal");
   const [modalStep, setModalStep] = useState<ModalStep>("welcome");
-  const [tourStep, setTourStep] = useState<TourStep>("mentions");
+  const [tourStep, setTourStep] = useState<TourStep>("try-input");
   const [signedIn, setSignedIn] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState(false);
@@ -89,24 +99,21 @@ export default function OnboardingFlow({ onComplete, expanded, onExpand, modalOn
         handleComplete();
         return;
       }
-      // Move to tour phase - auto-expand and go directly to tour
+      // Move to tour phase
       setPhase("tour");
-      setTourStep("mentions"); // Skip "expand" step, start at mentions
-      onExpand?.(); // Expand the overlay
-      // Resize to compact expanded size for the tour
-      setTimeout(() => {
-        try { (window as any).desktopAPI?.resize?.(520, 270); } catch {}
-      }, 100);
+      setTourStep("try-input");
+      // Close the modal window and go to overlay tour
+      try { (window as any).desktopAPI?.closeOnboarding?.(); } catch {}
     }
   };
 
   const nextTourStep = () => {
-    if (tourStep === "mentions") setTourStep("attachments");
-    else if (tourStep === "attachments") setTourStep("voice");
-    else if (tourStep === "voice") setTourStep("history");
-    else if (tourStep === "history") setTourStep("dashboard");
-    else if (tourStep === "dashboard") setTourStep("collapse");
-    else if (tourStep === "collapse") setTourStep("done");
+    if (tourStep === "try-input") setTourStep("try-attach");
+    else if (tourStep === "try-attach") setTourStep("try-mention");
+    else if (tourStep === "try-mention") setTourStep("layouts");
+    else if (tourStep === "layouts") setTourStep("shortcuts");
+    else if (tourStep === "shortcuts") setTourStep("marketplace");
+    else if (tourStep === "marketplace") setTourStep("done");
     else handleComplete();
   };
 
@@ -123,17 +130,14 @@ export default function OnboardingFlow({ onComplete, expanded, onExpand, modalOn
   // ============ PHASE 1: MODAL ============
   if (phase === "modal") {
     return (
-      <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-gradient-to-b from-black/90 via-black/95 to-black/90 backdrop-blur-xl">
-        {/* Ambient glow effects - BLUE theme */}
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/15 rounded-full blur-[120px]" />
-          <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-indigo-500/10 rounded-full blur-[100px]" />
-        </div>
+      <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-[#09090b] backdrop-blur-xl">
+        {/* Ambient glow effects - Minimal */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none bg-black/20" />
 
         {/* Skip button */}
         <button
           onClick={handleSkip}
-          className="absolute top-4 right-4 p-2 rounded-lg text-white/40 hover:text-white/80 hover:bg-white/5 transition-all"
+          className="absolute top-4 right-4 p-2 rounded-lg text-white/40 hover:text-white hover:bg-white/5 transition-all"
         >
           <X size={18} />
         </button>
@@ -145,10 +149,10 @@ export default function OnboardingFlow({ onComplete, expanded, onExpand, modalOn
               key={i}
               className={`transition-all duration-300 rounded-full ${
                 i === currentModalIndex 
-                  ? 'w-8 h-2 bg-blue-500' 
+                  ? 'w-8 h-2 bg-white' 
                   : i < currentModalIndex 
-                    ? 'w-2 h-2 bg-blue-500/50' 
-                    : 'w-2 h-2 bg-white/20'
+                    ? 'w-2 h-2 bg-white/40' 
+                    : 'w-2 h-2 bg-white/10'
               }`}
             />
           ))}
@@ -165,14 +169,14 @@ export default function OnboardingFlow({ onComplete, expanded, onExpand, modalOn
               transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
               className="relative z-10 w-full max-w-md px-6 text-center"
             >
-              {/* Logo/Icon - BLUE */}
+              {/* Logo/Icon - Minimal */}
               <motion.div
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
                 transition={{ delay: 0.1, type: "spring", stiffness: 200, damping: 15 }}
-                className="mx-auto mb-8 w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-500/20 to-indigo-600/10 border border-blue-500/30 flex items-center justify-center shadow-[0_0_40px_rgba(59,130,246,0.2)]"
+                className="mx-auto mb-8 w-20 h-20 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center shadow-lg"
               >
-                <Sparkles className="text-blue-400" size={36} />
+                <Sparkles className="text-white/90" size={36} />
               </motion.div>
 
               <motion.h1
@@ -201,8 +205,8 @@ export default function OnboardingFlow({ onComplete, expanded, onExpand, modalOn
                 className="space-y-4"
               >
                 {signedIn ? (
-                  <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4 flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 shrink-0">
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-white shrink-0">
                       <Check size={20} />
                     </div>
                     <div className="text-left flex-1 min-w-0">
@@ -214,7 +218,7 @@ export default function OnboardingFlow({ onComplete, expanded, onExpand, modalOn
                   <button
                     onClick={handleSignIn}
                     disabled={signingIn}
-                    className="w-full py-3.5 rounded-xl bg-white text-black font-semibold text-sm hover:bg-white/90 transition-all shadow-lg shadow-white/10 active:scale-[0.98] disabled:opacity-50 disabled:cursor-wait flex items-center justify-center gap-2"
+                    className="w-full py-3.5 rounded-xl bg-white text-black font-semibold text-sm hover:bg-white/90 transition-all shadow-lg active:scale-[0.98] disabled:opacity-50 disabled:cursor-wait flex items-center justify-center gap-2"
                   >
                     {signingIn ? (
                       <>
@@ -253,8 +257,8 @@ export default function OnboardingFlow({ onComplete, expanded, onExpand, modalOn
                 animate={{ opacity: 1, y: 0 }}
                 className="text-center mb-6"
               >
-                <div className="mx-auto mb-4 w-14 h-14 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
-                  <Settings className="text-indigo-400" size={28} />
+                <div className="mx-auto mb-4 w-14 h-14 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center">
+                  <Settings className="text-white/90" size={28} />
                 </div>
                 <h2 className="text-2xl font-bold text-white mb-2">How should I speak?</h2>
                 <p className="text-white/50 text-sm">Choose a communication style</p>
@@ -272,15 +276,15 @@ export default function OnboardingFlow({ onComplete, expanded, onExpand, modalOn
                     onClick={() => setTone(t)}
                     className={`text-left px-4 py-3 rounded-xl border transition-all duration-200 ${
                       tone === t
-                        ? 'border-blue-500/50 bg-blue-500/10 shadow-[0_0_15px_rgba(59,130,246,0.15)]'
+                        ? 'border-white bg-white text-black'
                         : 'border-white/10 hover:border-white/20 hover:bg-white/5'
                     } ${t === 'custom' ? 'col-span-2' : ''}`}
                   >
-                    <div className="text-sm font-medium capitalize text-white flex items-center justify-between">
+                    <div className="text-sm font-medium capitalize flex items-center justify-between">
                       {t}
-                      {tone === t && <Check size={14} className="text-blue-400" />}
+                      {tone === t && <Check size={14} className="text-black" />}
                     </div>
-                    <div className="text-[11px] text-white/50 mt-0.5">
+                    <div className={`text-[11px] mt-0.5 ${tone === t ? 'text-black/60' : 'text-white/50'}`}>
                       {t === 'concise' ? 'Short, direct answers' :
                         t === 'friendly' ? 'Warm, helpful vibe' :
                           t === 'formal' ? 'Professional tone' :
@@ -301,7 +305,7 @@ export default function OnboardingFlow({ onComplete, expanded, onExpand, modalOn
                     onChange={(e) => setCustomTone(e.target.value)}
                     autoFocus
                     placeholder="e.g. Talk like a pirate, or explain like I'm 5..."
-                    className="w-full bg-black/30 rounded-xl px-4 py-3 text-sm outline-none placeholder:text-white/30 border border-white/10 focus:border-blue-500/50 transition-all text-white"
+                    className="w-full bg-white/5 rounded-xl px-4 py-3 text-sm outline-none placeholder:text-white/30 border border-white/10 focus:border-white/30 transition-all text-white"
                   />
                 </motion.div>
               )}
@@ -311,7 +315,7 @@ export default function OnboardingFlow({ onComplete, expanded, onExpand, modalOn
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.2 }}
                 onClick={nextModalStep}
-                className="w-full py-3.5 rounded-xl bg-white text-black font-semibold text-sm hover:bg-white/90 transition-all shadow-lg shadow-white/10 active:scale-[0.98] flex items-center justify-center gap-2"
+                className="w-full py-3.5 rounded-xl bg-white text-black font-semibold text-sm hover:bg-white/90 transition-all shadow-lg active:scale-[0.98] flex items-center justify-center gap-2"
               >
                 Continue
                 <ArrowRight size={16} />
@@ -334,8 +338,8 @@ export default function OnboardingFlow({ onComplete, expanded, onExpand, modalOn
                 animate={{ opacity: 1, y: 0 }}
                 className="mb-8"
               >
-                <div className="mx-auto mb-4 w-14 h-14 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-                  <Keyboard className="text-blue-400" size={28} />
+                <div className="mx-auto mb-4 w-14 h-14 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center">
+                  <Keyboard className="text-white/90" size={28} />
                 </div>
                 <h2 className="text-2xl font-bold text-white mb-2">Remember This Shortcut</h2>
                 <p className="text-white/50 text-sm">Summon Stuard from anywhere</p>
@@ -346,7 +350,7 @@ export default function OnboardingFlow({ onComplete, expanded, onExpand, modalOn
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: 0.2, type: "spring", stiffness: 200, damping: 20 }}
-                className="bg-gradient-to-b from-white/10 to-white/5 border border-white/20 rounded-2xl p-8 mb-6 shadow-2xl"
+                className="bg-white/5 border border-white/10 rounded-2xl p-8 mb-6 shadow-xl"
               >
                 <div className="flex items-center justify-center gap-3">
                   <ShortcutKey>Ctrl</ShortcutKey>
@@ -365,7 +369,7 @@ export default function OnboardingFlow({ onComplete, expanded, onExpand, modalOn
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.3 }}
                 onClick={nextModalStep}
-                className="w-full py-4 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold text-sm hover:from-blue-400 hover:to-indigo-500 transition-all shadow-lg shadow-blue-500/30 active:scale-[0.98] flex items-center justify-center gap-2"
+                className="w-full py-4 rounded-xl bg-white text-black font-bold text-sm hover:bg-white/90 transition-all shadow-lg active:scale-[0.98] flex items-center justify-center gap-2"
               >
                 <Sparkles size={18} />
                 Let's Take a Quick Tour
@@ -377,228 +381,342 @@ export default function OnboardingFlow({ onComplete, expanded, onExpand, modalOn
     );
   }
 
-  // ============ PHASE 2: INTERACTIVE TOUR (in-overlay) ============
-  const tourSteps: { id: TourStep; targetId?: string; title: string; description: string; icon: React.ReactNode }[] = [
-    {
-      id: "mentions",
-      targetId: "stuard-input-area",
-      title: "@ Mentions",
-      description: "Type @ to add files or folders as context",
-      icon: <AtSign size={20} />,
-    },
-    {
-      id: "attachments",
-      targetId: "stuard-attach-btn",
-      title: "Attachments",
-      description: "Use the + button to attach files or images",
-      icon: <Paperclip size={20} />,
-    },
-    {
-      id: "voice",
-      targetId: "stuard-mic-btn",
-      title: "Voice Mode",
-      description: "Press to speak, then click again when you're done — or just say \"Send Stuard\" to send.",
-      icon: <Mic size={20} />,
-    },
-    {
-      id: "history",
-      targetId: "stuard-history-btn",
-      title: "Chat History",
-      description: "Access your past conversations here",
-      icon: <History size={20} />,
-    },
-    {
-      id: "dashboard",
-      targetId: "stuard-dashboard-btn",
-      title: "Dashboard",
-      description: "Open the full dashboard for settings and workflows",
-      icon: <LayoutGrid size={20} />,
-    },
-    {
-      id: "collapse",
-      targetId: "stuard-collapse-btn",
-      title: "Layout Options",
-      description: "Switch between compact bar, tall sidebar, standard, and wide views",
-      icon: <Minimize2 size={20} />,
-    },
-    {
-      id: "done",
-      title: "All Set!",
-      description: "Esc to hide, Ctrl+Shift+Space to summon",
-      icon: <Sparkles size={20} />,
-    },
+  // ============ PHASE 2: INTERACTIVE TOUR ============
+  // Marketplace workflows
+  const starterWorkflows = [
+    { id: 'daily-briefing', name: 'Daily Briefing', desc: 'Morning summary of calendar & tasks', icon: <Calendar className="w-5 h-5" /> },
+    { id: 'email-summarizer', name: 'Email Summarizer', desc: 'AI summaries of long emails', icon: <Mail className="w-5 h-5" /> },
+    { id: 'meeting-notes', name: 'Meeting Notes', desc: 'Auto-transcribe & summarize meetings', icon: <FileText className="w-5 h-5" /> },
+    { id: 'web-research', name: 'Web Research', desc: 'Deep research on any topic', icon: <Globe className="w-5 h-5" /> },
   ];
 
-  const currentTourStep = tourSteps.find(s => s.id === tourStep);
-  const currentTourIndex = tourSteps.findIndex(s => s.id === tourStep);
+  const [selectedWorkflows, setSelectedWorkflows] = useState<string[]>([]);
 
-  // Tour is in expanded overlay
-  return (
-    <div className="fixed inset-0 z-[9999] pointer-events-none">
-      {/* Spotlight Effect */}
-      {currentTourStep?.targetId ? (
-        <SpotlightOverlay targetId={currentTourStep.targetId} />
-      ) : (
-        <div className="absolute inset-0 bg-black/60 pointer-events-none" />
-      )}
+  const toggleWorkflow = (id: string) => {
+    setSelectedWorkflows(prev => 
+      prev.includes(id) ? prev.filter(w => w !== id) : [...prev, id]
+    );
+  };
 
-      {/* Tour Card - Positioned at top with safe margins */}
-      <motion.div
-        key={tourStep}
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -10 }}
-        className="absolute top-4 left-4 right-4 mx-auto pointer-events-auto max-w-[380px] z-20"
-      >
-        <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-3 shadow-2xl relative overflow-hidden">
-          {/* Blue accent line */}
-          <div className="absolute top-0 left-0 w-1 h-full bg-blue-500" />
-          
-          <div className="flex items-start gap-3 pl-2">
-            <div className="w-9 h-9 rounded-lg bg-blue-500/20 flex items-center justify-center text-blue-400 shrink-0 mt-0.5">
-              {currentTourStep?.icon}
+  // Tour step configurations
+  const tourStepConfig: Record<TourStep, {
+    highlight?: string;
+    showAttachMenu?: boolean;
+    showMentionMenu?: boolean;
+    interactive?: boolean;
+  }> = {
+    'try-input': { highlight: 'input', interactive: true },
+    'try-attach': { highlight: 'attach', showAttachMenu: true, interactive: true },
+    'try-mention': { highlight: 'input', showMentionMenu: true, interactive: true },
+    'layouts': { highlight: 'layouts', interactive: false },
+    'shortcuts': { interactive: false },
+    'marketplace': { interactive: false },
+    'done': { interactive: false },
+  };
+
+  const currentConfig = tourStepConfig[tourStep];
+  const tourStepsList: TourStep[] = ['try-input', 'try-attach', 'try-mention', 'layouts', 'shortcuts', 'marketplace', 'done'];
+  const currentTourIndex = tourStepsList.indexOf(tourStep);
+
+  // Tour content renderer
+  const renderTourContent = () => {
+    switch (tourStep) {
+      case 'try-input':
+        return (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-sky-500/20 border border-sky-500/30 flex items-center justify-center text-sky-400">
+                <MessageSquare size={20} />
+              </div>
+              <div>
+                <h3 className="text-white font-semibold text-base">Try typing something!</h3>
+                <p className="text-white/50 text-sm">Click on the input above and type a message</p>
+              </div>
             </div>
-            <div className="flex-1 min-w-0">
-              <h3 className="text-white font-semibold text-sm mb-0.5">{currentTourStep?.title}</h3>
-              <p className="text-white/70 text-xs leading-snug">{currentTourStep?.description}</p>
+            <div className="bg-white/[0.03] rounded-xl p-3 border border-white/[0.08]">
+              <p className="text-white/40 text-xs">💡 Try: "What can you help me with?"</p>
             </div>
           </div>
+        );
 
-          {/* Actions Row */}
-          <div className="flex items-center justify-between mt-3 pl-2 pt-2 border-t border-white/5">
-            <div className="flex gap-1">
-              {tourSteps.map((_, i) => (
-                <div
-                  key={i}
-                  className={`w-1.5 h-1.5 rounded-full transition-colors ${
-                    i === currentTourIndex ? 'bg-blue-500' : 'bg-white/10'
-                  }`}
-                />
+      case 'try-attach':
+        return (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-sky-500/20 border border-sky-500/30 flex items-center justify-center text-sky-400">
+                <Plus size={20} />
+              </div>
+              <div>
+                <h3 className="text-white font-semibold text-base">Attach Files</h3>
+                <p className="text-white/50 text-sm">Click the + button to see attachment options</p>
+              </div>
+            </div>
+            <div className="bg-white/[0.03] rounded-xl p-3 border border-white/[0.08] space-y-1">
+              <p className="text-white/40 text-xs">📎 Attach images, documents, or folders</p>
+              <p className="text-white/40 text-xs">📋 You can also paste images directly</p>
+            </div>
+          </div>
+        );
+
+      case 'try-mention':
+        return (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-sky-500/20 border border-sky-500/30 flex items-center justify-center text-sky-400">
+                <AtSign size={20} />
+              </div>
+              <div>
+                <h3 className="text-white font-semibold text-base">@ Mentions for Context</h3>
+                <p className="text-white/50 text-sm">Type @ to add files or browser tabs as context</p>
+              </div>
+            </div>
+            <div className="bg-white/[0.03] rounded-xl p-3 border border-white/[0.08]">
+              <p className="text-white/40 text-xs">💡 Try typing @ in the input to see the menu</p>
+            </div>
+          </div>
+        );
+
+      case 'layouts':
+        return (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-sky-500/20 border border-sky-500/30 flex items-center justify-center text-sky-400">
+                <PanelRight size={20} />
+              </div>
+              <div>
+                <h3 className="text-white font-semibold text-base">Layout Modes</h3>
+                <p className="text-white/50 text-sm">Switch views to fit your workflow</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="bg-white/[0.05] rounded-xl p-3 border border-sky-500/30 text-center">
+                <PanelRight className="w-6 h-6 mx-auto mb-2 text-sky-400" />
+                <p className="text-white text-xs font-medium">Sidebar</p>
+                <p className="text-white/40 text-[10px]">Docks to side</p>
+              </div>
+              <div className="bg-white/[0.05] rounded-xl p-3 border border-white/[0.1] text-center">
+                <AppWindow className="w-6 h-6 mx-auto mb-2 text-white/60" />
+                <p className="text-white text-xs font-medium">Window</p>
+                <p className="text-white/40 text-[10px]">Floating chat</p>
+              </div>
+              <div className="bg-white/[0.05] rounded-xl p-3 border border-white/[0.1] text-center">
+                <Home className="w-6 h-6 mx-auto mb-2 text-white/60" />
+                <p className="text-white text-xs font-medium">Dashboard</p>
+                <p className="text-white/40 text-[10px]">Full app</p>
+              </div>
+            </div>
+          </div>
+        );
+
+      case 'shortcuts':
+        return (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-sky-500/20 border border-sky-500/30 flex items-center justify-center text-sky-400">
+                <Keyboard size={20} />
+              </div>
+              <div>
+                <h3 className="text-white font-semibold text-base">Keyboard Shortcuts</h3>
+                <p className="text-white/50 text-sm">Master these for faster access</p>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {[
+                { keys: ['Ctrl', 'Shift', 'Space'], desc: 'Summon Stuard' },
+                { keys: ['Esc'], desc: 'Hide overlay' },
+                { keys: ['Ctrl', '/'], desc: 'Command palette' },
+                { keys: ['Ctrl', '↑↓←→'], desc: 'Move overlay' },
+              ].map((shortcut, i) => (
+                <div key={i} className="flex items-center justify-between bg-white/[0.03] rounded-lg px-3 py-2 border border-white/[0.08]">
+                  <span className="text-white/60 text-xs">{shortcut.desc}</span>
+                  <div className="flex items-center gap-1">
+                    {shortcut.keys.map((key, j) => (
+                      <React.Fragment key={j}>
+                        <kbd className="px-2 py-1 text-[10px] font-medium bg-white/10 border border-white/20 rounded text-white/80">
+                          {key}
+                        </kbd>
+                        {j < shortcut.keys.length - 1 && <span className="text-white/30 text-xs">+</span>}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleSkip}
-                className="text-[11px] text-white/40 hover:text-white/70 transition-colors px-2 py-1"
-              >
-                Skip
-              </button>
-              <button
-                onClick={tourStep === "done" ? handleComplete : nextTourStep}
-                className="px-3 py-1 rounded-md bg-blue-600 text-white text-[11px] font-semibold hover:bg-blue-500 transition-colors"
-              >
-                {tourStep === "done" ? "Finish" : "Next"}
-              </button>
+            <a 
+              href="#" 
+              onClick={(e) => { e.preventDefault(); /* Open settings */ }}
+              className="flex items-center gap-1.5 text-sky-400 text-xs hover:text-sky-300 transition-colors"
+            >
+              Customize shortcuts in Settings <ExternalLink size={12} />
+            </a>
+          </div>
+        );
+
+      case 'marketplace':
+        return (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-sky-500/20 border border-sky-500/30 flex items-center justify-center text-sky-400">
+                <Zap size={20} />
+              </div>
+              <div>
+                <h3 className="text-white font-semibold text-base">Get Started with Workflows</h3>
+                <p className="text-white/50 text-sm">Select automations to deploy instantly</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {starterWorkflows.map((wf) => (
+                <button
+                  key={wf.id}
+                  onClick={() => toggleWorkflow(wf.id)}
+                  className={`text-left p-3 rounded-xl border transition-all ${
+                    selectedWorkflows.includes(wf.id)
+                      ? 'bg-sky-500/20 border-sky-500/50'
+                      : 'bg-white/[0.03] border-white/[0.08] hover:border-white/20'
+                  }`}
+                >
+                  <div className={`mb-2 ${selectedWorkflows.includes(wf.id) ? 'text-sky-400' : 'text-white/50'}`}>
+                    {wf.icon}
+                  </div>
+                  <p className="text-white text-xs font-medium">{wf.name}</p>
+                  <p className="text-white/40 text-[10px] leading-tight mt-0.5">{wf.desc}</p>
+                  {selectedWorkflows.includes(wf.id) && (
+                    <div className="mt-2 flex items-center gap-1 text-sky-400">
+                      <Check size={12} />
+                      <span className="text-[10px]">Selected</span>
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+            <a 
+              href="https://studio.stuard.ai/marketplace" 
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-1.5 text-sky-400 text-xs hover:text-sky-300 transition-colors py-2"
+            >
+              Browse more in Stuard Studio <ExternalLink size={12} />
+            </a>
+          </div>
+        );
+
+      case 'done':
+        return (
+          <div className="text-center space-y-4">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-sky-500/30 to-blue-600/30 border border-sky-500/30 flex items-center justify-center mx-auto">
+              <Sparkles className="w-8 h-8 text-sky-400" />
+            </div>
+            <div>
+              <h3 className="text-white font-bold text-xl mb-2">You're all set!</h3>
+              <p className="text-white/50 text-sm">
+                Stuard is ready to help. Press <kbd className="px-1.5 py-0.5 text-[10px] bg-white/10 border border-white/20 rounded">Ctrl+Shift+Space</kbd> anytime to summon.
+              </p>
+            </div>
+            {selectedWorkflows.length > 0 && (
+              <div className="bg-sky-500/10 border border-sky-500/30 rounded-xl p-3">
+                <p className="text-sky-400 text-xs">
+                  <Check size={12} className="inline mr-1" />
+                  {selectedWorkflows.length} workflow{selectedWorkflows.length > 1 ? 's' : ''} will be deployed
+                </p>
+              </div>
+            )}
+          </div>
+        );
+    }
+  };
+
+  // Tour UI
+  return (
+    <div className="fixed inset-0 z-[10000] flex flex-col bg-[#0a0a0f]">
+      {/* Skip button */}
+      <button
+        onClick={handleSkip}
+        className="absolute top-4 right-4 p-2 rounded-lg text-white/40 hover:text-white hover:bg-white/5 transition-all z-20"
+      >
+        <X size={18} />
+      </button>
+
+      {/* Main content area */}
+      <div className="flex-1 flex flex-col items-center justify-center px-6 py-8">
+        {/* MockOverlay - only show for relevant steps */}
+        {['try-input', 'try-attach', 'try-mention', 'layouts'].includes(tourStep) && (
+          <div className="w-full max-w-[560px] mb-8">
+            <MockOverlay 
+              highlightElement={currentConfig?.highlight}
+              interactive={currentConfig?.interactive}
+              showAttachMenu={currentConfig?.showAttachMenu}
+              showMentionMenu={currentConfig?.showMentionMenu}
+              onAction={(action) => {
+                // Auto-advance on certain actions
+                if (tourStep === 'try-input' && action === 'send') nextTourStep();
+                if (tourStep === 'try-attach' && action.startsWith('attach-')) nextTourStep();
+                if (tourStep === 'try-mention' && action.startsWith('mention-')) nextTourStep();
+              }}
+            />
+          </div>
+        )}
+
+        {/* Tour Card - Fixed position below overlay */}
+        <motion.div
+          key={tourStep}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 20 }}
+          transition={{ duration: 0.25 }}
+          className="w-full max-w-[480px]"
+        >
+          <div className="bg-white/[0.04] border border-white/[0.1] rounded-2xl p-5 shadow-2xl backdrop-blur-xl">
+            {renderTourContent()}
+
+            {/* Progress & Actions */}
+            <div className="flex items-center justify-between mt-5 pt-4 border-t border-white/[0.08]">
+              <div className="flex gap-1.5">
+                {tourStepsList.map((_, i) => (
+                  <div
+                    key={i}
+                    className={`h-1.5 rounded-full transition-all duration-300 ${
+                      i === currentTourIndex 
+                        ? 'w-6 bg-sky-500' 
+                        : i < currentTourIndex 
+                          ? 'w-1.5 bg-sky-500/50' 
+                          : 'w-1.5 bg-white/10'
+                    }`}
+                  />
+                ))}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleSkip}
+                  className="text-xs text-white/40 hover:text-white/70 transition-colors px-3 py-1.5"
+                >
+                  Skip
+                </button>
+                <button
+                  onClick={tourStep === "done" ? handleComplete : nextTourStep}
+                  className="px-4 py-2 rounded-xl bg-sky-500 text-white text-xs font-semibold hover:bg-sky-400 transition-all active:scale-[0.98] flex items-center gap-1.5"
+                >
+                  {tourStep === "done" ? (
+                    <>
+                      <Play size={14} />
+                      Get Started
+                    </>
+                  ) : (
+                    <>
+                      Next
+                      <ArrowRight size={14} />
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      </motion.div>
+        </motion.div>
+      </div>
+
+      {/* Step indicator */}
+      <div className="pb-6 text-center text-white/30 text-xs">
+        Step {currentTourIndex + 1} of {tourStepsList.length}
+      </div>
     </div>
   );
 }
-
-// Component to create a spotlight effect around a target element
-function SpotlightOverlay({ targetId }: { targetId: string }) {
-  const [rect, setRect] = useState<DOMRect | null>(null);
-
-  useEffect(() => {
-    const updateRect = () => {
-      const el = document.getElementById(targetId);
-      if (el) {
-        const r = el.getBoundingClientRect();
-        // Ensure we have valid dimensions
-        if (r.width > 0 && r.height > 0) {
-          setRect(r);
-        }
-      }
-    };
-
-    // Initial update
-    // Small delay to allow layout to settle if coming from resize
-    setTimeout(updateRect, 50);
-    setTimeout(updateRect, 200);
-    
-    const interval = setInterval(updateRect, 200);
-    window.addEventListener('resize', updateRect);
-    
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener('resize', updateRect);
-    };
-  }, [targetId]);
-
-  if (!rect) return <div className="absolute inset-0 bg-black/60 pointer-events-none" />;
-
-  const padding = 4; // Padding around the highlight
-  
-  // Calculate the 4 rectangles around the target to create the "hole"
-  // Top rect
-  const topStyle: React.CSSProperties = {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: Math.max(0, rect.top - padding),
-    background: 'rgba(0,0,0,0.7)',
-    pointerEvents: 'none',
-  };
-  
-  // Bottom rect
-  const bottomStyle: React.CSSProperties = {
-    position: 'absolute',
-    top: rect.bottom + padding,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    background: 'rgba(0,0,0,0.7)',
-    pointerEvents: 'none',
-  };
-  
-  // Left rect
-  const leftStyle: React.CSSProperties = {
-    position: 'absolute',
-    top: Math.max(0, rect.top - padding),
-    height: rect.height + padding * 2,
-    left: 0,
-    width: Math.max(0, rect.left - padding),
-    background: 'rgba(0,0,0,0.7)',
-    pointerEvents: 'none',
-  };
-  
-  // Right rect
-  const rightStyle: React.CSSProperties = {
-    position: 'absolute',
-    top: Math.max(0, rect.top - padding),
-    height: rect.height + padding * 2,
-    left: rect.right + padding,
-    right: 0,
-    background: 'rgba(0,0,0,0.7)',
-    pointerEvents: 'none',
-  };
-
-  return (
-    <>
-      <div style={topStyle} />
-      <div style={bottomStyle} />
-      <div style={leftStyle} />
-      <div style={rightStyle} />
-      
-      {/* Highlight Ring */}
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="absolute pointer-events-none z-10"
-        style={{
-          top: rect.top - padding,
-          left: rect.left - padding,
-          width: rect.width + padding * 2,
-          height: rect.height + padding * 2,
-        }}
-      >
-        <div className="absolute inset-0 rounded-lg border-2 border-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.5)]" />
-        <div className="absolute inset-0 rounded-lg bg-blue-500/10 animate-pulse" />
-      </motion.div>
-    </>
-  );
-}
-

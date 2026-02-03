@@ -13,9 +13,13 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { searchToolsSemanticSupabase, isSupabaseSISEnabled, ResolvedTool } from './sis-supabase';
-import { TOOL_DEFINITIONS, ToolDefinition } from './definitions';
-import { ALL_TOOLS } from '../agents/stuard/tools';
 import { execLocalTool, hasClientBridge } from './bridge';
+import { getToolRegistry, getToolMetadata } from './tool-registry';
+// Ensure tools are registered
+import { initToolRegistry } from './meta-tools';
+
+// Initialize on module load
+initToolRegistry();
 
 /**
  * Fallback keyword search when Supabase SIS is not available.
@@ -30,12 +34,15 @@ function searchToolsKeyword(
   const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
   
   const results: Array<{ name: string; description: string; category: string; kind: string; score: number; schema: any }> = [];
+  const registry = getToolRegistry();
   
-  for (const tool of TOOL_DEFINITIONS) {
-    // Filter by category if specified
-    if (category && tool.category !== category) continue;
+  for (const [id, tool] of registry.entries()) {
+    const metadata = getToolMetadata(id) || { category: 'Other', kind: 'local' };
     
-    const nameLower = tool.id.toLowerCase();
+    // Filter by category if specified
+    if (category && metadata.category !== category) continue;
+    
+    const nameLower = id.toLowerCase();
     const descLower = (tool.description || '').toLowerCase();
     
     // Calculate relevance score based on keyword matches
@@ -58,12 +65,12 @@ function searchToolsKeyword(
     
     if (score > 0.1) {
       results.push({
-        name: tool.id,
+        name: id,
         description: tool.description,
-        category: tool.category,
-        kind: tool.kind,
+        category: metadata.category,
+        kind: metadata.kind || 'local',
         score: Math.round(score * 100) / 100,
-        schema: { args: tool.argsTemplate, output: tool.outputSchema },
+        schema: { args: tool.inputSchema, output: tool.outputSchema },
       });
     }
   }
@@ -114,8 +121,8 @@ Use this when you need a capability that isn't in your current toolset. IMPORTAN
     error: z.string().optional(),
   }),
 
-  execute: async ({ context }) => {
-    const { query, category, limit = 10 } = context as { query: string; category?: string; limit?: number };
+  execute: async (inputData, context) => {
+    const { query, category, limit = 10  } = inputData as { query: string; category?: string; limit?: number };
 
     let tools: Array<{ name: string; description: string; category: string; kind: string; score: number; schema: any }> = [];
     let searchMethod = 'keyword';
@@ -247,29 +254,25 @@ Example:
     error: z.string().optional(),
   }),
 
-  execute: async ({ context, runId, writer }) => {
-    const { tool_name, args = {} } = context as { tool_name: string; args?: Record<string, any> };
+  execute: async (inputData, runCtx) => {
+    const { tool_name, args = {} } = inputData as { tool_name: string; args?: Record<string, any> };
+    const { runId, writer } = (runCtx as any) || {};
 
     if (process.env.SIS_DEBUG === '1') {
       console.log(`[sis_execute_tool] Executing tool: ${tool_name}`, { args });
     }
 
-    // Look up the tool in ALL_TOOLS (cloud tools)
-    const toolFn = (ALL_TOOLS as any)[tool_name];
+    // Look up the tool in the dynamic registry
+    const registry = getToolRegistry();
+    const tool = registry.get(tool_name);
 
-    if (toolFn) {
+    if (tool) {
       // Found in cloud tools, execute it
       try {
-        if (typeof toolFn.execute === 'function') {
-          const result = await toolFn.execute({ context: args, runId, writer });
+        if (typeof tool.execute === 'function') {
+          const result = await tool.execute(args, { runId, writer } as any);
           if (process.env.SIS_DEBUG === '1') {
             console.log(`[sis_execute_tool] Tool '${tool_name}' executed successfully (cloud)`);
-          }
-          return { success: true, tool: tool_name, result };
-        } else if (typeof toolFn === 'function') {
-          const result = await toolFn(args);
-          if (process.env.SIS_DEBUG === '1') {
-            console.log(`[sis_execute_tool] Tool '${tool_name}' (function) executed successfully`);
           }
           return { success: true, tool: tool_name, result };
         } else {
@@ -284,7 +287,7 @@ Example:
       }
     }
 
-    // Tool not found in cloud tools, try executing via local agent bridge
+    // Tool not found in registry, try executing via local agent bridge
     if (hasClientBridge()) {
       if (process.env.SIS_DEBUG === '1') {
         console.log(`[sis_execute_tool] Tool '${tool_name}' not in cloud, trying local agent...`);
@@ -320,6 +323,7 @@ Example:
     return { success: false, error: errorMsg };
   },
 });
+
 
 /**
  * List all available tool categories

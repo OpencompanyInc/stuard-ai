@@ -26,7 +26,7 @@ export default function DashboardLayout({
     const isActive = (path: string) => pathname === path;
 
     return (
-        <div className="min-h-screen bg-gray-50 flex">
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50 flex">
             {/* Sidebar for Desktop */}
             <aside className="hidden md:flex w-64 flex-col bg-white border-r border-gray-200 fixed inset-y-0 z-50">
                 <div className="flex items-center h-16 px-6 border-b border-gray-100">
@@ -130,7 +130,9 @@ export default function DashboardLayout({
             {/* Main Content */}
             <main className="flex-1 md:ml-64 pt-16 md:pt-0 min-h-screen transition-all duration-300 ease-in-out">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 md:py-12">
-                    {children}
+                    <div className="rounded-3xl border border-white/70 bg-white/70 shadow-xl shadow-blue-100/40 backdrop-blur-sm p-6 md:p-10">
+                        {children}
+                    </div>
                 </div>
             </main>
         </div>

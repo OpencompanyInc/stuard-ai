@@ -4,6 +4,7 @@ import path from "path";
 import fs from "fs";
 import { isDev } from "../env";
 import logger from "../utils/logger";
+import { getGlobalHotkey } from "../settings";
 
 let win: BrowserWindow | null = null;
 let onboardingWin: BrowserWindow | null = null;
@@ -12,6 +13,7 @@ let hudWin: BrowserWindow | null = null;
 let sidebarWin: BrowserWindow | null = null;
 let spacesWin: BrowserWindow | null = null; // Legacy alias
 let dashboardWin: BrowserWindow | null = null;
+let notificationWin: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let sidebarExpanded = false;
 
@@ -304,7 +306,7 @@ export function getPreloadPath() {
   return fallback;
 }
 
-export function getRendererUrl(entry: "index" | "dashboard" | "onboarding" | "board" | "workflows" | "hud-test" | "spaces" | "sidebar" = "index") {
+export function getRendererUrl(entry: "index" | "dashboard" | "onboarding" | "board" | "workflows" | "hud-test" | "spaces" | "sidebar" | "notification" = "index") {
   if (isDev) return `http://localhost:5173/${entry}.html`;
   return `file://${path.join(__dirname, `../../renderer/${entry}.html`)}`;
 }
@@ -564,6 +566,7 @@ export function createWindow() {
     registerMoveShortcuts();
   });
   win.on('hide', () => {
+    wasHidden = true;
     unregisterMoveShortcuts();
     clearMoveTimer();
   });
@@ -583,37 +586,57 @@ export function openOnboardingWindow() {
   if (onboardingWin && !onboardingWin.isDestroyed()) {
     onboardingWin.show();
     onboardingWin.focus();
+    onboardingWin.moveTop();
     return;
   }
+
+  const WIDTH = 560;
+  const HEIGHT = 640;
+
   onboardingWin = new BrowserWindow({
-    width: 760,
-    height: 520,
-    show: true,
+    width: WIDTH,
+    height: HEIGHT,
+    minWidth: 480,
+    minHeight: 520,
+    maxWidth: 700,
+    maxHeight: 800,
+    show: false, // Show after ready-to-show for smoother appearance
     frame: false,
     transparent: true,
-    resizable: false,
+    hasShadow: true,
+    resizable: true,
     movable: true,
-    minimizable: false,
+    minimizable: true,
     maximizable: false,
     fullscreenable: false,
-    skipTaskbar: true,
-    alwaysOnTop: true,
+    skipTaskbar: false, // Show in taskbar like a normal window
+    alwaysOnTop: false, // Act like a normal window
     useContentSize: true,
+    titleBarStyle: 'hidden',
     webPreferences: {
       preload: getPreloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      devTools: isDev,
+      devTools: true,
     },
     backgroundColor: "#00000000",
   });
+
   onboardingWin.setMenu(null);
+
+  // Center on screen
   const { workArea } = screen.getPrimaryDisplay();
-  const b = onboardingWin.getBounds();
-  const x = Math.round(workArea.x + (workArea.width - b.width) / 2);
-  const y = Math.round(workArea.y + workArea.height * 0.18);
+  const x = Math.round(workArea.x + (workArea.width - WIDTH) / 2);
+  const y = Math.round(workArea.y + (workArea.height - HEIGHT) / 2);
   onboardingWin.setPosition(x, y);
+
+  // Show when ready for smoother appearance
+  onboardingWin.once('ready-to-show', () => {
+    onboardingWin?.show();
+    onboardingWin?.focus();
+  });
+
   if (isDev) {
     onboardingWin.loadURL(getRendererUrl("onboarding"));
   } else {
@@ -628,6 +651,7 @@ export function openOnboardingWindow() {
       }
     }
   }
+
   onboardingWin.on("closed", () => { onboardingWin = null; });
 }
 
@@ -794,7 +818,7 @@ export function openWorkflowsWindow(options?: { marketplaceSlug?: string }) {
 // Standalone Sidebar Window (Spaces, Canvas, Terminal) - always opens as standalone window
 export function openSidebarWindow(options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) {
   // Always open as standalone expanded window (ignore expanded flag, always expanded)
-  
+
   if (sidebarWin && !sidebarWin.isDestroyed()) {
     sidebarWin.show();
     sidebarWin.focus();
@@ -808,7 +832,7 @@ export function openSidebarWindow(options?: { tab?: 'spaces' | 'canvas' | 'termi
   // Always open as standalone centered window
   const display = screen.getPrimaryDisplay();
   const workArea = display.workArea;
-  
+
   const width = Math.min(SIDEBAR_EXPANDED_WIDTH, workArea.width - 100);
   const height = Math.min(SIDEBAR_EXPANDED_HEIGHT, workArea.height - 100);
   const initialBounds = {
@@ -855,7 +879,7 @@ export function openSidebarWindow(options?: { tab?: 'spaces' | 'canvas' | 'termi
   // Build URL/file with tab and expanded params (always expanded)
   const queryParams: Record<string, string> = { expanded: 'true' };
   if (options?.tab) queryParams.tab = options.tab;
-  
+
   if (isDev) {
     const params = new URLSearchParams(queryParams).toString();
     const url = params ? `${getRendererUrl("sidebar")}?${params}` : getRendererUrl("sidebar");
@@ -898,7 +922,7 @@ export function toggleSidebarWindow(options?: { tab?: 'spaces' | 'canvas' | 'ter
     try { sidebarWin.hide(); } catch { }
     return;
   }
-  
+
   // Always standalone mode - just show and focus
   sidebarWin.show();
   sidebarWin.focus();
@@ -1017,54 +1041,90 @@ export function toggleHudWindow() {
   }
 }
 
+let wasHidden = true;
+let overlayHotkeyLatched = false;
+let overlayHotkeyLatchTimer: any = null;
+let lastToggleAt = 0;
+let lastShowAt = 0;
+
+export function handleOverlayHotkey() {
+  try {
+    if (overlayHotkeyLatchTimer != null) {
+      clearTimeout(overlayHotkeyLatchTimer);
+    }
+  } catch { }
+
+  overlayHotkeyLatchTimer = setTimeout(() => {
+    overlayHotkeyLatched = false;
+  }, 900);
+
+  if (overlayHotkeyLatched) return;
+  overlayHotkeyLatched = true;
+  toggleWindow();
+}
+
 export function showWindow() {
-  logger.info("showWindow called");
   if (!win) {
     logger.warn("showWindow: win is null!");
     return;
   }
-  if (!win.isFocused()) {
-    updateLastActiveWindowHandle('showWindow');
-  }
-  if (currentMode === 'compact') {
+
+  const wasVisible = win.isVisible();
+
+  if (currentMode === 'compact' && wasHidden && !wasVisible) {
     repositionTopCenter(win);
   }
-  const bounds = win.getBounds();
-  logger.info("Window bounds:", bounds);
+
   try {
     if (win.isMinimized()) {
       win.restore();
     }
   } catch { }
-  try { win.show(); } catch { }
-  try { win.focus(); } catch { }
+
+  try {
+    win.showInactive();
+    win.focus();
+  } catch {
+    try { win.show(); } catch { }
+    try { win.focus(); } catch { }
+  }
+
+  lastShowAt = Date.now();
+
   try { win.moveTop(); } catch { }
-  logger.info("Window state after show:", {
-    visible: win.isVisible(),
-    focused: win.isFocused(),
-    minimized: win.isMinimized(),
-    alwaysOnTop: win.isAlwaysOnTop(),
-  });
+
+  wasHidden = false;
+
   try { win.webContents.send("overlay:showed"); } catch { }
 }
 
 export function hideWindow() {
-  logger.info("hideWindow called");
+  const now = Date.now();
+  if (now - lastShowAt < 250) return;
+  wasHidden = true;
   win?.hide();
 }
 
 export function toggleWindow() {
+  const now = Date.now();
+  if (now - lastToggleAt < 350) return;
+  lastToggleAt = now;
+
   logger.info("toggleWindow called, win exists:", !!win);
   if (!win) return;
   logger.info("toggleWindow: currently visible=", win.isVisible());
 
   if (win.isVisible()) {
     if (win.isFocused()) {
+      if (now - lastShowAt < 600) return;
       hideWindow();
     } else {
       showWindow();
     }
   } else {
+    if (currentMode !== 'compact') {
+      try { setOverlayMode('compact'); } catch { }
+    }
     showWindow();
   }
 }
@@ -1330,7 +1390,7 @@ export function setOverlayBounds(bounds: { x?: number; y?: number; width?: numbe
  */
 export function toggleInternalSidebar(open?: boolean): { open: boolean; width: number } {
   const shouldOpen = typeof open === 'boolean' ? open : !internalSidebarOpen;
-  
+
   if (!win || win.isDestroyed()) {
     internalSidebarOpen = shouldOpen;
     return { open: shouldOpen, width: 0 };
@@ -1346,7 +1406,7 @@ export function toggleInternalSidebar(open?: boolean): { open: boolean; width: n
     if (shouldOpen && !internalSidebarOpen) {
       // Opening sidebar - expand width
       const newWidth = Math.min(current.width + INTERNAL_SIDEBAR_WIDTH, workArea.width - 40);
-      
+
       // Adjust x position if expanding would go off-screen
       let newX = current.x;
       if (current.x + newWidth > workArea.x + workArea.width) {
@@ -1366,7 +1426,7 @@ export function toggleInternalSidebar(open?: boolean): { open: boolean; width: n
     } else if (!shouldOpen && internalSidebarOpen) {
       // Closing sidebar - contract width
       const newWidth = Math.max(current.width - INTERNAL_SIDEBAR_WIDTH, MODE_SIZE_CONSTRAINTS[currentMode].minW);
-      
+
       win.setBounds({ x: current.x, y: current.y, width: newWidth, height: current.height });
       baseContentWidth = newWidth;
       baseOuterWidth = newWidth;
@@ -1387,9 +1447,9 @@ export function toggleInternalSidebar(open?: boolean): { open: boolean; width: n
 
     // Notify renderer of the change
     try {
-      win.webContents.send('overlay:internalSidebarChanged', { 
-        open: internalSidebarOpen, 
-        width: win.getBounds().width 
+      win.webContents.send('overlay:internalSidebarChanged', {
+        open: internalSidebarOpen,
+        width: win.getBounds().width
       });
     } catch { }
 
@@ -1406,17 +1466,17 @@ export function getInternalSidebarState(): { open: boolean } {
 
 export function registerGlobalShortcuts() {
   logger.info("Registering global shortcuts...");
-  // Overlay toggle: prioritize Control+Space for main overlay
-  const overlayAccels = [
-    "Control+Space",
-    "Ctrl+Space",
-    "Control+Shift+Space",
-    "Ctrl+Shift+Space",
-    "CommandOrControl+Shift+Space",
-  ];
 
-  // Unregister all potential collisions first
-  for (const a of overlayAccels) {
+  // Get the stored hotkey or use default
+  const storedHotkey = getGlobalHotkey();
+  logger.info(`Using stored hotkey: ${storedHotkey}`);
+
+  // Unregister any existing shortcuts first
+  const existingAccels = [
+    "Control+Space", "Ctrl+Space", "Control+Shift+Space", "Ctrl+Shift+Space",
+    "CommandOrControl+Shift+Space", "Alt+Space", "Command+Space"
+  ];
+  for (const a of existingAccels) {
     try { globalShortcut.unregister(a); } catch { }
   }
 
@@ -1424,28 +1484,55 @@ export function registerGlobalShortcuts() {
   try { globalShortcut.unregister("Control+Alt+Space"); } catch { }
 
   let registered = false;
-  // Register ALL valid shortcuts for the overlay, not just the first one
-  for (const a of overlayAccels) {
-    try {
-      // Check if already registered by another app (electron returns false usually if taken, or throws)
-      if (globalShortcut.isRegistered(a)) {
-        logger.warn(`Shortcut ${a} is already registered by another application.`);
-        continue;
-      }
 
-      const success = globalShortcut.register(a, () => {
-        logger.info("Hotkey pressed:", a);
-        toggleWindow();
+  // Try to register the stored hotkey first
+  try {
+    if (globalShortcut.isRegistered(storedHotkey)) {
+      logger.warn(`Stored hotkey ${storedHotkey} is already registered by another application.`);
+    } else {
+      const success = globalShortcut.register(storedHotkey, () => {
+        logger.info("Hotkey pressed:", storedHotkey);
+        handleOverlayHotkey();
       });
 
       if (success) {
-        logger.info(`Shortcut ${a} registered successfully.`);
+        logger.info(`Stored hotkey ${storedHotkey} registered successfully.`);
         registered = true;
       } else {
-        logger.warn(`Failed to register ${a} (returned false).`);
+        logger.warn(`Failed to register stored hotkey ${storedHotkey}`);
       }
-    } catch (e) {
-      logger.warn(`Exception registering ${a}:`, e);
+    }
+  } catch (e) {
+    logger.warn(`Exception registering stored hotkey ${storedHotkey}:`, e);
+  }
+
+  // If stored hotkey failed, fall back to defaults
+  if (!registered) {
+    const fallbackAccels = [
+      "Control+Space", "Ctrl+Space", "Control+Shift+Space",
+      "Ctrl+Shift+Space", "CommandOrControl+Shift+Space"
+    ];
+
+    for (const a of fallbackAccels) {
+      try {
+        if (globalShortcut.isRegistered(a)) {
+          logger.warn(`Fallback shortcut ${a} is already registered.`);
+          continue;
+        }
+
+        const success = globalShortcut.register(a, () => {
+          logger.info("Hotkey pressed:", a);
+          handleOverlayHotkey();
+        });
+
+        if (success) {
+          logger.info(`Fallback shortcut ${a} registered successfully.`);
+          registered = true;
+          break; // Stop after first successful registration
+        }
+      } catch (e) {
+        logger.warn(`Exception registering ${a}:`, e);
+      }
     }
   }
 
@@ -1458,7 +1545,7 @@ export function registerGlobalShortcuts() {
   try { globalShortcut.register("CommandOrControl+Shift+/", () => openWorkflowsWindow()); } catch { }
   try { globalShortcut.register("CommandOrControl+Divide", () => openWorkflowsWindow()); } catch { }
 
-  // HUD Window: Moved to Control+Alt+Space to free up Control+Space
+  // HUD Window: Control+Alt+Space
   try {
     globalShortcut.register("Control+Alt+Space", () => {
       logger.info("Ctrl+Alt+Space pressed - toggling HUD");
@@ -1730,4 +1817,72 @@ export function clearBoardWindows() {
 
 export function listBoardWindows() {
   try { return Array.from(boardStates.values()); } catch { return []; }
+}
+
+export function getNotificationWindow() {
+  return notificationWin;
+}
+
+export function openNotificationWindow() {
+  if (notificationWin && !notificationWin.isDestroyed()) {
+    // Should be invisible to interaction but visible for rendering
+    // notificationWin.show(); 
+    return;
+  }
+
+  const { workArea } = screen.getPrimaryDisplay();
+
+  // Create a full-screen transparent overlay
+  notificationWin = new BrowserWindow({
+    x: workArea.x,
+    y: workArea.y,
+    width: workArea.width,
+    height: workArea.height,
+    show: false,
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true, // Always on top for notifications
+    type: 'toolbar', // Helps on some OSs to stay on top
+    webPreferences: {
+      preload: getPreloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      devTools: isDev,
+    },
+    backgroundColor: "#00000000",
+  });
+
+  // Make it click-through by default
+  notificationWin.setIgnoreMouseEvents(true, { forward: true });
+  notificationWin.setMenu(null);
+
+  if (isDev) {
+    notificationWin.loadURL(getRendererUrl("notification"));
+  } else {
+    // Load file
+    const p = path.join(__dirname, "../renderer/notification.html");
+    if (fs.existsSync(p)) {
+      notificationWin.loadFile(p);
+    } else {
+      // Fallback
+      const p2 = path.join(__dirname, "../../renderer/notification.html");
+      notificationWin.loadFile(p2);
+    }
+  }
+
+  notificationWin.once('ready-to-show', () => {
+    notificationWin?.showInactive(); // Show without taking focus
+  });
+
+  notificationWin.on("closed", () => {
+    notificationWin = null;
+  });
 }

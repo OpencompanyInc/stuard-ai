@@ -11,7 +11,14 @@ export type LoopConfig = {
   delayMs?: number;
 };
 
-export type StuardEdge = { to: string; guard?: any; label?: string; loop?: LoopConfig; loopBreak?: boolean };
+export type StuardEdge = {
+  to: string;
+  guard?: any;
+  label?: string;
+  loop?: LoopConfig;
+  loopBreak?: boolean;
+  loopFanoutMode?: 'wait' | 'parallel';
+};
 export type StuardStep = {
   id: string;
   tool?: string;

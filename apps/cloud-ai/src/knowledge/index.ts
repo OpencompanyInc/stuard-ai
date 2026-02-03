@@ -5,10 +5,13 @@
  */
 
 export {
-  extractKnowledge,
   executeKnowledgeActions,
   ingestConversationTurn,
 } from './ingestion';
+
+export {
+  extractKnowledge,
+} from './extraction';
 
 export {
   buildKnowledgeContext,

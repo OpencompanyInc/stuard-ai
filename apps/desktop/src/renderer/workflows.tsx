@@ -116,13 +116,15 @@ function WorkflowsApp() {
   const [showLogs, setShowLogs] = useState(false);
   const [showRunMenu, setShowRunMenu] = useState(false);
   const [selectedWireIndex, setSelectedWireIndex] = useState<number | null>(null);
+  // Reconnecting state: which wire and which end is being reconnected
+  const [reconnecting, setReconnecting] = useState<{ wireIndex: number; end: 'from' | 'to' } | null>(null);
 
   const [showImport, setShowImport] = useState(false);
   const [importJson, setImportJson] = useState('');
   const [importErr, setImportErr] = useState('');
 
-  // Context Menu State - supports both node and canvas context menus
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId?: string; type: 'node' | 'canvas' } | null>(null);
+  // Context Menu State - supports both node, canvas, and wire context menus
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId?: string; wireIndex?: number; type: 'node' | 'canvas' | 'wire' } | null>(null);
 
   // Marketplace state
   const [showPublish, setShowPublish] = useState(false);
@@ -610,6 +612,11 @@ function WorkflowsApp() {
       }
 
       if (key === 'escape') {
+        if (reconnecting) {
+          e.preventDefault();
+          setReconnecting(null);
+          return;
+        }
         if (runningIds[selectedId]) {
           e.preventDefault();
           stop();
@@ -933,6 +940,13 @@ function WorkflowsApp() {
     setContextMenu({ x: e.clientX, y: e.clientY, type: 'canvas' });
   };
 
+  const handleWireContextMenu = (wireIndex: number, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedWireIndex(wireIndex);
+    setContextMenu({ x: e.clientX, y: e.clientY, wireIndex, type: 'wire' });
+  };
+
   const handleMM = (e: React.MouseEvent) => {
     if (!dragging || !model) return;
     const rect = canvasRef.current?.getBoundingClientRect();
@@ -959,8 +973,110 @@ function WorkflowsApp() {
   const handleConnect = (id: string) => {
     // Prevent creating connections in locked workflows
     if (model?.locked) return;
+
+    // Handle reconnecting mode - connect the disconnected end to the clicked node
+    if (reconnecting && model) {
+      const wire = model.wires[reconnecting.wireIndex];
+      if (!wire) {
+        setReconnecting(null);
+        return;
+      }
+
+      // Don't allow connecting to the same node on the other end
+      if (reconnecting.end === 'from' && id === wire.to) {
+        setReconnecting(null);
+        return;
+      }
+      if (reconnecting.end === 'to' && id === wire.from) {
+        setReconnecting(null);
+        return;
+      }
+
+      // Update the wire with the new connection
+      const newWires = [...model.wires];
+      if (reconnecting.end === 'from') {
+        newWires[reconnecting.wireIndex] = { ...wire, from: id };
+      } else {
+        newWires[reconnecting.wireIndex] = { ...wire, to: id };
+      }
+      updateModel({ ...model, wires: newWires });
+      setReconnecting(null);
+      setSelectedWireIndex(null);
+      return;
+    }
+
     if (!connectingFrom) setConnectingFrom(id);
     else { if (connectingFrom !== id && model) updateModel({ ...model, wires: [...model.wires, { from: connectingFrom, to: id }] }); setConnectingFrom(""); }
+  };
+
+  // Start reconnecting a wire end
+  const startReconnect = (wireIndex: number, end: 'from' | 'to') => {
+    if (model?.locked) return;
+    setReconnecting({ wireIndex, end });
+    setContextMenu(null);
+  };
+
+  // Insert a node between two connected nodes (on a wire)
+  const insertNodeOnWire = (wireIndex: number, newNodeData: any, position: { x: number; y: number }) => {
+    if (!model || model.locked) return;
+
+    const wire = model.wires[wireIndex];
+    if (!wire) return;
+
+    // Create the new node
+    const safeKind = String(newNodeData.k || 'step').replace(/\./g, '_');
+    const newId = `${safeKind}_${Date.now().toString(36)}`;
+
+    let newNodes = model.nodes;
+    let newTriggers = model.triggers;
+
+    if (newNodeData.k === 'trigger') {
+      // Can't insert a trigger between nodes
+      return;
+    } else {
+      newNodes = [...model.nodes, {
+        id: newId,
+        type: newNodeData.k,
+        tool: newNodeData.t,
+        label: newNodeData.label,
+        args: newNodeData.args || {},
+        position
+      }];
+    }
+
+    // Create new wires: from original source to new node, from new node to original target
+    const newWires = model.wires.filter((_, i) => i !== wireIndex);
+    newWires.push(
+      { from: wire.from, to: newId },
+      { from: newId, to: wire.to, guard: wire.guard, loop: (wire as any).loop } // Preserve guard/loop on second wire
+    );
+
+    updateModel({ ...model, nodes: newNodes, triggers: newTriggers, wires: newWires });
+    setSelectedNodeId(newId);
+  };
+
+  // Swap a node with another node type while preserving connections
+  const swapNode = (nodeId: string, newNodeData: any) => {
+    if (!model || model.locked) return;
+
+    const nodeIndex = model.nodes.findIndex(n => n.id === nodeId);
+    if (nodeIndex === -1) return; // Can't swap triggers
+
+    const oldNode = model.nodes[nodeIndex];
+
+    // Create new node with same ID and position but new tool/type
+    const newNode = {
+      ...oldNode,
+      type: newNodeData.k,
+      tool: newNodeData.t,
+      label: newNodeData.label,
+      args: newNodeData.args || {} // Reset args for new tool
+    };
+
+    const newNodes = [...model.nodes];
+    newNodes[nodeIndex] = newNode;
+
+    updateModel({ ...model, nodes: newNodes });
   };
 
   const size = useMemo(() => {
@@ -1250,6 +1366,7 @@ function WorkflowsApp() {
                         selectedId={selectedId}
                         selectedNodeId={selectedNodeId}
                         connectingFrom={connectingFrom}
+                        reconnecting={reconnecting}
                         executionState={executionState}
                         size={size}
                         canvasRef={canvasRef}
@@ -1261,18 +1378,20 @@ function WorkflowsApp() {
                         onZoomOut={zoomOut}
                         onZoomReset={zoomReset}
                         onAutoOrganize={autoOrganize}
-                        onDragOver={e => e.preventDefault()}
+                        onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
                         onDrop={handleDrop}
                         onMouseMove={handleMM}
                         onMouseUp={() => { setDragging(null); setAlignmentGuides([]); }}
                         onMouseLeave={() => { setDragging(null); setAlignmentGuides([]); }}
-                        onCanvasClick={() => { setSelectedNodeId(""); setConnectingFrom(""); setSelectedWireIndex(null); }}
+                        onCanvasClick={() => { setSelectedNodeId(""); setConnectingFrom(""); setSelectedWireIndex(null); setReconnecting(null); }}
                         onNodeSelect={(id: string) => { setSelectedNodeId(id); setSelectedWireIndex(null); }}
                         onNodeMouseDown={handleNodeMD}
                         onNodeContextMenu={handleNodeContextMenu}
                         onNodeConnect={handleConnect}
                         onWireSelect={(i: number) => { setSelectedWireIndex(i); setSelectedNodeId(""); setRightPanel('inspector'); }}
                         onWireDelete={(i: number) => { if (model) updateModel({ ...model, wires: model.wires.filter((_, j) => j !== i) }); setSelectedWireIndex(null); }}
+                        onWireContextMenu={handleWireContextMenu}
+                        onWireReconnect={startReconnect}
                         onCanvasContextMenu={handleCanvasContextMenu}
                       />
                     </div>
@@ -1320,6 +1439,7 @@ function WorkflowsApp() {
                                 onUpdate={updateModel}
                                 onDelete={() => { updateModel({ ...model, wires: model.wires.filter((_, j) => j !== selectedWireIndex) }); setSelectedWireIndex(null); }}
                                 onClose={() => { setRightPanel('none'); setSelectedWireIndex(null); }}
+                                onReconnect={(end) => startReconnect(selectedWireIndex, end)}
                               />
                             ) : (
                               <InspectorPanel model={model} selectedNodeId={selectedNodeId} onUpdate={updateModel} onDelete={delNode} onClose={() => setRightPanel('none')} />
@@ -1343,7 +1463,10 @@ function WorkflowsApp() {
                   {/* Left: ToolPalette */}
                   <div className="w-64 bg-white border-r border-slate-200 flex flex-col shrink-0 z-10 min-h-0 shadow-[4px_0_24px_-12px_rgba(0,0,0,0.1)]">
                     <ToolPalette
-                      onDragStart={(e, item) => e.dataTransfer.setData('text/plain', JSON.stringify(item))}
+                      onDragStart={(e, item) => {
+                        e.dataTransfer.setData('text/plain', JSON.stringify(item));
+                        e.dataTransfer.effectAllowed = 'copy';
+                      }}
                       disabled={model.locked}
                     />
                   </div>
@@ -1357,6 +1480,7 @@ function WorkflowsApp() {
                         selectedId={selectedId}
                         selectedNodeId={selectedNodeId}
                         connectingFrom={connectingFrom}
+                        reconnecting={reconnecting}
                         executionState={executionState}
                         size={size}
                         canvasRef={canvasRef}
@@ -1368,18 +1492,20 @@ function WorkflowsApp() {
                         onZoomOut={zoomOut}
                         onZoomReset={zoomReset}
                         onAutoOrganize={autoOrganize}
-                        onDragOver={e => e.preventDefault()}
+                        onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
                         onDrop={handleDrop}
                         onMouseMove={handleMM}
                         onMouseUp={() => { setDragging(null); setAlignmentGuides([]); }}
                         onMouseLeave={() => { setDragging(null); setAlignmentGuides([]); }}
-                        onCanvasClick={() => { setSelectedNodeId(""); setConnectingFrom(""); setSelectedWireIndex(null); }}
+                        onCanvasClick={() => { setSelectedNodeId(""); setConnectingFrom(""); setSelectedWireIndex(null); setReconnecting(null); }}
                         onNodeSelect={(id: string) => { setSelectedNodeId(id); setSelectedWireIndex(null); }}
                         onNodeMouseDown={handleNodeMD}
                         onNodeContextMenu={handleNodeContextMenu}
                         onNodeConnect={handleConnect}
                         onWireSelect={(i: number) => { setSelectedWireIndex(i); setSelectedNodeId(""); setRightPanel('inspector'); }}
                         onWireDelete={(i: number) => { if (model) updateModel({ ...model, wires: model.wires.filter((_, j) => j !== i) }); setSelectedWireIndex(null); }}
+                        onWireContextMenu={handleWireContextMenu}
+                        onWireReconnect={startReconnect}
                         onCanvasContextMenu={handleCanvasContextMenu}
                       />
                     </div>
@@ -1418,6 +1544,7 @@ function WorkflowsApp() {
                                 onUpdate={updateModel}
                                 onDelete={() => { updateModel({ ...model, wires: model.wires.filter((_, j) => j !== selectedWireIndex) }); setSelectedWireIndex(null); }}
                                 onClose={() => { setRightPanel('none'); setSelectedWireIndex(null); }}
+                                onReconnect={(end) => startReconnect(selectedWireIndex, end)}
                               />
                             ) : (
                               <InspectorPanel model={model} selectedNodeId={selectedNodeId} onUpdate={updateModel} onDelete={delNode} onClose={() => setRightPanel('none')} />
@@ -1551,6 +1678,84 @@ function WorkflowsApp() {
                     </button>
                   </>
                 )}
+              </>
+            ) : contextMenu.type === 'wire' && contextMenu.wireIndex !== undefined ? (
+              <>
+                {/* Wire context menu */}
+                {(() => {
+                  const wire = model?.wires[contextMenu.wireIndex];
+                  const sourceNode = wire ? [...(model?.triggers || []), ...(model?.nodes || [])].find(n => n.id === wire.from) : null;
+                  const targetNode = wire ? [...(model?.triggers || []), ...(model?.nodes || [])].find(n => n.id === wire.to) : null;
+
+                  return (
+                    <>
+                      <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                        Connection
+                      </div>
+
+                      {model?.locked ? (
+                        <div className="px-3 py-2 text-xs text-slate-400 flex items-center gap-2">
+                          <Icons.Lock className="w-3.5 h-3.5" />
+                          <span>Editing locked</span>
+                        </div>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => {
+                              startReconnect(contextMenu.wireIndex!, 'from');
+                            }}
+                            className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-amber-50 flex items-center gap-2.5 transition-colors"
+                          >
+                            <Icons.Zap className="w-4 h-4 text-amber-500" />
+                            <span>Change Source</span>
+                            <span className="ml-auto text-[10px] text-slate-400 truncate max-w-[80px]">{sourceNode?.label || wire?.from}</span>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              startReconnect(contextMenu.wireIndex!, 'to');
+                            }}
+                            className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-amber-50 flex items-center gap-2.5 transition-colors"
+                          >
+                            <Icons.Zap className="w-4 h-4 text-amber-500" />
+                            <span>Change Target</span>
+                            <span className="ml-auto text-[10px] text-slate-400 truncate max-w-[80px]">{targetNode?.label || wire?.to}</span>
+                          </button>
+
+                          <div className="h-px bg-slate-100 my-1" />
+
+                          <button
+                            onClick={() => {
+                              setSelectedWireIndex(contextMenu.wireIndex!);
+                              setRightPanel('inspector');
+                              setContextMenu(null);
+                            }}
+                            className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2.5 transition-colors"
+                          >
+                            <Icons.Settings className="w-4 h-4 text-slate-400" />
+                            <span>Edit Properties</span>
+                          </button>
+
+                          <div className="h-px bg-slate-100 my-1" />
+
+                          <button
+                            onClick={() => {
+                              if (model && contextMenu.wireIndex !== undefined) {
+                                updateModel({ ...model, wires: model.wires.filter((_, j) => j !== contextMenu.wireIndex) });
+                              }
+                              setSelectedWireIndex(null);
+                              setContextMenu(null);
+                            }}
+                            className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2.5 transition-colors group"
+                          >
+                            <Icons.Trash className="w-4 h-4 text-red-400 group-hover:text-red-500" />
+                            <span>Delete Connection</span>
+                          </button>
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
               </>
             ) : (
               <>

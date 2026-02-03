@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Callable, Awaitable
 
-from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops
+from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http
 
 
 # Tool metadata for discovery (category and description)
@@ -10,6 +10,7 @@ from . import gui, system, windows, fs, clipboard, memory, knowledge, media, med
 _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     # GUI
     "get_mouse_position": ("input", "Get the current mouse cursor position on screen"),
+    "move_cursor": ("input", "Move the mouse cursor to specific screen coordinates"),
     "computer_use": ("input", "Perform GUI actions (mouse/keyboard) and optionally capture a screenshot"),
     "click_at_coordinates": ("input", "Click at specific screen coordinates"),
     "double_click_at_coordinates": ("input", "Double-click at specific screen coordinates"),
@@ -37,6 +38,7 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "open_file": ("system", "Open a file or folder with the default application"),
     "read_file_binary": ("system", "Read binary file contents"),
     "read_file_base64": ("system", "Read file as base64 encoded string"),
+    "write_file_base64": ("system", "Write base64 encoded string to a file"),
     "file_read": ("system", "Read file contents with line numbers for AI agents"),
     "file_edit": ("system", "Edit file contents using string-based matching"),
 
@@ -284,6 +286,9 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "math_slice": ("math", "Slice a tensor"),
     "math_get_index": ("math", "Get element at index"),
     "math_set_index": ("math", "Set element at index"),
+
+    # HTTP
+    "http_request": ("integrations", "Make HTTP requests like curl or Postman (GET, POST, PUT, PATCH, DELETE, etc.)"),
 }
 
 
@@ -291,6 +296,7 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
 _HANDLERS = {
     # GUI
     "get_mouse_position": gui.get_mouse_position,
+    "move_cursor": gui.move_cursor,
     "computer_use": gui.computer_use,
     "click_at_coordinates": gui.click_at_coordinates,
     "double_click_at_coordinates": gui.double_click_at_coordinates,
@@ -317,6 +323,7 @@ _HANDLERS = {
     "delete_file": fs.delete_file,
     "open_file": fs.open_file,
     "read_file_binary": fs.read_file_binary,
+    "write_file_base64": fs.write_file_base64,
     "read_file_base64": fs.read_file_binary,  # Alias - returns base64 in 'data' field
 
     # Agentic File Tools (for AI agents)
@@ -569,6 +576,9 @@ _HANDLERS = {
     "math_slice": math_ops.math_slice,
     "math_get_index": math_ops.math_get_index,
     "math_set_index": math_ops.math_set_index,
+
+    # HTTP
+    "http_request": http.http_request,
 }
 
 

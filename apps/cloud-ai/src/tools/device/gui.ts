@@ -8,6 +8,17 @@ export const get_mouse_position = makeLocalTool(
   z.object({ ok: z.boolean(), x: z.number(), y: z.number() }),
 );
 
+export const move_cursor = makeLocalTool(
+  'move_cursor',
+  'Move the mouse cursor to specific screen coordinates',
+  z.object({ 
+    x: z.number().describe('X coordinate'), 
+    y: z.number().describe('Y coordinate'),
+    duration: z.number().optional().describe('Duration in seconds for smooth movement'),
+  }),
+  z.object({ ok: z.boolean(), x: z.number(), y: z.number() }),
+);
+
 export const computer_use = makeLocalTool(
   'computer_use',
   'Perform GUI actions (mouse/keyboard) and optionally capture a screenshot. coordinate can be absolute pixels or normalized [0..1000, 0..1000].',

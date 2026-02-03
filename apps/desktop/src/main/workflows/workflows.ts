@@ -282,6 +282,7 @@ export function designerModelToStuardSpec(m: any, triggerId?: string): StuardSpe
       const label = (w as any)?.label;
       const loop = (w as any)?.loop;
       const loopBreak = (w as any)?.loopBreak;
+      const loopFanoutMode = (w as any)?.loopFanoutMode;
       const edge: any = { to, guard };
       if (label) edge.label = String(label);
       // Include loop configuration if present
@@ -300,6 +301,11 @@ export function designerModelToStuardSpec(m: any, triggerId?: string): StuardSpe
       // Include loopBreak flag if present
       if (loopBreak) {
         edge.loopBreak = true;
+      }
+
+      // Include loop fanout behavior if present
+      if (loopFanoutMode === 'wait' || loopFanoutMode === 'parallel') {
+        edge.loopFanoutMode = loopFanoutMode;
       }
       return edge;
     });
@@ -905,9 +911,13 @@ export function workflows_autostart() {
 
 export function workflows_list() {
   try {
-    const dir = path.join(app.getPath('userData'), 'workflows');
+    const userData = app.getPath('userData');
+    const dir = path.join(userData, 'workflows');
+    console.log('[workflows_list] userData path:', userData);
+    console.log('[workflows_list] workflows dir:', dir);
     try { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); } catch { }
     const files = (fs.readdirSync(dir) || []).filter(f => f.endsWith('.json'));
+    console.log('[workflows_list] found files:', files);
     const items = files.map(f => {
       const id = f.replace(/\.json$/i, '');
       const p = path.join(dir, f);

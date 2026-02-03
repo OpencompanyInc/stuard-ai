@@ -217,19 +217,23 @@ export async function execTestRunSteps(args: any, ctx: RouterContext): Promise<a
  * List all locally saved workflows
  */
 export async function execListLocalWorkflows(args: any, ctx: RouterContext): Promise<any> {
+  console.log('[execListLocalWorkflows] CALLED - this is the desktop handler');
   try {
     const result = workflows_list();
+    console.log('[execListLocalWorkflows] workflows_list returned:', result?.ok, 'items:', result?.items?.length);
     if (result?.ok && result?.items) {
+      const workflows = result.items.map((w: any) => ({
+        id: w.id,
+        name: w.name,
+        path: w.path,
+        updatedAt: w.updatedAt,
+        running: w.running,
+        triggers: w.triggers,
+      }));
+      console.log('[execListLocalWorkflows] returning workflows:', workflows.map((w: any) => w.name));
       return {
         ok: true,
-        workflows: result.items.map((w: any) => ({
-          id: w.id,
-          name: w.name,
-          path: w.path,
-          updatedAt: w.updatedAt,
-          running: w.running,
-          triggers: w.triggers,
-        })),
+        workflows,
       };
     }
     return { ok: false, workflows: [], error: result?.error || 'failed to list workflows' };

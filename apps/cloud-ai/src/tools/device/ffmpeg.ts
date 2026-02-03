@@ -27,16 +27,35 @@ export const ffmpeg_run = makeLocalTool(
   'ffmpeg_run',
   'Run FFmpeg with custom arguments. Use for advanced conversions and edits.',
   z.object({
-    args: z.array(z.union([z.string(), z.number()])).describe('FFmpeg arguments, not including the ffmpeg executable itself'),
+    args: z
+      .array(z.union([z.string(), z.number()]))
+      .optional()
+      .describe('FFmpeg arguments, not including the ffmpeg executable itself'),
+    inputs: z
+      .array(z.string())
+      .optional()
+      .describe('Alternative to args: input file paths (each will be passed as -i)'),
+    extraArgs: z
+      .array(z.union([z.string(), z.number()]))
+      .optional()
+      .describe('Alternative to args: extra FFmpeg arguments appended after all inputs'),
+    output: z.string().optional().describe('Alternative to args: output file path'),
+    overwrite: z.boolean().optional().default(true).describe('Overwrite output file when using inputs/output form'),
     timeoutMs: z.number().int().min(100).max(1800000).optional().describe('Optional timeout for the FFmpeg process'),
     cwd: z.string().optional().describe('Optional working directory'),
-  }),
+  }).refine(
+    (v) =>
+      (Array.isArray(v.args) && v.args.length > 0) ||
+      (Array.isArray(v.inputs) && v.inputs.length > 0 && typeof v.output === 'string' && v.output.length > 0),
+    { message: 'Provide either args[] or (inputs[] + output)' },
+  ),
   z.object({
     ok: z.boolean().optional(),
     exitCode: z.number().int().optional(),
     stdout: z.string().optional(),
     stderr: z.string().optional(),
     ffmpegPath: z.string().optional(),
+    outputFilePath: z.string().optional(),
   }),
   (ctx) => {
     try {

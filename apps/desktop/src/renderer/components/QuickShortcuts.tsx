@@ -68,7 +68,8 @@ export function QuickShortcutsGrid({
   onEdit, 
   onAdd,
   isEditing = false,
-  maxVisible = 6
+  maxVisible = 6,
+  filter = ""
 }: { 
   bookmarks: Bookmark[];
   onExecute: (bookmark: Bookmark) => void;
@@ -76,16 +77,44 @@ export function QuickShortcutsGrid({
   onAdd?: () => void;
   isEditing?: boolean;
   maxVisible?: number;
+  filter?: string;
 }) {
-  const visibleBookmarks = bookmarks.slice(0, maxVisible);
-  const hasMore = bookmarks.length > maxVisible;
+  const visibleBookmarks = React.useMemo(() => {
+    if (!filter || !filter.trim()) return bookmarks.slice(0, maxVisible);
 
-  if (bookmarks.length === 0 && !isEditing) {
+    const q = filter.toLowerCase().trim();
+    // Filter and score
+    const scored = bookmarks.map(b => {
+      let score = 0;
+      const name = b.name.toLowerCase();
+      const target = b.target.toLowerCase();
+      const type = b.type.toLowerCase();
+
+      if (name === q) score += 100;
+      else if (name.startsWith(q)) score += 50;
+      else if (name.includes(q)) score += 20;
+
+      if (target === q) score += 40;
+      else if (target.includes(q)) score += 10;
+
+      if (type.includes(q)) score += 5;
+
+      return { bookmark: b, score };
+    }).filter(item => item.score > 0);
+
+    // Sort by score desc
+    return scored.sort((a, b) => b.score - a.score).map(item => item.bookmark);
+  }, [bookmarks, filter, maxVisible]);
+
+  const hasMore = (!filter && bookmarks.length > maxVisible);
+  const showAdd = !filter && !isEditing;
+
+  if (bookmarks.length === 0 && !isEditing && !filter) {
     return (
       <div className="px-4 py-3">
         <button
           onClick={onAdd}
-          className="w-full flex items-center gap-3 px-3 py-3 rounded-xl border-2 border-dashed border-theme/20 hover:border-primary/50 hover:bg-primary/5 transition-all group"
+          className="w-full flex items-center gap-3 px-3 py-3 rounded-xl border-2 border-dashed border-gray-300/50 hover:border-primary/50 hover:bg-primary/5 transition-all group bg-white/50"
         >
           <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-all">
             <Plus className="w-4 h-4 text-primary" />
@@ -99,20 +128,26 @@ export function QuickShortcutsGrid({
     );
   }
 
+  if (filter && visibleBookmarks.length === 0) return null;
+
   return (
-    <div className="space-y-1 px-2 py-2">
+    <div className="space-y-2 px-2 py-2">
       <div className="flex items-center justify-between px-2 pb-1">
         <div className="flex items-center gap-2">
           <Zap className="w-3.5 h-3.5 text-amber-500" />
-          <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">Quick Shortcuts</span>
+          <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">
+            {filter ? 'Matching Shortcuts' : 'Quick Shortcuts'}
+          </span>
         </div>
-        <button
-          onClick={onEdit}
-          className="text-[10px] font-semibold text-theme-muted hover:text-primary transition-colors flex items-center gap-1"
-        >
-          <Pencil className="w-3 h-3" />
-          Edit
-        </button>
+        {!filter && (
+          <button
+            onClick={onEdit}
+            className="text-[10px] font-semibold text-theme-muted hover:text-primary transition-colors flex items-center gap-1"
+          >
+            <Pencil className="w-3 h-3" />
+            Edit
+          </button>
+        )}
       </div>
       
       <div className="grid grid-cols-3 gap-1.5">
@@ -124,41 +159,49 @@ export function QuickShortcutsGrid({
               key={bookmark.id}
               onClick={() => onExecute(bookmark)}
               className={clsx(
-                "flex flex-col items-center gap-1.5 px-2 py-2.5 rounded-xl transition-all group",
-                "hover:bg-theme-hover border border-transparent hover:border-theme/20",
+                "flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group relative overflow-hidden",
+                "bg-transparent",
+                "hover:bg-theme-hover/30",
                 "active:scale-95"
               )}
               title={bookmark.target}
             >
               <div className={clsx(
-                "w-9 h-9 rounded-xl flex items-center justify-center transition-all group-hover:scale-110",
+                "w-5 h-5 rounded-md flex items-center justify-center transition-all group-hover:scale-110 shadow-inner",
                 bookmark.color ? `bg-${bookmark.color}-500/10 text-${bookmark.color}-500` : `${cfg.bg} ${cfg.color}`
               )}>
-                <Icon className="w-4.5 h-4.5" />
+                <Icon className="w-3 h-3" />
               </div>
-              <span className="text-[10px] font-semibold text-theme-fg truncate w-full text-center leading-tight">
+              <span className="text-[11px] font-semibold text-theme-fg truncate w-full text-center leading-tight px-1">
                 {bookmark.name}
               </span>
+              {filter && (
+                 <span className="text-[9px] text-theme-muted truncate w-full text-center opacity-70">
+                   {cfg.label}
+                 </span>
+              )}
             </button>
           );
         })}
         
-        {/* Add new shortcut button */}
-        <button
-          onClick={onAdd}
-          className={clsx(
-            "flex flex-col items-center gap-1.5 px-2 py-2.5 rounded-xl transition-all group",
-            "hover:bg-theme-hover border-2 border-dashed border-theme/10 hover:border-primary/30",
-            "active:scale-95"
-          )}
-        >
-          <div className="w-9 h-9 rounded-xl bg-theme-hover/50 flex items-center justify-center transition-all group-hover:bg-primary/10">
-            <Plus className="w-4 h-4 text-theme-muted group-hover:text-primary transition-colors" />
-          </div>
-          <span className="text-[10px] font-semibold text-theme-muted group-hover:text-primary truncate w-full text-center leading-tight transition-colors">
-            Add
-          </span>
-        </button>
+        {/* Add new shortcut button - only show when not filtering */}
+        {showAdd && (
+          <button
+            onClick={onAdd}
+            className={clsx(
+              "flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group",
+              "bg-transparent hover:bg-theme-hover/30",
+              "active:scale-95"
+            )}
+          >
+            <div className="w-5 h-5 rounded-md bg-theme-hover/50 flex items-center justify-center transition-all group-hover:bg-primary/10 shadow-sm">
+              <Plus className="w-3 h-3 text-theme-muted group-hover:text-primary transition-colors" />
+            </div>
+            <span className="text-[11px] font-semibold text-theme-muted group-hover:text-primary truncate w-full text-center leading-tight transition-colors">
+              Add
+            </span>
+          </button>
+        )}
       </div>
       
       {hasMore && (
@@ -292,7 +335,7 @@ export function BookmarkEditor({
       
       <div className="relative w-full max-w-md bg-theme-card rounded-2xl border border-theme/20 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-theme/10">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-theme/10 bg-theme-hover/20">
           <div className="flex items-center gap-3">
             {view !== 'list' && (
               <button
@@ -350,7 +393,7 @@ export function BookmarkEditor({
                               type="text"
                               value={bookmark.name}
                               onChange={(e) => handleUpdate(bookmark.id, { name: e.target.value })}
-                              className="w-full px-2.5 py-1.5 text-[13px] bg-theme-bg border border-theme/20 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary/50"
+                              className="w-full px-2.5 py-1.5 text-[13px] bg-theme-bg border border-theme/20 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary/50 text-theme-fg"
                               placeholder="Name"
                               autoFocus
                             />
@@ -611,7 +654,7 @@ export function BookmarkEditor({
                     type="text"
                     value={newBookmark.target || ''}
                     onChange={(e) => setNewBookmark({ ...newBookmark, target: e.target.value })}
-                    className="w-full px-3 py-2.5 text-[13px] bg-theme-bg border border-theme/20 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    className="w-full px-3 py-2.5 text-[13px] bg-theme-bg border border-theme/20 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/30 text-theme-fg"
                     placeholder="https://example.com"
                     autoFocus
                   />
@@ -661,7 +704,7 @@ export function BookmarkEditor({
                   type="text"
                   value={newBookmark.name || ''}
                   onChange={(e) => setNewBookmark({ ...newBookmark, name: e.target.value })}
-                  className="w-full px-3 py-2.5 text-[13px] bg-theme-bg border border-theme/20 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  className="w-full px-3 py-2.5 text-[13px] bg-theme-bg border border-theme/20 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/30 text-theme-fg"
                   placeholder="My Shortcut"
                 />
               </div>
@@ -670,7 +713,7 @@ export function BookmarkEditor({
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-theme/10 flex justify-end gap-2">
+        <div className="px-5 py-3 border-t border-theme/10 bg-theme-hover/10 flex justify-end gap-2">
           {view === 'add' ? (
             <>
               <button

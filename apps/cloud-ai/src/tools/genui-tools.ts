@@ -264,6 +264,27 @@ export const showFeedbackForm = createTool({
   },
 });
 
+export const showWeather = createTool({
+  id: 'show_weather',
+  description: 'Display a rich weather card with current conditions and forecast.',
+  inputSchema: z.object({
+    location: z.string().describe('City name or location'),
+    temperature: z.number().describe('Current temperature'),
+    condition: z.string().describe('Weather condition (e.g. Sunny, Rainy, Cloudy)'),
+    humidity: z.number().optional().describe('Humidity percentage'),
+    windSpeed: z.number().optional().describe('Wind speed in km/h'),
+    unit: z.enum(['C', 'F']).optional().default('C').describe('Temperature unit'),
+    forecast: z.array(z.object({
+      day: z.string().describe('Day name (e.g. Mon)'),
+      temp: z.number().describe('Temperature'),
+      condition: z.string().describe('Condition'),
+    })).optional().describe('5-day forecast'),
+  }),
+  execute: async (args) => {
+    return executeGenUI('show_weather', args, false);
+  },
+});
+
 // Export all GenUI tools
 export const genuiTools = {
   ask_confirmation: askConfirmation,
@@ -280,5 +301,6 @@ export const genuiTools = {
   show_colors: showColors,
   show_progress: showProgress,
   show_feedback_form: showFeedbackForm,
+  show_weather: showWeather,
 };
 

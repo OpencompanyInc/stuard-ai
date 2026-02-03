@@ -131,6 +131,32 @@ export async function POST(req: Request) {
         return NextResponse.json({ message: `Switched to branch ${branchName}` });
       }
 
+      // Run local checks (lint, typecheck, test)
+      case 'run-checks': {
+        const { exec } = await import('child_process');
+        const util = await import('util');
+        const execPromise = util.promisify(exec);
+        const repoRoot = findRepoRoot(process.cwd());
+
+        try {
+          // Run in sequence to fail fast
+          await execPromise('pnpm run typecheck', { cwd: repoRoot });
+          await execPromise('pnpm run lint', { cwd: repoRoot });
+          // Ensure tests run in CI mode (non-interactive)
+          await execPromise('pnpm run test', { cwd: repoRoot, env: { ...process.env, CI: 'true' } });
+          
+          return NextResponse.json({ message: 'All checks passed (typecheck, lint, test)' });
+        } catch (error: any) {
+          console.error('Checks failed:', error);
+          const stdout = error.stdout?.toString() || '';
+          const stderr = error.stderr?.toString() || '';
+          // Return a readable error summary
+          return NextResponse.json({ 
+            error: `Checks failed. \n${stderr || stdout || error.message}`.slice(0, 500) // Truncate for UI
+          }, { status: 400 });
+        }
+      }
+
       // 2. BETA (develop) ---------------------------------------------------
       case 'ship-to-beta': {
         const current = await git.revparse(['--abbrev-ref', 'HEAD']);

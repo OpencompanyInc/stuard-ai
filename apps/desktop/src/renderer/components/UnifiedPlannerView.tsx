@@ -255,7 +255,7 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
   }, [calendarView]);
 
   return (
-    <div className="h-[calc(100vh-140px)] flex flex-col gap-4">
+    <div className="h-[calc(100vh-140px)] flex flex-col gap-4" data-onboarding="planner-calendar">
       <div className="flex items-center justify-between shrink-0">
         <div className="flex items-center gap-4">
           <div className="flex items-center bg-theme-card rounded-theme-button p-0.5 border border-theme">

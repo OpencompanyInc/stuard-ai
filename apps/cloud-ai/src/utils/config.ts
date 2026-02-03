@@ -76,3 +76,19 @@ export const TAVILY_API_KEY = clean(process.env.TAVILY_API_KEY || '');
 
 // Dev mode bypasses credit/usage checks for local development
 export const DEV_MODE = process.env.DEV_MODE === '1' || process.env.NODE_ENV === 'development';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Security Configuration
+// ─────────────────────────────────────────────────────────────────────────────
+
+// CORS allowed origins - comma-separated list, or '*' for development only
+// Example: 'https://stuard.ai,https://app.stuard.ai,http://localhost:3000'
+export const CORS_ALLOWED_ORIGINS = clean(process.env.CORS_ALLOWED_ORIGINS || (IS_DEVELOPMENT ? '*' : ''));
+
+// Tools that can be executed without authentication (read-only, safe tools)
+export const PUBLIC_TOOLS_ALLOWLIST = new Set(
+  clean(process.env.PUBLIC_TOOLS_ALLOWLIST || 'list_tts_voices').split(',').map(s => s.trim()).filter(Boolean)
+);
+
+// Whether to require auth for all tool executions (default: true in production)
+export const REQUIRE_TOOL_AUTH = process.env.REQUIRE_TOOL_AUTH !== '0' && IS_PRODUCTION;

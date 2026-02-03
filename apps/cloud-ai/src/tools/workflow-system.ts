@@ -12,11 +12,14 @@ import * as googleTools from './google-tools';
 import * as httpTools from './http-tools';
 import * as marketplaceTools from './marketplace-tools';
 import * as ttsTools from './tts-tools';
-import { TOOL_DEFINITIONS } from './definitions';
 import { generateText, generateObject } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { google } from '@ai-sdk/google';
 import { writeLog } from '../utils/logger';
+import { getToolRegistry, getToolMetadata } from './tool-registry';
+
+// Note: initToolRegistry is called lazily when needed, not at module load time
+// to avoid circular dependency issues with meta-tools.ts
 
 // Debug logger for workflow tools
 function wfLog(event: string, data?: Record<string, any>) {
@@ -192,8 +195,8 @@ export const runSequentialTool = createTool({
     steps: z.array(StepSchema).min(1),
     continueOnError: z.boolean().default(false),
   }),
-  execute: async ({ context, writer }) => {
-    const { steps, continueOnError } = context as { steps: Array<z.infer<typeof StepSchema>>; continueOnError: boolean };
+  execute: async (inputData, { writer }) => {
+    const { steps, continueOnError } = inputData;
     const results: any[] = [];
     let firstError: string | undefined;
 
@@ -220,8 +223,8 @@ export const runParallelTool = createTool({
     steps: z.array(StepSchema).min(1),
     concurrency: z.number().int().min(1).optional(),
   }),
-  execute: async ({ context, writer }) => {
-    const { steps, concurrency } = context as { steps: Array<z.infer<typeof StepSchema>>; concurrency?: number };
+  execute: async (inputData, { writer }) => {
+    const { steps, concurrency } = inputData;
     const limit = Math.max(1, Math.min(typeof concurrency === 'number' ? concurrency : steps.length, steps.length));
 
     await safeToolWrite(writer as any, { type: 'tool_event', tool: 'run_parallel', status: 'started', count: steps.length, concurrency: limit });
@@ -369,15 +372,15 @@ EXAMPLE:
 
 `,
   inputSchema: z.object({
-    spec: WorkflowSpecSchema.passthrough().describe('The full workflow spec'),
+    spec: WorkflowSpecSchema.describe('The full workflow spec'),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
-    spec: WorkflowSpecSchema.passthrough().optional(),
+    spec: WorkflowSpecSchema.optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context, writer }) => {
-    const { spec } = context as { spec?: any };
+  execute: async (inputData, { writer }) => {
+    const { spec } = inputData as { spec?: any };
 
     if (!spec || !spec.id) {
       return { ok: false, error: 'Spec with id is required' };
@@ -436,39 +439,55 @@ export const retrieveToolFormat = createTool({
     }).optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const { toolName } = context as { toolName: string };
+  execute: async (inputData, context) => {
+    const { toolName } = inputData as { toolName: string };
     
     if (!toolName) {
       return { found: false, error: 'toolName is required' };
     }
 
-    // Search in TOOL_DEFINITIONS
-    const tool = TOOL_DEFINITIONS.find(def => 
-      def.id === toolName || 
-      def.id.toLowerCase() === toolName.toLowerCase()
-    );
+    // Search in Registry
+    const registry = getToolRegistry();
+    let tool = registry.get(toolName);
+    let toolId = toolName;
+
+    // Case-insensitive fallback
+    if (!tool) {
+      for (const [id, t] of registry.entries()) {
+        if (id.toLowerCase() === toolName.toLowerCase()) {
+          tool = t;
+          toolId = id;
+          break;
+        }
+      }
+    }
 
     if (tool) {
+      const metadata = getToolMetadata(toolId) || { category: 'Other', kind: 'local' };
+      // reconstruct argsTemplate/outputSchema from tool definition if possible, or use placeholders
+      // Mastra tools have inputSchema/outputSchema as Zod schemas.
+      
       return {
         found: true,
         tool: {
-          id: tool.id,
-          kind: tool.kind,
+          id: toolId,
+          kind: metadata.kind,
           description: tool.description,
-          argsTemplate: tool.argsTemplate,
-          outputSchema: tool.outputSchema,
-          category: tool.category,
+          argsTemplate: (tool as any).inputSchema ? "See inputSchema" : {}, 
+          outputSchema: (tool as any).outputSchema ? "See outputSchema" : {},
+          category: metadata.category,
         },
       };
     }
 
     // Not found - suggest similar tools
-    const similar = TOOL_DEFINITIONS
-      .filter(def => def.id.toLowerCase().includes(toolName.toLowerCase()) || 
-                     toolName.toLowerCase().includes(def.id.toLowerCase().split('_')[0]))
-      .slice(0, 5)
-      .map(def => def.id);
+    const similar: string[] = [];
+    for (const id of registry.keys()) {
+        if (id.toLowerCase().includes(toolName.toLowerCase()) || toolName.toLowerCase().includes(id.toLowerCase().split('_')[0])) {
+            similar.push(id);
+            if (similar.length >= 5) break;
+        }
+    }
 
     return {
       found: false,
@@ -497,14 +516,18 @@ export const listAllToolFormats = createTool({
       { type: 'fs.watch', description: 'Filesystem watch trigger', argsTemplate: { path: 'C:/path', pattern: '*.*' } },
     ];
 
-    const tools = TOOL_DEFINITIONS.map(def => ({
-      id: def.id,
-      kind: def.kind,
-      description: def.description,
-      argsTemplate: def.argsTemplate,
-      outputSchema: def.outputSchema,
-      category: def.category,
-    }));
+    const registry = getToolRegistry();
+    const tools = Array.from(registry.entries()).map(([id, tool]) => {
+      const metadata = getToolMetadata(id) || { category: 'Other', kind: 'local' };
+      return {
+        id,
+        kind: metadata.kind,
+        description: tool.description,
+        argsTemplate: (tool as any).inputSchema ? "See inputSchema" : {},
+        outputSchema: (tool as any).outputSchema ? "See outputSchema" : {},
+        category: metadata.category,
+      };
+    });
 
     return { triggers, tools };
   },
@@ -537,8 +560,8 @@ export const testWorkflowStepTool = createTool({
     duration: z.number().optional(),
     dryRun: z.boolean().optional(),
   }),
-  execute: async ({ context, writer }) => {
-    const c = context as any;
+  execute: async (inputData, { writer }) => {
+    const c = inputData as any;
     const explicitMode = c?.mode === 'single' || c?.mode === 'segment' ? (c.mode as 'single' | 'segment') : undefined;
     const mode: 'single' | 'segment' = explicitMode
       ? explicitMode
@@ -642,18 +665,21 @@ export const testWorkflowStepTool = createTool({
         if (dryRun) {
           const cloudTools = getCloudTools();
           const isCloud = cloudTools.has(toolName);
-          const toolDef = TOOL_DEFINITIONS.find(t => t.id === toolName);
-          if (!isCloud && !toolDef) {
+          const registry = getToolRegistry();
+          const tool = registry.get(toolName);
+          
+          if (!isCloud && !tool) {
             return { ok: false, mode, error: `Unknown tool: ${toolName}`, dryRun: true };
           }
+          const metadata = getToolMetadata(toolName) || { kind: isCloud ? 'cloud' : 'local' };
           return {
             ok: true,
             mode,
             dryRun: true,
             result: {
               toolFound: true,
-              kind: toolDef?.kind || (isCloud ? 'cloud' : 'local'),
-              description: toolDef?.description || 'Cloud tool'
+              kind: metadata.kind,
+              description: tool?.description || 'Cloud tool'
             }
           };
         }
@@ -704,11 +730,13 @@ export const testWorkflowStepTool = createTool({
 
       if (dryRun) {
         const cloudTools = getCloudTools();
+        const registry = getToolRegistry();
         for (const s of steps) {
           const tn = normalizeToolName(String((s as any)?.tool || ''));
           const isCloud = cloudTools.has(tn);
-          const toolDef = TOOL_DEFINITIONS.find(t => t.id === tn);
-          if (!isCloud && !toolDef) {
+          const tool = registry.get(tn);
+          
+          if (!isCloud && !tool) {
             return { ok: false, mode, error: `Unknown tool: ${tn}`, dryRun: true };
           }
         }

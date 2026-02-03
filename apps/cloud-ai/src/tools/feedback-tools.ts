@@ -159,8 +159,8 @@ export const submitFeedback = createTool({
     cancelled: z.boolean().optional(),
     error: z.string().optional(),
   }),
-  execute: async (args, runCtx) => {
-    const { type, title, description, severity, screenshots, labels, skipConfirmation } = args.context;
+  execute: async (inputData, runCtx) => {
+    const { type, title, description, severity, screenshots, labels, skipConfirmation } = inputData;
     
     // Validate severity is only for bugs
     if (type === 'feature' && severity) {
@@ -282,8 +282,8 @@ export const listMyFeedback = createTool({
     count: z.number().optional(),
     error: z.string().optional(),
   }),
-  execute: async (args, runCtx) => {
-    const { type, status, limit } = args.context;
+  execute: async (inputData, runCtx) => {
+    const { type, status, limit } = inputData;
     
     const supabase = getSupabaseService();
     if (!supabase) {
@@ -342,8 +342,8 @@ export const getFeedbackDetails = createTool({
     comments: z.array(z.any()).optional(),
     error: z.string().optional(),
   }),
-  execute: async (args, runCtx) => {
-    const { feedbackId } = args.context;
+  execute: async (inputData, runCtx) => {
+    const { feedbackId } = inputData;
     
     const supabase = getSupabaseService();
     if (!supabase) {
@@ -398,18 +398,16 @@ export const reportBug = createTool({
     error: z.string().optional(),
     cancelled: z.boolean().optional(),
   }),
-  execute: async (args, runCtx) => {
-    const { title, description, severity, screenshots } = args.context;
-    return submitFeedback.execute({
-      context: {
-        type: 'bug' as const,
-        title,
-        description,
-        severity,
-        screenshots,
-        labels: ['bug'],
-        skipConfirmation: false,
-      },
+  execute: async (inputData, runCtx) => {
+    const { title, description, severity, screenshots } = inputData;
+    return submitFeedback.execute?.({
+      type: 'bug' as const,
+      title,
+      description,
+      severity,
+      screenshots,
+      labels: ['bug'],
+      skipConfirmation: false,
     } as any, runCtx);
   },
 });
@@ -428,17 +426,15 @@ export const suggestFeature = createTool({
     error: z.string().optional(),
     cancelled: z.boolean().optional(),
   }),
-  execute: async (args, runCtx) => {
-    const { title, description, screenshots } = args.context;
-    return submitFeedback.execute({
-      context: {
-        type: 'feature' as const,
-        title,
-        description,
-        screenshots,
-        labels: ['enhancement'],
-        skipConfirmation: false,
-      },
+  execute: async (inputData, runCtx) => {
+    const { title, description, screenshots } = inputData;
+    return submitFeedback.execute?.({
+      type: 'feature' as const,
+      title,
+      description,
+      screenshots,
+      labels: ['enhancement'],
+      skipConfirmation: false,
     } as any, runCtx);
   },
 });

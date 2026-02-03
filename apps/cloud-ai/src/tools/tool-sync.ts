@@ -1,15 +1,13 @@
-/**
- * Tool Sync Utilities
- *
- * Syncs tool definitions from TOOL_DEFINITIONS to Supabase tool_embeddings table.
- * This is the single source of truth for tool metadata and embeddings.
- */
-
 import { getSupabaseService } from '../supabase';
-import { TOOL_DEFINITIONS, ToolDefinition } from './definitions';
+import { getToolRegistry, getToolMetadata } from './tool-registry';
 import { embedMany } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { clearToolCache } from './sis-supabase';
+import { z } from 'zod';
+
+// Ensure registry is initialized
+import './meta-tools'; 
+import { initToolRegistry } from './meta-tools';
 
 const EMBEDDING_MODEL = 'text-embedding-3-large';
 const BATCH_SIZE = 50;
@@ -30,6 +28,7 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   gmail_list_messages: ['inbox', 'email list', 'check mail', 'emails'],
   gmail_get_message_brief: ['email summary', 'read email', 'message preview'],
   gmail_get_message_full: ['full email', 'email content', 'message body'],
+  gmail_retrieve_messages_with_attachments: ['download attachments', 'email attachments', 'save attachments', 'get files from email', 'download files'],
   gmail_modify_message: ['label email', 'categorize', 'organize'],
   gmail_delete_message: ['remove email', 'trash', 'delete mail'],
   gmail_archive_message: ['archive mail', 'move from inbox'],
@@ -106,7 +105,7 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   get_space_tree: ['space tree', 'folder tree', 'space folders', 'list folders'],
 
   // Workflows
-  list_local_workflows: ['workflows', 'automations', 'stuards'],
+  search_local_workflows: ['workflows', 'automations', 'stuards'],
   run_automation: ['run workflow', 'execute automation'],
   invoke_workflow: ['call workflow', 'trigger workflow'],
 
@@ -160,12 +159,45 @@ function getSemanticHints(toolName: string): string[] {
 }
 
 /**
+ * Convert Zod schema to a simpler JSON representation for DB storage
+ * This is a best-effort conversion to give the AI context about arguments
+ */
+function zodToJSON(schema: any): any {
+  if (!schema) return {};
+  if (schema instanceof z.ZodObject) {
+    const shape = schema.shape;
+    const result: any = {};
+    for (const key in shape) {
+      result[key] = zodToJSON(shape[key]);
+    }
+    return result;
+  }
+  if (schema instanceof z.ZodArray) {
+    return [zodToJSON(schema.element)];
+  }
+  if (schema instanceof z.ZodString) return "string";
+  if (schema instanceof z.ZodNumber) return "number";
+  if (schema instanceof z.ZodBoolean) return "boolean";
+  if (schema instanceof z.ZodEnum) return `enum(${(schema._def as any).values.join('|')})`;
+  if (schema instanceof z.ZodUnion) return "union";
+  if (schema instanceof z.ZodOptional) return zodToJSON(schema._def.innerType) + "?";
+  if (schema instanceof z.ZodDefault) return zodToJSON(schema._def.innerType);
+  if (schema instanceof z.ZodAny) return "any";
+  if (schema instanceof z.ZodRecord) return "record";
+  
+  return "unknown";
+}
+
+/**
  * Sync tool definitions to Supabase tool_embeddings table
  */
 export async function syncToolsToSupabase(options: {
   force?: boolean;
   toolNames?: string[];
 } = {}): Promise<ToolSyncResult> {
+  // Ensure tools are registered
+  initToolRegistry();
+  
   const { force = false, toolNames } = options;
   const result: ToolSyncResult = { synced: 0, skipped: 0, errors: [] };
 
@@ -175,10 +207,17 @@ export async function syncToolsToSupabase(options: {
     return result;
   }
 
-  // Filter tools to sync
-  let toolsToSync = TOOL_DEFINITIONS;
+  // Get tools from registry
+  const registry = getToolRegistry();
+  let toolsToSync: any[] = [];
+  
   if (toolNames && toolNames.length > 0) {
-    toolsToSync = TOOL_DEFINITIONS.filter(t => toolNames.includes(t.id));
+    for (const name of toolNames) {
+      const tool = registry.get(name);
+      if (tool) toolsToSync.push(tool);
+    }
+  } else {
+    toolsToSync = Array.from(registry.values());
   }
 
   console.log(`[tool-sync] Found ${toolsToSync.length} tool definitions`);
@@ -187,7 +226,7 @@ export async function syncToolsToSupabase(options: {
   const { data: existingTools, error: fetchError } = await supabase
     .from('tool_embeddings')
     .select('name, updated_at')
-    .in('name', toolsToSync.map(t => t.id));
+    .in('name', toolsToSync.map(t => t.id || t.name));
 
   if (fetchError) {
     result.errors.push(`Failed to fetch existing tools: ${fetchError.message}`);
@@ -200,7 +239,7 @@ export async function syncToolsToSupabase(options: {
 
   const toUpdate = force
     ? toolsToSync
-    : toolsToSync.filter(t => !existingMap.has(t.id));
+    : toolsToSync.filter(t => !existingMap.has(t.id || t.name));
 
   if (toUpdate.length === 0) {
     console.log('[tool-sync] All tools up to date');
@@ -221,8 +260,9 @@ export async function syncToolsToSupabase(options: {
     try {
       // Generate embeddings
       const texts = batch.map(t => {
-        const hints = getSemanticHints(t.id);
-        return `${t.id}: ${t.description}${hints.length > 0 ? ' ' + hints.join(' ') : ''}`;
+        const id = t.id || t.name;
+        const hints = getSemanticHints(id);
+        return `${id}: ${t.description}${hints.length > 0 ? ' ' + hints.join(' ') : ''}`;
       });
 
       const { embeddings } = await embedMany({
@@ -231,17 +271,25 @@ export async function syncToolsToSupabase(options: {
       });
 
       // Prepare rows for upsert
-      const rows = batch.map((tool, idx) => ({
-        name: tool.id,
-        description: tool.description,
-        category: tool.category,
-        kind: tool.kind,
-        schema: { args: tool.argsTemplate, output: tool.outputSchema },
-        semantic_hints: getSemanticHints(tool.id),
-        embedding: embeddings[idx],
-        enabled: true,
-        updated_at: new Date().toISOString(),
-      }));
+      const rows = batch.map((tool, idx) => {
+        const id = tool.id || tool.name;
+        const metadata = getToolMetadata(id) || { category: 'Other', kind: 'local' };
+        
+        return {
+          name: id,
+          description: tool.description,
+          category: metadata.category,
+          kind: metadata.kind || 'local',
+          schema: { 
+            args: zodToJSON(tool.inputSchema), 
+            output: zodToJSON(tool.outputSchema) 
+          },
+          semantic_hints: getSemanticHints(id),
+          embedding: embeddings[idx],
+          enabled: true,
+          updated_at: new Date().toISOString(),
+        };
+      });
 
       // Upsert to Supabase
       const { error: upsertError } = await supabase
@@ -271,15 +319,16 @@ export async function syncToolsToSupabase(options: {
 }
 
 /**
- * Disable tools that are no longer in TOOL_DEFINITIONS
+ * Disable tools that are no longer in registry
  */
 export async function disableObsoleteTools(): Promise<number> {
+  initToolRegistry();
   const supabase = getSupabaseService();
   if (!supabase) return 0;
 
-  const validToolNames = TOOL_DEFINITIONS.map(t => t.id);
+  const validToolNames = Array.from(getToolRegistry().keys());
 
-  // Get currently enabled tools that aren't in TOOL_DEFINITIONS
+  // Get currently enabled tools that aren't in registry
   const { data: allEnabled } = await supabase
     .from('tool_embeddings')
     .select('name')
@@ -319,17 +368,21 @@ export async function getSyncStatus(): Promise<{
   unsyncedTools: string[];
   obsoleteTools: string[];
 }> {
+  initToolRegistry();
   const supabase = getSupabaseService();
+  const registry = getToolRegistry();
+  const definedTools = Array.from(registry.keys());
+  
   if (!supabase) {
     return {
-      definedCount: TOOL_DEFINITIONS.length,
+      definedCount: definedTools.length,
       syncedCount: 0,
-      unsyncedTools: TOOL_DEFINITIONS.map(t => t.id),
+      unsyncedTools: definedTools,
       obsoleteTools: [],
     };
   }
 
-  const definedNames = new Set(TOOL_DEFINITIONS.map(t => t.id));
+  const definedNames = new Set(definedTools);
 
   const { data: syncedTools } = await supabase
     .from('tool_embeddings')
@@ -337,16 +390,14 @@ export async function getSyncStatus(): Promise<{
 
   const syncedSet = new Set((syncedTools || []).map((t: any) => t.name));
 
-  const unsyncedTools = TOOL_DEFINITIONS
-    .filter(t => !syncedSet.has(t.id))
-    .map(t => t.id);
+  const unsyncedTools = definedTools.filter(t => !syncedSet.has(t));
 
   const obsoleteTools = (syncedTools || [])
     .filter((t: any) => !definedNames.has(t.name) && t.enabled)
     .map((t: any) => t.name);
 
   return {
-    definedCount: TOOL_DEFINITIONS.length,
+    definedCount: definedTools.length,
     syncedCount: syncedSet.size,
     unsyncedTools,
     obsoleteTools,

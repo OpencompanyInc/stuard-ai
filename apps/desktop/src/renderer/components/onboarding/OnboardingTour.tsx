@@ -52,7 +52,7 @@ export default function OnboardingTour({ onComplete }: { onComplete: () => void 
                     <div className="space-y-3">
                         <div className="flex items-start gap-3">
                             <div className="p-2 rounded-lg bg-white/5 border border-white/10 shrink-0">
-                                <MousePointer2 size={16} className="text-emerald-400" />
+                                <MousePointer2 size={16} className="text-white/90" />
                             </div>
                             <div>
                                 <div className="text-white font-medium text-sm">Move Window</div>
@@ -61,7 +61,7 @@ export default function OnboardingTour({ onComplete }: { onComplete: () => void 
                         </div>
                         <div className="flex items-start gap-3">
                             <div className="p-2 rounded-lg bg-white/5 border border-white/10 shrink-0">
-                                <MessageSquare size={16} className="text-blue-400" />
+                                <MessageSquare size={16} className="text-white/90" />
                             </div>
                             <div>
                                 <div className="text-white font-medium text-sm">Mentions</div>
@@ -93,7 +93,7 @@ export default function OnboardingTour({ onComplete }: { onComplete: () => void 
                         onClick={() => {
                             onComplete();
                         }}
-                        className="w-full py-2 rounded-lg bg-emerald-500 text-black text-sm font-bold hover:bg-emerald-400 transition-all"
+                        className="w-full py-2 rounded-lg bg-white text-black text-sm font-bold hover:bg-white/90 transition-all"
                     >
                         Start Chatting
                     </button>
@@ -158,7 +158,7 @@ export default function OnboardingTour({ onComplete }: { onComplete: () => void 
                 <div className="px-6 py-4 border-t border-white/5 bg-white/[0.02] flex items-center justify-between">
                     <div className="flex gap-1">
                         {steps.map((_, i) => (
-                            <div key={i} className={`h-1 rounded-full transition-all ${i === stepIndex ? 'w-4 bg-emerald-500' : 'w-1.5 bg-white/10'}`} />
+                            <div key={i} className={`h-1 rounded-full transition-all ${i === stepIndex ? 'w-4 bg-white' : 'w-1.5 bg-white/10'}`} />
                         ))}
                     </div>
                     <div className="flex gap-2">
@@ -212,7 +212,7 @@ export default function OnboardingTour({ onComplete }: { onComplete: () => void 
                 <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
 
                 <div
-                    className="absolute rounded-xl border border-emerald-400/60 bg-emerald-400/10 shadow-[0_0_0_1px_rgba(16,185,129,0.3)]"
+                    className="absolute rounded-xl border border-white/60 bg-white/10 shadow-[0_0_0_1px_rgba(255,255,255,0.1)]"
                     style={highlight}
                 />
 
@@ -226,7 +226,7 @@ export default function OnboardingTour({ onComplete }: { onComplete: () => void 
                 >
                     <div className="flex items-start justify-between gap-3">
                         <div>
-                            <div className="text-[11px] font-medium text-emerald-400 uppercase tracking-wide">Tip</div>
+                            <div className="text-[11px] font-medium text-white/60 uppercase tracking-wide">Tip</div>
                             {currentStep.title && (
                                 <h2 className="text-sm font-semibold text-white mt-1">
                                     {currentStep.title}

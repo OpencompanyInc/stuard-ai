@@ -338,6 +338,37 @@ async def write_file(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True}
 
 
+async def write_file_base64(args: Dict[str, Any]) -> Dict[str, Any]:
+    p = str(args.get("path") or "").strip()
+    data_b64 = str(args.get("content") or args.get("data") or "")
+    if not p:
+        raise ValueError("missing path")
+    if not data_b64:
+         raise ValueError("missing content/data")
+    
+    p = os.path.expanduser(p)
+    if not _is_safe_path(p):
+        raise ValueError(f"Access denied to system path: {p}")
+        
+    d = os.path.dirname(p)
+    if d and not os.path.exists(d):
+        os.makedirs(d, exist_ok=True)
+
+    # Checkpoint
+    op = "create" if not os.path.exists(p) else "modify"
+    CheckpointManager.record_change(p, op)
+
+    try:
+        data = base64.b64decode(data_b64)
+    except Exception as e:
+        raise ValueError(f"Invalid base64 data: {e}")
+
+    with open(p, "wb") as f:
+        f.write(data)
+        
+    return {"ok": True, "path": p, "size": len(data)}
+
+
 async def create_directory(args: Dict[str, Any]) -> Dict[str, Any]:
     p = str(args.get("path") or "").strip()
     if not p:

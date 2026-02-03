@@ -147,32 +147,43 @@ function toPythonInline(value: any): string {
 }
 
 export function interpolateForTool(input: any, ctx: any, toolName: string): any {
-  const templ = (s: string, path: string) => s.replace(/\{\{([^}]+)\}\}/g, (_m, g1) => {
-    const expr = String(g1 || '').trim();
-    // Try simple path lookup first (fast, safe, handles non-JS identifiers)
-    let v = getAtPath(ctx, expr, undefined);
-
-    if (toolName === 'custom_ui' && expr.includes('get_clip')) {
-      console.log(`[Interpolate] custom_ui looking up '${expr}': value type=${typeof v}, value=${v ? String(v).slice(0, 50) : v}`);
-    }
-
+  const templ = (s: string, path: string) => {
+    // Resolve templates iteratively from inside-out to support nested syntax like {{arr[{{i}}]}}
+    let result = s;
+    let maxIterations = 10; // Prevent infinite loops
     const isPythonCode = toolName === 'run_python_script' && path === 'code';
+    while (maxIterations-- > 0) {
+      const prev = result;
+      // Match innermost {{...}} that contains no nested braces
+      result = result.replace(/\{\{([^{}]+)\}\}/g, (_m, g1) => {
+        const expr = String(g1 || '').trim();
+        // Try simple path lookup first (fast, safe, handles non-JS identifiers)
+        const v = getAtPath(ctx, expr, undefined);
 
-    if (isPythonCode) {
-      return toPythonInline(v);
-    }
+        if (toolName === 'custom_ui' && expr.includes('get_clip')) {
+          console.log(`[Interpolate] custom_ui looking up '${expr}': value type=${typeof v}, value=${v ? String(v).slice(0, 50) : v}`);
+        }
 
-    if (v == null) {
-      // For custom_ui tools, preserve unmatched tags so they can be handled by the UI's own templating
-      if (toolName === 'custom_ui' || toolName === 'update_custom_ui') {
-        return _m;
-      }
-      return '';
+        if (isPythonCode) {
+          return toPythonInline(v);
+        }
+
+        if (v == null) {
+          // For custom_ui tools, preserve unmatched tags so they can be handled by the UI's own templating
+          if (toolName === 'custom_ui' || toolName === 'update_custom_ui') {
+            return _m;
+          }
+          return '';
+        }
+        // JSON stringify objects/arrays so they can be parsed in scripts
+        if (typeof v === 'object') return JSON.stringify(v);
+        return String(v);
+      });
+
+      if (result === prev) break;
     }
-    // JSON stringify objects/arrays so they can be parsed in scripts
-    if (typeof v === 'object') return JSON.stringify(v);
-    return String(v);
-  });
+    return result;
+  };
 
   const walk = (v: any, p: string): any => {
     if (typeof v === 'string') return templ(v, p);

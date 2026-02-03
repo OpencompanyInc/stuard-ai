@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
-import { Search, Replace, X, ChevronUp, ChevronDown, Copy, Check, Type, Regex, CaseSensitive } from "lucide-react";
+import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { Search, Replace, X, ChevronUp, ChevronDown, Copy, Check, Regex, CaseSensitive, Wand2, WrapText, Minimize2, Maximize2 } from "lucide-react";
 
 interface RichCodeEditorProps {
   value: string;
@@ -8,6 +8,8 @@ interface RichCodeEditorProps {
   placeholder?: string;
   readOnly?: boolean;
   className?: string;
+  minHeight?: number;
+  maxHeight?: number;
 }
 
 export function RichCodeEditor({
@@ -17,6 +19,8 @@ export function RichCodeEditor({
   placeholder,
   readOnly = false,
   className = "",
+  minHeight = 200,
+  maxHeight,
 }: RichCodeEditorProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [replaceTerm, setReplaceTerm] = useState("");
@@ -27,10 +31,55 @@ export function RichCodeEditor({
   const [useRegex, setUseRegex] = useState(false);
   const [matchCase, setMatchCase] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [wordWrap, setWordWrap] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [jsonError, setJsonError] = useState<string | null>(null);
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Validate JSON in real-time
+  useEffect(() => {
+    if (language === 'json' && value.trim()) {
+      try {
+        JSON.parse(value);
+        setJsonError(null);
+      } catch (e: any) {
+        const match = e.message?.match(/position (\d+)/i);
+        const pos = match ? parseInt(match[1]) : null;
+        setJsonError(pos !== null ? `Error at position ${pos}: ${e.message}` : e.message);
+      }
+    } else {
+      setJsonError(null);
+    }
+  }, [value, language]);
+
+  // Format JSON
+  const formatCode = useCallback(() => {
+    if (language === 'json') {
+      try {
+        const parsed = JSON.parse(value);
+        const formatted = JSON.stringify(parsed, null, 2);
+        onChange(formatted);
+      } catch {
+        // Can't format invalid JSON
+      }
+    }
+  }, [value, onChange, language]);
+
+  // Minify JSON
+  const minifyCode = useCallback(() => {
+    if (language === 'json') {
+      try {
+        const parsed = JSON.parse(value);
+        const minified = JSON.stringify(parsed);
+        onChange(minified);
+      } catch {
+        // Can't minify invalid JSON
+      }
+    }
+  }, [value, onChange, language]);
 
   // Sync scroll between textarea and backdrop (for line numbers/highlighting)
   const handleScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
@@ -235,13 +284,20 @@ export function RichCodeEditor({
     return escapeHtml(value);
   }, [value, language]);
 
+  // Calculate dynamic height
+  const editorHeight = isExpanded ? '70vh' : undefined;
+  const editorMinHeight = isExpanded ? '70vh' : `${minHeight}px`;
+  const editorMaxHeight = isExpanded ? '70vh' : (maxHeight ? `${maxHeight}px` : undefined);
+
   return (
-    <div className={`flex flex-col border border-slate-200 rounded-xl overflow-hidden bg-[#1e1e2e] shadow-sm ${className}`}>
+    <div className={`flex flex-col border rounded-xl overflow-hidden shadow-sm transition-all ${jsonError ? 'border-red-400/50 bg-[#1e1e2e]' : 'border-slate-200 bg-[#1e1e2e]'} ${isExpanded ? 'fixed inset-4 z-50' : ''} ${className}`}>
       {/* Toolbar */}
       <div className="flex items-center justify-between px-3 py-2 bg-[#252538] border-b border-slate-700/50 text-slate-400">
-        <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50">{language}</span>
-            <div className="h-4 w-px bg-slate-700/50 mx-1" />
+        <div className="flex items-center gap-1.5">
+            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${jsonError ? 'bg-red-900/50 border-red-700/50 text-red-400' : 'bg-slate-800/50 border-slate-700/50 text-slate-500'}`}>
+              {language}
+            </span>
+            <div className="h-4 w-px bg-slate-700/50 mx-0.5" />
             <button 
                 onClick={() => { setShowSearch(!showSearch); if (!showSearch) setTimeout(() => document.getElementById('code-search')?.focus(), 50); }}
                 className={`p-1.5 rounded hover:bg-slate-700 transition-colors ${showSearch ? 'text-indigo-400 bg-slate-700' : ''}`}
@@ -258,14 +314,49 @@ export function RichCodeEditor({
                     <Replace className="w-3.5 h-3.5" />
                 </button>
             )}
+            {!readOnly && language === 'json' && (
+              <>
+                <div className="h-4 w-px bg-slate-700/50 mx-0.5" />
+                <button 
+                    onClick={formatCode}
+                    className="p-1.5 rounded hover:bg-slate-700 transition-colors text-slate-400 hover:text-emerald-400"
+                    title="Format JSON (Pretty Print)"
+                    disabled={!!jsonError}
+                >
+                    <Wand2 className="w-3.5 h-3.5" />
+                </button>
+                <button 
+                    onClick={minifyCode}
+                    className="p-1.5 rounded hover:bg-slate-700 transition-colors text-slate-400 hover:text-amber-400"
+                    title="Minify JSON"
+                    disabled={!!jsonError}
+                >
+                    <Minimize2 className="w-3.5 h-3.5" />
+                </button>
+              </>
+            )}
         </div>
-        <div className="flex items-center gap-2">
-             <div className="text-[10px] text-slate-500 font-mono">
+        <div className="flex items-center gap-1.5">
+             <div className="text-[10px] text-slate-500 font-mono hidden sm:block">
                 {value.length} chars • {value.split('\n').length} lines
              </div>
-             <div className="h-4 w-px bg-slate-700/50 mx-1" />
+             <div className="h-4 w-px bg-slate-700/50 mx-0.5 hidden sm:block" />
+             <button 
+                onClick={() => setWordWrap(!wordWrap)} 
+                className={`p-1.5 rounded hover:bg-slate-700 transition-colors ${wordWrap ? 'text-indigo-400 bg-slate-700' : 'text-slate-400'}`} 
+                title={wordWrap ? "Disable Word Wrap" : "Enable Word Wrap"}
+             >
+                <WrapText className="w-3.5 h-3.5" />
+             </button>
              <button onClick={handleCopy} className="p-1.5 hover:bg-slate-700 rounded text-slate-400 transition-colors" title="Copy Content">
                 {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+             </button>
+             <button 
+                onClick={() => setIsExpanded(!isExpanded)} 
+                className="p-1.5 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition-colors" 
+                title={isExpanded ? "Collapse" : "Expand"}
+             >
+                {isExpanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
              </button>
         </div>
       </div>
@@ -343,19 +434,38 @@ export function RichCodeEditor({
         </div>
       )}
 
+      {/* JSON Error Banner */}
+      {jsonError && (
+        <div className="px-3 py-2 bg-red-900/30 border-b border-red-800/50 text-xs text-red-300 flex items-center gap-2">
+          <X className="w-3.5 h-3.5 text-red-400 shrink-0" />
+          <span className="truncate">{jsonError}</span>
+        </div>
+      )}
+
       {/* Editor Area */}
-      <div className="flex-1 relative min-h-[200px] flex overflow-hidden">
+      <div 
+        className="flex-1 relative flex overflow-hidden"
+        style={{ 
+          minHeight: editorMinHeight,
+          maxHeight: editorMaxHeight,
+          height: editorHeight
+        }}
+      >
         {/* Line Numbers */}
         <div
             ref={scrollRef}
-            className="w-10 bg-[#1e1e2e] border-r border-slate-700/50 text-slate-600 text-[11px] font-mono py-3 text-right pr-2 select-none overflow-hidden whitespace-pre"
-            style={{ fontFamily: '"Menlo", "Consolas", "Monaco", monospace', lineHeight: '1.6' }}
+            className="w-10 bg-[#1e1e2e] border-r border-slate-700/50 text-slate-600 text-[11px] font-mono py-3 text-right pr-2 select-none overflow-hidden"
+            style={{ 
+              fontFamily: '"Menlo", "Consolas", "Monaco", monospace', 
+              lineHeight: '1.6',
+              whiteSpace: wordWrap ? 'pre-wrap' : 'pre'
+            }}
         >
             {lineNumbers}
         </div>
 
         {/* Text Area Container */}
-        <div className="flex-1 relative bg-[#1e1e2e] overflow-hidden">
+        <div className="flex-1 relative bg-[#1e1e2e] overflow-auto">
             {/* Syntax Highlighting Backdrop */}
             <div
                 ref={backdropRef}
@@ -364,7 +474,7 @@ export function RichCodeEditor({
             >
                 <pre
                     dangerouslySetInnerHTML={{ __html: highlightedCode }}
-                    className="p-3 m-0 whitespace-pre-wrap break-words text-slate-300"
+                    className={`p-3 m-0 text-slate-300 ${wordWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`}
                     style={{
                         fontFamily: '"Menlo", "Consolas", "Monaco", monospace',
                         fontSize: '11px',
@@ -387,6 +497,9 @@ export function RichCodeEditor({
                     lineHeight: '1.6',
                     color: 'transparent',
                     caretColor: 'white',
+                    whiteSpace: wordWrap ? 'pre-wrap' : 'pre',
+                    wordBreak: wordWrap ? 'break-word' : 'normal',
+                    overflowWrap: wordWrap ? 'break-word' : 'normal',
                 }}
                 spellCheck={false}
                 readOnly={readOnly}
@@ -394,6 +507,14 @@ export function RichCodeEditor({
             />
         </div>
       </div>
+      
+      {/* Expanded backdrop */}
+      {isExpanded && (
+        <div 
+          className="fixed inset-0 bg-black/50 -z-10" 
+          onClick={() => setIsExpanded(false)}
+        />
+      )}
     </div>
   );
 }

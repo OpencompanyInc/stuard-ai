@@ -4,6 +4,53 @@ import { openai } from '@ai-sdk/openai';
 import { google } from '@ai-sdk/google';
 import { z } from 'zod';
 import { verifyToken } from '../supabase';
+import { CORS_ALLOWED_ORIGINS, IS_DEVELOPMENT } from '../utils/config';
+
+/**
+ * Extracts and validates Supabase auth token from request.
+ * Returns userId if valid, null otherwise.
+ * In development mode, allows unauthenticated requests for local testing.
+ */
+async function validateAuth(req: IncomingMessage): Promise<{ userId: string | null; isAuthed: boolean }> {
+  const auth = req.headers.authorization || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  
+  if (token) {
+    try {
+      const user = await verifyToken(token);
+      if (user?.userId) {
+        return { userId: user.userId, isAuthed: true };
+      }
+    } catch {}
+  }
+  
+  // Dev mode allows unauthenticated local requests
+  if (IS_DEVELOPMENT) {
+    return { userId: null, isAuthed: true };
+  }
+  
+  return { userId: null, isAuthed: false };
+}
+
+/**
+ * Gets CORS origin header based on request and configuration.
+ */
+function getCorsOrigin(req: IncomingMessage): string {
+  const origin = req.headers.origin || '';
+  
+  // Development mode: allow all
+  if (CORS_ALLOWED_ORIGINS === '*') return '*';
+  
+  // No allowed origins configured: deny cross-origin
+  if (!CORS_ALLOWED_ORIGINS) return '';
+  
+  // Check if origin is in allowed list
+  const allowed = CORS_ALLOWED_ORIGINS.split(',').map(s => s.trim());
+  if (allowed.includes(origin)) return origin;
+  
+  // Origin not allowed
+  return '';
+}
 
 function readJsonBody(req: IncomingMessage): Promise<any> {
   return new Promise((resolve) => {
@@ -17,17 +64,21 @@ function readJsonBody(req: IncomingMessage): Promise<any> {
   });
 }
 
-function writeJson(res: ServerResponse, status: number, obj: any) {
+function writeJson(res: ServerResponse, status: number, obj: any, corsOrigin: string = '*') {
   try {
     const body = JSON.stringify(obj);
-    res.writeHead(status, {
+    const headers: Record<string, string | number> = {
       'Content-Type': 'application/json',
       'Content-Length': Buffer.byteLength(body),
-      'Access-Control-Allow-Origin': '*',
-    });
+    };
+    if (corsOrigin) {
+      headers['Access-Control-Allow-Origin'] = corsOrigin;
+      headers['Vary'] = 'Origin';
+    }
+    res.writeHead(status, headers);
     res.end(body);
   } catch {
-    try { res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }); res.end('{"ok":false,"error":"internal"}'); } catch {}
+    try { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{"ok":false,"error":"internal"}'); } catch {}
   }
 }
 
@@ -45,22 +96,32 @@ function pickModelProvider() {
 export async function handleInferenceRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   const path = String(parsedUrl.pathname || '');
 
+  const corsOrigin = getCorsOrigin(req);
+
   // CORS preflight
   if (req.method === 'OPTIONS' && path.startsWith('/inference/')) {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
+    const headers: Record<string, string> = {
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Authorization, Content-Type',
       'Access-Control-Max-Age': '600',
-    });
+    };
+    if (corsOrigin) {
+      headers['Access-Control-Allow-Origin'] = corsOrigin;
+      headers['Vary'] = 'Origin';
+    }
+    res.writeHead(204, headers);
     res.end();
     return true;
   }
 
   if (req.method === 'POST' && path === '/inference/workflow/next') {
     try {
-      // Internal workflow engine endpoint - no user auth required
-      // TODO: Add internal API key validation for production
+      // Workflow routing - requires Supabase auth in production
+      const { isAuthed } = await validateAuth(req);
+      if (!isAuthed) {
+        writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
+        return true;
+      }
       const body = await readJsonBody(req);
       const ctx = body?.context || {};
       const step = ctx.step || {};
@@ -70,7 +131,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       const state = ctx.ctx || {};
 
       if (!options.length) {
-        writeJson(res, 400, { ok: false, error: 'no_options' });
+        writeJson(res, 400, { ok: false, error: 'no_options' }, corsOrigin);
         return true;
       }
 
@@ -109,13 +170,13 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       } catch {}
 
       if (!result) {
-        writeJson(res, 400, { ok: false, error: 'no_routing_decision' });
+        writeJson(res, 400, { ok: false, error: 'no_routing_decision' }, corsOrigin);
       } else {
-        writeJson(res, 200, { ok: true, ...result });
+        writeJson(res, 200, { ok: true, ...result }, corsOrigin);
       }
       return true;
     } catch (e: any) {
-      writeJson(res, 500, { ok: false, error: e?.message || 'failed' });
+      writeJson(res, 500, { ok: false, error: e?.message || 'failed' }, corsOrigin);
       return true;
     }
   }
@@ -126,7 +187,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
       const authed = token ? await verifyToken(token) : null;
       if (!authed) {
-        writeJson(res, 401, { ok: false, error: 'unauthorized' });
+        writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
         return true;
       }
 
@@ -140,7 +201,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         .map((t: string) => t.slice(0, 12000));
 
       if (values.length === 0) {
-        writeJson(res, 400, { ok: false, error: 'missing_texts' });
+        writeJson(res, 400, { ok: false, error: 'missing_texts' }, corsOrigin);
         return true;
       }
 
@@ -149,11 +210,11 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         values,
       });
 
-      writeJson(res, 200, { ok: true, embeddings: out.embeddings, model: modelId });
+      writeJson(res, 200, { ok: true, embeddings: out.embeddings, model: modelId }, corsOrigin);
       return true;
     } catch (e: any) {
       console.error('[inference] ai/embed_many error:', e);
-      writeJson(res, 500, { ok: false, error: e?.message || 'embed_many_failed' });
+      writeJson(res, 500, { ok: false, error: e?.message || 'embed_many_failed' }, corsOrigin);
       return true;
     }
   }
@@ -163,14 +224,18 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
   // Analyze media (audio, video, images) - used by workflow engine
   if (req.method === 'POST' && path === '/inference/ai/analyze-media') {
     try {
-      // Internal workflow engine endpoint - no user auth required
-      // TODO: Add internal API key validation for production
+      // Media analysis - requires Supabase auth in production
+      const { isAuthed } = await validateAuth(req);
+      if (!isAuthed) {
+        writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
+        return true;
+      }
       const body = await readJsonBody(req);
       const task = String(body?.task || 'Analyze this media and provide a summary.');
       const media = Array.isArray(body?.media) ? body.media : [];
       
       if (media.length === 0) {
-        writeJson(res, 400, { ok: false, error: 'no_media_provided' });
+        writeJson(res, 400, { ok: false, error: 'no_media_provided' }, corsOrigin);
         return true;
       }
       
@@ -202,15 +267,15 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         });
         
         const summary = out.text?.trim() || '';
-        writeJson(res, 200, { ok: true, summary, text: summary });
+        writeJson(res, 200, { ok: true, summary, text: summary }, corsOrigin);
         return true;
       } catch (e: any) {
         console.error('[inference] analyze-media error:', e);
-        writeJson(res, 500, { ok: false, error: e?.message || 'ai_failed' });
+        writeJson(res, 500, { ok: false, error: e?.message || 'ai_failed' }, corsOrigin);
         return true;
       }
     } catch (e: any) {
-      writeJson(res, 500, { ok: false, error: e?.message || 'failed' });
+      writeJson(res, 500, { ok: false, error: e?.message || 'failed' }, corsOrigin);
       return true;
     }
   }
@@ -234,7 +299,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
 
       const parsed = inputSchema.safeParse(body || {});
       if (!parsed.success) {
-        writeJson(res, 400, { ok: false, error: 'invalid_body', details: parsed.error.flatten() });
+        writeJson(res, 400, { ok: false, error: 'invalid_body', details: parsed.error.flatten() }, corsOrigin);
         return true;
       }
 
@@ -278,14 +343,14 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       } catch {}
 
       if (!object || typeof object !== 'object') {
-        writeJson(res, 400, { ok: false, error: 'ai_failed' });
+        writeJson(res, 400, { ok: false, error: 'ai_failed' }, corsOrigin);
         return true;
       }
 
-      writeJson(res, 200, { ok: true, object });
+      writeJson(res, 200, { ok: true, object }, corsOrigin);
       return true;
     } catch (e: any) {
-      writeJson(res, 500, { ok: false, error: e?.message || 'failed' });
+      writeJson(res, 500, { ok: false, error: e?.message || 'failed' }, corsOrigin);
       return true;
     }
   }
@@ -293,8 +358,12 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
   // AI Text Inference - text in, text or JSON out
   if (req.method === 'POST' && path === '/inference/ai/text') {
     try {
-      // Internal workflow engine endpoint - no user auth required
-      // TODO: Add internal API key validation for production
+      // Text inference - requires Supabase auth in production
+      const { isAuthed } = await validateAuth(req);
+      if (!isAuthed) {
+        writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
+        return true;
+      }
       const body = await readJsonBody(req);
       const prompt = String(body?.prompt || '');
       const input = body?.input ? String(body.input) : undefined;
@@ -305,7 +374,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       const systemPrompt = body?.systemPrompt ? String(body.systemPrompt) : undefined;
 
       if (!prompt) {
-        writeJson(res, 400, { ok: false, error: 'prompt_required' });
+        writeJson(res, 400, { ok: false, error: 'prompt_required' }, corsOrigin);
         return true;
       }
 
@@ -351,7 +420,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
             }
           }
 
-          writeJson(res, 200, { ok: true, json: jsonResult, model: modelId });
+          writeJson(res, 200, { ok: true, json: jsonResult, model: modelId }, corsOrigin);
         } else {
           // Text mode
           const messages: any[] = systemPrompt
@@ -365,16 +434,16 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
           });
 
           const text = result.text?.trim() || '';
-          writeJson(res, 200, { ok: true, text, model: modelId });
+          writeJson(res, 200, { ok: true, text, model: modelId }, corsOrigin);
         }
         return true;
       } catch (e: any) {
         console.error('[inference] ai/text error:', e);
-        writeJson(res, 500, { ok: false, error: e?.message || 'ai_inference_failed', model: modelId });
+        writeJson(res, 500, { ok: false, error: e?.message || 'ai_inference_failed', model: modelId }, corsOrigin);
         return true;
       }
     } catch (e: any) {
-      writeJson(res, 500, { ok: false, error: e?.message || 'failed' });
+      writeJson(res, 500, { ok: false, error: e?.message || 'failed' }, corsOrigin);
       return true;
     }
   }
@@ -385,7 +454,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
       const authed = token ? await verifyToken(token) : null;
       if (!authed) {
-        writeJson(res, 401, { ok: false, error: 'unauthorized' });
+        writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
         return true;
       }
 
@@ -393,7 +462,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       const text = String(body?.text || '').trim();
       const modelId = String(body?.model || 'text-embedding-3-large').trim() || 'text-embedding-3-large';
       if (!text) {
-        writeJson(res, 400, { ok: false, error: 'missing_text' });
+        writeJson(res, 400, { ok: false, error: 'missing_text' }, corsOrigin);
         return true;
       }
 
@@ -402,11 +471,11 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         value: text.slice(0, 12000),
       });
 
-      writeJson(res, 200, { ok: true, embedding: out.embedding, model: modelId });
+      writeJson(res, 200, { ok: true, embedding: out.embedding, model: modelId }, corsOrigin);
       return true;
     } catch (e: any) {
       console.error('[inference] ai/embed error:', e);
-      writeJson(res, 500, { ok: false, error: e?.message || 'embed_failed' });
+      writeJson(res, 500, { ok: false, error: e?.message || 'embed_failed' }, corsOrigin);
       return true;
     }
   }
@@ -421,7 +490,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       const textContent = body?.text as string | undefined;  // For text-based files
 
       if (!base64Data && !textContent) {
-        writeJson(res, 400, { ok: false, error: 'Either data (base64) or text content required' });
+        writeJson(res, 400, { ok: false, error: 'Either data (base64) or text content required' }, corsOrigin);
         return true;
       }
 
@@ -467,11 +536,11 @@ Filename: ${filename}`;
         summary: summaryMatch?.[1]?.trim() || `File: ${filename}`,
         keywords: keywordsMatch?.[1]?.trim() || filename.replace(/[._-]/g, ', '),
         model: 'gemini-2.5-flash',
-      });
+      }, corsOrigin);
       return true;
     } catch (e: any) {
       console.error('[inference] ai/summarize-file error:', e);
-      writeJson(res, 500, { ok: false, error: e?.message || 'summarize_failed' });
+      writeJson(res, 500, { ok: false, error: e?.message || 'summarize_failed' }, corsOrigin);
       return true;
     }
   }

@@ -108,8 +108,8 @@ export const youtube_get_video = createTool({
     }).optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const { url, videoId: providedId } = context;
+  execute: async (inputData, context) => {
+    const { url, videoId: providedId  } = inputData;
 
     if (!YOUTUBE_API_KEY) {
       return { ok: false, error: 'YOUTUBE_API_KEY not configured' };
@@ -197,8 +197,8 @@ export const youtube_get_channel = createTool({
     }).optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const { url, channelId: providedId, handle: providedHandle } = context;
+  execute: async (inputData, context) => {
+    const { url, channelId: providedId, handle: providedHandle  } = inputData as any;
 
     if (!YOUTUBE_API_KEY) {
       return { ok: false, error: 'YOUTUBE_API_KEY not configured' };
@@ -306,8 +306,8 @@ export const youtube_get_playlist = createTool({
     })).optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const { url, playlistId: providedId, maxVideos = 10 } = context;
+  execute: async (inputData, context) => {
+    const { url, playlistId: providedId, maxVideos = 10  } = inputData as any;
 
     if (!YOUTUBE_API_KEY) {
       return { ok: false, error: 'YOUTUBE_API_KEY not configured' };
@@ -397,8 +397,8 @@ export const youtube_search = createTool({
     })).optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const { query, type = 'video', maxResults = 5, order = 'relevance' } = context;
+  execute: async (inputData, context) => {
+    const { query, type = 'video', maxResults = 5, order = 'relevance'  } = inputData as any;
 
     if (!YOUTUBE_API_KEY) {
       return { ok: false, error: 'YOUTUBE_API_KEY not configured' };
@@ -470,8 +470,8 @@ export const youtube_parse_url = createTool({
     isShort: z.boolean().optional(),
     isLive: z.boolean().optional(),
   }),
-  execute: async ({ context }) => {
-    const { url } = context;
+  execute: async (inputData, context) => {
+    const { url  } = inputData as any;
 
     const videoId = extractVideoId(url);
     if (videoId) {

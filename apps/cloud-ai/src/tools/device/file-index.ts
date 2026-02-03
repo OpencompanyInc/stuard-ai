@@ -234,8 +234,8 @@ export const process_pending_file_index = createTool({
     failed: z.number().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context, writer }) => {
-    const c = context as any;
+  execute: async (inputData, { writer }) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {
@@ -284,8 +284,8 @@ export const process_pending_file_index_batch = createTool({
     count: z.number().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context, writer }) => {
-    const c = context as any;
+  execute: async (inputData, { writer }) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {
@@ -363,8 +363,8 @@ export const semantic_file_search = createTool({
     count: z.number().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context, writer }) => {
-    const c = context as any;
+  execute: async (inputData, { writer }) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {

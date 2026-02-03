@@ -26,12 +26,6 @@ export const get_screen_text = makeLocalTool(
   z.object({ text: z.string() }),
 );
 
-export const find_and_click_text = makeLocalTool(
-  'find_and_click_text',
-  'Find text on screen via OCR and click it',
-  z.object({ text: z.string(), region: region.optional(), fuzzy: z.boolean().optional() }),
-);
-
 export const read_image_optimized = makeLocalTool(
   'read_image_optimized',
   'Read and compress images for efficient transmission',

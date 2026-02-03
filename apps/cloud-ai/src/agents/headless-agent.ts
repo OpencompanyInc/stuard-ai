@@ -11,7 +11,7 @@ import { listHeadlessAgentTasks } from '../tools/list-headless-agent-tasks';
 import { outlook_get_me, outlook_list_messages, outlook_search_messages, outlook_send_mail } from '../tools/outlook-tools';
 import { github_get_me, github_list_repos, github_list_issues, github_create_issue } from '../tools/github-tools';
 import { google_get_userinfo, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, calendar_list_events, calendar_create_event, calendar_delete_event, tasks_list, drive_list_files, sheets_read_range, docs_get_document, docs_create_document, docs_write_text } from '../tools/google-tools';
-import { send_hotkey, list_directory, read_file, write_file, create_directory, move_file, canvas_list, canvas_read, canvas_write, canvas_create, canvas_delete, calendar_crud, task_crud, task_reminders, planner_list_items, capture_media, describe_media_capture_capabilities, run_command, run_system_command, list_local_workflows, list_local_stuards, import_workflow, run_automation, stop_automation, search_past_conversations, get_conversation_context } from '../tools/device-tools';
+import { send_hotkey, list_directory, read_file, write_file, create_directory, move_file, canvas_list, canvas_read, canvas_write, canvas_create, canvas_delete, calendar_crud, task_crud, task_reminders, planner_list_items, capture_media, describe_media_capture_capabilities, run_command, run_system_command, search_local_workflows, import_workflow, run_automation, stop_automation, search_past_conversations, get_conversation_context } from '../tools/device-tools';
 import { web_search } from '../tools/perplexity-tools';
 
 const HEADLESS_SYSTEM_INSTRUCTIONS = `You are the Headless Execution Agent for StuardAI.
@@ -106,8 +106,7 @@ export function getHeadlessAgent(
     write_file,
     create_directory,
     move_file,
-    list_local_workflows,
-    list_local_stuards,
+    search_local_workflows,
     import_workflow,
     run_automation,
     stop_automation,
@@ -123,7 +122,7 @@ export function getHeadlessAgent(
     'describe_media_capture_capabilities', 'run_system_command', 'run_command',
     'calendar_crud', 'task_crud', 'task_reminders', 'planner_list_items',
     'list_directory', 'read_file', 'write_file', 'create_directory', 'move_file',
-    'list_local_workflows', 'list_local_stuards',
+    'search_local_workflows',
     'import_workflow', 'run_automation', 'stop_automation',
     'search_past_conversations', 'get_conversation_context'
   ];
@@ -214,6 +213,7 @@ export function getHeadlessAgent(
   }
 
   return new Agent({
+    id: 'stuard-headless',
     name: 'stuard-headless',
     instructions: instructions as any,
     model: selectedModel,

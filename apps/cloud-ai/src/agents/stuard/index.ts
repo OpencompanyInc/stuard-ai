@@ -37,6 +37,7 @@ export function getAgent(
   // The server already manages conversation history via the conversations WeakMap
   // and passes full history in inputMessages, so agent-level memory is redundant.
   return new Agent({
+    id: name,
     name,
     instructions: instructions as any,
     model: selectedModel as any,
@@ -67,6 +68,7 @@ export async function getAgentForQuery(
   ];
 
   return new Agent({
+    id: name,
     name,
     instructions: instructions as any,
     model: selectedModel as any,

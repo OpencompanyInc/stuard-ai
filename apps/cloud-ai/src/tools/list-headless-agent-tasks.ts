@@ -15,7 +15,7 @@ export const listHeadlessAgentTasks = createTool({
     tasks: z.array(z.any()).optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
+  execute: async (inputData, context) => {
     const secrets = getBridgeSecrets();
     const userId = secrets?.userId;
     const conversationId = secrets?.conversationId;
@@ -24,9 +24,9 @@ export const listHeadlessAgentTasks = createTool({
     try {
       // Get sub-agents from local storage
       const result = await execLocalTool('subagent_list', {
-        parent_id: context.parent_id || conversationId,
-        status: context.status,
-        limit: context.limit,
+        parent_id: (inputData as any).parent_id || conversationId,
+        status: (inputData as any).status,
+        limit: (inputData as any).limit,
       });
 
       if (!result?.ok) {

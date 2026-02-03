@@ -1,8 +1,22 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { OpenAIVoice } from '@mastra/voice-openai';
-import { getToolRegistry, initToolRegistry } from '../tools/meta-tools';
+import { initToolRegistry } from '../tools/meta-tools';
+import { getToolRegistry } from '../tools/tool-registry';
 import { runWithSecrets } from '../tools/bridge';
 import { verifyToken } from '../supabase';
+import { CORS_ALLOWED_ORIGINS, PUBLIC_TOOLS_ALLOWLIST, REQUIRE_TOOL_AUTH, IS_DEVELOPMENT } from '../utils/config';
+
+/**
+ * Gets CORS origin header based on request and configuration.
+ */
+function getCorsOrigin(req: IncomingMessage): string {
+  const origin = req.headers.origin || '';
+  if (CORS_ALLOWED_ORIGINS === '*') return '*';
+  if (!CORS_ALLOWED_ORIGINS) return '';
+  const allowed = CORS_ALLOWED_ORIGINS.split(',').map(s => s.trim());
+  if (allowed.includes(origin)) return origin;
+  return '';
+}
 
 function readJsonBody(req: IncomingMessage): Promise<any> {
   return new Promise((resolve) => {
@@ -16,17 +30,21 @@ function readJsonBody(req: IncomingMessage): Promise<any> {
   });
 }
 
-function writeJson(res: ServerResponse, status: number, obj: any) {
+function writeJson(res: ServerResponse, status: number, obj: any, corsOrigin: string = '*') {
   try {
     const body = JSON.stringify(obj);
-    res.writeHead(status, {
+    const headers: Record<string, string | number> = {
       'Content-Type': 'application/json',
       'Content-Length': Buffer.byteLength(body),
-      'Access-Control-Allow-Origin': '*',
-    });
+    };
+    if (corsOrigin) {
+      headers['Access-Control-Allow-Origin'] = corsOrigin;
+      headers['Vary'] = 'Origin';
+    }
+    res.writeHead(status, headers);
     res.end(body);
   } catch {
-    try { res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }); res.end('{"ok":false,"error":"internal"}'); } catch {}
+    try { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{"ok":false,"error":"internal"}'); } catch {}
   }
 }
 
@@ -52,15 +70,20 @@ async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
 
 export async function handleToolsRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   const path = String(parsedUrl.pathname || '');
+  const corsOrigin = getCorsOrigin(req);
 
   // CORS preflight
   if (req.method === 'OPTIONS' && path.startsWith('/tools/')) {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
+    const headers: Record<string, string> = {
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Authorization, Content-Type',
       'Access-Control-Max-Age': '600',
-    });
+    };
+    if (corsOrigin) {
+      headers['Access-Control-Allow-Origin'] = corsOrigin;
+      headers['Vary'] = 'Origin';
+    }
+    res.writeHead(204, headers);
     res.end();
     return true;
   }
@@ -75,7 +98,7 @@ export async function handleToolsRoutes(req: IncomingMessage, res: ServerRespons
       const format = body?.format || 'mp3';
       
       if (!text) {
-        writeJson(res, 400, { ok: false, error: 'text_required' });
+        writeJson(res, 400, { ok: false, error: 'text_required' }, corsOrigin);
         return true;
       }
       
@@ -95,16 +118,16 @@ export async function handleToolsRoutes(req: IncomingMessage, res: ServerRespons
         voice,
         textLength: text.length,
         mimeType: format === 'mp3' ? 'audio/mpeg' : `audio/${format}`,
-      });
+      }, corsOrigin);
       return true;
     } catch (e: any) {
       console.error('[tools] text_to_speech error:', e);
-      writeJson(res, 500, { ok: false, error: e?.message || 'tts_failed' });
+      writeJson(res, 500, { ok: false, error: e?.message || 'tts_failed' }, corsOrigin);
       return true;
     }
   }
 
-  // List TTS voices
+  // List TTS voices (public endpoint)
   if ((req.method === 'POST' || req.method === 'GET') && path === '/tools/list_tts_voices') {
     const voices = [
       { id: 'alloy', name: 'Alloy', description: 'Neutral, balanced voice - good for general use' },
@@ -114,7 +137,7 @@ export async function handleToolsRoutes(req: IncomingMessage, res: ServerRespons
       { id: 'nova', name: 'Nova', description: 'Friendly, upbeat female voice' },
       { id: 'shimmer', name: 'Shimmer', description: 'Clear, pleasant female voice' },
     ];
-    writeJson(res, 200, { ok: true, voices });
+    writeJson(res, 200, { ok: true, voices }, corsOrigin);
     return true;
   }
 
@@ -137,7 +160,7 @@ export async function handleToolsRoutes(req: IncomingMessage, res: ServerRespons
       const tool = registry.get(toolName);
 
       if (!tool) {
-        writeJson(res, 404, { ok: false, error: 'unknown_tool', message: `Tool '${toolName}' not found in registry` });
+        writeJson(res, 404, { ok: false, error: 'unknown_tool', message: `Tool '${toolName}' not found in registry` }, corsOrigin);
         return true;
       }
 
@@ -155,20 +178,31 @@ export async function handleToolsRoutes(req: IncomingMessage, res: ServerRespons
         } catch {}
       }
 
+      // Security: Require auth for non-public tools in production
+      const isPublicTool = PUBLIC_TOOLS_ALLOWLIST.has(toolName);
+      if (REQUIRE_TOOL_AUTH && !isPublicTool && !userId) {
+        writeJson(res, 401, { ok: false, error: 'unauthorized', message: 'Authentication required for this tool' }, corsOrigin);
+        return true;
+      }
+
       // Execute the tool with user context (secrets)
       const secrets = userId ? { userId } : {};
       
-      console.log(`[tools] Executing ${toolName} with args:`, JSON.stringify(body).slice(0, 200));
+      // Security: Only log tool name and arg size, not full content
+      console.log(`[tools] Executing ${toolName} (args: ${JSON.stringify(body).length} bytes, userId: ${userId || 'anonymous'})`);
 
       const result = await runWithSecrets(secrets, async () => {
-        return await tool.execute({ context: body }, {});
+        if (typeof tool.execute !== 'function') {
+          throw new Error(`Tool '${toolName}' is not executable`);
+        }
+        return await tool.execute({ context: body } as any, {} as any);
       });
 
-      writeJson(res, 200, { ok: true, result });
+      writeJson(res, 200, { ok: true, result }, corsOrigin);
       return true;
     } catch (e: any) {
-      console.error(`[tools] ${toolName} error:`, e);
-      writeJson(res, 500, { ok: false, error: e?.message || 'tool_execution_failed' });
+      console.error(`[tools] ${toolName} error:`, e?.message || e);
+      writeJson(res, 500, { ok: false, error: e?.message || 'tool_execution_failed' }, corsOrigin);
       return true;
     }
   }

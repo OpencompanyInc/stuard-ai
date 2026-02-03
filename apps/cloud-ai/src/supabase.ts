@@ -2,7 +2,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { estimateCostUsd, monthlyCreditLimitForPlan, creditsFromUsd, creditsPerUsd } from './pricing';
 import { DEV_MODE } from './utils/config';
 import { embedMany } from 'ai';
-import { ModelRouterEmbeddingModel } from '@mastra/core';
+import { openai } from '@ai-sdk/openai';
 import { DEFAULT_EMBEDDER } from './utils/config';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
@@ -42,8 +42,11 @@ export async function enqueueMemoryJob(input: {
   const texts = Array.isArray(input.texts) ? input.texts.filter((s) => typeof s === 'string' && s.trim()) : [];
   if (texts.length === 0) return;
   try {
-    const embedder = new ModelRouterEmbeddingModel(DEFAULT_EMBEDDER);
-    const { embeddings } = await embedMany({ model: embedder as any, values: texts });
+    const modelId = DEFAULT_EMBEDDER.replace('openai/', '');
+    const { embeddings } = await embedMany({ 
+      model: openai.embedding(modelId), 
+      values: texts 
+    });
     const items = texts.map((t, i) => ({
       text: String(t),
       vector: embeddings[i] as number[],

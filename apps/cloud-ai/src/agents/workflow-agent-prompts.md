@@ -623,7 +623,7 @@ The workflow agent had access to these tools:
 - `modify_workflow` - Modify existing workflow
 - `retrieve_tool_format` - Get tool argument schema
 - `search_tools` - Search available tools
-- `list_local_workflows` - List saved workflows
+- `search_local_workflows` - List and search saved workflows (returns schemas)
 - `list_local_stuards` - List stuard files
 - `show_json_workflow_code` - Show workflow JSON
 - `import_workflow` - Import workflow from file

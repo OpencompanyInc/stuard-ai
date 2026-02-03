@@ -12,8 +12,8 @@ export const analyzeYouTubeVideoTool = createTool({
     thinking: z.boolean().default(false),
   }),
   outputSchema: z.object({ summary: z.string() }),
-  execute: async ({ context, writer }) => {
-    const { url, task, thinking } = context as {
+  execute: async (inputData, { writer }) => {
+    const { url, task, thinking  } = inputData as {
       url: string;
       task: string;
       thinking: boolean;

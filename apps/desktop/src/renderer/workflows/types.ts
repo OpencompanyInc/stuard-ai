@@ -83,6 +83,7 @@ export interface DesignerWire {
   loop?: WireLoopConfig;
   /** When true, this wire marks the end of a loop scope - nodes after this wire run outside the loop */
   loopBreak?: boolean;
+  loopFanoutMode?: 'wait' | 'parallel';
 }
 
 /** A workflow-level variable that can be referenced by any step */
@@ -128,7 +129,7 @@ export interface StuardSpec {
     id: string;
     tool: string;
     args: any;
-    next?: Array<{ to: string; guard?: any; label?: string }>;
+    next?: Array<{ to: string; guard?: any; label?: string; loop?: any; loopBreak?: boolean; loopFanoutMode?: 'wait' | 'parallel' }>;
     fallback?: { to: string };
     /** When true, this step waits for all incoming branches to complete before executing */
     waitForAll?: boolean;

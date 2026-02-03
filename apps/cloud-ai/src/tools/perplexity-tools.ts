@@ -19,9 +19,9 @@ export const web_search = createTool({
     results: z.array(z.any()),
     id: z.string().optional(),
     usage: z.any().optional(),
-  }).passthrough(),
-  execute: async (args) => {
-    const { query: rawQuery, max_results, search_domain_filter, search_language_filter, country, max_tokens_per_page } = args.context;
+  }),
+  execute: async (inputData, context) => {
+    const { query: rawQuery, max_results, search_domain_filter, search_language_filter, country, max_tokens_per_page } = inputData;
 
     // Ensure query is always a string
     const query = typeof rawQuery === 'string' ? rawQuery : String(rawQuery ?? '');

@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { PostHogProvider } from "posthog-js/react";
 import { initPostHog, posthog } from "./lib/posthog";
+import { OnboardingProvider } from "./components/onboarding";
 import App from "./App";
 import "./styles.css";
 
@@ -11,7 +12,9 @@ initPostHog();
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <PostHogProvider client={posthog}>
-      <App />
+      <OnboardingProvider>
+        <App />
+      </OnboardingProvider>
     </PostHogProvider>
   </React.StrictMode>
 );

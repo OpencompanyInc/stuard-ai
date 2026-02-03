@@ -1,7 +1,7 @@
 
 import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut } from "electron";
 import { selectFiles, selectImages, listDirectory, selectFolder } from "../utils/files";
-import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, getInternalSidebarState } from "../windows";
+import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, getInternalSidebarState, getNotificationWindow } from "../windows";
 import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition } from "../workflows";
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
@@ -12,9 +12,79 @@ import { setupTerminalIpc } from "../terminal";
 import logger from "../utils/logger";
 import * as fs from "fs";
 import { Buffer } from "node:buffer";
+import { getGlobalHotkey, setGlobalHotkey as saveGlobalHotkey } from "../settings";
 
 let nodeNotifier: any = null;
 try { nodeNotifier = require('node-notifier'); } catch { }
+
+// SECURITY: SSRF protection - block requests to private/internal IP addresses
+function isPrivateOrInternalUrl(urlString: string): boolean {
+  try {
+    const url = new URL(urlString);
+    const hostname = url.hostname.toLowerCase();
+
+    // Block localhost variants
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+      return true;
+    }
+
+    // Block .local and .internal domains
+    if (hostname.endsWith('.local') || hostname.endsWith('.internal') || hostname.endsWith('.localhost')) {
+      return true;
+    }
+
+    // Block file:// and other non-http protocols
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return true;
+    }
+
+    // Parse IP address and check for private ranges
+    const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (ipv4Match) {
+      const [, a, b, c, d] = ipv4Match.map(Number);
+
+      // 10.0.0.0/8 - Private
+      if (a === 10) return true;
+
+      // 172.16.0.0/12 - Private
+      if (a === 172 && b >= 16 && b <= 31) return true;
+
+      // 192.168.0.0/16 - Private
+      if (a === 192 && b === 168) return true;
+
+      // 127.0.0.0/8 - Loopback
+      if (a === 127) return true;
+
+      // 169.254.0.0/16 - Link-local
+      if (a === 169 && b === 254) return true;
+
+      // 0.0.0.0/8 - Current network
+      if (a === 0) return true;
+
+      // 224.0.0.0/4 - Multicast
+      if (a >= 224 && a <= 239) return true;
+
+      // 240.0.0.0/4 - Reserved
+      if (a >= 240) return true;
+    }
+
+    // Block IPv6 private/internal addresses
+    if (hostname.startsWith('[')) {
+      const ipv6 = hostname.slice(1, -1).toLowerCase();
+      // ::1 loopback
+      if (ipv6 === '::1') return true;
+      // fe80::/10 link-local
+      if (ipv6.startsWith('fe80:')) return true;
+      // fc00::/7 unique local
+      if (ipv6.startsWith('fc') || ipv6.startsWith('fd')) return true;
+    }
+
+    return false;
+  } catch {
+    // If we can't parse the URL, block it to be safe
+    return true;
+  }
+}
 
 export function setupIpc() {
   setupSpeechIpc();
@@ -29,7 +99,7 @@ export function setupIpc() {
   ipcMain.handle("overlay:moveBy", (_e, dx: number, dy: number) => moveOverlayBy(dx, dy));
   ipcMain.handle("overlay:getSize", () => getOverlaySize());
   ipcMain.handle("overlay:getMode", () => getOverlayMode());
-  
+
   // Internal sidebar (rendered inside overlay window, expands window width)
   ipcMain.handle("overlay:toggleInternalSidebar", (_e, open?: boolean) => toggleInternalSidebar(open));
   ipcMain.handle("overlay:getInternalSidebarState", () => getInternalSidebarState());
@@ -195,6 +265,12 @@ export function setupIpc() {
       const targetUrl = normalizeUrl(url);
       if (!targetUrl || !targetUrl.startsWith('http')) return { ok: false, error: 'invalid_url' };
 
+      // SECURITY: Block SSRF attempts to internal/private networks
+      if (isPrivateOrInternalUrl(targetUrl)) {
+        console.warn(`[getLinkPreview] SSRF blocked: ${targetUrl}`);
+        return { ok: false, error: 'blocked_internal_url', message: 'Cannot fetch preview for internal/private URLs' };
+      }
+
       const response = await fetch(targetUrl, { headers: { 'User-Agent': UA } });
       if (!response.ok) return { ok: false, error: 'fetch_failed' };
       const html = await response.text();
@@ -322,22 +398,41 @@ export function setupIpc() {
   ipcMain.handle("system:notify", (_e, payload: any) => {
     try {
       const title = String(payload?.title || 'Stuard AI');
-      const body = String(payload?.body || '');
-      if (Notification && typeof (Notification as any).isSupported === 'function' && Notification.isSupported()) {
-        const n = new Notification({ title, body });
-        n.show();
-      } else if (nodeNotifier && typeof nodeNotifier.notify === 'function') {
-        nodeNotifier.notify({
-          title,
-          message: body,
-          appName: 'Stuard AI',
-          appID: 'Stuard AI',
-        });
+      // Normalize body/message
+      const message = String(payload?.message || payload?.body || '');
+      // Defaults
+      const variant = payload?.variant || 'info';
+      const position = payload?.position || 'top-right'; // User preferred position
+      const duration = typeof payload?.duration === 'number' ? payload.duration : 5000;
+
+      const config = {
+        ...payload,
+        title,
+        message,
+        variant,
+        position,
+        duration,
+      };
+
+      const notifWin = getNotificationWindow();
+      if (notifWin && !notifWin.isDestroyed()) {
+        notifWin.webContents.send('notification:show', config);
+      } else {
+        // Fallback to native
+        if (Notification && typeof (Notification as any).isSupported === 'function' && Notification.isSupported()) {
+          const n = new Notification({ title, body: message });
+          n.show();
+        }
       }
       return { ok: true };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e || 'failed') };
     }
+  });
+
+  ipcMain.on('window:ignore-mouse-events', (event, ignore, options) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    win?.setIgnoreMouseEvents(ignore, options);
   });
 
   // Logs
@@ -1262,5 +1357,61 @@ export function setupIpc() {
       logger.error('Failed to execute bookmark:', e);
       return { ok: false, error: String(e?.message || e) };
     }
+  });
+
+  // Global hotkey management
+  ipcMain.handle('system:setGlobalHotkey', (_e, accelerator: string) => {
+    try {
+      // Validate the accelerator format
+      if (!accelerator || typeof accelerator !== 'string') {
+        return { ok: false, error: 'Invalid accelerator format' };
+      }
+
+      // Try to register the new shortcut first
+      const testSuccess = globalShortcut.register(accelerator, () => {
+        // This is just a test registration, we'll unregister immediately
+      });
+
+      if (!testSuccess) {
+        return { ok: false, error: 'Shortcut may be in use by another application' };
+      }
+
+      // Unregister the test
+      globalShortcut.unregister(accelerator);
+
+      // Unregister the current overlay shortcuts
+      const oldHotkey = getGlobalHotkey();
+      try { globalShortcut.unregister(oldHotkey); } catch { }
+      // Also try common variants
+      const variants = ['Control+Space', 'Ctrl+Space', 'Control+Shift+Space', 'Ctrl+Shift+Space', 'CommandOrControl+Shift+Space'];
+      for (const v of variants) {
+        try { globalShortcut.unregister(v); } catch { }
+      }
+
+      // Register the new shortcut
+      const success = globalShortcut.register(accelerator, () => {
+        const { handleOverlayHotkey } = require('../windows');
+        handleOverlayHotkey();
+      });
+
+      if (success) {
+        // Save to settings
+        saveGlobalHotkey(accelerator);
+        logger.info(`Global hotkey changed to: ${accelerator}`);
+        return { ok: true };
+      } else {
+        // Re-register the default
+        const { registerGlobalShortcuts } = require('../windows');
+        registerGlobalShortcuts();
+        return { ok: false, error: 'Failed to register new shortcut' };
+      }
+    } catch (e: any) {
+      logger.error('Error setting global hotkey:', e);
+      return { ok: false, error: String(e?.message || 'Unknown error') };
+    }
+  });
+
+  ipcMain.handle('system:getGlobalHotkey', () => {
+    return { ok: true, hotkey: getGlobalHotkey() };
   });
 }

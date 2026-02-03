@@ -30,7 +30,7 @@ export const math_add = createTool({
     b: TensorSchema.describe('Second operand'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_add', context),
+  execute: async (inputData, context) => execLocalTool('math_add', inputData),
 });
 
 export const math_subtract = createTool({
@@ -41,7 +41,7 @@ export const math_subtract = createTool({
     b: TensorSchema.describe('Second operand (subtracted from a)'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_subtract', context),
+  execute: async (inputData, context) => execLocalTool('math_subtract', inputData),
 });
 
 export const math_multiply = createTool({
@@ -52,7 +52,7 @@ export const math_multiply = createTool({
     b: TensorSchema.describe('Second operand'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_multiply', context),
+  execute: async (inputData, context) => execLocalTool('math_multiply', inputData),
 });
 
 export const math_divide = createTool({
@@ -63,7 +63,7 @@ export const math_divide = createTool({
     b: TensorSchema.describe('Denominator'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_divide', context),
+  execute: async (inputData, context) => execLocalTool('math_divide', inputData),
 });
 
 export const math_power = createTool({
@@ -74,7 +74,7 @@ export const math_power = createTool({
     b: TensorSchema.describe('Exponent'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_power', context),
+  execute: async (inputData, context) => execLocalTool('math_power', inputData),
 });
 
 export const math_sqrt = createTool({
@@ -84,7 +84,7 @@ export const math_sqrt = createTool({
     x: TensorSchema.describe('Input value(s)'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_sqrt', context),
+  execute: async (inputData, context) => execLocalTool('math_sqrt', inputData),
 });
 
 export const math_abs = createTool({
@@ -94,7 +94,7 @@ export const math_abs = createTool({
     x: TensorSchema.describe('Input value(s)'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_abs', context),
+  execute: async (inputData, context) => execLocalTool('math_abs', inputData),
 });
 
 export const math_negate = createTool({
@@ -104,7 +104,7 @@ export const math_negate = createTool({
     x: TensorSchema.describe('Input value(s)'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_negate', context),
+  execute: async (inputData, context) => execLocalTool('math_negate', inputData),
 });
 
 export const math_exp = createTool({
@@ -114,7 +114,7 @@ export const math_exp = createTool({
     x: TensorSchema.describe('Input value(s)'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_exp', context),
+  execute: async (inputData, context) => execLocalTool('math_exp', inputData),
 });
 
 export const math_log = createTool({
@@ -124,7 +124,7 @@ export const math_log = createTool({
     x: TensorSchema.describe('Input value(s)'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_log', context),
+  execute: async (inputData, context) => execLocalTool('math_log', inputData),
 });
 
 // ============================================================================
@@ -139,7 +139,7 @@ export const math_sum = createTool({
     axis: z.number().int().optional().describe('Axis to sum along (omit for total sum)'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_sum', context),
+  execute: async (inputData, context) => execLocalTool('math_sum', inputData),
 });
 
 export const math_mean = createTool({
@@ -150,7 +150,7 @@ export const math_mean = createTool({
     axis: z.number().int().optional().describe('Axis to compute mean along'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_mean', context),
+  execute: async (inputData, context) => execLocalTool('math_mean', inputData),
 });
 
 export const math_max = createTool({
@@ -160,7 +160,7 @@ export const math_max = createTool({
     x: TensorSchema.describe('Input tensor'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_max', context),
+  execute: async (inputData, context) => execLocalTool('math_max', inputData),
 });
 
 export const math_min = createTool({
@@ -170,7 +170,7 @@ export const math_min = createTool({
     x: TensorSchema.describe('Input tensor'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_min', context),
+  execute: async (inputData, context) => execLocalTool('math_min', inputData),
 });
 
 export const math_argmax = createTool({
@@ -180,7 +180,7 @@ export const math_argmax = createTool({
     x: TensorSchema.describe('Input tensor'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_argmax', context),
+  execute: async (inputData, context) => execLocalTool('math_argmax', inputData),
 });
 
 export const math_argmin = createTool({
@@ -190,7 +190,7 @@ export const math_argmin = createTool({
     x: TensorSchema.describe('Input tensor'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_argmin', context),
+  execute: async (inputData, context) => execLocalTool('math_argmin', inputData),
 });
 
 // ============================================================================
@@ -205,7 +205,7 @@ export const math_dot = createTool({
     b: TensorSchema.describe('Second matrix/vector'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_dot', context),
+  execute: async (inputData, context) => execLocalTool('math_dot', inputData),
 });
 
 export const math_transpose = createTool({
@@ -215,7 +215,7 @@ export const math_transpose = createTool({
     x: z.array(z.array(z.number())).describe('2D matrix'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_transpose', context),
+  execute: async (inputData, context) => execLocalTool('math_transpose', inputData),
 });
 
 export const math_reshape = createTool({
@@ -226,7 +226,7 @@ export const math_reshape = createTool({
     shape: z.array(z.number().int()).describe('New shape, e.g., [2, 3] for 2×3 matrix'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_reshape', context),
+  execute: async (inputData, context) => execLocalTool('math_reshape', inputData),
 });
 
 export const math_shape = createTool({
@@ -236,7 +236,7 @@ export const math_shape = createTool({
     x: TensorSchema.describe('Input tensor'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_shape', context),
+  execute: async (inputData, context) => execLocalTool('math_shape', inputData),
 });
 
 export const math_flatten = createTool({
@@ -246,7 +246,7 @@ export const math_flatten = createTool({
     x: TensorSchema.describe('Input tensor'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_flatten', context),
+  execute: async (inputData, context) => execLocalTool('math_flatten', inputData),
 });
 
 // ============================================================================
@@ -260,7 +260,7 @@ export const math_zeros = createTool({
     shape: z.array(z.number().int()).describe('Shape of tensor, e.g., [3, 4] for 3×4 matrix'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_zeros', context),
+  execute: async (inputData, context) => execLocalTool('math_zeros', inputData),
 });
 
 export const math_ones = createTool({
@@ -270,7 +270,7 @@ export const math_ones = createTool({
     shape: z.array(z.number().int()).describe('Shape of tensor'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_ones', context),
+  execute: async (inputData, context) => execLocalTool('math_ones', inputData),
 });
 
 export const math_random = createTool({
@@ -283,7 +283,7 @@ export const math_random = createTool({
     seed: z.number().int().optional().describe('Random seed for reproducibility'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_random', context),
+  execute: async (inputData, context) => execLocalTool('math_random', inputData),
 });
 
 export const math_range = createTool({
@@ -295,7 +295,7 @@ export const math_range = createTool({
     step: z.number().default(1).describe('Step size'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_range', context),
+  execute: async (inputData, context) => execLocalTool('math_range', inputData),
 });
 
 export const math_linspace = createTool({
@@ -307,7 +307,7 @@ export const math_linspace = createTool({
     num: z.number().int().default(10).describe('Number of values'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_linspace', context),
+  execute: async (inputData, context) => execLocalTool('math_linspace', inputData),
 });
 
 // ============================================================================
@@ -321,7 +321,7 @@ export const math_sigmoid = createTool({
     x: TensorSchema.describe('Input value(s)'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_sigmoid', context),
+  execute: async (inputData, context) => execLocalTool('math_sigmoid', inputData),
 });
 
 export const math_relu = createTool({
@@ -331,7 +331,7 @@ export const math_relu = createTool({
     x: TensorSchema.describe('Input value(s)'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_relu', context),
+  execute: async (inputData, context) => execLocalTool('math_relu', inputData),
 });
 
 export const math_leaky_relu = createTool({
@@ -342,7 +342,7 @@ export const math_leaky_relu = createTool({
     alpha: z.number().default(0.01).describe('Slope for negative values'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_leaky_relu', context),
+  execute: async (inputData, context) => execLocalTool('math_leaky_relu', inputData),
 });
 
 export const math_tanh = createTool({
@@ -352,7 +352,7 @@ export const math_tanh = createTool({
     x: TensorSchema.describe('Input value(s)'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_tanh', context),
+  execute: async (inputData, context) => execLocalTool('math_tanh', inputData),
 });
 
 export const math_softmax = createTool({
@@ -362,7 +362,7 @@ export const math_softmax = createTool({
     x: z.array(z.number()).describe('Input vector of logits'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_softmax', context),
+  execute: async (inputData, context) => execLocalTool('math_softmax', inputData),
 });
 
 export const math_gelu = createTool({
@@ -372,7 +372,7 @@ export const math_gelu = createTool({
     x: TensorSchema.describe('Input value(s)'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_gelu', context),
+  execute: async (inputData, context) => execLocalTool('math_gelu', inputData),
 });
 
 export const math_swish = createTool({
@@ -382,7 +382,7 @@ export const math_swish = createTool({
     x: TensorSchema.describe('Input value(s)'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_swish', context),
+  execute: async (inputData, context) => execLocalTool('math_swish', inputData),
 });
 
 // ============================================================================
@@ -398,7 +398,7 @@ export const math_linear = createTool({
     bias: z.array(z.number()).optional().describe('Bias vector (output_dim)'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_linear', context),
+  execute: async (inputData, context) => execLocalTool('math_linear', inputData),
 });
 
 export const math_forward_pass = createTool({
@@ -414,7 +414,7 @@ export const math_forward_pass = createTool({
     })).describe('List of layer configurations'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_forward_pass', context),
+  execute: async (inputData, context) => execLocalTool('math_forward_pass', inputData),
 });
 
 export const math_cross_entropy_loss = createTool({
@@ -428,7 +428,7 @@ export const math_cross_entropy_loss = createTool({
     ]).describe('Target class index or one-hot vector'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_cross_entropy_loss', context),
+  execute: async (inputData, context) => execLocalTool('math_cross_entropy_loss', inputData),
 });
 
 export const math_mse_loss = createTool({
@@ -439,7 +439,7 @@ export const math_mse_loss = createTool({
     targets: TensorSchema.describe('Target values'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_mse_loss', context),
+  execute: async (inputData, context) => execLocalTool('math_mse_loss', inputData),
 });
 
 // ============================================================================
@@ -455,7 +455,7 @@ export const math_compare = createTool({
     op: z.enum(['eq', 'ne', 'lt', 'le', 'gt', 'ge']).describe('Comparison operator'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_compare', context),
+  execute: async (inputData, context) => execLocalTool('math_compare', inputData),
 });
 
 export const math_clip = createTool({
@@ -467,7 +467,7 @@ export const math_clip = createTool({
     max: z.number().optional().describe('Maximum value'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_clip', context),
+  execute: async (inputData, context) => execLocalTool('math_clip', inputData),
 });
 
 export const math_where = createTool({
@@ -479,7 +479,7 @@ export const math_where = createTool({
     y: TensorSchema.describe('Value(s) when false'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_where', context),
+  execute: async (inputData, context) => execLocalTool('math_where', inputData),
 });
 
 // ============================================================================
@@ -494,7 +494,7 @@ export const math_concat = createTool({
     axis: z.number().int().default(0).describe('Axis to concatenate along'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_concat', context),
+  execute: async (inputData, context) => execLocalTool('math_concat', inputData),
 });
 
 export const math_stack = createTool({
@@ -505,7 +505,7 @@ export const math_stack = createTool({
     axis: z.number().int().default(0).describe('Axis to stack along'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_stack', context),
+  execute: async (inputData, context) => execLocalTool('math_stack', inputData),
 });
 
 export const math_slice = createTool({
@@ -518,7 +518,7 @@ export const math_slice = createTool({
     step: z.number().int().default(1).describe('Step size'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_slice', context),
+  execute: async (inputData, context) => execLocalTool('math_slice', inputData),
 });
 
 export const math_get_index = createTool({
@@ -529,7 +529,7 @@ export const math_get_index = createTool({
     index: z.number().int().describe('Index (supports negative)'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_get_index', context),
+  execute: async (inputData, context) => execLocalTool('math_get_index', inputData),
 });
 
 export const math_set_index = createTool({
@@ -541,5 +541,5 @@ export const math_set_index = createTool({
     value: z.any().describe('New value'),
   }),
   outputSchema: ResultSchema,
-  execute: async ({ context }) => execLocalTool('math_set_index', context),
+  execute: async (inputData, context) => execLocalTool('math_set_index', inputData),
 });

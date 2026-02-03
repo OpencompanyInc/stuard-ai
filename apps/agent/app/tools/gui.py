@@ -18,6 +18,19 @@ async def get_mouse_position(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "x": pos.x, "y": pos.y}
 
 
+async def move_cursor(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Move the mouse cursor to specific screen coordinates."""
+    try:
+        import pyautogui as pag  # type: ignore
+    except Exception:
+        raise RuntimeError("pyautogui not installed")
+    x = float(args.get("x"))
+    y = float(args.get("y"))
+    duration = float(args.get("duration") or 0.0)
+    pag.moveTo(x, y, duration=duration)
+    return {"ok": True, "x": x, "y": y}
+
+
 async def click_at_coordinates(args: Dict[str, Any]) -> Dict[str, Any]:
     try:
         import pyautogui as pag  # type: ignore

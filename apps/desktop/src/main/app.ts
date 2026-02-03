@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "path";
 import { Readable } from "node:stream";
 import { initEnv } from "./env";
-import { createWindow, registerGlobalShortcuts, createTray, showWindow } from "./windows/index";
+import { createWindow, registerGlobalShortcuts, createTray, showWindow, openNotificationWindow } from "./windows/index";
 import { setupIpc } from "./ipc/index";
 import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, startBrowserExtensionServer } from "./services/index";
 import { startLocalWebhookServer, workflows_autostart } from "./workflows/index";
@@ -12,6 +12,22 @@ import { initCustomUiIpc } from "./tools/index";
 import logger from "./utils/logger";
 
 initEnv();
+
+// Force consistent userData path in dev mode (package.json name is @stuardai/desktop, but we want "Stuard AI")
+// app.setName only affects display, we need app.setPath to change actual userData location
+app.setName("Stuard AI");
+
+// Override userData path to always use "Stuard AI" folder (not @stuardai/desktop in dev)
+const targetUserData = (() => {
+  const base = process.platform === 'win32'
+    ? (process.env.APPDATA || path.join(require('os').homedir(), 'AppData', 'Roaming'))
+    : process.platform === 'darwin'
+      ? path.join(require('os').homedir(), 'Library', 'Application Support')
+      : (process.env.XDG_CONFIG_HOME || path.join(require('os').homedir(), '.config'));
+  return path.join(base, 'Stuard AI');
+})();
+app.setPath('userData', targetUserData);
+console.log('[app] userData path set to:', targetUserData);
 
 // Register custom protocol for local file access (must be before app.ready)
 protocol.registerSchemesAsPrivileged([
@@ -33,6 +49,53 @@ function setupSingleInstance() {
 
 app.setAppUserModelId("Stuard AI");
 setupSingleInstance();
+
+// Migrate workflows from old dev path (@stuardai/desktop) to unified path (Stuard AI)
+function migrateDevWorkflows() {
+  try {
+    const base = process.platform === 'win32'
+      ? (process.env.APPDATA || path.join(require('os').homedir(), 'AppData', 'Roaming'))
+      : process.platform === 'darwin'
+        ? path.join(require('os').homedir(), 'Library', 'Application Support')
+        : (process.env.XDG_CONFIG_HOME || path.join(require('os').homedir(), '.config'));
+
+    const oldDevPath = path.join(base, '@stuardai', 'desktop', 'workflows');
+    const newPath = path.join(base, 'Stuard AI', 'workflows');
+
+    // Only migrate if old path exists and has files
+    if (!fs.existsSync(oldDevPath)) return;
+
+    const oldFiles = fs.readdirSync(oldDevPath).filter(f => f.endsWith('.json'));
+    if (oldFiles.length === 0) return;
+
+    // Ensure new directory exists
+    if (!fs.existsSync(newPath)) {
+      fs.mkdirSync(newPath, { recursive: true });
+    }
+
+    let migrated = 0;
+    for (const file of oldFiles) {
+      const oldFilePath = path.join(oldDevPath, file);
+      const newFilePath = path.join(newPath, file);
+
+      // Only copy if doesn't already exist in new location
+      if (!fs.existsSync(newFilePath)) {
+        fs.copyFileSync(oldFilePath, newFilePath);
+        migrated++;
+        logger.info(`[migration] Copied workflow: ${file}`);
+      }
+    }
+
+    if (migrated > 0) {
+      logger.info(`[migration] Migrated ${migrated} workflow(s) from dev path to unified path`);
+    }
+  } catch (e) {
+    logger.warn('[migration] Failed to migrate dev workflows:', e);
+  }
+}
+
+// Run migration before app ready (userData path is now set)
+migrateDevWorkflows();
 
 app.whenReady().then(async () => {
   // Register local-file:// protocol handler to serve local files in renderer
@@ -61,19 +124,19 @@ app.whenReady().then(async () => {
     const ext = path.extname(filePath).toLowerCase();
     const contentType =
       ext === '.mp4' ? 'video/mp4' :
-      ext === '.webm' ? 'video/webm' :
-      ext === '.mov' ? 'video/quicktime' :
-      ext === '.m4v' ? 'video/x-m4v' :
-      ext === '.mp3' ? 'audio/mpeg' :
-      ext === '.wav' ? 'audio/wav' :
-      ext === '.ogg' ? 'audio/ogg' :
-      ext === '.m4a' ? 'audio/mp4' :
-      ext === '.aac' ? 'audio/aac' :
-      ext === '.png' ? 'image/png' :
-      ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
-      ext === '.gif' ? 'image/gif' :
-      ext === '.webp' ? 'image/webp' :
-      'application/octet-stream';
+        ext === '.webm' ? 'video/webm' :
+          ext === '.mov' ? 'video/quicktime' :
+            ext === '.m4v' ? 'video/x-m4v' :
+              ext === '.mp3' ? 'audio/mpeg' :
+                ext === '.wav' ? 'audio/wav' :
+                  ext === '.ogg' ? 'audio/ogg' :
+                    ext === '.m4a' ? 'audio/mp4' :
+                      ext === '.aac' ? 'audio/aac' :
+                        ext === '.png' ? 'image/png' :
+                          ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
+                            ext === '.gif' ? 'image/gif' :
+                              ext === '.webp' ? 'image/webp' :
+                                'application/octet-stream';
 
     try {
       const stat = await fs.promises.stat(filePath);
@@ -201,6 +264,7 @@ app.whenReady().then(async () => {
   try {
     logger.info("Creating window...");
     createWindow();
+    openNotificationWindow();
     logger.info("Window created");
   } catch (e) {
     logger.error("Failed to create window:", e);
@@ -284,7 +348,7 @@ app.whenReady().then(async () => {
 
 app.on("browser-window-focus", () => {
   // re-register just in case
-  registerGlobalShortcuts();
+  // no-op
 });
 
 app.on("will-quit", () => {

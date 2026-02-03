@@ -161,8 +161,8 @@ export const computer_use_agent = createTool({
     modelValidationIssues: z.array(z.any()).optional(),
     steps: z.array(z.any()).optional(),
   }),
-  execute: async ({ context, writer }: any) => {
-    const c = context as any;
+  execute: async (inputData: any, { writer }: any) => {
+    const c = inputData as any;
     const goal = String(c.goal || '').trim();
     const extra = typeof c.context === 'string' ? c.context : '';
     const modelId = DEFAULT_MODEL_ID;

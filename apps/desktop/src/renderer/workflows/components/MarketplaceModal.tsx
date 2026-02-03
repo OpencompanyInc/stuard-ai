@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { getMarketplaceApi, MarketplaceWorkflow, MarketplaceCategory, MarketplaceVersion, MarketplaceUpdate } from "../../utils/cloud";
 import { supabase } from "../../lib/supabaseClient";
 import { Search, Download, Star, Tag, User, Calendar, X, AlertCircle, Loader2, Globe, Check, ChevronRight, Hash, Sparkles, Rocket, Plus, CheckCircle2, Pencil, Trash2, Clock, History, ArrowUpCircle, Package, Lock, Unlock, RefreshCw, ExternalLink, Info, Eye, EyeOff } from "lucide-react";
+import "../../scrollbar.css";
 
 // Helper to get token from Supabase auth
 async function getToken(): Promise<string | null> {
@@ -56,7 +57,7 @@ function ModalShell({
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="flex-1 overflow-auto">{children}</div>
+        <div className="flex-1 overflow-auto custom-scrollbar">{children}</div>
       </div>
     </div>
   );

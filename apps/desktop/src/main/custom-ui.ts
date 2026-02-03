@@ -17,6 +17,49 @@ import type { RouterContext } from './tool-router';
 import { execTool } from './tools/index';
 import logger from './utils/logger';
 
+// Security: Allowed base directories for file operations
+// Custom UIs can only read/write within these directories
+function getAllowedBasePaths(): string[] {
+  return [
+    app.getPath('userData'),
+    app.getPath('temp'),
+    app.getPath('downloads'),
+    app.getPath('documents'),
+    app.getPath('desktop'),
+  ];
+}
+
+// Security: Check if a path is within allowed directories
+function isPathAllowed(filePath: string): boolean {
+  const resolved = path.resolve(filePath);
+  const allowed = getAllowedBasePaths();
+  return allowed.some(base => resolved.startsWith(path.resolve(base)));
+}
+
+// Security: Track user-approved paths per window session
+const userApprovedPaths = new Map<number, Set<string>>();
+
+function approvePathForWindow(webContentsId: number, filePath: string): void {
+  const resolved = path.resolve(filePath);
+  if (!userApprovedPaths.has(webContentsId)) {
+    userApprovedPaths.set(webContentsId, new Set());
+  }
+  userApprovedPaths.get(webContentsId)!.add(resolved);
+}
+
+function isPathApprovedForWindow(webContentsId: number, filePath: string): boolean {
+  const resolved = path.resolve(filePath);
+  const approved = userApprovedPaths.get(webContentsId);
+  if (!approved) return false;
+  // Check exact match or if it's within an approved directory
+  for (const approvedPath of approved) {
+    if (resolved === approvedPath || resolved.startsWith(approvedPath + path.sep)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Window storage
 export const customUiWindows = new Map<string, BrowserWindow>();
 
@@ -91,29 +134,16 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
     }
   });
 
-  // Run script (sandboxed eval)
-  ipcMain.handle('stuard:runScript', async (event, { code, context }) => {
-    try {
-      // Execute in the window's context
-      const win = BrowserWindow.fromWebContents(event.sender);
-      if (!win || win.isDestroyed()) {
-        return { ok: false, error: 'window_not_found' };
-      }
-
-      // Build context injection
-      const contextStr = context ? `const __ctx = ${JSON.stringify(context)};` : '';
-      const wrappedCode = `
-        (async () => {
-          ${contextStr}
-          ${code}
-        })()
-      `;
-
-      const result = await win.webContents.executeJavaScript(wrappedCode, true);
-      return { ok: true, result };
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message || 'script_execution_failed') };
-    }
+  // Run script - SECURITY: Disabled for security reasons
+  // Arbitrary script execution from custom UIs is too dangerous
+  // Use stuard:callTool instead for workflow operations
+  ipcMain.handle('stuard:runScript', async (_event, _args) => {
+    console.warn('[custom_ui] stuard:runScript is disabled for security. Use stuard:callTool instead.');
+    return { 
+      ok: false, 
+      error: 'disabled_for_security', 
+      message: 'runScript is disabled. Use stuard.callTool() for workflow operations.' 
+    };
   });
 
   // Update data
@@ -248,9 +278,10 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
     }
   });
 
-  // File picker
+  // File picker - SECURITY: Approves selected paths for this window
   ipcMain.handle('stuard:pickFile', async (event, options) => {
     const win = BrowserWindow.fromWebContents(event.sender);
+    const webContentsId = event.sender.id;
     const properties: ('openFile' | 'multiSelections')[] = ['openFile'];
     if (options?.multiple) properties.push('multiSelections');
 
@@ -260,12 +291,20 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
       properties,
     });
 
+    // Approve selected paths for this window
+    if (!result.canceled && result.filePaths.length > 0) {
+      for (const filePath of result.filePaths) {
+        approvePathForWindow(webContentsId, filePath);
+      }
+    }
+
     return { canceled: result.canceled, filePaths: result.filePaths };
   });
 
-  // Folder picker
+  // Folder picker - SECURITY: Approves selected paths for this window
   ipcMain.handle('stuard:pickFolder', async (event, options) => {
     const win = BrowserWindow.fromWebContents(event.sender);
+    const webContentsId = event.sender.id;
     const properties: ('openDirectory' | 'multiSelections')[] = ['openDirectory'];
     if (options?.multiple) properties.push('multiSelections');
 
@@ -274,12 +313,20 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
       properties,
     });
 
+    // Approve selected folders (and their contents) for this window
+    if (!result.canceled && result.filePaths.length > 0) {
+      for (const folderPath of result.filePaths) {
+        approvePathForWindow(webContentsId, folderPath);
+      }
+    }
+
     return { canceled: result.canceled, filePaths: result.filePaths };
   });
 
-  // Save dialog
+  // Save dialog - SECURITY: Approves selected path for this window
   ipcMain.handle('stuard:pickSavePath', async (event, options) => {
     const win = BrowserWindow.fromWebContents(event.sender);
+    const webContentsId = event.sender.id;
 
     const result = await dialog.showSaveDialog(win || undefined as any, {
       title: options?.title || 'Save File',
@@ -287,25 +334,48 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
       filters: options?.filters || [{ name: 'All Files', extensions: ['*'] }],
     });
 
+    // Approve selected path for this window
+    if (!result.canceled && result.filePath) {
+      approvePathForWindow(webContentsId, result.filePath);
+    }
+
     return { canceled: result.canceled, filePath: result.filePath };
   });
 
-  // Read file
-  ipcMain.handle('stuard:readFile', async (_event, { path: filePath, encoding }) => {
+  // Read file - SECURITY: Restricted to allowed directories or user-approved paths
+  ipcMain.handle('stuard:readFile', async (event, { path: filePath, encoding }) => {
     try {
-      const content = await fs.promises.readFile(filePath, { encoding: encoding || 'utf-8' });
+      const webContentsId = event.sender.id;
+      const resolved = path.resolve(filePath);
+      
+      // Security check: must be in allowed directories or user-approved
+      if (!isPathAllowed(resolved) && !isPathApprovedForWindow(webContentsId, resolved)) {
+        console.warn(`[custom_ui] File read blocked - not in allowed paths: ${resolved}`);
+        throw new Error('Access denied: file is outside allowed directories. Use pickFile() to request access.');
+      }
+      
+      const content = await fs.promises.readFile(resolved, { encoding: encoding || 'utf-8' });
       return content;
     } catch (e: any) {
       throw new Error(`Failed to read file: ${e?.message}`);
     }
   });
 
-  // Write file
-  ipcMain.handle('stuard:writeFile', async (_event, { path: filePath, content }) => {
+  // Write file - SECURITY: Restricted to allowed directories or user-approved paths
+  ipcMain.handle('stuard:writeFile', async (event, { path: filePath, content }) => {
     try {
-      const dir = path.dirname(filePath);
+      const webContentsId = event.sender.id;
+      const resolved = path.resolve(filePath);
+      
+      // Security check: must be in allowed directories or user-approved
+      if (!isPathAllowed(resolved) && !isPathApprovedForWindow(webContentsId, resolved)) {
+        console.warn(`[custom_ui] File write blocked - not in allowed paths: ${resolved}`);
+        throw new Error('Access denied: file is outside allowed directories. Use pickSavePath() to request access.');
+      }
+      
+      const dir = path.dirname(resolved);
       await fs.promises.mkdir(dir, { recursive: true });
-      await fs.promises.writeFile(filePath, content, 'utf-8');
+      await fs.promises.writeFile(resolved, content, 'utf-8');
     } catch (e: any) {
       throw new Error(`Failed to write file: ${e?.message}`);
     }
@@ -677,8 +747,8 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
-      webSecurity: false, // Allow loading local files from data URL origin
+      sandbox: true, // SECURITY: Enable sandbox for isolation
+      webSecurity: true, // SECURITY: Enable web security
       preload: preloadPath,
     },
   });

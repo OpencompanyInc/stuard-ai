@@ -16,8 +16,8 @@ export const memory_extract_texts = createTool({
     maxWords: z.number().int().min(10).max(1000).default(120),
   }),
   outputSchema: z.object({ extraction: z.string() }),
-  execute: async ({ context, writer }) => {
-    const c = context as any;
+  execute: async (inputData, { writer }) => {
+    const c = inputData as any;
     const secrets = getBridgeSecrets();
     const items = (c.items || []).map((s: any) => String(s)).filter((s: string) => s);
     const maxWords = Number(c.maxWords || 120);
@@ -51,9 +51,11 @@ export {
   take_screenshot,
   capture_screen_to_file,
   get_screen_text,
-  find_and_click_text,
   read_image_optimized,
 } from './device/screen';
+
+// Google Cloud Vision OCR (Cloud-side, uses API key)
+export { find_text_on_screen, find_and_click_text } from './device/ocr';
 
 // System & Window Management
 export {
@@ -113,12 +115,13 @@ export {
   set_window_bounds,
 } from './device/windows';
 
-// Workflows / Stuards metadata (desktop-side JSON files)
+// Workflows metadata (desktop-side JSON files)
 // These tools require a client bridge to the desktop app. If no bridge is available,
 // they return an empty list gracefully instead of timing out.
+// NOTE: list_local_workflows removed - use search_local_workflows instead
+// NOTE: list_local_stuards deprecated - stuards and workflows are now unified
 export {
-  list_local_workflows,
-  list_local_stuards,
+  list_local_stuards,  // Deprecated, kept for backwards compatibility
   show_json_workflow_code,
   execute_workflow,
   find_workflow_semantic,
@@ -127,6 +130,8 @@ export {
   stop_automation,
   invoke_workflow,
   test_run_steps,
+  search_local_workflows,  // Primary tool for listing/searching workflows
+  run_workflow,
 } from './device/workflows';
 
 // File System Operations
@@ -299,8 +304,8 @@ Args:
     progress: z.any().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    return await execLocalTool('agent_todo', context);
+  execute: async (inputData, context) => {
+    return await execLocalTool('agent_todo', inputData);
   },
 });
 

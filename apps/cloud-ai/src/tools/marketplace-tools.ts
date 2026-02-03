@@ -52,8 +52,8 @@ export const search_marketplace = createTool({
     count: z.number(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const { query, category, limit } = context as { query: string; category?: string; limit: number };
+  execute: async (inputData, context) => {
+    const { query, category, limit  } = inputData as any;
     
     const supabase = getSupabaseService();
     if (!supabase) {
@@ -149,8 +149,8 @@ export const get_marketplace_workflow = createTool({
     }).optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const { slug } = context as { slug: string };
+  execute: async (inputData, context) => {
+    const { slug  } = inputData as any;
     
     const supabase = getSupabaseService();
     if (!supabase) {
@@ -201,8 +201,8 @@ export const list_popular_workflows = createTool({
     count: z.number(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const { category, sort_by, limit } = context as { category?: string; sort_by: string; limit: number };
+  execute: async (inputData, context) => {
+    const { category, sort_by, limit  } = inputData as any;
     
     const supabase = getSupabaseService();
     if (!supabase) {
@@ -266,8 +266,8 @@ export const import_from_marketplace = createTool({
     workflow_name: z.string().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const { slug, new_name } = context as { slug: string; new_name?: string };
+  execute: async (inputData, context) => {
+    const { slug, new_name  } = inputData as any;
     
     const supabase = getSupabaseService();
     if (!supabase) {

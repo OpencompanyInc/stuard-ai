@@ -33,7 +33,7 @@ const Header = () => {
         {/* Action Button */}
         <div className="flex items-center gap-4">
           {user ? (
-            <Link href="/settings">
+            <Link href="/dashboard">
               <button className="bg-black text-white text-sm font-medium px-5 py-2.5 rounded-lg hover:opacity-80 transition-all">
                 Dashboard
               </button>

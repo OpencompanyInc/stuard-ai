@@ -1,6 +1,7 @@
 import { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { createClient } from '@supabase/supabase-js';
 
 interface Workflow {
   id: string;
@@ -33,11 +34,27 @@ const CATEGORIES: Record<string, { name: string; icon: string }> = {
 };
 
 async function getWorkflow(slug: string): Promise<Workflow | null> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+
+  if (supabaseUrl && supabaseAnonKey) {
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, { auth: { persistSession: false } });
+    const { data, error } = await supabase
+      .from('marketplace_workflows')
+      .select('id, slug, name, description, version, spec, category, tags, icon, rating_avg, rating_count, download_count, publisher_name, created_at, published_at')
+      .eq('slug', slug)
+      .eq('status', 'published')
+      .single();
+
+    if (!error && data) {
+      return data as Workflow;
+    }
+  }
+
   const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://api.stuard.ai';
-  
   try {
     const res = await fetch(`${baseUrl}/v1/marketplace/workflow/${slug}`, {
-      next: { revalidate: 300 }, // Cache for 5 minutes
+      next: { revalidate: 300 },
     });
     if (!res.ok) return null;
     const data = await res.json();

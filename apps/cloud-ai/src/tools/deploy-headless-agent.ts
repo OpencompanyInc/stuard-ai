@@ -76,8 +76,8 @@ export const deployHeadlessAgent = createTool({
     taskId: z.string().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const { objective, mode, tools_allowed, tool, custom_system_prompt, model } = context as any;
+  execute: async (inputData, context) => {
+    const { objective, mode, tools_allowed, tool, custom_system_prompt, model  } = inputData as any;
     const secrets = getBridgeSecrets();
     const bridgeWs = getBridgeWs();
     const userId = secrets?.userId;

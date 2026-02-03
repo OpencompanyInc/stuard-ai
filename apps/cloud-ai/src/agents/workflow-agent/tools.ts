@@ -39,8 +39,8 @@ export const executeStep = createTool({
     duration: z.number().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context, writer }) => {
-    const { tool, args, timeoutMs } = context as any;
+  execute: async (inputData, { writer }) => {
+    const { tool, args, timeoutMs } = inputData as any;
     const startTime = Date.now();
 
     wfLog('execute_step', { tool });
@@ -84,7 +84,7 @@ export const listWorkflows = createTool({
     })).optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ writer }) => {
+  execute: async (inputData, { writer }) => {
     wfLog('list_workflows');
 
     if (!hasClientBridge()) {

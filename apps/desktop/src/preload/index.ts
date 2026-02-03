@@ -78,7 +78,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   canvasDeleteDocument: (docId: string) => ipcRenderer.invoke('canvas:deleteDocument', docId),
   canvasGetDocument: (docId: string) => ipcRenderer.invoke('canvas:getDocument', docId),
   canvasRead: (docId?: string) => ipcRenderer.invoke('canvas:read', docId),
-  canvasWrite: (data: { documentId?: string; content?: string; title?: string; action?: 'append' | 'replace' | 'insert'; position?: number }) => 
+  canvasWrite: (data: { documentId?: string; content?: string; title?: string; action?: 'append' | 'replace' | 'insert'; position?: number }) =>
     ipcRenderer.invoke('canvas:write', data),
   onCanvasUpdate: (cb: (data: { documentId?: string; content?: string; title?: string; action?: 'append' | 'replace' | 'insert'; position?: number }) => void) => {
     const handler = (_e: any, data: any) => cb(data);
@@ -118,7 +118,12 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   openExternal: (url: string) => ipcRenderer.invoke('system:openExternal', url),
   getLinkPreview: (url: string) => ipcRenderer.invoke('system:getLinkPreview', url),
   getFileIcon: (filePath: string, options?: { size?: 'small' | 'normal' | 'large' }) => ipcRenderer.invoke('system:getFileIcon', filePath, options),
-  notify: (title: string, body: string) => ipcRenderer.invoke('system:notify', { title, body }),
+  notify: (titleOrConfig: string | any, body?: string) => {
+    if (typeof titleOrConfig === 'string') {
+      return ipcRenderer.invoke('system:notify', { title: titleOrConfig, body });
+    }
+    return ipcRenderer.invoke('system:notify', titleOrConfig);
+  },
   webhooksLocalUrl: (id?: string) => ipcRenderer.invoke('webhooks:localUrl', id),
   handleCloudWebhook: (payload: any) => ipcRenderer.invoke('webhooks:cloudEvent', payload),
   connectOutlook: () => ipcRenderer.invoke('outlook:connect'),
@@ -127,6 +132,9 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   onShow: (cb: () => void) => {
     const handler = () => cb();
     ipcRenderer.on("overlay:showed", handler);
+    return () => {
+      try { ipcRenderer.off("overlay:showed", handler); } catch { }
+    };
   },
   // Agent
   agentStart: (id?: string) => ipcRenderer.invoke('agent:start', id),
@@ -381,10 +389,22 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   todosToggle: (todoId: string) => ipcRenderer.invoke('todos:toggle', todoId),
   todosReorder: (todoIds: string[]) => ipcRenderer.invoke('todos:reorder', todoIds),
 
+  // Global Hotkey
+  setGlobalHotkey: (accelerator: string) => ipcRenderer.invoke('system:setGlobalHotkey', accelerator),
+  getGlobalHotkey: () => ipcRenderer.invoke('system:getGlobalHotkey'),
+
   // View mode change events (for shortcuts to switch views)
   onViewModeChange: (cb: (data: { mode: 'chat' | 'tasks'; subTab?: 'todo' | 'agent' }) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('overlay:view-mode', handler);
     return () => { try { ipcRenderer.off('overlay:view-mode', handler); } catch { } };
   },
+
+  // Notification System
+  onShowNotification: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('notification:show', handler);
+    return () => { try { ipcRenderer.off('notification:show', handler); } catch { } };
+  },
+  setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => ipcRenderer.send('window:ignore-mouse-events', ignore, options),
 });

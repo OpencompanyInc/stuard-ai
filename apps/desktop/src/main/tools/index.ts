@@ -116,6 +116,27 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'browser_get_page_info') return execBrowserGetPageInfo(args, ctx);
       if (toolName === 'browser_execute_script') return execBrowserExecuteScript(args, ctx);
 
+      // GenUI interactive tools - route through custom_ui with component type
+      const GENUI_TOOLS = new Set([
+        'ask_confirmation', 'show_choices', 'pick_date', 'request_files',
+        'show_table', 'show_info', 'show_details', 'show_files',
+        'show_command', 'show_json', 'show_link', 'show_colors',
+        'show_progress', 'show_info_card', 'show_feedback_form'
+      ]);
+      if (GENUI_TOOLS.has(toolName)) {
+        // GenUI tools render via custom_ui with layout.type = tool name
+        const isBlocking = ['ask_confirmation', 'show_choices', 'pick_date', 'request_files', 'show_command', 'show_feedback_form'].includes(toolName);
+        return execCustomUi({
+          id: args?.id || `genui-${toolName}-${Date.now()}`,
+          title: args?.title || toolName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+          layout: { type: toolName, ...args },
+          blocking: isBlocking,
+          timeoutMs: args?.timeoutMs || (isBlocking ? 300000 : 5000),
+          window: { width: 400, height: 300, position: 'center', alwaysOnTop: true, ...args?.window },
+          data: args,
+        }, ctx);
+      }
+
       return { ok: false, error: `unknown_electron_tool: ${toolName}` };
 
     case 'cloud':

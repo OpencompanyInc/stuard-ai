@@ -38,7 +38,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   };
 
   return (
-    <div className="space-y-8 pb-10">
+    <div className="space-y-8 pb-10" data-onboarding="overview-panel">
       {/* Header */}
       <div className="flex flex-col gap-1 relative overflow-hidden">
         {/* Subtle background section watermark matching the personality */}

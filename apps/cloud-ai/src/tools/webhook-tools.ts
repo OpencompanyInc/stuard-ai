@@ -46,8 +46,8 @@ export const create_webhook = createTool({
     }).optional(),
     message: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const { name, description, type, workflowId, triggerId, requireSignature, allowedIps } = context as any;
+  execute: async (inputData, context) => {
+    const { name, description, type, workflowId, triggerId, requireSignature, allowedIps  } = inputData as any;
     const secrets = getBridgeSecrets();
     const userId = secrets?.userId;
     
@@ -157,8 +157,8 @@ export const update_webhook = createTool({
     error: z.string().optional(),
     message: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const { webhookId, name, description, isActive, workflowId, triggerId, requireSignature, allowedIps } = context as any;
+  execute: async (inputData, context) => {
+    const { webhookId, name, description, isActive, workflowId, triggerId, requireSignature, allowedIps  } = inputData as any;
     const secrets = getBridgeSecrets();
     const userId = secrets?.userId;
     
@@ -195,8 +195,8 @@ export const delete_webhook = createTool({
     error: z.string().optional(),
     message: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const { webhookId } = context as any;
+  execute: async (inputData, context) => {
+    const { webhookId  } = inputData as any;
     const secrets = getBridgeSecrets();
     const userId = secrets?.userId;
     
@@ -233,8 +233,8 @@ export const configure_webhook_provider = createTool({
     isActive: z.boolean().optional(),
     instructions: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const { provider, webhookSecret, config, eventMappings, isActive } = context as any;
+  execute: async (inputData, context) => {
+    const { provider, webhookSecret, config, eventMappings, isActive  } = inputData as any;
     const secrets = getBridgeSecrets();
     const userId = secrets?.userId;
     
@@ -296,8 +296,8 @@ export const get_webhook_provider = createTool({
     eventCount: z.number().optional(),
     lastEventAt: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const { provider } = context as any;
+  execute: async (inputData, context) => {
+    const { provider  } = inputData as any;
     const secrets = getBridgeSecrets();
     const userId = secrets?.userId;
     

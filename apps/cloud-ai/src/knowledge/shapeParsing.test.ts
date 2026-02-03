@@ -4,6 +4,8 @@ const execLocalToolMock = vi.fn();
 const hasClientBridgeMock = vi.fn(() => true);
 const writeLogMock = vi.fn();
 
+const extractKnowledgeMock = vi.fn();
+
 vi.mock('../tools/bridge', () => ({
   execLocalTool: execLocalToolMock,
   hasClientBridge: hasClientBridgeMock,
@@ -11,6 +13,10 @@ vi.mock('../tools/bridge', () => ({
 
 vi.mock('../utils/logger', () => ({
   writeLog: writeLogMock,
+}));
+
+vi.mock('./extraction', () => ({
+  extractKnowledge: extractKnowledgeMock,
 }));
 
 let ingestion: typeof import('./ingestion');
@@ -26,6 +32,7 @@ beforeEach(() => {
   hasClientBridgeMock.mockReset();
   hasClientBridgeMock.mockReturnValue(true);
   writeLogMock.mockReset();
+  extractKnowledgeMock.mockReset();
 });
 
 describe('knowledge tool response shape parsing', () => {
@@ -51,17 +58,15 @@ describe('knowledge tool response shape parsing', () => {
       throw new Error(`unexpected tool: ${tool}`);
     });
 
-    const spy = vi
-      .spyOn(ingestion, 'extractKnowledge')
-      .mockResolvedValue({ actions: [], detected_entities: [] });
+    extractKnowledgeMock.mockResolvedValue({ actions: [], detected_entities: [] });
 
     await ingestion.ingestConversationTurn(
       [{ role: 'user', content: 'Hello' }],
       { skipExtraction: false, skipEmbeddings: true }
     );
 
-    expect(spy).toHaveBeenCalledTimes(1);
-    expect(spy).toHaveBeenCalledWith(
+    expect(extractKnowledgeMock).toHaveBeenCalledTimes(1);
+    expect(extractKnowledgeMock).toHaveBeenCalledWith(
       [{ role: 'user', content: 'Hello' }],
       {
         profile: { name: 'Alice', os: 'Windows 11' },
@@ -102,17 +107,15 @@ describe('knowledge tool response shape parsing', () => {
       throw new Error(`unexpected tool: ${tool}`);
     });
 
-    const spy = vi
-      .spyOn(ingestion, 'extractKnowledge')
-      .mockResolvedValue({ actions: [], detected_entities: [] });
+    extractKnowledgeMock.mockResolvedValue({ actions: [], detected_entities: [] });
 
     await ingestion.ingestConversationTurn(
       [{ role: 'user', content: 'Hello' }],
       { skipExtraction: false, skipEmbeddings: true }
     );
 
-    expect(spy).toHaveBeenCalledTimes(1);
-    expect(spy).toHaveBeenCalledWith(
+    expect(extractKnowledgeMock).toHaveBeenCalledTimes(1);
+    expect(extractKnowledgeMock).toHaveBeenCalledWith(
       [{ role: 'user', content: 'Hello' }],
       {
         profile: { timezone: 'UTC+1' },

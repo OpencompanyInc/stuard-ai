@@ -39,10 +39,9 @@ export const scrape_url = createTool({
       responseTime: z.number().optional(),
       requestId: z.string().optional(),
       usage: z.any().optional(),
-    })
-    .passthrough(),
-  execute: async (args) => {
-    const { urls, includeImages, extractDepth, format, timeout, includeFavicon } = args.context;
+    }),
+  execute: async (inputData, context) => {
+    const { urls, includeImages, extractDepth, format, timeout, includeFavicon } = inputData;
 
     if (!TAVILY_API_KEY) {
       throw new Error('Missing TAVILY_API_KEY configuration');

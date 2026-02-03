@@ -50,9 +50,9 @@ export const outlook_list_messages = createTool({
     top: z.number().int().min(1).max(50).default(10),
     select: z.array(z.string()).optional(),
   }),
-  execute: async ({ context }) => {
+  execute: async (inputData, context) => {
     const accessToken = await requireOutlookToken();
-    const { folder, top, select } = context as { folder?: string; top?: number; select?: string[] };
+    const { folder, top, select  } = inputData as any;
     const sel = Array.isArray(select) && select.length ? `$select=${select.join(',')}` : '';
     const query = [`$top=${Math.max(1, Math.min(50, Number(top || 10)))}`, `$orderby=receivedDateTime desc`, sel].filter(Boolean).join('&');
     const path = folder && folder !== 'Inbox'
@@ -71,9 +71,9 @@ export const outlook_search_messages = createTool({
     query: z.string(),
     top: z.number().int().min(1).max(25).default(10),
   }),
-  execute: async ({ context }) => {
+  execute: async (inputData, context) => {
     const accessToken = await requireOutlookToken();
-    const { query, top } = context as { query: string; top?: number };
+    const { query, top  } = inputData as any;
     const params = new URLSearchParams();
     params.set('$search', `"${query}"`);
     params.set('$top', String(Math.max(1, Math.min(25, Number(top || 10)))));
@@ -98,14 +98,14 @@ export const outlook_send_mail = createTool({
     body: z.string().min(1),
     contentType: z.enum(['Text', 'HTML']).default('Text'),
   }),
-  execute: async ({ context }) => {
+  execute: async (inputData, context) => {
     const accessToken = await requireOutlookToken();
-    const { to, subject, body, contentType } = context as { to: string[]; subject: string; body: string; contentType: 'Text' | 'HTML' };
+    const { to, subject, body, contentType  } = inputData as any;
     const payload = {
       message: {
         subject,
         body: { contentType, content: body },
-        toRecipients: to.map((addr) => ({ emailAddress: { address: addr } })),
+        toRecipients: to.map((addr: string) => ({ emailAddress: { address: addr } })),
       },
       saveToSentItems: true,
     };

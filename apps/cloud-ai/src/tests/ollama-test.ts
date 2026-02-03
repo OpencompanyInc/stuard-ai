@@ -55,6 +55,7 @@ async function testMastraAgent() {
   console.log('\n=== Test 3: Mastra Agent with Ollama ===');
   
   const agent = new Agent({
+    id: 'ollama-test-agent',
     name: 'ollama-test-agent',
     instructions: 'You are a helpful assistant running locally via Ollama. Be concise.',
     model: ollama('qwen3:0.6b'),
@@ -71,6 +72,7 @@ async function testToolCalling() {
   console.log('\n=== Test 4: Tool Calling ===');
   
   const agent = new Agent({
+    id: 'tool-test-agent',
     name: 'tool-test-agent',
     instructions: 'You are a helpful assistant. Use tools when needed.',
     model: ollama('qwen3:0.6b'),

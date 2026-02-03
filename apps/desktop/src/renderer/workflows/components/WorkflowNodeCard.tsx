@@ -13,6 +13,7 @@ interface WorkflowNodeProps {
   isTrigger?: boolean;
   selected: boolean;
   connecting: boolean;
+  reconnectTarget?: boolean | null;
   executionStatus?: StepExecutionStatus;
   onSelect: () => void;
   onMouseDown: (e: React.MouseEvent) => void;
@@ -21,7 +22,7 @@ interface WorkflowNodeProps {
 }
 
 export function WorkflowNode({ 
-  node, isTrigger, selected, connecting, executionStatus, 
+  node, isTrigger, selected, connecting, reconnectTarget, executionStatus, 
   onSelect, onMouseDown, onContextMenu, onConnect 
 }: WorkflowNodeProps) {
   const tool = ('tool' in node ? node.tool : node.type) || '';
@@ -35,6 +36,7 @@ export function WorkflowNode({
     if (executionStatus === 'error') return 'border-red-500 ring-4 ring-red-100/50 shadow-[0_8px_30px_rgb(239,68,68,0.2)] z-10';
     if (selected) return 'border-indigo-500 ring-4 ring-indigo-100/50 shadow-[0_8px_30px_rgb(99,102,241,0.15)] translate-y-[-2px] z-10';
     if (connecting) return 'border-dashed border-indigo-300 bg-indigo-50/30 shadow-none';
+    if (reconnectTarget) return 'border-amber-400 ring-4 ring-amber-100/50 shadow-[0_8px_30px_rgb(245,158,11,0.2)] cursor-pointer z-10 animate-pulse';
     
     // Default state using category color
     return `${styles.border} shadow-sm hover:shadow-[0_4px_20px_-12px_rgba(0,0,0,0.1)] hover:-translate-y-0.5`;

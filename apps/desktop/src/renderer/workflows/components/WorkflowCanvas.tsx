@@ -85,6 +85,7 @@ interface WorkflowCanvasProps {
   selectedId: string;
   selectedNodeId: string;
   connectingFrom: string;
+  reconnecting?: { wireIndex: number; end: 'from' | 'to' } | null;
   executionState: ExecutionState | null;
   size: { w: number; h: number };
   canvasRef: React.RefObject<HTMLDivElement>;
@@ -108,14 +109,16 @@ interface WorkflowCanvasProps {
   onNodeConnect?: (id: string) => void;
   onWireSelect?: (index: number) => void;
   onWireDelete?: (index: number) => void;
+  onWireContextMenu?: (index: number, e: React.MouseEvent) => void;
+  onWireReconnect?: (index: number, end: 'from' | 'to') => void;
   onCanvasContextMenu?: (e: React.MouseEvent) => void;
 }
 
 export function WorkflowCanvas({
-  model, selectedId, selectedNodeId, connectingFrom, executionState, size,
+  model, selectedId, selectedNodeId, connectingFrom, reconnecting, executionState, size,
   canvasRef, alignmentGuides = [], zoom = 1, selectedWireIndex, onWheel, onZoomIn, onZoomOut, onZoomReset, onAutoOrganize,
   onDragOver, onDrop, onMouseMove, onMouseUp, onMouseLeave, onCanvasClick,
-  onNodeSelect, onNodeMouseDown, onNodeContextMenu, onNodeConnect, onWireSelect, onWireDelete, onCanvasContextMenu
+  onNodeSelect, onNodeMouseDown, onNodeContextMenu, onNodeConnect, onWireSelect, onWireDelete, onWireContextMenu, onWireReconnect, onCanvasContextMenu
 }: WorkflowCanvasProps) {
   const [hoveredWireIndex, setHoveredWireIndex] = useState<number | null>(null);
   const scaledSize = {
@@ -128,6 +131,7 @@ export function WorkflowCanvas({
   return (
     <div
       ref={canvasRef}
+      data-onboarding="workflow-canvas"
       className="flex-1 overflow-auto scrollbar-minimal bg-slate-50/50 relative cursor-grab active:cursor-grabbing pb-32"
       onDragOver={onDragOver}
       onDrop={onDrop}
@@ -321,6 +325,7 @@ export function WorkflowCanvas({
             const isCompletedWire = sourceStatus === 'completed' && (targetStatus === 'completed' || targetStatus === 'running');
             const isSelected = selectedWireIndex === i;
             const isHovered = hoveredWireIndex === i;
+            const isReconnecting = reconnecting?.wireIndex === i;
             
             // Check if this wire has a loop configuration
             const hasLoop = !!(w as any).loop;
@@ -346,7 +351,8 @@ export function WorkflowCanvas({
 
             // Special colors for back edges, loop wires, and loop breaks
             // Orange = continues in loop, Grey = exits loop (loopBreak)
-            const wireColor = isSelected ? '#ef4444'
+            const wireColor = isReconnecting ? '#f59e0b' // Amber for reconnecting wire
+              : isSelected ? '#ef4444'
               : isActiveWire ? '#6366f1'
               : isCompletedWire ? '#10b981'
               : isHovered ? '#94a3b8'
@@ -355,7 +361,8 @@ export function WorkflowCanvas({
               : isBackEdge ? '#f59e0b' // Amber for back edges
               : '#cbd5e1'; // Grey for normal and loopBreak
 
-            const markerEnd = isSelected ? 'url(#ah-selected)'
+            const markerEnd = isReconnecting ? 'url(#ah-loop)' // Amber marker for reconnecting
+              : isSelected ? 'url(#ah-selected)'
               : isActiveWire ? 'url(#ah-active)'
               : isCompletedWire ? 'url(#ah-completed)'
               : isInsideLoop ? 'url(#ah-loop-break)' // Reuse orange marker
@@ -379,16 +386,22 @@ export function WorkflowCanvas({
                     e.stopPropagation();
                     onWireSelect?.(i);
                   }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onWireContextMenu?.(i, e as any);
+                  }}
                 />
 
                 {/* Main wire path */}
                 <path
                   d={pathD}
                   stroke={wireColor}
-                  strokeWidth={isSelected ? 3 : isActiveWire ? 3 : isHovered ? 2.5 : 2}
+                  strokeWidth={isReconnecting ? 3 : isSelected ? 3 : isActiveWire ? 3 : isHovered ? 2.5 : 2}
+                  strokeDasharray={isReconnecting ? '8 4' : undefined}
                   fill="none"
                   markerEnd={markerEnd}
-                  className={`transition-all duration-200 ${isActiveWire ? 'drop-shadow-md' : ''} ${isSelected ? 'drop-shadow-md' : ''} ${isBackEdge ? 'stroke-dasharray-none' : ''}`}
+                  className={`transition-all duration-200 ${isActiveWire ? 'drop-shadow-md' : ''} ${isSelected ? 'drop-shadow-md' : ''} ${isReconnecting ? 'drop-shadow-md animate-pulse' : ''} ${isBackEdge ? 'stroke-dasharray-none' : ''}`}
                   style={{ pointerEvents: 'none' }}
                 />
 
@@ -468,7 +481,7 @@ export function WorkflowCanvas({
                 )}
 
                 {/* Delete button on hover/select */}
-                {(isSelected || isHovered) && onWireDelete && (
+                {(isSelected || isHovered) && onWireDelete && !isReconnecting && (
                   <g
                     transform={`translate(${midX}, ${midY})`}
                     className="cursor-pointer"
@@ -495,6 +508,61 @@ export function WorkflowCanvas({
                       <line x1="4" y1="-4" x2="-4" y2="4" />
                     </g>
                   </g>
+                )}
+
+                {/* Disconnect handles at endpoints when wire is selected */}
+                {isSelected && onWireReconnect && !isReconnecting && (
+                  <>
+                    {/* Source endpoint disconnect handle */}
+                    <g
+                      transform={`translate(${x1}, ${y1})`}
+                      className="cursor-pointer"
+                      style={{ pointerEvents: 'all' }}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onWireReconnect(i, 'from');
+                      }}
+                    >
+                      <circle r="14" fill="transparent" />
+                      <circle 
+                        r="10" 
+                        fill="#fef3c7" 
+                        stroke="#f59e0b" 
+                        strokeWidth="2" 
+                        className="drop-shadow-md hover:fill-amber-100 hover:stroke-amber-600 transition-all"
+                      />
+                      {/* Unplug icon */}
+                      <g stroke="#f59e0b" strokeWidth="1.5" strokeLinecap="round" fill="none">
+                        <path d="M-3,-3 L3,3 M-1,-4 L-4,-1 M1,4 L4,1" />
+                      </g>
+                    </g>
+
+                    {/* Target endpoint disconnect handle */}
+                    <g
+                      transform={`translate(${x2}, ${y2})`}
+                      className="cursor-pointer"
+                      style={{ pointerEvents: 'all' }}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onWireReconnect(i, 'to');
+                      }}
+                    >
+                      <circle r="14" fill="transparent" />
+                      <circle 
+                        r="10" 
+                        fill="#fef3c7" 
+                        stroke="#f59e0b" 
+                        strokeWidth="2" 
+                        className="drop-shadow-md hover:fill-amber-100 hover:stroke-amber-600 transition-all"
+                      />
+                      {/* Unplug icon */}
+                      <g stroke="#f59e0b" strokeWidth="1.5" strokeLinecap="round" fill="none">
+                        <path d="M-3,-3 L3,3 M-1,-4 L-4,-1 M1,4 L4,1" />
+                      </g>
+                    </g>
+                  </>
                 )}
               </g>
             );
@@ -528,35 +596,55 @@ export function WorkflowCanvas({
         </svg>
 
         {/* Render trigger nodes */}
-        {model.triggers.map(n => (
-          <WorkflowNode
-            key={n.id}
-            node={n}
-            isTrigger
-            selected={selectedNodeId === n.id}
-            connecting={connectingFrom === n.id}
-            executionStatus={executionState?.flowId === selectedId ? executionState.stepStates[n.id] : undefined}
-            onSelect={() => onNodeSelect?.(n.id)}
-            onMouseDown={e => onNodeMouseDown?.(n.id, e)}
-            onContextMenu={e => onNodeContextMenu?.(n.id, e)}
-            onConnect={() => onNodeConnect?.(n.id)}
-          />
-        ))}
+        {model.triggers.map(n => {
+          // Check if this node is a valid reconnect target
+          const wire = reconnecting ? model.wires[reconnecting.wireIndex] : null;
+          const isReconnectTarget = reconnecting && wire && (
+            (reconnecting.end === 'from' && n.id !== wire.to) ||
+            (reconnecting.end === 'to' && n.id !== wire.from)
+          );
+          
+          return (
+            <WorkflowNode
+              key={n.id}
+              node={n}
+              isTrigger
+              selected={selectedNodeId === n.id}
+              connecting={connectingFrom === n.id}
+              reconnectTarget={isReconnectTarget}
+              executionStatus={executionState?.flowId === selectedId ? executionState.stepStates[n.id] : undefined}
+              onSelect={() => onNodeSelect?.(n.id)}
+              onMouseDown={e => onNodeMouseDown?.(n.id, e)}
+              onContextMenu={e => onNodeContextMenu?.(n.id, e)}
+              onConnect={() => onNodeConnect?.(n.id)}
+            />
+          );
+        })}
 
         {/* Render step nodes */}
-        {model.nodes.map(n => (
-          <WorkflowNode
-            key={n.id}
-            node={n}
-            selected={selectedNodeId === n.id}
-            connecting={connectingFrom === n.id}
-            executionStatus={executionState?.flowId === selectedId ? executionState.stepStates[n.id] : undefined}
-            onSelect={() => onNodeSelect?.(n.id)}
-            onMouseDown={e => onNodeMouseDown?.(n.id, e)}
-            onContextMenu={e => onNodeContextMenu?.(n.id, e)}
-            onConnect={() => onNodeConnect?.(n.id)}
-          />
-        ))}
+        {model.nodes.map(n => {
+          // Check if this node is a valid reconnect target
+          const wire = reconnecting ? model.wires[reconnecting.wireIndex] : null;
+          const isReconnectTarget = reconnecting && wire && (
+            (reconnecting.end === 'from' && n.id !== wire.to) ||
+            (reconnecting.end === 'to' && n.id !== wire.from)
+          );
+          
+          return (
+            <WorkflowNode
+              key={n.id}
+              node={n}
+              selected={selectedNodeId === n.id}
+              connecting={connectingFrom === n.id}
+              reconnectTarget={isReconnectTarget}
+              executionStatus={executionState?.flowId === selectedId ? executionState.stepStates[n.id] : undefined}
+              onSelect={() => onNodeSelect?.(n.id)}
+              onMouseDown={e => onNodeMouseDown?.(n.id, e)}
+              onContextMenu={e => onNodeContextMenu?.(n.id, e)}
+              onConnect={() => onNodeConnect?.(n.id)}
+            />
+          );
+        })}
 
         {/* Empty State */}
         {model.triggers.length === 0 && model.nodes.length === 0 && (
@@ -578,6 +666,14 @@ export function WorkflowCanvas({
         <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg z-50 flex items-center gap-2 animate-in slide-in-from-bottom-centered">
           <div className="w-2 h-2 bg-indigo-400 rounded-full animate-pulse" />
           Select a target node to connect
+        </div>
+      )}
+
+      {/* Reconnecting mode indicator */}
+      {reconnecting && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-amber-600 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg z-50 flex items-center gap-2 animate-in slide-in-from-bottom-centered">
+          <div className="w-2 h-2 bg-amber-300 rounded-full animate-pulse" />
+          Click a node to reconnect the {reconnecting.end === 'from' ? 'source' : 'target'} • Press Esc to cancel
         </div>
       )}
 

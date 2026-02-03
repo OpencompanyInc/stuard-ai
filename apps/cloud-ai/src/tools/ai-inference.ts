@@ -103,7 +103,7 @@ export const aiInferenceTool = createTool({
     model: z.string().describe('Model used'),
     error: z.string().optional(),
   }),
-  execute: async ({ context, writer }: any) => {
+  execute: async (inputData: any, { writer }: any) => {
     const {
       prompt,
       input,
@@ -112,7 +112,7 @@ export const aiInferenceTool = createTool({
       model: modelId,
       temperature,
       systemPrompt,
-    } = context as {
+    } = (inputData || {}) as {
       prompt: string;
       input?: string;
       mode: 'text' | 'json';

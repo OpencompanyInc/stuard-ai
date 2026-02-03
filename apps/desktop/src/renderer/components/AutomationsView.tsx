@@ -31,7 +31,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
       </div>
 
       {/* Content */}
-      <div className="space-y-6">
+      <div className="space-y-6" data-onboarding="automations-list">
         {stuards.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 px-4 text-center bg-theme-card rounded-theme-card border border-theme border-dashed">
             <div className="w-16 h-16 bg-theme-hover rounded-full flex items-center justify-center mb-4 shadow-sm border border-theme">

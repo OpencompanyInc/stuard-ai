@@ -79,13 +79,29 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
         return <BooleanToggle value={Boolean(value)} onChange={onChange} />;
 
       case 'number':
+        // Allow template syntax like {{step.output}} as well as plain numbers
+        const numValue = value ?? '';
+        const isTemplateOrString = typeof numValue === 'string' && (numValue.includes('{{') || numValue.includes('$vars'));
         return (
-          <input
-            type="number"
-            value={value ?? ''}
-            onChange={e => onChange(e.target.value === '' ? undefined : Number(e.target.value))}
+          <TextInputWithVariables
+            value={String(numValue)}
+            onChange={(v: string) => {
+              // If it looks like a template or variable reference, keep as string
+              if (v.includes('{{') || v.includes('$vars') || v.includes('{{')) {
+                onChange(v);
+              } else if (v === '') {
+                onChange(undefined);
+              } else if (!isNaN(Number(v))) {
+                // Pure number - convert to number type
+                onChange(Number(v));
+              } else {
+                // Keep as string for partial input
+                onChange(v);
+              }
+            }}
             placeholder={placeholder || '0'}
-            className="w-full px-4 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 transition-all shadow-sm"
+            upstreamNodes={upstreamNodes}
+            workflowVariables={workflowVariables}
           />
         );
 

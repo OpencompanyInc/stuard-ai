@@ -82,7 +82,7 @@ export function WorkflowSidebar({
   }
 
   return (
-    <aside className="w-[280px] bg-[#fdfdfd] border-r border-slate-100 flex flex-col h-full shrink-0 z-20">
+    <aside className="w-[280px] bg-[#fdfdfd] border-r border-slate-100 flex flex-col h-full shrink-0 z-20" data-onboarding="workflow-sidebar">
       <div className="h-14 px-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
         <div className="flex items-center gap-2.5 font-bold text-slate-800 text-sm">
           <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-xl flex items-center justify-center shadow-sm text-white">

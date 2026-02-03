@@ -59,8 +59,8 @@ export const text_to_speech = createTool({
     played: z.boolean().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context, writer }) => {
-    const { text, voice, speed, format, save, play, outputPath } = context;
+  execute: async (inputData, { writer }) => {
+    const { text, voice, speed, format, save, play, outputPath  } = inputData;
 
     try {
       const voice_instance = getVoiceInstance();

@@ -318,11 +318,13 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
   };
 
   return (
-    <div className="flex flex-col w-full max-h-[320px] bg-theme-card/95 backdrop-blur-xl rounded-xl border border-theme/20 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 ring-1 ring-theme/10">
+    <div 
+      className="flex flex-col w-full max-h-[320px] bg-gray-100/95 text-theme-fg rounded-xl border border-gray-300/50 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+    >
       {/* Header / Path */}
-      <div className="flex items-center gap-2 px-3 py-2.5 bg-theme-hover/30 border-b border-theme/10 text-[12px] font-mono select-none">
+      <div className="flex items-center gap-2 px-3 py-2.5 bg-gray-200/40 border-b border-gray-200 text-[12px] font-medium select-none">
         <div className="flex items-center gap-1.5 flex-1 truncate">
-          <div className="w-5 h-5 rounded-md bg-primary/20 flex items-center justify-center">
+          <div className="w-5 h-5 rounded-md bg-primary/10 flex items-center justify-center">
             <Search className="w-3 h-3 text-primary" />
           </div>
           <div className="flex flex-col leading-none gap-0.5">
@@ -364,7 +366,7 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
         )}
         
         {!loading && !error && sortedItems.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-10 text-theme-muted/50 text-[12px]">
+          <div className="flex flex-col items-center justify-center py-10 text-theme-muted text-[12px]">
             <Folder className="w-8 h-8 mb-2 opacity-20" />
             <span>No items found</span>
           </div>
@@ -379,7 +381,7 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
                 id={`filenav-item-${i}`}
                 className={clsx(
                   "group flex items-center gap-3 px-2.5 py-2 rounded-lg text-left transition-all cursor-pointer border border-transparent",
-                  isSelected ? "bg-theme-hover border-theme/10 shadow-sm" : "hover:bg-theme-hover/50 hover:border-theme/5"
+                  isSelected ? "bg-theme-active border-theme shadow-sm" : "hover:bg-theme-hover hover:border-theme/50"
                 )}
                 onClick={(e) => handleEntryClick(item, e)}
                 onMouseEnter={() => setSelectedIndex(i)}
@@ -387,10 +389,11 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
                 {/* Icon */}
                 <div className={clsx(
                   "w-6 h-6 flex items-center justify-center shrink-0 rounded-md transition-colors",
-                  item.type === 'space' ? (isSelected ? "bg-primary text-primary-fg shadow-primary/20 shadow-lg" : "bg-primary/10 text-primary") :
-                  item.type === 'canvas' ? (isSelected ? "bg-purple-500 text-white shadow-purple-500/20 shadow-lg" : "bg-purple-500/10 text-purple-500") :
-                  item.isDirectory ? (isSelected ? "bg-theme-fg text-theme-bg" : "bg-theme-fg/10 text-theme-fg") :
-                  (isSelected ? "bg-theme-fg text-theme-bg" : "bg-theme-fg/5 text-theme-muted")
+                  item.type === 'space' ? (isSelected ? "bg-blue-500 text-white shadow-blue-500/20 shadow-lg" : "bg-blue-500/10 text-blue-400") :
+                  item.type === 'canvas' ? (isSelected ? "bg-purple-500 text-white shadow-purple-500/20 shadow-lg" : "bg-purple-500/10 text-purple-400") :
+                  item.isDirectory ? (isSelected ? "bg-theme-fg text-theme-bg" : "bg-theme-hover text-theme-muted") :
+                  item.type === 'space-item' ? (isSelected ? "bg-blue-500 text-white shadow-blue-500/20 shadow-lg" : "bg-blue-500/10 text-blue-400") :
+                  (isSelected ? "bg-primary text-primary-fg shadow-primary/20 shadow-lg" : "bg-primary/10 text-primary")
                 )}>
                   {item.type === 'space' ? <Layout className="w-3.5 h-3.5" /> :
                    item.type === 'canvas' ? <PenTool className="w-3.5 h-3.5" /> :
@@ -404,17 +407,17 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
                   <span className={clsx(
                     "text-[13px] truncate transition-colors",
                     isSelected ? "text-theme-fg font-semibold" : 
-                    item.isDirectory ? "text-theme-fg/90 font-medium" : "text-theme-fg/70"
+                    item.isDirectory ? "text-theme-fg font-medium" : "text-theme-muted"
                   )}>
                     {item.name}
                   </span>
                   {item.type === 'space' && (
-                    <span className={clsx("text-[10px] truncate transition-colors", isSelected ? "text-primary" : "text-theme-muted")}>
+                    <span className={clsx("text-[10px] truncate transition-colors", isSelected ? "text-blue-300" : "text-theme-muted")}>
                       Space • {item.metadata?.type}
                     </span>
                   )}
                   {item.type === 'canvas' && (
-                    <span className={clsx("text-[10px] truncate transition-colors", isSelected ? "text-purple-400" : "text-theme-muted")}>
+                    <span className={clsx("text-[10px] truncate transition-colors", isSelected ? "text-purple-300" : "text-theme-muted")}>
                       Canvas Document
                     </span>
                   )}
@@ -427,7 +430,7 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
                     onClick={(e) => handleAddContext(item, e)}
                     className={clsx(
                       "p-1.5 rounded-md transition-colors",
-                      isSelected ? "bg-theme-fg/10 text-theme-fg hover:bg-theme-fg/20" : "hover:bg-theme-hover text-theme-muted hover:text-theme-fg"
+                      isSelected ? "bg-theme-bg/20 text-theme-fg hover:bg-theme-bg/30" : "hover:bg-theme-hover text-theme-muted hover:text-theme-fg"
                     )}
                     title={item.isDirectory ? "Add folder as context" : item.type === 'space' ? "Add space as context" : "Add to context"}
                   >
@@ -436,7 +439,7 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
                   
                   {/* Navigate Hint */}
                   {item.isDirectory && (
-                    <div className={clsx("px-1.5 py-0.5 rounded text-[10px] font-mono", isSelected ? "text-theme-muted" : "text-theme-muted/50")}>
+                    <div className={clsx("px-1.5 py-0.5 rounded text-[10px] font-mono", isSelected ? "text-theme-muted" : "text-theme-muted/70")}>
                       ↵
                     </div>
                   )}
@@ -448,13 +451,13 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
       </div>
       
       {/* Footer Hint */}
-      <div className="px-3 py-2 bg-theme-bg/50 border-t border-theme/10 text-[10px] text-theme-muted flex items-center justify-between font-medium">
+      <div className="px-3 py-2 bg-theme-bg/50 border-t border-theme text-[10px] text-theme-muted flex items-center justify-between font-medium">
         <div className="flex items-center gap-3">
-          <span className="flex items-center gap-1"><span className="bg-theme-fg/10 px-1 rounded text-theme-fg/60">↑↓</span> to navigate</span>
-          <span className="flex items-center gap-1"><span className="bg-theme-fg/10 px-1 rounded text-theme-fg/60">↵</span> to select</span>
+          <span className="flex items-center gap-1"><span className="bg-theme-hover px-1 rounded text-theme-fg">↑↓</span> to navigate</span>
+          <span className="flex items-center gap-1"><span className="bg-theme-hover px-1 rounded text-theme-fg">↵</span> to select</span>
         </div>
         <div className="flex items-center gap-1">
-           <span className="bg-theme-fg/10 px-1 rounded text-theme-fg/60">@</span> 
+           <span className="bg-theme-hover px-1 rounded text-theme-fg">@</span> 
            <span>type to filter</span>
         </div>
       </div>

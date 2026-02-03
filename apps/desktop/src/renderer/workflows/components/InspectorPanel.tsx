@@ -639,16 +639,26 @@ function WireLoopEditor({
   index,
   onUpdate,
   nodesForSuggestions,
-  workflowVariables
+  workflowVariables,
+  model
 }: {
   wire: any;
   index: number;
   onUpdate: (i: number, u: any) => void;
   nodesForSuggestions: UpstreamNode[];
   workflowVariables?: any[];
+  model: DesignerModel;
 }) {
   const hasLoop = !!wire.loop;
   const loopType = wire.loop?.type || 'forEach';
+
+  // Check if there's a sibling wire from the same source that has a loop
+  const hasOutgoingLoopFromSameNode = useMemo(() => {
+    const wires = model.wires || [];
+    return wires.some((w: any) => w.from === wire.from && w.to !== wire.to && w.loop && w.loop.type);
+  }, [model.wires, wire.from, wire.to]);
+
+  const fanoutMode = (wire.loopFanoutMode === 'parallel' ? 'parallel' : 'wait');
   
   const [isExpanded, setIsExpanded] = useState(hasLoop);
   
@@ -831,6 +841,28 @@ function WireLoopEditor({
           </div>
         </div>
       )}
+
+      {/* Loop Fanout Mode - shown for non-loop wires when sibling has loop */}
+      {!hasLoop && hasOutgoingLoopFromSameNode && (
+        <div className="pt-2 border-t border-slate-200/50">
+          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 block">
+            When sibling loop is active
+          </label>
+          <select
+            value={fanoutMode}
+            onChange={(e) => onUpdate(index, { loopFanoutMode: e.target.value })}
+            className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+          >
+            <option value="wait">Wait for loop to finish</option>
+            <option value="parallel">Run in parallel with loop</option>
+          </select>
+          <p className="text-[10px] text-slate-400 mt-1">
+            {fanoutMode === 'wait'
+              ? 'This connection executes after the loop completes'
+              : 'This connection executes immediately, in parallel with the loop'}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -857,9 +889,6 @@ function WireConditionEditor({
   const isConditional = wire.guard && wire.guard !== 'always';
 
   const [editorMode, setEditorMode] = useState<'builder' | 'advanced'>('builder');
-
-  // Track if we're currently updating to prevent loops
-  const isUpdatingRef = React.useRef(false);
 
   const currentNode = useMemo(() => {
     return model.nodes.find(n => n.id === selectedNodeId);
@@ -923,31 +952,60 @@ function WireConditionEditor({
   }, []);
 
   // Initialize builder state from wire.guard
-  const initialBuilder = useMemo(() => parseGuardToBuilder(wire.guard), [wire.guard, parseGuardToBuilder]);
+  const [builderLhs, setBuilderLhs] = useState<string>('');
+  const [builderOp, setBuilderOp] = useState<string>('==');
+  const [builderRhs, setBuilderRhs] = useState<string>('');
+  const [localText, setLocalText] = useState('');
 
-  const [builderLhs, setBuilderLhs] = useState<string>(initialBuilder?.lhs || '');
-  const [builderOp, setBuilderOp] = useState<string>(initialBuilder?.op || '==');
-  const [builderRhs, setBuilderRhs] = useState<string>(initialBuilder?.rhs || '');
+  // Track previous guard to detect actual changes (fixes wire switching issue)
+  const prevGuardRef = React.useRef<any>(null);
+  const prevWireIdRef = React.useRef<string>('');
 
-  // Use local state for advanced text editor
-  const initialText = useMemo(() => {
-    const s = guardToString(wire.guard);
-    return s === 'always' ? '' : s;
-  }, [wire.guard]);
-
-  const [localText, setLocalText] = useState(initialText);
-
-  // Sync builder state when wire.guard changes externally (not from our own updates)
+  // Sync builder state when wire.guard changes or when switching to a different wire
   useEffect(() => {
-    if (isUpdatingRef.current) return;
+    // Create a unique wire identifier
+    const wireId = `${wire.from}->${wire.to}`;
+    const currentGuardStr = JSON.stringify(wire.guard);
+    const prevGuardStr = JSON.stringify(prevGuardRef.current);
+    const wireChanged = wireId !== prevWireIdRef.current;
+    
+    // Only sync if guard actually changed or if we switched wires
+    if (currentGuardStr !== prevGuardStr || wireChanged) {
+      prevGuardRef.current = wire.guard;
+      prevWireIdRef.current = wireId;
+      
+      const parsed = parseGuardToBuilder(wire.guard);
+      if (parsed) {
+        setBuilderLhs(parsed.lhs);
+        setBuilderOp(parsed.op);
+        setBuilderRhs(parsed.rhs);
+      } else {
+        // Reset to empty when guard is cleared or not parseable
+        setBuilderLhs('');
+        setBuilderOp('==');
+        setBuilderRhs('');
+      }
+      
+      // Update text for advanced mode
+      const guardStr = guardToString(wire.guard);
+      setLocalText(guardStr === 'always' ? '' : guardStr);
+    }
+  }, [wire.guard, wire.from, wire.to, parseGuardToBuilder]);
+  
+  // Also sync on initial mount
+  useEffect(() => {
     const parsed = parseGuardToBuilder(wire.guard);
     if (parsed) {
       setBuilderLhs(parsed.lhs);
       setBuilderOp(parsed.op);
       setBuilderRhs(parsed.rhs);
     }
-    setLocalText(initialText);
-  }, [wire.guard, parseGuardToBuilder, initialText]);
+    const guardStr = guardToString(wire.guard);
+    setLocalText(guardStr === 'always' ? '' : guardStr);
+    prevGuardRef.current = wire.guard;
+    prevWireIdRef.current = `${wire.from}->${wire.to}`;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Find target node to get its label
   const targetNode = useMemo(() => {
@@ -976,8 +1034,10 @@ function WireConditionEditor({
     if (mode === 'always') {
       onUpdate(index, { guard: 'always' });
       setBuilderLhs('');
+      setBuilderOp('==');
       setBuilderRhs('');
       setLocalText('');
+      setEditorMode('builder');
     } else {
       // Switching to conditional - set up initial state
       const firstVar = Array.isArray(workflowVariables) && workflowVariables[0]?.name
@@ -989,9 +1049,7 @@ function WireConditionEditor({
       setLocalText('');
       setEditorMode('builder');
       // Set initial guard
-      if (firstVar) {
-        onUpdate(index, { guard: { '==': [{ var: firstVar }, ''] } });
-      }
+      onUpdate(index, { guard: { if: { '==': [{ var: firstVar }, ''] } } });
     }
   };
 
@@ -1023,12 +1081,11 @@ function WireConditionEditor({
 
     // Build the guard and update
     if (newLhs) {
-      isUpdatingRef.current = true;
       const rhsValue = parseRhsValue(newRhs);
       const logic = { [newOp]: [{ var: newLhs }, rhsValue] };
+      // Update the prevGuardRef to prevent the useEffect from overwriting our change
+      prevGuardRef.current = logic;
       onUpdate(index, { guard: logic });
-      // Reset flag after a tick
-      setTimeout(() => { isUpdatingRef.current = false; }, 0);
     }
   }, [builderLhs, builderOp, builderRhs, index, onUpdate, parseRhsValue]);
 
@@ -1062,6 +1119,7 @@ function WireConditionEditor({
         onUpdate={onUpdate}
         nodesForSuggestions={nodesForSuggestions}
         workflowVariables={workflowVariables}
+        model={model}
       />
 
       {/* Condition Section */}
@@ -1094,7 +1152,11 @@ function WireConditionEditor({
                   Builder
                 </button>
                 <button
-                  onClick={() => { setEditorMode('advanced'); setLocalText(initialText); }}
+                  onClick={() => { 
+                    setEditorMode('advanced'); 
+                    const guardStr = guardToString(wire.guard);
+                    setLocalText(guardStr === 'always' ? '' : guardStr); 
+                  }}
                   className={`px-2 py-1 text-xs font-semibold rounded-md transition-colors ${editorMode === 'advanced' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-100'}`}
                 >
                   Advanced

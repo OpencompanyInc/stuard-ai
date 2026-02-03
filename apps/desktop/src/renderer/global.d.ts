@@ -53,7 +53,7 @@ declare global {
       listDirectory: (path: string) => Promise<{ ok: boolean; entries?: Array<{ name: string; path: string; isDirectory: boolean }>; error?: string }>;
       pickFiles: (options?: { type?: string; multiple?: boolean; title?: string; includeData?: boolean }) => Promise<{ ok: boolean; files?: Array<{ name: string; path: string; data?: string; mimeType?: string }>; error?: string }>;
       pickFolder: (options?: { title?: string; multiple?: boolean }) => Promise<{ ok: boolean; folders?: Array<{ path: string }>; error?: string }>;
-      onShow: (cb: () => void) => void;
+      onShow: (cb: () => void) => () => void;
       onOpenChat: (cb: (id: string) => void) => void | (() => void);
       onDashboardNavigate: (cb: (data: { tab: string }) => void) => () => void;
       onWorkflowsNavigate: (cb: (data: { marketplaceSlug: string }) => void) => () => void;
@@ -140,6 +140,10 @@ declare global {
 
       // File Icons
       getFileIcon: (filePath: string, options?: { size?: 'small' | 'normal' | 'large' }) => Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
+
+      // Global Hotkey
+      setGlobalHotkey: (accelerator: string) => Promise<{ ok: boolean; error?: string }>;
+      getGlobalHotkey: () => Promise<{ ok: boolean; hotkey?: string }>;
     };
   }
 }

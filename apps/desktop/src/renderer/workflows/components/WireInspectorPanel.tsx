@@ -155,6 +155,7 @@ interface WireInspectorPanelProps {
   onUpdate: (m: DesignerModel) => void;
   onDelete: () => void;
   onClose: () => void;
+  onReconnect?: (end: 'from' | 'to') => void;
 }
 
 // Find all upstream nodes by tracing wires backwards
@@ -186,7 +187,7 @@ function getUpstreamNodes(model: DesignerModel, nodeId: string): UpstreamNode[] 
   return result;
 }
 
-export function WireInspectorPanel({ model, wireIndex, onUpdate, onDelete, onClose }: WireInspectorPanelProps) {
+export function WireInspectorPanel({ model, wireIndex, onUpdate, onDelete, onClose, onReconnect }: WireInspectorPanelProps) {
   const wire = model.wires[wireIndex];
   
   if (!wire) {
@@ -260,7 +261,7 @@ export function WireInspectorPanel({ model, wireIndex, onUpdate, onDelete, onClo
       </div>
 
       <div className="flex-1 overflow-y-auto scrollbar-minimal p-5 space-y-6">
-        {/* Connection Info */}
+        {/* Connection Info with Reconnect Buttons */}
         <div className="space-y-3">
           <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
             <div className="flex-1 text-center">
@@ -275,6 +276,30 @@ export function WireInspectorPanel({ model, wireIndex, onUpdate, onDelete, onClo
               <div className="text-[10px] text-slate-400 font-mono">#{wire.to}</div>
             </div>
           </div>
+          
+          {/* Quick Reconnect Buttons */}
+          {onReconnect && (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => onReconnect('from')}
+                className="py-2.5 px-3 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 hover:border-amber-300 rounded-lg transition-all flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+                Change Source
+              </button>
+              <button
+                onClick={() => onReconnect('to')}
+                className="py-2.5 px-3 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 hover:border-amber-300 rounded-lg transition-all flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+                Change Target
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Loop Configuration */}
@@ -284,6 +309,7 @@ export function WireInspectorPanel({ model, wireIndex, onUpdate, onDelete, onClo
           upstreamNodes={upstreamNodes}
           workflowVariables={model.variables}
           isBackEdge={isBackEdge}
+          model={model}
         />
 
         {/* Loop Break - End loop scope */}
@@ -324,16 +350,26 @@ function WireLoopSection({
   onUpdate,
   upstreamNodes,
   workflowVariables,
-  isBackEdge = false
+  isBackEdge = false,
+  model
 }: {
   wire: DesignerWire;
   onUpdate: (updates: Partial<DesignerWire>) => void;
   upstreamNodes: UpstreamNode[];
   workflowVariables?: WorkflowVariable[];
   isBackEdge?: boolean;
+  model: DesignerModel;
 }) {
   const hasLoop = !!(wire as any).loop;
   const loopType = (wire as any).loop?.type || 'repeat'; // Default to repeat for back edges
+
+  // Check if there's a sibling wire from the same source that has a loop
+  const hasOutgoingLoopFromSameNode = React.useMemo(() => {
+    const wires = model.wires || [];
+    return wires.some(w => w.from === wire.from && w.to !== wire.to && (w as any).loop && (w as any).loop.type);
+  }, [model.wires, wire.from, wire.to]);
+
+  const fanoutMode = ((wire as any).loopFanoutMode === 'parallel' ? 'parallel' : 'wait') as 'wait' | 'parallel';
 
   // Auto-configure loop for back edges that don't have a loop yet
   React.useEffect(() => {
@@ -551,6 +587,29 @@ function WireLoopSection({
             </div>
           </div>
         )}
+
+        {/* Loop Fanout Mode - shown for non-loop wires when sibling has loop */}
+        {!hasLoop && hasOutgoingLoopFromSameNode && (
+          <div className="pt-3 border-t border-slate-200/50">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
+              When sibling loop is active
+            </label>
+            <StyledSelect
+              value={fanoutMode}
+              onChange={(v) => onUpdate({ loopFanoutMode: v as any })}
+              size="xs"
+              options={[
+                { value: 'wait', label: 'Wait for loop to finish' },
+                { value: 'parallel', label: 'Run in parallel with loop' },
+              ]}
+            />
+            <p className="text-[10px] text-slate-400 mt-1.5">
+              {fanoutMode === 'wait' 
+                ? 'This connection will execute after the loop completes all iterations'
+                : 'This connection will execute immediately, in parallel with the loop'}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -603,32 +662,55 @@ function WireConditionSection({
     }
   }, []);
 
-  const initialBuilder = useMemo(() => parseGuardToBuilder(wire.guard), [wire.guard, parseGuardToBuilder]);
-  const [builderLhs, setBuilderLhs] = useState<string>(initialBuilder?.lhs || '');
-  const [builderOp, setBuilderOp] = useState<string>(initialBuilder?.op || '==');
-  const [builderRhs, setBuilderRhs] = useState<string>(initialBuilder?.rhs || '');
+  // Parse guard into builder fields - key is using wire.guard directly, not memoized
+  const [builderLhs, setBuilderLhs] = useState<string>('');
+  const [builderOp, setBuilderOp] = useState<string>('==');
+  const [builderRhs, setBuilderRhs] = useState<string>('');
+  const [localText, setLocalText] = useState('');
 
-  const initialText = useMemo(() => {
-    const s = guardToString(wire.guard);
-    return s === 'always' ? '' : s;
-  }, [wire.guard]);
-  const [localText, setLocalText] = useState(initialText);
-
-  // Sync when wire changes
+  // Sync builder state when wire.guard changes - this is the critical fix
+  // Using a ref to track the previous guard to detect actual changes
+  const prevGuardRef = React.useRef<any>(null);
+  
+  useEffect(() => {
+    // Always sync when guard changes (compare by JSON to handle object guards)
+    const currentGuardStr = JSON.stringify(wire.guard);
+    const prevGuardStr = JSON.stringify(prevGuardRef.current);
+    
+    if (currentGuardStr !== prevGuardStr) {
+      prevGuardRef.current = wire.guard;
+      
+      const parsed = parseGuardToBuilder(wire.guard);
+      if (parsed) {
+        setBuilderLhs(parsed.lhs);
+        setBuilderOp(parsed.op);
+        setBuilderRhs(parsed.rhs);
+      } else {
+        // Reset to empty when guard is cleared or not parseable
+        setBuilderLhs('');
+        setBuilderOp('==');
+        setBuilderRhs('');
+      }
+      
+      // Update text for advanced mode
+      const guardStr = guardToString(wire.guard);
+      setLocalText(guardStr === 'always' ? '' : guardStr);
+    }
+  }, [wire.guard, parseGuardToBuilder]);
+  
+  // Also sync on initial mount
   useEffect(() => {
     const parsed = parseGuardToBuilder(wire.guard);
     if (parsed) {
       setBuilderLhs(parsed.lhs);
       setBuilderOp(parsed.op);
       setBuilderRhs(parsed.rhs);
-    } else if (!wire.guard || wire.guard === 'always') {
-      // Reset to empty when guard is cleared
-      setBuilderLhs('');
-      setBuilderOp('==');
-      setBuilderRhs('');
     }
-    setLocalText(initialText);
-  }, [wire.guard, parseGuardToBuilder, initialText]);
+    const guardStr = guardToString(wire.guard);
+    setLocalText(guardStr === 'always' ? '' : guardStr);
+    prevGuardRef.current = wire.guard;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Build operand options
   const operandOptions = useMemo(() => {
@@ -665,11 +747,26 @@ function WireConditionSection({
       setBuilderLhs('');
       setBuilderOp('==');
       setBuilderRhs('');
+      setLocalText('');
+      setEditorMode('builder');
     } else {
-      // Switch to conditional mode with empty condition
-      setBuilderLhs('');
+      const firstVar = Array.isArray(workflowVariables) && workflowVariables[0]?.name
+        ? `workflow.${workflowVariables[0].name}`
+        : operandOptions[0]?.value || '';
+
+      setBuilderLhs(firstVar);
       setBuilderOp('==');
       setBuilderRhs('');
+      setLocalText('');
+      setEditorMode('builder');
+
+      onUpdate({
+        guard: {
+          if: {
+            '==': [{ var: firstVar }, '']
+          }
+        }
+      });
     }
   };
 
@@ -744,7 +841,11 @@ function WireConditionSection({
                 Builder
               </button>
               <button
-                onClick={() => { setEditorMode('advanced'); setLocalText(initialText); }}
+                onClick={() => { 
+                  setEditorMode('advanced'); 
+                  const guardStr = guardToString(wire.guard);
+                  setLocalText(guardStr === 'always' ? '' : guardStr); 
+                }}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${editorMode === 'advanced' ? 'bg-amber-500 text-white' : 'text-slate-500 hover:bg-slate-100'}`}
               >
                 Advanced

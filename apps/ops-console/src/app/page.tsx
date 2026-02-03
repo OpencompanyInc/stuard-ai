@@ -140,15 +140,16 @@ export default function OpsDashboard() {
     return () => { clearInterval(interval); clearInterval(syncInterval); };
   }, []);
 
-  const doAction = async (type: string, payload: Record<string, unknown> = {}) => {
+  const doAction = async (type: string, payload: Record<string, unknown> = {}): Promise<boolean> => {
     // Client-side validation
     if (type === 'commit' && !payload.message) {
       setMessage('Error: Commit message is required');
-      return;
+      return false;
     }
 
     setLoading(true);
-    setMessage('');
+    setMessage(type === 'run-checks' ? 'Running local checks (this may take a minute)...' : 'Processing...');
+    
     try {
       const res = await fetch('/api/actions', {
         method: 'POST',
@@ -165,15 +166,30 @@ export default function OpsDashboard() {
         if (type === 'start-feature') setFeatureName('');
         
         await fetchStatus();
+        return true;
       } else {
         setMessage(`Error: ${data.error || 'Action failed'}`);
+        return false;
       }
     } catch (err) {
       console.error('Action error:', err);
       setMessage('Error: Network request failed');
+      return false;
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleShipToBeta = async () => {
+    // 1. Run local checks first
+    const checksPassed = await doAction('run-checks');
+    if (!checksPassed) return;
+
+    // 2. If passed, proceed to ship
+    // Small delay to let the user see the success message
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    await doAction('ship-to-beta', { targets: betaTargets, branch: selectedBetaBranch });
   };
 
   const updateChannels = [
@@ -429,6 +445,9 @@ export default function OpsDashboard() {
                 <div className="flex flex-col gap-2">
                   <button onClick={() => doAction('stage-all')} disabled={loading || status.isClean} className="btn-secondary w-full py-2 text-xs disabled:opacity-40">Stage All</button>
                   <button onClick={() => doAction('commit', { message: commitMsg })} disabled={loading || !commitMsg.trim()} className="btn-primary w-full py-2 text-xs disabled:opacity-40">Commit</button>
+                  <button onClick={() => doAction('run-checks')} disabled={loading} className="btn-secondary w-full py-2 text-xs disabled:opacity-40 flex items-center justify-center gap-2">
+                    <ShieldCheck className="w-3 h-3" /> Run Checks
+                  </button>
                 </div>
               </div>
             </div>
@@ -453,7 +472,7 @@ export default function OpsDashboard() {
                   <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={betaTargets.cloud} onChange={() => setBetaTargets(p => ({ ...p, cloud: !p.cloud }))} className="rounded" /> Cloud API</label>
                   <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={betaTargets.desktop} onChange={() => setBetaTargets(p => ({ ...p, desktop: !p.desktop }))} className="rounded" /> Desktop</label>
                 </div>
-                <button onClick={() => doAction('ship-beta', { targets: betaTargets, branch: selectedBetaBranch })} disabled={loading} className="btn-primary w-full py-2 text-xs disabled:opacity-40">🚀 Ship to Beta</button>
+                <button onClick={handleShipToBeta} disabled={loading} className="btn-primary w-full py-2 text-xs disabled:opacity-40">🚀 Ship to Beta</button>
               </div>
             </div>
 
@@ -470,7 +489,7 @@ export default function OpsDashboard() {
                   <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={stagingTargets.cloud} onChange={() => setStagingTargets(p => ({ ...p, cloud: !p.cloud }))} className="rounded" /> Cloud API</label>
                   <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={stagingTargets.desktop} onChange={() => setStagingTargets(p => ({ ...p, desktop: !p.desktop }))} className="rounded" /> Desktop</label>
                 </div>
-                <button onClick={() => doAction('ship-staging', { targets: stagingTargets })} disabled={loading || status.currentBranch !== 'staging'} className="btn-primary w-full py-2 text-xs disabled:opacity-40">🧪 Ship to Staging</button>
+                <button onClick={() => doAction('ship-to-staging', { targets: stagingTargets })} disabled={loading || status.currentBranch !== 'staging'} className="btn-primary w-full py-2 text-xs disabled:opacity-40">🧪 Ship to Staging</button>
                 {status.currentBranch !== 'staging' && <p className="text-[10px] text-amber-600 text-center">Switch to staging branch to release</p>}
               </div>
             </div>
@@ -492,7 +511,7 @@ export default function OpsDashboard() {
                   <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={prodTargets.cloud} onChange={() => setProdTargets(p => ({ ...p, cloud: !p.cloud }))} className="rounded" /> Cloud API</label>
                   <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={prodTargets.desktop} onChange={() => setProdTargets(p => ({ ...p, desktop: !p.desktop }))} className="rounded" /> Desktop</label>
                 </div>
-                <button onClick={() => doAction('ship-production', { version, targets: prodTargets })} disabled={loading || !version.trim() || status.currentBranch !== 'staging'} className="btn-primary w-full py-2 text-xs disabled:opacity-40">🚀 Ship to Production</button>
+                <button onClick={() => doAction('ship-to-prod', { version, targets: prodTargets })} disabled={loading || !version.trim() || status.currentBranch !== 'staging'} className="btn-primary w-full py-2 text-xs disabled:opacity-40">🚀 Ship to Production</button>
                 {status.currentBranch !== 'staging' && <p className="text-[10px] text-amber-600 text-center">Switch to staging branch to release</p>}
               </div>
             </div>

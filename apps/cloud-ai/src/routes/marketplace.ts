@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { verifyToken, getSupabaseService } from '../supabase';
 import { resolveEmbedder } from '../utils/embeddings';
 import { embed } from 'ai';
+import { analyzeWorkflowSecurity, quickSecurityCheck, type SecurityAnalysisResult } from '../marketplace/security-analyzer';
 
 // Helper to read JSON body
 async function readBody(req: IncomingMessage): Promise<any> {
@@ -70,6 +71,52 @@ export async function handleMarketplaceRoutes(
       return true;
     }
 
+    // Quick security check for obvious blockers
+    const quickCheck = quickSecurityCheck(spec);
+    if (quickCheck.blocked) {
+      res.writeHead(403, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ 
+        error: 'Security check failed', 
+        reason: quickCheck.reason,
+        code: 'SECURITY_BLOCKED'
+      }));
+      return true;
+    }
+
+    // Full AI-powered security analysis
+    let securityAnalysis: SecurityAnalysisResult | null = null;
+    try {
+      console.log('[marketplace] Running security analysis for:', name);
+      securityAnalysis = await analyzeWorkflowSecurity(spec, name, description);
+      console.log('[marketplace] Security analysis result:', {
+        passed: securityAnalysis.passed,
+        score: securityAnalysis.overallScore,
+        riskLevel: securityAnalysis.riskLevel,
+        issueCount: securityAnalysis.issues.length
+      });
+
+      if (!securityAnalysis.passed) {
+        res.writeHead(403, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ 
+          error: 'Workflow did not pass security review',
+          code: 'SECURITY_REVIEW_FAILED',
+          analysis: {
+            passed: securityAnalysis.passed,
+            score: securityAnalysis.overallScore,
+            riskLevel: securityAnalysis.riskLevel,
+            issues: securityAnalysis.issues,
+            warnings: securityAnalysis.warnings,
+            summary: securityAnalysis.summary,
+            recommendations: securityAnalysis.recommendations
+          }
+        }));
+        return true;
+      }
+    } catch (analysisError) {
+      console.error('[marketplace] Security analysis error (non-blocking):', analysisError);
+      // Continue with publishing but flag for manual review
+    }
+
     const supabase = getSupabaseService();
     if (!supabase) {
       res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -102,6 +149,8 @@ export async function handleMarketplaceRoutes(
         icon: icon || null,
         status: 'published',
         published_at: new Date().toISOString(),
+        security_score: securityAnalysis?.overallScore ?? null,
+        security_risk_level: securityAnalysis?.riskLevel ?? null,
       };
       
       // Only include embedding if we have one

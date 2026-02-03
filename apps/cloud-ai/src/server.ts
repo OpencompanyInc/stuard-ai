@@ -647,6 +647,16 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
           }
         } catch {}
 
+        // Inform agent about connected integrations and SIS categories
+        try {
+          const integrationsText = enabledIntegrations.length > 0
+            ? enabledIntegrations.join(', ')
+            : 'none';
+          const categoriesText = 'system, core, input, ui, vision, data, integrations, flow';
+          const sisHint = `Connected integrations: ${integrationsText}. Only a small core toolset is loaded; use sis_search_tools to discover additional tools. Available SIS categories: ${categoriesText}.`;
+          inputMessages = [{ role: 'system', content: sisHint }, ...inputMessages];
+        } catch {}
+
         // Apply user's persona and tone/style preferences if provided by the client
         try {
           const ctx: any = (msg as any)?.context || {};

@@ -11,6 +11,7 @@ import * as marketplaceTools from './marketplace-tools';
 import * as ttsTools from './tts-tools';
 import * as feedbackTools from './feedback-tools';
 import * as webhookTools from './webhook-tools';
+import * as httpTools from './http-tools';
 import { waitTool } from './wait';
 import { analyzeMediaTool } from './analyze-media';
 import { aiInferenceTool } from './ai-inference';
@@ -19,6 +20,7 @@ import { runSequentialTool, runParallelTool } from './workflow-system';
 import { resolveEmbedder, cosineSimilarity } from '../utils/embeddings';
 import { embedMany } from 'ai';
 import { getSupabaseService } from '../supabase';
+import { registerTool, getToolRegistry, getToolCategories, getTool } from './tool-registry';
 
 const MEMORY_AI_TOOL_IDS = new Set([
     'memory_retrieval',
@@ -49,23 +51,14 @@ const MEMORY_AI_TOOL_IDS = new Set([
 
 const MEMORY_AI_ALLOWLIST = new Set(['search_past_conversations', 'get_conversation_context']);
 
-// 1. Build Registry
-const TOOL_REGISTRY = new Map<string, any>();
-const TOOL_CATEGORIES = new Map<string, string[]>();
-
 let _syncPromise: Promise<void> | null = null;
 let _initialized = false;
-
-/** Get the tool registry map */
-export function getToolRegistry(): Map<string, any> {
-  return TOOL_REGISTRY;
-}
 
 /** Initialize tool registry if not already done */
 export function initToolRegistry(): void {
   if (_initialized) return;
   _initialized = true;
-  // Tools are registered during module load via register() calls below
+  // Tools are registered during module load via registerTool() calls below
 }
 
 export async function ensureToolEmbeddings() {
@@ -82,11 +75,13 @@ export async function ensureToolEmbeddings() {
 
     const toUpdate: any[] = [];
     const nameToCat = new Map<string, string>();
-    for (const [cat, names] of TOOL_CATEGORIES.entries()) {
+    const categories = getToolCategories();
+    for (const [cat, names] of categories.entries()) {
         for (const n of names) nameToCat.set(n, cat);
     }
 
-    for (const [name, tool] of TOOL_REGISTRY.entries()) {
+    const registry = getToolRegistry();
+    for (const [name, tool] of registry.entries()) {
         const description = tool.description || '';
         // Check if description changed or new tool
         if (!existingMap.has(name) || existingMap.get(name) !== description) {
@@ -117,26 +112,11 @@ export async function ensureToolEmbeddings() {
     }
 }
 
-function register(tool: any, category: string) {
-    try {
-        const name = tool?.id || tool?.name;
-        if (name && typeof tool?.execute === 'function') {
-            TOOL_REGISTRY.set(name, tool);
-            if (!TOOL_CATEGORIES.has(category)) {
-                TOOL_CATEGORIES.set(category, []);
-            }
-            TOOL_CATEGORIES.get(category)?.push(name);
-        }
-    } catch (e) {
-        console.warn('Failed to register tool:', e);
-    }
-}
-
 // Register all tools
-register(waitTool, 'Core');
-register(runSequentialTool, 'Core');
-register(runParallelTool, 'Core');
-register(executeAgenticTask, 'Core');
+registerTool(waitTool, 'Core');
+registerTool(runSequentialTool, 'Core');
+registerTool(runParallelTool, 'Core');
+registerTool(executeAgenticTask, 'Core');
 
 // Virtual tools for workflow authoring (not executable directly by agent, but valid in workflows)
 const customUiTool = createTool({
@@ -175,9 +155,9 @@ const logTool = createTool({
     execute: async () => { throw new Error("This tool is for workflow definitions only, not direct execution."); }
 });
 
-register(customUiTool, 'GUI');
-register(notifyTool, 'System');
-register(logTool, 'Core');
+registerTool(customUiTool, 'GUI');
+registerTool(notifyTool, 'System');
+registerTool(logTool, 'Core');
 
 // Device Tools
 Object.values(deviceTools).forEach(t => {
@@ -189,71 +169,82 @@ Object.values(deviceTools).forEach(t => {
     }
 
     if (['list_directory', 'read_file', 'write_file', 'create_directory', 'move_file', 'copy_file', 'delete_file'].includes(name)) {
-        register(t, 'FileSystem');
+        registerTool(t, 'FileSystem');
     } else if (['file_index_add_root', 'file_index_remove_root', 'file_index_list_roots', 'file_index_scan', 'file_index_get_pending', 'file_index_stats', 'file_index_update', 'file_search', 'file_search_by_filename', 'file_search_by_kind', 'file_search_recent', 'file_search_details', 'file_search_similar', 'process_pending_file_index', 'process_pending_file_index_batch', 'sync_file_index_batch_jobs', 'semantic_file_search'].includes(name)) {
-        register(t, 'FileSearch');
+        registerTool(t, 'FileSearch');
     } else if (['run_command', 'run_system_command', 'list_terminals', 'read_terminal', 'launch_application_or_uri', 'list_open_windows', 'bring_window_to_foreground', 'get_window_info', 'smart_bring_window_to_foreground', 'set_window_bounds', 'python_status', 'python_setup', 'python_install', 'run_python_script', 'run_node_script'].includes(name)) {
-        register(t, 'System');
-    } else if (['computer_use', 'computer_use_agent', 'click_at_coordinates', 'double_click_at_coordinates', 'type_text', 'send_hotkey', 'scroll', 'drag_and_drop', 'take_screenshot', 'capture_screen_to_file', 'find_and_click_text', 'get_screen_text', 'read_image_optimized'].includes(name)) {
-        register(t, 'GUI');
+        registerTool(t, 'System');
+    } else if (['computer_use', 'computer_use_agent', 'click_at_coordinates', 'double_click_at_coordinates', 'type_text', 'send_hotkey', 'scroll', 'drag_and_drop', 'take_screenshot', 'capture_screen_to_file', 'find_and_click_text', 'get_screen_text', 'read_image_optimized', 'find_text_on_screen', 'move_cursor', 'get_mouse_position'].includes(name)) {
+        registerTool(t, 'GUI');
     } else if (['capture_media', 'stop_capture', 'list_active_captures', 'describe_media_capture_capabilities', 'stream_speech', 'stop_stream_speech'].includes(name)) {
-        register(t, 'Media');
+        registerTool(t, 'Media');
     } else if (['ffmpeg_status', 'ffmpeg_setup', 'ffmpeg_run', 'ffmpeg_convert_media', 'ffmpeg_extract_audio', 'ffmpeg_trim_media', 'ffmpeg_probe_media', 'ffmpeg_extract_frames'].includes(name)) {
-        register(t, 'Media');
-    } else if (['list_local_workflows', 'list_local_stuards', 'show_json_workflow_code', 'import_workflow', 'run_automation', 'stop_automation', 'create_workflow', 'workflow_modify', 'retrieve_tool_format'].includes(name)) {
-        register(t, 'Workflow');
+        registerTool(t, 'Media');
+    } else if (['search_local_workflows', 'list_local_stuards', 'show_json_workflow_code', 'import_workflow', 'run_automation', 'stop_automation', 'create_workflow', 'workflow_modify', 'retrieve_tool_format', 'run_workflow', 'execute_workflow', 'invoke_workflow'].includes(name)) {
+        registerTool(t, 'Workflow');
     } else if (['search_past_conversations', 'get_conversation_context'].includes(name)) {
-        register(t, 'Memory');
+        registerTool(t, 'Memory');
     } else if (['knowledge_add_instruction', 'knowledge_remember_about_user', 'knowledge_update_profile', 'knowledge_add_project_fact', 'knowledge_stats'].includes(name)) {
-        register(t, 'Knowledge');
+        registerTool(t, 'Knowledge');
     } else if (['calendar_crud', 'task_crud', 'task_reminders', 'planner_list_items'].includes(name)) {
-        register(t, 'Productivity');
+        registerTool(t, 'Productivity');
     } else if (['canvas_list', 'canvas_read', 'canvas_write', 'canvas_create', 'canvas_delete'].includes(name)) {
-        register(t, 'Canvas');
+        registerTool(t, 'Canvas');
     } else if (['set_variable', 'get_variable', 'toggle_variable', 'increment_variable', 'append_to_list', 'list_variables', 'delete_variable'].includes(name)) {
-        register(t, 'Variables');
+        registerTool(t, 'Variables');
     } else if (['name_conversation'].includes(name)) {
-        register(t, 'Core');
+        registerTool(t, 'Core');
     } else if (name.startsWith('math_')) {
-        register(t, 'Math');
+        registerTool(t, 'Math');
     } else {
-        register(t, 'Other');
+        registerTool(t, 'Other');
     }
 });
 
 // Integration Tools
-register(analyzeMediaTool, 'AI');
-register(aiInferenceTool, 'AI');
-register(web_search, 'Search');
-register(scrape_url, 'Search');
+registerTool(analyzeMediaTool, 'AI');
+registerTool(aiInferenceTool, 'AI');
+registerTool(web_search, 'Search');
+registerTool(scrape_url, 'Search');
 
-Object.values(googleTools).forEach(t => register(t, 'Google'));
+Object.values(googleTools).forEach(t => registerTool(t, 'Google'));
 // Backward compatibility alias
 if (googleTools.gmail_send_message) {
-    TOOL_REGISTRY.set('gmail_send', googleTools.gmail_send_message);
+    registerTool(googleTools.gmail_send_message, 'Google');
+    // Also alias in registry if needed, but registry uses ID.
+    // Ideally we duplicate the tool with a new ID if we want an alias.
+    // For now, let's just register it as is, assuming it has an ID.
+    // Actually, createTool doesn't support changing ID easily without recreating.
+    // We can manually add to map.
+    const t = googleTools.gmail_send_message;
+    if (t) getToolRegistry().set('gmail_send', t);
 }
 
-Object.values(outlookTools).forEach(t => register(t, 'Outlook'));
+Object.values(outlookTools).forEach(t => registerTool(t, 'Outlook'));
 // Backward compatibility alias
 if (outlookTools.outlook_send_mail) {
-    TOOL_REGISTRY.set('outlook_send', outlookTools.outlook_send_mail);
+    const t = outlookTools.outlook_send_mail;
+    if (t) getToolRegistry().set('outlook_send', t);
 }
 
-Object.values(githubTools).forEach(t => register(t, 'GitHub'));
+Object.values(githubTools).forEach(t => registerTool(t, 'GitHub'));
 Object.values(youtubeTools).forEach(t => {
-    if (typeof (t as any)?.execute === 'function') register(t, 'YouTube');
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'YouTube');
 });
 Object.values(marketplaceTools).forEach(t => {
-    if (typeof (t as any)?.execute === 'function') register(t, 'Marketplace');
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Marketplace');
 });
 Object.values(ttsTools).forEach(t => {
-    if (typeof (t as any)?.execute === 'function') register(t, 'Media');
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Media');
 });
 Object.values(feedbackTools).forEach(t => {
-    if (typeof (t as any)?.execute === 'function') register(t, 'Feedback');
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Feedback');
 });
 Object.values(webhookTools).forEach(t => {
-    if (typeof (t as any)?.execute === 'function') register(t, 'Webhooks');
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Webhooks');
+});
+Object.values(httpTools).forEach(t => {
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations');
 });
 
 // 2. Meta Tools
@@ -262,7 +253,7 @@ export const search_tools = createTool({
     id: 'search_tools',
     description: 'Search for available tools by category or query string. Returns tool names and descriptions.',
     inputSchema: z.object({
-        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Workflow', 'Memory', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'YouTube', 'Marketplace', 'Variables', 'Math', 'Feedback', 'Webhooks', 'Other']).optional(),
+        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Workflow', 'Memory', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'YouTube', 'Marketplace', 'Variables', 'Math', 'Feedback', 'Webhooks', 'Integrations', 'Other']).optional(),
         query: z.string().optional(),
     }),
     outputSchema: z.object({
@@ -272,20 +263,20 @@ export const search_tools = createTool({
             category: z.string(),
         })),
     }),
-    execute: async (args) => {
-        const { category, query } = args.context;
-        const supabase = getSupabaseService();
+    execute: async (inputData) => {
+        const { category, query } = inputData;
+        const registry = getToolRegistry();
+        const categories = getToolCategories();
 
-        // Fallback to keyword search if Supabase not available or no query
-        if (!supabase || !query) {
-            const results: any[] = [];
+        const keywordSearch = () => {
+            const results: Array<{ name: string; description: string; category: string }> = [];
             const q = (query || '').toLowerCase();
 
-            for (const [cat, names] of TOOL_CATEGORIES.entries()) {
+            for (const [cat, names] of categories.entries()) {
                 if (category && cat !== category) continue;
 
                 for (const name of names) {
-                    const tool = TOOL_REGISTRY.get(name);
+                    const tool = registry.get(name);
                     if (!tool) continue;
 
                     const desc = tool.description || '';
@@ -298,7 +289,15 @@ export const search_tools = createTool({
                     });
                 }
             }
+
             return { tools: results };
+        };
+
+        const supabase = getSupabaseService();
+        const hasQuery = typeof query === 'string' && query.trim().length > 0;
+
+        if (!hasQuery || !supabase) {
+            return keywordSearch();
         }
 
         // Vector Search Logic
@@ -336,26 +335,14 @@ export const search_tools = createTool({
             const top = withScores.slice(0, 10).map((t: any) => ({
                 name: t.name,
                 description: t.description,
-                category: t.category
+                category: t.category,
             }));
 
             return { tools: top };
 
         } catch (e) {
             console.warn('Vector search failed, falling back to keyword search', e);
-            const results: any[] = [];
-            const q = (query || '').toLowerCase();
-            for (const [cat, names] of TOOL_CATEGORIES.entries()) {
-                if (category && cat !== category) continue;
-                for (const name of names) {
-                    const tool = TOOL_REGISTRY.get(name);
-                    if (!tool) continue;
-                    const desc = tool.description || '';
-                    if (q && !name.toLowerCase().includes(q) && !desc.toLowerCase().includes(q)) continue;
-                    results.push({ name, description: desc, category: cat });
-                }
-            }
-            return { tools: results };
+            return keywordSearch();
         }
     },
 });
@@ -372,43 +359,18 @@ export const get_tool_schema = createTool({
         inputSchema: z.any(),
         outputSchema: z.any().optional(),
     }),
-    execute: async (args) => {
-        const { tool_name } = args.context;
-        const tool = TOOL_REGISTRY.get(tool_name);
+    execute: async (inputData, runCtx) => {
+        const { tool_name } = inputData;
+        const tool = getToolRegistry().get(tool_name);
 
         if (!tool) {
             throw new Error(`Tool '${tool_name}' not found.`);
         }
 
-        // Zod schema to JSON schema conversion is usually handled by the framework,
-        // but here we might need to do it manually or return a simplified representation.
-        // For now, we'll try to return the raw Zod schema description if possible,
-        // or rely on the fact that the agent framework might have a helper.
-        // Since we don't have a direct Zod-to-JSON-Schema lib imported here, 
-        // we will return a best-effort representation.
-        // Actually, device-tools.ts's retrieveToolFormat manually constructs templates.
-        // Let's try to use that if available, or fallback to a generic description.
-
-        // If the tool has inputSchema as a Zod object, we can inspect its shape.
-        let inputSchema: any = {};
-        if (tool.inputSchema && tool.inputSchema._def) {
-            // This is a hacky way to get the shape without a proper library
-            // In a real app we'd use zod-to-json-schema
-            inputSchema = "Schema available via framework introspection";
-            // Better: let's just return the description and hope the LLM can infer or we use the 'retrieve_tool_format' logic
-        }
-
-        // Reuse logic from retrieveToolFormat if possible?
-        // deviceTools.retrieveToolFormat is available.
-        // But it only covers a subset.
-
-        // Let's just return what we can.
         return {
-            name: tool.id || tool.name,
+            name: tool.id || (tool as any).name,
             description: tool.description,
             inputSchema: tool.inputSchema ? "See tool definition" : {}, // Placeholder
-            // The user said "uses the get tool format too see the input args".
-            // I should probably implement a proper schema dumper or use the one in device-tools.
         };
     },
 });
@@ -421,12 +383,16 @@ export const execute_tool = createTool({
         args: z.any().describe('Arguments for the tool as a key-value object.'),
     }),
     outputSchema: z.any(),
-    execute: async (args, runCtx) => {
-        const { tool_name, args: toolArgs } = args.context;
-        const tool = TOOL_REGISTRY.get(tool_name);
+    execute: async (inputData, runCtx) => {
+        const { tool_name, args: toolArgs } = inputData;
+        const tool = getToolRegistry().get(tool_name);
 
         if (!tool) {
             throw new Error(`Tool '${tool_name}' not found.`);
+        }
+
+        if (typeof tool.execute !== 'function') {
+             throw new Error(`Tool '${tool_name}' is not executable.`);
         }
 
         return await tool.execute(toolArgs, runCtx);

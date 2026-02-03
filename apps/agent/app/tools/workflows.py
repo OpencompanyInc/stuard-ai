@@ -119,9 +119,11 @@ def _extract_input_metadata(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _list_json_items(dir_path: str) -> List[Dict[str, Any]]:
+    print(f"[PYTHON AGENT] _list_json_items called with: {dir_path}")
     items: List[Dict[str, Any]] = []
     try:
         if not os.path.isdir(dir_path):
+            print(f"[PYTHON AGENT] dir does not exist: {dir_path}")
             return items
         for name in os.listdir(dir_path):
             if not name.lower().endswith(".json"):

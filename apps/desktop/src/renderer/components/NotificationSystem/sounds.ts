@@ -1,0 +1,34 @@
+/**
+ * Notification Sounds - Pre-encoded notification sounds for Stuard AI
+ * 
+ * These are base64-encoded audio files that can be used directly without
+ * loading external files. Each sound is a short notification chime.
+ */
+
+// Simple notification chime (soft, pleasant tone)
+export const NOTIFICATION_CHIME = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYN+HuuAAAAAAD/+9DEAAAGAAKf9AAAAARoqr/VEAAJQ0amxMJNAiBuQOMHASCIQGAEB8Pgy/ygPh8H/5QGP/LgQBA8SAgCB4+XAgCJn/iAL/5cOE4fx/8oCH//Lhwnh/+XDhP/ygIfD5QHA+D//8vl/+UBT////5f//BAxwcJCQkTE4AwYIAABRR8TYdEg8DCRiAoKBhgdEUFg7T8oJpByJZKMsmkjYLIWjDVKZJCRdsuJFBaVFhYCQlDKwsomRJME9M2mcrMpNBCXVBWVWXb1P1UL/VIzb/v/9C3VBfVv/X/rqOl1q7q1oOxc4e77f/3eGn8ej/+DQIXpDa3X1ff/89j3bq3V1fl3f3/nHYtF2f/TUl1a0ta0C/1obaP/VNTU9RUAQE1JTU1JTbU1NTVFU0lNTU1N//tQxOkAF9WJP/zmACMDO+v90wAA//0YBKENOkoAMkhD7gzKyO4AAAAAAAAWbMLDqiQjpMx2n3xaOPu75fS/RP3/eZ/5fd/4Rl/C/ykQUY8LI6aGnA+LECqPJBB8VQCRnsFW67Td9v3jUvx7/+8DEEoAVaW1f+aYAIt4g7f6ugBYJFQhAqt9lMC9YLFUKdO5gBmAZBR5TLSUCXEEwoTxMBH5VQvI4VpJg+UcAr////1D/oX+XDgOfkIf/0If/lD5fLxwnyh////lw////Kf/Of+cCAfL/+c//5T/+X//w+XB////wr/ygMgOE+X/y/8v/+U8LWZ8uBD5cOHDl/5QGfL/5fKAz5f/lwIfl/8v/l///8p4XE////L/5QE//54Wy/8p4fy4cPl8v//lAZAp//lP/+UBkCA+X/+XAALKAAAAAA=';
+
+// Success sound (uplifting tone)
+export const NOTIFICATION_SUCCESS = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYglJ5fAAAAAAD/+9DEAAAGAAKf9AAAAARoqr/VEAAJa0aGxMJNAiBuQOMHASCIQGAEB8PgyP5QGPD4PD5QGQHBwIB8HycCYPH8uHy+XAgEAQJAgCB4Plwnw+Hwfx8vB//ywEQeT//lg4D4fB4Plw4T4fLAUB8H/5QFAU/LA4BAHy+UBgHw+U//5T///5T//ywEA+D4PB8v/lAU////y4fB//B4JhISFhQMD0BgwQAAChR8TYaEg8DCSaDIKBh4dEMFg7D8o5pByJZIMsmkjILMWjDSKJJCRVspJFBaVFRYCQpDKwtI2SZMk9M2mcrMpNBCbVBWVWXb1P1f/VIzb/v/9O3VBfVP/X/rqOl3q7q1oOxc4e/7f/t8NR8ej/+DQIXJDa/X1ff/89j3bq215l3ft8c47FqvT/6akuraWtaI/60N7H/qmrqqoqAABNSU1NSVSYTU1NVU0lNTU1N//tQxO0AF8WNP/zmACL/O+v50wAA//0cAaE5OkqAMkJD7gzKyG4AAAAAAAAWbMLDqiQjpMx2n35aOPuDpfy/RP3/eZ/5fd/4Zl/C/ykQUY8LIGaGnA+LECqPJBB8VYCRnsFWq7Vd9v3jUvx7/+8DEEoAVdW1f+aYAIt4g7f6ugBUpFQhAqt9lMC9YLFUKdO5gJmAZBR5TLSUCbEEwoTxMBH5VQvI4VpJg+UcAr////1L/o3+XDgOfkIf/0If/lD5fLxwnygP///5cOH///lP/+f+cCAfL/+c//5T/+X//w+Xw////wr/ygMgOE+X/y/8v/+U8LWZ8uBD5cOHDl/5QGPL/5fKAz5f/lwIfl/8v/l///8p4XE////L/5QE//54Wy/8p4fy4cPl8v//lAZAp//lP/+UBkCA+X/+XAALL=';
+
+// Error/Alert sound (attention-grabbing)
+export const NOTIFICATION_ALERT = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYLvF+FAAAAAAD/+9DEAAAGAAKf9AAAAARoqr/VEAAJS0amxMJNAiBuQOMHASCIQGAEB8PgyfygPh8Hh8oDP/lwIAgfJwJg8fy4TgfB8HhcCAQBAoCAIHg+XCfD4fB/Hy8H//LARh5P/8sHAfD4PB8uHCfD5YCgPg//KAoCn5YHAICh8vlAYB8PlP/+U///+U//8sBAPg+DwfL/5QFP///8uHAf/weKYSFhcUEA9QYMEAAAo0fE2GhYPBwkmgyCgYeHRDBYOxf1HNIOhLJJlk0nJBZi0YaRRJISKplJIoLSooLASFIZWFpFyTpmn5m0zlZlJooSaoKyqy7ep+qhf6pGbf9//oW6oL6t/6/9dR0u9XdWtB2LnD3/b/9vjqPj0f/waBK9IbX6+r7//nse7dW6vMu79vjnHYtV6f/TUl1ay1rRH/Whs4/9U1dVVFQAAJqSmppqqkqmpqaqppKamppqf/+lDc7QAXwY0//OYAI/87q/nTAAD/+jgDQnJ0lQBkhIfcGZWQ3AAAAAAAACzZhYdSSEdJmO0m+LRxy+vl9L9E/f95n/l93/hmX8L/KRBRjwsgZoacD4sQKo8kEHxVgJGewVbrtV32/eNS/Hv/7wMQSgBV1bV/5pgAi3iDt/q6AFSkVCECq32UwL1gsVQp07mAmYBkFHlMtJQJsQTChPEwEflVC8jhWkmD5RwCv////Uv+jf5cOA5+Qh//Qh/+UPl8vHCfKA////lw4f//+U//5/5wIB8v/5z//lP/5f//D5fD////Cv/KAyA4T5f/L/y//5TwtZny4EPlw4cOX/lAY8v/l8oDPl/+XAh+X/y/+X///ynhcT////8v/lAT//nhbL/ynh/Lhw+Xy//+UBkCn/+U//5QGQID5f/5cAAssAAAAA==';
+
+// Warning sound (caution tone)
+export const NOTIFICATION_WARNING = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYCqU7PAAAAAAD/+9DEAAAGAAKf9AAAAARoqr/VEAAJS0amxMJNAiBuQOMHASCIQGAEB8PgyfygPh8Hh8oDP/lwIAgfJwJg8fy4TgfB8HhcCAQBAoCAIHg+XCfD4fB/Hy8H//LARh5P/8sHAfD4PB8uHCfD5YCgPg//KAoCn5YHAICh8vlAYB8PlP/+U///+U//8sBAPg+DwfL/5QFP///8uHAf/weKYSFhcUEA9QYMEAAAo0fE2GhYPBwkmgyCgYeHRDBYOxf1HNIOhLJJlk0nJBZi0YaRRJISKplJIoLSooLASFIZWFpFyTpmn5m0zlZlJooSaoKyqy7ep+qhf6pGbf9//oW6oL6t/6/9dR0u9XdWtB2LnD3/b/9vjqPj0f/waBK9IbX6+r7//nse7dW6vMu79vjnHYtV6f/TUl1ay1rRH/WhsY/9U1NVVFQAAJqSmppqqkqmpqaqppKamppqf/+lDc7QAZwY0//OYAIwM7q/nTAAD/+jgDQnJ0lQBkhIfcGZWQ3AAAAAAAACzZhYdSCEdJmO0m+LRx7+vl9L9E/f95n/l93/hmX8L/KRBRjwsjZoacD4sQKo8kEHxVgJGewVbrtV32/eNS/Hv/7wMQSgBV1bV/5pgAi3yDt/q6AFSkVCECq32UwL1gsVQp07mAmYBkFHlMtJQJsQTChPEwEfpVC8jhWkmD5RwCv////Uv+jf5cOA5+Qh//Qh/+UPl8vHCfKA////lw4f//+U//5/5wIB8v/5z//lP/5f//D5fD////Cv/KAyA4T5f/L/y//5TwtZny4EPlw4cOX/lAY8v/l8oDPl/+XAh+X/y/+X///ynhcT////8v/lAT//nhbL/ynh/Lhw+Xy//+UBkCn/+U//5QGQID5f/5cAAssAAAAA==';
+
+/**
+ * Get the appropriate sound for a notification variant
+ */
+export function getNotificationSound(variant: 'info' | 'success' | 'warning' | 'error' | 'neutral'): string {
+    switch (variant) {
+        case 'success':
+            return NOTIFICATION_SUCCESS;
+        case 'error':
+            return NOTIFICATION_ALERT;
+        case 'warning':
+            return NOTIFICATION_WARNING;
+        default:
+            return NOTIFICATION_CHIME;
+    }
+}

@@ -74,8 +74,8 @@ export const planner_list_items = createTool({
       .optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
 
     // Compute time range
     let start: Date | null = null;

@@ -47,6 +47,13 @@ CLIENT_TOOLS = {
     "sidebar_canvas_write",
     "sidebar_canvas_create",
     "sidebar_canvas_delete",
+    # Workflow execution tools (must run on desktop IPC)
+    "invoke_workflow",
+    "run_automation",
+    "stop_automation",
+    "stuards_run",
+    "stuards_stop",
+    "test_run_steps",
 }
 CLIENT_PREFIXES = ("terminal_",)
 SENSITIVE_CLIENT_TOOLS = {

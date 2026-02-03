@@ -478,6 +478,33 @@ async def ffmpeg_run(
     timeout_ms = int(args.get("timeoutMs") or 300000)
     cwd = args.get("cwd")
 
+    output_file_path: str | None = None
+
+    # Backwards-compatible convenience shape:
+    # { inputs: [..], extraArgs: [..], output: "...", overwrite?: bool }
+    if argv is None:
+        inputs = args.get("inputs")
+        extra = args.get("extraArgs")
+        output = args.get("output")
+        overwrite = bool(args.get("overwrite", True))
+
+        if isinstance(inputs, list) and isinstance(output, str) and output.strip():
+            in_list = [str(x) for x in inputs if isinstance(x, (str, int, float)) and str(x).strip()]
+            extra_args: list[str] = []
+            if isinstance(extra, list):
+                extra_args = [str(x) for x in extra if isinstance(x, (str, int, float))]
+
+            argv = ["-hide_banner", "-y" if overwrite else "-n"]
+            for p in in_list:
+                argv += ["-i", p]
+            argv += extra_args + [output]
+            output_file_path = output
+
+    if output_file_path is None and isinstance(argv, list) and len(argv) > 0:
+        last = argv[-1]
+        if isinstance(last, str) and last.strip() and not last.strip().startswith("-"):
+            output_file_path = last.strip()
+
     if not isinstance(argv, list) or not all(isinstance(x, (str, int, float)) for x in argv):
         return {"ok": False, "error": "missing_args"}
 
@@ -492,13 +519,22 @@ async def ffmpeg_run(
             cwd=str(cwd) if isinstance(cwd, str) and cwd else None,
             timeout=timeout_ms / 1000,
         )
-        return {
-            "ok": proc.returncode == 0,
+        success = proc.returncode == 0
+        result: Dict[str, Any] = {
+            "ok": success,
             "exitCode": proc.returncode,
             "stdout": proc.stdout,
             "stderr": proc.stderr,
             "ffmpegPath": ffmpeg_path,
+            "outputFilePath": output_file_path,
         }
+        if not success:
+            # Include error field so workflow engine shows meaningful message
+            err_msg = (proc.stderr or "").strip()
+            if len(err_msg) > 500:
+                err_msg = err_msg[-500:]  # Last 500 chars are usually most relevant
+            result["error"] = f"ffmpeg exited {proc.returncode}: {err_msg}" if err_msg else f"ffmpeg exited {proc.returncode}"
+        return result
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "timeout", "timeoutMs": timeout_ms}
     except Exception as e:

@@ -94,10 +94,21 @@ export function handleClientToolMessage(ws: WebSocket, msg: any) {
   }
 }
 
-export async function execLocalTool(tool: string, args: any, writer?: WritableStreamDefaultWriter<any>, timeoutMs = 300000, options?: { silent?: boolean }) {
+export async function execLocalTool(tool: string, args: any, writer?: WritableStreamDefaultWriter<any>, timeoutMs = 300000, options?: { silent?: boolean; noFallback?: boolean }) {
   const silent = options?.silent ?? false;
+  const noFallback = options?.noFallback ?? false;
   const store = bridgeALS.getStore();
   const forceDirect = !!(args && (args as any)._forceDirect);
+  
+  // Debug logging for workflow tools
+  if (tool === 'list_local_workflows') {
+    console.log('[bridge] execLocalTool called for list_local_workflows');
+    console.log('[bridge] store exists:', !!store);
+    console.log('[bridge] store.ws exists:', !!store?.ws);
+    console.log('[bridge] ws readyState:', store?.ws?.readyState, '(OPEN=1)');
+    console.log('[bridge] noFallback:', noFallback);
+    console.log('[bridge] forceDirect:', forceDirect);
+  }
   // Avoid leaking internal control flags over the wire
   const sendArgs = (() => {
     try {
@@ -109,7 +120,11 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
     }
   })();
   // In-band bridge if we are inside an active client WS context
-  if (!forceDirect && store?.ws && store.ws.readyState === WebSocket.OPEN) {
+  const useBridge = !forceDirect && store?.ws && store.ws.readyState === WebSocket.OPEN;
+  if (tool === 'list_local_workflows') {
+    console.log('[bridge] Will use bridge:', useBridge);
+  }
+  if (useBridge) {
     const id = `tool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     return new Promise<any>((resolve, reject) => {
       const pend: Pending = { resolve, reject, writer, tool, silent };
@@ -136,6 +151,11 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
   }
 
   // Fallback: reach the local agent directly (useful in local dev)
+  // Skip fallback if noFallback option is set (workflow tools should only use desktop bridge)
+  if (noFallback) {
+    return { ok: false, error: 'No desktop bridge available', workflows: [] };
+  }
+
   return new Promise<any>((resolve, reject) => {
     try {
       const ws = new WebSocket(AGENT_WS, { maxPayload: AGENT_WS_MAX_PAYLOAD });

@@ -542,7 +542,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                   </button>
                 </DropdownMenu.Trigger>
                 <DropdownMenu.Portal>
-                  <DropdownMenu.Content className="DropdownContent z-[10002] w-72 bg-theme-card rounded-xl border border-theme p-2 shadow-2xl backdrop-blur-xl" sideOffset={8} align="end" collisionPadding={10}>
+                  <DropdownMenu.Content className="DropdownContent z-[10002] w-72 bg-theme-bg rounded-xl border border-theme/20 p-2 shadow-lg shadow-black/10 backdrop-blur-xl" sideOffset={8} align="end" collisionPadding={10}>
                     <DropdownMenu.Item
                       onSelect={onNewChat}
                       className="text-[13px] text-primary font-semibold flex items-center gap-2 px-3 py-2.5 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors mb-1"
@@ -639,17 +639,17 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 
               {/* Quick Actions Grid */}
               {!showResults && (
-                <div className="grid grid-cols-4 gap-3 mb-4 shrink-0">
+                <div className="grid grid-cols-4 gap-2 mb-4 shrink-0">
                   {quickActions.map((action) => (
                     <button
                       key={action.id}
                       onClick={() => handleQuickAction(action.id)}
-                      className="group flex flex-col items-center gap-2.5 p-4 rounded-2xl bg-theme-hover/30 hover:bg-theme-hover border border-theme/10 hover:border-theme/30 transition-all duration-300 hover:-translate-y-0.5"
+                      className="group flex flex-col items-center gap-2 p-3 rounded-2xl bg-transparent hover:bg-theme-hover border border-theme/10 hover:border-theme/30 transition-all duration-300 hover:-translate-y-0.5"
                     >
-                      <div className={clsx("w-10 h-10 rounded-xl flex items-center justify-center transition-all group-hover:scale-110", action.bgLight, action.textColor)}>
-                        <action.icon className="w-5 h-5" />
+                      <div className={clsx("w-5 h-5 rounded-lg flex items-center justify-center transition-all group-hover:scale-110", action.bgLight, action.textColor)}>
+                        <action.icon className="w-3 h-3" />
                       </div>
-                      <span className="text-xs font-semibold text-theme-muted group-hover:text-theme-fg transition-colors">{action.label}</span>
+                      <span className="text-[11px] font-semibold text-theme-muted group-hover:text-theme-fg transition-colors">{action.label}</span>
                     </button>
                   ))}
                 </div>
@@ -671,20 +671,20 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
               {/* Results */}
               {showResults && (
                 <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-4 min-h-0">
-                  <button onClick={onSend} className="w-full flex items-center gap-4 px-4 py-3 rounded-2xl hover:bg-theme-hover transition-all group border border-transparent hover:border-theme/30 relative overflow-hidden bg-theme-hover/30">
+                  <button onClick={onSend} className="w-full flex items-center gap-4 px-4 py-3 rounded-2xl hover:bg-theme-hover transition-all group border border-transparent hover:border-theme/30 relative overflow-hidden bg-theme-bg">
                     <div className="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity" />
-                    <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 group-hover:scale-110 transition-all ring-1 ring-primary/20 group-hover:ring-primary/50 z-10">
-                      <MessageSquare className="w-5 h-5 text-primary" />
+                    <div className="w-7 h-7 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 group-hover:scale-110 transition-all ring-1 ring-primary/20 group-hover:ring-primary/50 z-10">
+                      <MessageSquare className="w-3.5 h-3.5 text-primary" />
                     </div>
                     <div className="flex-1 text-left z-10">
-                      <div className="text-[14px] font-bold text-theme-fg group-hover:text-primary transition-colors">Ask Stuard</div>
+                      <div className="text-[13px] font-bold text-theme-fg group-hover:text-primary transition-colors">Ask Stuard</div>
                       <div className="text-[11px] text-theme-muted font-semibold">Get an AI assistant response</div>
                     </div>
                     <div className="text-[10px] font-bold text-theme-muted bg-theme-hover px-2.5 py-1.5 rounded-lg border border-theme/10 group-hover:bg-primary group-hover:text-primary-fg group-hover:border-primary transition-all z-10">Enter</div>
                   </button>
 
                   {fileResults.length > 0 && (
-                    <div className="bg-theme-hover/30 rounded-2xl border border-theme/10 p-4">
+                    <div className="bg-theme-bg/30 rounded-2xl border border-theme/20 p-4 shadow-sm">
                       <div className="flex items-center gap-2 mb-3">
                         <FolderSearch className="w-4 h-4 text-emerald-500" />
                         <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">Files Found</span>
@@ -694,8 +694,8 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                           const cfg = getFileKindConfig(String(f.kind || 'other').toLowerCase());
                           return (
                             <button key={f.path} onClick={() => handleOpenIndexedFile(f.path)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-theme-hover transition-all group/file text-left border border-transparent hover:border-theme/30">
-                              <div className={clsx("w-9 h-9 rounded-lg flex items-center justify-center border border-theme/20", cfg.bg, cfg.color)}>
-                                <cfg.icon className="w-4 h-4" />
+                              <div className={clsx("w-7 h-7 rounded-lg flex items-center justify-center border border-theme/20", cfg.bg, cfg.color)}>
+                                <cfg.icon className="w-3.5 h-3.5" />
                               </div>
                               <div className="min-w-0 flex-1 text-[13px] font-semibold text-theme-fg truncate">{f.filename || f.path}</div>
                             </button>
@@ -720,7 +720,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                 </button>
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content className="DropdownContent z-[10002] w-80 bg-theme-card rounded-xl border border-theme p-3 shadow-2xl backdrop-blur-xl" sideOffset={8} align="start">
+                <DropdownMenu.Content className="DropdownContent z-[10002] w-80 bg-theme-bg rounded-xl border border-theme/20 p-3 shadow-lg shadow-black/10 backdrop-blur-xl" sideOffset={8} align="start">
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-[11px] font-bold text-theme-muted uppercase tracking-wider">Active Tasks</span>
                     <button

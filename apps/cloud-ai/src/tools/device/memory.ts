@@ -99,8 +99,8 @@ export const search_past_conversations = createTool({
       .optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available', results: [] };
 
     try {
@@ -247,8 +247,8 @@ export const ensure_space_path = createTool({
     created: z.boolean().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {
@@ -276,8 +276,8 @@ export const list_space_path = createTool({
     items: z.array(z.any()).optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {
@@ -315,8 +315,8 @@ export const add_to_space_path = createTool({
     folder_id: z.string().nullable().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {
@@ -348,8 +348,8 @@ export const get_space_tree = createTool({
     tree: z.array(z.any()).optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {
@@ -390,8 +390,8 @@ export const get_conversation_context = createTool({
       .optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {
@@ -438,8 +438,8 @@ export const list_user_spaces = createTool({
       .optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {
@@ -492,8 +492,8 @@ export const get_space_contents = createTool({
       .optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {
@@ -535,8 +535,8 @@ export const add_to_space = createTool({
     item: z.any().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {
@@ -566,8 +566,8 @@ export const create_space = createTool({
     space: z.any().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {
@@ -628,8 +628,8 @@ export const add_source_to_space = createTool({
     item: z.any().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {
@@ -663,8 +663,8 @@ export const add_note_to_space = createTool({
     item: z.any().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {
@@ -696,8 +696,8 @@ export const add_code_snippet_to_space = createTool({
     item: z.any().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {
@@ -728,8 +728,8 @@ export const link_conversation_to_space = createTool({
     ok: z.boolean(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {
@@ -758,8 +758,8 @@ export const find_or_create_space = createTool({
     created: z.boolean().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {
@@ -800,8 +800,8 @@ export const update_space_item = createTool({
     item: z.any().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {
@@ -829,8 +829,8 @@ export const delete_space_item = createTool({
     ok: z.boolean(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
-    const c = context as any;
+  execute: async (inputData, context) => {
+    const c = inputData as any;
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {

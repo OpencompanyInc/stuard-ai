@@ -100,6 +100,9 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'double_click_at_coordinates', category: 'input', kind: 'local', description: 'Double-click at specific screen coordinates', argsTemplate: { x: 100, y: 100, button: 'left' }, outputSchema: { ok: 'boolean' } },
   { id: 'scroll', category: 'input', kind: 'local', description: 'Scroll the mouse wheel', argsTemplate: { deltaY: 120, deltaX: 0, speed: 1 }, outputSchema: { ok: 'boolean' } },
   { id: 'drag_and_drop', category: 'input', kind: 'local', description: 'Drag from one coordinate to another', argsTemplate: { fromX: 100, fromY: 100, toX: 400, toY: 400 }, outputSchema: { ok: 'boolean' } },
+  { id: 'get_mouse_position', category: 'input', kind: 'local', description: 'Get the current mouse cursor position on screen', argsTemplate: {}, outputSchema: { ok: 'boolean', x: 'number', y: 'number' } },
+  { id: 'move_cursor', category: 'input', kind: 'local', description: 'Move the mouse cursor to specific screen coordinates', argsTemplate: { x: 100, y: 100, duration: 0 }, outputSchema: { ok: 'boolean', x: 'number', y: 'number' } },
+  { id: 'computer_use', category: 'input', kind: 'local', description: 'Perform GUI actions (mouse/keyboard) and optionally capture a screenshot', argsTemplate: { action: 'mouse_move', x: 100, y: 100, includeScreenshot: false }, outputSchema: { ok: 'boolean', action: 'string', filePath: 'string', screenshot: 'string', cursor: { x: 'number', y: 'number' }, display: { width: 'number', height: 'number' }, text: 'string' } },
   { id: 'get_clipboard_content', category: 'input', kind: 'local', description: 'Read text from the clipboard', argsTemplate: {}, outputSchema: { ok: 'boolean', text: 'string' } },
   { id: 'set_clipboard_content', category: 'input', kind: 'local', description: 'Set text into the clipboard', argsTemplate: { text: '' }, outputSchema: { ok: 'boolean' } },
 
@@ -122,7 +125,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'play_audio', category: 'vision', kind: 'local', description: 'Play an audio file (MP3, WAV, etc.)', argsTemplate: { path: '', block: true }, outputSchema: { ok: 'boolean', played: 'string', method: 'string', error: 'string' } },
   { id: 'ffmpeg_status', category: 'vision', kind: 'local', description: 'Check if FFmpeg is available locally (downloaded or system-installed).', argsTemplate: {}, outputSchema: { ok: 'boolean', available: 'boolean', source: 'string', ffmpegPath: 'string', ffprobePath: 'string', meta: 'any' } },
   { id: 'ffmpeg_setup', category: 'vision', kind: 'local', description: 'Ensure FFmpeg is available locally (auto-downloads if needed).', argsTemplate: {}, outputSchema: { ok: 'boolean', available: 'boolean', source: 'string', ffmpegPath: 'string', ffprobePath: 'string', meta: 'any', error: 'string', message: 'string' } },
-  { id: 'ffmpeg_run', category: 'vision', kind: 'local', description: 'Run FFmpeg with custom arguments. Use for advanced conversions and edits.', argsTemplate: { args: ['-hide_banner', '-i', 'C:/input.mp4', 'C:/output.mp4'], timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string' } },
+  { id: 'ffmpeg_run', category: 'vision', kind: 'local', description: 'Run FFmpeg with custom arguments. Use for advanced conversions and edits.', argsTemplate: { inputs: ['C:/input_1.mp4', 'C:/input_2.mp4'], extraArgs: ['-filter_complex', '...'], output: 'C:/output.mp4', overwrite: true, timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string', outputFilePath: 'string' } },
   { id: 'ffmpeg_convert_media', category: 'vision', kind: 'local', description: 'Convert media from one format to another using FFmpeg.', argsTemplate: { inputPath: 'C:/input.mp4', outputPath: 'C:/output.webm', overwrite: true, extraArgs: ['-c:v', 'libvpx-vp9', '-crf', 30, '-b:v', 0], timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string' } },
   { id: 'ffmpeg_extract_audio', category: 'vision', kind: 'local', description: 'Extract audio from a media file into an audio-only output (e.g. mp3, wav).', argsTemplate: { inputPath: 'C:/input.mp4', outputPath: 'C:/output.mp3', overwrite: true, timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string' } },
   { id: 'ffmpeg_trim_media', category: 'vision', kind: 'local', description: 'Trim a media file to a time range (fast copy mode).', argsTemplate: { inputPath: 'C:/input.mp4', outputPath: 'C:/clip.mp4', startSeconds: 0, durationSeconds: 10, overwrite: true, timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string' } },
@@ -204,8 +207,8 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
 ];
 
 const TRIGGER_DEFINITIONS = [
-  { type: 'manual', description: 'Manual trigger', argsTemplate: {} },
-  { type: 'function', description: 'Function trigger - allows this workflow to be called from other workflows with input parameters', argsTemplate: {} },
+  { type: 'manual', description: 'Manual trigger - user clicks run. Supports inputParams for user input forms.', argsTemplate: {}, inputParams: [] },
+  { type: 'function', description: 'Function trigger - allows this workflow to be called from other workflows with input parameters', argsTemplate: {}, inputParams: [] },
   { type: 'webhook.local', description: 'Local webhook trigger', argsTemplate: {} },
   { type: 'webhook.cloud', description: 'Cloud webhook trigger', argsTemplate: {} },
   { type: 'schedule.cron', description: 'Cron schedule trigger', argsTemplate: { cron: '* * * * *' } },
@@ -370,6 +373,21 @@ const KNOWN_LABELS: Record<string, string> = {
   'inputs': 'Input Data',
 };
 
+function extractOutputKeys(schema: any, prefix = '', depth = 0): string[] {
+  if (!schema || depth > 3) return [];
+  if (typeof schema !== 'object' || Array.isArray(schema)) return [];
+
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(schema)) {
+    const key = prefix ? `${prefix}.${k}` : String(k);
+    out.push(key);
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      out.push(...extractOutputKeys(v, key, depth + 1));
+    }
+  }
+  return out;
+}
+
 function convertDefinition(def: ToolDefinition): ToolSchema {
   const args: Record<string, ArgSchema> = {};
 
@@ -398,7 +416,11 @@ function convertDefinition(def: ToolDefinition): ToolSchema {
     args[key] = argSchema;
   }
 
-  const outputs = Object.keys(def.outputSchema);
+  const runtimeOutputSchema = def.kind === 'cloud'
+    ? ({ ok: 'boolean', ...(def.outputSchema || {}) } as any)
+    : def.outputSchema;
+
+  const outputs = [...new Set(extractOutputKeys(runtimeOutputSchema))];
 
   return {
     name: def.id,

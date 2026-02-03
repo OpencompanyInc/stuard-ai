@@ -377,6 +377,16 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
     const results: any[] = [];
     let breakEdge: { to: string } | undefined;
     
+    // Find loopBreak edge from the source step (prevStepId) - this tells us where to go after loop completes
+    const sourceStep = map.get(prevStepId);
+    if (sourceStep && Array.isArray(sourceStep.next)) {
+      const loopBreakEdge = sourceStep.next.find((e: any) => e.loopBreak === true);
+      if (loopBreakEdge) {
+        breakEdge = { to: loopBreakEdge.to };
+        engineCtx.logFn(`[${step.id}] 🔄 Found loopBreak edge → ${loopBreakEdge.to} (will execute after loop)`);
+      }
+    }
+    
     // Initialize loop context
     ctx.loop = ctx.loop || {};
     

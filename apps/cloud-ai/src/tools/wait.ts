@@ -11,8 +11,8 @@ export const waitTool = createTool({
   outputSchema: z.object({
     waitedMs: z.number(),
   }),
-  execute: async ({ context, writer }) => {
-    const { milliseconds, message } = context as { milliseconds: number; message?: string };
+  execute: async (inputData, { writer }) => {
+    const { milliseconds, message  } = inputData as { milliseconds: number; message?: string };
     const start = Date.now();
     const step = Math.max(250, Math.min(2000, Math.floor(milliseconds / 10) || 250));
     let sent = 0;

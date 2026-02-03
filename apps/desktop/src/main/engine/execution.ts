@@ -101,7 +101,7 @@ async function decideNext(
   const rawEdges = Array.isArray(step.next) ? step.next : [];
 
   // Separate unconditional edges (always/no guard) from conditional ones
-  const unconditionalEdges: Array<{ to: string }> = [];
+  const unconditionalEdges: Array<any> = [];
   const conditionalEdges: Array<any> = [];
 
   for (const edge of rawEdges) {
@@ -112,11 +112,34 @@ async function decideNext(
     }
   }
 
-  // If there are multiple unconditional edges, run them in parallel
+  // If there are multiple unconditional edges, check for loop/loopBreak relationships
   if (unconditionalEdges.length > 1) {
-    const nextIds = unconditionalEdges.map(e => e.to).filter(Boolean);
-    engineCtx.logFn(`[${step.id}] Parallel branches: ${nextIds.join(', ')}`);
-    return { ok: true, nextIds, ctx };
+    // Separate loop edges from loopBreak edges and regular edges
+    const loopEdges = unconditionalEdges.filter((e: any) => e.loop && e.loop.type);
+    const loopBreakEdges = unconditionalEdges.filter((e: any) => e.loopBreak);
+    const regularEdges = unconditionalEdges.filter((e: any) => !e.loop?.type && !e.loopBreak);
+
+    // If there's a loop edge, prioritize it - loopBreak edges execute after loop completes
+    if (loopEdges.length > 0) {
+      const loopEdge = loopEdges[0];
+      engineCtx.logFn(`[${step.id}] Loop edge detected → ${loopEdge.to} (loopBreak edges will run after loop)`);
+      return { ok: true, nextId: loopEdge.to, loop: loopEdge.loop, ctx };
+    }
+
+    // If there are only regular edges (no loops), run them in parallel
+    // But exclude loopBreak edges from parallel execution (they should only run after a loop)
+    const parallelEdges = regularEdges.length > 0 ? regularEdges : unconditionalEdges.filter((e: any) => !e.loopBreak);
+    if (parallelEdges.length > 1) {
+      const nextIds = parallelEdges.map((e: any) => e.to).filter(Boolean);
+      engineCtx.logFn(`[${step.id}] Parallel branches: ${nextIds.join(', ')}`);
+      return { ok: true, nextIds, ctx };
+    }
+
+    // Single edge remaining
+    if (parallelEdges.length === 1) {
+      const edge = parallelEdges[0];
+      return { ok: true, nextId: edge.to, loop: edge.loop, loopBreak: edge.loopBreak, ctx };
+    }
   }
 
   // Sort edges: specific guards first, catch-all guards (true/always) last

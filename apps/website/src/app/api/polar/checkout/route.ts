@@ -47,6 +47,9 @@ export async function GET(req: NextRequest) {
     console.log("5. Attempting to create checkout session...");
 
     // Create Checkout
+    const amountParam = url.searchParams.get("amount");
+    const amount = amountParam ? Number(amountParam) : undefined;
+
     const result = await polar.checkouts.create({
       products,
       customerId: url.searchParams.get("customerId") || undefined,
@@ -55,6 +58,7 @@ export async function GET(req: NextRequest) {
       metadata: url.searchParams.has("metadata") 
         ? JSON.parse(url.searchParams.get("metadata")!) 
         : undefined,
+      amount: Number.isFinite(amount) ? amount : undefined,
       successUrl: `${origin}/billing/success?checkout_id={CHECKOUT_ID}`,
       returnUrl: origin,
     });

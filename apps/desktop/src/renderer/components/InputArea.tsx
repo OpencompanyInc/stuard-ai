@@ -1,4 +1,3 @@
-
 import React, { forwardRef, useState, useEffect, useRef, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
 import TextareaAutosize from 'react-textarea-autosize';
@@ -94,27 +93,108 @@ interface InputAreaProps {
   onGenUIResponse?: (component: string, result: any) => void;
 }
 
-const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
-  query, setQuery, onSend,
-  attachments, onRemoveAttachment, onAttachFiles, onAttachImages,
-  onPaste, onDrop,
-  signedIn, onSignIn,
-  conversationTitle, conversations, loadingConversations, onSelectConversation, onDeleteConversation, onNewChat, onStopGeneration, onChatMenuOpenChange, chatMenuOpen,
-  expanded, onToggleExpand, onOpenDashboard, overlayMode, statusText, statusIcon, statusUrgency,
-  connectionStatus,
-  queueDepth, queuedMessages,
-  isRecording, onMicClick,
-  contextPaths, setContextPaths,
-  translucentMode = false,
-  accessToken,
-  miniOutputText,
-  miniOutputHasContent,
-  miniOutputStreaming,
-  showMiniOutput,
-  setShowMiniOutput,
-  onSubmitToolOutput,
-  onGenUIResponse
-}, ref) => {
+// Helper component for attachments & context
+const AttachmentBar = memo(({
+  attachments,
+  contextPaths,
+  onRemoveAttachment,
+  onRemoveContext
+}: {
+  attachments: Array<{ type: 'image' | 'file'; name: string }>;
+  contextPaths?: ContextItem[];
+  onRemoveAttachment: (index: number) => void;
+  onRemoveContext: (index: number) => void;
+}) => {
+  if (attachments.length === 0 && (!contextPaths || contextPaths.length === 0)) return null;
+
+  return (
+    <div className="w-full flex flex-wrap gap-2 px-1 py-1 animate-in fade-in slide-in-from-bottom-1 duration-200 no-drag relative z-20">
+      {/* Attachments */}
+      {attachments.map((att, idx) => (
+        <div
+          key={`att-${idx}`}
+          className="group relative flex items-center gap-2 pl-2 pr-7 py-1.5 rounded-xl bg-gray-200/50 border border-gray-300/30 hover:bg-gray-200/80 hover:border-gray-300/50 transition-all cursor-default select-none shadow-sm backdrop-blur-md"
+        >
+          {att.type === 'image' ? (
+            <div className="w-5 h-5 rounded-md bg-purple-500/10 flex items-center justify-center text-purple-500">
+              <ImageIconLucide className="w-3 h-3" />
+            </div>
+          ) : (
+            <div className="w-5 h-5 rounded-md bg-blue-500/10 flex items-center justify-center text-blue-500">
+              <FileIconLucide className="w-3 h-3" />
+            </div>
+          )}
+          <span className="text-[11px] font-semibold text-theme-fg max-w-[120px] truncate">
+            {att.name}
+          </span>
+          <button
+            onClick={(e) => { e.stopPropagation(); onRemoveAttachment(idx); }}
+            className="absolute right-1 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-lg text-theme-muted hover:text-red-500 hover:bg-red-500/10 transition-colors opacity-50 group-hover:opacity-100"
+            title="Remove attachment"
+          >
+            <Cross2Icon className="w-3 h-3" />
+          </button>
+        </div>
+      ))}
+
+      {/* Context Paths */}
+      {contextPaths?.map((c, i) => (
+        <div
+          key={c.path}
+          className="group relative flex items-center gap-2 pl-2 pr-7 py-1.5 rounded-xl bg-primary/5 border border-primary/10 hover:bg-primary/10 hover:border-primary/20 transition-all cursor-default select-none shadow-sm backdrop-blur-md"
+        >
+          <div className="w-5 h-5 rounded-md bg-primary/10 flex items-center justify-center text-primary">
+            {c.isDirectory ? (
+              <Folder className="w-3 h-3" />
+            ) : (
+              <FileText className="w-3 h-3" />
+            )}
+          </div>
+          <div className="flex flex-col leading-none justify-center">
+            <span className="text-[11px] font-semibold text-theme-fg max-w-[120px] truncate">
+              {c.name}
+            </span>
+            <span className="text-[9px] text-primary/70 font-medium truncate max-w-[100px] mt-0.5">
+              Context
+            </span>
+          </div>
+          <button
+            onClick={(e) => { e.stopPropagation(); onRemoveContext(i); }}
+            className="absolute right-1 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-lg text-theme-muted hover:text-red-500 hover:bg-red-500/10 transition-colors opacity-50 group-hover:opacity-100"
+            title="Remove context"
+          >
+            <Cross2Icon className="w-3 h-3" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+});
+
+const InputArea = forwardRef(function InputArea(
+  {
+    query, setQuery, onSend,
+    attachments, onRemoveAttachment, onAttachFiles, onAttachImages,
+    onPaste, onDrop,
+    signedIn, onSignIn,
+    conversationTitle, conversations, loadingConversations, onSelectConversation, onDeleteConversation, onNewChat, onStopGeneration, onChatMenuOpenChange, chatMenuOpen,
+    expanded, onToggleExpand, onOpenDashboard, overlayMode, statusText, statusIcon, statusUrgency,
+    connectionStatus,
+    queueDepth, queuedMessages,
+    isRecording, onMicClick,
+    contextPaths, setContextPaths,
+    translucentMode = false,
+    accessToken,
+    miniOutputText,
+    miniOutputHasContent,
+    miniOutputStreaming,
+    showMiniOutput,
+    setShowMiniOutput,
+    onSubmitToolOutput,
+    onGenUIResponse,
+  }: InputAreaProps,
+  ref: React.ForwardedRef<HTMLTextAreaElement>
+) {
 
   const conn = connectionStatus || 'connected';
   const isConnSpinner = conn === 'connecting';
@@ -663,7 +743,9 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
 
     // Calculate target height
     // baseHeight should match inputBarHeight (140 + inputBarGap)
-    const baseHeight = 156 + miniHeight; // 140 + 16 gap + mini output
+    const hasAttachments = attachments.length > 0 || (contextPaths && contextPaths.length > 0);
+    const attachmentHeight = hasAttachments ? 44 : 0;
+    const baseHeight = 156 + miniHeight + attachmentHeight; // 140 + 16 gap + mini output + attachments
     const hasFileResults = fileResults.length > 0;
     const fileResultsHeight = hasFileResults ? Math.min(fileResults.length * 60 + 40, 300) : 0;
 
@@ -729,7 +811,7 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
   useEffect(() => {
     if (expanded) return;
     updateWindowSize();
-  }, [expanded, updateWindowSize, showSearchOptions, showFileNav, showWebOptions, showMiniOutput, miniOutputHasContent, overlayMode]);
+  }, [expanded, updateWindowSize, showSearchOptions, showFileNav, showWebOptions, showMiniOutput, miniOutputHasContent, overlayMode, attachments.length, contextPaths?.length]);
 
   // Recalculate placement when window moves
   useEffect(() => {
@@ -753,7 +835,7 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [expanded, showSearchOptions, showFileNav, calculatePlacement, dropdownPlacement, showMiniOutput, miniOutputHasContent]);
+  }, [expanded, showSearchOptions, showFileNav, calculatePlacement, dropdownPlacement, showMiniOutput, miniOutputHasContent, attachments.length, contextPaths?.length]);
 
   // Handle height change for auto-expansion in compact mode
   const handleHeightChange = useCallback((height: number) => {
@@ -805,7 +887,9 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
   // Base: container p-2 (8px) + input card min-h (114px) + extra padding (~18px) = ~140px
   // Add gap for visual separation between dropdown and input bar
   const inputBarGap = 16;
-  const inputBarHeight = 140 + extraInputHeight + inputBarGap;
+  const hasAttachments = attachments.length > 0 || (contextPaths && contextPaths.length > 0);
+  const attachmentOffset = hasAttachments ? 44 : 0;
+  const inputBarHeight = 140 + extraInputHeight + inputBarGap + attachmentOffset;
 
   // Compact Mode
   if (!expanded) {
@@ -831,8 +915,8 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
               top: dropdownPlacement === 'bottom' ? `${inputBarHeight - 8}px` : 'auto',
             }}
           >
-            <div className="bg-theme-card rounded-[24px] border border-theme/50 overflow-hidden backdrop-blur-3xl shadow-2xl">
-              <div className="p-3 border-b border-theme/10 bg-theme-hover/20">
+            <div className="bg-theme-bg rounded-[24px] border border-theme/20 overflow-hidden backdrop-blur-3xl shadow-lg shadow-black/10">
+              <div className="p-3 border-b border-theme/10 bg-theme-bg/70">
                 <div className="flex items-center justify-between">
                   <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-theme-muted px-1">
                     Quick Actions
@@ -843,20 +927,29 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
                 </div>
               </div>
               <div className="p-2 space-y-1 max-h-[380px] overflow-y-auto custom-scrollbar">
-                {/* Ask Stuard - Primary */}
+                {/* Quick Shortcuts */}
+                <QuickShortcutsGrid
+                  bookmarks={bookmarks}
+                  onExecute={executeBookmark}
+                  onEdit={() => setShowBookmarkEditor(true)}
+                  onAdd={() => setShowBookmarkEditor(true)}
+                  maxVisible={6}
+                  filter={query}
+                />
+              {/* Ask Stuard - Primary */}
                 <button
                   onClick={() => handleSearchOption('chat')}
-                  className="w-full flex items-center gap-4 px-4 py-3 rounded-2xl hover:bg-theme-hover transition-all group border border-transparent hover:border-theme/30 relative overflow-hidden"
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl bg-theme-bg border border-theme/10 shadow-sm hover:border-primary/30 hover:shadow-md transition-all group relative overflow-hidden"
                 >
                   <div className="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity" />
-                  <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 group-hover:scale-110 transition-all ring-1 ring-primary/20 group-hover:ring-primary/50 z-10">
-                    <MessageSquare className="w-5 h-5 text-primary" />
+                  <div className="w-7 h-7 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 group-hover:scale-110 transition-all ring-1 ring-primary/20 group-hover:ring-primary/50 z-10">
+                    <MessageSquare className="w-3.5 h-3.5 text-primary" />
                   </div>
                   <div className="flex-1 text-left z-10">
-                    <div className="text-[14px] font-bold text-theme-fg group-hover:text-primary transition-colors">Ask Stuard</div>
-                    <div className="text-[11px] text-theme-muted font-semibold">Get an AI assistant response</div>
+                    <div className="text-[13px] font-bold text-theme-fg group-hover:text-primary transition-colors">Ask Stuard</div>
+                    <div className="text-[10px] text-theme-muted font-semibold">Get an AI assistant response</div>
                   </div>
-                  <div className="text-[10px] font-bold text-theme-muted bg-theme-hover px-2.5 py-1.5 rounded-lg border border-theme/10 group-hover:bg-primary group-hover:text-primary-fg group-hover:border-primary transition-all z-10">Enter</div>
+                  <div className="text-[10px] font-bold text-theme-muted bg-theme-hover px-2 py-1 rounded-lg border border-theme/10 group-hover:bg-primary group-hover:text-primary-fg group-hover:border-primary transition-all z-10">Enter</div>
                 </button>
 
                 {/* File Results / Search */}
@@ -875,6 +968,7 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
                     <div className="max-h-[240px] overflow-y-auto custom-scrollbar px-1 space-y-1">
                       {fileResults.map((f: any, idx: number) => {
                         if (!f) return null;
+
                         const kind = String(f.kind || 'other').toLowerCase();
                         const getFileKindConfig = (k: string) => {
                           switch (k) {
@@ -889,24 +983,22 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
                             default: return { icon: FileIconLucide, color: 'text-theme-muted', bg: 'bg-theme-muted/10', label: 'FILE' };
                           }
                         };
+
                         const cfg = getFileKindConfig(kind);
                         const Icon = cfg.icon;
-                        const p = String(f.path || '').trim();
-                        const iconUrl = (kind === 'application' && p)
-                          ? (fileIconDataUrls[p] || fileIconCacheRef.current[p] || '')
-                          : '';
+                        const iconUrl = f?.path ? fileIconDataUrls[String(f.path)] : undefined;
 
                         return (
                           <button
                             key={String(f.id || f.path || idx)}
                             onClick={() => handleAddFileAsContext(f)}
-                            className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-theme-hover transition-all group border border-transparent hover:border-theme/30 text-left"
+                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-bg/30 border border-theme/10 shadow-sm hover:border-primary/30 hover:shadow-md transition-all group text-left mb-1"
                           >
-                            <div className={clsx("w-8 h-8 rounded-lg border border-theme/20 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-all", cfg.bg, cfg.color)}>
+                            <div className={clsx("w-7 h-7 rounded-lg border border-theme/20 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-all", cfg.bg, cfg.color)}>
                               {iconUrl ? (
-                                <img src={iconUrl} alt="" className="w-4 h-4 object-contain" />
+                                <img src={iconUrl} alt="" className="w-3.5 h-3.5 object-contain" />
                               ) : (
-                                <Icon className="w-4 h-4" />
+                                <Icon className="w-3.5 h-3.5" />
                               )}
                             </div>
                             <div className="min-w-0 flex-1">
@@ -935,127 +1027,126 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
                     </button>
                   </div>
                 ) : (
-                  <button
-                    onClick={() => handleSearchOption('files')}
-                    className="w-full flex items-center gap-4 px-4 py-3 rounded-2xl hover:bg-theme-hover transition-all group border border-transparent hover:border-theme/30"
-                  >
-                    <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 group-hover:scale-110 transition-all ring-1 ring-primary/20 group-hover:ring-primary/50">
-                      <FolderSearch className="w-5 h-5 text-primary" />
-                    </div>
-                    <div className="flex-1 text-left">
-                      <div className="text-[14px] font-bold text-theme-fg group-hover:text-primary transition-colors">Search Files</div>
-                      <div className="text-[11px] text-theme-muted font-semibold">
-                        {fileLoading || fileSemanticLoading ? 'Searching...' : 'Find apps, docs, folders & more'}
-                      </div>
-                    </div>
-                    <div className="text-[10px] font-bold text-primary-fg bg-theme-hover px-2.5 py-1.5 rounded-lg border border-theme/10 group-hover:bg-primary group-hover:text-primary-fg group-hover:border-primary transition-all">@</div>
-                  </button>
-                )}
+<button
+onClick={() => handleSearchOption('files')}
+className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl bg-theme-card/50 border border-theme/10 shadow-sm hover:border-primary/30 hover:shadow-md transition-all group"
+>
+<div className="w-7 h-7 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 group-hover:scale-110 transition-all ring-1 ring-primary/20 group-hover:ring-primary/50">
+<FolderSearch className="w-3.5 h-3.5 text-primary" />
+</div>
+<div className="flex-1 text-left">
+<div className="text-[12px] font-bold text-theme-fg group-hover:text-primary transition-colors">Search Files</div>
+<div className="text-[9px] text-theme-muted font-semibold">
+{fileLoading || fileSemanticLoading ? 'Searching...' : 'Find apps, docs, folders & more'}
+</div>
+</div>
+<div className="text-[9px] font-bold text-primary-fg bg-theme-hover px-2 py-1 rounded-lg border border-theme/10 group-hover:bg-primary group-hover:text-primary-fg group-hover:border-primary transition-all">@</div>
+</button>
+)}
 
-                {/* Local Workflows & Marketplace */}
-                {(filteredLocalWorkflows.length > 0 || marketplaceResults.length > 0) && (
-                  <div className="space-y-1 mb-1">
-                    <div className="px-3 py-1.5 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Zap className="w-3.5 h-3.5 text-amber-500" />
-                        <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">Workflows</span>
-                        {isMarketplaceSearching && <Loader2 className="w-3 h-3 text-primary animate-spin" />}
-                      </div>
-                      <div className="text-[10px] text-theme-muted font-semibold">
-                        Actions
-                      </div>
-                    </div>
+{/* Local Workflows & Marketplace */}
+{(filteredLocalWorkflows.length > 0 || marketplaceResults.length > 0) && (
+<div className="space-y-1 mb-1">
+<div className="px-3 py-1.5 flex items-center justify-between">
+<div className="flex items-center gap-2">
+<Zap className="w-3.5 h-3.5 text-amber-500" />
+<span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">Workflows</span>
+{isMarketplaceSearching && <Loader2 className="w-3 h-3 text-primary animate-spin" />}
+</div>
+<div className="text-[10px] text-theme-muted font-semibold">
+Actions
+</div>
+</div>
 
-                    <div className="space-y-1">
-                      {/* Local */}
-                      {filteredLocalWorkflows.map(w => (
-                        <button
-                          key={w.id}
-                          onClick={async () => {
-                            try {
-                              await window.desktopAPI?.workflowsRun?.(w.id);
-                              window.desktopAPI?.hide?.();
-                              (window as any).desktopAPI?.notify?.('Workflow Started', `Running ${w.name}...`);
-                            } catch (e) {
-                              console.error(e);
-                            }
-                          }}
-                          className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-theme-hover transition-all group border border-transparent hover:border-theme/30 text-left"
-                        >
-                          <div className="w-8 h-8 rounded-lg border border-theme/20 flex items-center justify-center flex-shrink-0 bg-amber-500/10 text-amber-500 group-hover:scale-105 transition-all">
-                            <Zap className="w-4 h-4" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="text-[13px] font-semibold text-theme-fg truncate group-hover:text-amber-500 transition-colors">
-                              {w.name || 'Untitled'}
-                            </div>
-                            <div className="text-[10px] text-theme-muted truncate font-medium">
-                              Run Local Workflow
-                            </div>
-                          </div>
-                          <PlayCircle className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-amber-500" />
-                        </button>
-                      ))}
+<div className="space-y-1">
+{/* Local */}
+{filteredLocalWorkflows.map(w => (
+<button
+key={w.id}
+onClick={async () => {
+try {
+await window.desktopAPI?.workflowsRun?.(w.id);
+window.desktopAPI?.hide?.();
+(window as any).desktopAPI?.notify?.('Workflow Started', `Running ${w.name}...`);
+} catch (e) {
+console.error(e);
+}
+}}
+className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-card border border-theme/10 shadow-sm hover:border-primary/30 hover:shadow-md transition-all group text-left mb-1"
+>
+<div className="w-7 h-7 rounded-lg border border-theme/20 flex items-center justify-center flex-shrink-0 bg-amber-500/10 text-amber-500 group-hover:scale-105 transition-all">
+<Zap className="w-3.5 h-3.5" />
+</div>
+<div className="min-w-0 flex-1">
+<div className="text-[13px] font-semibold text-theme-fg truncate group-hover:text-amber-500 transition-colors">
+{w.name || 'Untitled'}
+</div>
+<div className="text-[10px] text-theme-muted truncate font-medium">
+Run Local Workflow
+</div>
+</div>
+<PlayCircle className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-amber-500" />
+</button>
+))}
 
-                      {/* Marketplace */}
-                      {marketplaceResults.map(w => (
-                        <button
-                          key={w.slug}
-                          onClick={() => {
-                            window.desktopAPI?.openWorkflows?.({ marketplaceSlug: w.slug });
-                            window.desktopAPI?.hide?.();
-                          }}
-                          className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-theme-hover transition-all group border border-transparent hover:border-theme/30 text-left"
-                        >
-                          <div className="w-8 h-8 rounded-lg border border-theme/20 flex items-center justify-center flex-shrink-0 bg-indigo-500/10 text-indigo-500 group-hover:scale-105 transition-all">
-                            <CloudDownload className="w-4 h-4" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="text-[13px] font-semibold text-theme-fg truncate group-hover:text-indigo-500 transition-colors">
-                              {w.name}
-                            </div>
-                            <div className="text-[10px] text-theme-muted truncate font-medium">
-                              Marketplace • {w.publisher_name || 'Community'}
-                            </div>
-                          </div>
-                          <Zap className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-indigo-500" />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+{/* Marketplace */}
+{marketplaceResults.map(w => (
+<button
+key={w.slug}
+onClick={() => {
+window.desktopAPI?.openWorkflows?.({ marketplaceSlug: w.slug });
+window.desktopAPI?.hide?.();
+}}
+className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-card border border-theme/10 shadow-sm hover:border-primary/30 hover:shadow-md transition-all group text-left mb-1"
+>
+<div className="w-7 h-7 rounded-lg border border-theme/20 flex items-center justify-center flex-shrink-0 bg-indigo-500/10 text-indigo-500 group-hover:scale-105 transition-all">
+<CloudDownload className="w-3.5 h-3.5" />
+</div>
+<div className="min-w-0 flex-1">
+<div className="text-[13px] font-semibold text-theme-fg truncate group-hover:text-indigo-500 transition-colors">
+{w.name}
+</div>
+<div className="text-[10px] text-theme-muted truncate font-medium">
+Marketplace • {w.publisher_name || 'Community'}
+</div>
+</div>
+<Zap className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-indigo-500" />
+</button>
+))}
+</div>
+</div>
+)}
 
-                {/* Web Search - Expandable with multiple engines */}
-                <div className="rounded-2xl overflow-hidden bg-theme-hover/10 border border-theme/5">
-                  <div className="flex items-stretch">
-                    {/* Main Action - Search with Default */}
-                    <button
-                      onClick={() => handleSearchOption('web', activeEngine.id)}
-                      className="flex-1 flex items-center gap-4 px-4 py-3 hover:bg-theme-hover transition-all group relative overflow-hidden text-left"
-                    >
-                      <div className={clsx("absolute inset-y-0 left-0 w-1", activeEngine.bg)} />
-                      <div className={clsx(
-                        "w-10 h-10 rounded-xl flex items-center justify-center transition-all bg-theme-bg/50 group-hover:scale-110",
-                        activeEngine.color
-                      )}>
-                        {activeEngine.icon}
-                      </div>
-                      <div className="flex-1">
-                        <div className={clsx("text-[14px] font-bold transition-colors group-hover:text-theme-fg", activeEngine.color)}>
-                          Search {activeEngine.name}
-                        </div>
-                        <div className="text-[11px] text-theme-muted font-semibold flex items-center gap-1.5">
-                          <span>Ctrl + Enter</span>
-                          <Command className="w-3 h-3 opacity-50" />
-                        </div>
-                      </div>
-                    </button>
+{/* Web Search - Expandable with multiple engines */}
+<div className="rounded-2xl overflow-hidden bg-theme-card border border-theme/10 shadow-sm">
+<div className="flex items-stretch">
+{/* Main Action - Search with Default */}
+<button
+onClick={() => handleSearchOption('web', activeEngine.id)}
+className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-card border border-theme/10 shadow-sm hover:border-primary/30 hover:shadow-md transition-all group text-left mb-1"
+>
+<div className={clsx(
+"w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-theme-bg/50 group-hover:scale-110",
+activeEngine.color
+)}>
+{activeEngine.icon}
+</div>
+<div className="flex-1">
+<div className={clsx("text-[13px] font-bold transition-colors group-hover:text-theme-fg", activeEngine.color)}>
+Search {activeEngine.name}
+</div>
+<div className="text-[10px] text-theme-muted font-semibold flex items-center gap-1.5">
+<span>Ctrl + Enter</span>
+<Command className="w-3 h-3 opacity-50" />
+</div>
+</div>
+</button>
 
                     {/* Change Engine Trigger */}
                     <button
                       onClick={(e) => { e.stopPropagation(); setShowWebOptions(!showWebOptions); }}
                       className={clsx(
-                        "w-12 flex items-center justify-center border-l border-theme/10 hover:bg-theme-hover transition-all",
+                        "w-10 flex items-center justify-center border-l border-theme/10 hover:bg-theme-hover transition-all",
                         showWebOptions ? "bg-theme-hover/80 text-primary" : "text-theme-muted"
                       )}
                       title="Change Default Search Engine"
@@ -1066,7 +1157,7 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
 
                   {/* Search Engine Options */}
                   {showWebOptions && (
-                    <div className="p-3 bg-theme-hover/5 border-t border-theme/5 grid grid-cols-5 gap-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                    <div className="p-3 bg-theme-bg/30 border-t border-theme/10 grid grid-cols-5 gap-2 animate-in fade-in slide-in-from-top-1 duration-200">
                       {searchEngines.map((engine) => (
                         <button
                           key={engine.id}
@@ -1086,14 +1177,14 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
                           )} />
 
                           <div className={clsx(
-                            "w-10 h-10 rounded-xl flex items-center justify-center text-xl shadow-sm transition-all duration-300",
+                            "w-7 h-7 rounded-lg flex items-center justify-center text-xl shadow-sm transition-all duration-300",
                             "bg-theme-card border border-theme/10 group-hover/engine:border-transparent",
                             "group-hover/engine:scale-110 group-hover/engine:shadow-md"
                           )}>
                             {engine.icon}
                           </div>
                           <span className={clsx(
-                            "text-[10px] font-black uppercase tracking-wider transition-colors",
+                            "text-[9px] font-black uppercase tracking-wider transition-colors",
                             "text-theme-muted group-hover/engine:text-theme-fg"
                           )}>{engine.name}</span>
                         </button>
@@ -1102,29 +1193,21 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
                   )}
                 </div>
 
-                {/* Quick Shortcuts */}
-                <QuickShortcutsGrid
-                  bookmarks={bookmarks}
-                  onExecute={executeBookmark}
-                  onEdit={() => setShowBookmarkEditor(true)}
-                  onAdd={() => setShowBookmarkEditor(true)}
-                  maxVisible={6}
-                />
               </div>
             </div>
           </div>,
           document.body
         )}
 
-        {showFileNav && fileNavOverlay && typeof document !== 'undefined' && document.body && createPortal(
+        {showFileNav && typeof document !== 'undefined' && document.body && createPortal(
           <div
+            className={clsx(
+              "fixed left-1/2 -translate-x-1/2 z-[100000] w-[92%] max-w-[520px] animate-in fade-in duration-200",
+              dropdownPlacement === 'top' ? "slide-in-from-bottom-centered mb-3" : "slide-in-from-top-centered mt-2"
+            )}
             style={{
-              position: 'fixed',
-              left: fileNavOverlay.left,
-              top: fileNavOverlay.top,
-              width: fileNavOverlay.width,
-              transform: fileNavOverlay.placement === 'top' ? 'translateY(-100%)' : undefined,
-              zIndex: 100000,
+              bottom: dropdownPlacement === 'top' ? `${inputBarHeight}px` : 'auto',
+              top: dropdownPlacement === 'bottom' ? `${inputBarHeight - 8}px` : 'auto',
             }}
           >
             <FileNavigator
@@ -1153,17 +1236,17 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
           >
             <div className={clsx(
               translucentMode
-                ? "rounded-[24px] bg-theme-bg/15 backdrop-blur-2xl border border-theme/15"
-                : "rounded-[24px] bg-theme-card border border-theme/40",
-              "shadow-2xl overflow-hidden"
+                ? "rounded-[24px] bg-theme-bg backdrop-blur-2xl border border-theme/20"
+                : "rounded-[24px] bg-theme-bg border border-theme/20",
+              "shadow-lg shadow-black/10 overflow-hidden"
             )}>
-              <div className="flex items-center justify-between px-4 py-3 border-b border-theme/10 bg-theme-hover/20">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-theme/10 bg-theme-bg">
                 <div className="text-[11px] font-bold uppercase tracking-widest text-theme-muted">
                   Quick answer
                 </div>
                 <button
                   type="button"
-                  className="w-7 h-7 rounded-[10px] bg-theme-card border border-theme/10 text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all flex items-center justify-center"
+                  className="w-7 h-7 rounded-[10px] bg-theme-bg border border-theme/10 text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all flex items-center justify-center"
                   title="Hide"
                   onClick={() => setShowMiniOutput?.(false)}
                 >
@@ -1191,8 +1274,8 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
           className={clsx(
             "drag w-full min-h-[114px] h-auto py-3 rounded-[28px] flex flex-col justify-center px-4 gap-2 transition-all duration-300",
             translucentMode
-              ? "bg-theme-bg/25 backdrop-blur-2xl border border-theme/20"
-              : "bg-theme-card border border-theme/50"
+              ? "bg-gray-100/80 backdrop-blur-2xl border border-gray-300/50"
+              : "bg-gray-100/90 border border-gray-200"
           )}
           onDragOver={(e) => { e.preventDefault(); try { e.dataTransfer.dropEffect = 'copy'; } catch { } }}
           onDrop={onDrop}
@@ -1248,7 +1331,7 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
               {overlayMode !== 'sidebar' && (
                 <button
                   type="button"
-                  className="w-8 h-8 rounded-[10px] bg-theme-card border border-theme/10 text-theme-fg hover:bg-theme-hover hover:scale-105 active:scale-95 transition-all flex items-center justify-center"
+                  className="w-8 h-8 rounded-[10px] bg-white border border-gray-200 text-theme-fg hover:bg-gray-200/50 hover:scale-105 active:scale-95 transition-all flex items-center justify-center"
                   title="Sidebar"
                   onClick={() => window.desktopAPI.setMode('sidebar')}
                 >
@@ -1258,7 +1341,7 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
               {overlayMode !== 'window' && (
                 <button
                   type="button"
-                  className="w-8 h-8 rounded-[10px] bg-theme-card border border-theme/10 text-theme-fg hover:bg-theme-hover hover:scale-105 active:scale-95 transition-all flex items-center justify-center"
+                  className="w-8 h-8 rounded-[10px] bg-white border border-gray-200 text-theme-fg hover:bg-gray-200/50 hover:scale-105 active:scale-95 transition-all flex items-center justify-center"
                   title="Window"
                   onClick={() => window.desktopAPI.setMode('window')}
                 >
@@ -1269,7 +1352,7 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
               {/* Dashboard / Home */}
               <button
                 type="button"
-                className="w-8 h-8 rounded-[10px] bg-theme-card border border-theme/10 text-theme-fg hover:bg-theme-hover hover:scale-105 active:scale-95 transition-all flex items-center justify-center"
+                className="w-8 h-8 rounded-[10px] bg-white border border-gray-200 text-theme-fg hover:bg-gray-200/50 hover:scale-105 active:scale-95 transition-all flex items-center justify-center"
                 title="Dashboard"
                 onClick={onOpenDashboard}
               >
@@ -1279,31 +1362,39 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
             </div>
           </div>
 
+          {/* Attachments Bar (Compact Mode) */}
+          <AttachmentBar
+            attachments={attachments}
+            contextPaths={contextPaths}
+            onRemoveAttachment={onRemoveAttachment}
+            onRemoveContext={removeContext}
+          />
+
           {/* Bottom Row: Input & Mic */}
           <div className="flex items-center gap-2.5 w-full no-drag">
             {!signedIn ? (
               <button
                 onClick={onSignIn}
-                className="no-drag flex-1 flex items-center justify-center gap-2 h-[42px] rounded-full bg-primary text-primary-fg font-semibold text-[14px] hover:opacity-90 transition-all active:scale-[0.99]"
+                className="no-drag flex-1 flex items-center justify-center gap-2 h-[42px] rounded-full bg-primary text-primary-fg font-semibold text-[14px] hover:opacity-90 transition-all active:scale-95"
               >
                 <LogIn className="w-4 h-4" />
                 <span>Sign in</span>
               </button>
             ) : (
-              <div className="flex-1 relative min-h-[42px] bg-theme-card rounded-[21px] border border-theme/50 flex items-center px-1.5 py-0.5 transition-all focus-within:ring-2 focus-within:ring-primary/20">
+              <div className="flex-1 relative min-h-[42px] bg-white rounded-[21px] border border-gray-200 flex items-center px-1.5 py-0.5 transition-all focus-within:ring-2 focus-within:ring-primary/20">
                 {/* Plus / Attach Button */}
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger asChild>
                     <button
                       type="button"
-                      className="w-8 h-8 rounded-full flex items-center justify-center text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-colors"
+                      className="w-8 h-8 rounded-full flex items-center justify-center bg-theme-hover/50 text-theme-fg/70 hover:text-theme-fg hover:bg-theme-hover transition-all active:scale-95 border border-theme/10"
                       title="Attach"
                     >
-                      <PlusIcon className="w-4 h-4 rounded-full border border-current p-0.5" />
+                      <PlusIcon className="w-4 h-4" />
                     </button>
                   </DropdownMenu.Trigger>
                   <DropdownMenu.Portal>
-                    <DropdownMenu.Content className="DropdownContent z-[10001] min-w-[160px] bg-theme-card rounded-xl border border-theme p-1 shadow-2xl" sideOffset={8} align="start" collisionPadding={10}>
+                    <DropdownMenu.Content className="DropdownContent z-[10001] min-w-[160px] bg-gray-50 rounded-xl border border-gray-200 p-1 shadow-2xl" sideOffset={8} align="start" collisionPadding={10}>
                       <DropdownMenu.Item
                         onSelect={onAttachFiles}
                         className="group text-[13px] text-theme-fg font-bold flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors"
@@ -1324,8 +1415,7 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
 
                 {/* Input Field */}
                 <div className={clsx(
-                  "flex-1 relative mx-1 rounded-lg transition-all flex items-center min-h-[36px]",
-                  showFileNav && "ring-2 ring-primary/40 bg-primary/5"
+                  "flex-1 relative mx-1 transition-all flex items-center min-h-[36px]"
                 )}>
                   <TextareaAutosize
                     ref={setTextareaRef}
@@ -1337,7 +1427,7 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
                     placeholder={showFileNav ? "Type to filter..." : "Just ask Stuard"}
                     className={clsx(
                       "w-full bg-transparent outline-none text-[14px] leading-tight py-2 resize-none scrollbar-hidden font-semibold px-1",
-                      showFileNav ? "text-primary placeholder:text-primary/40" : "text-theme-fg placeholder:text-theme-muted"
+                      "text-theme-fg placeholder:text-theme-muted"
                     )}
                     minRows={1}
                     maxRows={5}
@@ -1403,48 +1493,15 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
     <>
       {expandedOverlayPortal}
       <div className="flex flex-col bg-transparent">
-        {/* Attachments & Context Bar */}
-        {(attachments.length > 0 || (contextPaths && contextPaths.length > 0)) && (
-          <div className="px-3 py-2 flex flex-wrap gap-2 no-drag border-b border-theme/10">
-            {/* File/Image Attachments */}
-            {attachments.map((att, idx) => (
-              <div
-                key={`att-${idx}`}
-                className="group flex items-center gap-1.5 px-2.5 py-1.5 bg-theme-active/50 hover:bg-theme-active rounded-lg text-[11px] text-theme-fg shadow-sm animate-in fade-in zoom-in duration-200 transition-colors border border-theme/10"
-              >
-                {att.type === 'image' ? <ImageIcon className="w-3.5 h-3.5 text-primary" /> : <FileIcon className="w-3.5 h-3.5 text-emerald-500" />}
-                <span className="max-w-[120px] truncate font-semibold">{att.name}</span>
-                <button
-                  onClick={() => onRemoveAttachment(idx)}
-                  className="ml-0.5 text-theme-muted hover:text-theme-fg hover:bg-theme-hover rounded p-0.5 transition-colors opacity-0 group-hover:opacity-100"
-                  title="Remove"
-                >
-                  <Cross2Icon className="w-3 h-3" />
-                </button>
-              </div>
-            ))}
-
-            {/* Context Paths (Files/Folders from @ mention) */}
-            {contextPaths && contextPaths.map((c, i) => (
-              <div
-                key={c.path}
-                className="group flex items-center gap-1.5 px-2.5 py-1.5 bg-primary/10 hover:bg-primary/20 border border-primary/30 rounded-lg text-[11px] text-theme-fg shadow-sm animate-in fade-in zoom-in duration-200 transition-colors"
-                title={c.path}
-              >
-                <span className="text-primary">{c.isDirectory ? '📁' : '📄'}</span>
-                <span className="max-w-[120px] truncate font-semibold">{c.name}</span>
-                <button
-                  type="button"
-                  onClick={() => removeContext(i)}
-                  className="ml-0.5 text-theme-muted hover:text-theme-fg hover:bg-theme-hover rounded p-0.5 transition-colors opacity-0 group-hover:opacity-100"
-                  title="Remove context"
-                >
-                  <Cross2Icon className="w-3 h-3" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Attachments & Context Bar (Expanded Mode) */}
+        <div className="px-2">
+          <AttachmentBar
+            attachments={attachments}
+            contextPaths={contextPaths}
+            onRemoveAttachment={onRemoveAttachment}
+            onRemoveContext={removeContext}
+          />
+        </div>
 
         {/* Input & Tools Row */}
         <div
@@ -1496,11 +1553,11 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
             </button>
           ) : (
             <div id="stuard-input-area" className={clsx(
-              "relative flex-1 min-w-0 rounded-3xl transition-all flex items-center",
-              showFileNav && "ring-2 ring-primary/50 ring-offset-1 ring-offset-transparent"
+              "relative flex-1 min-w-0 rounded-3xl transition-all flex items-center"
             )}>
               <TextareaAutosize
                 ref={setTextareaRef}
+                data-onboarding="input-area"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -1530,6 +1587,7 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
                 )}
                 onClick={onMicClick}
                 title={isRecording ? "Stop recording" : "Start recording"}
+                data-onboarding="mic-btn"
               >
                 <Mic className="w-3.5 h-3.5" />
               </button>
@@ -1542,6 +1600,7 @@ const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
               className="no-drag inline-flex items-center justify-center rounded-md hover:bg-theme-hover transition-all text-theme-fg/70 hover:text-theme-fg h-7 w-7"
               onClick={onOpenDashboard}
               title="Dashboard"
+              data-onboarding="expand-btn"
             >
               <HomeIcon className="w-3.5 h-3.5" />
             </button>

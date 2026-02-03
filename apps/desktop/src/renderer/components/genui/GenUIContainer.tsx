@@ -15,6 +15,7 @@ import { ProgressBar } from './ProgressBar';
 import { Slider } from './Slider';
 import { Chart } from './Chart';
 import { InfoCard } from './InfoCard';
+import { WeatherCard } from './WeatherCard';
 import { EmailView } from './EmailView';
 import { AgentTodoList } from './AgentTodoList';
 import { FeedbackForm } from './FeedbackForm';
@@ -265,6 +266,20 @@ export const GenUIContainer: React.FC<GenUIProps> = ({
             actionLabel={safeArgs.actionLabel}
             onAction={disabled ? undefined : () => onResult({ action: 'card_action' })}
             footer={safeArgs.footer}
+          />
+        );
+
+      case 'show_weather':
+      case 'weather_card':
+        return (
+          <WeatherCard
+            location={safeArgs.location}
+            temperature={safeArgs.temperature}
+            condition={safeArgs.condition}
+            humidity={safeArgs.humidity}
+            windSpeed={safeArgs.windSpeed}
+            unit={safeArgs.unit}
+            forecast={safeArgs.forecast}
           />
         );
 

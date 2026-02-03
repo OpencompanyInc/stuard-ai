@@ -5,104 +5,54 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import WaitlistForm from '@/components/waitlist/WaitlistForm';
 import Link from 'next/link';
 import { useAuthContext } from '@/components/providers/AuthProvider';
-import { useRouter } from 'next/navigation';
+import { useMemo, useState } from 'react';
 
 export default function PricingPage() {
-  const { user, loading } = useAuthContext();
-  const router = useRouter();
+  const { user } = useAuthContext();
+  const [amount, setAmount] = useState(30);
 
-  console.log('PricingPage auth status:', { user: !!user, loading });
+  const payWhatYouWantProductId =
+    process.env.NEXT_PUBLIC_POLAR_PRODUCT_PAYG_ID ||
+    process.env.NEXT_PUBLIC_POLAR_PRODUCT_PRO_ID ||
+    process.env.NEXT_PUBLIC_POLAR_PRODUCT_STARTER_ID;
 
-  const handleGetStarted = async (e: React.MouseEvent, productId: string | undefined, planName: string) => {
-    if (user) {
-      e.preventDefault();
+  console.log('PricingPage auth status:', { user: !!user });
 
-      if (!productId) {
-        if (planName.toLowerCase() === 'free') {
-          router.push('/dashboard');
-          return;
-        }
-        console.error('Missing Polar product id for plan', planName);
-        return;
-      }
-
-      const metadata = JSON.stringify({ userId: user.id });
-      const qs = new URLSearchParams({
-        products: productId,
-        customerEmail: user.email || '',
-        customerExternalId: user.id,
-        metadata,
-      });
-
-      window.location.href = `/api/polar/checkout?${qs.toString()}`;
+  const baseRate = 33;
+  const tier = useMemo(() => {
+    if (amount >= 100) {
+      return { name: 'Whale', multiplier: 2.0, badge: '2.0x Credits', accent: 'text-amber-600' };
     }
+    if (amount >= 30) {
+      return { name: 'Pro', multiplier: 1.5, badge: '1.5x Credits', accent: 'text-indigo-600' };
+    }
+    return { name: 'Starter', multiplier: 1.0, badge: 'Standard Rate', accent: 'text-emerald-600' };
+  }, [amount]);
+
+  const credits = Math.floor(amount * baseRate * tier.multiplier);
+
+  const handleCheckout = (e: React.MouseEvent) => {
+    if (!user) {
+      return;
+    }
+    e.preventDefault();
+
+    if (!payWhatYouWantProductId) {
+      console.error('Missing Polar product id for pay-what-you-want pricing');
+      return;
+    }
+
+    const metadata = JSON.stringify({ userId: user.id });
+    const qs = new URLSearchParams({
+      products: payWhatYouWantProductId,
+      customerEmail: user.email || '',
+      customerExternalId: user.id,
+      metadata,
+      amount: String(Math.round(amount * 100)),
+    });
+
+    window.location.href = `/api/polar/checkout?${qs.toString()}`;
   };
-  // 65% of plan price goes to usage budget. 100 credits per $1.
-  // Free Trial: $0.50 one-time budget (50 credits), Mini models only
-  // Starter: $10/mo, $6.50 budget (650 credits), All models
-  // Pro: $45/mo, $29.25 budget (2,925 credits), All models
-  // Power: $100/mo, $65 budget (6,500 credits), All models
-  // BYOK: Free, unlimited, All models
-  const plans = [
-    {
-      name: 'Free',
-      productId: process.env.NEXT_PUBLIC_POLAR_PRODUCT_FREE_ID || undefined,
-      price: '$0',
-      period: '',
-      description: 'Get started with Stuard AI',
-      features: [
-        '$0.50 trial credit included',
-        'Unlimited usage with BYOK',
-        'Voice & text interaction',
-        'Local data storage',
-      ],
-      credits: '50 + Unlimited (BYOK)',
-      badge: 'Trial + BYOK',
-    },
-    {
-      name: 'Starter',
-      productId: process.env.NEXT_PUBLIC_POLAR_PRODUCT_STARTER_ID,
-      price: '$10',
-      period: '/month',
-      description: 'For everyday AI assistance',
-      features: [
-        '≈650 credits per month',
-        'All AI models included',
-        'Voice & text interaction',
-        'Priority support',
-      ],
-      credits: '≈650',
-    },
-    {
-      name: 'Pro',
-      productId: process.env.NEXT_PUBLIC_POLAR_PRODUCT_PRO_ID,
-      price: '$45',
-      period: '/month',
-      description: 'For power users',
-      features: [
-        '≈2,925 credits per month',
-        'All AI models included',
-        'Advanced document processing',
-        'Custom workflows',
-      ],
-      popular: true,
-      credits: '≈2,925',
-    },
-    {
-      name: 'Power',
-      productId: process.env.NEXT_PUBLIC_POLAR_PRODUCT_POWER_ID,
-      price: '$100',
-      period: '/month',
-      description: 'Maximum capabilities',
-      features: [
-        '≈6,500 credits per month',
-        'All AI models included',
-        'Fastest processing',
-        'Best support response times',
-      ],
-      credits: '≈6,500',
-    },
-  ];
 
   return (
     <>
@@ -157,72 +107,140 @@ export default function PricingPage() {
 
           {/* Pricing Preview */}
           <div className="text-center mb-12">
-            <h3 className="text-2xl font-bold text-gray-900 mb-4">Pricing Plans</h3>
-            <p className="text-gray-600">Simple pricing that scales with you</p>
+            <h3 className="text-2xl font-bold text-gray-900 mb-4">Pay What You Want</h3>
+            <p className="text-gray-600">The more you contribute, the cheaper your credits become.</p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 max-w-6xl mx-auto justify-center">
-            {plans.map((plan) => (
-              <Card
-                key={plan.name}
-                className={`relative ${plan.popular ? 'border-2 border-primary shadow-xl' : 'border border-gray-200'}`}
-              >
-                {plan.popular && (
-                  <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
-                    <span className="bg-primary text-white px-4 py-1 rounded-full text-sm font-semibold shadow-lg">
-                      Most Popular
-                    </span>
+          <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-8">
+            <Card className="border border-gray-200 shadow-xl">
+              <CardHeader>
+                <CardTitle className="text-2xl">Pick your monthly amount</CardTitle>
+                <CardDescription>
+                  Drag the slider or tap a quick amount. Minimum $5. Credits roll over for 30 days.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-8">
+                <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-white via-white to-indigo-50 p-6">
+                  <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+                    <div>
+                      <p className="text-sm text-gray-500">Your price</p>
+                      <div className="text-4xl font-bold text-gray-900">${amount}</div>
+                      <p className="text-sm text-gray-500">billed monthly</p>
+                    </div>
+                    <div className="text-left md:text-right">
+                      <p className="text-sm text-gray-500">Tier status</p>
+                      <div className={`text-2xl font-semibold ${tier.accent}`}>{tier.name}</div>
+                      <div className="inline-flex items-center mt-1 rounded-full bg-black/90 px-3 py-1 text-xs font-semibold text-white">
+                        {tier.badge}
+                      </div>
+                    </div>
                   </div>
-                )}
-                {'badge' in plan && plan.badge && (
-                  <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
-                    <span className="bg-gray-700 text-white px-4 py-1 rounded-full text-sm font-semibold shadow-lg">
-                      {plan.badge}
-                    </span>
+                  <div className="mt-6">
+                    <input
+                      type="range"
+                      min={5}
+                      max={200}
+                      step={1}
+                      value={amount}
+                      onChange={(event) => setAmount(Number(event.target.value))}
+                      className="w-full accent-indigo-600"
+                    />
+                    <div className="flex justify-between text-xs text-gray-500 mt-2">
+                      <span>$5</span>
+                      <span>$30</span>
+                      <span>$100</span>
+                      <span>$200</span>
+                    </div>
                   </div>
-                )}
-                <CardHeader className="text-center">
-                  <CardTitle className="text-xl">{plan.name}</CardTitle>
-                  <CardDescription className="text-gray-600 text-sm">{plan.description}</CardDescription>
-                  <div className="mt-4">
-                    <span className={`text-3xl font-bold ${plan.popular ? 'text-primary' : 'text-gray-900'}`}>
-                      {plan.price}
-                    </span>
-                    {plan.period && <span className="text-gray-600">{plan.period}</span>}
-                    <p className="text-xs text-gray-500 mt-1">
-                      {plan.credits} credits{plan.period ? '/mo' : ''}
-                    </p>
+                </div>
+
+                <div className="flex flex-wrap gap-3">
+                  {[10, 30, 60, 100].map((preset) => (
+                    <button
+                      key={preset}
+                      onClick={() => setAmount(preset)}
+                      className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${amount === preset ? 'border-indigo-600 bg-indigo-600 text-white shadow-md' : 'border-gray-200 text-gray-700 hover:border-indigo-200 hover:text-indigo-700'}`}
+                    >
+                      ${preset}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {[
+                    {
+                      title: 'Starter',
+                      price: '$5 - $29',
+                      bonus: 'Standard rate',
+                      accent: 'text-emerald-600',
+                    },
+                    {
+                      title: 'Pro',
+                      price: '$30 - $99',
+                      bonus: '1.5x credits (50% bonus)',
+                      accent: 'text-indigo-600',
+                    },
+                    {
+                      title: 'Whale',
+                      price: '$100+',
+                      bonus: '2.0x credits (double)',
+                      accent: 'text-amber-600',
+                    },
+                  ].map((plan) => (
+                    <div key={plan.title} className="rounded-2xl border border-gray-200 bg-white p-4">
+                      <p className={`text-sm font-semibold ${plan.accent}`}>{plan.title}</p>
+                      <p className="text-lg font-bold text-gray-900 mt-1">{plan.price}</p>
+                      <p className="text-xs text-gray-500 mt-2">{plan.bonus}</p>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border border-gray-200 shadow-xl">
+              <CardHeader>
+                <CardTitle className="text-2xl">Your monthly credits</CardTitle>
+                <CardDescription>Live estimate based on your amount.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="rounded-2xl bg-gray-900 p-6 text-white">
+                  <p className="text-sm text-gray-300">Estimated credits</p>
+                  <div className="text-4xl font-bold">{credits.toLocaleString()}</div>
+                  <p className="text-sm text-gray-300 mt-2">${amount} × {baseRate} × {tier.multiplier}x</p>
+                </div>
+                <div className="space-y-3 text-sm text-gray-600">
+                  <div className="flex items-center justify-between">
+                    <span>Credit rollover</span>
+                    <span className="font-semibold text-gray-900">30 days</span>
                   </div>
-                </CardHeader>
-                <CardContent>
-                  <ul className="space-y-2 mb-6">
-                    {plan.features.map((feature) => (
-                      <li key={feature} className="flex items-center text-gray-700 text-sm">
-                        <svg
-                          className="w-4 h-4 text-green-500 mr-2 flex-shrink-0"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M5 13l4 4L19 7"
-                          />
-                        </svg>
-                        <span>{feature}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  <Link href="/signup" onClick={(e) => handleGetStarted(e, plan.productId, plan.name)} className="block w-full">
+                  <div className="flex items-center justify-between">
+                    <span>Upgrade anytime</span>
+                    <span className="font-semibold text-gray-900">Instantly applied</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Models included</span>
+                    <span className="font-semibold text-gray-900">All of them</span>
+                  </div>
+                </div>
+                {user ? (
+                  <button
+                    onClick={handleCheckout}
+                    className="w-full py-3 rounded-xl bg-primary text-white font-bold hover:opacity-90 transition-all shadow-sm active:scale-[0.98]"
+                  >
+                    Continue to checkout
+                  </button>
+                ) : (
+                  <Link href="/signup" className="block w-full">
                     <button className="w-full py-3 rounded-xl bg-primary text-white font-bold hover:opacity-90 transition-all shadow-sm active:scale-[0.98]">
-                      {user ? 'Upgrade Now' : 'Get Started'}
+                      Create account to continue
                     </button>
                   </Link>
-                </CardContent>
-              </Card>
-            ))}
+                )}
+                <p className="text-xs text-gray-500 text-center">
+                  Pay-what-you-want subscription. Minimum $5/month.
+                </p>
+              </CardContent>
+            </Card>
           </div>
 
           {/* FAQ Section */}

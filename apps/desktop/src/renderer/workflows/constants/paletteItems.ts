@@ -18,6 +18,24 @@ export const LOCAL_TOOL_ITEMS: PaletteItem[] = [
   // Notifications
   { k: 'local.tool', t: 'send_notification', label: 'Send Notification', args: { title: 'Stuard AI', body: 'Hello!', severity: 'info' } },
 
+  // HTTP / API
+  {
+    k: 'local.tool',
+    t: 'http_request',
+    label: 'HTTP Request',
+    args: {
+      url: 'https://httpbin.org/anything',
+      method: 'GET',
+      headers: {},
+      query: {},
+      bearer_token: '',
+      timeout: 30,
+      follow_redirects: true,
+      verify_ssl: true,
+      retries: 0,
+    }
+  },
+
   // Python & Node scripts
   {
     k: 'local.tool',

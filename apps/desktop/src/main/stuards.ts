@@ -361,11 +361,24 @@ function deepMerge(base: any, patch: any): any {
 }
 
 function interpolate(input: any, ctx: any): any {
-  const templ = (s: string) => s.replace(/\{\{([^}]+)\}\}/g, (_m, g1) => {
-    const path = String(g1 || '').trim();
-    const v = getAtPath(ctx, path, '');
-    return v == null ? '' : String(v);
-  });
+  // Resolve templates iteratively from inside-out to support nested syntax like {{arr[{{i}}]}}
+  const templ = (s: string) => {
+    let result = s;
+    let maxIterations = 10; // Prevent infinite loops
+    while (maxIterations-- > 0) {
+      // Match innermost {{...}} that contains no nested braces
+      const newResult = result.replace(/\{\{([^{}]+)\}\}/g, (_m, g1) => {
+        const path = String(g1 || '').trim();
+        const v = getAtPath(ctx, path, '');
+        if (v == null) return '';
+        if (typeof v === 'object') return JSON.stringify(v);
+        return String(v);
+      });
+      if (newResult === result) break; // No more replacements
+      result = newResult;
+    }
+    return result;
+  };
   const walk = (v: any): any => {
     if (typeof v === 'string') return templ(v);
     if (Array.isArray(v)) return v.map(walk);

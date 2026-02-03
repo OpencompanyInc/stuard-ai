@@ -1,6 +1,7 @@
 import { Metadata } from 'next';
 import Link from 'next/link';
 import { Suspense } from 'react';
+import { createClient } from '@supabase/supabase-js';
 
 export const metadata: Metadata = {
   title: 'Workflow Marketplace - Free AI Automation Templates',
@@ -62,6 +63,33 @@ interface Workflow {
 }
 
 async function getWorkflows(category?: string, query?: string): Promise<Workflow[]> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+
+  if (supabaseUrl && supabaseAnonKey) {
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, { auth: { persistSession: false } });
+    let queryBuilder = supabase
+      .from('marketplace_workflows')
+      .select('id, slug, name, description, category, tags, icon, rating_avg, rating_count, download_count, publisher_name, created_at')
+      .eq('status', 'published')
+      .order('download_count', { ascending: false })
+      .limit(50);
+
+    if (category) {
+      queryBuilder = queryBuilder.eq('category', category);
+    }
+
+    if (query) {
+      const escaped = query.replace(/%/g, '\\%').replace(/_/g, '\\_');
+      queryBuilder = queryBuilder.or(`name.ilike.%${escaped}%,description.ilike.%${escaped}%`);
+    }
+
+    const { data, error } = await queryBuilder;
+    if (!error && data) {
+      return data as Workflow[];
+    }
+  }
+
   const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://api.stuard.ai';
   const params = new URLSearchParams();
   if (category) params.set('category', category);
@@ -70,7 +98,7 @@ async function getWorkflows(category?: string, query?: string): Promise<Workflow
 
   try {
     const res = await fetch(`${baseUrl}/v1/marketplace/search?${params.toString()}`, {
-      next: { revalidate: 300 }, // Cache for 5 minutes
+      next: { revalidate: 300 },
     });
     if (!res.ok) return [];
     const data = await res.json();

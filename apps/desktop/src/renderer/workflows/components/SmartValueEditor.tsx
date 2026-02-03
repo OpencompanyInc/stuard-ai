@@ -35,6 +35,8 @@ const TOOL_OUTPUT_FIELDS: Record<string, string[]> = {
   'type_text': ['ok'],
   'send_hotkey': ['ok'],
   'click_at_coordinates': ['ok'],
+  'get_mouse_position': ['ok', 'x', 'y'],
+  'move_cursor': ['ok', 'x', 'y'],
   'wait': ['ok'],
   'log': ['ok', 'logged'],
   'get_variable': ['ok', 'value'],

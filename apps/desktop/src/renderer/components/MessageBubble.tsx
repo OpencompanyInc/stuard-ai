@@ -189,7 +189,7 @@ const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool }) => {
         >
           {isCompleted && tool.result ? (
             // Show results for completed tools
-            <div className="py-1">
+            <div className="py-1" data-onboarding="tool-result">
               <span className="text-gray-500 text-[10px] font-medium uppercase mb-1 block">Result:</span>
               {formatResult(tool.result)}
             </div>

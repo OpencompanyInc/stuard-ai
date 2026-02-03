@@ -869,7 +869,7 @@ function DashboardApp() {
             </div>
           </div>
 
-          <nav className="flex-1 px-4 space-y-1 overflow-y-auto custom-scrollbar">
+          <nav className="flex-1 px-4 space-y-1 overflow-y-auto custom-scrollbar" data-onboarding="sidebar-nav">
             <div className="text-[10px] font-black text-theme-muted uppercase tracking-[0.2em] px-4 mb-2 opacity-40">Main</div>
             <SidebarItem id="overview" label="Overview" icon={LayoutDashboard} current={tab} onClick={setTab} />
             <SidebarItem id="history" label="History" icon={Clock} current={tab} onClick={setTab} />

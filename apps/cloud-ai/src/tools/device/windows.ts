@@ -53,5 +53,5 @@ export const set_window_bounds = makeLocalTool(
     ok: z.boolean().optional(),
     bounds: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }).optional(),
     error: z.string().optional(),
-  }).passthrough(),
+  }),
 );

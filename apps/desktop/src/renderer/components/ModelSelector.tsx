@@ -240,18 +240,18 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       {open && (
         <div
           className={clsx(
-            "absolute z-[10005] w-[400px] bg-white rounded-[24px] border border-black/10 shadow-2xl overflow-hidden flex flex-col max-h-[520px] animate-in fade-in zoom-in-95 duration-200",
+            "absolute z-[10005] w-[400px] bg-theme-card/95 backdrop-blur-xl rounded-[24px] border border-theme/20 shadow-2xl overflow-hidden flex flex-col max-h-[520px] animate-in fade-in zoom-in-95 duration-200",
             side === 'top' ? 'bottom-full mb-4' : 'top-full mt-4',
             align === 'end' ? 'right-0' : align === 'center' ? 'left-1/2 -translate-x-1/2' : 'left-0'
           )}
         >
           {/* Header with Search */}
-          <div className="p-3 bg-neutral-50/50 border-b border-neutral-100 flex items-center">
+          <div className="p-3 bg-theme-bg/50 border-b border-theme/10 flex items-center">
             <div className="relative flex-1">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-theme-muted" />
               <input
                 ref={inputRef}
-                className="w-full pl-11 pr-4 py-2 bg-white rounded-xl text-[14px] text-neutral-800 placeholder:text-neutral-400 outline-none shadow-sm ring-1 ring-black/5 focus:ring-2 focus:ring-blue-500/20 transition-all border-none font-medium"
+                className="w-full pl-11 pr-4 py-2 bg-theme-hover/50 rounded-xl text-[14px] text-theme-fg placeholder:text-theme-muted outline-none shadow-sm ring-1 ring-theme/5 focus:ring-2 focus:ring-primary/20 transition-all border-none font-medium"
                 placeholder="Search any model..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -277,10 +277,10 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                 </div>
                 {allVisibleItems.length === 0 && (
                   <div className="py-20 text-center">
-                    <div className="w-16 h-16 bg-neutral-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <Search className="w-8 h-8 text-neutral-300" />
+                    <div className="w-16 h-16 bg-theme-hover/50 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Search className="w-8 h-8 text-theme-muted" />
                     </div>
-                    <p className="text-neutral-500 font-medium">No models found for "{search}"</p>
+                    <p className="text-theme-muted font-medium">No models found for "{search}"</p>
                   </div>
                 )}
               </div>
@@ -292,20 +292,20 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                     onClick={() => handleSelect('auto')}
                     data-index={0}
                     className={clsx(
-                      "w-full flex items-center gap-3 p-2 rounded-xl transition-all text-left",
-                      activeIndex === 0 ? "bg-neutral-900 text-white shadow-lg scale-[1.02] z-10" :
-                      selectedModelId === 'auto' ? "bg-blue-50 text-blue-700 ring-1 ring-blue-500/10" : "hover:bg-neutral-50 text-neutral-700"
+                      "w-full flex items-center gap-3 p-2 rounded-xl transition-all text-left border border-transparent",
+                      activeIndex === 0 ? "bg-primary text-primary-fg shadow-lg scale-[1.02] z-10" :
+                      selectedModelId === 'auto' ? "bg-primary/10 text-primary border-primary/20" : "hover:bg-theme-hover text-theme-fg"
                     )}
                   >
                     <div className={clsx(
                       "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-all shadow-sm",
-                      activeIndex === 0 ? "bg-white/10" : "bg-blue-50"
+                      activeIndex === 0 ? "bg-white/20" : "bg-primary/10"
                     )}>
-                      <Sparkles className={clsx("w-4 h-4", activeIndex === 0 ? "text-white" : "text-blue-600")} />
+                      <Sparkles className={clsx("w-4 h-4", activeIndex === 0 ? "text-white" : "text-primary")} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="text-[13px] font-bold">Automatic Routing</div>
-                      <div className={clsx("text-[10px] font-medium", activeIndex === 0 ? "text-neutral-300" : "text-neutral-400")}>Best model for each task</div>
+                      <div className={clsx("text-[10px] font-medium", activeIndex === 0 ? "text-primary-fg/80" : "text-theme-muted")}>Best model for each task</div>
                     </div>
                     {selectedModelId === 'auto' && <Check className="w-4 h-4" />}
                   </button>
@@ -316,7 +316,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2 px-2 mb-1">
                       <Zap className="w-3 h-3 text-amber-500" />
-                      <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">Fast & Efficient</span>
+                      <span className="text-[10px] font-bold text-theme-muted uppercase tracking-wider">Fast & Efficient</span>
                     </div>
                     {grouped.fast.map((model) => {
                       const idx = allVisibleItems.findIndex(x => x.id === model.id);
@@ -340,7 +340,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2 px-2 mb-1">
                       <Scale className="w-3 h-3 text-emerald-500" />
-                      <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">Balanced</span>
+                      <span className="text-[10px] font-bold text-theme-muted uppercase tracking-wider">Balanced</span>
                     </div>
                     {grouped.balanced.map((model) => {
                       const idx = allVisibleItems.findIndex(x => x.id === model.id);
@@ -364,7 +364,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2 px-2 mb-1">
                       <Brain className="w-3 h-3 text-purple-500" />
-                      <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">Intelligence</span>
+                      <span className="text-[10px] font-bold text-theme-muted uppercase tracking-wider">Intelligence</span>
                     </div>
                     {grouped.smart.map((model) => {
                       const idx = allVisibleItems.findIndex(x => x.id === model.id);
@@ -388,7 +388,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2 px-2 mb-1">
                       <Globe className="w-3 h-3 text-cyan-500" />
-                      <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">Research</span>
+                      <span className="text-[10px] font-bold text-theme-muted uppercase tracking-wider">Research</span>
                     </div>
                     {grouped.research.map((model) => {
                       const idx = allVisibleItems.findIndex(x => x.id === model.id);
@@ -411,18 +411,18 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           </div>
 
           {/* Footer Info */}
-          <div className="p-3 bg-neutral-50 border-t border-neutral-100 flex items-center justify-between">
+          <div className="p-3 bg-theme-bg/50 border-t border-theme/10 flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 text-[10px] text-neutral-500 font-bold uppercase tracking-wider">
+              <div className="flex items-center gap-2 text-[10px] text-theme-muted font-bold uppercase tracking-wider">
                 <Command className="w-3 h-3" />
                 <span>Nav</span>
               </div>
-              <div className="flex items-center gap-2 text-[10px] text-neutral-500 font-bold uppercase tracking-wider hover:text-neutral-800 cursor-pointer transition-colors">
+              <div className="flex items-center gap-2 text-[10px] text-theme-muted font-bold uppercase tracking-wider hover:text-theme-fg cursor-pointer transition-colors">
                 <Settings2 className="w-3 h-3" />
                 <span>Config</span>
               </div>
             </div>
-            <div className="text-[10px] text-neutral-400 italic">
+            <div className="text-[10px] text-theme-muted italic">
               {ALL_MODELS.length} models
             </div>
           </div>
@@ -448,17 +448,17 @@ const ModelItem: React.FC<ModelItemProps> = ({ model, isActive, isSelected, inde
       data-index={index}
       onClick={onClick}
       className={clsx(
-        'w-full flex items-center justify-between rounded-2xl text-left transition-all group relative',
+        'w-full flex items-center justify-between rounded-2xl text-left transition-all group relative border border-transparent',
         compact ? 'p-2' : 'p-3',
-        isActive ? 'bg-neutral-900 text-white shadow-xl scale-[1.02] z-10' : 
-        isSelected ? 'bg-blue-50/80 text-neutral-900 ring-1 ring-blue-500/10' : 'hover:bg-neutral-50 text-neutral-700 hover:scale-[1.01]'
+        isActive ? 'bg-primary text-primary-fg shadow-xl scale-[1.02] z-10' : 
+        isSelected ? 'bg-primary/10 text-theme-fg border-primary/20' : 'hover:bg-theme-hover text-theme-fg hover:scale-[1.01]'
       )}
     >
       <div className="flex items-center gap-3 min-w-0">
         <div className={clsx(
           "rounded-xl flex items-center justify-center flex-shrink-0 transition-all shadow-sm",
           compact ? "w-8 h-8" : "w-10 h-10",
-          isActive ? "bg-white/10 rotate-3" : "bg-white border border-black/5 group-hover:-rotate-3"
+          isActive ? "bg-white/20 rotate-3" : "bg-theme-bg border border-theme/10 group-hover:-rotate-3"
         )}>
           {model.logoUrl ? (
             <img
@@ -479,7 +479,7 @@ const ModelItem: React.FC<ModelItemProps> = ({ model, isActive, isSelected, inde
             {model.isReasoning && !compact && (
               <div className={clsx(
                 "px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider",
-                isActive ? "bg-white/20 text-white" : "bg-purple-100 text-purple-600"
+                isActive ? "bg-white/20 text-white" : "bg-purple-500/10 text-purple-500"
               )}>
                 Pro
               </div>
@@ -487,7 +487,7 @@ const ModelItem: React.FC<ModelItemProps> = ({ model, isActive, isSelected, inde
           </div>
           <div className={clsx(
             "text-[10px] mt-1 font-bold truncate uppercase tracking-tighter opacity-70",
-            isActive ? "text-neutral-300" : "text-neutral-400"
+            isActive ? "text-primary-fg/80" : "text-theme-muted"
           )}>
             {model.provider} {model.contextWindow && `• ${Math.round(model.contextWindow/1000)}k`}
           </div>
@@ -498,9 +498,9 @@ const ModelItem: React.FC<ModelItemProps> = ({ model, isActive, isSelected, inde
           <div className={clsx(
             "rounded-full flex items-center justify-center",
             compact ? "w-4 h-4" : "w-5 h-5",
-            isActive ? "bg-white/20" : "bg-blue-600 shadow-sm shadow-blue-500/30"
+            isActive ? "bg-white/20" : "bg-primary shadow-sm shadow-primary/30"
           )}>
-            <Check className={clsx(compact ? "w-2.5 h-2.5" : "w-3 h-3", "text-white")} />
+            <Check className={clsx(compact ? "w-2.5 h-2.5" : "w-3 h-3", isActive ? "text-white" : "text-primary-fg")} />
           </div>
         ) : (
           <ChevronRight className={clsx(

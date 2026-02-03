@@ -82,7 +82,7 @@ export function ToolPalette({ onDragStart, disabled }: ToolPaletteProps) {
   }, [searchQuery, paletteCategories]);
   
   return (
-    <div className="flex flex-col h-full bg-[#fdfdfd] border-r border-slate-100">
+    <div className="flex flex-col h-full bg-[#fdfdfd] border-r border-slate-100" data-onboarding="node-palette">
       {/* Header */}
       <div className="h-14 px-4 py-2 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
         <div className="flex items-center gap-2.5 text-sm font-bold text-slate-800">

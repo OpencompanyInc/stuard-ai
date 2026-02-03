@@ -388,13 +388,32 @@ def _video_bus_worker(bus: MediaBus) -> None:
     # Get properties
     bus.width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
     bus.height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 480)
-    bus.fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
-    if bus.fps < 1 or bus.fps > 120:
-        bus.fps = 20.0
+    cap_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+    if cap_fps < 1 or cap_fps > 120:
+        cap_fps = 0.0
+
+    # Warm up + estimate actual FPS to avoid 2x speed recordings
+    warmup_frames: List[Any] = []
+    warmup_start = time.monotonic()
+    for _ in range(15):
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            break
+        warmup_frames.append(frame)
+    warmup_elapsed = time.monotonic() - warmup_start
+    measured_fps = (
+        (len(warmup_frames) / warmup_elapsed)
+        if warmup_elapsed >= 0.25 and len(warmup_frames) >= 5
+        else 0.0
+    )
+    bus.fps = cap_fps or measured_fps or 20.0
+    if measured_fps and (not cap_fps or abs(cap_fps - measured_fps) / measured_fps > 0.25):
+        bus.fps = measured_fps
     
     frame_interval = 1.0 / bus.fps
     
     try:
+        warmup_index = 0
         while not bus.stop_event.is_set():
             # Check if we have any subscribers
             with bus.subscribers_lock:
@@ -403,7 +422,12 @@ def _video_bus_worker(bus: MediaBus) -> None:
                     break
             
             start = time.monotonic()
-            ok, frame = cap.read()
+            if warmup_index < len(warmup_frames):
+                frame = warmup_frames[warmup_index]
+                warmup_index += 1
+                ok = True
+            else:
+                ok, frame = cap.read()
             if not ok or frame is None:
                 bus.errors.append("frame_read_failed")
                 break

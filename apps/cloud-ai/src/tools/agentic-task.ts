@@ -17,8 +17,8 @@ export const executeAgenticTask = createTool({
     error: z.string().optional(),
     logs: z.array(z.any()).optional(),
   }),
-  execute: async ({ context }) => {
-    const { instruction, timeoutMs, context: taskContext, outputSchema } = context;
+  execute: async (inputData, context) => {
+    const { instruction, timeoutMs, context: taskContext, outputSchema  } = inputData;
 
     // Initialize the headless agent
     const agent = getHeadlessAgent('fast', [], {}); // Default to fast model, no extra integrations for now unless passed

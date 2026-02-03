@@ -806,7 +806,11 @@ export function useAgent(options?: string | UseAgentOptions) {
               const normalizedStatus = typeof toolStatus === 'string' ? toolStatus.toLowerCase() : '';
               const toolCallId = evt.data?.toolCallId || evt.data?.id || `tc-${Date.now()}`;
               // Get description from args.description or generate from tool name
-              const toolDescription = evt.data?.args?.description || evt.data?.description || humanTool;
+              // Truncate long descriptions to max 60 chars for better UX
+              const rawDescription = evt.data?.args?.description || evt.data?.description || '';
+              const toolDescription = rawDescription && rawDescription.length > 60
+                ? rawDescription.slice(0, 57) + '...'
+                : rawDescription || humanTool;
               const isHiddenTool = HIDDEN_TOOL_NAMES.has(tool) || HIDDEN_WRAPPER_TOOL_NAMES.has(tool);
 
               const requestIdKey = String(msg.requestId || activeRequestIdRef.current || '');

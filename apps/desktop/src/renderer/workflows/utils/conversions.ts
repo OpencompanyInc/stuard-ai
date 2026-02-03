@@ -53,6 +53,9 @@ export function specToDesignerModel(spec: any): DesignerModel {
         to: String(w?.to || '').replace(/\./g, '_'),
         guard: w?.guard || 'always',
         label: w?.label || '',
+        loop: (w as any)?.loop,
+        loopBreak: (w as any)?.loopBreak,
+        loopFanoutMode: (w as any)?.loopFanoutMode,
       })).filter((w: any) => w.from && w.to);
 
       console.log('[conversions] Detected DesignerModel format:', { triggers: trigNodes.length, nodes: normNodes.length, wires: normWires.length });
@@ -95,7 +98,15 @@ export function specToDesignerModel(spec: any): DesignerModel {
           if (guard && typeof guard === 'object' && guard.ai) g = { ai: guard.ai };
           if (typeof guard === 'string' && guard !== 'always') g = guard;
           wires.push({ from: fromId, to: toId });
-          wiresFull.push({ from: fromId, to: toId, guard: g, label: (e as any)?.label || '' });
+          wiresFull.push({
+            from: fromId,
+            to: toId,
+            guard: g,
+            label: (e as any)?.label || '',
+            loop: (e as any)?.loop,
+            loopBreak: (e as any)?.loopBreak,
+            loopFanoutMode: (e as any)?.loopFanoutMode,
+          });
         }
       }
     }
@@ -152,8 +163,32 @@ export function designerModelToStuardSpec(m: any): StuardSpec {
       if (g && typeof g === 'object' && g.if) guard = { if: g.if };
       if (g && typeof g === 'object' && g.ai) guard = { ai: g.ai };
       const label = (w as any)?.label;
+      const loop = (w as any)?.loop;
+      const loopBreak = (w as any)?.loopBreak;
+      const loopFanoutMode = (w as any)?.loopFanoutMode;
       const edge: any = { to, guard };
       if (label) edge.label = String(label);
+
+      if (loop && typeof loop === 'object' && loop.type) {
+        edge.loop = {
+          type: loop.type,
+          items: loop.items,
+          itemVar: loop.itemVar || 'item',
+          indexVar: loop.indexVar || 'index',
+          count: loop.count,
+          conditionText: loop.conditionText,
+          maxIterations: loop.maxIterations || 100,
+          delayMs: loop.delayMs || 0,
+        };
+      }
+
+      if (loopBreak) {
+        edge.loopBreak = true;
+      }
+
+      if (loopFanoutMode === 'wait' || loopFanoutMode === 'parallel') {
+        edge.loopFanoutMode = loopFanoutMode;
+      }
       return edge;
     });
     const step: any = { id: fromId, tool: String(n?.tool || 'noop'), args: n?.args || {}, next };

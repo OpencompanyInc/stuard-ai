@@ -3,8 +3,8 @@ import { runSequentialTool, runParallelTool } from '../../tools/workflow-system'
 import { analyzeMediaTool } from '../../tools/analyze-media';
 import { outlook_get_me, outlook_list_messages, outlook_search_messages, outlook_send_mail } from '../../tools/outlook-tools';
 import { github_get_me, github_list_repos, github_list_issues, github_create_issue } from '../../tools/github-tools';
-import { google_get_userinfo, gmail_send_message, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, gmail_modify_message, gmail_delete_message, gmail_archive_message, gmail_mark_as_read, gmail_mark_as_unread, calendar_list_events, calendar_create_event, calendar_delete_event, tasks_list, drive_list_files, sheets_read_range, docs_get_document, docs_create_document, docs_write_text } from '../../tools/google-tools';
-import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, canvas_list, canvas_read, canvas_write, canvas_create, canvas_delete, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, stop_system_audio, describe_system_audio_capabilities, run_command, run_system_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, list_local_workflows, list_local_stuards, show_json_workflow_code, execute_workflow, find_workflow_semantic, import_workflow, run_automation, stop_automation, invoke_workflow, search_past_conversations, get_conversation_context, list_user_spaces, get_space_contents, add_to_space, ensure_space_path, list_space_path, add_to_space_path, get_space_tree, create_space, add_source_to_space, add_note_to_space, add_code_snippet_to_space, link_conversation_to_space, find_or_create_space, update_space_item, delete_space_item, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, get_window_info, set_window_bounds, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, browser_get_content, browser_click_element, browser_type_text, browser_find_text, browser_get_element_position, browser_find_clickable, browser_hover, browser_select_option, browser_press_key, browser_get_form_fields, browser_fill_form, browser_wait_for_element, browser_scroll_to, browser_get_page_info, browser_execute_script, agent_todo, get_mouse_position, computer_use, click_at_coordinates, double_click_at_coordinates, type_text, scroll, drag_and_drop } from '../../tools/device-tools';
+import { google_get_userinfo, gmail_send_message, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, gmail_modify_message, gmail_delete_message, gmail_archive_message, gmail_mark_as_read, gmail_mark_as_unread, gmail_download_attachment, calendar_list_events, calendar_create_event, calendar_delete_event, tasks_list, drive_list_files, sheets_read_range, docs_get_document, docs_create_document, docs_write_text } from '../../tools/google-tools';
+import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, canvas_list, canvas_read, canvas_write, canvas_create, canvas_delete, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, stop_system_audio, describe_system_audio_capabilities, run_command, run_system_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, list_local_stuards, show_json_workflow_code, execute_workflow, find_workflow_semantic, import_workflow, run_automation, stop_automation, invoke_workflow, search_local_workflows, run_workflow, search_past_conversations, get_conversation_context, list_user_spaces, get_space_contents, add_to_space, ensure_space_path, list_space_path, add_to_space_path, get_space_tree, create_space, add_source_to_space, add_note_to_space, add_code_snippet_to_space, link_conversation_to_space, find_or_create_space, update_space_item, delete_space_item, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, get_window_info, set_window_bounds, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, browser_get_content, browser_click_element, browser_type_text, browser_find_text, browser_get_element_position, browser_find_clickable, browser_hover, browser_select_option, browser_press_key, browser_get_form_fields, browser_fill_form, browser_wait_for_element, browser_scroll_to, browser_get_page_info, browser_execute_script, agent_todo, get_mouse_position, computer_use, click_at_coordinates, double_click_at_coordinates, type_text, scroll, drag_and_drop } from '../../tools/device-tools';
 import { computer_use_agent } from '../../tools/device-tools';
 import { web_search } from '../../tools/perplexity-tools';
 import { scrape_url } from '../../tools/tavily-tools';
@@ -14,6 +14,7 @@ import { listHeadlessAgentTasks } from '../../tools/list-headless-agent-tasks';
 import { stopHeadlessAgent } from '../../tools/stop-headless-agent';
 import { ffmpeg_status, ffmpeg_setup, ffmpeg_run, ffmpeg_convert_media, ffmpeg_extract_audio, ffmpeg_trim_media, ffmpeg_probe_media, ffmpeg_extract_frames } from '../../tools/device-tools';
 import { submitFeedback, reportBug, suggestFeature, listMyFeedback, getFeedbackDetails } from '../../tools/feedback-tools';
+import { http_request } from '../../tools/http-tools';
 import { createRequire } from 'node:module';
 import type { SIS as SISType } from 'sis-tools';
 import { searchToolsSemanticSupabase, isSupabaseSISEnabled } from '../../tools/sis-supabase';
@@ -56,7 +57,6 @@ export const ALL_TOOLS = {
   gmail_archive_message,
   gmail_mark_as_read,
   gmail_mark_as_unread,
-  calendar_list_events,
   calendar_create_event,
   calendar_delete_event,
   tasks_list,
@@ -100,6 +100,7 @@ export const ALL_TOOLS = {
   ffmpeg_extract_frames,
   run_system_command,
   run_command,
+  http_request,
   run_python_script,
   // Background terminal polling (non-interactive)
   list_terminals,
@@ -135,9 +136,8 @@ export const ALL_TOOLS = {
   get_window_info,
   smart_bring_window_to_foreground,
   set_window_bounds,
-  // Local workflows / Stuards metadata
-  list_local_workflows,
-  list_local_stuards,
+  // Local workflows metadata (consolidated - no more stuards distinction)
+  list_local_stuards,  // Deprecated, kept for backwards compat
   show_json_workflow_code,
   execute_workflow,
   find_workflow_semantic,
@@ -146,6 +146,8 @@ export const ALL_TOOLS = {
   run_automation,
   stop_automation,
   invoke_workflow,  // Invoke workflows with custom arguments
+  search_local_workflows,  // Primary tool for listing/searching workflows
+  run_workflow,  // Run workflow by ID or name
   // Memory + Spaces
   search_past_conversations,
   get_conversation_context,
@@ -208,6 +210,10 @@ export const ALL_TOOLS = {
   suggest_feature: suggestFeature,
   list_my_feedback: listMyFeedback,
   get_feedback_details: getFeedbackDetails,
+  // SIS runtime tools (for dynamic tool discovery)
+  sis_search_tools: SIS_RUNTIME_TOOLS.sis_search_tools,
+  sis_execute_tool: SIS_RUNTIME_TOOLS.sis_execute_tool,
+  sis_list_categories: SIS_RUNTIME_TOOLS.sis_list_categories,
 } as const;
 
 const _INTERNAL_SPACE_TOOLS = {
@@ -292,6 +298,9 @@ export const TIER_1_PARAMOUNT_TOOLS = [
   // Web Search (1)
   'web_search',
 
+  // HTTP Requests (1)
+  'http_request',
+
   // Web Extraction (1)
   'scrape_url',
 
@@ -299,9 +308,11 @@ export const TIER_1_PARAMOUNT_TOOLS = [
   'deploy_headless_agent', 'get_headless_agent_status',
   'list_headless_agent_tasks', 'stop_headless_agent',
 
-  // Workflows as Tools (2)
+  // Workflows as Tools (4)
   'execute_workflow',
   'find_workflow_semantic',
+  'search_local_workflows',
+  'run_workflow',
 
   // Agent Todo Management (1)
   'agent_todo',
@@ -395,50 +406,24 @@ async function getSis(): Promise<SISType | null> {
   return _sis;
 }
 
-// Always available tools
+// Always available core tools (keep minimal; rely on SIS for the rest)
 export const CORE_TOOLS_LIST = [
-  'wait', 'run_sequential', 'run_parallel', 'analyze_media', 'web_search', 'scrape_url',
-  'deploy_headless_agent', 'get_headless_agent_status', 'list_headless_agent_tasks', 'stop_headless_agent',
-  'send_hotkey', 'computer_use', 'computer_use_agent', 'canvas_list', 'canvas_read', 'canvas_write', 'canvas_create', 'canvas_delete', 'capture_media', 'stop_capture',
-  'describe_media_capture_capabilities',
-  // Screen recording & system audio
-  'capture_screen', 'stop_screen_capture', 'describe_screen_capture_capabilities',
-  'capture_system_audio', 'stop_system_audio', 'describe_system_audio_capabilities',
-  'run_system_command', 'run_command', 'run_python_script',
-  // Background terminal polling (non-interactive)
-  'list_terminals', 'read_terminal',
-  // Interactive PTY terminal tools
-  'terminal_create', 'terminal_list', 'terminal_get', 'terminal_read', 'terminal_send_input', 'terminal_send_raw', 'terminal_send_keys', 'terminal_wait_for', 'terminal_destroy',
-  // Variables
-  'set_variable', 'get_variable', 'toggle_variable', 'increment_variable', 'append_to_list', 'list_variables', 'delete_variable',
-  'calendar_crud', 'task_crud', 'task_reminders', 'planner_list_items',
-  'list_directory', 'read_file', 'write_file', 'create_directory', 'open_file', 'move_file', 'copy_file', 'delete_file',
-  'list_open_windows', 'bring_window_to_foreground', 'get_window_info', 'smart_bring_window_to_foreground', 'set_window_bounds',
-  'list_local_workflows', 'list_local_stuards', 'show_json_workflow_code',
-  'import_workflow', 'run_automation', 'stop_automation', 'invoke_workflow',
+  // Orchestration (3)
+  'wait', 'run_sequential', 'run_parallel',
+  // File system basics (6)
+  'list_directory', 'read_file', 'write_file', 'create_directory', 'file_read', 'file_edit',
+  // Commands (1)
+  'run_command',
+  // SIS discovery + execution (3)
+  'sis_search_tools', 'sis_execute_tool', 'sis_list_categories',
+  // Web research (2)
+  'web_search', 'scrape_url',
+  // Memory (2)
   'search_past_conversations', 'get_conversation_context',
-  'list_user_spaces', 'get_space_contents',
-  'ensure_space_path', 'list_space_path', 'add_to_space_path', 'get_space_tree',
-  'add_to_space', 'create_space',
-  'add_source_to_space', 'add_note_to_space', 'add_code_snippet_to_space',
-  'link_conversation_to_space', 'find_or_create_space',
-  'update_space_item', 'delete_space_item',
-  // File Search & Indexing
-  'file_index_add_root', 'file_index_remove_root', 'file_index_list_roots', 'file_index_scan', 'file_index_stats',
-  'file_search', 'file_search_by_filename', 'file_search_by_kind', 'file_search_recent', 'file_search_similar',
-  'process_pending_file_index', 'semantic_file_search',
-  // Agentic File Tools
-  'file_read', 'file_edit',
-  // Browser tools
-  'browser_get_content', 'browser_click_element', 'browser_type_text',
-  'browser_find_text', 'browser_get_element_position', 'browser_find_clickable',
-  'browser_hover', 'browser_select_option', 'browser_press_key',
-  'browser_get_form_fields', 'browser_fill_form', 'browser_wait_for_element',
-  'browser_scroll_to', 'browser_get_page_info', 'browser_execute_script'
 ];
 
 export function getTools(enabledIntegrations: string[] = [], mcpTools: Record<string, any> = {}): Record<string, any> {
-  const tools: Record<string, any> = { ...mcpTools };
+  const tools: Record<string, any> = {};
 
   // Add core tools
   CORE_TOOLS_LIST.forEach(name => {
@@ -446,53 +431,6 @@ export function getTools(enabledIntegrations: string[] = [], mcpTools: Record<st
       tools[name] = (ALL_TOOLS as any)[name];
     }
   });
-
-  if (hasClientBridge()) {
-    for (const name of _FFMPEG_TIER_1_TOOLS) {
-      if ((ALL_TOOLS as any)[name]) {
-        tools[name] = (ALL_TOOLS as any)[name];
-      }
-    }
-  }
-
-  // Integration-specific tools
-  if (enabledIntegrations.includes('outlook')) {
-    tools.outlook_get_me = ALL_TOOLS.outlook_get_me;
-    tools.outlook_list_messages = ALL_TOOLS.outlook_list_messages;
-    tools.outlook_search_messages = ALL_TOOLS.outlook_search_messages;
-    tools.outlook_send_mail = ALL_TOOLS.outlook_send_mail;
-  }
-
-  if (enabledIntegrations.includes('google')) {
-    tools.google_get_userinfo = ALL_TOOLS.google_get_userinfo;
-    tools.gmail_send_message = ALL_TOOLS.gmail_send_message;
-    tools.gmail_list_messages = ALL_TOOLS.gmail_list_messages;
-    tools.gmail_get_message_brief = ALL_TOOLS.gmail_get_message_brief;
-    tools.gmail_get_message_full = ALL_TOOLS.gmail_get_message_full;
-    tools.gmail_get_messages_brief = ALL_TOOLS.gmail_get_messages_brief;
-    tools.gmail_list_recent_brief = ALL_TOOLS.gmail_list_recent_brief;
-    tools.gmail_get_most_recent_full = ALL_TOOLS.gmail_get_most_recent_full;
-    tools.gmail_modify_message = ALL_TOOLS.gmail_modify_message;
-    tools.gmail_delete_message = ALL_TOOLS.gmail_delete_message;
-    tools.gmail_archive_message = ALL_TOOLS.gmail_archive_message;
-    tools.gmail_mark_as_read = ALL_TOOLS.gmail_mark_as_read;
-    tools.gmail_mark_as_unread = ALL_TOOLS.gmail_mark_as_unread;
-    tools.calendar_list_events = ALL_TOOLS.calendar_list_events;
-    tools.calendar_create_event = ALL_TOOLS.calendar_create_event;
-    tools.tasks_list = ALL_TOOLS.tasks_list;
-    tools.drive_list_files = ALL_TOOLS.drive_list_files;
-    tools.sheets_read_range = ALL_TOOLS.sheets_read_range;
-    tools.docs_get_document = ALL_TOOLS.docs_get_document;
-    tools.docs_create_document = ALL_TOOLS.docs_create_document;
-    tools.docs_write_text = ALL_TOOLS.docs_write_text;
-  }
-
-  if (enabledIntegrations.includes('github')) {
-    tools.github_get_me = ALL_TOOLS.github_get_me;
-    tools.github_list_repos = ALL_TOOLS.github_list_repos;
-    tools.github_list_issues = ALL_TOOLS.github_list_issues;
-    tools.github_create_issue = ALL_TOOLS.github_create_issue;
-  }
 
   return tools;
 }
@@ -502,29 +440,16 @@ export async function getToolsForQuery(
   enabledIntegrations: string[] = [],
   mcpTools: Record<string, any> = {}
 ): Promise<Record<string, any>> {
-  const selected: Record<string, any> = { ...mcpTools };
+  const selected: Record<string, any> = {};
 
   // =========================================================================
-  // ALWAYS load Tier 1 paramount tools first
-  // These are the most commonly used tools and should always be available
+  // Load ONLY the 16 core tools; everything else should be discovered via SIS
   // =========================================================================
-  const tier1Tools = hasClientBridge()
-    ? [...TIER_1_PARAMOUNT_TOOLS, ..._FFMPEG_TIER_1_TOOLS]
-    : TIER_1_PARAMOUNT_TOOLS;
-
-  for (const name of tier1Tools) {
+  for (const name of CORE_TOOLS_LIST) {
     if ((ALL_TOOLS as any)[name]) {
       selected[name] = (ALL_TOOLS as any)[name];
     }
   }
-
-  // =========================================================================
-  // ALWAYS add SIS runtime tools for dynamic discovery
-  // These tools now have proper fallback (keyword search) when Supabase isn't available
-  // =========================================================================
-  selected.sis_search_tools = SIS_RUNTIME_TOOLS.sis_search_tools;
-  selected.sis_execute_tool = SIS_RUNTIME_TOOLS.sis_execute_tool;
-  selected.sis_list_categories = SIS_RUNTIME_TOOLS.sis_list_categories;
 
   if (process.env.SIS_DEBUG === '1') {
     const searchMode = isSupabaseSISEnabled() ? 'semantic (Supabase)' : 'keyword (fallback)';
@@ -555,48 +480,6 @@ export async function getToolsForQuery(
     }
   }
 
-  // =========================================================================
-  // Always add integration-specific tools if user has them enabled
-  // These are loaded regardless of SIS mode since user explicitly connected
-  // =========================================================================
-
-  if (enabledIntegrations.includes('outlook')) {
-    selected.outlook_get_me = ALL_TOOLS.outlook_get_me;
-    selected.outlook_list_messages = ALL_TOOLS.outlook_list_messages;
-    selected.outlook_search_messages = ALL_TOOLS.outlook_search_messages;
-    selected.outlook_send_mail = ALL_TOOLS.outlook_send_mail;
-  }
-
-  if (enabledIntegrations.includes('google')) {
-    selected.google_get_userinfo = ALL_TOOLS.google_get_userinfo;
-    selected.gmail_send_message = ALL_TOOLS.gmail_send_message;
-    selected.gmail_list_messages = ALL_TOOLS.gmail_list_messages;
-    selected.gmail_get_message_brief = ALL_TOOLS.gmail_get_message_brief;
-    selected.gmail_get_message_full = ALL_TOOLS.gmail_get_message_full;
-    selected.gmail_get_messages_brief = ALL_TOOLS.gmail_get_messages_brief;
-    selected.gmail_list_recent_brief = ALL_TOOLS.gmail_list_recent_brief;
-    selected.gmail_get_most_recent_full = ALL_TOOLS.gmail_get_most_recent_full;
-    selected.gmail_modify_message = ALL_TOOLS.gmail_modify_message;
-    selected.gmail_delete_message = ALL_TOOLS.gmail_delete_message;
-    selected.gmail_archive_message = ALL_TOOLS.gmail_archive_message;
-    selected.gmail_mark_as_read = ALL_TOOLS.gmail_mark_as_read;
-    selected.gmail_mark_as_unread = ALL_TOOLS.gmail_mark_as_unread;
-    selected.calendar_list_events = ALL_TOOLS.calendar_list_events;
-    selected.calendar_create_event = ALL_TOOLS.calendar_create_event;
-    selected.tasks_list = ALL_TOOLS.tasks_list;
-    selected.drive_list_files = ALL_TOOLS.drive_list_files;
-    selected.sheets_read_range = ALL_TOOLS.sheets_read_range;
-    selected.docs_get_document = ALL_TOOLS.docs_get_document;
-    selected.docs_create_document = ALL_TOOLS.docs_create_document;
-    selected.docs_write_text = ALL_TOOLS.docs_write_text;
-  }
-
-  if (enabledIntegrations.includes('github')) {
-    selected.github_get_me = ALL_TOOLS.github_get_me;
-    selected.github_list_repos = ALL_TOOLS.github_list_repos;
-    selected.github_list_issues = ALL_TOOLS.github_list_issues;
-    selected.github_create_issue = ALL_TOOLS.github_create_issue;
-  }
-
   return selected;
 }
+

@@ -307,7 +307,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   setOnboardingComplete,
 }) => {
   return (
-    <div className="max-w-4xl mx-auto pb-16">
+    <div className="max-w-4xl mx-auto pb-16" data-onboarding="settings-view">
       <div className="flex flex-col gap-1 mb-8">
         <h2 className="text-4xl font-stuard text-theme-fg tracking-tight">Settings</h2>
         <p className="text-theme-muted text-sm font-medium">Manage your preferences and application settings.</p>

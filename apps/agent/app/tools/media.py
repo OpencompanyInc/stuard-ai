@@ -716,9 +716,27 @@ async def _start_background_video(
         # Determine properties
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 480)
-        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
-        if fps < 1 or fps > 120:
-            fps = 20.0
+        cap_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        if cap_fps < 1 or cap_fps > 120:
+            cap_fps = 0.0
+
+        # Warm up + estimate actual FPS to avoid 2x speed recordings
+        warmup_frames: List[Any] = []
+        warmup_start = time.monotonic()
+        for _ in range(15):
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                break
+            warmup_frames.append(frame)
+        warmup_elapsed = time.monotonic() - warmup_start
+        measured_fps = (
+            (len(warmup_frames) / warmup_elapsed)
+            if warmup_elapsed >= 0.25 and len(warmup_frames) >= 5
+            else 0.0
+        )
+        fps = cap_fps or measured_fps or 20.0
+        if measured_fps and (not cap_fps or abs(cap_fps - measured_fps) / measured_fps > 0.25):
+            fps = measured_fps
         
         def _try_writer_mp4_h264(out_path: str):
             try:
@@ -786,6 +804,7 @@ async def _start_background_video(
         start = time.monotonic()
         next_emit_time = start
         
+        warmup_index = 0
         try:
             while (time.monotonic() - start) * 1000.0 < max_duration_ms:
                 # Check for stop signal
@@ -793,7 +812,12 @@ async def _start_background_video(
                     print(f"[background_video] Stop signal detected!")
                     break
                 
-                ok, frame = cap.read()
+                if warmup_index < len(warmup_frames):
+                    frame = warmup_frames[warmup_index]
+                    warmup_index += 1
+                    ok = True
+                else:
+                    ok, frame = cap.read()
                 if not ok or frame is None:
                     break
                 out.write(frame)
@@ -1098,9 +1122,27 @@ async def _capture_video_with_stop(
         # Determine properties
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 480)
-        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
-        if fps < 1 or fps > 120:
-            fps = 20.0
+        cap_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        if cap_fps < 1 or cap_fps > 120:
+            cap_fps = 0.0
+
+        # Warm up + estimate actual FPS to avoid 2x speed recordings
+        warmup_frames: List[Any] = []
+        warmup_start = time.monotonic()
+        for _ in range(15):
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                break
+            warmup_frames.append(frame)
+        warmup_elapsed = time.monotonic() - warmup_start
+        measured_fps = (
+            (len(warmup_frames) / warmup_elapsed)
+            if warmup_elapsed >= 0.25 and len(warmup_frames) >= 5
+            else 0.0
+        )
+        fps = cap_fps or measured_fps or 20.0
+        if measured_fps and (not cap_fps or abs(cap_fps - measured_fps) / measured_fps > 0.25):
+            fps = measured_fps
 
         def _try_writer_mp4_h264(out_path: str):
             try:
@@ -1163,13 +1205,19 @@ async def _capture_video_with_stop(
 
         start = time.monotonic()
         next_emit = start
+        warmup_index = 0
         try:
             while (time.monotonic() - start) * 1000.0 < duration_ms:
                 # Check for stop signal in until_stop mode
                 if stop_event.is_set():
                     break
                 
-                ok, frame = cap.read()
+                if warmup_index < len(warmup_frames):
+                    frame = warmup_frames[warmup_index]
+                    warmup_index += 1
+                    ok = True
+                else:
+                    ok, frame = cap.read()
                 if not ok or frame is None:
                     break
                 out.write(frame)
