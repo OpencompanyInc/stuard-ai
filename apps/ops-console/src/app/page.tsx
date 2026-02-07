@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import {
-  GitBranch, Rocket, RefreshCw, CheckCircle, AlertCircle, ArrowRight, Clock, Activity,
+  GitBranch, Rocket, RefreshCw, CheckCircle, AlertCircle, Clock, Activity,
   Beaker, ShieldCheck, Database, Cloud, Webhook, MessageSquare, Users, Store, Bug,
-  Monitor, HardDrive, Zap, Wrench, Cpu, Play, Layers, Terminal
+  Monitor, HardDrive, Wrench, Cpu, Play, Layers, Terminal
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -83,9 +83,9 @@ export default function OpsDashboard() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [commitMsg, setCommitMsg] = useState('');
-  const [featureName, setFeatureName] = useState('');
+  const [_featureName, _setFeatureName] = useState('');
   const [version, setVersion] = useState('');
-  const [selectedCheckoutBranch, setSelectedCheckoutBranch] = useState('');
+  const [_selectedCheckoutBranch, _setSelectedCheckoutBranch] = useState('');
   const [selectedBetaBranch, setSelectedBetaBranch] = useState('');
   const [betaTargets, setBetaTargets] = useState({ website: true, cloud: true, desktop: true });
   const [stagingTargets, setStagingTargets] = useState({ website: true, cloud: true, desktop: true });

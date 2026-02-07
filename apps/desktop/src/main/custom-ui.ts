@@ -763,7 +763,7 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
 
     // Apply window shadow if enabled
     if (shadow.enabled) {
-      existing.setShadow(true);
+      existing.setHasShadow(true);
     }
 
     existing.show();

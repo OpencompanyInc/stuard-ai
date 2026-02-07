@@ -9,7 +9,7 @@ export const stream_create = makeLocalTool(
     flowId: z.string().optional().describe('Workflow run ID that owns this stream'),
     sourceStepId: z.string().optional().describe('Step ID that produces data into this stream'),
     bufferSize: z.number().optional().default(500).describe('Max chunks in ring buffer'),
-    metadata: z.record(z.any()).optional().describe('Stream metadata (fps, samplerate, etc.)'),
+    metadata: z.record(z.string(), z.any()).optional().describe('Stream metadata (fps, samplerate, etc.)'),
   }),
 );
 
@@ -72,7 +72,7 @@ export const stream_add_transform = makeLocalTool(
     transformId: z.string().optional().describe('Unique ID for this transform'),
     type: z.enum(['python', 'builtin']).default('python').describe('Transform type'),
     code: z.string().describe('Python code defining a transform(chunk, params) function'),
-    params: z.record(z.any()).optional().describe('Parameters passed to the transform function'),
+    params: z.record(z.string(), z.any()).optional().describe('Parameters passed to the transform function'),
     order: z.number().optional().default(0).describe('Position in the chain (lower = earlier)'),
   }),
 );
@@ -92,7 +92,7 @@ export const stream_update_transform = makeLocalTool(
   z.object({
     streamId: z.string().describe('Target stream'),
     transformId: z.string().describe('Transform to update'),
-    params: z.record(z.any()).describe('New parameters (merged with existing)'),
+    params: z.record(z.string(), z.any()).describe('New parameters (merged with existing)'),
   }),
 );
 
@@ -121,7 +121,7 @@ export const stream_from_script = makeLocalTool(
     flowId: z.string().optional().describe('Workflow run ID'),
     sourceStepId: z.string().optional().describe('Step ID'),
     bufferSize: z.number().optional().default(500).describe('Max chunks in ring buffer'),
-    metadata: z.record(z.any()).optional().describe('Stream metadata'),
+    metadata: z.record(z.string(), z.any()).optional().describe('Stream metadata'),
   }),
 );
 
@@ -131,13 +131,13 @@ export const stream_from_api = makeLocalTool(
   z.object({
     url: z.string().describe('API endpoint URL'),
     method: z.enum(['sse', 'chunked_http', 'lines']).default('lines').describe('How to consume the API response'),
-    headers: z.record(z.string()).optional().describe('HTTP headers to send'),
+    headers: z.record(z.string(), z.string()).optional().describe('HTTP headers to send'),
     chunkType: z.enum(['json', 'text', 'bytes']).default('text').describe('How to parse incoming chunks'),
     kind: z.string().optional().describe('Stream kind (defaults to chunkType)'),
     flowId: z.string().optional().describe('Workflow run ID'),
     sourceStepId: z.string().optional().describe('Step ID'),
     bufferSize: z.number().optional().default(500).describe('Max chunks in ring buffer'),
-    metadata: z.record(z.any()).optional().describe('Stream metadata'),
+    metadata: z.record(z.string(), z.any()).optional().describe('Stream metadata'),
     timeoutSec: z.number().optional().default(60).describe('Connection timeout in seconds'),
   }),
 );
@@ -154,6 +154,6 @@ export const stream_from_llm = makeLocalTool(
     flowId: z.string().optional().describe('Workflow run ID'),
     sourceStepId: z.string().optional().describe('Step ID'),
     bufferSize: z.number().optional().default(500).describe('Max chunks in ring buffer'),
-    metadata: z.record(z.any()).optional().describe('Stream metadata'),
+    metadata: z.record(z.string(), z.any()).optional().describe('Stream metadata'),
   }),
 );

@@ -78,7 +78,7 @@ const HeroSection = () => {
             marginBottom: '24px'
           }}
         >
-          The only AI assistant <span className="text-gray-400">you'll ever need.</span>
+          The only AI assistant <span className="text-gray-400">you&apos;ll ever need.</span>
         </h1>
 
         {/* Subtitle */}
@@ -92,7 +92,7 @@ const HeroSection = () => {
             maxWidth: '640px'
           }}
         >
-          <strong>Copilot stops at answers. Stuard keeps going.</strong> Your personal assistant that remembers everything, runs automations, and replaces the 5 subscriptions you're paying for.
+          <strong>Copilot stops at answers. Stuard keeps going.</strong> Your personal assistant that remembers everything, runs automations, and replaces the 5 subscriptions you&apos;re paying for.
         </p>
 
         {/* Signup Section */}

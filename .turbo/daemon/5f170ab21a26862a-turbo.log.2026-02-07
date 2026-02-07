@@ -1,0 +1,103 @@
+2026-02-07T18:47:04.182396Z  WARN daemon_server: turborepo_lib::commands::daemon: daemon already running
+2026-02-07T18:47:04.252092Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo"), AnchoredSystemPathBuf(".turbo\\cookies\\1.cookie"), AnchoredSystemPathBuf(".turbo\\daemon"), AnchoredSystemPathBuf(".turbo\\cookies"), AnchoredSystemPathBuf(".turbo\\cookies\\.turbo-cookie")}
+2026-02-07T18:47:04.252491Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T18:47:04.447010Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo\\daemon\\5f170ab21a26862a-turbo.log.2026-02-07")}
+2026-02-07T18:47:04.447220Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T18:47:05.845808Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo\\cookies")}
+2026-02-07T18:47:05.845841Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T18:47:06.150383Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo\\cookies\\2.cookie")}
+2026-02-07T18:47:06.150420Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T18:47:06.247464Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo\\cookies"), AnchoredSystemPathBuf(".turbo\\cookies\\3.cookie")}
+2026-02-07T18:47:06.247495Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T18:47:31.744942Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo\\cookies\\4.cookie")}
+2026-02-07T18:47:31.744976Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T18:47:48.739459Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo\\cookies")}
+2026-02-07T18:47:48.739498Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T18:50:32.145772Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo\\daemon\\5f170ab21a26862a-turbo.log.2026-02-07")}
+2026-02-07T18:50:32.145814Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T18:51:30.238280Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\src\\main\\custom-ui.ts"), AnchoredSystemPathBuf("apps\\desktop\\src\\main\\engine\\execution.ts")}
+2026-02-07T18:51:30.238315Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T18:51:30.343716Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\src\\main\\engine\\execution.ts"), AnchoredSystemPathBuf("apps\\desktop\\src\\renderer\\workflows\\builder\\compiler.ts")}
+2026-02-07T18:51:30.343757Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T18:52:09.143946Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\src\\main\\engine\\execution.ts")}
+2026-02-07T18:52:09.143978Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T18:52:53.346194Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\src\\renderer\\config.public.ts")}
+2026-02-07T18:52:53.346333Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T18:52:53.439468Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\src\\renderer\\config.public.ts")}
+2026-02-07T18:52:53.439722Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T18:52:58.249267Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\src\\renderer\\workflows\\components\\smart-args\\SmartArgEditor.tsx")}
+2026-02-07T18:52:58.249331Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T18:52:58.850232Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\src\\renderer\\ui-builder\\EnhancedUIBuilderModal.tsx")}
+2026-02-07T18:52:58.850272Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T18:53:08.848092Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\src\\renderer\\hooks\\usePlannerData.ts")}
+2026-02-07T18:53:08.848125Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T18:53:23.647537Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\src\\renderer"), AnchoredSystemPathBuf("apps\\desktop\\src\\renderer\\vite-env.d.ts")}
+2026-02-07T18:53:23.647572Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T18:53:30.844803Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\src\\renderer\\hooks\\useSpeechToText.ts")}
+2026-02-07T18:53:30.844837Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T18:53:41.750738Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\src\\renderer\\lib\\posthog.ts")}
+2026-02-07T18:53:41.750773Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T18:54:20.344526Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\tsconfig.json")}
+2026-02-07T18:54:20.344636Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T18:55:05.039999Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo\\cookies\\5.cookie")}
+2026-02-07T18:55:05.040033Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T18:55:05.546054Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo\\cookies"), AnchoredSystemPathBuf(".turbo\\cookies\\6.cookie")}
+2026-02-07T18:55:05.546086Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T18:55:05.642140Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo\\cookies\\7.cookie"), AnchoredSystemPathBuf(".turbo\\cookies"), AnchoredSystemPathBuf(".turbo\\cookies\\8.cookie")}
+2026-02-07T18:55:05.642189Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T18:55:25.049543Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\tsconfig.json")}
+2026-02-07T18:55:25.049579Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T18:56:52.740409Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\tsconfig.json")}
+2026-02-07T18:56:52.740444Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T18:56:56.352454Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo\\cookies\\9.cookie")}
+2026-02-07T18:56:56.352508Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T18:56:56.947293Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo\\cookies\\11.cookie"), AnchoredSystemPathBuf(".turbo\\cookies"), AnchoredSystemPathBuf(".turbo\\cookies\\10.cookie")}
+2026-02-07T18:56:56.947363Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T18:57:48.740258Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo\\cookies")}
+2026-02-07T18:57:48.740294Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T18:58:52.940543Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\tsconfig.json")}
+2026-02-07T18:58:52.940574Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T19:00:00.743164Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\src\\renderer\\ui-builder\\EnhancedUIBuilderModal.tsx")}
+2026-02-07T19:00:00.743203Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T19:00:00.841988Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\src\\renderer\\ui-builder\\EnhancedUIBuilderModal.tsx")}
+2026-02-07T19:00:00.842029Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T19:02:43.051467Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\tsconfig.json")}
+2026-02-07T19:02:43.051511Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T19:02:44.845787Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(""), AnchoredSystemPathBuf("_tmp_35880_22834cc8dbf9a755ab2157bc31e42f01")}
+2026-02-07T19:02:44.845864Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T19:02:45.039686Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("_tmp_35880_22834cc8dbf9a755ab2157bc31e42f01")}
+2026-02-07T19:02:45.039717Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T19:02:45.151866Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("")}
+2026-02-07T19:02:45.151903Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({}))
+2026-02-07T19:02:56.440923Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("node_modules")}
+2026-02-07T19:02:56.440963Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T19:02:56.539942Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("node_modules")}
+2026-02-07T19:02:56.539973Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T19:02:56.644183Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("node_modules")}
+2026-02-07T19:02:56.644220Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T19:02:56.845868Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("node_modules")}
+2026-02-07T19:02:56.845897Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T19:02:57.343972Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("node_modules")}
+2026-02-07T19:02:57.344001Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T19:02:58.038877Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\browser-extension\\node_modules"), AnchoredSystemPathBuf("apps\\cloud-ai\\node_modules"), AnchoredSystemPathBuf("apps\\desktop\\node_modules"), AnchoredSystemPathBuf("node_modules")}
+2026-02-07T19:02:58.038914Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }, WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }, WorkspacePackage { name: Other("@stuardai/browser-extension"), path: AnchoredSystemPathBuf("apps\\browser-extension") }, WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T19:02:58.144965Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\website\\node_modules"), AnchoredSystemPathBuf("apps\\browser-extension\\node_modules"), AnchoredSystemPathBuf("apps\\ops-console\\node_modules"), AnchoredSystemPathBuf("node_modules"), AnchoredSystemPathBuf("infra\\cdk\\node_modules"), AnchoredSystemPathBuf("apps\\desktop\\node_modules")}
+2026-02-07T19:02:58.145029Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/infra"), path: AnchoredSystemPathBuf("infra\\cdk") }, WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }, WorkspacePackage { name: Other("@stuardai/browser-extension"), path: AnchoredSystemPathBuf("apps\\browser-extension") }, WorkspacePackage { name: Other("stuard-ai-website"), path: AnchoredSystemPathBuf("apps\\website") }, WorkspacePackage { name: Other("ops-console"), path: AnchoredSystemPathBuf("apps\\ops-console") }, WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T19:02:58.250798Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\node_modules"), AnchoredSystemPathBuf("apps\\cloud-ai\\node_modules"), AnchoredSystemPathBuf("infra\\cdk\\node_modules")}
+2026-02-07T19:02:58.250836Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }, WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }, WorkspacePackage { name: Other("@stuardai/infra"), path: AnchoredSystemPathBuf("infra\\cdk") }}))
+2026-02-07T19:02:58.546864Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("node_modules")}
+2026-02-07T19:02:58.546932Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T19:18:32.544892Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\src\\renderer\\workflows\\components\\smart-args\\SmartArgEditor.tsx"), AnchoredSystemPathBuf("apps\\desktop\\src\\renderer\\ui-builder"), AnchoredSystemPathBuf("apps\\desktop\\src\\renderer\\ui-builder\\EnhancedUIBuilderModal.tsx"), AnchoredSystemPathBuf("apps\\desktop\\src\\renderer\\workflows\\components\\smart-args")}
+2026-02-07T19:18:32.544934Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2026-02-07T19:19:03.548959Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo\\cookies\\12.cookie")}
+2026-02-07T19:19:03.549032Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T19:19:04.539218Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo\\cookies\\14.cookie"), AnchoredSystemPathBuf(".turbo\\cookies\\13.cookie"), AnchoredSystemPathBuf(".turbo\\cookies")}
+2026-02-07T19:19:04.539251Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T19:19:34.447398Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo\\cookies\\15.cookie")}
+2026-02-07T19:19:34.447429Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T19:19:35.852077Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo\\cookies")}
+2026-02-07T19:19:35.852108Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T19:22:23.849000Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(".turbo\\daemon\\5f170ab21a26862a-turbo.log.2026-02-07")}
+2026-02-07T19:22:23.849034Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2026-02-07T19:35:06.645268Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\browser-extension"), AnchoredSystemPathBuf("apps\\browser-extension\\.turbo")}
+2026-02-07T19:35:06.645366Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/browser-extension"), path: AnchoredSystemPathBuf("apps\\browser-extension") }}))

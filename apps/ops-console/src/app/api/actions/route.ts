@@ -146,13 +146,14 @@ export async function POST(req: Request) {
           await execPromise('pnpm run test', { cwd: repoRoot, env: { ...process.env, CI: 'true' } });
           
           return NextResponse.json({ message: 'All checks passed (typecheck, lint, test)' });
-        } catch (error: any) {
+        } catch (error: unknown) {
           console.error('Checks failed:', error);
-          const stdout = error.stdout?.toString() || '';
-          const stderr = error.stderr?.toString() || '';
+          const execErr = error as { stdout?: Buffer | string; stderr?: Buffer | string; message?: string };
+          const stdout = execErr.stdout?.toString() || '';
+          const stderr = execErr.stderr?.toString() || '';
           // Return a readable error summary
           return NextResponse.json({ 
-            error: `Checks failed. \n${stderr || stdout || error.message}`.slice(0, 500) // Truncate for UI
+            error: `Checks failed. \n${stderr || stdout || execErr.message || 'Unknown error'}`.slice(0, 500) // Truncate for UI
           }, { status: 400 });
         }
       }

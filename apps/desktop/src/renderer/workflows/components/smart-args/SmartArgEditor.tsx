@@ -2,13 +2,13 @@
  * SmartArgEditor - Main schema-aware argument editor component
  * Uses modular editors from ./editors folder
  */
-import React, { useState, useMemo } from 'react';
-import { Plus, X, Code2, Paintbrush, Settings } from 'lucide-react';
-import { getToolSchema } from '../../constants/tool-schemas';
+import React, { useMemo, useState } from 'react';
+import { Paintbrush, Plus, X, Settings, Code2, LayoutGrid } from 'lucide-react';
 import type { WorkflowVariable } from '../../types';
-
-// Import editors
-import { BooleanToggle } from './editors/BooleanToggle';
+import { getToolSchema } from '../../constants/tool-schemas';
+import { SmartValueEditor } from '../SmartValueEditor';
+import { EnhancedUIBuilderModal } from '../../../ui-builder/EnhancedUIBuilderModal';
+import type { UIWindowConfig } from '../../../ui-builder/types';
 import { HotkeyEditor } from './editors/HotkeyEditor';
 import { SelectInput } from './editors/SelectInput';
 import { TextInputWithVariables, type UpstreamNode } from './editors/TextInputWithVariables';
@@ -18,6 +18,7 @@ import { JsonEditor } from './editors/JsonEditor';
 import { DriveQueryEditor } from './editors/DriveQueryEditor';
 import { ParallelStepsEditor } from './editors/ParallelStepsEditor';
 import { FilesEditor } from './editors/FilesEditor';
+import { BooleanToggle } from './editors/BooleanToggle';
 import { CronEditor } from '../CronEditor';
 import { UIBuilderModal } from '../../../ui-builder';
 
@@ -263,23 +264,30 @@ export function ToolArgsEditor({
   const [showAddArg, setShowAddArg] = useState(false);
   const [newArgKey, setNewArgKey] = useState('');
   const [showUIBuilder, setShowUIBuilder] = useState(false);
+  const [showAdvancedArgs, setShowAdvancedArgs] = useState(false);
 
   // Special case: custom_ui tool - show visual UI builder + key args
   if (toolName === 'custom_ui') {
-    const handleUIBuilderSave = (result: { html: string; css: string; js: string; window: any }) => {
-      onUpdate({
+    const handleUIBuilderSave = (result: { html: string; css: string; js: string; window: UIWindowConfig; pages?: Record<string, any>; startPage?: string }) => {
+      const newArgs: Record<string, any> = {
         ...args,
         html: result.html,
         css: result.css,
         js: result.js || args.js,
         script: result.js || args.script,
-        ...result.window,
-      });
+        window: result.window,
+      };
+      // Include pages if provided
+      if (result.pages && Object.keys(result.pages).length > 0) {
+        newArgs.pages = result.pages;
+        newArgs.startPage = result.startPage || Object.keys(result.pages)[0];
+      }
+      onUpdate(newArgs);
     };
 
     // Key args to show prominently (in order)
     const keyArgs = ['id', 'title', 'data', 'blocking'];
-    const windowArgs = ['width', 'height', 'position', 'alwaysOnTop', 'frameless'];
+    const hasPages = args.pages && typeof args.pages === 'object' && Object.keys(args.pages).length > 0;
 
     // Add custom property handler for custom_ui
     const addCustomArg = () => {
@@ -317,27 +325,57 @@ export function ToolArgsEditor({
           ))}
         </div>
 
-        {/* Window Configuration - Collapsible */}
-        <details className="text-sm border border-slate-200 rounded-xl overflow-hidden">
+        {/* Pages System - Collapsible */}
+        <details className="text-sm border border-slate-200 rounded-xl overflow-hidden" open={hasPages}>
           <summary className="cursor-pointer text-slate-600 hover:text-slate-800 font-medium p-3 flex items-center gap-2 bg-slate-50 hover:bg-slate-100 transition-colors">
-            <Settings className="w-4 h-4" />
-            Window Settings
-            <span className="ml-auto text-xs text-slate-400">
-              {args.width || 400}×{args.height || 500}
-            </span>
+            <LayoutGrid className="w-4 h-4" />
+            Pages (Multi-page SPA)
+            {hasPages && (
+              <span className="ml-auto text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
+                {Object.keys(args.pages).length} page(s)
+              </span>
+            )}
           </summary>
           <div className="p-4 space-y-4 bg-white">
-            {windowArgs.map(key => (
+            <SmartArgEditor
+              toolName={toolName}
+              argKey="pages"
+              value={args.pages || {}}
+              onChange={v => onUpdate({ ...args, pages: v })}
+              upstreamNodes={upstreamNodes}
+              workflowVariables={workflowVariables}
+            />
+            {hasPages && (
               <SmartArgEditor
-                key={key}
                 toolName={toolName}
-                argKey={key}
-                value={args[key]}
-                onChange={v => onUpdate({ ...args, [key]: v })}
+                argKey="startPage"
+                value={args.startPage || ''}
+                onChange={v => onUpdate({ ...args, startPage: v })}
                 upstreamNodes={upstreamNodes}
                 workflowVariables={workflowVariables}
               />
-            ))}
+            )}
+          </div>
+        </details>
+
+        {/* Window Configuration - Collapsible (simplified since builder handles it) */}
+        <details className="text-sm border border-slate-200 rounded-xl overflow-hidden">
+          <summary className="cursor-pointer text-slate-600 hover:text-slate-800 font-medium p-3 flex items-center gap-2 bg-slate-50 hover:bg-slate-100 transition-colors">
+            <Settings className="w-4 h-4" />
+            Window Settings (Advanced)
+            <span className="ml-auto text-xs text-slate-400">
+              {args.window?.width || args.width || 600}×{args.window?.height || args.height || 450}
+            </span>
+          </summary>
+          <div className="p-4 space-y-4 bg-white">
+            <SmartArgEditor
+              toolName={toolName}
+              argKey="window"
+              value={args.window || {}}
+              onChange={v => onUpdate({ ...args, window: v })}
+              upstreamNodes={upstreamNodes}
+              workflowVariables={workflowVariables}
+            />
           </div>
         </details>
 
@@ -412,18 +450,183 @@ export function ToolArgsEditor({
         )}
 
         {showUIBuilder && (
-          <UIBuilderModal
+          <EnhancedUIBuilderModal
             html={args.html || ''}
             css={args.css || ''}
             js={args.js || args.script || ''}
+            pages={args.pages}
+            startPage={args.startPage}
+            mode="create"
             windowConfig={{
-              width: args.width || args.window?.width || 800,
-              height: args.height || args.window?.height || 600,
-              title: args.title || args.window?.title,
-              position: args.position || args.window?.position,
-              alwaysOnTop: args.alwaysOnTop ?? args.window?.alwaysOnTop,
-              frameless: args.frameless ?? args.window?.frameless,
-              borderRadius: args.borderRadius || args.window?.borderRadius,
+              width: args.window?.width || args.width || 600,
+              height: args.window?.height || args.height || 450,
+              position: args.window?.position || args.position || 'center',
+              alwaysOnTop: args.window?.alwaysOnTop ?? args.alwaysOnTop ?? true,
+              frameless: args.window?.frameless ?? args.frameless ?? false,
+              transparent: args.window?.transparent ?? args.transparent ?? false,
+              borderRadius: args.window?.borderRadius || args.borderRadius || 12,
+              resizable: args.window?.resizable ?? args.resizable ?? false,
+              title: args.title || args.window?.title || 'Custom UI',
+              // Enhanced properties
+              backgroundType: args.window?.backgroundType || 'color',
+              backgroundColor: args.window?.backgroundColor || '#1a1a2e',
+              gradient: args.window?.gradient,
+              backgroundImage: args.window?.backgroundImage,
+              shadow: args.window?.shadow || { enabled: true, color: '#00000040', blur: 20, spread: 0, x: 0, y: 8 },
+              border: args.window?.border,
+              animation: args.window?.animation || { open: 'fade', close: 'fade', duration: 300, easing: 'ease-out' },
+              contentPadding: args.window?.contentPadding || 24,
+            }}
+            onSave={handleUIBuilderSave}
+            onClose={() => setShowUIBuilder(false)}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // Special case: update_custom_ui tool - visual editor for updating existing UI
+  if (toolName === 'update_custom_ui') {
+    const handleUIBuilderSave = (result: { html: string; css: string; js: string; window: UIWindowConfig; pages?: Record<string, any>; startPage?: string }) => {
+      const newArgs: Record<string, any> = {
+        ...args,
+        html: result.html,
+        css: result.css,
+        js: result.js || args.js,
+        script: result.js || args.script,
+        window: result.window,
+      };
+      // Include pages if provided
+      if (result.pages && Object.keys(result.pages).length > 0) {
+        newArgs.pages = result.pages;
+        newArgs.navigateTo = result.startPage;
+      }
+      onUpdate(newArgs);
+    };
+
+    const keyArgs = ['id', 'data', 'navigateTo'];
+    const hasPages = args.pages && typeof args.pages === 'object' && Object.keys(args.pages).length > 0;
+
+    return (
+      <div className="space-y-5">
+        {/* UI Update Button */}
+        <button
+          onClick={() => setShowUIBuilder(true)}
+          className="w-full py-3.5 text-white rounded-xl font-semibold flex items-center justify-center gap-2.5 shadow-lg hover:shadow-xl transition-all group bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
+        >
+          <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+            <Paintbrush className="w-5 h-5" />
+          </div>
+          <span>Edit UI Design</span>
+        </button>
+
+        {/* Key Arguments */}
+        <div className="space-y-4">
+          {keyArgs.map(key => (
+            <SmartArgEditor
+              key={key}
+              toolName={toolName}
+              argKey={key}
+              value={args[key]}
+              onChange={v => onUpdate({ ...args, [key]: v })}
+              upstreamNodes={upstreamNodes}
+              workflowVariables={workflowVariables}
+            />
+          ))}
+        </div>
+
+        {/* Pages Navigation - if pages exist */}
+        {hasPages && (
+          <details className="text-sm border border-slate-200 rounded-xl overflow-hidden" open>
+            <summary className="cursor-pointer text-slate-600 hover:text-slate-800 font-medium p-3 flex items-center gap-2 bg-slate-50 hover:bg-slate-100 transition-colors">
+              <LayoutGrid className="w-4 h-4" />
+              Pages
+              <span className="ml-auto text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">
+                {Object.keys(args.pages).length} page(s)
+              </span>
+            </summary>
+            <div className="p-4 space-y-4 bg-white">
+              <SmartArgEditor
+                toolName={toolName}
+                argKey="pages"
+                value={args.pages || {}}
+                onChange={v => onUpdate({ ...args, pages: v })}
+                upstreamNodes={upstreamNodes}
+                workflowVariables={workflowVariables}
+              />
+              <SmartArgEditor
+                toolName={toolName}
+                argKey="navigateTo"
+                value={args.navigateTo || ''}
+                onChange={v => onUpdate({ ...args, navigateTo: v })}
+                upstreamNodes={upstreamNodes}
+                workflowVariables={workflowVariables}
+              />
+            </div>
+          </details>
+        )}
+
+        {/* Raw Code Editing */}
+        <details className="text-sm border border-slate-200 rounded-xl overflow-hidden">
+          <summary className="cursor-pointer text-slate-600 hover:text-slate-800 font-medium p-3 flex items-center gap-2 bg-slate-50 hover:bg-slate-100 transition-colors">
+            <Code2 className="w-4 h-4" />
+            Edit HTML/CSS/JS
+          </summary>
+          <div className="p-4 space-y-4 bg-white">
+            <SmartArgEditor
+              toolName={toolName}
+              argKey="html"
+              value={args.html || ''}
+              onChange={v => onUpdate({ ...args, html: v })}
+              upstreamNodes={upstreamNodes}
+              workflowVariables={workflowVariables}
+            />
+            <SmartArgEditor
+              toolName={toolName}
+              argKey="css"
+              value={args.css || ''}
+              onChange={v => onUpdate({ ...args, css: v })}
+              upstreamNodes={upstreamNodes}
+              workflowVariables={workflowVariables}
+            />
+            <SmartArgEditor
+              toolName={toolName}
+              argKey="js"
+              value={args.js || ''}
+              onChange={v => onUpdate({ ...args, js: v })}
+              upstreamNodes={upstreamNodes}
+              workflowVariables={workflowVariables}
+            />
+          </div>
+        </details>
+
+        {showUIBuilder && (
+          <EnhancedUIBuilderModal
+            html={args.html || ''}
+            css={args.css || ''}
+            js={args.js || args.script || ''}
+            pages={args.pages}
+            startPage={args.navigateTo || args.startPage}
+            mode="update"
+            windowConfig={{
+              width: args.window?.width || args.width || 600,
+              height: args.window?.height || args.height || 450,
+              position: args.window?.position || args.position || 'center',
+              alwaysOnTop: args.window?.alwaysOnTop ?? args.alwaysOnTop ?? true,
+              frameless: args.window?.frameless ?? args.frameless ?? false,
+              transparent: args.window?.transparent ?? args.transparent ?? false,
+              borderRadius: args.window?.borderRadius || args.borderRadius || 12,
+              resizable: args.window?.resizable ?? args.resizable ?? false,
+              title: 'Update UI',
+              // Enhanced properties from existing window config if available
+              backgroundType: args.window?.backgroundType || 'color',
+              backgroundColor: args.window?.backgroundColor || '#1a1a2e',
+              gradient: args.window?.gradient,
+              backgroundImage: args.window?.backgroundImage,
+              shadow: args.window?.shadow || { enabled: true, color: '#00000040', blur: 20, spread: 0, x: 0, y: 8 },
+              border: args.window?.border,
+              animation: args.window?.animation || { open: 'fade', close: 'fade', duration: 300, easing: 'ease-out' },
+              contentPadding: args.window?.contentPadding || 24,
             }}
             onSave={handleUIBuilderSave}
             onClose={() => setShowUIBuilder(false)}
@@ -452,17 +655,20 @@ export function ToolArgsEditor({
 
   const schemaKeys = schema ? Object.keys(schema.args) : [];
   const extraKeys = Object.keys(args).filter(k => !schemaKeys.includes(k));
-  const allKeys = [...schemaKeys, ...extraKeys];
+  const visibleSchemaKeys = schemaKeys.filter((k) => !schema?.args?.[k]?.hidden);
+  const baseSchemaKeys = visibleSchemaKeys.filter((k) => !schema?.args?.[k]?.advanced);
+  const advancedSchemaKeys = visibleSchemaKeys.filter((k) => !!schema?.args?.[k]?.advanced);
+  const allBaseKeys = [...baseSchemaKeys, ...extraKeys];
 
   return (
     <div className="space-y-6">
-      {allKeys.length === 0 && !showAddArg ? (
+      {allBaseKeys.length === 0 && !showAddArg && advancedSchemaKeys.length === 0 ? (
         <div className="py-8 px-4 text-center rounded-xl bg-slate-50 border border-dashed border-slate-200">
           <p className="text-sm text-slate-500 font-medium">No configuration needed</p>
           <p className="text-xs text-slate-400 mt-1">This step doesn't require any settings.</p>
         </div>
       ) : (
-        allKeys.map(key => {
+        allBaseKeys.map(key => {
           const argSchema = schema?.args[key];
           const isExtra = !schemaKeys.includes(key);
 
@@ -488,6 +694,34 @@ export function ToolArgsEditor({
             </div>
           );
         })
+      )}
+
+      {advancedSchemaKeys.length > 0 && (
+        <div className="border border-slate-200 rounded-xl overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setShowAdvancedArgs((v) => !v)}
+            className="w-full flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-slate-100 transition-colors text-xs font-semibold text-slate-600"
+          >
+            <span>Advanced Settings</span>
+            <span className="text-[10px] text-slate-400">{advancedSchemaKeys.length} option(s)</span>
+          </button>
+          {showAdvancedArgs && (
+            <div className="p-4 space-y-4 bg-white border-t border-slate-200">
+              {advancedSchemaKeys.map((key) => (
+                <SmartArgEditor
+                  key={key}
+                  toolName={toolName}
+                  argKey={key}
+                  value={(args as any)[key]}
+                  onChange={(v) => onUpdate({ ...args, [key]: v })}
+                  upstreamNodes={upstreamNodes}
+                  workflowVariables={workflowVariables}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {showAddArg ? (

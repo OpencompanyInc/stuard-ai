@@ -273,9 +273,9 @@ function generateSimpleFormat(model: DesignerModel): string {
   lines.push('steps:');
   
   // Build execution order
-  const executionOrder = buildExecutionOrder(model.nodes, wires);
+  const executionOrder = buildExecutionOrder(model.nodes, model.wires);
   const wiresByFrom = new Map<string, DesignerWire[]>();
-  for (const wire of wires) {
+  for (const wire of model.wires) {
     if (!wiresByFrom.has(wire.from)) wiresByFrom.set(wire.from, []);
     wiresByFrom.get(wire.from)!.push(wire);
   }

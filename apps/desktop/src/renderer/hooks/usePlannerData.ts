@@ -6,7 +6,7 @@ const AGENT_HTTP_CANDIDATES = (() => {
   for (let p = 8765; p <= 8775; p++) range.push(`http://127.0.0.1:${p}`);
   return Array.from(new Set([DEFAULT_AGENT_HTTP, ...range, 'http://127.0.0.1:9090']));
 })();
-const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || import.meta.env.VITE_CLOUD_AI_URL || (import.meta.env.DEV ? 'http://127.0.0.1:8082' : 'https://cloud.stuard.ai');
+const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || ((import.meta as any).env?.DEV ? 'http://127.0.0.1:8082' : 'https://cloud.stuard.ai');
 
 export interface PlannerTask {
   id: string;

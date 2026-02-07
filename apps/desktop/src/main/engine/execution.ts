@@ -88,7 +88,7 @@ export async function executeStep(
 
     // Handle 'end' tool - terminates the workflow
     if (toolName === 'end' || result?.terminated) {
-      return { ok: true, ctx }; // No nextId = end of workflow
+      return { ok: true, ctx, edges: [] }; // No nextId = end of workflow
     }
 
     // Check for failure
@@ -97,7 +97,7 @@ export async function executeStep(
       if (toolName === 'custom_ui' && (result?.action === 'timeout' || result?.action === 'closed')) {
         // Continue normally - but if there's no 'always' edge, may need to check guards
       } else {
-        return { ok: false, error: String(result?.error || `${toolName}_failed`), ctx };
+        return { ok: false, error: String(result?.error || `${toolName}_failed`), ctx, edges: [] };
       }
     }
 
@@ -177,7 +177,7 @@ async function decideNext(
   // Always include all stream edges — they run in parallel with flow edges
   activeEdges.push(...streamEdges);
   if (streamEdges.length > 0) {
-    engineCtx.logFn(`[${step.id}] 📡 ${streamEdges.length} stream edge(s) detected`);
+    engineCtx.logFn(`[${step.id}] ${streamEdges.length} stream edge(s) detected`);
   }
 
   // Separate unconditional flow edges from conditional ones

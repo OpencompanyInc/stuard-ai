@@ -17,12 +17,12 @@ export default function PrivacyPage() {
         <section>
           <h2 className="text-2xl font-medium text-gray-900 mb-4">1. Introduction</h2>
           <p>
-            At Stuard AI ("we," "our," or "us"), we respect your privacy and are committed to protecting your personal data. 
+            At Stuard AI (&ldquo;we,&rdquo; &ldquo;our,&rdquo; or &ldquo;us&rdquo;), we respect your privacy and are committed to protecting your personal data. 
             This Privacy Policy explains how we collect, use, and share information about you when you use our desktop application, 
-            website, and related services (collectively, the "Service").
+            website, and related services (collectively, the &ldquo;Service&rdquo;).
           </p>
           <p className="mt-4">
-            Our core philosophy is <strong>"Local-First."</strong> We design our software to keep as much of your personal data 
+            Our core philosophy is <strong>&ldquo;Local-First.&rdquo;</strong> We design our software to keep as much of your personal data 
             on your local device as possible, minimizing what is sent to our servers.
           </p>
         </section>
@@ -64,7 +64,7 @@ export default function PrivacyPage() {
             <li><strong>Files:</strong> Documents and files you ask Stuard to manage.</li>
           </ul>
           <p className="mt-4">
-            This local data is under your control. If you enable "Cloud Sync" (optional), an encrypted copy of this data 
+            This local data is under your control. If you enable &ldquo;Cloud Sync&rdquo; (optional), an encrypted copy of this data 
             may be stored on our servers to synchronize across your devices.
           </p>
         </section>
@@ -120,7 +120,7 @@ export default function PrivacyPage() {
         </section>
 
         <section>
-          <h2 className="text-2xl font-medium text-gray-900 mb-4">9. Children's Privacy</h2>
+          <h2 className="text-2xl font-medium text-gray-900 mb-4">9. Children&apos;s Privacy</h2>
           <p>
             The Service is not intended for individuals under the age of 13. We do not knowingly collect personal data from children.
           </p>
@@ -130,7 +130,7 @@ export default function PrivacyPage() {
           <h2 className="text-2xl font-medium text-gray-900 mb-4">10. Changes to This Policy</h2>
           <p>
             We may update this Privacy Policy from time to time. We will notify you of any changes by posting the new policy on this page 
-            and updating the "Last updated" date.
+            and updating the &ldquo;Last updated&rdquo; date.
           </p>
         </section>
 

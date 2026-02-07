@@ -52,7 +52,7 @@ export function useSpeechToText(cloudUrl?: string) {
   const buildSpeechUrl = () => {
     if (cloudUrl) return cloudUrl;
     // Check for injected cloud URL (set during build)
-    const httpUrl = (window as any).__CLOUD_AI_HTTP__ || import.meta.env.VITE_CLOUD_HTTP_URL || '';
+    const httpUrl = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_HTTP_URL || '';
     if (httpUrl) {
       return httpUrl.replace(/^https?:\/\//, (m: string) => m.startsWith('https') ? 'wss://' : 'ws://') + '/speech';
     }

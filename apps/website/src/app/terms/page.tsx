@@ -17,7 +17,7 @@ export default function TermsPage() {
         <section>
           <h2 className="text-2xl font-medium text-gray-900 mb-4">1. Acceptance of Terms</h2>
           <p>
-            By accessing or using Stuard AI ("the Service"), you agree to be bound by these Terms of Use. 
+            By accessing or using Stuard AI (&ldquo;the Service&rdquo;), you agree to be bound by these Terms of Use. 
             If you do not agree to these terms, please do not use the Service.
           </p>
         </section>
@@ -36,7 +36,7 @@ export default function TermsPage() {
           <p>
             The Service is currently in a Beta phase. You acknowledge that the Service may contain bugs, errors, and other problems 
             that could cause system or other failures and data loss. We may modify or discontinue features at any time without notice. 
-            Beta access may be limited to specific users or groups ("stable", "beta", "staging").
+            Beta access may be limited to specific users or groups (&ldquo;stable&rdquo;, &ldquo;beta&rdquo;, &ldquo;staging&rdquo;).
           </p>
         </section>
 
@@ -51,7 +51,7 @@ export default function TermsPage() {
         <section>
           <h2 className="text-2xl font-medium text-gray-900 mb-4">5. Local-First Data and Privacy</h2>
           <p>
-            Stuard AI is designed with a "local-first" philosophy. Much of your data, including local memory and task history, is stored locally on your device. 
+            Stuard AI is designed with a &ldquo;local-first&rdquo; philosophy. Much of your data, including local memory and task history, is stored locally on your device. 
             However, certain features require data to be processed in the cloud (e.g., AI model inference, syncing across devices, marketplace publishing). 
             By using these features, you consent to such processing as described in our Privacy Policy.
           </p>
@@ -60,7 +60,7 @@ export default function TermsPage() {
         <section>
           <h2 className="text-2xl font-medium text-gray-900 mb-4">6. Marketplace and User Content</h2>
           <p>
-            Users may publish workflows, automations, or other content ("User Content") to the Stuard Marketplace.
+            Users may publish workflows, automations, or other content (&ldquo;User Content&rdquo;) to the Stuard Marketplace.
           </p>
           <ul className="list-disc pl-6 space-y-2 mt-4">
             <li><strong>Ownership:</strong> You retain ownership of your User Content.</li>
@@ -106,7 +106,7 @@ export default function TermsPage() {
         <section>
           <h2 className="text-2xl font-medium text-gray-900 mb-4">10. Disclaimer of Warranties</h2>
           <p>
-            THE SERVICE IS PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, 
+            THE SERVICE IS PROVIDED &ldquo;AS IS&rdquo; AND &ldquo;AS AVAILABLE&rdquo; WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, 
             INCLUDING, BUT NOT LIMITED TO, IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
           </p>
         </section>
