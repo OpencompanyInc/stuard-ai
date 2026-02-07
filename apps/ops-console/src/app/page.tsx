@@ -86,6 +86,10 @@ export default function OpsDashboard() {
   const [_featureName, _setFeatureName] = useState('');
   const [version, setVersion] = useState('');
   const [_selectedCheckoutBranch, _setSelectedCheckoutBranch] = useState('');
+  const [newBranchName, setNewBranchName] = useState('');
+  const [newBranchBase, setNewBranchBase] = useState('');
+  const [checkoutBranch, setCheckoutBranch] = useState('');
+  const [pushAutoCommit, setPushAutoCommit] = useState(false);
   const [selectedBetaBranch, setSelectedBetaBranch] = useState('');
   const [betaTargets, setBetaTargets] = useState({ website: true, cloud: true, desktop: true });
   const [stagingTargets, setStagingTargets] = useState({ website: true, cloud: true, desktop: true });
@@ -163,7 +167,8 @@ export default function OpsDashboard() {
         setMessage(data.message || 'Action completed');
         // Clear inputs on success
         if (type === 'commit') setCommitMsg('');
-        if (type === 'start-feature') setFeatureName('');
+        if (type === 'start-feature') _setFeatureName('');
+        if (type === 'create-branch') setNewBranchName('');
         
         await fetchStatus();
         return true;
@@ -189,7 +194,7 @@ export default function OpsDashboard() {
     // Small delay to let the user see the success message
     await new Promise(resolve => setTimeout(resolve, 1000));
     
-    await doAction('ship-to-beta', { targets: betaTargets, branch: selectedBetaBranch });
+    await doAction('ship-to-beta', { targets: betaTargets, sourceBranch: selectedBetaBranch || undefined });
   };
 
   const updateChannels = [
@@ -448,6 +453,83 @@ export default function OpsDashboard() {
                   <button onClick={() => doAction('run-checks')} disabled={loading} className="btn-secondary w-full py-2 text-xs disabled:opacity-40 flex items-center justify-center gap-2">
                     <ShieldCheck className="w-3 h-3" /> Run Checks
                   </button>
+                </div>
+
+                <div className="pt-4 border-t border-gray-100 space-y-3">
+                  <div className="text-[10px] text-gray-500 font-medium uppercase">Branches</div>
+
+                  <div className="space-y-2">
+                    <label className="block text-[10px] text-gray-500 font-medium uppercase">Create New Branch</label>
+                    <input
+                      type="text"
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#007AFF]/20 focus:border-[#007AFF]"
+                      placeholder="feature/my-branch"
+                      value={newBranchName}
+                      onChange={(e) => setNewBranchName(e.target.value)}
+                    />
+                    <select
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800"
+                      value={newBranchBase}
+                      onChange={(e) => setNewBranchBase(e.target.value)}
+                    >
+                      <option value="">Base: current ({status.currentBranch})</option>
+                      {status.branches?.map((b) => (
+                        <option key={b} value={b}>
+                          Base: {b}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => doAction('create-branch', { branch: newBranchName, baseBranch: newBranchBase || undefined })}
+                      disabled={loading || !newBranchName.trim()}
+                      className="btn-secondary w-full py-2 text-xs disabled:opacity-40"
+                    >
+                      <GitBranch className="w-3 h-3 inline-block mr-2" /> Create & Push Branch
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-[10px] text-gray-500 font-medium uppercase">Switch Branch</label>
+                    <select
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800"
+                      value={checkoutBranch}
+                      onChange={(e) => setCheckoutBranch(e.target.value)}
+                    >
+                      <option value="">Select branch…</option>
+                      {status.branches?.map((b) => (
+                        <option key={b} value={b}>
+                          {b}{b === status.currentBranch ? ' (current)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => doAction('checkout-branch', { branch: checkoutBranch })}
+                      disabled={loading || !checkoutBranch.trim() || checkoutBranch === status.currentBranch}
+                      className="btn-secondary w-full py-2 text-xs disabled:opacity-40"
+                    >
+                      Switch
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-[10px] text-gray-500 font-medium uppercase">Upload to Cloud Branch</label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={pushAutoCommit}
+                        onChange={() => setPushAutoCommit((v) => !v)}
+                        className="rounded"
+                      />
+                      Auto-commit dirty changes (WIP)
+                    </label>
+                    <button
+                      onClick={() => doAction('push-current', { autoCommit: pushAutoCommit })}
+                      disabled={loading}
+                      className="btn-primary w-full py-2 text-xs disabled:opacity-40"
+                    >
+                      <Cloud className="w-3 h-3 inline-block mr-2" /> Push Current Branch
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

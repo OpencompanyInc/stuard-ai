@@ -68,6 +68,10 @@ function formatTargets(targets?: { website?: boolean; cloud?: boolean; desktop?:
 
 const git = simpleGit(findRepoRoot(process.cwd()));
 
+function isDevMode() {
+  return process.env.NODE_ENV !== 'production';
+}
+
 export async function POST(req: Request) {
   try {
     const { type, payload = {} } = await req.json();
@@ -79,6 +83,30 @@ export async function POST(req: Request) {
         return NextResponse.json({ message: 'Staged all changes' });
       }
 
+      case 'create-branch': {
+        if (!isDevMode()) {
+          return NextResponse.json({ error: 'This action is only available in dev mode' }, { status: 403 });
+        }
+
+        const branchName = String(payload.branch || payload.name || '').trim();
+        const baseBranch = String(payload.baseBranch || '').trim();
+
+        if (!branchName) {
+          return NextResponse.json({ error: 'Branch name is required' }, { status: 400 });
+        }
+
+        // Create from the current branch by default
+        if (baseBranch) {
+          await git.checkout(baseBranch);
+          await git.pull('origin', baseBranch);
+        }
+
+        // Creates and checks out the new branch
+        await git.checkoutLocalBranch(branchName);
+        await git.push(['-u', 'origin', branchName]);
+        return NextResponse.json({ message: `Created branch: ${branchName}` });
+      }
+
       case 'commit': {
         const msg = String(payload.message || '').trim();
         if (!msg) {
@@ -88,9 +116,34 @@ export async function POST(req: Request) {
         return NextResponse.json({ message: 'Committed changes' });
       }
 
+      case 'push-current': {
+        if (!isDevMode()) {
+          return NextResponse.json({ error: 'This action is only available in dev mode' }, { status: 403 });
+        }
+
+        const autoCommit = Boolean(payload.autoCommit);
+
+        const status = await git.status();
+        if (!status.isClean()) {
+          if (!autoCommit) {
+            return NextResponse.json({ error: 'Working tree is not clean. Commit changes or enable autoCommit.' }, { status: 400 });
+          }
+          await git.add('.');
+          await git.commit('wip: push current branch');
+        }
+
+        const current = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
+        await git.push('origin', current);
+        return NextResponse.json({ message: `Pushed ${current} to remote` });
+      }
+
       // Start a new feature branch (new API) or legacy "push-feature"
       case 'start-feature':
       case 'push-feature': {
+        if (!isDevMode()) {
+          return NextResponse.json({ error: 'This action is only available in dev mode' }, { status: 403 });
+        }
+
         const rawName = String(payload.name || '').trim();
         if (!rawName) {
           return NextResponse.json({ error: 'Feature name is required' }, { status: 400 });
@@ -103,6 +156,10 @@ export async function POST(req: Request) {
       }
 
       case 'share-feature': {
+        if (!isDevMode()) {
+          return NextResponse.json({ error: 'This action is only available in dev mode' }, { status: 403 });
+        }
+
         // Check if there are uncommitted changes
         const status = await git.status();
         if (!status.isClean()) {
@@ -115,6 +172,10 @@ export async function POST(req: Request) {
       }
 
       case 'checkout-branch': {
+        if (!isDevMode()) {
+          return NextResponse.json({ error: 'This action is only available in dev mode' }, { status: 403 });
+        }
+
         const branchName = String(payload.branch || '').trim();
         if (!branchName) {
           return NextResponse.json({ error: 'Branch name is required' }, { status: 400 });
@@ -161,7 +222,7 @@ export async function POST(req: Request) {
       // 2. BETA (develop) ---------------------------------------------------
       case 'ship-to-beta': {
         const current = await git.revparse(['--abbrev-ref', 'HEAD']);
-        const sourceBranch = String(payload.sourceBranch || current).trim() || current;
+        const sourceBranch = String(payload.sourceBranch || payload.branch || current).trim() || current;
         const targets = payload.targets as { website?: boolean; cloud?: boolean; desktop?: boolean } | undefined;
         const targetLabel = formatTargets(targets);
         const github = getGithubConfig();
