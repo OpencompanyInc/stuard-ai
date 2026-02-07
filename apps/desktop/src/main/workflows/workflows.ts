@@ -283,6 +283,7 @@ export function designerModelToStuardSpec(m: any, triggerId?: string): StuardSpe
       const loop = (w as any)?.loop;
       const loopBreak = (w as any)?.loopBreak;
       const loopFanoutMode = (w as any)?.loopFanoutMode;
+      const stream = (w as any)?.stream;
       const edge: any = { to, guard };
       if (label) edge.label = String(label);
       // Include loop configuration if present
@@ -306,6 +307,15 @@ export function designerModelToStuardSpec(m: any, triggerId?: string): StuardSpe
       // Include loop fanout behavior if present
       if (loopFanoutMode === 'wait' || loopFanoutMode === 'parallel') {
         edge.loopFanoutMode = loopFanoutMode;
+      }
+
+      // Include stream wire configuration if present
+      if (stream && typeof stream === 'object') {
+        edge.stream = {
+          sourceField: stream.sourceField || 'streamId',
+          mode: stream.mode || 'reactive',
+          ...(stream.bufferSize ? { bufferSize: stream.bufferSize } : {}),
+        };
       }
       return edge;
     });

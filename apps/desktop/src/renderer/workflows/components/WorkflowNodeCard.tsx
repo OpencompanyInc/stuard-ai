@@ -2,11 +2,22 @@
  * WorkflowNode - Visual node card for triggers and steps on the canvas
  */
 import React from "react";
-import { Link2, MoreHorizontal, Play, Check, X } from "lucide-react";
+import { Link2, MoreHorizontal, Play, Check, X, Radio } from "lucide-react";
 import { getToolIcon, getToolColor, CATEGORY_COLORS } from "../constants/paletteCategories";
 import type { DesignerNode, DesignerTrigger } from "../types";
 
 export type StepExecutionStatus = 'pending' | 'running' | 'completed' | 'error';
+
+/** Tools that produce streams (return a streamId) */
+const STREAM_PRODUCER_TOOLS = new Set([
+  'stream_create', 'stream_from_script', 'stream_from_api', 'stream_from_llm',
+  'capture_media',
+]);
+
+/** Tools commonly used as stream consumers */
+const STREAM_CONSUMER_TOOLS = new Set([
+  'stream_read', 'stream_add_transform', 'stream_subscribe',
+]);
 
 interface WorkflowNodeProps {
   node: DesignerNode | DesignerTrigger;
@@ -15,20 +26,28 @@ interface WorkflowNodeProps {
   connecting: boolean;
   reconnectTarget?: boolean | null;
   executionStatus?: StepExecutionStatus;
+  hasStreamOut?: boolean;
+  hasStreamIn?: boolean;
+  connectingStreamFrom?: string;
   onSelect: () => void;
   onMouseDown: (e: React.MouseEvent) => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   onConnect: () => void;
+  onStreamConnect?: () => void;
 }
 
 export function WorkflowNode({ 
-  node, isTrigger, selected, connecting, reconnectTarget, executionStatus, 
-  onSelect, onMouseDown, onContextMenu, onConnect 
+  node, isTrigger, selected, connecting, reconnectTarget, executionStatus,
+  hasStreamOut, hasStreamIn, connectingStreamFrom,
+  onSelect, onMouseDown, onContextMenu, onConnect, onStreamConnect
 }: WorkflowNodeProps) {
   const tool = ('tool' in node ? node.tool : node.type) || '';
   const Icon = getToolIcon(tool, isTrigger);
   const colorKey = getToolColor(tool, isTrigger);
   const styles = CATEGORY_COLORS[colorKey] || CATEGORY_COLORS.slate;
+
+  const isStreamProducer = STREAM_PRODUCER_TOOLS.has(tool);
+  const isStreamConsumer = STREAM_CONSUMER_TOOLS.has(tool);
   
   const getStatusClasses = () => {
     if (executionStatus === 'running') return 'border-emerald-500 ring-4 ring-emerald-100/50 shadow-[0_8px_30px_rgb(16,185,129,0.2)] scale-[1.02] z-10';
@@ -114,7 +133,7 @@ export function WorkflowNode({
         )}
       </div>
 
-      {/* Action Handle - Connect */}
+      {/* Action Handle - Connect (control wire, right side) */}
       <div 
         className={`absolute -right-3.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full border-4 border-white shadow-sm flex items-center justify-center cursor-crosshair transition-all duration-200 z-20
           ${connecting 
@@ -127,9 +146,43 @@ export function WorkflowNode({
         <Link2 className="w-3.5 h-3.5" />
       </div>
 
-      {/* Input Handle (visual only) */}
+      {/* Input Handle (visual only, left side) */}
       {!isTrigger && (
         <div className={`absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border-2 border-white shadow-sm ${styles.bg} ${styles.border}`} />
+      )}
+
+      {/* Stream Output Port (bottom center) — shown for stream producers or when a stream wire is connected out */}
+      {(isStreamProducer || hasStreamOut) && (
+        <div
+          className={`absolute -bottom-3.5 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full border-4 border-white shadow-sm flex items-center justify-center cursor-crosshair transition-all duration-200 z-20
+            ${connectingStreamFrom === node.id
+              ? 'bg-cyan-500 scale-110'
+              : hasStreamOut
+                ? 'bg-cyan-100 text-cyan-600 border-cyan-200 hover:bg-cyan-500 hover:text-white hover:scale-110'
+                : 'bg-cyan-50 text-cyan-400 opacity-0 group-hover:opacity-100 hover:bg-cyan-500 hover:text-white hover:scale-110'
+            }`}
+          onClick={e => { e.stopPropagation(); onStreamConnect?.(); }}
+          title="Stream output — drag to connect stream wire"
+        >
+          <Radio className="w-3.5 h-3.5" />
+        </div>
+      )}
+
+      {/* Stream Input Port (top center) — shown for stream consumers or when a stream wire is connected in */}
+      {(isStreamConsumer || hasStreamIn) && (
+        <div
+          className={`absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 rounded-full border-2 border-white shadow-sm
+            ${hasStreamIn ? 'bg-cyan-200 border-cyan-300' : 'bg-cyan-50 border-cyan-200'}
+          `}
+          title="Stream input"
+        />
+      )}
+
+      {/* Stream badge — small indicator when node is a stream producer */}
+      {isStreamProducer && !hasStreamOut && (
+        <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-cyan-500 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-30" title="Stream producer">
+          <Radio className="w-2.5 h-2.5 text-white" />
+        </div>
       )}
     </div>
   );

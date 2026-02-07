@@ -64,7 +64,7 @@ function isPathApprovedForWindow(webContentsId: number, filePath: string): boole
 export const customUiWindows = new Map<string, BrowserWindow>();
 
 // Per-window data storage
-const windowData = new Map<string, { data: any; flowId: string; resolve?: (result: any) => void; keepOpen?: boolean }>();
+const windowData = new Map<string, { data: any; flowId: string; resolve?: (result: any) => void; keepOpen?: boolean; currentPage?: string; pages?: Record<string, any> }>();
 
 // Audio player (hidden window for audio playback)
 let audioPlayerWindow: BrowserWindow | null = null;
@@ -253,6 +253,44 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
         break;
       }
     }
+  });
+
+  // Navigate to a page (pages system)
+  ipcMain.on('stuard:navigate', (event, { page, data }) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return;
+
+    for (const [id, w] of customUiWindows) {
+      if (w === win) {
+        const winData = windowData.get(id);
+        if (winData) {
+          winData.currentPage = page;
+          // Merge navigation data into window data
+          if (data && typeof data === 'object') {
+            winData.data = { ...winData.data, ...data };
+          }
+        }
+        // Bounce back to the renderer so the client-side router can handle it
+        if (!w.isDestroyed()) {
+          w.webContents.send('stuard:page-change', { page, data });
+        }
+        const ctx = getRouterContext();
+        ctx.logFn(`[custom_ui:${id}] Navigate to page: ${page}`);
+        break;
+      }
+    }
+  });
+
+  // Get current page
+  ipcMain.handle('stuard:getCurrentPage', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return null;
+    for (const [id, w] of customUiWindows) {
+      if (w === win) {
+        return windowData.get(id)?.currentPage || null;
+      }
+    }
+    return null;
   });
 
   // Stop workflow
@@ -624,6 +662,17 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
   const margin = Number(windowCfg.margin ?? 20);
   const frameless = windowCfg.frameless !== false;
   const wantsTransparentWindow = windowCfg.transparent === true || windowCfg.transparent === 'true';
+
+  // === ENHANCED WINDOW PROPERTIES ===
+  const backgroundType = windowCfg.backgroundType || 'color';
+  const backgroundColor = windowCfg.backgroundColor || '#1a1a2e';
+  const gradient = windowCfg.gradient;
+  const backgroundImage = windowCfg.backgroundImage;
+  const shadow = windowCfg.shadow || { enabled: false };
+  const border = windowCfg.border || { enabled: false };
+  const animation = windowCfg.animation;
+  const contentPadding = windowCfg.contentPadding || 24;
+
   const transparentBg =
     windowCfg.noBackground === true ||
     windowCfg.noBackground === 'true' ||
@@ -634,9 +683,13 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
 
   const flowId = args?.flowId || (ctx as any)?.flowId || '';
 
+  // Pages system - multi-page SPA navigation
+  const pages = args?.pages || undefined; // Record<string, { html?, layout?, css?, script? }>
+  const startPage = args?.startPage || (pages ? Object.keys(pages)[0] : undefined);
+
   const existing = customUiWindows.get(id);
   const forceNew = args?.forceNew === true;
-  ctx.logFn(`custom_ui: id="${id}", existing=${!!existing}, destroyed=${existing?.isDestroyed()}, blocking=${blocking}`);
+  ctx.logFn(`custom_ui: id="${id}", existing=${!!existing}, destroyed=${existing?.isDestroyed()}, blocking=${blocking}${pages ? `, pages=[${Object.keys(pages).join(',')}], startPage=${startPage}` : ''}`);
 
   // Parse data if string
   let safeData = typeof data === 'string' ? {} : (data || {});
@@ -651,7 +704,8 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
   // Auto-merge non-reserved arguments into data
   const reservedArgs = new Set([
     'id', 'title', 'window', 'width', 'height', 'blocking', 'timeoutMs',
-    'css', 'layout', 'content', 'html', 'script', 'keepOpen', 'forceNew', 'flowId', 'data'
+    'css', 'layout', 'content', 'html', 'script', 'keepOpen', 'forceNew', 'flowId', 'data',
+    'pages', 'startPage'
   ]);
 
   for (const [key, val] of Object.entries(args || {})) {
@@ -673,25 +727,56 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
 
   // Handle existing window
   if (existing && !existing.isDestroyed() && !forceNew) {
-    const htmlContent = generateCustomUiHtml(id, title, css, layout, safeData, rawHtml, borderRadius, flowId, transparentBg, initScript);
-    await existing.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
-    existing.setTitle(title);
-
+    // Update window properties
     const [currentWidth, currentHeight] = existing.getSize();
     if (currentWidth !== width || currentHeight !== height) {
       existing.setSize(width, height);
     }
     existing.setPosition(x, y);
+    existing.setTitle(title);
+
+    // Generate enhanced HTML with new window properties
+    const htmlContent = generateEnhancedCustomUiHtml({
+      id,
+      title,
+      css,
+      layout,
+      data: safeData,
+      rawHtml,
+      borderRadius,
+      flowId,
+      transparentBg,
+      initScript,
+      pages,
+      startPage,
+      backgroundType,
+      backgroundColor,
+      gradient,
+      backgroundImage,
+      shadow,
+      border,
+      animation,
+      contentPadding,
+    });
+
+    await existing.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
+
+    // Apply window shadow if enabled
+    if (shadow.enabled) {
+      existing.setShadow(true);
+    }
 
     existing.show();
     existing.focus();
-    ctx.logFn(`custom_ui: Updated "${title}" (reusing window)`);
+    ctx.logFn(`custom_ui: Updated "${title}" with enhanced properties (reusing window)`);
 
     // Update stored data
     const existingData = windowData.get(id);
     if (existingData) {
       existingData.data = safeData;
       existingData.flowId = flowId;
+      existingData.pages = pages;
+      existingData.currentPage = startPage;
     }
 
     if (!blocking) {
@@ -717,7 +802,6 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
   let preloadPath: string | undefined;
   try {
     preloadPath = getPreloadPath();
-    // Check if preload exists
     if (!fs.existsSync(preloadPath)) {
       ctx.logFn(`custom_ui: Preload not found at ${preloadPath}, falling back to legacy mode`);
       preloadPath = undefined;
@@ -742,13 +826,13 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     fullscreenable: false,
     skipTaskbar: shouldSkipTaskbar,
     alwaysOnTop: isAlwaysOnTop,
-    hasShadow: windowCfg.shadow !== false && !transparentBg,
+    hasShadow: shadow.enabled !== false && !transparentBg,
     title,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true, // SECURITY: Enable sandbox for isolation
-      webSecurity: true, // SECURITY: Enable web security
+      sandbox: true,
+      webSecurity: true,
       preload: preloadPath,
     },
   });
@@ -762,14 +846,37 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
   }
 
   customUiWindows.set(id, win);
-  windowData.set(id, { data: safeData, flowId, keepOpen });
+  windowData.set(id, { data: safeData, flowId, keepOpen, pages, currentPage: startPage });
   ctx.logFn(`custom_ui: Stored window "${id}" in map (total: ${customUiWindows.size})`);
 
-  const htmlContent = generateCustomUiHtml(id, title, css, layout, safeData, rawHtml, borderRadius, flowId, transparentBg, initScript);
+  // Generate enhanced HTML
+  const htmlContent = generateEnhancedCustomUiHtml({
+    id,
+    title,
+    css,
+    layout,
+    data: safeData,
+    rawHtml,
+    borderRadius,
+    flowId,
+    transparentBg,
+    initScript,
+    pages,
+    startPage,
+    backgroundType,
+    backgroundColor,
+    gradient,
+    backgroundImage,
+    shadow,
+    border,
+    animation,
+    contentPadding,
+  });
+
   await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
   win.show();
 
-  ctx.logFn(`custom_ui: Showing "${title}" (${width}x${height}) at ${windowCfg.position || 'center'}${transparentBg ? ' [transparent]' : ''}`);
+  ctx.logFn(`custom_ui: Showing "${title}" (${width}x${height}) with ${backgroundType} background${transparentBg ? ' [transparent]' : ''}`);
 
   if (!blocking) {
     return { ok: true, action: 'shown', data: safeData };
@@ -855,6 +962,9 @@ export async function execUpdateCustomUi(args: any, ctx: RouterContext): Promise
   const html = typeof args?.html === 'string' ? args.html : undefined;
   const css = typeof args?.css === 'string' ? args.css : undefined;
   const script = typeof args?.script === 'string' ? args.script : undefined;
+  const navigateTo = typeof args?.navigateTo === 'string' ? args.navigateTo : undefined;
+  const pageData = args?.pageData || undefined;
+  const newPages = args?.pages || undefined; // Support updating page definitions
 
   if (!windowId) {
     return { ok: false, error: 'missing_window_id' };
@@ -867,8 +977,22 @@ export async function execUpdateCustomUi(args: any, ctx: RouterContext): Promise
 
   // Update stored data
   const winData = windowData.get(windowId);
-  if (winData && updates) {
-    winData.data = { ...winData.data, ...updates };
+  if (winData) {
+    if (updates && Object.keys(updates).length > 0) {
+      winData.data = { ...winData.data, ...updates };
+    }
+    if (newPages) {
+      winData.pages = { ...(winData.pages || {}), ...newPages };
+    }
+  }
+
+  // Handle page navigation (pages system)
+  if (navigateTo && winData?.pages) {
+    winData.currentPage = navigateTo;
+    // Send navigation event to renderer
+    existing.webContents.send('stuard:page-change', { page: navigateTo, data: pageData });
+    ctx.logFn(`update_custom_ui: Navigating to page "${navigateTo}" in "${windowId}"`);
+    return { ok: true, navigatedTo: navigateTo };
   }
 
   // Send data update to window
@@ -897,12 +1021,39 @@ export async function execUpdateCustomUi(args: any, ctx: RouterContext): Promise
     }
   `;
 
+  // Handle pages updates
+  if (newPages) {
+    updateScript += `
+      if (typeof __pages !== 'undefined') {
+        const newPages = ${JSON.stringify(newPages)};
+        Object.assign(__pages, newPages);
+        changed.push('pages');
+        
+        // If current page was updated, re-render it
+        if (typeof __currentPage !== 'undefined' && newPages[__currentPage]) {
+          if (typeof navigateTo === 'function') {
+            navigateTo(__currentPage); // Re-render current page
+          }
+        }
+      }
+    `;
+  }
+
   if (html !== undefined) {
     updateScript += `
       const root = document.querySelector('.stuard-root') || document.querySelector('.root') || document.body;
       if (root) {
+        // If we are in pages mode, update the current page's HTML definition too
+        if (typeof __pages !== 'undefined' && typeof __currentPage !== 'undefined' && __pages[__currentPage]) {
+          __pages[__currentPage].html = ${JSON.stringify(html)};
+        }
+        
         root.innerHTML = ${JSON.stringify(html)};
         changed.push('html');
+        // Re-initialize bindings
+        if (typeof __initBindings === 'function') {
+          __initBindings();
+        }
       }
     `;
   }
@@ -978,7 +1129,9 @@ function generateCustomUiHtml(
   borderRadius: number = 0,
   flowId: string = '',
   transparentBg: boolean = false,
-  initScript?: string
+  initScript?: string,
+  pages?: Record<string, any>,
+  startPage?: string
 ): string {
   const radiusStyle = borderRadius > 0 ? `border-radius: ${borderRadius}px;` : '';
   const shadowStyle = borderRadius > 0 && !transparentBg ? `box-shadow: 0 8px 32px rgba(0,0,0,0.4);` : '';
@@ -987,12 +1140,13 @@ function generateCustomUiHtml(
   const defaultCss = `
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html {
-      background: transparent !important;
+      background: ${transparentBg ? 'transparent' : '#0f0f1a'};
       -webkit-font-smoothing: antialiased;
+      height: 100%;
     }
     body {
       font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-      background: transparent !important;
+      background: ${transparentBg ? 'transparent' : '#0f0f1a'};
       color: #e2e8f0;
       min-height: 100vh;
       font-size: 14px;
@@ -1001,7 +1155,7 @@ function generateCustomUiHtml(
     }
 
     .overlay-container, .root, .stuard-root {
-      background: transparent;
+      background: ${transparentBg ? 'transparent' : '#0f0f1a'};
       ${radiusStyle}
       ${shadowStyle}
       ${clipStyle}
@@ -1009,7 +1163,7 @@ function generateCustomUiHtml(
     }
 
     ${transparentBg ? `
-      .overlay-container, .root, .stuard-root, body > div, body > div > div {
+      html, body, .overlay-container, .root, .stuard-root, body > div, body > div > div {
         background: transparent !important;
       }
     ` : ''}
@@ -1020,21 +1174,26 @@ function generateCustomUiHtml(
       font-family: inherit;
     }
 
-    button { cursor: pointer; user-select: none; }
-
-    .btn {
+    button {
+      cursor: pointer;
+      user-select: none;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       padding: 8px 16px;
-      border: 1px solid transparent;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: #334155;
+      color: white;
       border-radius: 8px;
       font-weight: 500;
       font-size: 13px;
       transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
       gap: 8px;
     }
-    .btn:active { transform: scale(0.98); }
+    button:hover { background: #475569; }
+    button:active { transform: scale(0.98); }
+
+    .btn { /* specialized classes override default button */ }
 
     .btn-primary {
       background: #6366f1;
@@ -1065,6 +1224,7 @@ function generateCustomUiHtml(
       background: transparent;
       color: #94a3b8;
       border: 1px solid transparent;
+      box-shadow: none;
     }
     .btn-ghost:hover {
       background: rgba(255,255,255,0.05);
@@ -1122,23 +1282,66 @@ function generateCustomUiHtml(
   // Interpolate template variables in raw HTML
   // Triple braces {{{var}}} = raw HTML (unescaped)
   // Double braces {{var}} = escaped text
-  const interpolatedHtml = rawHtml
-    ? rawHtml
-      // First handle triple braces (raw HTML, no escaping)
+  const interpolateHtmlStr = (html: string, d: any): string => {
+    return html
       .replace(/\{\{\{\s*([\w\.]+)\s*\}\}\}/g, (match: string, k: string) => {
-        const val = k.split('.').reduce((o, key) => (o || {})[key], data);
+        const val = k.split('.').reduce((o, key) => (o || {})[key], d);
         return val !== undefined ? String(val) : match;
       })
-      // Then handle double braces (escaped)
       .replace(/\{\{\s*([\w\.]+)\s*\}\}/g, (match: string, k: string) => {
-        const val = k.split('.').reduce((o, key) => (o || {})[key], data);
+        const val = k.split('.').reduce((o, key) => (o || {})[key], d);
         return val !== undefined ? escapeHtml(String(val)) : match;
-      })
-    : null;
+      });
+  };
+
+  const interpolatedHtml = rawHtml ? interpolateHtmlStr(rawHtml, data) : null;
   const layoutHtml = interpolatedHtml || renderLayout(layout, data);
 
+  // Pre-render pages into a JS-embeddable object if pages system is active
+  let pagesObj: Record<string, { html: string; css?: string; script?: string }> | null = null;
+  if (pages && typeof pages === 'object' && Object.keys(pages).length > 0) {
+    pagesObj = {};
+    for (const [pageName, pageDef] of Object.entries(pages)) {
+      const def = typeof pageDef === 'string' ? { html: pageDef } : (pageDef || {});
+      let pageHtml: string;
+      if (def.html) {
+        pageHtml = interpolateHtmlStr(def.html, data);
+      } else if (def.layout || def.content) {
+        pageHtml = renderLayout(def.layout || def.content, data);
+      } else {
+        pageHtml = '';
+      }
+      pagesObj[pageName] = {
+        html: pageHtml,
+        css: def.css || undefined,
+        script: def.script || undefined,
+      };
+    }
+  }
+
+  const hasPages = !!pagesObj;
+  const initialPageHtml = hasPages && startPage && pagesObj![startPage]
+    ? pagesObj![startPage].html
+    : layoutHtml;
+
+  // Build per-page CSS aggregation
+  let allPageCss = css;
+  if (pagesObj) {
+    for (const [, pg] of Object.entries(pagesObj)) {
+      if (pg.css) allPageCss += '\n' + pg.css;
+    }
+  }
+
+  // Transparent background override - must come AFTER Tailwind to override its defaults
+  const transparentOverride = transparentBg ? `
+    html, body, .dark, .stuard-root, .root, .overlay-container, body > div, body > div > div {
+      background: transparent !important;
+      background-color: transparent !important;
+    }
+  ` : '';
+
   return `<!DOCTYPE html>
-<html>
+<html${transparentBg ? ' style="background:transparent!important"' : ''}>
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https:; img-src * data: blob: local-file: file:; media-src * data: blob: local-file: file:; font-src * data:;">
@@ -1156,10 +1359,10 @@ function generateCustomUiHtml(
       }
     }
   </script>
-  <style>${defaultCss}\n${css}</style>
+  <style>${defaultCss}\n${allPageCss}\n${transparentOverride}</style>
 </head>
-<body class="dark">
-  <div class="stuard-root">${layoutHtml}</div>
+<body class="dark"${transparentBg ? ' style="background:transparent!important"' : ''}>
+  <div class="stuard-root">${initialPageHtml}</div>
   <script>
     const CUSTOM_UI_ID = ${JSON.stringify(id)};
     const FLOW_ID = ${JSON.stringify(flowId)};
@@ -1169,19 +1372,249 @@ function generateCustomUiHtml(
     // Check if stuard API is available (preload loaded successfully)
     const hasStuardApi = typeof window.stuard !== 'undefined';
 
-    // Initialize data bindings
+    // ─── Pages System (SPA Router) ───────────────────────────────────────
+    ${hasPages ? `
+    const __pages = ${JSON.stringify(pagesObj)};
+    let __currentPage = ${JSON.stringify(startPage || '')};
+    const __pageHistory = [__currentPage];
+
+    function __initBindings() {
+      const root = document.querySelector('.stuard-root');
+      if (!root) return;
+
+      // Data bindings
+      root.querySelectorAll('[data-bind]').forEach(el => {
+        const key = el.getAttribute('data-bind');
+        const val = formData[key];
+        const useHtml = el.hasAttribute('data-html') || el.hasAttribute('data-render-html');
+
+        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
+          if (el.type === 'checkbox') {
+            el.checked = !!val;
+            el.addEventListener('change', (e) => { formData[key] = e.target.checked; });
+          } else {
+            if (val !== undefined && val !== '') {
+              el.value = val;
+            } else {
+              formData[key] = el.value || '';
+            }
+            el.addEventListener('input', (e) => { formData[key] = e.target.value; });
+          }
+        } else {
+          if (val !== undefined) {
+            if (useHtml) {
+              el.innerHTML = val;
+            } else {
+              el.textContent = val;
+            }
+          }
+        }
+      });
+
+      // Action handlers
+      root.querySelectorAll('[data-action]').forEach(el => {
+        const actionName = el.getAttribute('data-action');
+        el.addEventListener('click', async () => { __handleAction(actionName, el); });
+      });
+
+      // Navigate handlers (data-navigate="pageName")
+      root.querySelectorAll('[data-navigate]').forEach(el => {
+        const target = el.getAttribute('data-navigate');
+        el.addEventListener('click', (e) => {
+          e.preventDefault();
+          const navDataStr = el.getAttribute('data-navigate-data');
+          let navData;
+          if (navDataStr) {
+            try { navData = JSON.parse(navDataStr); } catch {}
+          }
+          navigateTo(target, navData);
+        });
+      });
+
+      // Enter key submits
+      root.querySelectorAll('input[data-bind]').forEach(el => {
+        el.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') {
+            if (hasStuardApi) {
+              window.stuard.submit(formData);
+            } else {
+              document.title = 'ACTION:submit:' + JSON.stringify(formData);
+            }
+          }
+        });
+      });
+    }
+
+    function navigateTo(pageName, pageData) {
+      if (!__pages[pageName]) {
+        console.warn('[stuard] Page not found:', pageName);
+        return;
+      }
+
+      // Merge navigation data into formData
+      if (pageData && typeof pageData === 'object') {
+        Object.assign(formData, pageData);
+      }
+
+      __currentPage = pageName;
+      __pageHistory.push(pageName);
+
+      const root = document.querySelector('.stuard-root');
+      if (!root) return;
+
+      // Interpolate page HTML with current formData
+      let html = __pages[pageName].html;
+      html = html.replace(/\\{\\{\\{\\s*([\\w\\.]+)\\s*\\}\\}\\}/g, (match, k) => {
+        const val = k.split('.').reduce((o, key) => (o || {})[key], formData);
+        return val !== undefined ? String(val) : match;
+      });
+      html = html.replace(/\\{\\{\\s*([\\w\\.]+)\\s*\\}\\}/g, (match, k) => {
+        const val = k.split('.').reduce((o, key) => (o || {})[key], formData);
+        return val !== undefined ? String(val).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : match;
+      });
+
+      root.innerHTML = html;
+
+      // Re-initialize bindings for the new page
+      __initBindings();
+
+      // Update page-specific CSS
+      const pageCss = __pages[pageName].css;
+      if (pageCss) {
+        let pageStyleEl = document.getElementById('stuard-page-css');
+        if (!pageStyleEl) {
+          pageStyleEl = document.createElement('style');
+          pageStyleEl.id = 'stuard-page-css';
+          document.head.appendChild(pageStyleEl);
+        }
+        pageStyleEl.textContent = pageCss;
+      }
+
+      // Run page-specific script
+      const pageScript = __pages[pageName].script;
+      if (pageScript) {
+        (async () => {
+          try {
+            await (new Function('formData', 'navigateTo', 'goBack', 'stuard', '$stuard', pageScript))
+              (formData, navigateTo, goBack, window.stuard, window.$stuard);
+          } catch (e) {
+            console.error('[stuard] Page script error (' + pageName + '):', e);
+          }
+        })();
+      }
+
+      // Dispatch DOM event for custom listeners
+      window.dispatchEvent(new CustomEvent('stuard:page-change', { detail: { page: pageName, data: pageData } }));
+    }
+
+    function goBack() {
+      if (__pageHistory.length > 1) {
+        __pageHistory.pop(); // remove current
+        const prev = __pageHistory[__pageHistory.length - 1];
+        // Don't push to history again
+        __currentPage = prev;
+        const root = document.querySelector('.stuard-root');
+        if (root && __pages[prev]) {
+          let html = __pages[prev].html;
+          html = html.replace(/\\{\\{\\s*([\\w\\.]+)\\s*\\}\\}/g, (match, k) => {
+            const val = k.split('.').reduce((o, key) => (o || {})[key], formData);
+            return val !== undefined ? String(val).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : match;
+          });
+          root.innerHTML = html;
+          __initBindings();
+        }
+      }
+    }
+
+    // Listen for navigation from preload API (IPC bounce-back)
+    if (hasStuardApi) {
+      window.stuard.onPageChange(({ page, data }) => {
+        // Only navigate if it's a different page (avoid infinite loop from our own navigate call)
+        if (page !== __currentPage) {
+          navigateTo(page, data);
+        }
+      });
+    }
+
+    // Expose to global scope for inline scripts / onclick handlers
+    window.navigateTo = navigateTo;
+    window.goBack = goBack;
+    window.__currentPage = () => __currentPage;
+    ` : ''}
+
+    // ─── Common Action Handler ───────────────────────────────────────────
+    async function __handleAction(actionName, el) {
+      if (hasStuardApi) {
+        if (actionName === 'submit') {
+          window.stuard.submit(formData);
+        } else if (actionName === 'close' || actionName === 'cancel') {
+          window.stuard.close(formData);
+        } else if (actionName === 'stop_workflow') {
+          window.stuard.stopWorkflow();
+        } else if (actionName.startsWith('pick_')) {
+          const targetField = el.getAttribute('data-target') || el.getAttribute('data-bind');
+          let result;
+
+          if (actionName === 'pick_file') {
+            result = await window.stuard.pickFile({
+              title: el.getAttribute('data-title') || 'Select File',
+              multiple: false
+            });
+          } else if (actionName === 'pick_files') {
+            result = await window.stuard.pickFile({
+              title: el.getAttribute('data-title') || 'Select Files',
+              multiple: true
+            });
+          } else if (actionName === 'pick_folder') {
+            result = await window.stuard.pickFolder({
+              title: el.getAttribute('data-title') || 'Select Folder'
+            });
+          } else if (actionName === 'pick_save_path') {
+            result = await window.stuard.pickSavePath({
+              title: el.getAttribute('data-title') || 'Save File'
+            });
+          }
+
+          if (result && !result.canceled && targetField) {
+            const path = result.filePath || result.filePaths?.[0] || '';
+            formData[targetField] = path;
+            const input = document.querySelector('[data-bind="' + targetField + '"]');
+            if (input) {
+              input.value = path;
+              input.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+          }
+        } else {
+          window.stuard.action(actionName, formData);
+        }
+      } else {
+        document.title = 'ACTION:' + actionName + ':' + JSON.stringify(formData);
+      }
+    }
+
+    // ─── Initialize Bindings ─────────────────────────────────────────────
+    ${hasPages ? `
+    // Pages mode: use shared init function
+    __initBindings();
+    ` : `
+    // Single-page mode: inline bindings (original behavior)
     document.querySelectorAll('[data-bind]').forEach(el => {
       const key = el.getAttribute('data-bind');
       const val = formData[key];
       const useHtml = el.hasAttribute('data-html') || el.hasAttribute('data-render-html');
 
-      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-        if (val !== undefined && val !== '') {
-          el.value = val;
+      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
+        if (el.type === 'checkbox') {
+          el.checked = !!val;
+          el.addEventListener('change', (e) => { formData[key] = e.target.checked; });
         } else {
-          formData[key] = el.value || '';
+          if (val !== undefined && val !== '') {
+            el.value = val;
+          } else {
+            formData[key] = el.value || '';
+          }
+          el.addEventListener('input', (e) => { formData[key] = e.target.value; });
         }
-        el.addEventListener('input', (e) => { formData[key] = e.target.value; });
       } else {
         if (val !== undefined) {
           if (useHtml) {
@@ -1193,65 +1626,11 @@ function generateCustomUiHtml(
       }
     });
 
-    // Initialize action handlers
     document.querySelectorAll('[data-action]').forEach(el => {
       const actionName = el.getAttribute('data-action');
-
-      el.addEventListener('click', async () => {
-        if (hasStuardApi) {
-          // Use the new IPC-based API
-          if (actionName === 'submit') {
-            window.stuard.submit(formData);
-          } else if (actionName === 'close' || actionName === 'cancel') {
-            window.stuard.close(formData);
-          } else if (actionName === 'stop_workflow') {
-            window.stuard.stopWorkflow();
-          } else if (actionName.startsWith('pick_')) {
-            // File picker actions
-            const targetField = el.getAttribute('data-target') || el.getAttribute('data-bind');
-            let result;
-
-            if (actionName === 'pick_file') {
-              result = await window.stuard.pickFile({
-                title: el.getAttribute('data-title') || 'Select File',
-                multiple: false
-              });
-            } else if (actionName === 'pick_files') {
-              result = await window.stuard.pickFile({
-                title: el.getAttribute('data-title') || 'Select Files',
-                multiple: true
-              });
-            } else if (actionName === 'pick_folder') {
-              result = await window.stuard.pickFolder({
-                title: el.getAttribute('data-title') || 'Select Folder'
-              });
-            } else if (actionName === 'pick_save_path') {
-              result = await window.stuard.pickSavePath({
-                title: el.getAttribute('data-title') || 'Save File'
-              });
-            }
-
-            if (result && !result.canceled && targetField) {
-              const path = result.filePath || result.filePaths?.[0] || '';
-              formData[targetField] = path;
-              const input = document.querySelector('[data-bind="' + targetField + '"]');
-              if (input) {
-                input.value = path;
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-              }
-            }
-          } else {
-            // Generic action
-            window.stuard.action(actionName, formData);
-          }
-        } else {
-          // Fallback to title-based communication
-          document.title = 'ACTION:' + actionName + ':' + JSON.stringify(formData);
-        }
-      });
+      el.addEventListener('click', async () => { __handleAction(actionName, el); });
     });
 
-    // Enter key submits
     document.querySelectorAll('input[data-bind]').forEach(el => {
       el.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') {
@@ -1263,12 +1642,12 @@ function generateCustomUiHtml(
         }
       });
     });
+    `}
 
-    // Listen for data updates
+    // ─── Data Update Listener ────────────────────────────────────────────
     if (hasStuardApi) {
       window.stuard.onDataUpdate((newData) => {
         Object.assign(formData, newData);
-        // Update bound elements
         for (const [key, value] of Object.entries(newData)) {
           const bindEl = document.querySelector('[data-bind="' + key + '"]');
           if (bindEl) {
@@ -1285,6 +1664,643 @@ function generateCustomUiHtml(
     }
 
     // Run initialization script if provided
+    ${initScript ? `
+    (async () => {
+      try {
+        ${initScript}
+      } catch (e) {
+        console.error('[stuard] Init script error:', e);
+      }
+    })();
+    ` : ''}
+  </script>
+</body>
+</html>`;
+}
+
+function generateEnhancedCustomUiHtml(options: {
+  id: string;
+  title: string;
+  css: string;
+  layout: any;
+  data: any;
+  rawHtml?: string;
+  borderRadius: number;
+  flowId: string;
+  transparentBg: boolean;
+  initScript?: string;
+  pages?: Record<string, any>;
+  startPage?: string;
+  backgroundType?: string;
+  backgroundColor?: string;
+  gradient?: any;
+  backgroundImage?: any;
+  shadow?: { enabled: boolean; color?: string; blur?: number; spread?: number; x?: number; y?: number };
+  border?: { enabled: boolean; color?: string; width?: number; style?: string };
+  animation?: { open?: string; close?: string; duration?: number; easing?: string };
+  contentPadding?: number;
+}): string {
+  const {
+    id,
+    title,
+    css,
+    layout,
+    data,
+    rawHtml,
+    borderRadius = 0,
+    flowId,
+    transparentBg,
+    initScript,
+    pages,
+    startPage,
+    backgroundType = 'color',
+    backgroundColor = '#1a1a2e',
+    gradient,
+    backgroundImage,
+    shadow,
+    border,
+    animation,
+    contentPadding = 24,
+  } = options;
+
+  const radiusStyle = borderRadius > 0 ? `border-radius: ${borderRadius}px;` : '';
+  const clipStyle = borderRadius > 0 ? `overflow: hidden;` : '';
+
+  // Build background CSS based on type
+  let backgroundCss = '';
+  let backgroundOverlayCss = '';
+
+  switch (backgroundType) {
+    case 'gradient':
+      if (gradient && gradient.stops?.length > 0) {
+        const sortedStops = [...gradient.stops].sort((a: any, b: any) => a.position - b.position);
+        const stopString = sortedStops.map((s: any) => `${s.color} ${s.position}%`).join(', ');
+
+        if (gradient.type === 'linear') {
+          backgroundCss = `background: linear-gradient(${gradient.angle || 135}deg, ${stopString});`;
+        } else if (gradient.type === 'radial') {
+          backgroundCss = `background: radial-gradient(circle at ${gradient.centerX || 50}% ${gradient.centerY || 50}%, ${stopString});`;
+        } else if (gradient.type === 'conic') {
+          backgroundCss = `background: conic-gradient(from 0deg at ${gradient.centerX || 50}% ${gradient.centerY || 50}%, ${stopString});`;
+        }
+      }
+      break;
+
+    case 'image':
+      if (backgroundImage?.url) {
+        const fit = backgroundImage.fit || 'cover';
+        const position = backgroundImage.position || 'center';
+        const repeat = backgroundImage.repeat || 'no-repeat';
+        backgroundCss = `background-image: url('${backgroundImage.url}'); background-size: ${fit}; background-position: ${position}; background-repeat: ${repeat};`;
+        if (backgroundImage.opacity !== undefined && backgroundImage.opacity < 1) {
+          backgroundOverlayCss = `opacity: ${backgroundImage.opacity};`;
+        }
+      }
+      break;
+
+    case 'color':
+    default:
+      backgroundCss = `background-color: ${backgroundColor};`;
+      break;
+  }
+
+  // Build shadow CSS
+  const shadowCss = shadow?.enabled
+    ? `box-shadow: ${shadow.x || 0}px ${shadow.y || 4}px ${shadow.blur || 12}px ${shadow.spread || 0}px ${shadow.color || '#00000040'};`
+    : '';
+
+  // Build border CSS
+  const borderCss = border?.enabled
+    ? `border: ${border.width || 1}px ${border.style || 'solid'} ${border.color || '#ffffff20'};`
+    : '';
+
+  // Build animation CSS
+  let animationCss = '';
+  let animationKeyframes = '';
+  if (animation?.open && animation.open !== 'none') {
+    const duration = animation.duration || 300;
+    const easing = animation.easing || 'ease-out';
+
+    const keyframeName = `open-${animation.open}`;
+    animationCss = `animation: ${keyframeName} ${duration}ms ${easing};`;
+
+    switch (animation.open) {
+      case 'fade':
+        animationKeyframes = `@keyframes ${keyframeName} { from { opacity: 0; } to { opacity: 1; } }`;
+        break;
+      case 'slide-up':
+        animationKeyframes = `@keyframes ${keyframeName} { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }`;
+        break;
+      case 'slide-down':
+        animationKeyframes = `@keyframes ${keyframeName} { from { transform: translateY(-20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }`;
+        break;
+      case 'scale':
+        animationKeyframes = `@keyframes ${keyframeName} { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }`;
+        break;
+    }
+  }
+
+  const defaultCss = `
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html {
+      background: ${transparentBg ? 'transparent' : (backgroundType === 'color' ? backgroundColor : 'transparent')};
+      -webkit-font-smoothing: antialiased;
+      height: 100%;
+    }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: ${transparentBg ? 'transparent' : (backgroundType === 'color' ? backgroundColor : 'transparent')};
+      color: #e2e8f0;
+      min-height: 100vh;
+      font-size: 14px;
+      line-height: 1.5;
+      ${borderRadius > 0 ? `${radiusStyle} ${clipStyle}` : ''}
+      ${animationCss}
+    }
+
+    .overlay-container, .root, .stuard-root {
+      background: ${transparentBg ? 'transparent' : (backgroundType === 'color' ? backgroundColor : 'transparent')};
+      ${radiusStyle}
+      ${shadowCss}
+      ${borderCss}
+      ${clipStyle}
+      min-height: 100vh;
+      ${contentPadding ? `padding: ${contentPadding}px;` : ''}
+    }
+
+    ${backgroundType !== 'color' && !transparentBg ? `
+    .stuard-background {
+      position: fixed;
+      inset: 0;
+      ${backgroundCss}
+      ${backgroundOverlayCss}
+      z-index: -1;
+    }` : ''}
+
+    ${transparentBg ? `
+      html, body, .dark, .stuard-root, .root, .overlay-container, body > div, body > div > div {
+        background: transparent !important;
+      }
+    ` : ''}
+
+    ${animationKeyframes}
+
+    body { -webkit-app-region: drag; }
+    input, textarea, button, a, select, [data-action], [data-bind], .no-drag {
+      -webkit-app-region: no-drag;
+      font-family: inherit;
+    }
+
+    button {
+      cursor: pointer;
+      user-select: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 16px;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: #334155;
+      color: white;
+      border-radius: 8px;
+      font-weight: 500;
+      font-size: 13px;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      gap: 8px;
+    }
+    button:hover { background: #475569; }
+    button:active { transform: scale(0.98); }
+
+    .btn-primary {
+      background: #6366f1;
+      color: white;
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .btn-primary:hover {
+      background: #4f46e5;
+      box-shadow: 0 6px 16px rgba(99, 102, 241, 0.4);
+    }
+
+    .btn-danger {
+      background: #ef4444;
+      color: white;
+      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+    }
+    .btn-danger:hover { background: #dc2626; }
+
+    .btn-secondary {
+      background: #334155;
+      color: white;
+      border: 1px solid rgba(255,255,255,0.05);
+    }
+    .btn-secondary:hover { background: #475569; }
+
+    .btn-ghost {
+      background: transparent;
+      color: #94a3b8;
+      border: 1px solid transparent;
+      box-shadow: none;
+    }
+    .btn-ghost:hover {
+      background: rgba(255,255,255,0.05);
+      color: #f8fafc;
+    }
+
+    input[type="text"], input[type="password"], textarea {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(148, 163, 184, 0.1);
+      color: #f1f5f9;
+      border-radius: 8px;
+      padding: 8px 12px;
+      width: 100%;
+      outline: none;
+      transition: all 0.2s;
+    }
+    input:focus, textarea:focus {
+      border-color: #6366f1;
+      background: rgba(15, 23, 42, 0.8);
+      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+    }
+
+    .glass {
+      background: rgba(15, 23, 42, 0.7) !important;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .card {
+      background: rgba(30, 41, 59, 0.5);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 12px;
+      padding: 16px;
+    }
+
+    h1, h2, h3, h4, h5, h6 { color: #f8fafc; font-weight: 600; margin-bottom: 0.5em; }
+    p { margin-bottom: 1em; color: #cbd5e1; }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.2);
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.4); }
+
+    .fade-in { animation: fadeIn 0.3s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+    .slide-up { animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+    @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  `;
+
+  // Interpolate template variables
+  const interpolateHtmlStr = (html: string, d: any): string => {
+    return html
+      .replace(/\{\{\{\s*([\w\.]+)\s*\}\}\}/g, (match: string, k: string) => {
+        const val = k.split('.').reduce((o, key) => (o || {})[key], d);
+        return val !== undefined ? String(val) : match;
+      })
+      .replace(/\{\{\s*([\w\.]+)\s*\}\}/g, (match: string, k: string) => {
+        const val = k.split('.').reduce((o, key) => (o || {})[key], d);
+        return val !== undefined ? escapeHtml(String(val)) : match;
+      });
+  };
+
+  const interpolatedHtml = rawHtml ? interpolateHtmlStr(rawHtml, data) : null;
+  const layoutHtml = interpolatedHtml || renderLayout(layout, data);
+
+  // Pre-render pages
+  let pagesObj: Record<string, { html: string; css?: string; script?: string }> | null = null;
+  if (pages && typeof pages === 'object' && Object.keys(pages).length > 0) {
+    pagesObj = {};
+    for (const [pageName, pageDef] of Object.entries(pages)) {
+      const def = typeof pageDef === 'string' ? { html: pageDef } : (pageDef || {});
+      let pageHtml: string;
+      if (def.html) {
+        pageHtml = interpolateHtmlStr(def.html, data);
+      } else if (def.layout || def.content) {
+        pageHtml = renderLayout(def.layout || def.content, data);
+      } else {
+        pageHtml = '';
+      }
+      pagesObj[pageName] = {
+        html: pageHtml,
+        css: def.css || undefined,
+        script: def.script || undefined,
+      };
+    }
+  }
+
+  const hasPages = !!pagesObj;
+  const initialPageHtml = hasPages && startPage && pagesObj![startPage]
+    ? pagesObj![startPage].html
+    : layoutHtml;
+
+  // Build per-page CSS
+  let allPageCss = css;
+  if (pagesObj) {
+    for (const [, pg] of Object.entries(pagesObj)) {
+      if (pg.css) allPageCss += '\n' + pg.css;
+    }
+  }
+
+  const transparentOverride = transparentBg ? `
+    html, body, .dark, .stuard-root, .root, .overlay-container, body > div, body > div > div {
+      background: transparent !important;
+      background-color: transparent !important;
+    }
+  ` : '';
+
+  return `<!DOCTYPE html>
+<html${transparentBg ? ' style="background:transparent!important"' : ''}>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https:; img-src * data: blob: local-file: file:; media-src * data: blob: local-file: file:; font-src * data:;">
+  <title>${escapeHtml(title)}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            dark: { 900: '#0f0f1a', 800: '#1a1a2e', 700: '#2d2d44' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>${defaultCss}\n${allPageCss}\n${transparentOverride}</style>
+</head>
+<body class="dark"${transparentBg ? ' style="background:transparent!important"' : ''}>
+  ${backgroundType !== 'color' && !transparentBg ? '<div class="stuard-background"></div>' : ''}
+  <div class="stuard-root">${initialPageHtml}</div>
+  <script>
+    const CUSTOM_UI_ID = ${JSON.stringify(id)};
+    const FLOW_ID = ${JSON.stringify(flowId)};
+    const initialData = ${JSON.stringify(data)};
+    const formData = { ...initialData, flowId: FLOW_ID };
+    const hasStuardApi = typeof window.stuard !== 'undefined';
+
+    ${hasPages ? `
+    const __pages = ${JSON.stringify(pagesObj)};
+    let __currentPage = ${JSON.stringify(startPage || '')};
+    const __pageHistory = [__currentPage];
+
+    function __initBindings() {
+      const root = document.querySelector('.stuard-root');
+      if (!root) return;
+
+      root.querySelectorAll('[data-bind]').forEach(el => {
+        const key = el.getAttribute('data-bind');
+        const val = formData[key];
+        const useHtml = el.hasAttribute('data-html') || el.hasAttribute('data-render-html');
+
+        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
+          if (el.type === 'checkbox') {
+            el.checked = !!val;
+            el.addEventListener('change', (e) => { formData[key] = e.target.checked; });
+          } else {
+            if (val !== undefined && val !== '') {
+              el.value = val;
+            } else {
+              formData[key] = el.value || '';
+            }
+            el.addEventListener('input', (e) => { formData[key] = e.target.value; });
+          }
+        } else {
+          if (val !== undefined) {
+            if (useHtml) {
+              el.innerHTML = val;
+            } else {
+              el.textContent = val;
+            }
+          }
+        }
+      });
+
+      root.querySelectorAll('[data-action]').forEach(el => {
+        const actionName = el.getAttribute('data-action');
+        el.addEventListener('click', async () => { __handleAction(actionName, el); });
+      });
+
+      root.querySelectorAll('[data-navigate]').forEach(el => {
+        const target = el.getAttribute('data-navigate');
+        el.addEventListener('click', (e) => {
+          e.preventDefault();
+          const navDataStr = el.getAttribute('data-navigate-data');
+          let navData;
+          if (navDataStr) {
+            try { navData = JSON.parse(navDataStr); } catch {}
+          }
+          navigateTo(target, navData);
+        });
+      });
+
+      root.querySelectorAll('input[data-bind]').forEach(el => {
+        el.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') {
+            if (hasStuardApi) {
+              window.stuard.submit(formData);
+            } else {
+              document.title = 'ACTION:submit:' + JSON.stringify(formData);
+            }
+          }
+        });
+      });
+    }
+
+    function navigateTo(pageName, pageData) {
+      if (!__pages[pageName]) {
+        console.warn('[stuard] Page not found:', pageName);
+        return;
+      }
+
+      if (pageData && typeof pageData === 'object') {
+        Object.assign(formData, pageData);
+      }
+
+      __currentPage = pageName;
+      __pageHistory.push(pageName);
+
+      const root = document.querySelector('.stuard-root');
+      if (!root) return;
+
+      let html = __pages[pageName].html;
+      html = html.replace(/\\{\\{\\{\\s*([\\w\\.]+)\\s*\\}\\}\\}/g, (match, k) => {
+        const val = k.split('.').reduce((o, key) => (o || {})[key], formData);
+        return val !== undefined ? String(val) : match;
+      });
+      html = html.replace(/\\{\\{\\s*([\\w\\.]+)\\s*\\}\\}/g, (match, k) => {
+        const val = k.split('.').reduce((o, key) => (o || {})[key], formData);
+        return val !== undefined ? String(val).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : match;
+      });
+
+      root.innerHTML = html;
+      __initBindings();
+
+      const pageCss = __pages[pageName].css;
+      if (pageCss) {
+        let pageStyleEl = document.getElementById('stuard-page-css');
+        if (!pageStyleEl) {
+          pageStyleEl = document.createElement('style');
+          pageStyleEl.id = 'stuard-page-css';
+          document.head.appendChild(pageStyleEl);
+        }
+        pageStyleEl.textContent = pageCss;
+      }
+
+      const pageScript = __pages[pageName].script;
+      if (pageScript) {
+        (async () => {
+          try {
+            await (new Function('formData', 'navigateTo', 'goBack', 'stuard', '$stuard', pageScript))
+              (formData, navigateTo, goBack, window.stuard, window.$stuard);
+          } catch (e) {
+            console.error('[stuard] Page script error (' + pageName + '):', e);
+          }
+        })();
+      }
+
+      window.dispatchEvent(new CustomEvent('stuard:page-change', { detail: { page: pageName, data: pageData } }));
+    }
+
+    function goBack() {
+      if (__pageHistory.length > 1) {
+        __pageHistory.pop();
+        const prev = __pageHistory[__pageHistory.length - 1];
+        __currentPage = prev;
+        const root = document.querySelector('.stuard-root');
+        if (root && __pages[prev]) {
+          let html = __pages[prev].html;
+          html = html.replace(/\\{\\{\\s*([\\w\\.]+)\\s*\\}\\}/g, (match, k) => {
+            const val = k.split('.').reduce((o, key) => (o || {})[key], formData);
+            return val !== undefined ? String(val).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : match;
+          });
+          root.innerHTML = html;
+          __initBindings();
+        }
+      }
+    }
+
+    if (hasStuardApi) {
+      window.stuard.onPageChange(({ page, data }) => {
+        if (page !== __currentPage) {
+          navigateTo(page, data);
+        }
+      });
+    }
+
+    window.navigateTo = navigateTo;
+    window.goBack = goBack;
+    window.__currentPage = () => __currentPage;
+    ` : ''}
+
+    async function __handleAction(actionName, el) {
+      if (hasStuardApi) {
+        if (actionName === 'submit') {
+          window.stuard.submit(formData);
+        } else if (actionName === 'close' || actionName === 'cancel') {
+          window.stuard.close(formData);
+        } else if (actionName === 'stop_workflow') {
+          window.stuard.stopWorkflow();
+        } else if (actionName.startsWith('pick_')) {
+          const targetField = el.getAttribute('data-target') || el.getAttribute('data-bind');
+          let result;
+
+          if (actionName === 'pick_file') {
+            result = await window.stuard.pickFile({ title: el.getAttribute('data-title') || 'Select File', multiple: false });
+          } else if (actionName === 'pick_files') {
+            result = await window.stuard.pickFile({ title: el.getAttribute('data-title') || 'Select Files', multiple: true });
+          } else if (actionName === 'pick_folder') {
+            result = await window.stuard.pickFolder({ title: el.getAttribute('data-title') || 'Select Folder' });
+          } else if (actionName === 'pick_save_path') {
+            result = await window.stuard.pickSavePath({ title: el.getAttribute('data-title') || 'Save File' });
+          }
+
+          if (result && !result.canceled && targetField) {
+            const path = result.filePath || result.filePaths?.[0] || '';
+            formData[targetField] = path;
+            const input = document.querySelector('[data-bind="' + targetField + '"]');
+            if (input) {
+              input.value = path;
+              input.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+          }
+        } else {
+          window.stuard.action(actionName, formData);
+        }
+      } else {
+        document.title = 'ACTION:' + actionName + ':' + JSON.stringify(formData);
+      }
+    }
+
+    ${hasPages ? `__initBindings();` : `
+    document.querySelectorAll('[data-bind]').forEach(el => {
+      const key = el.getAttribute('data-bind');
+      const val = formData[key];
+      const useHtml = el.hasAttribute('data-html') || el.hasAttribute('data-render-html');
+
+      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
+        if (el.type === 'checkbox') {
+          el.checked = !!val;
+          el.addEventListener('change', (e) => { formData[key] = e.target.checked; });
+        } else {
+          if (val !== undefined && val !== '') {
+            el.value = val;
+          } else {
+            formData[key] = el.value || '';
+          }
+          el.addEventListener('input', (e) => { formData[key] = e.target.value; });
+        }
+      } else {
+        if (val !== undefined) {
+          if (useHtml) {
+            el.innerHTML = val;
+          } else {
+            el.textContent = val;
+          }
+        }
+      }
+    });
+
+    document.querySelectorAll('[data-action]').forEach(el => {
+      const actionName = el.getAttribute('data-action');
+      el.addEventListener('click', async () => { __handleAction(actionName, el); });
+    });
+
+    document.querySelectorAll('input[data-bind]').forEach(el => {
+      el.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          if (hasStuardApi) {
+            window.stuard.submit(formData);
+          } else {
+            document.title = 'ACTION:submit:' + JSON.stringify(formData);
+          }
+        }
+      });
+    });
+    `}
+
+    if (hasStuardApi) {
+      window.stuard.onDataUpdate((newData) => {
+        Object.assign(formData, newData);
+        for (const [key, value] of Object.entries(newData)) {
+          const bindEl = document.querySelector('[data-bind="' + key + '"]');
+          if (bindEl) {
+            if (bindEl.tagName === 'INPUT' || bindEl.tagName === 'TEXTAREA') {
+              bindEl.value = value;
+            } else if (bindEl.hasAttribute('data-html') || bindEl.hasAttribute('data-render-html')) {
+              bindEl.innerHTML = value;
+            } else {
+              bindEl.textContent = value;
+            }
+          }
+        }
+      });
+    }
+
     ${initScript ? `
     (async () => {
       try {

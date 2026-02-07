@@ -99,6 +99,7 @@ function indent(str: string, spaces: number): string {
 
 export function generateSimpleDsl(model: DesignerModel): string {
   const lines: string[] = [];
+  const wires = Array.isArray((model as any)?.wires) ? (model as any).wires : [];
   
   // Header
   lines.push(`workflow "${model.name || 'Untitled'}"`);
@@ -131,7 +132,7 @@ export function generateSimpleDsl(model: DesignerModel): string {
     lines.push('');
     lines.push('steps:');
     
-    const order = getExecutionOrder(model.nodes, model.wires);
+    const order = getExecutionOrder(model.nodes, wires);
     
     for (const node of order) {
       const stepLines = formatStep(node);
@@ -209,8 +210,9 @@ function formatStep(node: DesignerNode): string {
 
 function getExecutionOrder(nodes: DesignerNode[], wires: DesignerWire[]): DesignerNode[] {
   if (nodes.length === 0) return [];
+  const safeWires = Array.isArray(wires) ? wires : [];
   
-  const inbound = new Set(wires.map(w => w.to));
+  const inbound = new Set(safeWires.map(w => w.to));
   const startNodes = nodes.filter(n => !inbound.has(n.id));
   
   const visited = new Set<string>();
@@ -218,7 +220,7 @@ function getExecutionOrder(nodes: DesignerNode[], wires: DesignerWire[]): Design
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
   
   const outgoing = new Map<string, string[]>();
-  for (const wire of wires) {
+  for (const wire of safeWires) {
     if (!outgoing.has(wire.from)) outgoing.set(wire.from, []);
     outgoing.get(wire.from)!.push(wire.to);
   }
@@ -248,11 +250,12 @@ function getExecutionOrder(nodes: DesignerNode[], wires: DesignerWire[]): Design
 function findNonLinearWires(model: DesignerModel): DesignerWire[] {
   // Find wires that skip nodes or branch
   const outCount = new Map<string, number>();
-  for (const w of model.wires) {
+  const wires = Array.isArray((model as any)?.wires) ? (model as any).wires : [];
+  for (const w of wires) {
     outCount.set(w.from, (outCount.get(w.from) || 0) + 1);
   }
   
-  return model.wires.filter(w => {
+  return wires.filter((w: any) => {
     // Branching (multiple outputs from same node)
     if ((outCount.get(w.from) || 0) > 1) return true;
     // Guarded wire
@@ -267,6 +270,7 @@ function findNonLinearWires(model: DesignerModel): DesignerWire[] {
 
 export function generateQuickFormat(model: DesignerModel): string {
   const parts: string[] = [];
+  const wires = Array.isArray((model as any)?.wires) ? (model as any).wires : [];
   
   // Name + trigger
   let header = `workflow "${model.name}"`;
@@ -283,7 +287,7 @@ export function generateQuickFormat(model: DesignerModel): string {
   
   // Steps as chain (only for simple workflows)
   if (model.nodes.length > 0 && model.nodes.length <= 5) {
-    const order = getExecutionOrder(model.nodes, model.wires);
+    const order = getExecutionOrder(model.nodes, wires);
     const hasComplex = order.some(n => hasComplexArgs(n.args || {}));
     
     if (!hasComplex) {

@@ -55,16 +55,16 @@ function send(ws: WebSocket, data: unknown, requestId?: string) {
     // Include requestId in all messages for parallel routing
     const payload = requestId ? { ...data as object, requestId } : data;
     ws.send(JSON.stringify(payload));
-  } catch {}
+  } catch { }
 }
 
 // Helper to check if a tool should be hidden from UI (SIS meta-tools, internal operations)
 function isSISMetaTool(toolName: string): boolean {
   return toolName === 'sis_execute_tool' ||
-         toolName === 'sis_search_tools' ||
-         toolName === 'sis_list_categories' ||
-         toolName === 'search_past_conversations' ||
-         toolName === 'segment_search';
+    toolName === 'sis_search_tools' ||
+    toolName === 'sis_list_categories' ||
+    toolName === 'search_past_conversations' ||
+    toolName === 'segment_search';
 }
 
 // Sanitizers moved to utils/sanitize
@@ -106,16 +106,16 @@ const pingTimer = setInterval(() => {
       const alive = wsAlive.get(client);
       if (alive === false) {
         writeLog('ws_terminate_due_to_no_pong');
-        try { client.terminate(); } catch {}
+        try { client.terminate(); } catch { }
         wsAlive.delete(client);
         return;
       }
       wsAlive.set(client, false);
-      try { client.ping(); } catch {}
+      try { client.ping(); } catch { }
     });
-  } catch {}
+  } catch { }
 }, PING_INTERVAL_MS);
-server.on('close', () => { try { clearInterval(pingTimer); } catch {} });
+server.on('close', () => { try { clearInterval(pingTimer); } catch { } });
 
 import { handleSpeechConnection } from './routes/speech';
 
@@ -148,14 +148,14 @@ server.listen(PORT, () => {
         .then(() => console.log('[cloud-ai] Tool embeddings sync complete'))
         .catch((e) => console.warn('[cloud-ai] Tool embeddings sync failed', e));
     }
-  } catch {}
+  } catch { }
 });
 
 // Increase HTTP keep-alive and headers timeouts to be friendly to long-lived WS
 try {
   (server as any).keepAliveTimeout = Number(process.env.CLOUD_HTTP_KEEPALIVE_MS || 120000);
   (server as any).headersTimeout = Number(process.env.CLOUD_HTTP_HEADERS_TIMEOUT_MS || 120000);
-} catch {}
+} catch { }
 
 // Store conversation history per connection
 const conversations = new WeakMap<WebSocket, Array<any>>();
@@ -169,7 +169,7 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
 
 // Note: Server-side queuing removed - client handles per-tab queuing via requestId routing
 
- wss.on('connection', (ws: WebSocket, req: any) => {
+wss.on('connection', (ws: WebSocket, req: any) => {
   try {
     const rawUrl = String(req?.url || '');
     const qIndex = rawUrl.indexOf('?');
@@ -184,14 +184,14 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
         }
       }
     }
-  } catch {}
+  } catch { }
 
   send(ws, { type: 'handshake', origin: 'cloud-ai', message: 'connected' });
   conversations.set(ws, []);
   writeLog('ws_connected');
-  try { wsAlive.set(ws, true); } catch {}
-  try { ws.on('pong', () => { try { wsAlive.set(ws, true); } catch {} }); } catch {}
-  try { ws.on('close', () => { writeLog('ws_disconnected'); }); } catch {}
+  try { wsAlive.set(ws, true); } catch { }
+  try { ws.on('pong', () => { try { wsAlive.set(ws, true); } catch { } }); } catch { }
+  try { ws.on('close', () => { writeLog('ws_disconnected'); }); } catch { }
 
   ws.on('message', async (buf: WebSocket.RawData) => {
     let msg: any;
@@ -205,7 +205,7 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
     const kind = String(msg?.type || '').toLowerCase();
     // Bridge passthrough: tool events/results coming from the client to resolve pending execLocalTool
     if (kind === 'tool_event' || kind === 'tool_result') {
-      try { handleClientToolMessage(ws, msg); } catch {}
+      try { handleClientToolMessage(ws, msg); } catch { }
       return;
     }
     // Handle stop/abort request to cancel ongoing stream
@@ -236,12 +236,12 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
       const oat = incomingCtx?.outlookAccessToken;
       if (typeof oat === 'string' && oat) {
         secrets = { outlookAccessToken: oat };
-        try { delete incomingCtx.outlookAccessToken; } catch {}
-        try { (msg as any).context = incomingCtx; } catch {}
+        try { delete incomingCtx.outlookAccessToken; } catch { }
+        try { (msg as any).context = incomingCtx; } catch { }
       }
       // Capture deviceId (non-secret) to target a specific desktop instance for memory jobs
-      try { (msg as any).__deviceId = typeof incomingCtx?.deviceId === 'string' ? incomingCtx.deviceId : undefined; } catch {}
-    } catch {}
+      try { (msg as any).__deviceId = typeof incomingCtx?.deviceId === 'string' ? incomingCtx.deviceId : undefined; } catch { }
+    } catch { }
 
     const secretBag: any = { ...(secrets || {}) };
 
@@ -266,7 +266,7 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
         const accessToken = String(msg?.auth?.accessToken || '');
         const authResult = accessToken ? await verifyAccessToken(accessToken) : null;
         const authUser = authResult?.success ? { userId: authResult.userId!, email: authResult.email } : null;
-        
+
         // Update secretBag with userId if authenticated
         if (authUser?.userId) secretBag.userId = authUser.userId;
 
@@ -274,9 +274,9 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
           // Provide specific error codes for client-side handling
           const errorCode = authResult?.error || AuthErrorCode.UNAUTHORIZED;
           const errorMessage = authResult?.message || 'unauthorized';
-          send(ws, { 
-            type: 'error', 
-            message: errorMessage, 
+          send(ws, {
+            type: 'error',
+            message: errorMessage,
             code: errorCode,
             data: { requiresReauth: errorCode === AuthErrorCode.EXPIRED_TOKEN }
           }, requestId);
@@ -290,8 +290,8 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
             return;
           }
           // Count this chat request towards daily usage
-          try { await incrementDailyRequestCounter(authUser.userId); } catch {}
-          
+          try { await incrementDailyRequestCounter(authUser.userId); } catch { }
+
           // Register for webhook delivery and deliver any queued webhooks
           try {
             registerWebhookClient(authUser.userId, ws);
@@ -299,7 +299,7 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
             if (delivered > 0) {
               writeLog('queued_webhooks_delivered', { userId: authUser.userId, count: delivered });
             }
-          } catch {}
+          } catch { }
         }
 
         const requestedMode = normalizeTierChoice((msg as any)?.model);
@@ -336,11 +336,11 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
 
         try {
           send(ws, { type: 'progress', event: 'model', data: { tier: routedTier, modelId: chosenModelId } }, requestId);
-        } catch {}
+        } catch { }
 
         let enabledIntegrations: string[] = [];
         let mcpTools: Record<string, any> = {};
-        
+
         if (authUser) {
           // Check integrations
           const providers = ['github', 'google', 'outlook'];
@@ -350,7 +350,7 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
           } catch (e) {
             // ignore
           }
-          
+
           // Load MCP tools from connected integrations (Notion, Linear, Stripe)
           try {
             const { getConnectedMCPIntegrations, getMCPToolsForIntegrations } = await import('./mcp');
@@ -366,7 +366,7 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
 
         // Get conversation history for this connection
         const history = conversations.get(ws) || [];
-        
+
         // Add new user messages to history
         const newUserMsgs = messages.filter(m => m.role === 'user');
         for (const userMsg of newUserMsgs) {
@@ -399,9 +399,9 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
 
         const agentType =
           rawAgentLower === 'workflow' ||
-          rawAgentLower === 'workflow_agent' ||
-          rawAgentLower === 'workflow-architect' ||
-          rawAgentLower === 'workflow_architect'
+            rawAgentLower === 'workflow_agent' ||
+            rawAgentLower === 'workflow-architect' ||
+            rawAgentLower === 'workflow_architect'
             ? 'workflow'
             : inferredWorkflow
               ? 'workflow'
@@ -426,7 +426,7 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
           try {
             agent = getWorkflowAgent(workflowModelId);
             console.log('[cloud-ai] Using workflow agent', { rawAgent, clientType, ctxMode, modelId: workflowModelId });
-            
+
             // Pre-store workflow in session for modify_workflow tool
             // Prefer explicit workflow from payload context (no parsing needed)
             clearSessionWorkflow();
@@ -512,7 +512,7 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
         if (authUser) {
           const resetRequested = !!(msg as any)?.resetConversation;
           if (resetRequested) {
-            try { wsConversations.delete(ws); } catch {}
+            try { wsConversations.delete(ws); } catch { }
           }
           const requestedId = typeof (msg as any)?.conversationId === 'string' ? String((msg as any).conversationId).trim() : '';
           if (requestedId) {
@@ -524,7 +524,7 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
               modelLabel,
               { mode: requestedMode, tier: routedTier, modelId: chosenModelId, contextPaths: contextPathsForMeta }
             ) as any;
-            if (conversationId) { 
+            if (conversationId) {
               conversationCreatedNow = true;
               // Immediately notify client of new conversation ID so it can be used for subsequent messages
               send(ws, { type: 'conversation', conversationId }, requestId);
@@ -599,7 +599,7 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
         let sawAnyTextDelta = false;
         let sawToolCall = false;
         aggregatedText = '';
-        
+
         // Track metadata for persistence (reasoning, tools, stream chunks)
         let aggregatedReasoning = '';
         let reasoningStartTime: number | null = null;
@@ -616,9 +616,9 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
               modelId: chosenModelId,
               contextPaths: contextPathsForMeta,
             });
-          } catch {}
+          } catch { }
         }
-        
+
         // Determine maxSteps for this run (per-message override -> env/default), with a safety cap
         // Workflow agent needs more steps for tool discovery and testing
         const reqMaxStepsRaw = (msg as any)?.maxSteps ?? (msg as any)?.limits?.maxSteps;
@@ -626,14 +626,14 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
         try {
           const n = Number(reqMaxStepsRaw);
           if (!isNaN(n) && n > 0) maxSteps = Math.min(n, MAX_STEPS_CAP);
-        } catch {}
+        } catch { }
 
         // Prepend server time context (non-blocking - don't wait for client)
         try {
           const now = new Date();
           const timeMsg = `Current time: ${now.toISOString()}`;
           inputMessages = [{ role: 'system', content: timeMsg }, ...inputMessages];
-        } catch {}
+        } catch { }
 
         // Add context paths (files/folders referenced via @) to system context
         try {
@@ -645,7 +645,7 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
             inputMessages = [{ role: 'system', content: contextMsg }, ...inputMessages];
             console.log('[cloud-ai] Context paths added:', paths.length, 'items');
           }
-        } catch {}
+        } catch { }
 
         // Inform agent about connected integrations and SIS categories
         try {
@@ -653,9 +653,9 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
             ? enabledIntegrations.join(', ')
             : 'none';
           const categoriesText = 'system, core, input, ui, vision, data, integrations, flow';
-          const sisHint = `Connected integrations: ${integrationsText}. Only a small core toolset is loaded; use sis_search_tools to discover additional tools. Available SIS categories: ${categoriesText}.`;
+          const sisHint = `Connected integrations: ${integrationsText}. A full toolset is loaded (~180+ tools). You can discover even more tools using sis_search_tools. Available SIS categories: ${categoriesText}.`;
           inputMessages = [{ role: 'system', content: sisHint }, ...inputMessages];
-        } catch {}
+        } catch { }
 
         // Apply user's persona and tone/style preferences if provided by the client
         try {
@@ -678,12 +678,12 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
             const desc = preset === 'concise'
               ? 'Be brief and direct. Prefer short sentences and bullet lists.'
               : preset === 'friendly'
-              ? 'Use a warm, approachable tone.'
-              : preset === 'formal'
-              ? 'Use a polite, professional tone.'
-              : preset === 'technical'
-              ? 'Be precise and technical; include implementation details when helpful.'
-              : `Use a ${preset} tone.`;
+                ? 'Use a warm, approachable tone.'
+                : preset === 'formal'
+                  ? 'Use a polite, professional tone.'
+                  : preset === 'technical'
+                    ? 'Be precise and technical; include implementation details when helpful.'
+                    : `Use a ${preset} tone.`;
             note = `Tone & style: ${desc}`;
           } else if (rawTone.trim()) {
             note = `Tone & style: ${rawTone.trim()}`;
@@ -691,7 +691,7 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
           if (note) {
             inputMessages = [{ role: 'system', content: note }, ...inputMessages];
           }
-        } catch {}
+        } catch { }
 
         // Retrieve knowledge context and inject into messages
         if (agentType !== 'workflow') {
@@ -741,7 +741,7 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
           }
         }
 
-        
+
 
         // Log system prompt for debugging
         const systemMessages = inputMessages.filter((m: any) => m.role === 'system');
@@ -789,8 +789,8 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
         hardTimeout = setTimeout(() => {
           if (didSendFinal) return;
           didSendFinal = true;
-          try { abortController?.abort(); } catch {}
-          try { wsAbortControllers.delete(ws); } catch {}
+          try { abortController?.abort(); } catch { }
+          try { wsAbortControllers.delete(ws); } catch { }
           const timeoutText = (aggregatedText || '').trim() || 'Request timed out. Please retry.';
           send(
             ws,
@@ -813,14 +813,14 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
           abortSignal: abortController.signal,
           onFinish: async ({ text, steps, finishReason, usage }: any) => {
             if (didSendFinal) {
-              try { if (hardTimeout) clearTimeout(hardTimeout); } catch {}
+              try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
               return;
             }
             didSendFinal = true;
-            try { if (hardTimeout) clearTimeout(hardTimeout); } catch {}
+            try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
             try {
               console.log('[cloud-ai] onFinish reason:', finishReason, 'usage:', usage);
-            } catch {}
+            } catch { }
             let finalText = String(text || '').trim();
             if (!finalText && aggregatedText) {
               finalText = aggregatedText.trim();
@@ -840,7 +840,7 @@ const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
                 toolCalls: filteredToolCalls.length > 0 ? filteredToolCalls : undefined,
                 streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
               };
-              try { await addAssistantMessage(authUser.userId, conversationId, finalText, metadata); } catch {}
+              try { await addAssistantMessage(authUser.userId, conversationId, finalText, metadata); } catch { }
             }
 
             const stepsSafe = typeof steps !== 'undefined' ? sanitizeSteps(steps) : steps;
@@ -858,10 +858,10 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                 await setConversationTitle(authUser.userId, conversationId, title);
                 // Send title update to client
                 send(ws, { type: 'title', conversationId, title }, requestId);
-              } catch {}
+              } catch { }
             }
-            if (authUser) { try { await logUsageEvent(authUser.userId, conversationId, chosenModelId || routedTier, usage); } catch {} try { if (conversationId) await finishRun(authUser.userId, conversationId, finalText || ''); } catch {} }
-            
+            if (authUser) { try { await logUsageEvent(authUser.userId, conversationId, chosenModelId || routedTier, usage); } catch { } try { if (conversationId) await finishRun(authUser.userId, conversationId, finalText || ''); } catch { } }
+
             // Knowledge Graph Ingestion - extract and store knowledge from conversation
             try {
               const { ingestConversationTurn } = await import('./knowledge');
@@ -889,25 +889,25 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
             } catch (ingestionErr) {
               console.error('[cloud-ai] Knowledge ingestion import failed:', ingestionErr);
             }
-            
+
             // Local Memory Storage - store conversation locally with encryption
             try {
               const localConvId = conversationId || resource;
-              
+
               // Store the user message locally
               if (prompt) {
                 memoryService.storeMessageLocally(localConvId, 'user', prompt).catch((err) => {
                   console.error('[cloud-ai] Failed to store user message locally:', err);
                 });
               }
-              
+
               // Store the assistant response locally
               if (finalText) {
                 memoryService.storeMessageLocally(localConvId, 'assistant', finalText).catch((err) => {
                   console.error('[cloud-ai] Failed to store assistant message locally:', err);
                 });
               }
-              
+
               // Process conversation turn (segmentation, embeddings, etc.)
               const fullHistory = [...history];
               memoryService.processConversationTurn(localConvId, fullHistory).catch((err) => {
@@ -927,7 +927,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
 
         const hasFull = !!(stream as any)?.fullStream;
         const fullStream = (stream as any)?.fullStream || stream;
-        try { console.log('[cloud-ai] Stream obtained. hasFullStream:', hasFull, 'type:', typeof fullStream); } catch {}
+        try { console.log('[cloud-ai] Stream obtained. hasFullStream:', hasFull, 'type:', typeof fullStream); } catch { }
 
         let streamIterationError: any = null;
         try {
@@ -945,167 +945,167 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               }
               let handledChunk = false;
               let sentToolEventTopLevel = false;
-            
-            // Handle Mastra chunk types explicitly
-            if (evType) {
-              switch (evType) {
-                case 'start':
-                  send(ws, { type: 'progress', event: 'start', data: {} }, requestId);
-                  handledChunk = true;
-                  break;
-                  
-                // Text streaming (actual response content)
-                case 'text-delta': {
-                  const text = (chunk as any)?.payload?.text || (chunk as any)?.text || '';
-                  if (text) {
-                    sawAnyTextDelta = true;
-                    aggregatedText += text;
-                    // Track in streamChunks - append to last text chunk or create new
-                    const lastChunk = streamChunks[streamChunks.length - 1];
-                    if (lastChunk?.type === 'text') {
-                      lastChunk.content += text;
-                    } else {
-                      streamChunks.push({ type: 'text', content: text });
+
+              // Handle Mastra chunk types explicitly
+              if (evType) {
+                switch (evType) {
+                  case 'start':
+                    send(ws, { type: 'progress', event: 'start', data: {} }, requestId);
+                    handledChunk = true;
+                    break;
+
+                  // Text streaming (actual response content)
+                  case 'text-delta': {
+                    const text = (chunk as any)?.payload?.text || (chunk as any)?.text || '';
+                    if (text) {
+                      sawAnyTextDelta = true;
+                      aggregatedText += text;
+                      // Track in streamChunks - append to last text chunk or create new
+                      const lastChunk = streamChunks[streamChunks.length - 1];
+                      if (lastChunk?.type === 'text') {
+                        lastChunk.content += text;
+                      } else {
+                        streamChunks.push({ type: 'text', content: text });
+                      }
+                      send(ws, { type: 'progress', event: 'delta', data: { text } }, requestId);
+                      writeLog('delta', { length: text.length });
                     }
-                    send(ws, { type: 'progress', event: 'delta', data: { text } }, requestId);
-                    writeLog('delta', { length: text.length });
+                    handledChunk = true;
+                    break;
                   }
-                  handledChunk = true;
-                  break;
-                }
-                
-                // Reasoning/Thinking events (disabled - do not forward or store)
-                case 'reasoning-start':
-                case 'thinking-start':
-                case 'reasoning-delta':
-                case 'thinking-delta':
-                case 'reasoning-end':
-                case 'thinking-end':
-                case 'reasoning-signature':
-                  handledChunk = true;
-                  break;
-                  
-                case 'tool_event':
-                  sawToolCall = true;
-                  const safeEvt = sanitizeToolEvent(chunk);
-                  // Log workflow_modify events for debugging immediate application
-                  if (safeEvt?.tool === 'workflow_modify' && safeEvt?.status === 'completed') {
-                    console.log('[cloud-ai] Forwarding workflow_modify completed event with result:', {
-                      hasResult: !!safeEvt?.result,
-                      hasWorkflow: !!safeEvt?.result?.workflow,
-                      changes: safeEvt?.result?.changes
-                    });
+
+                  // Reasoning/Thinking events (disabled - do not forward or store)
+                  case 'reasoning-start':
+                  case 'thinking-start':
+                  case 'reasoning-delta':
+                  case 'thinking-delta':
+                  case 'reasoning-end':
+                  case 'thinking-end':
+                  case 'reasoning-signature':
+                    handledChunk = true;
+                    break;
+
+                  case 'tool_event':
+                    sawToolCall = true;
+                    const safeEvt = sanitizeToolEvent(chunk);
+                    // Log workflow_modify events for debugging immediate application
+                    if (safeEvt?.tool === 'workflow_modify' && safeEvt?.status === 'completed') {
+                      console.log('[cloud-ai] Forwarding workflow_modify completed event with result:', {
+                        hasResult: !!safeEvt?.result,
+                        hasWorkflow: !!safeEvt?.result?.workflow,
+                        changes: safeEvt?.result?.changes
+                      });
+                    }
+                    send(ws, { type: 'progress', event: 'tool_event', data: safeEvt }, requestId);
+                    writeLog('tool_event', { source: 'top-level', tool: safeEvt?.tool, status: safeEvt?.status });
+                    sentToolEventTopLevel = true;
+                    handledChunk = true;
+                    break;
+
+                  case 'tool-call': {
+                    sawToolCall = true;
+                    const toolName = (chunk as any)?.payload?.toolName || 'tool';
+                    const toolCallId = (chunk as any)?.payload?.toolCallId || `tc-${Date.now()}`;
+                    const toolArgs = (chunk as any)?.payload?.args;
+
+                    // Track tool call
+                    const toolCall = { id: toolCallId, tool: toolName, status: 'called', args: toolArgs, timestamp: Date.now() };
+                    toolCallsMap.set(toolCallId, toolCall);
+                    streamChunks.push({ type: 'tool', tool: { ...toolCall } });
+
+                    // Only send to UI if not a SIS meta-tool
+                    if (!isSISMetaTool(toolName)) {
+                      send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolName, status: 'called', toolCallId, args: toolArgs } }, requestId);
+                    }
+                    writeLog('tool_call', { name: toolName });
+                    handledChunk = true;
+                    break;
                   }
-                  send(ws, { type: 'progress', event: 'tool_event', data: safeEvt }, requestId);
-                  writeLog('tool_event', { source: 'top-level', tool: safeEvt?.tool, status: safeEvt?.status });
-                  sentToolEventTopLevel = true;
-                  handledChunk = true;
-                  break;
-                  
-                case 'tool-call': {
-                  sawToolCall = true;
-                  const toolName = (chunk as any)?.payload?.toolName || 'tool';
-                  const toolCallId = (chunk as any)?.payload?.toolCallId || `tc-${Date.now()}`;
-                  const toolArgs = (chunk as any)?.payload?.args;
 
-                  // Track tool call
-                  const toolCall = { id: toolCallId, tool: toolName, status: 'called', args: toolArgs, timestamp: Date.now() };
-                  toolCallsMap.set(toolCallId, toolCall);
-                  streamChunks.push({ type: 'tool', tool: { ...toolCall } });
+                  case 'tool-result': {
+                    sawToolCall = true;
+                    const toolName = (chunk as any)?.payload?.toolName || 'tool';
+                    const toolCallId = (chunk as any)?.payload?.toolCallId || '';
+                    const toolResult = (chunk as any)?.payload?.result;
 
-                  // Only send to UI if not a SIS meta-tool
-                  if (!isSISMetaTool(toolName)) {
-                    send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolName, status: 'called', toolCallId, args: toolArgs } }, requestId);
-                  }
-                  writeLog('tool_call', { name: toolName });
-                  handledChunk = true;
-                  break;
-                }
-                  
-                case 'tool-result': {
-                  sawToolCall = true;
-                  const toolName = (chunk as any)?.payload?.toolName || 'tool';
-                  const toolCallId = (chunk as any)?.payload?.toolCallId || '';
-                  const toolResult = (chunk as any)?.payload?.result;
-
-                  // Update tool call with result
-                  const existingCall = toolCallsMap.get(toolCallId);
-                  if (existingCall) {
-                    existingCall.status = 'completed';
-                    existingCall.result = toolResult;
-                    // Update in streamChunks
-                    for (const sc of streamChunks) {
-                      if (sc.type === 'tool' && sc.tool.id === toolCallId) {
-                        sc.tool.status = 'completed';
-                        sc.tool.result = toolResult;
-                        break;
+                    // Update tool call with result
+                    const existingCall = toolCallsMap.get(toolCallId);
+                    if (existingCall) {
+                      existingCall.status = 'completed';
+                      existingCall.result = toolResult;
+                      // Update in streamChunks
+                      for (const sc of streamChunks) {
+                        if (sc.type === 'tool' && sc.tool.id === toolCallId) {
+                          sc.tool.status = 'completed';
+                          sc.tool.result = toolResult;
+                          break;
+                        }
                       }
                     }
-                  }
 
-                  // Only send to UI if not a SIS meta-tool
-                  if (!isSISMetaTool(toolName)) {
-                    send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolName, status: 'completed', toolCallId, result: toolResult } }, requestId);
-                  }
-                  handledChunk = true;
-                  break;
-                }
-                  
-                case 'finish': {
-                  const text =
-                    (chunk as any)?.payload?.text ||
-                    (chunk as any)?.payload?.response?.text ||
-                    (chunk as any)?.text ||
-                    '';
-                  if (typeof text === 'string' && text) {
-                    sawAnyTextDelta = true;
-                    aggregatedText += text;
-                    const lastChunk = streamChunks[streamChunks.length - 1];
-                    if (lastChunk?.type === 'text') {
-                      lastChunk.content += text;
-                    } else {
-                      streamChunks.push({ type: 'text', content: text });
+                    // Only send to UI if not a SIS meta-tool
+                    if (!isSISMetaTool(toolName)) {
+                      send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolName, status: 'completed', toolCallId, result: toolResult } }, requestId);
                     }
+                    handledChunk = true;
+                    break;
                   }
-                  handledChunk = true;
-                  break;
+
+                  case 'finish': {
+                    const text =
+                      (chunk as any)?.payload?.text ||
+                      (chunk as any)?.payload?.response?.text ||
+                      (chunk as any)?.text ||
+                      '';
+                    if (typeof text === 'string' && text) {
+                      sawAnyTextDelta = true;
+                      aggregatedText += text;
+                      const lastChunk = streamChunks[streamChunks.length - 1];
+                      if (lastChunk?.type === 'text') {
+                        lastChunk.content += text;
+                      } else {
+                        streamChunks.push({ type: 'text', content: text });
+                      }
+                    }
+                    handledChunk = true;
+                    break;
+                  }
+
+                  case 'step-finish':
+                  case 'step-start':
+                  case 'response-metadata':
+                    // Control chunks - don't need to forward to UI
+                    handledChunk = true;
+                    break;
+                }
+              }
+
+              // Fallback for legacy/alternative formats (only if not already handled)
+              if (!handledChunk) {
+                // Log unhandled chunk types for debugging (helps identify missing handlers)
+                if (evType && process.env.CLOUD_DEBUG_STREAM === '1') {
+                  console.log('[cloud-ai] Unhandled chunk type:', evType, JSON.stringify(chunk).slice(0, 300));
                 }
 
-                case 'step-finish':
-                case 'step-start':
-                case 'response-metadata':
-                  // Control chunks - don't need to forward to UI
-                  handledChunk = true;
-                  break;
+                let textDelta: string | undefined;
+                if (typeof (chunk as any) === 'string') {
+                  textDelta = chunk as any;
+                } else if (typeof (chunk as any)?.textDelta === 'string') {
+                  textDelta = (chunk as any).textDelta;
+                } else if (typeof (chunk as any)?.delta === 'string') {
+                  textDelta = (chunk as any).delta;
+                } else if (typeof (chunk as any)?.text === 'string') {
+                  textDelta = (chunk as any).text;
+                }
+                // Note: We no longer extract from payload.text here as that could catch reasoning
+                if (textDelta && textDelta.length > 0) {
+                  sawAnyTextDelta = true;
+                  aggregatedText += textDelta;
+                  if (process.env.CLOUD_DEBUG_DELTA === '1') { console.log('[cloud-ai] Delta length:', textDelta.length, 'preview:', textDelta.slice(0, 80)); }
+                  send(ws, { type: 'progress', event: 'delta', data: { text: textDelta } }, requestId);
+                  writeLog('delta', { length: textDelta.length });
+                }
               }
-            }
-            
-            // Fallback for legacy/alternative formats (only if not already handled)
-            if (!handledChunk) {
-              // Log unhandled chunk types for debugging (helps identify missing handlers)
-              if (evType && process.env.CLOUD_DEBUG_STREAM === '1') {
-                console.log('[cloud-ai] Unhandled chunk type:', evType, JSON.stringify(chunk).slice(0, 300));
-              }
-              
-              let textDelta: string | undefined;
-              if (typeof (chunk as any) === 'string') {
-                textDelta = chunk as any;
-              } else if (typeof (chunk as any)?.textDelta === 'string') {
-                textDelta = (chunk as any).textDelta;
-              } else if (typeof (chunk as any)?.delta === 'string') {
-                textDelta = (chunk as any).delta;
-              } else if (typeof (chunk as any)?.text === 'string') {
-                textDelta = (chunk as any).text;
-              }
-              // Note: We no longer extract from payload.text here as that could catch reasoning
-              if (textDelta && textDelta.length > 0) {
-                sawAnyTextDelta = true;
-                aggregatedText += textDelta;
-                if (process.env.CLOUD_DEBUG_DELTA === '1') { console.log('[cloud-ai] Delta length:', textDelta.length, 'preview:', textDelta.slice(0, 80)); }
-                send(ws, { type: 'progress', event: 'delta', data: { text: textDelta } }, requestId);
-                writeLog('delta', { length: textDelta.length });
-              }
-            }
               // Legacy AI SDK toolCall/toolResult shapes (only if not already handled)
               if (!handledChunk) {
                 const toolCall = (chunk as any)?.toolCall;
@@ -1138,7 +1138,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
 
         if (streamIterationError && !didSendFinal) {
           didSendFinal = true;
-          try { if (hardTimeout) clearTimeout(hardTimeout); } catch {}
+          try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
           wsAbortControllers.delete(ws);
           const msgText = String(streamIterationError?.message || streamIterationError || 'Agent stream failed');
           send(
@@ -1168,14 +1168,14 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
             if (!aggregatedText && typeof maybeText === 'string' && maybeText.trim()) {
               aggregatedText = maybeText;
             }
-          } catch {}
+          } catch { }
         }
 
         // Check if we broke out of the loop due to abort
         if (abortController?.signal.aborted) {
           console.log('[cloud-ai] Stream aborted by user (loop break)');
           didSendFinal = true;
-          try { if (hardTimeout) clearTimeout(hardTimeout); } catch {}
+          try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
           wsAbortControllers.delete(ws);
           const partialText = aggregatedText ? aggregatedText.trim() : '';
           send(
@@ -1205,12 +1205,12 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                 finalText = genText;
                 emptyOutput = false;
               }
-            } catch {}
+            } catch { }
           }
 
           if (!didSendFinal) {
             didSendFinal = true;
-            try { if (hardTimeout) clearTimeout(hardTimeout); } catch {}
+            try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
             send(
               ws,
               {
@@ -1231,10 +1231,10 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
         }
 
         // Clean up abort controller after stream completes
-        try { if (hardTimeout) clearTimeout(hardTimeout); } catch {}
+        try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
         wsAbortControllers.delete(ws);
       } catch (e: any) {
-        try { if (hardTimeout) clearTimeout(hardTimeout); } catch {}
+        try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
         // Clean up abort controller on error
         wsAbortControllers.delete(ws);
 
@@ -1272,7 +1272,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               message: errMsg,
               inputChars: typeof (e as any).input === 'string' ? (e as any).input.length : undefined,
             });
-          } catch {}
+          } catch { }
 
           try {
             send(
@@ -1291,7 +1291,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               },
               requestId
             );
-          } catch {}
+          } catch { }
 
           const finalText = `Tool call failed: ${errMsg}. Please retry.`;
           send(

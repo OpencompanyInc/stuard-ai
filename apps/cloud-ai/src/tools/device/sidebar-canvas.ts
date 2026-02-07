@@ -47,14 +47,17 @@ export const canvas_write = makeLocalTool(
 - replace: Replace all content with new content
 - append: Add content to the end
 - insert: Insert content at a specific position
+- edit: Find and replace old_string with new_string (partial edit)
 
 The canvas will update in real-time as you write.`,
   z.object({
     documentId: z.string().optional().describe('ID of the document to write to. If omitted, writes to the most recent document.'),
-    content: z.string().optional().describe('The content to write'),
+    content: z.string().optional().describe('The content to write (for replace/append/insert actions)'),
     title: z.string().optional().describe('New title for the document'),
-    action: z.enum(['replace', 'append', 'insert']).default('replace').describe('How to apply the content'),
+    action: z.enum(['replace', 'append', 'insert', 'edit']).default('replace').describe('How to apply the content'),
     position: z.number().int().optional().describe('Position for insert action (0-indexed character position)'),
+    old_string: z.string().optional().describe('Text to find and replace (required for edit action)'),
+    new_string: z.string().optional().describe('Text to replace old_string with (required for edit action)'),
   }),
   z.object({
     ok: z.boolean(),

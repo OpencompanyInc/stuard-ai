@@ -121,14 +121,45 @@ registerTool(executeAgenticTask, 'Core');
 // Virtual tools for workflow authoring (not executable directly by agent, but valid in workflows)
 const customUiTool = createTool({
     id: 'custom_ui',
-    description: 'Display a custom overlay UI for user interaction or status display',
+    description: 'Display a custom overlay UI for user interaction or status display. Supports multi-page SPA mode with client-side navigation.',
     inputSchema: z.object({
         title: z.string().optional(),
         position: z.union([z.string(), z.object({ x: z.number(), y: z.number() })]).optional(),
         width: z.number().optional(),
         height: z.number().optional(),
-        content: z.array(z.any()).describe('List of UI nodes: { type: "button"|"text"|..., ... }'),
+        content: z.array(z.any()).describe('List of UI nodes: { type: "button"|"text"|..., ... }').optional(),
+        html: z.string().describe('Raw HTML content (single-page mode)').optional(),
         data: z.record(z.string(), z.any()).optional(),
+        pages: z.record(z.string(), z.object({
+            html: z.string().optional(),
+            layout: z.any().optional(),
+            css: z.string().optional(),
+            script: z.string().optional(),
+        })).describe('Multi-page SPA mode: map of pageName → { html, layout?, css?, script? }').optional(),
+        startPage: z.string().describe('Initial page to show (defaults to first key in pages)').optional(),
+        blocking: z.boolean().optional(),
+        keepOpen: z.boolean().optional(),
+        script: z.string().describe('JavaScript to run after UI loads').optional(),
+    }),
+    execute: async () => { throw new Error("This tool is for workflow definitions only, not direct execution."); }
+});
+
+const updateCustomUiTool = createTool({
+    id: 'update_custom_ui',
+    description: 'Update an existing custom UI window with new data, HTML, or navigate to a page.',
+    inputSchema: z.object({
+        id: z.string().describe('The ID of the custom_ui window to update'),
+        data: z.record(z.string(), z.any()).optional().describe('Data to merge into formData'),
+        html: z.string().optional().describe('New HTML content (replaces current view)'),
+        css: z.string().optional().describe('New CSS to append'),
+        script: z.string().optional().describe('JavaScript to run'),
+        navigateTo: z.string().optional().describe('Page name to navigate to (if using pages system)'),
+        pages: z.record(z.string(), z.object({
+            html: z.string().optional(),
+            layout: z.any().optional(),
+            css: z.string().optional(),
+            script: z.string().optional(),
+        })).describe('Update or add page definitions').optional(),
     }),
     execute: async () => { throw new Error("This tool is for workflow definitions only, not direct execution."); }
 });
@@ -156,6 +187,7 @@ const logTool = createTool({
 });
 
 registerTool(customUiTool, 'GUI');
+registerTool(updateCustomUiTool, 'GUI');
 registerTool(notifyTool, 'System');
 registerTool(logTool, 'Core');
 
@@ -180,6 +212,8 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'Media');
     } else if (['ffmpeg_status', 'ffmpeg_setup', 'ffmpeg_run', 'ffmpeg_convert_media', 'ffmpeg_extract_audio', 'ffmpeg_trim_media', 'ffmpeg_probe_media', 'ffmpeg_extract_frames'].includes(name)) {
         registerTool(t, 'Media');
+    } else if (name.startsWith('stream_')) {
+        registerTool(t, 'Streaming');
     } else if (['search_local_workflows', 'list_local_stuards', 'show_json_workflow_code', 'import_workflow', 'run_automation', 'stop_automation', 'create_workflow', 'workflow_modify', 'retrieve_tool_format', 'run_workflow', 'execute_workflow', 'invoke_workflow'].includes(name)) {
         registerTool(t, 'Workflow');
     } else if (['search_past_conversations', 'get_conversation_context'].includes(name)) {
@@ -253,7 +287,7 @@ export const search_tools = createTool({
     id: 'search_tools',
     description: 'Search for available tools by category or query string. Returns tool names and descriptions.',
     inputSchema: z.object({
-        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Workflow', 'Memory', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'YouTube', 'Marketplace', 'Variables', 'Math', 'Feedback', 'Webhooks', 'Integrations', 'Other']).optional(),
+        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Streaming', 'Workflow', 'Memory', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'YouTube', 'Marketplace', 'Variables', 'Math', 'Feedback', 'Webhooks', 'Integrations', 'Other']).optional(),
         query: z.string().optional(),
     }),
     outputSchema: z.object({

@@ -21,8 +21,8 @@ export function compileDesignerModel(model: DesignerModel): StuardSpec {
   const nodes = model.nodes || [];
   const wires = model.wires || [];
 
-  // Build wire lookup: from_id → [{ to, guard, label, loop, loopBreak, loopFanoutMode }]
-  const wiresByFrom = new Map<string, Array<{ to: string; guard: any; label?: string; loop?: any; loopBreak?: boolean; loopFanoutMode?: 'wait' | 'parallel' }>>();
+  // Build wire lookup: from_id → [{ to, guard, label, loop, loopBreak, loopFanoutMode, stream }]
+  const wiresByFrom = new Map<string, Array<{ to: string; guard: any; label?: string; loop?: any; loopBreak?: boolean; loopFanoutMode?: 'wait' | 'parallel'; stream?: any }>>();
   for (const wire of wires) {
     const fromId = wire.from;
     if (!wiresByFrom.has(fromId)) {
@@ -35,6 +35,7 @@ export function compileDesignerModel(model: DesignerModel): StuardSpec {
       loop: (wire as any).loop,
       loopBreak: (wire as any).loopBreak,
       loopFanoutMode: (wire as any).loopFanoutMode,
+      stream: (wire as any).stream,
     });
   }
 
@@ -48,6 +49,7 @@ export function compileDesignerModel(model: DesignerModel): StuardSpec {
       ...(w.loop ? { loop: w.loop } : {}),
       ...(w.loopBreak ? { loopBreak: true } : {}),
       ...(w.loopFanoutMode ? { loopFanoutMode: w.loopFanoutMode } : {}),
+      ...(w.stream ? { stream: w.stream } : {}),
     })) : undefined;
 
     return {
@@ -115,6 +117,7 @@ export function decompileToDesignerModel(spec: StuardSpec): DesignerModel {
           loop: (edge as any).loop,
           loopBreak: (edge as any).loopBreak,
           loopFanoutMode: (edge as any).loopFanoutMode,
+          stream: (edge as any).stream,
         });
       }
     }
@@ -270,9 +273,9 @@ function generateSimpleFormat(model: DesignerModel): string {
   lines.push('steps:');
   
   // Build execution order
-  const executionOrder = buildExecutionOrder(model.nodes, model.wires);
+  const executionOrder = buildExecutionOrder(model.nodes, wires);
   const wiresByFrom = new Map<string, DesignerWire[]>();
-  for (const wire of model.wires) {
+  for (const wire of wires) {
     if (!wiresByFrom.has(wire.from)) wiresByFrom.set(wire.from, []);
     wiresByFrom.get(wire.from)!.push(wire);
   }

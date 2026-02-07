@@ -194,6 +194,12 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('workflows:execution', handler);
     return () => { try { ipcRenderer.off('workflows:execution', handler); } catch { } };
   },
+  // Stream wire activity events (for animation control)
+  onWorkflowsStream: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('workflows:stream', handler);
+    return () => { try { ipcRenderer.off('workflows:stream', handler); } catch { } };
+  },
   // Stuards (Automations)
   stuardsList: () => ipcRenderer.invoke('stuards:list'),
   stuardsRead: (id: string) => ipcRenderer.invoke('stuards:read', id),

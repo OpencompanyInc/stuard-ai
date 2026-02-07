@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Callable, Awaitable
 
-from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http
+from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http, streams
 
 
 # Tool metadata for discovery (category and description)
@@ -112,6 +112,7 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "segment_list": ("memory", "List conversation segments"),
     "segment_list_recent": ("memory", "List recent segments"),
     "segment_search": ("memory", "Search segments"),
+    "segment_build_topic_drawers": ("memory", "Build topic drawers (topics -> clustered segments)"),
     "space_create": ("data", "Create a new space"),
     "space_get": ("data", "Get a space"),
     "space_list": ("data", "List spaces"),
@@ -289,6 +290,22 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
 
     # HTTP
     "http_request": ("integrations", "Make HTTP requests like curl or Postman (GET, POST, PUT, PATCH, DELETE, etc.)"),
+
+    # Streaming
+    "stream_create": ("streaming", "Create a named data stream for real-time chunk processing"),
+    "stream_write": ("streaming", "Push a chunk of data to a stream"),
+    "stream_read": ("streaming", "Read next chunk(s) from a stream (cursor-based)"),
+    "stream_close": ("streaming", "Close a stream, signaling end to all subscribers"),
+    "stream_subscribe": ("streaming", "Subscribe to a stream to receive chunks"),
+    "stream_unsubscribe": ("streaming", "Unsubscribe from a stream"),
+    "stream_add_transform": ("streaming", "Add a transform function to the stream pipeline"),
+    "stream_remove_transform": ("streaming", "Remove a transform from the stream pipeline"),
+    "stream_update_transform": ("streaming", "Update transform parameters live"),
+    "stream_list": ("streaming", "List active streams for a workflow"),
+    "stream_get_status": ("streaming", "Get detailed stream stats and subscriber info"),
+    "stream_from_script": ("streaming", "Run a Python script that emits chunks into a real-time stream"),
+    "stream_from_api": ("streaming", "Subscribe to a streaming API (SSE/chunked HTTP) and push events into a stream"),
+    "stream_from_llm": ("streaming", "Stream LLM text generation token-by-token into a workflow stream"),
 }
 
 
@@ -400,6 +417,7 @@ _HANDLERS = {
     "segment_list": memory_conversations.segment_list,
     "segment_list_recent": memory_conversations.segment_list_recent,
     "segment_search": memory_conversations.segment_search,
+    "segment_build_topic_drawers": memory_conversations.segment_build_topic_drawers,
     "space_create": memory_conversations.space_create,
     "space_get": memory_conversations.space_get,
     "space_list": memory_conversations.space_list,
@@ -579,6 +597,22 @@ _HANDLERS = {
 
     # HTTP
     "http_request": http.http_request,
+
+    # Streaming
+    "stream_create": streams.stream_create,
+    "stream_write": streams.stream_write,
+    "stream_read": streams.stream_read,
+    "stream_close": streams.stream_close,
+    "stream_subscribe": streams.stream_subscribe,
+    "stream_unsubscribe": streams.stream_unsubscribe,
+    "stream_add_transform": streams.stream_add_transform,
+    "stream_remove_transform": streams.stream_remove_transform,
+    "stream_update_transform": streams.stream_update_transform,
+    "stream_list": streams.stream_list,
+    "stream_get_status": streams.stream_get_status,
+    "stream_from_script": streams.stream_from_script,
+    "stream_from_api": streams.stream_from_api,
+    "stream_from_llm": streams.stream_from_llm,
 }
 
 
@@ -662,6 +696,22 @@ async def execute(tool: str, args: Dict[str, Any], emit: Callable[[str, Dict[str
         "ffmpeg_trim_media",
         "ffmpeg_probe_media",
         "ffmpeg_extract_frames",
+
+        # Stream tools
+        "stream_create",
+        "stream_write",
+        "stream_read",
+        "stream_close",
+        "stream_subscribe",
+        "stream_unsubscribe",
+        "stream_add_transform",
+        "stream_remove_transform",
+        "stream_update_transform",
+        "stream_list",
+        "stream_get_status",
+        "stream_from_script",
+        "stream_from_api",
+        "stream_from_llm",
     ):
         return await handler(args, emit)  # type: ignore[misc]
     else:

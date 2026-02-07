@@ -50,6 +50,8 @@ class BusSubscriber:
     silence_threshold: Optional[float] = None  # 0.0 to 1.0
     silence_duration_ms: Optional[int] = None  # duration in ms
     silence_stop_event: Optional[threading.Event] = field(default_factory=threading.Event)
+    # Stream bridge: when set, frames are also pushed to the Stream registry
+    stream_id: Optional[str] = None
 
 
 @dataclass  
@@ -101,6 +103,10 @@ class MediaBus:
 
 _buses: Dict[str, MediaBus] = {}  # key = "{kind}:{device}" e.g. "audio:0", "video:1"
 _buses_lock = threading.Lock()
+
+# Global registry for audiovideo combined subscriptions
+_audiovideo_subscriptions: Dict[str, Dict[str, Any]] = {}
+_audiovideo_lock = threading.Lock()
 
 
 def _bus_key(kind: str, device: Optional[int] = None) -> str:
@@ -315,35 +321,42 @@ def _audio_bus_worker(bus: MediaBus) -> None:
                             bus.buffer_index += 1
                             bus.total_frames += 1
                         
-                        # Also add to each subscriber's recording buffer if active
-                        # and check for silence detection
+                        # Also add to each subscriber's recording buffer if active,
+                        # push to linked streams, and check for silence detection
                         with bus.subscribers_lock:
                             for sub in bus.subscribers.values():
                                 if sub.recording_active:
                                     sub.recorded_chunks.append(chunk)
+                                # Push to linked stream if set
+                                if sub.stream_id:
+                                    try:
+                                        from . import streams as _streams_mod
+                                        _streams_mod.push_to_stream(sub.stream_id, chunk)
+                                    except Exception:
+                                        pass
+                                
+                                # Silence detection for this subscriber
+                                if sub.silence_threshold is not None and sub.silence_duration_ms is not None:
+                                    is_silent = rms < sub.silence_threshold
+                                    silence_duration_s = sub.silence_duration_ms / 1000.0
                                     
-                                    # Silence detection for this subscriber
-                                    if sub.silence_threshold is not None and sub.silence_duration_ms is not None:
-                                        is_silent = rms < sub.silence_threshold
-                                        silence_duration_s = sub.silence_duration_ms / 1000.0
-                                        
-                                        if is_silent:
-                                            if sub.id not in subscriber_silence_start:
-                                                subscriber_silence_start[sub.id] = time.time()
-                                                print(f"[audio_bus] Silence detected for subscriber {sub.id}")
-                                        else:
-                                            if sub.id in subscriber_silence_start:
-                                                print(f"[audio_bus] Sound detected for subscriber {sub.id}, resetting silence timer")
-                                                del subscriber_silence_start[sub.id]
-                                        
-                                        # Check if silence duration exceeded
+                                    if is_silent:
+                                        if sub.id not in subscriber_silence_start:
+                                            subscriber_silence_start[sub.id] = time.time()
+                                            print(f"[audio_bus] Silence detected for subscriber {sub.id}")
+                                    else:
                                         if sub.id in subscriber_silence_start:
-                                            silence_elapsed = time.time() - subscriber_silence_start[sub.id]
-                                            if silence_elapsed >= silence_duration_s:
-                                                print(f"[audio_bus] Silence duration ({silence_elapsed:.1f}s) exceeded for subscriber {sub.id}, stopping")
-                                                if sub.silence_stop_event:
-                                                    sub.silence_stop_event.set()
-                                                del subscriber_silence_start[sub.id]
+                                            print(f"[audio_bus] Sound detected for subscriber {sub.id}, resetting silence timer")
+                                            del subscriber_silence_start[sub.id]
+                                    
+                                    # Check if silence duration exceeded
+                                    if sub.id in subscriber_silence_start:
+                                        silence_elapsed = time.time() - subscriber_silence_start[sub.id]
+                                        if silence_elapsed >= silence_duration_s:
+                                            print(f"[audio_bus] Silence duration ({silence_elapsed:.1f}s) exceeded for subscriber {sub.id}, stopping")
+                                            if sub.silence_stop_event:
+                                                sub.silence_stop_event.set()
+                                            del subscriber_silence_start[sub.id]
                 except queue.Empty:
                     pass
                 
@@ -438,10 +451,18 @@ def _video_bus_worker(bus: MediaBus) -> None:
             bus.total_frames += 1
             
             # Also add to each subscriber's recording buffer if active
+            # and push to linked streams
             with bus.subscribers_lock:
                 for sub in bus.subscribers.values():
                     if sub.recording_active:
                         sub.recorded_chunks.append(frame)
+                    # Push to linked stream if set
+                    if sub.stream_id:
+                        try:
+                            from . import streams as _streams_mod
+                            _streams_mod.push_to_stream(sub.stream_id, frame)
+                        except Exception:
+                            pass
             
             # Maintain frame rate
             elapsed = time.monotonic() - start
@@ -500,6 +521,221 @@ def _stop_bus(bus: MediaBus) -> None:
     bus.running = False
 
 
+async def _subscribe_audiovideo(
+    args: Dict[str, Any],
+    emit: Optional[Callable[[str, Dict[str, Any] | None], Awaitable[None]]] = None,
+) -> Dict[str, Any]:
+    """
+    Handle audiovideo subscription by subscribing to both audio and video buses.
+    Stores both subscriptions under a combined ID and returns combined info.
+    """
+    subscriber_id = str(args.get("subscriberId") or "").strip() or str(uuid.uuid4())[:8]
+    video_device = args.get("device")
+    audio_device = args.get("audioDevice")
+    file_path = str(args.get("filePath") or "").strip()
+    silence_threshold = args.get("silenceThreshold")
+    silence_duration_ms = args.get("silenceDurationMs")
+    
+    # Create separate subscriber IDs for audio and video
+    audio_sub_id = f"{subscriber_id}_audio"
+    video_sub_id = f"{subscriber_id}_video"
+    
+    # Generate temp paths for both streams
+    out_dir = _tmp_dir()
+    if file_path:
+        base_path = file_path.rsplit(".", 1)[0]
+        audio_path = f"{base_path}_audio.wav"
+        video_path = f"{base_path}_video.mp4"
+        final_path = file_path
+    else:
+        timestamp = int(time.time() * 1000)
+        audio_path = os.path.join(out_dir, f"audiovideo_{subscriber_id}_audio_{timestamp}.wav")
+        video_path = os.path.join(out_dir, f"audiovideo_{subscriber_id}_video_{timestamp}.mp4")
+        final_path = os.path.join(out_dir, f"audiovideo_{subscriber_id}_{timestamp}.mp4")
+    
+    # Subscribe to audio bus
+    audio_result = await subscribe_media_bus({
+        "kind": "audio",
+        "device": audio_device,
+        "subscriberId": audio_sub_id,
+        "startRecording": True,
+        "filePath": audio_path,
+        "silenceThreshold": silence_threshold,
+        "silenceDurationMs": silence_duration_ms,
+    }, emit)
+    
+    if not audio_result.get("ok"):
+        return {"ok": False, "error": "Failed to subscribe to audio bus", "details": audio_result}
+    
+    # Subscribe to video bus
+    video_result = await subscribe_media_bus({
+        "kind": "video",
+        "device": video_device,
+        "subscriberId": video_sub_id,
+        "startRecording": True,
+        "filePath": video_path,
+    }, emit)
+    
+    if not video_result.get("ok"):
+        # Unsubscribe from audio if video failed
+        await unsubscribe_media_bus({
+            "kind": "audio",
+            "device": audio_device,
+            "subscriberId": audio_sub_id,
+            "saveRecording": False,
+        }, emit)
+        return {"ok": False, "error": "Failed to subscribe to video bus", "details": video_result}
+    
+    # Store combined subscription info in a special entry
+    combined_key = f"audiovideo:{subscriber_id}"
+    with _audiovideo_lock:
+        _audiovideo_subscriptions[combined_key] = {
+            "subscriberId": subscriber_id,
+            "audioSubscriberId": audio_sub_id,
+            "videoSubscriberId": video_sub_id,
+            "audioDevice": audio_device,
+            "videoDevice": video_device,
+            "audioPath": audio_path,
+            "videoPath": video_path,
+            "finalPath": final_path,
+            "audioBusId": audio_result.get("busId"),
+            "videoBusId": video_result.get("busId"),
+        }
+    
+    if emit:
+        await emit("subscribed", {
+            "busId": f"{audio_result.get('busId')},{video_result.get('busId')}",
+            "subscriberId": subscriber_id,
+            "kind": "audiovideo",
+            "videoDevice": video_device,
+            "audioDevice": audio_device,
+            "isNewBus": audio_result.get("isNewBus") or video_result.get("isNewBus"),
+        })
+    
+    return {
+        "ok": True,
+        "busId": f"{audio_result.get('busId')},{video_result.get('busId')}",
+        "subscriberId": subscriber_id,
+        "kind": "audiovideo",
+        "videoDevice": video_device,
+        "audioDevice": audio_device,
+        "isNewBus": audio_result.get("isNewBus") or video_result.get("isNewBus"),
+        "subscriberCount": max(audio_result.get("subscriberCount", 1), video_result.get("subscriberCount", 1)),
+        "filePath": final_path,
+        "recording": True,
+        "audioSamplerate": audio_result.get("samplerate"),
+        "audioChannels": audio_result.get("channels"),
+        "videoWidth": video_result.get("width"),
+        "videoHeight": video_result.get("height"),
+        "videoFps": video_result.get("fps"),
+    }
+
+
+async def _unsubscribe_audiovideo(
+    subscriber_id: str,
+    save_recording: bool = True,
+    emit: Optional[Callable[[str, Dict[str, Any] | None], Awaitable[None]]] = None,
+) -> Dict[str, Any]:
+    """
+    Handle audiovideo unsubscription by unsubscribing from both audio and video buses
+    and optionally muxing them together into a single output file.
+    """
+    combined_key = f"audiovideo:{subscriber_id}"
+    
+    with _audiovideo_lock:
+        sub_info = _audiovideo_subscriptions.pop(combined_key, None)
+    
+    if not sub_info:
+        return {"ok": False, "error": "audiovideo subscription not found"}
+    
+    # Unsubscribe from audio bus
+    audio_result = await unsubscribe_media_bus({
+        "kind": "audio",
+        "device": sub_info["audioDevice"],
+        "subscriberId": sub_info["audioSubscriberId"],
+        "saveRecording": True,
+    }, emit)
+    
+    # Unsubscribe from video bus
+    video_result = await unsubscribe_media_bus({
+        "kind": "video",
+        "device": sub_info["videoDevice"],
+        "subscriberId": sub_info["videoSubscriberId"],
+        "saveRecording": True,
+    }, emit)
+    
+    # Mux audio and video together if both saved successfully
+    final_path = sub_info["finalPath"]
+    audio_path = audio_result.get("filePath") or sub_info["audioPath"]
+    video_path = video_result.get("filePath") or sub_info["videoPath"]
+    
+    if save_recording and audio_path and video_path and os.path.isfile(audio_path) and os.path.isfile(video_path):
+        muxed_path = await _mux_audio_video(video_path, audio_path, final_path)
+        if muxed_path:
+            final_path = muxed_path
+    
+    if emit:
+        await emit("unsubscribed", {
+            "subscriberId": subscriber_id,
+            "kind": "audiovideo",
+            "busStopped": audio_result.get("busStopped") and video_result.get("busStopped"),
+        })
+    
+    return {
+        "ok": True,
+        "subscriberId": subscriber_id,
+        "kind": "audiovideo",
+        "filePath": final_path,
+        "audioStopped": audio_result.get("busStopped"),
+        "videoStopped": video_result.get("busStopped"),
+    }
+
+
+async def _mux_audio_video(video_path: str, audio_path: str, output_path: str) -> Optional[str]:
+    """Mux audio and video files together using ffmpeg."""
+    try:
+        import subprocess
+        
+        # Use ffmpeg to mux audio and video
+        cmd = [
+            "ffmpeg",
+            "-y",  # Overwrite output
+            "-i", video_path,
+            "-i", audio_path,
+            "-c:v", "copy",  # Copy video codec
+            "-c:a", "aac",   # Encode audio to AAC
+            "-b:a", "192k",  # Audio bitrate
+            "-shortest",     # Match shortest duration
+            output_path,
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        
+        if result.returncode == 0 and os.path.isfile(output_path):
+            print(f"[media_bus] Muxed audiovideo: {output_path}")
+            # Clean up temp files
+            try:
+                os.remove(video_path)
+                os.remove(audio_path)
+            except Exception:
+                pass
+            return output_path
+        else:
+            print(f"[media_bus] FFmpeg mux failed: {result.stderr}")
+            return None
+    except FileNotFoundError:
+        print("[media_bus] ffmpeg not found for muxing. Returning separate files.")
+        # If ffmpeg not available, return video file (audio discarded)
+        try:
+            os.rename(video_path, output_path)
+            return output_path
+        except Exception:
+            return video_path
+    except Exception as e:
+        print(f"[media_bus] Error muxing audiovideo: {e}")
+        return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
@@ -512,8 +748,9 @@ async def subscribe_media_bus(
     Subscribe to a media bus. Starts the bus if not already running.
     
     Args:
-        kind: 'audio' or 'video'
-        device: Device ID/index (optional, uses default if not specified)
+        kind: 'audio', 'video', or 'audiovideo'
+        device: Device ID/index for video (optional, uses default if not specified)
+        audioDevice: Device ID/index for audio when using audiovideo (optional)
         subscriberId: Unique ID for this subscriber (auto-generated if not provided)
         startRecording: If true, start recording to a file immediately (default: false)
         filePath: Output file path for recording (auto-generated if not provided)
@@ -524,8 +761,12 @@ async def subscribe_media_bus(
         { ok, busId, subscriberId, kind, device, isNewBus, subscriberCount, filePath? }
     """
     kind = str(args.get("kind") or "").strip().lower()
-    if kind not in ("audio", "video"):
-        raise ValueError("kind must be 'audio' or 'video'")
+    if kind not in ("audio", "video", "audiovideo"):
+        raise ValueError("kind must be 'audio', 'video', or 'audiovideo'")
+    
+    # Handle audiovideo mode by subscribing to both audio and video buses
+    if kind == "audiovideo":
+        return await _subscribe_audiovideo(args, emit)
     
     device = args.get("device")
     device_idx = None
@@ -567,7 +808,6 @@ async def subscribe_media_bus(
         subscriber_count = len(bus.subscribers)
     
     # If the bus is already running and we started recording, seed the recording with a couple of recent chunks.
-    # This reduces the chance of "empty" recordings for very short captures and improves UX when attaching mid-stream.
     if start_recording and bus.running:
         try:
             with bus.buffer_lock:
@@ -629,7 +869,7 @@ async def unsubscribe_media_bus(
     Unsubscribe from a media bus. Stops the bus if no subscribers remain.
     
     Args:
-        kind: 'audio' or 'video'
+        kind: 'audio', 'video', or 'audiovideo'
         device: Device ID/index (optional)
         subscriberId: ID of subscriber to remove
         saveRecording: If true, save accumulated recording to file (default: true if recording was active)
@@ -638,8 +878,16 @@ async def unsubscribe_media_bus(
         { ok, subscriberId, busStopped, remainingSubscribers, filePath? }
     """
     kind = str(args.get("kind") or "").strip().lower()
-    if kind not in ("audio", "video"):
-        raise ValueError("kind must be 'audio' or 'video'")
+    if kind not in ("audio", "video", "audiovideo"):
+        raise ValueError("kind must be 'audio', 'video', or 'audiovideo'")
+    
+    # Handle audiovideo unsubscription
+    if kind == "audiovideo":
+        subscriber_id = str(args.get("subscriberId") or "").strip()
+        if not subscriber_id:
+            raise ValueError("subscriberId is required")
+        save_recording = args.get("saveRecording", True)
+        return await _unsubscribe_audiovideo(subscriber_id, save_recording, emit)
     
     device = args.get("device")
     device_idx = None

@@ -496,6 +496,126 @@ TEMPLATE SOURCES:
 └─────────────────────┴────────────────────────────────────────────────────────┘
 
 ═══════════════════════════════════════════════════════════════════════════════
+CUSTOM UI - Pages System (Multi-Page SPA)
+═══════════════════════════════════════════════════════════════════════════════
+
+custom_ui supports a PAGES mode that turns a single blocking step into a
+full standalone app with client-side navigation — like a website or desktop app.
+
+KEY BENEFITS:
+• Navigate between pages WITHOUT advancing the workflow step
+• Call tools from ANY page via stuard.callTool() without resolving the step
+• formData persists across all page navigations
+• The step only resolves on explicit submit/close/action
+
+─── SINGLE-PAGE MODE (original) ────────────────────────────────────────────
+
+{ tool: "custom_ui", args: {
+  html: "<h1>Hello</h1><button data-action='submit'>Done</button>",
+  blocking: true
+}}
+
+─── MULTI-PAGE MODE (new) ──────────────────────────────────────────────────
+
+{ tool: "custom_ui", args: {
+  title: "My App",
+  pages: {
+    "home": {
+      "html": "<h1>Welcome</h1><button data-navigate='settings'>⚙️ Settings</button><button data-navigate='search'>🔍 Search</button>"
+    },
+    "settings": {
+      "html": "<h1>Settings</h1><input data-bind='username' placeholder='Username'><button data-navigate='home'>← Back</button>"
+    },
+    "search": {
+      "html": "<h1>Search</h1><input data-bind='query' placeholder='Search...'><button data-action='submit'>Submit</button>",
+      "script": "console.log('Search page loaded')"
+    }
+  },
+  startPage: "home",
+  blocking: true,
+  keepOpen: true,
+  data: { username: "", query: "" },
+  window: { width: 500, height: 400 }
+}}
+
+PAGE DEFINITION:
+  pages: {
+    "pageName": {
+      html: string,      // Raw HTML for the page
+      layout?: any,       // OR layout object (same as content/layout arg)
+      css?: string,       // Page-specific CSS (added when page is active)
+      script?: string     // JS to run when page is mounted
+    }
+  }
+
+NAVIGATION METHODS:
+
+1. DECLARATIVE (recommended):
+   <button data-navigate="settings">Settings</button>
+   <button data-navigate="home" data-navigate-data='{"tab":"general"}'>Home</button>
+
+2. JAVASCRIPT (in page scripts or onclick):
+   <button onclick="navigateTo('results', { query: formData.query })">Search</button>
+   <button onclick="goBack()">← Back</button>
+
+3. STUARD API (in page scripts):
+   // Available in page "script" field:
+   // - formData: shared data across all pages
+   // - navigateTo(page, data?): navigate to a page
+   // - goBack(): go to previous page
+   // - stuard: full stuard API (callTool, pickFile, etc.)
+
+CALLING TOOLS FROM PAGES (without resolving the step):
+  // In a page script or onclick handler:
+  const result = await stuard.callTool('take_screenshot', {});
+  formData.screenshotPath = result.filePath;
+  navigateTo('results');
+
+  // Or in HTML:
+  <button onclick="(async()=>{
+    const r = await stuard.callTool('run_command', {command: 'dir'});
+    formData.output = r.stdout;
+    navigateTo('output');
+  })()">Run Command</button>
+
+DATA FLOW:
+  • formData is SHARED across all pages (survives navigation)
+  • data-bind inputs read/write to formData
+  • When navigating, you can pass data: navigateTo('page', {key: 'val'})
+    → merges into formData before rendering
+  • On submit/close, formData is returned as step result.data
+
+PAGE SCRIPTS:
+  Each page can have a "script" field that runs when the page is mounted.
+  The script has access to: formData, navigateTo, goBack, stuard, $stuard
+
+STEP OUTPUT (when step resolves):
+  • {{step_id.action}} - "submit", "closed", or custom action name
+  • {{step_id.data}} - the final formData object
+  • {{step_id.data.fieldName}} - specific field from formData
+
+EXAMPLE - File Converter App:
+  { tool: "custom_ui", args: {
+    title: "File Converter",
+    pages: {
+      "select": {
+        "html": "<div class='p-6'><h2 class='text-lg font-bold mb-4'>Select File</h2><div class='flex gap-2'><input data-bind='filePath' class='flex-1' placeholder='No file selected' readonly><button data-action='pick_file' data-target='filePath' class='btn btn-secondary'>Browse</button></div><button data-navigate='options' class='btn btn-primary mt-4 w-full'>Next →</button></div>"
+      },
+      "options": {
+        "html": "<div class='p-6'><h2 class='text-lg font-bold mb-4'>Convert Options</h2><select data-bind='format'><option value='pdf'>PDF</option><option value='png'>PNG</option></select><button data-navigate='select' class='btn btn-ghost'>← Back</button><button onclick=\\"(async()=>{ const r = await stuard.callTool('ffmpeg_convert_media',{input:formData.filePath,format:formData.format}); formData.output=r.outputPath; navigateTo('done'); })()\\" class='btn btn-primary'>Convert</button></div>"
+      },
+      "done": {
+        "html": "<div class='p-6 text-center'><h2 class='text-lg font-bold text-green-400 mb-2'>✓ Done!</h2><p class='text-sm opacity-70' data-bind='output'></p><button data-navigate='select' class='btn btn-secondary'>Convert Another</button><button data-action='submit' class='btn btn-primary'>Close</button></div>"
+      }
+    },
+    startPage: "select",
+    blocking: true,
+    keepOpen: true,
+    data: { filePath: "", format: "pdf", output: "" },
+    window: { width: 420, height: 320 }
+  }}
+
+═══════════════════════════════════════════════════════════════════════════════
 YOUR 6 TOOLS
 ═══════════════════════════════════════════════════════════════════════════════
 

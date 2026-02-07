@@ -90,6 +90,20 @@ async def canvas_write(args: Dict[str, Any], emit: Optional[Any] = None) -> Dict
             pos = max(0, min(position, len(current_content)))
             doc["content"] = current_content[:pos] + content + current_content[pos:]
     
+    # Handle edit action (find and replace)
+    if action == "edit":
+        old_str = args.get("old_string")
+        new_str = args.get("new_string", "")
+        current_content = doc.get("content", "")
+        
+        if not old_str:
+            return {"ok": False, "error": "old_string is required for edit action"}
+        
+        if old_str not in current_content:
+            return {"ok": False, "error": "old_string not found in document"}
+        
+        doc["content"] = current_content.replace(old_str, new_str)
+    
     # Update title if provided
     if title is not None:
         doc["title"] = title

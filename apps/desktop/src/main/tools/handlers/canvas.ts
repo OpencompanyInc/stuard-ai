@@ -146,6 +146,23 @@ export async function execCanvasWrite(args: any, _ctx: RouterContext): Promise<a
     }
   }
 
+  // Handle edit action (find and replace)
+  if (action === 'edit') {
+    const oldStr = args?.old_string;
+    const newStr = args?.new_string ?? '';
+    const currentContent = doc.content || '';
+
+    if (!oldStr) {
+      return { ok: false, error: 'old_string is required for edit action' };
+    }
+
+    if (!currentContent.includes(oldStr)) {
+      return { ok: false, error: 'old_string not found in document' };
+    }
+
+    doc.content = currentContent.replace(oldStr, newStr);
+  }
+
   // Update title if provided
   if (title !== undefined && title !== null) {
     doc.title = title;

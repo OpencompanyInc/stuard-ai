@@ -3,14 +3,14 @@
  * Redesigned for beginner-friendliness and Scratch-like UX
  */
 import React, { useMemo, useState, useEffect, useCallback } from "react";
-import { X, Settings, Trash2, ArrowRight, Sparkles, Info, ChevronDown, ChevronRight, Hash, Activity, GitBranch, GitMerge, FileText, Zap, Power, Paintbrush, Repeat, RotateCw, List, Plus, GripVertical, Package, ArrowRightFromLine } from "lucide-react";
+import { X, Settings, Trash2, ArrowRight, Sparkles, Info, ChevronDown, ChevronRight, Hash, Activity, GitBranch, GitMerge, FileText, Zap, Power, Repeat, RotateCw, List, Plus, GripVertical, Package, ArrowRightFromLine } from "lucide-react";
 import { ToolArgsEditor, TextInputWithVariables, type UpstreamNode } from "./SmartArgEditor";
 import { getToolSchema, getToolOutputs } from "../constants/tool-schemas";
 import { getToolIcon, getToolColor, CATEGORY_COLORS } from "../constants/paletteCategories";
 import { parseGuard, guardToString } from "../builder/guards";
 import { VariablesPanel } from "./VariablesPanel";
 import type { DesignerModel, WorkflowVariable, DesignerWire, WorkflowInputParam, WorkflowOutputField } from "../types";
-import { UIBuilderModal } from "../../ui-builder";
+// UIBuilderModal is now handled inside ToolArgsEditor for custom_ui/update_custom_ui tools
 
 /**
  * Compute chain indices for all nodes based on the flow of connections.
@@ -116,7 +116,6 @@ function getUpstreamNodes(model: DesignerModel, nodeId: string): UpstreamNode[] 
 
 export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onClose }: InspectorPanelProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [showUIBuilder, setShowUIBuilder] = useState(false);
 
   const allItems = [...model.triggers, ...model.nodes];
   const item = allItems.find(n => n.id === selectedNodeId);
@@ -202,7 +201,7 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
   };
 
   return (
-    <div className="flex flex-col h-full bg-white border-l border-slate-200 shadow-xl z-20 w-[400px]">
+    <div className="flex flex-col h-full w-full bg-white">
       {/* Header */}
       <div className="h-14 px-5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
         <div className="flex items-center gap-2.5">
@@ -471,21 +470,6 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
             })()}
           </div>
 
-          {/* Quick Action for custom_ui tool */}
-          {toolName === 'custom_ui' && (
-            <div>
-              <button
-                onClick={() => setShowUIBuilder(true)}
-                className="w-full py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl font-semibold flex items-center justify-center gap-2.5 hover:from-indigo-600 hover:to-purple-700 shadow-lg hover:shadow-xl transition-all group"
-              >
-                <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
-                  <Paintbrush className="w-5 h-5" />
-                </div>
-                <span>Design UI Visually</span>
-              </button>
-            </div>
-          )}
-
           {/* Settings / Arguments */}
           <div>
             <div className="flex items-center gap-2 mb-3">
@@ -586,37 +570,6 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
         </div>
       )}
 
-      {/* UI Builder Modal for custom_ui tool */}
-      {showUIBuilder && item && toolName === 'custom_ui' && (
-        <UIBuilderModal
-          html={item.args?.html || ''}
-          css={item.args?.css || ''}
-          js={item.args?.js || item.args?.script || ''}
-          windowConfig={{
-            width: item.args?.width || 800,
-            height: item.args?.height || 600,
-            title: item.args?.title,
-            position: item.args?.position,
-            alwaysOnTop: item.args?.alwaysOnTop,
-            frameless: item.args?.frameless,
-            borderRadius: item.args?.borderRadius,
-          }}
-          onSave={(result) => {
-            // Auto-save updates model without closing modal
-            updateItem({
-              args: {
-                ...item.args,
-                html: result.html,
-                css: result.css,
-                js: result.js,
-                script: result.js,
-                ...result.window,
-              }
-            });
-          }}
-          onClose={() => setShowUIBuilder(false)}
-        />
-      )}
     </div>
   );
 }

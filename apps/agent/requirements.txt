@@ -15,7 +15,9 @@ numpy>=1.26.0
 sounddevice
 soundfile
 # WASAPI loopback for system audio capture (Windows)
-# PyAudioWPatch>=0.0.7  # Temporarily disabled - not compatible with Python 3.14 yet
+PyAudioWPatch>=0.0.7  # Temporarily disabled - not compatible with Python 3.14 yet
+# Audio/Video muxing (bundles FFmpeg libs, no system install needed)
+av>=12.0.0
 pytest==8.3.4
 pyinstaller>=6.0.0
 # Encryption

@@ -197,7 +197,7 @@ export function WorkflowSidebar({
                 <div className={`w-2 h-2 rounded-full shrink-0 transition-all duration-300 ${runningIds[i.id]
                   ? 'bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.6)]'
                   : hasUpdate ? 'bg-indigo-500 animate-pulse'
-                  : selectedId === i.id ? 'bg-indigo-500 scale-110' : 'bg-slate-200 group-hover:bg-slate-300'
+                    : selectedId === i.id ? 'bg-indigo-500 scale-110' : 'bg-slate-200 group-hover:bg-slate-300'
                   }`} />
 
                 <div className="flex-1 min-w-0">

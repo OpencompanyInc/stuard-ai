@@ -74,6 +74,16 @@ export interface WireLoopConfig {
   delayMs?: number;
 }
 
+/** Stream wire configuration — when set, the wire carries real-time data chunks */
+export interface StreamWireConfig {
+  /** Which field on the source step's output contains the streamId */
+  sourceField?: string;
+  /** Consumer mode: 'reactive' processes each chunk, 'batch' collects then processes */
+  mode?: 'reactive' | 'batch';
+  /** Ring buffer size override for this wire's subscription */
+  bufferSize?: number;
+}
+
 export interface DesignerWire {
   from: string;
   to: string;
@@ -84,6 +94,8 @@ export interface DesignerWire {
   /** When true, this wire marks the end of a loop scope - nodes after this wire run outside the loop */
   loopBreak?: boolean;
   loopFanoutMode?: 'wait' | 'parallel';
+  /** When set, this wire is a stream wire — the consumer step runs reactively on each chunk */
+  stream?: StreamWireConfig;
 }
 
 /** A workflow-level variable that can be referenced by any step */
@@ -129,7 +141,7 @@ export interface StuardSpec {
     id: string;
     tool: string;
     args: any;
-    next?: Array<{ to: string; guard?: any; label?: string; loop?: any; loopBreak?: boolean; loopFanoutMode?: 'wait' | 'parallel' }>;
+    next?: Array<{ to: string; guard?: any; label?: string; loop?: any; loopBreak?: boolean; loopFanoutMode?: 'wait' | 'parallel'; stream?: StreamWireConfig }>;
     fallback?: { to: string };
     /** When true, this step waits for all incoming branches to complete before executing */
     waitForAll?: boolean;

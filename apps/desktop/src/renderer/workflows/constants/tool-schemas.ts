@@ -29,6 +29,8 @@ export interface ArgSchema {
   itemOptions?: ArgOption[];
   language?: 'python' | 'javascript' | 'shell' | 'json';
   suggestFrom?: string[];
+  advanced?: boolean;
+  hidden?: boolean;
 }
 
 export interface ToolSchema {
@@ -251,8 +253,9 @@ const CAPTURE_MODE_OPTIONS: ArgOption[] = [
 
 const MEDIA_KIND_OPTIONS: ArgOption[] = [
   { value: 'photo', label: 'Photo', description: 'Take a still image' },
-  { value: 'video', label: 'Video', description: 'Record video' },
+  { value: 'video', label: 'Video', description: 'Record video only' },
   { value: 'audio', label: 'Audio', description: 'Record audio only' },
+  { value: 'audiovideo', label: 'Audio + Video', description: 'Record both audio and video together' },
 ];
 
 const AUDIO_FORMAT_OPTIONS: ArgOption[] = [
@@ -265,6 +268,36 @@ const ANALYZE_MODE_OPTIONS: ArgOption[] = [
   { value: 'text', label: 'Text', description: 'Return plain text response' },
   { value: 'json', label: 'JSON', description: 'Return structured JSON' },
   { value: 'boolean', label: 'Boolean', description: 'Return true/false' },
+];
+
+const AI_INFERENCE_MODE_OPTIONS: ArgOption[] = [
+  { value: 'text', label: 'Text', description: 'Return plain text' },
+  { value: 'json', label: 'JSON', description: 'Return structured JSON (use with schema)' },
+];
+
+const ANALYZE_MEDIA_MODE_OPTIONS: ArgOption[] = [
+  { value: 'fast', label: 'Fast', description: 'Quick analysis, lower cost' },
+  { value: 'detailed', label: 'Detailed', description: 'Thorough analysis, higher quality' },
+];
+
+const FILE_EDIT_MODE_OPTIONS: ArgOption[] = [
+  { value: 'replace', label: 'Replace', description: 'Replace lines in range' },
+  { value: 'delete', label: 'Delete', description: 'Delete lines in range' },
+  { value: 'add', label: 'Add', description: 'Insert lines at position' },
+];
+
+const MODEL_OPTIONS: ArgOption[] = [
+  { value: 'fast', label: 'Fast (Gemini Flash)', description: 'Gemini 2.5 Flash — fast and cheap' },
+  { value: 'quality', label: 'Quality (GPT-4.1 Mini)', description: 'GPT-4.1 Mini — higher quality' },
+  { value: 'openai/gpt-4.1-mini', label: 'GPT-4.1 Mini', description: 'OpenAI GPT-4.1 Mini' },
+  { value: 'openai/gpt-4.1', label: 'GPT-4.1', description: 'OpenAI GPT-4.1' },
+  { value: 'openai/gpt-4o', label: 'GPT-4o', description: 'OpenAI GPT-4o' },
+  { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini', description: 'OpenAI GPT-4o Mini' },
+  { value: 'openai/o3-mini', label: 'o3-mini', description: 'OpenAI o3-mini reasoning' },
+  { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', description: 'Google Gemini 2.5 Flash' },
+  { value: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro', description: 'Google Gemini 2.5 Pro' },
+  { value: 'anthropic/claude-sonnet-4-20250514', label: 'Claude Sonnet 4', description: 'Anthropic Claude Sonnet 4' },
+  { value: 'anthropic/claude-3.5-haiku', label: 'Claude 3.5 Haiku', description: 'Anthropic Claude 3.5 Haiku — fast' },
 ];
 
 const SCREEN_TARGET_OPTIONS: ArgOption[] = [
@@ -284,16 +317,40 @@ const KNOWN_SELECT_OPTIONS: Record<string, ArgOption[]> = {
   'button': MOUSE_BUTTON_OPTIONS,
   'shell': SHELL_OPTIONS,
   'voice': TTS_VOICE_OPTIONS,
-  'mode': [...CAPTURE_MODE_OPTIONS, ...ANALYZE_MODE_OPTIONS],
+  'model': MODEL_OPTIONS,
   'kind': MEDIA_KIND_OPTIONS,
   'format': AUDIO_FORMAT_OPTIONS,
   'target': SCREEN_TARGET_OPTIONS,
   'quality': SCREEN_QUALITY_OPTIONS,
 };
 
+const ADVANCED_ARG_KEYS = new Set([
+  'timeoutMs',
+  'cwd',
+  'shell',
+  'background',
+  'terminalId',
+  'envId',
+  'device',
+  'filePath',
+  'sessionId',
+  'maxDurationMs',
+  'includeSpamTrash',
+  'pageSize',
+  'orderBy',
+  'maxResults',
+  'temperature',
+  'model',
+]);
+
+const HIDDEN_ARG_KEYS = new Set([
+  '_uiDesign',
+]);
+
 function inferArgType(key: string, value: any): ArgType {
   if (key === 'code' || key === 'script') return 'code';
   if (key === 'path' || key === 'filePath' || key === 'imagePath' || key === 'src' || key === 'dest' || key === 'cwd' || key === 'outputPath') return 'path';
+  if (key === 'attachments') return 'files';
   if (key === 'keys' && Array.isArray(value)) return 'hotkey';
   if (key === 'schema' || key === 'layout' || key === 'window' || key === 'region' || key === 'task') return 'json';
   if (typeof value === 'boolean') return 'boolean';
@@ -399,6 +456,8 @@ function convertDefinition(def: ToolDefinition): ToolSchema {
       description: KNOWN_DESCRIPTIONS[key],
       default: value,
       placeholder: typeof value === 'string' ? value : undefined,
+      advanced: ADVANCED_ARG_KEYS.has(key),
+      hidden: HIDDEN_ARG_KEYS.has(key),
     };
 
     if (type === 'select' && KNOWN_SELECT_OPTIONS[key]) {
@@ -459,6 +518,68 @@ for (const trigger of TRIGGER_DEFINITIONS) {
 // SCHEMA OVERRIDES - Explicit field configurations for better UX
 // ============================================================================
 
+// Command tools - require a human-readable description for approvals
+for (const toolId of ['run_command', 'run_system_command']) {
+  if (TOOL_SCHEMAS[toolId]) {
+    TOOL_SCHEMAS[toolId].args = {
+      ...TOOL_SCHEMAS[toolId].args,
+      description: {
+        type: 'string',
+        label: 'Explain this step',
+        description: 'A short, non-technical explanation shown to you when approving this step.',
+        required: true,
+        placeholder: 'Example: List the files in my Downloads folder',
+      },
+    };
+  }
+}
+
+// write_file requires a description for approval
+if (TOOL_SCHEMAS['write_file']) {
+  TOOL_SCHEMAS['write_file'].args = {
+    ...TOOL_SCHEMAS['write_file'].args,
+    description: {
+      type: 'string',
+      label: 'Explain this step',
+      description: 'A short, non-technical explanation shown to you when approving this step.',
+      required: true,
+      placeholder: 'Example: Save the meeting notes to notes.txt',
+    },
+    append: {
+      ...(TOOL_SCHEMAS['write_file'].args.append || { type: 'boolean', label: 'Append' }),
+      advanced: true,
+    },
+  };
+}
+
+// Gmail send - use FilesEditor for attachments, hide rarely-used fields
+if (TOOL_SCHEMAS['gmail_send_message']) {
+  TOOL_SCHEMAS['gmail_send_message'].args = {
+    ...TOOL_SCHEMAS['gmail_send_message'].args,
+    attachments: {
+      type: 'files',
+      label: 'Attachments',
+      description: 'Files to attach to the email',
+      advanced: false,
+    },
+    contentType: {
+      ...(TOOL_SCHEMAS['gmail_send_message'].args.contentType || {
+        type: 'select',
+        label: 'Content Type',
+      }),
+      advanced: true,
+    },
+    cc: {
+      ...(TOOL_SCHEMAS['gmail_send_message'].args.cc || { type: 'array', label: 'CC' }),
+      advanced: true,
+    },
+    bcc: {
+      ...(TOOL_SCHEMAS['gmail_send_message'].args.bcc || { type: 'array', label: 'BCC' }),
+      advanced: true,
+    },
+  };
+}
+
 // Custom UI - code-style editors for layout, CSS, and data
 if (TOOL_SCHEMAS['custom_ui']) {
   TOOL_SCHEMAS['custom_ui'].args = {
@@ -509,6 +630,18 @@ if (TOOL_SCHEMAS['custom_ui']) {
       type: 'json',
       label: 'Initial Data',
       description: 'Data object passed to the UI components. Use the key-value editor to add variables like {{stepId.field}}',
+    },
+    pages: {
+      type: 'json',
+      label: 'Pages (Multi-page SPA)',
+      description: 'Define multiple pages for a single-page app experience. Each page can have its own HTML/CSS/JS. Use data-navigate="pageName" in buttons to navigate.',
+      placeholder: '{ "home": { "html": "..." }, "settings": { "html": "..." } }',
+    },
+    startPage: {
+      type: 'string',
+      label: 'Start Page',
+      description: 'The initial page to show when using the pages system',
+      placeholder: 'home',
     },
     // Window settings (shown in collapsible section)
     width: {
@@ -583,6 +716,18 @@ if (TOOL_SCHEMAS['update_custom_ui']) {
     data: {
       type: 'json',
       label: 'Updated Data',
+    },
+    pages: {
+      type: 'json',
+      label: 'Pages (Multi-page SPA)',
+      description: 'Update or add pages to the existing UI. Each page can have its own HTML/CSS/JS.',
+      placeholder: '{ "home": { "html": "..." }, "settings": { "html": "..." } }',
+    },
+    navigateTo: {
+      type: 'string',
+      label: 'Navigate To Page',
+      description: 'Navigate to a specific page when updating (requires pages to be defined)',
+      placeholder: 'home',
     },
   };
 }
@@ -695,6 +840,65 @@ if (TOOL_SCHEMAS['gmail_send_message']) {
       label: 'Attachments',
       description: 'Files to attach to the email. Select local files to include.',
     },
+  };
+}
+
+// --- Tool-specific 'mode' overrides ---
+// (mode was removed from generic KNOWN_SELECT_OPTIONS to avoid capture_media modes leaking into AI tools)
+
+// Capture tools: fixed / until_stop
+for (const toolId of ['capture_media', 'capture_screen', 'capture_system_audio']) {
+  if (TOOL_SCHEMAS[toolId]?.args?.mode) {
+    TOOL_SCHEMAS[toolId].args.mode = {
+      ...TOOL_SCHEMAS[toolId].args.mode,
+      type: 'select',
+      options: CAPTURE_MODE_OPTIONS,
+    };
+  }
+}
+
+// Analyze current screen: text / json / boolean
+if (TOOL_SCHEMAS['analyze_current_screen']?.args?.mode) {
+  TOOL_SCHEMAS['analyze_current_screen'].args.mode = {
+    ...TOOL_SCHEMAS['analyze_current_screen'].args.mode,
+    type: 'select',
+    options: ANALYZE_MODE_OPTIONS,
+  };
+}
+
+// Analyze media: fast / detailed
+if (TOOL_SCHEMAS['analyze_media']?.args?.mode) {
+  TOOL_SCHEMAS['analyze_media'].args.mode = {
+    ...TOOL_SCHEMAS['analyze_media'].args.mode,
+    type: 'select',
+    options: ANALYZE_MEDIA_MODE_OPTIONS,
+  };
+}
+
+// AI inference: text / json + model dropdown
+if (TOOL_SCHEMAS['ai_inference']?.args?.mode) {
+  TOOL_SCHEMAS['ai_inference'].args.mode = {
+    ...TOOL_SCHEMAS['ai_inference'].args.mode,
+    type: 'select',
+    options: AI_INFERENCE_MODE_OPTIONS,
+  };
+}
+if (TOOL_SCHEMAS['ai_inference']?.args?.model) {
+  TOOL_SCHEMAS['ai_inference'].args.model = {
+    ...TOOL_SCHEMAS['ai_inference'].args.model,
+    type: 'select',
+    label: 'Model',
+    description: 'AI model to use for inference',
+    options: MODEL_OPTIONS,
+  };
+}
+
+// File edit: replace / delete / add
+if (TOOL_SCHEMAS['file_edit']?.args?.mode) {
+  TOOL_SCHEMAS['file_edit'].args.mode = {
+    ...TOOL_SCHEMAS['file_edit'].args.mode,
+    type: 'select',
+    options: FILE_EDIT_MODE_OPTIONS,
   };
 }
 

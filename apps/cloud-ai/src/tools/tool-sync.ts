@@ -116,7 +116,7 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   stop_headless_agent: ['cancel task', 'stop agent', 'abort task'],
 
   // UI
-  custom_ui: ['dialog', 'prompt', 'interface', 'form', 'popup'],
+  custom_ui: ['dialog', 'prompt', 'interface', 'form', 'popup', 'pages', 'spa', 'multi-page', 'app', 'navigation'],
   show_table: ['display data', 'grid', 'results table'],
   show_choices: ['multiple choice', 'options', 'selection'],
   ask_confirmation: ['confirm', 'yes no', 'approval'],

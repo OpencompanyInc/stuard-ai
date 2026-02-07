@@ -274,8 +274,10 @@ async def capture_screen(
             scale = min(1.0, 1280 / max(width, height))
         elif quality == "medium":
             scale = min(1.0, 1920 / max(width, height))
+        elif quality == "ultra":
+            scale = 1.0  # Native resolution with high bitrate
         else:  # high
-            scale = 1.0
+            scale = 1.0  # Native resolution
 
         out_width = int(width * scale)
         out_height = int(height * scale)
@@ -301,7 +303,7 @@ async def capture_screen(
         audio_path = None
         audio_stop_event = threading.Event()
         if include_audio:
-            audio_path = path.rsplit(".", 1)[0] + "_audio.wav"
+            audio_path = used_path.rsplit(".", 1)[0] + "_audio.wav"
             recording_info["audioFilePath"] = audio_path
             audio_thread = threading.Thread(
                 target=_capture_system_audio_worker,
@@ -311,9 +313,9 @@ async def capture_screen(
             audio_thread.start()
 
         start = time.monotonic()
-        frame_interval = 1.0 / fps
-        next_frame_time = start
         next_emit_time = start
+        frames_written = 0
+        last_frame = None
 
         try:
             with mss.mss() as sct:
@@ -323,52 +325,95 @@ async def capture_screen(
                         print(f"[screen_capture] Stop signal detected!")
                         break
 
+                    # Capture a new frame
+                    try:
+                        img = sct.grab(monitor)
+                        frame = np.array(img)
+                        # Convert BGRA to BGR
+                        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                        # Resize if needed
+                        if scale != 1.0:
+                            frame = cv2.resize(frame, (out_width, out_height))
+                        last_frame = frame
+                    except Exception as e:
+                        print(f"[screen_capture] Frame capture error: {e}")
+                        time.sleep(0.001)
+                        continue
+
+                    # Calculate how many total frames should exist at this
+                    # point based on elapsed wall-clock time, then write the
+                    # captured frame enough times to fill any timing gaps.
+                    # This keeps playback speed 1:1 with real time even when
+                    # capture is slower than the target fps.
                     now = time.monotonic()
+                    elapsed = now - start
+                    expected_frame_count = int(elapsed * fps) + 1
+                    writes = max(1, expected_frame_count - frames_written)
+                    for _ in range(writes):
+                        out.write(frame)
+                        frames_written += 1
 
-                    # Capture frame at the right interval
-                    if now >= next_frame_time:
-                        try:
-                            img = sct.grab(monitor)
-                            frame = np.array(img)
-                            # Convert BGRA to BGR
-                            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-                            # Resize if needed
-                            if scale != 1.0:
-                                frame = cv2.resize(frame, (out_width, out_height))
-                            out.write(frame)
-                        except Exception as e:
-                            print(f"[screen_capture] Frame capture error: {e}")
-
-                        next_frame_time = now + frame_interval
+                    # Sleep until next frame is due
+                    next_due = start + frames_written / fps
+                    sleep_s = next_due - time.monotonic()
+                    if sleep_s > 0.002:
+                        time.sleep(sleep_s - 0.001)
+                    else:
+                        time.sleep(0.001)
 
                     # Emit progress
-                    if emit and loop and now - next_emit_time >= 0.5:
-                        next_emit_time = now
-                        elapsed_ms = int((now - start) * 1000)
+                    now2 = time.monotonic()
+                    if emit and loop and now2 - next_emit_time >= 0.5:
+                        next_emit_time = now2
+                        elapsed_ms = int((now2 - start) * 1000)
                         try:
                             loop.call_soon_threadsafe(
                                 asyncio.create_task,
-                                emit("recording_progress", {
-                                    "sessionId": session_id,
-                                    "elapsedMs": elapsed_ms,
-                                    "mode": mode,
-                                })
+                                emit(
+                                    "recording_progress",
+                                    {
+                                        "sessionId": session_id,
+                                        "elapsedMs": elapsed_ms,
+                                        "mode": mode,
+                                    },
+                                ),
                             )
                         except Exception:
                             pass
 
-                    # Small sleep to prevent busy loop
-                    time.sleep(0.001)
-
         finally:
+            # Final padding to guarantee exact duration
+            elapsed_s = max(0.0, time.monotonic() - start)
+            target_s = (duration_ms / 1000.0) if mode == "fixed" else elapsed_s
+            expected_frames = int(round(target_s * float(fps)))
+            if last_frame is not None and expected_frames > frames_written:
+                for _ in range(expected_frames - frames_written):
+                    try:
+                        out.write(last_frame)
+                    except Exception:
+                        break
             out.release()
+            print(f"[screen_capture] Wrote {frames_written} frames in {elapsed_s:.2f}s (target: {expected_frames} @ {fps}fps)")
 
             # Stop audio capture
             if audio_thread:
                 audio_stop_event.set()
                 audio_thread.join(timeout=2.0)
 
-            if include_audio and audio_path and os.path.isfile(audio_path):
+            # Mux audio into video if both files exist
+            if include_audio and audio_path and os.path.isfile(audio_path) and os.path.isfile(used_path):
+                # Create muxed output path
+                muxed_path = used_path.rsplit(".", 1)[0] + "_muxed." + used_path.rsplit(".", 1)[1]
+                result = _mux_video_audio_pyav(used_path, audio_path, muxed_path)
+                if result:
+                    recording_info["path"] = result
+                    recording_info["hasAudio"] = True
+                    recording_info["audioFilePath"] = None  # Cleaned up
+                else:
+                    # Muxing failed, keep separate files
+                    recording_info["hasAudio"] = True
+                    print(f"[screen_capture] Muxing failed, keeping separate files")
+            elif include_audio and audio_path and os.path.isfile(audio_path):
                 recording_info["hasAudio"] = True
 
         recording_info["completed"] = True
@@ -430,13 +475,16 @@ async def capture_screen(
         _active_screen_sessions.pop(session_id, None)
         _active_screen_recordings.pop(session_id, None)
 
+    final_path = recording_info.get("path")
+    mime = "video/webm" if str(final_path or "").lower().endswith(".webm") else "video/mp4"
+
     return {
         "ok": not recording_info.get("error"),
         "sessionId": session_id,
-        "filePath": recording_info.get("path"),
+        "filePath": final_path,
         "mode": mode,
         "status": "completed",
-        "mimeType": "video/mp4",
+        "mimeType": mime,
         "hasAudio": recording_info.get("hasAudio", False),
         "error": recording_info.get("error"),
     }
@@ -730,6 +778,91 @@ async def stop_system_audio(
 
 # Helper functions
 
+def _mux_video_audio_pyav(video_path: str, audio_path: str, output_path: str) -> Optional[str]:
+    """
+    Mux video and audio files into a single output file using PyAV.
+    This uses the bundled FFmpeg libraries, no system FFmpeg install needed.
+    
+    Args:
+        video_path: Path to video file (mp4/webm)
+        audio_path: Path to audio file (wav)
+        output_path: Path for muxed output
+    
+    Returns:
+        Path to muxed file on success, None on failure
+    """
+    try:
+        import av
+    except ImportError:
+        print("[mux] PyAV not installed, cannot mux audio into video")
+        return None
+    
+    if not os.path.isfile(video_path) or not os.path.isfile(audio_path):
+        print(f"[mux] Missing files: video={os.path.isfile(video_path)}, audio={os.path.isfile(audio_path)}")
+        return None
+    
+    try:
+        print(f"[mux] Muxing {video_path} + {audio_path} -> {output_path}")
+        
+        # Open input containers
+        video_container = av.open(video_path)
+        audio_container = av.open(audio_path)
+        
+        # Create output container
+        output_container = av.open(output_path, mode='w')
+        
+        # Get input streams
+        video_stream = video_container.streams.video[0]
+        audio_stream = audio_container.streams.audio[0]
+        
+        # Add output streams (copy codec from video, transcode audio to AAC)
+        out_video_stream = output_container.add_stream(template=video_stream)
+        out_audio_stream = output_container.add_stream('aac', rate=audio_stream.rate)
+        out_audio_stream.layout = 'stereo' if audio_stream.channels >= 2 else 'mono'
+        
+        # Copy video packets (no re-encoding)
+        for packet in video_container.demux(video_stream):
+            if packet.dts is None:
+                continue
+            packet.stream = out_video_stream
+            output_container.mux(packet)
+        
+        # Decode and re-encode audio to AAC
+        for frame in audio_container.decode(audio_stream):
+            # Resample if needed
+            frame.pts = None  # Let encoder assign PTS
+            for packet in out_audio_stream.encode(frame):
+                output_container.mux(packet)
+        
+        # Flush audio encoder
+        for packet in out_audio_stream.encode():
+            output_container.mux(packet)
+        
+        # Close containers
+        output_container.close()
+        video_container.close()
+        audio_container.close()
+        
+        if os.path.isfile(output_path):
+            print(f"[mux] Successfully muxed to {output_path}")
+            # Clean up temp files
+            try:
+                os.remove(video_path)
+                os.remove(audio_path)
+            except Exception as e:
+                print(f"[mux] Warning: Could not remove temp files: {e}")
+            return output_path
+        else:
+            print("[mux] Output file not created")
+            return None
+            
+    except Exception as e:
+        print(f"[mux] Error muxing with PyAV: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 def _get_window_rect(window_title: str) -> Optional[Dict[str, int]]:
     """Get window rectangle by title (Windows only)."""
     if platform.system() != "Windows" or not window_title:
@@ -950,6 +1083,73 @@ def _capture_wasapi_loopback(
         p.terminate()
 
 
+def _find_loopback_device_linux() -> Optional[int]:
+    """Find PulseAudio/PipeWire monitor source on Linux."""
+    try:
+        import sounddevice as sd
+        
+        devices = sd.query_devices()
+        
+        # Priority order for Linux loopback devices:
+        # 1. Default output monitor (most common)
+        # 2. Any device with "monitor" in name
+        # 3. Any device with "pulse" and input channels
+        
+        monitor_devices = []
+        for i, dev in enumerate(devices):
+            name = str(dev.get("name", "")).lower()
+            max_in = int(dev.get("max_input_channels", 0))
+            
+            if max_in > 0:
+                # PulseAudio/PipeWire monitor sources
+                if "monitor" in name:
+                    # Prefer default/built-in monitors
+                    if "built-in" in name or "default" in name:
+                        return i
+                    monitor_devices.append((i, name))
+        
+        # Return first monitor device found
+        if monitor_devices:
+            return monitor_devices[0][0]
+        
+        return None
+    except Exception as e:
+        print(f"[system_audio] Error finding Linux loopback device: {e}")
+        return None
+
+
+def _find_loopback_device_macos() -> Optional[int]:
+    """Find virtual audio device on macOS (BlackHole, Soundflower, etc.)."""
+    try:
+        import sounddevice as sd
+        
+        devices = sd.query_devices()
+        virtual_devices = []
+        
+        for i, dev in enumerate(devices):
+            name = str(dev.get("name", "")).lower()
+            max_in = int(dev.get("max_input_channels", 0))
+            
+            if max_in > 0:
+                # Known virtual audio devices for macOS
+                if "blackhole" in name:
+                    return i  # Prefer BlackHole
+                elif "soundflower" in name:
+                    virtual_devices.append((i, 1))  # Second priority
+                elif "loopback" in name:
+                    virtual_devices.append((i, 2))  # Third priority
+        
+        if virtual_devices:
+            # Sort by priority and return best match
+            virtual_devices.sort(key=lambda x: x[1])
+            return virtual_devices[0][0]
+        
+        return None
+    except Exception as e:
+        print(f"[system_audio] Error finding macOS loopback device: {e}")
+        return None
+
+
 def _capture_generic_loopback(
     path: str,
     duration_ms: int,
@@ -971,21 +1171,46 @@ def _capture_generic_loopback(
             recording_info["error"] = "sounddevice/soundfile not installed"
         return
 
-    print(f"[system_audio] Starting generic loopback capture for session '{session_id}'")
+    plat = platform.system()
+    print(f"[system_audio] Starting generic loopback capture for session '{session_id}' on {plat}")
 
-    # Try to find a loopback/monitor device
+    # Platform-specific device discovery
     loopback_device = None
-    for i, dev in enumerate(sd.query_devices()):
-        name = str(dev.get("name", "")).lower()
-        if any(x in name for x in ["blackhole", "soundflower", "loopback", "monitor"]):
-            if int(dev.get("max_input_channels", 0)) > 0:
-                loopback_device = i
-                break
+    if plat == "Darwin":  # macOS
+        loopback_device = _find_loopback_device_macos()
+        if loopback_device is None:
+            error_msg = (
+                "No virtual audio device found. To capture system audio on macOS:\n"
+                "1. Install BlackHole: brew install blackhole-2ch\n"
+                "2. Open Audio MIDI Setup (Applications > Utilities)\n"
+                "3. Create a Multi-Output Device with your speakers + BlackHole\n"
+                "4. Set the Multi-Output Device as your system output\n"
+                "More info: https://github.com/ExistentialAudio/BlackHole"
+            )
+            print(f"[system_audio] {error_msg}")
+            if recording_info:
+                recording_info["error"] = error_msg
+            return
+    else:  # Linux
+        loopback_device = _find_loopback_device_linux()
+        if loopback_device is None:
+            error_msg = (
+                "No PulseAudio/PipeWire monitor source found. Ensure:\n"
+                "1. PulseAudio or PipeWire is running\n"
+                "2. You have audio output active (play some audio)\n"
+                "3. Run: pactl list sources | grep -i monitor"
+            )
+            print(f"[system_audio] {error_msg}")
+            if recording_info:
+                recording_info["error"] = error_msg
+            return
 
-    if loopback_device is None:
-        if recording_info:
-            recording_info["error"] = "No loopback device found. On macOS, install BlackHole."
-        return
+    # Log which device we're using
+    try:
+        device_info = sd.query_devices(loopback_device)
+        print(f"[system_audio] Using loopback device: {device_info.get('name', 'unknown')}")
+    except Exception:
+        pass
 
     try:
         device_info = sd.query_devices(loopback_device)

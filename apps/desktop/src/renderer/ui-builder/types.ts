@@ -198,7 +198,9 @@ export interface UICanvasConfig {
 export interface UIWindowConfig {
   width: number;
   height: number;
-  position: 'center' | 'topleft' | 'topright' | 'bottomleft' | 'bottomright' | 'mouse';
+  position: 'center' | 'topleft' | 'topright' | 'bottomleft' | 'bottomright' | 'bottomcenter' | 'mouse' | 'cursor' | 'custom';
+  customX?: number;
+  customY?: number;
   alwaysOnTop: boolean;
   frameless: boolean;
   transparent: boolean;
@@ -206,7 +208,80 @@ export interface UIWindowConfig {
   resizable?: boolean;
   minimizable?: boolean;
   closable?: boolean;
+  draggable?: boolean;
   title?: string;
+
+  // === ENHANCED WINDOW APPEARANCE ===
+  // Background type: solid color, gradient, or image
+  backgroundType?: 'color' | 'gradient' | 'image' | 'transparent';
+
+  // Solid color background (hex, rgb, rgba)
+  backgroundColor?: string;
+
+  // Gradient background configuration
+  gradient?: {
+    type: 'linear' | 'radial' | 'conic';
+    angle?: number; // For linear gradient (degrees)
+    stops: Array<{
+      color: string;
+      position: number; // 0-100
+    }>;
+    centerX?: number; // For radial/conic (0-100)
+    centerY?: number; // For radial/conic (0-100)
+  };
+
+  // Image background configuration
+  backgroundImage?: {
+    url: string;
+    fit: 'cover' | 'contain' | 'fill' | 'none' | 'scale-down';
+    position: 'center' | 'top' | 'bottom' | 'left' | 'right' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+    repeat: 'no-repeat' | 'repeat' | 'repeat-x' | 'repeat-y';
+    opacity?: number; // 0-1
+  };
+
+  // Overlay for better text readability over images/gradients
+  overlay?: {
+    enabled: boolean;
+    color: string; // rgba color
+    blur?: number; // backdrop blur in px
+  };
+
+  // Window shadow
+  shadow?: {
+    enabled: boolean;
+    color: string;
+    blur: number;
+    spread: number;
+    x: number;
+    y: number;
+  };
+
+  // Border styling
+  border?: {
+    enabled: boolean;
+    color: string;
+    width: number;
+    style: 'solid' | 'dashed' | 'dotted';
+  };
+
+  // Animation
+  animation?: {
+    open?: 'fade' | 'slide-up' | 'slide-down' | 'slide-left' | 'slide-right' | 'scale' | 'none';
+    close?: 'fade' | 'slide-up' | 'slide-down' | 'slide-left' | 'slide-right' | 'scale' | 'none';
+    duration: number; // ms
+    easing: 'ease' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'linear';
+  };
+
+  // Content padding
+  contentPadding?: number;
+
+  // Typography defaults
+  typography?: {
+    fontFamily?: string;
+    fontSize?: number;
+    lineHeight?: number;
+    color?: string;
+  };
 }
 
 export interface UIDesign {
@@ -358,7 +433,62 @@ export interface UIBuilderModalProps {
   isOpen?: boolean;
 }
 
-// === Helper Types ===
+// === PAGE SYSTEM ===
+
+export interface UIPage {
+  id: string;
+  name: string;
+  title?: string;
+  html: string;
+  css?: string;
+  js?: string;
+  // Page-specific window overrides
+  windowConfig?: Partial<UIWindowConfig>;
+  // Navigation rules
+  navigation?: {
+    // Actions that trigger navigation to this page
+    triggers?: Array<{
+      action: string;
+      condition?: string; // Optional condition expression
+    }>;
+    // Timeout auto-navigation
+    autoNavigate?: {
+      delayMs: number;
+      targetPage: string;
+      condition?: string;
+    };
+  };
+}
+
+export interface UIPageFlow {
+  pages: Record<string, UIPage>;
+  startPage: string;
+  // Global navigation handlers
+  onAction?: Record<string, {
+    targetPage: string;
+    condition?: string;
+    dataMapping?: Record<string, string>; // Map form data to page data
+  }>;
+}
+
+export interface PageFlowNode {
+  id: string;
+  pageId: string;
+  x: number;
+  y: number;
+  // Outgoing connections (action -> target page)
+  connections: Array<{
+    action: string;
+    targetNodeId: string;
+    condition?: string;
+    label?: string;
+  }>;
+}
+
+export interface PageFlowDesign {
+  nodes: PageFlowNode[];
+  startNodeId: string;
+}
 
 export type DeepPartial<T> = {
   [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];

@@ -348,6 +348,28 @@ async def segment_search(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": str(e)}
 
 
+async def segment_build_topic_drawers(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Build topic drawers from recent conversation segments.
+
+    Returns an array of topics (drawers) each with clusters of segments.
+    Embeddings are never returned to the client.
+    """
+    try:
+        db = get_memory_db()
+        drawers = db.build_topic_drawers(
+            query=args.get("query"),
+            limit_topics=args.get("limit_topics", 50),
+            limit_segments_per_topic=args.get("limit_segments_per_topic", 200),
+            cluster_threshold=args.get("cluster_threshold", 0.82),
+            max_clusters_per_topic=args.get("max_clusters_per_topic", 12),
+            segments_scan_limit=args.get("segments_scan_limit", 2000),
+        )
+        return {"ok": True, "drawers": drawers, "count": len(drawers)}
+    except Exception as e:
+        logger.exception("segment_build_topic_drawers failed")
+        return {"ok": False, "error": str(e), "drawers": []}
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SPACE HANDLERS
 # ═══════════════════════════════════════════════════════════════════════════════

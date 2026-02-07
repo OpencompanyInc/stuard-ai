@@ -110,6 +110,11 @@ export async function executeFromTrigger(
       }
     }
 
+    // Ensure trigger context is available for templates (fixes {{trigger.data.X}})
+    functionCtx.trigger = {
+      data: inputs || {}
+    };
+
     engineCtx.logFn(`📞 Calling function trigger: ${triggerId}`);
 
     // Execute the chain starting from startStep

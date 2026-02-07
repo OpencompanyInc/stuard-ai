@@ -11,6 +11,15 @@ export type LoopConfig = {
   delayMs?: number;
 };
 
+export type StreamWireConfig = {
+  /** Which field on the source step's output contains the streamId */
+  sourceField?: string;
+  /** Consumer mode: 'reactive' processes each chunk, 'batch' collects then processes */
+  mode?: 'reactive' | 'batch';
+  /** Ring buffer size override for this wire's subscription */
+  bufferSize?: number;
+};
+
 export type StuardEdge = {
   to: string;
   guard?: any;
@@ -18,6 +27,8 @@ export type StuardEdge = {
   loop?: LoopConfig;
   loopBreak?: boolean;
   loopFanoutMode?: 'wait' | 'parallel';
+  /** When set, this edge is a stream wire — the consumer step runs reactively on each chunk */
+  stream?: StreamWireConfig;
 };
 export type StuardStep = {
   id: string;

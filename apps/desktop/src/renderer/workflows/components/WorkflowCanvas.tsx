@@ -78,6 +78,7 @@ interface ExecutionState {
   stepStates: Record<string, StepExecutionStatus>;
   activeWireFrom?: string;
   activeWireTo?: string;
+  activeStreams?: Set<string>; // Set of "sourceId->consumerId" keys for active stream wires
 }
 
 interface WorkflowCanvasProps {
@@ -112,15 +113,35 @@ interface WorkflowCanvasProps {
   onWireContextMenu?: (index: number, e: React.MouseEvent) => void;
   onWireReconnect?: (index: number, end: 'from' | 'to') => void;
   onCanvasContextMenu?: (e: React.MouseEvent) => void;
+  connectingStreamFrom?: string;
+  onNodeStreamConnect?: (id: string) => void;
 }
 
 export function WorkflowCanvas({
   model, selectedId, selectedNodeId, connectingFrom, reconnecting, executionState, size,
   canvasRef, alignmentGuides = [], zoom = 1, selectedWireIndex, onWheel, onZoomIn, onZoomOut, onZoomReset, onAutoOrganize,
   onDragOver, onDrop, onMouseMove, onMouseUp, onMouseLeave, onCanvasClick,
-  onNodeSelect, onNodeMouseDown, onNodeContextMenu, onNodeConnect, onWireSelect, onWireDelete, onWireContextMenu, onWireReconnect, onCanvasContextMenu
+  onNodeSelect, onNodeMouseDown, onNodeContextMenu, onNodeConnect, onWireSelect, onWireDelete, onWireContextMenu, onWireReconnect, onCanvasContextMenu,
+  connectingStreamFrom, onNodeStreamConnect
 }: WorkflowCanvasProps) {
   const [hoveredWireIndex, setHoveredWireIndex] = useState<number | null>(null);
+  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
+
+  const safeWires: DesignerWire[] = Array.isArray((model as any)?.wires) ? ((model as any).wires as DesignerWire[]) : [];
+
+  // Compute which nodes have stream wires connected (for showing stream ports)
+  const streamPortInfo = useMemo(() => {
+    const hasStreamOut = new Set<string>();
+    const hasStreamIn = new Set<string>();
+    for (const w of safeWires) {
+      if ((w as any).stream) {
+        hasStreamOut.add(w.from);
+        hasStreamIn.add(w.to);
+      }
+    }
+    return { hasStreamOut, hasStreamIn };
+  }, [safeWires]);
+
   const scaledSize = {
     w: size.w * zoom,
     h: size.h * zoom
@@ -135,7 +156,10 @@ export function WorkflowCanvas({
       className="flex-1 overflow-auto scrollbar-minimal bg-slate-50/50 relative cursor-grab active:cursor-grabbing pb-32"
       onDragOver={onDragOver}
       onDrop={onDrop}
-      onMouseMove={onMouseMove}
+      onMouseMove={(e) => {
+        setMousePos({ x: e.nativeEvent.offsetX / zoom, y: e.nativeEvent.offsetY / zoom });
+        onMouseMove?.(e);
+      }}
       onMouseUp={onMouseUp}
       onMouseLeave={onMouseLeave}
       onClick={onCanvasClick}
@@ -234,6 +258,9 @@ export function WorkflowCanvas({
             <marker id="ah-loop-break" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
               <path d="M0,0 L6,2 L0,4" fill="#f97316" />
             </marker>
+            <marker id="ah-stream" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+              <path d="M0,0 L6,2 L0,4" fill="#06b6d4" />
+            </marker>
 
             {/* Animated Gradients */}
             <linearGradient id="flow-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -245,24 +272,33 @@ export function WorkflowCanvas({
               </stop>
               <stop offset="100%" stopColor="#6366f1" stopOpacity="0.2" />
             </linearGradient>
+            {/* Stream wire animated gradient - only animate when active via CSS */}
+            <linearGradient id="stream-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#06b6d4" stopOpacity="0.3" />
+              <stop offset="50%" stopColor="#22d3ee" />
+              <stop offset="100%" stopColor="#06b6d4" stopOpacity="0.3" />
+            </linearGradient>
           </defs>
 
           {(() => {
             // Compute chain indices once for all nodes based on connection flow
-            const chainIndices = computeChainIndices(model.triggers, model.nodes, model.wires);
+            const chainIndices = computeChainIndices(model.triggers, model.nodes, safeWires);
             
-            return model.wires.map((w, i) => {
+            return safeWires.map((w, i) => {
             const all = [...model.triggers, ...model.nodes];
             const f = all.find(n => n.id === w.from);
             const t = all.find(n => n.id === w.to);
             if (!f || !t) return null;
 
-            // Calculate connection points (center-right of source, center-left of target)
-            // Node width is ~256px (w-64), header height ~50px
-            const x1 = f.position.x + 256;
-            const y1 = f.position.y + 40;
-            const x2 = t.position.x;
-            const y2 = t.position.y + 40;
+            // Calculate connection points.
+            // Normal wires: center-right of source → center-left of target.
+            // Stream wires: bottom-center of source → top-center of target.
+            const isStreamWire = !!(w as any).stream;
+
+            const x1 = isStreamWire ? (f.position.x + 128) : (f.position.x + 256);
+            const y1 = isStreamWire ? (f.position.y + 80) : (f.position.y + 40);
+            const x2 = isStreamWire ? (t.position.x + 128) : (t.position.x);
+            const y2 = isStreamWire ? (t.position.y) : (t.position.y + 40);
 
             // Detect if this is a back edge based on chain index
             // A back edge goes from a higher index to a lower index in the chain
@@ -331,6 +367,12 @@ export function WorkflowCanvas({
             const hasLoop = !!(w as any).loop;
             const loopType = (w as any).loop?.type;
             const hasLoopBreak = !!(w as any).loopBreak;
+            // Check if this wire is a stream wire
+            // (computed earlier for path endpoints)
+            
+            // Check if this stream wire is currently active (flowing data)
+            const isStreamActive = isStreamWire && executionState?.flowId === selectedId &&
+              executionState?.activeStreams?.has(`${w.from}->${w.to}`);
             
             // Check if source node is inside a loop (for "continue in loop" styling)
             const isInsideLoop = (() => {
@@ -349,13 +391,14 @@ export function WorkflowCanvas({
               return checkUpstream(w.from);
             })();
 
-            // Special colors for back edges, loop wires, and loop breaks
-            // Orange = continues in loop, Grey = exits loop (loopBreak)
+            // Special colors for back edges, loop wires, loop breaks, and stream wires
+            // Orange = continues in loop, Grey = exits loop (loopBreak), Cyan = stream wire
             const wireColor = isReconnecting ? '#f59e0b' // Amber for reconnecting wire
               : isSelected ? '#ef4444'
               : isActiveWire ? '#6366f1'
               : isCompletedWire ? '#10b981'
               : isHovered ? '#94a3b8'
+              : isStreamWire ? '#06b6d4' // Cyan for stream wires
               : isInsideLoop ? '#f97316' // Orange for wires that continue in loop
               : hasLoop ? '#a855f7' // Purple for configured loops (entry)
               : isBackEdge ? '#f59e0b' // Amber for back edges
@@ -365,6 +408,7 @@ export function WorkflowCanvas({
               : isSelected ? 'url(#ah-selected)'
               : isActiveWire ? 'url(#ah-active)'
               : isCompletedWire ? 'url(#ah-completed)'
+              : isStreamWire ? 'url(#ah-stream)' // Cyan marker for stream wires
               : isInsideLoop ? 'url(#ah-loop-break)' // Reuse orange marker
               : hasLoop ? 'url(#ah-loop-config)'
               : isBackEdge ? 'url(#ah-loop)'
@@ -396,13 +440,13 @@ export function WorkflowCanvas({
                 {/* Main wire path */}
                 <path
                   d={pathD}
-                  stroke={wireColor}
-                  strokeWidth={isReconnecting ? 3 : isSelected ? 3 : isActiveWire ? 3 : isHovered ? 2.5 : 2}
-                  strokeDasharray={isReconnecting ? '8 4' : undefined}
+                  stroke={isStreamWire && !isSelected ? '#06b6d4' : wireColor}
+                  strokeWidth={isReconnecting ? 3 : isSelected ? 3 : isActiveWire ? 3 : isStreamActive ? 3 : isStreamWire ? 2.5 : isHovered ? 2.5 : 2}
+                  strokeDasharray={isReconnecting ? '8 4' : isStreamWire ? '6 4' : undefined}
                   fill="none"
                   markerEnd={markerEnd}
-                  className={`transition-all duration-200 ${isActiveWire ? 'drop-shadow-md' : ''} ${isSelected ? 'drop-shadow-md' : ''} ${isReconnecting ? 'drop-shadow-md animate-pulse' : ''} ${isBackEdge ? 'stroke-dasharray-none' : ''}`}
-                  style={{ pointerEvents: 'none' }}
+                  className={`transition-all duration-200 ${isActiveWire ? 'drop-shadow-md' : ''} ${isSelected ? 'drop-shadow-md' : ''} ${isReconnecting ? 'drop-shadow-md animate-pulse' : ''} ${isStreamActive ? 'drop-shadow-md stream-wire-active' : isStreamWire ? 'drop-shadow-sm' : ''} ${isBackEdge ? 'stroke-dasharray-none' : ''}`}
+                  style={{ pointerEvents: 'none', ...(isStreamActive ? { animation: 'streamFlow 1.5s linear infinite', filter: 'drop-shadow(0 0 4px rgba(6,182,212,0.6))' } : {}) }}
                 />
 
                 {/* Loop indicator icon for configured loops */}
@@ -462,6 +506,19 @@ export function WorkflowCanvas({
                       strokeWidth="1.5"
                       strokeLinecap="round"
                     />
+                  </g>
+                )}
+
+                {/* Stream wire indicator icon (cyan radio/signal icon) */}
+                {isStreamWire && !isSelected && !isHovered && (
+                  <g transform={`translate(${midX}, ${midY})`}>
+                    <circle r="10" fill="white" stroke="#06b6d4" strokeWidth="1.5" className="drop-shadow-sm" />
+                    {/* Radio/signal icon - concentric arcs */}
+                    <g stroke="#06b6d4" strokeWidth="1.5" fill="none" strokeLinecap="round">
+                      <circle cx="0" cy="0" r="2" fill="#06b6d4" />
+                      <path d="M-4 -3 A5 5 0 0 1 -4 3" />
+                      <path d="M4 -3 A5 5 0 0 0 4 3" />
+                    </g>
                   </g>
                 )}
 
@@ -579,6 +636,37 @@ export function WorkflowCanvas({
             })()
           )}
 
+          {/* Stream connection preview */}
+          {connectingStreamFrom && mousePos && (
+            (() => {
+              const all = [...model.triggers, ...model.nodes];
+              const source = all.find(n => n.id === connectingStreamFrom);
+              if (!source) return null;
+              const sx = source.position.x + 128;
+              const sy = source.position.y + 80;
+              const ex = mousePos.x;
+              const ey = mousePos.y;
+              const dist = Math.abs(ex - sx);
+              const cp1x = sx;
+              const cp1y = sy + Math.max(dist * 0.3, 40);
+              const cp2x = ex;
+              const cp2y = ey - Math.max(dist * 0.3, 40);
+              const d = `M ${sx} ${sy} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${ex} ${ey}`;
+              return (
+                <path
+                  d={d}
+                  stroke="url(#stream-gradient)"
+                  strokeWidth={2.5}
+                  strokeDasharray="6 4"
+                  fill="none"
+                  markerEnd="url(#ah-stream)"
+                  className="drop-shadow-sm"
+                  style={{ pointerEvents: 'none' }}
+                />
+              );
+            })()
+          )}
+
           {/* Alignment Guides */}
           {alignmentGuides.map((guide, i) => (
             <line
@@ -613,10 +701,14 @@ export function WorkflowCanvas({
               connecting={connectingFrom === n.id}
               reconnectTarget={isReconnectTarget}
               executionStatus={executionState?.flowId === selectedId ? executionState.stepStates[n.id] : undefined}
+              hasStreamOut={model.wires?.some(w => w.from === n.id && !!(w as any).stream)}
+              hasStreamIn={model.wires?.some(w => w.to === n.id && !!(w as any).stream)}
+              connectingStreamFrom={connectingStreamFrom}
               onSelect={() => onNodeSelect?.(n.id)}
               onMouseDown={e => onNodeMouseDown?.(n.id, e)}
               onContextMenu={e => onNodeContextMenu?.(n.id, e)}
               onConnect={() => onNodeConnect?.(n.id)}
+              onStreamConnect={() => onNodeStreamConnect?.(n.id)}
             />
           );
         })}
@@ -638,10 +730,14 @@ export function WorkflowCanvas({
               connecting={connectingFrom === n.id}
               reconnectTarget={isReconnectTarget}
               executionStatus={executionState?.flowId === selectedId ? executionState.stepStates[n.id] : undefined}
+              hasStreamOut={model.wires?.some(w => w.from === n.id && !!(w as any).stream)}
+              hasStreamIn={model.wires?.some(w => w.to === n.id && !!(w as any).stream)}
+              connectingStreamFrom={connectingStreamFrom}
               onSelect={() => onNodeSelect?.(n.id)}
               onMouseDown={e => onNodeMouseDown?.(n.id, e)}
               onContextMenu={e => onNodeContextMenu?.(n.id, e)}
               onConnect={() => onNodeConnect?.(n.id)}
+              onStreamConnect={() => onNodeStreamConnect?.(n.id)}
             />
           );
         })}

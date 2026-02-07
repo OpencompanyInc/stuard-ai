@@ -3,15 +3,16 @@ import { makeLocalTool } from './shared';
 
 export const capture_media = makeLocalTool(
   'capture_media',
-  'Capture photos, videos, and audio from webcam/microphone. Use mode="until_stop" to capture indefinitely until stop_capture is called. Audio/video captures automatically share the same device between workflows. Use mode="silence" to stop recording when silence is detected for a specified duration.',
+  'Capture photos, videos, audio, or combined audiovideo from webcam/microphone. Use mode="until_stop" to capture indefinitely until stop_capture is called. Audio/video/audiovideo captures automatically share the same device between workflows. Use mode="silence" to stop recording when silence is detected for a specified duration.',
   z.object({
-    kind: z.enum(['photo', 'video', 'audio']),
+    kind: z.enum(['photo', 'video', 'audio', 'audiovideo']),
     durationMs: z
       .number()
       .int()
       .optional()
-      .describe('Duration in ms for fixed mode (required for video/audio in fixed mode)'),
-    device: z.string().optional().describe('Device ID/index'),
+      .describe('Duration in ms for fixed mode (required for video/audio/audiovideo in fixed mode)'),
+    device: z.string().optional().describe('Device ID/index for video (optional)'),
+    audioDevice: z.string().optional().describe('Audio device ID/index for audiovideo mode (optional)'),
     filePath: z.string().optional().describe('Output file path (auto-generated if not provided)'),
     mode: z
       .enum(['fixed', 'until_stop', 'silence'])
@@ -51,11 +52,16 @@ export const capture_media = makeLocalTool(
     busId: z.string().optional().describe('Bus ID when sharing device'),
     isNewBus: z.boolean().optional().describe('Whether this capture started a new shared bus'),
     subscriberCount: z.number().optional().describe('Number of workflows sharing the device'),
+    videoWidth: z.number().optional().describe('Video width for audiovideo mode'),
+    videoHeight: z.number().optional().describe('Video height for audiovideo mode'),
+    videoFps: z.number().optional().describe('Video FPS for audiovideo mode'),
+    audioSamplerate: z.number().optional().describe('Audio sample rate for audiovideo mode'),
   }),
   (ctx) => {
     const mode = String((ctx as any)?.mode || 'fixed');
-    if (mode === 'until_stop') {
-      // until_stop mode returns immediately after starting (non-blocking)
+    const kind = String((ctx as any)?.kind || 'photo');
+    if (mode === 'until_stop' || kind === 'audiovideo') {
+      // until_stop mode and audiovideo return immediately after starting (non-blocking)
       return 60000; // 60s for setup
     }
     // fixed mode blocks for the entire duration
@@ -134,11 +140,14 @@ export const subscribe_media_bus = makeLocalTool(
   'subscribe_media_bus',
   'Subscribe to a shared media bus. First subscriber starts the capture, others tap into the same stream. Use for multi-workflow scenarios.',
   z.object({
-    kind: z.enum(['audio', 'video']).describe('Type of media to capture'),
-    device: z.any().optional().describe('Device ID (string) or index (number)'),
+    kind: z.enum(['audio', 'video', 'audiovideo']).describe('Type of media to capture'),
+    device: z.any().optional().describe('Device ID (string) or index (number) for video'),
+    audioDevice: z.any().optional().describe('Audio device ID or index for audiovideo mode'),
     subscriberId: z.string().optional().describe('Unique subscriber ID (auto-generated if not provided)'),
     startRecording: z.boolean().optional().default(false).describe('Start recording to file immediately'),
     filePath: z.string().optional().describe('Output file path for recording'),
+    silenceThreshold: z.number().optional().describe('Silence detection threshold for audio/audiovideo mode'),
+    silenceDurationMs: z.number().optional().describe('Silence duration in ms for audio/audiovideo mode'),
   }),
   z.object({
     ok: z.boolean(),
@@ -162,7 +171,7 @@ export const unsubscribe_media_bus = makeLocalTool(
   'unsubscribe_media_bus',
   'Unsubscribe from a media bus. Bus auto-stops when last subscriber leaves.',
   z.object({
-    kind: z.enum(['audio', 'video']),
+    kind: z.enum(['audio', 'video', 'audiovideo']),
     device: z.any().optional().describe('Device ID or index'),
     subscriberId: z.string().describe('ID of the subscriber to remove'),
     saveRecording: z.boolean().optional().default(true).describe('Save accumulated recording to file'),

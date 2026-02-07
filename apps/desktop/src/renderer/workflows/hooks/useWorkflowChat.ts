@@ -284,7 +284,9 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
                 const HIDDEN_TOOLS = [
                   'knowledge_get_identity', 'knowledge_get_directives', 'knowledge_get_bio',
                   'knowledge_list_entities', 'knowledge_search_facts', 'knowledge_get_entity_context',
-                  'retrieve_tool_format', 'search_tools'
+                  'retrieve_tool_format', 'search_tools',
+                  // Hide duplicate workflow tools - use run_workflow and search_local_workflows instead
+                  'invoke_workflow', 'execute_workflow', 'list_local_stuards'
                 ];
                 if (HIDDEN_TOOLS.includes(tool)) {
                    return;
@@ -335,16 +337,18 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
                         workflowValue.triggers = [workflowValue.triggers];
                       }
                       
-                      // workflow_modify returns DesignerModel directly (has nodes array, not steps)
-                      if (workflowValue && (Array.isArray(workflowValue.nodes) || Array.isArray(workflowValue.triggers))) {
+                      // workflow_modify may return DesignerModel (nodes/wires) or StuardSpec (steps/next)
+                      // Always normalize through specToDesignerModel to handle both formats
+                      if (workflowValue && (Array.isArray(workflowValue.nodes) || Array.isArray(workflowValue.triggers) || Array.isArray(workflowValue.steps))) {
+                        const normalizedModel = specToDesignerModel(workflowValue);
                         // CRITICAL: Apply immediately - this updates the workflow canvas in real-time
                         console.log('[useWorkflowChat] APPLYING workflow_modify result NOW:', { 
-                          nodes: workflowValue.nodes?.length, 
-                          triggers: workflowValue.triggers?.length,
-                          wires: workflowValue.wires?.length,
+                          nodes: normalizedModel.nodes?.length, 
+                          triggers: normalizedModel.triggers?.length,
+                          wires: normalizedModel.wires?.length,
                           changes: result.changes
                         });
-                        onApplyModel(workflowValue);
+                        onApplyModel(normalizedModel);
                       }
                     }
                     // Error - log it (UI will show the error from the tool event)

@@ -646,8 +646,43 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
             else:
                 py_bin = sys.executable or shutil.which("python") or shutil.which("python3") or ("py" if sys.platform.startswith("win") else "python")
 
-        # Prepare script
+        # Prepare cleanup list
         cleanup: list[str] = []
+
+        # Inject context dict as Python variables if provided
+        # This is used by stream consumers to pass __streamChunk, __streamChunkIndex, etc.
+        context_dict = args.get("context")
+        if code and isinstance(context_dict, dict) and context_dict:
+            import json as _json
+            # Write context to temp file to avoid huge command lines/escaping issues
+            fd_ctx, ctx_path = tempfile.mkstemp(prefix="ctx-", suffix=".json")
+            try:
+                os.write(fd_ctx, _json.dumps(context_dict).encode("utf-8"))
+            finally:
+                os.close(fd_ctx)
+            cleanup.append(ctx_path)
+            
+            # Escape path for Windows
+            safe_ctx_path = ctx_path.replace("\\", "\\\\")
+            
+            preamble_lines = [
+                "import json as _stuard_json",
+                "import os as _stuard_os",
+                f"_ctx_path = '{safe_ctx_path}'",
+                "context = {}",
+                "if _stuard_os.path.exists(_ctx_path):",
+                "    try:",
+                "        with open(_ctx_path, 'r', encoding='utf-8') as _f: context = _stuard_json.load(_f)",
+                "    except Exception as e: print(f'Warning: failed to load context: {e}')"
+            ]
+            # Also inject individual keys as top-level variables for convenience
+            for k in context_dict.keys():
+                safe_key = str(k)
+                if safe_key.isidentifier() and not safe_key.startswith("_stuard_"):
+                    preamble_lines.append(f"{safe_key} = context.get('{safe_key}')")
+            preamble = "\n".join(preamble_lines) + "\n"
+            code = preamble + code
+
         script_path = path
         if not script_path:
             fd, tmp_path = tempfile.mkstemp(prefix="stuard-run-", suffix=".py")
@@ -722,6 +757,40 @@ async def run_node_script(args: Dict[str, Any], emit: Callable[[str, Dict[str, A
             return {"ok": False, "error": "missing_code_or_path"}
 
         cleanup: list[str] = []
+
+        # Inject context dict if provided
+        context_dict = args.get("context")
+        if code and isinstance(context_dict, dict) and context_dict:
+            import json as _json
+            fd_ctx, ctx_path = tempfile.mkstemp(prefix="ctx-", suffix=".json")
+            try:
+                os.write(fd_ctx, _json.dumps(context_dict).encode("utf-8"))
+            finally:
+                os.close(fd_ctx)
+            cleanup.append(ctx_path)
+            
+            # Escape path for JS string
+            safe_ctx_path = ctx_path.replace("\\", "\\\\")
+            
+            preamble_lines = [
+                "const _fs = require('fs');",
+                "let context = {};",
+                "try {",
+                f"    if (_fs.existsSync('{safe_ctx_path}')) {{",
+                f"        context = JSON.parse(_fs.readFileSync('{safe_ctx_path}', 'utf8'));",
+                "    }",
+                "} catch (e) { console.warn('Warning: failed to load context', e); }"
+            ]
+            
+            # Also inject individual keys as top-level variables
+            for k in context_dict.keys():
+                safe_key = str(k)
+                if safe_key.isidentifier():
+                    preamble_lines.append(f"let {safe_key} = context['{safe_key}'];")
+            
+            preamble = "\n".join(preamble_lines) + "\n"
+            code = preamble + code
+
         script_path = path
         if not script_path:
             fd, tmp_path = tempfile.mkstemp(prefix="run-", suffix=".js")

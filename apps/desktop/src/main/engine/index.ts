@@ -1,9 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { EngineContext, StuardSpec, StuardStep, LoopConfig } from './types';
-import { emitStepEvent, emitFlowEvent } from './events';
+import { EngineContext, StuardSpec, StuardStep, StuardEdge, LoopConfig, StreamWireConfig } from './types';
+import { emitStepEvent, emitFlowEvent, emitStreamEvent } from './events';
 import { safeStuardId, summarizeOutput, interpolateForTool, getAtPath } from './utils';
-import { getVariable } from '../tool-router';
+import { execTool, getToolKind, execLocalTool, getVariable } from '../tool-router';
 import { executeStep } from './execution';
 
 export * from './types';
@@ -123,6 +123,13 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
     } catch { }
   }
 
+  // Ensure trigger context is available for templates (fixes {{trigger.data.X}})
+  if (!ctx.trigger) {
+    ctx.trigger = {
+      data: ctx.args || ctx.input || {}
+    };
+  }
+
   // Build incoming edges map for convergence detection
   const incomingEdges = new Map<string, string[]>();
   for (const step of steps) {
@@ -153,6 +160,9 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
       }
     }
   }
+
+  // Track stream consumer promises so we wait for them before emitting flow-done
+  const streamConsumerPromises: Promise<void>[] = [];
 
   // Emit flow started
   emitFlowEvent(safe, true);
@@ -248,35 +258,86 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
         break;
       }
 
-      // Handle parallel branches (multiple nextIds)
-      if (out.nextIds && out.nextIds.length > 1) {
-        engineCtx.logFn(`[${current.id}] ⚡ Executing ${out.nextIds.length} parallel branches`);
-        const parallelSteps = out.nextIds.map(id => map.get(id)).filter(Boolean) as StuardStep[];
+      // ── NEW: Edge-based routing using out.edges ──
+      // Split edges into stream (parallel, non-blocking) and flow (sequential/parallel blocking)
+      const streamEdges = (out.edges || []).filter(e => e.stream);
+      const flowEdges = (out.edges || []).filter(e => !e.stream);
 
-        // Run all parallel branches concurrently
-        await Promise.all(parallelSteps.map(step =>
-          runBranch(step, { ...branchCtx }, current!.id)
-        ));
-        break; // All branches handled
+      // 1. Spawn stream consumers for all stream edges (non-blocking)
+      for (const streamEdge of streamEdges) {
+        const consumerStep = map.get(streamEdge.to);
+        if (!consumerStep) {
+          engineCtx.logFn(`[${current.id}] ⚠️ Stream edge target not found: ${streamEdge.to}`);
+          continue;
+        }
+
+        const streamCfg = streamEdge.stream!;
+        const sourceField = streamCfg.sourceField || 'streamId';
+        const streamId = branchCtx[current.id]?.[sourceField] || branchCtx[current.id];
+
+        if (streamId && typeof streamId === 'string') {
+          engineCtx.logFn(`[${current.id}] 📡 Stream wire to ${streamEdge.to} (streamId: ${streamId})`);
+          // Spawn async consumer loop — does not block main branch but is tracked for completion
+          const consumerPromise = runStreamConsumer(consumerStep, branchCtx, streamId, streamCfg, current.id).catch(err => {
+            engineCtx.logFn(`[${streamEdge.to}] ❌ Stream consumer error: ${err}`);
+          });
+          streamConsumerPromises.push(consumerPromise);
+        } else {
+          engineCtx.logFn(`[${current.id}] ⚠️ Stream wire to ${streamEdge.to} but no streamId found in output.${sourceField}`);
+        }
       }
 
-      // Single next step
-      if (!out.nextId) {
-        engineCtx.logFn(`[${current.id}] End of flow (no next step)`);
+      // 2. Process flow edges
+      if (flowEdges.length === 0) {
+        // No flow edges — end of this branch (stream consumers may still be running)
+        engineCtx.logFn(`[${current.id}] End of flow (no flow edges)`);
         break;
       }
 
-      const next = map.get(out.nextId);
-      if (!next) {
-        engineCtx.logFn(`Next step not found: ${out.nextId}`);
-        break;
-      }
-
-      // Handle loop execution if edge has loop configuration
-      if ((out as any).loop && (out as any).loop.type) {
-        const loopResult = await executeLoop(spec, next, branchCtx, (out as any).loop, engineCtx, map, current.id);
+      if (flowEdges.length === 1) {
+        // Single flow edge — check for loop vs regular
+        const edge = flowEdges[0];
+        const next = map.get(edge.to);
         
-        // After loop completes, continue to the break edge target (or end)
+        if (!next) {
+          engineCtx.logFn(`Next step not found: ${edge.to}`);
+          break;
+        }
+
+        // Handle loop execution if edge has loop configuration
+        if (edge.loop && edge.loop.type) {
+          const loopResult = await executeLoop(spec, next, branchCtx, edge.loop, engineCtx, map, current.id);
+          
+          // After loop completes, continue to the break edge target (or end)
+          if (loopResult.breakEdge && loopResult.breakEdge.to) {
+            engineCtx.logFn(`[${next.id}] 🔄 Loop done → continuing to: ${loopResult.breakEdge.to}`);
+            current = map.get(loopResult.breakEdge.to);
+          } else {
+            engineCtx.logFn(`[${next.id}] 🔄 Loop done → end of flow`);
+            current = undefined;
+          }
+          if (!current) break;
+          continue;
+        }
+
+        // Regular single edge — continue to next step
+        engineCtx.logFn(`[${current.id}] → Next: ${edge.to}`);
+        current = next;
+        continue;
+      }
+
+      // Multiple flow edges — check for loop edge precedence, otherwise run parallel
+      const loopEdge = flowEdges.find(e => e.loop?.type);
+      if (loopEdge) {
+        // Loop edge takes precedence
+        const next = map.get(loopEdge.to);
+        if (!next) {
+          engineCtx.logFn(`Loop target step not found: ${loopEdge.to}`);
+          break;
+        }
+
+        const loopResult = await executeLoop(spec, next, branchCtx, loopEdge.loop!, engineCtx, map, current.id);
+        
         if (loopResult.breakEdge && loopResult.breakEdge.to) {
           engineCtx.logFn(`[${next.id}] 🔄 Loop done → continuing to: ${loopResult.breakEdge.to}`);
           current = map.get(loopResult.breakEdge.to);
@@ -288,9 +349,194 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
         continue;
       }
 
-      engineCtx.logFn(`[${current.id}] → Next: ${out.nextId}`);
-      current = next;
+      // Multiple regular flow edges — run parallel branches
+      engineCtx.logFn(`[${current.id}] ⚡ Executing ${flowEdges.length} parallel branches`);
+      const parallelSteps = flowEdges.map(e => map.get(e.to)).filter(Boolean) as StuardStep[];
+
+      // Run all parallel branches concurrently
+      await Promise.all(parallelSteps.map(step =>
+        runBranch(step, { ...branchCtx }, current!.id)
+      ));
+      break; // All branches handled
     }
+  }
+
+  // Run a reactive stream consumer loop — polls stream and executes consumer step for each chunk
+  async function runStreamConsumer(
+    consumerStep: StuardStep,
+    baseCtx: any,
+    streamId: string,
+    streamCfg: StreamWireConfig,
+    sourceStepId: string
+  ): Promise<void> {
+    const mode = streamCfg.mode || 'reactive';
+    const pollIntervalMs = 50; // Poll every 50ms for new chunks
+    const maxIdleMs = 30000; // Stop after 30s of no data (stream likely closed)
+    
+    // Subscribe to the stream
+    const subResult = await execLocalTool('stream_subscribe', {
+      streamId,
+      label: `consumer:${consumerStep.id}`,
+      fromStart: false,
+    }, engineCtx);
+    
+    if (!subResult?.ok || !subResult?.subscriberId) {
+      engineCtx.logFn(`[${consumerStep.id}] 📡 Failed to subscribe to stream ${streamId}`);
+      return;
+    }
+    
+    const subscriberId = subResult.subscriberId;
+    engineCtx.logFn(`[${consumerStep.id}] 📡 Subscribed to stream (subscriberId: ${subscriberId})`);
+    
+    // Emit stream active event for UI animation
+    emitStreamEvent(safe, sourceStepId, consumerStep.id, true);
+    
+    let lastDataTime = Date.now();
+    let chunkIndex = 0;
+    const batchedChunks: any[] = [];
+    
+    // Reactive consumer loop
+    while (!controller.signal.aborted) {
+      // Read chunks from stream
+      const readResult = await execLocalTool('stream_read', {
+        streamId,
+        subscriberId,
+        maxChunks: mode === 'batch' ? 100 : 10,
+        waitMs: pollIntervalMs,
+      }, engineCtx);
+      
+      if (!readResult?.ok) {
+        // Stream might be closed or error
+        if (readResult?.closed) {
+          engineCtx.logFn(`[${consumerStep.id}] 📡 Stream closed`);
+          break;
+        }
+        // Transient error, continue polling
+        await new Promise(r => setTimeout(r, pollIntervalMs));
+        continue;
+      }
+      
+      const chunks = readResult.chunks || [];
+      
+      if (chunks.length > 0) {
+        lastDataTime = Date.now();
+        
+        if (mode === 'batch') {
+          // Batch mode: accumulate chunks
+          batchedChunks.push(...chunks);
+        } else {
+          // Reactive mode: process each chunk immediately
+          for (const chunk of chunks) {
+            if (controller.signal.aborted) break;
+            
+            // stream_read returns {index, data, timestamp} — extract .data as the actual payload
+            const chunkData = chunk?.data !== undefined ? chunk.data : chunk;
+            
+            // Build context for this chunk
+            const chunkCtx = {
+              ...baseCtx,
+              __streamChunk: chunkData,
+              __streamChunkIndex: chunkIndex,
+              __streamId: streamId,
+              __streamSourceStep: sourceStepId,
+            };
+            
+            // Create a modified step with stream context injected into args
+            // This allows tools like run_python_script to access chunk data
+            const streamStep = {
+              ...consumerStep,
+              args: {
+                ...consumerStep.args,
+                context: {
+                  __streamChunk: chunkData,
+                  __streamChunkIndex: chunkIndex,
+                  __streamId: streamId,
+                  __streamSourceStep: sourceStepId,
+                },
+              },
+            };
+            
+            emitStepEvent(safe, consumerStep.id, 'running', { 
+              wireFromId: sourceStepId,
+            } as any);
+            
+            const out = await executeStep(spec, streamStep, chunkCtx, engineCtx);
+            
+            if (!out.ok) {
+              engineCtx.logFn(`[${consumerStep.id}] ❌ Chunk ${chunkIndex} failed: ${out.error}`);
+            } else {
+              emitStepEvent(safe, consumerStep.id, 'completed', { 
+                result: out.ctx?.[consumerStep.id],
+              } as any);
+            }
+            
+            chunkIndex++;
+          }
+        }
+      }
+      
+      // Check for stream closed
+      if (readResult.closed) {
+        engineCtx.logFn(`[${consumerStep.id}] 📡 Stream closed after ${chunkIndex} chunks`);
+        break;
+      }
+      
+      // Check idle timeout
+      if (Date.now() - lastDataTime > maxIdleMs) {
+        engineCtx.logFn(`[${consumerStep.id}] 📡 Stream idle timeout (${maxIdleMs}ms)`);
+        break;
+      }
+      
+      // Small delay between polls
+      await new Promise(r => setTimeout(r, pollIntervalMs));
+    }
+    
+    // If batch mode, execute consumer once with all chunks
+    if (mode === 'batch' && batchedChunks.length > 0 && !controller.signal.aborted) {
+      // Extract .data from each chunk wrapper {index, data, timestamp}
+      const batchData = batchedChunks.map((c: any) => c?.data !== undefined ? c.data : c);
+      
+      const batchCtx = {
+        ...baseCtx,
+        __streamChunks: batchData,
+        __streamChunkCount: batchData.length,
+        __streamId: streamId,
+        __streamSourceStep: sourceStepId,
+      };
+      
+      // Inject batch context into consumer step args
+      const batchStep = {
+        ...consumerStep,
+        args: {
+          ...consumerStep.args,
+          context: {
+            __streamChunks: batchData,
+            __streamChunkCount: batchData.length,
+            __streamId: streamId,
+            __streamSourceStep: sourceStepId,
+          },
+        },
+      };
+      
+      emitStepEvent(safe, consumerStep.id, 'running', { 
+        wireFromId: sourceStepId,
+      } as any);
+      
+      const out = await executeStep(spec, batchStep, batchCtx, engineCtx);
+      
+      if (out.ok) {
+        emitStepEvent(safe, consumerStep.id, 'completed', { 
+          result: out.ctx?.[consumerStep.id],
+        } as any);
+      }
+    }
+    
+    // Emit stream inactive event for UI animation
+    emitStreamEvent(safe, sourceStepId, consumerStep.id, false);
+    
+    // Unsubscribe from stream
+    await execLocalTool('stream_unsubscribe', { streamId, subscriberId }, engineCtx).catch(() => {});
+    engineCtx.logFn(`[${consumerStep.id}] 📡 Stream consumer finished`);
   }
 
   // Execute a chain of steps within a loop iteration, stopping at loopBreak edge or loop back edge
@@ -539,6 +785,13 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
   try {
     // Start the main branch
     await runBranch(current!, ctx, undefined);
+
+    // Wait for any stream consumers that were spawned during execution
+    if (streamConsumerPromises.length > 0) {
+      engineCtx.logFn(`Waiting for ${streamConsumerPromises.length} stream consumer(s) to finish...`);
+      await Promise.allSettled(streamConsumerPromises);
+    }
+
     return hasReturn ? { ok: true, returnValue } : { ok: true };
   } finally {
     try {

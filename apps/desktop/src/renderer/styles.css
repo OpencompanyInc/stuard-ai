@@ -816,3 +816,43 @@ body {
 .notification-pulse {
   animation: notificationPulse 2s ease-in-out infinite;
 }
+
+/* ----------------------------------------------------------------------------
+ * 3D Transforms & Perspective Utilities
+ * ---------------------------------------------------------------------------- */
+
+.preserve-3d {
+  transform-style: preserve-3d;
+}
+
+.perspective-1000 {
+  perspective: 1000px;
+}
+
+.perspective-2000 {
+  perspective: 2000px;
+}
+
+.translate-z-0 {
+  transform: translateZ(0px);
+}
+
+.translate-z-10 {
+  transform: translateZ(10px);
+}
+
+.translate-z-20 {
+  transform: translateZ(20px);
+}
+
+.backface-hidden {
+  backface-visibility: hidden;
+}
+
+.rotate-x-10 {
+  transform: rotateX(10deg);
+}
+
+.rotate-x-minus-10 {
+  transform: rotateX(-10deg);
+}

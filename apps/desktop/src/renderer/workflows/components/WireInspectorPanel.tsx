@@ -2,7 +2,7 @@
  * WireInspectorPanel - Right panel for editing selected wire properties (conditions, loops)
  */
 import React, { useMemo, useState, useEffect, useCallback } from "react";
-import { X, ArrowRight, GitBranch, Info, Repeat, RotateCw, List, Trash2, LogOut, ChevronDown, Check } from "lucide-react";
+import { X, ArrowRight, GitBranch, Info, Repeat, RotateCw, List, Trash2, LogOut, ChevronDown, Check, Radio } from "lucide-react";
 import { TextInputWithVariables, type UpstreamNode } from "./SmartArgEditor";
 import { getToolOutputs } from "../constants/tool-schemas";
 import type { DesignerModel, DesignerWire, WorkflowVariable } from "../types";
@@ -188,11 +188,12 @@ function getUpstreamNodes(model: DesignerModel, nodeId: string): UpstreamNode[] 
 }
 
 export function WireInspectorPanel({ model, wireIndex, onUpdate, onDelete, onClose, onReconnect }: WireInspectorPanelProps) {
-  const wire = model.wires[wireIndex];
+  const safeWires: DesignerWire[] = Array.isArray((model as any)?.wires) ? ((model as any).wires as DesignerWire[]) : [];
+  const wire = safeWires[wireIndex];
   
   if (!wire) {
     return (
-      <div className="flex flex-col h-full bg-white border-l border-slate-200 shadow-xl z-20 w-[400px]">
+      <div className="flex flex-col h-full w-full bg-white">
         <div className="h-14 px-5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
           <span className="font-semibold text-slate-800">Wire Properties</span>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition-colors">
@@ -212,9 +213,9 @@ export function WireInspectorPanel({ model, wireIndex, onUpdate, onDelete, onClo
 
   // Detect if this wire is a back edge (creates a loop in the flow)
   const isBackEdge = useMemo(() => {
-    const chainIndices = computeChainIndices(model.triggers, model.nodes, model.wires || []);
+    const chainIndices = computeChainIndices(model.triggers, model.nodes, safeWires);
     return isBackEdgeByChain(chainIndices, wire.from, wire.to);
-  }, [model, wire.from, wire.to]);
+  }, [model, safeWires, wire.from, wire.to]);
 
   // Get upstream nodes for variable suggestions (from source node's perspective)
   const upstreamNodes = useMemo(() => {
@@ -237,13 +238,13 @@ export function WireInspectorPanel({ model, wireIndex, onUpdate, onDelete, onClo
   }, [model, wire.from]);
 
   const updateWire = (updates: Partial<DesignerWire>) => {
-    const newWires = [...model.wires];
+    const newWires = [...safeWires];
     newWires[wireIndex] = { ...newWires[wireIndex], ...updates };
     onUpdate({ ...model, wires: newWires });
   };
 
   return (
-    <div className="flex flex-col h-full bg-white border-l border-slate-200 shadow-xl z-20 w-[400px]">
+    <div className="flex flex-col h-full w-full bg-white">
       {/* Header */}
       <div className="h-14 px-5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
         <div className="flex items-center gap-2.5">
@@ -317,6 +318,12 @@ export function WireInspectorPanel({ model, wireIndex, onUpdate, onDelete, onClo
           wire={wire}
           onUpdate={updateWire}
           model={model}
+        />
+
+        {/* Stream Wire Configuration */}
+        <StreamWireSection
+          wire={wire}
+          onUpdate={updateWire}
         />
 
         {/* Condition Configuration */}
@@ -1040,6 +1047,120 @@ function LoopBreakSection({
                 Nodes after this connection will run <strong>once</strong> after all loop iterations complete, 
                 not on each iteration.
               </span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * StreamWireSection - Configure stream wire behavior
+ */
+function StreamWireSection({
+  wire,
+  onUpdate,
+}: {
+  wire: DesignerWire;
+  onUpdate: (updates: Partial<DesignerWire>) => void;
+}) {
+  const hasStream = !!(wire as any).stream;
+  const streamConfig = (wire as any).stream || {};
+  const mode = streamConfig.mode || 'reactive';
+  const sourceField = streamConfig.sourceField || 'streamId';
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <div className="p-1.5 rounded-lg bg-cyan-50 text-cyan-500">
+          <Radio className="w-4 h-4" />
+        </div>
+        <div className="font-medium text-slate-700">Stream Wire</div>
+      </div>
+
+      <div className="rounded-xl border border-slate-100 overflow-hidden">
+        <button
+          onClick={() => {
+            if (hasStream) {
+              onUpdate({ stream: undefined } as any);
+            } else {
+              onUpdate({ stream: { sourceField: 'streamId', mode: 'reactive' } } as any);
+            }
+          }}
+          className={`w-full px-4 py-3 flex items-center justify-between transition-colors ${
+            hasStream 
+              ? 'bg-cyan-50 border-cyan-200' 
+              : 'bg-white hover:bg-slate-50'
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-5 rounded-full transition-colors relative ${
+              hasStream ? 'bg-cyan-500' : 'bg-slate-200'
+            }`}>
+              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                hasStream ? 'left-5' : 'left-0.5'
+              }`} />
+            </div>
+            <span className="text-sm font-medium text-slate-700">
+              {hasStream ? 'Stream wire enabled' : 'Enable stream wire'}
+            </span>
+          </div>
+        </button>
+        
+        {hasStream && (
+          <div className="px-4 py-3 bg-cyan-50/30 border-t border-cyan-100 space-y-3">
+            <div className="flex items-start gap-2 text-[11px] text-cyan-700">
+              <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span>
+                Stream wires carry real-time data chunks. The target step runs <strong>reactively</strong> on each chunk, 
+                not just once after the source completes.
+              </span>
+            </div>
+
+            {/* Source Field */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">Source Field</label>
+              <input
+                type="text"
+                value={sourceField}
+                onChange={e => onUpdate({ stream: { ...streamConfig, sourceField: e.target.value } } as any)}
+                placeholder="streamId"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400"
+              />
+              <p className="text-[10px] text-slate-400">Which field on the source step's output contains the streamId</p>
+            </div>
+
+            {/* Consumer Mode */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">Consumer Mode</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => onUpdate({ stream: { ...streamConfig, mode: 'reactive' } } as any)}
+                  className={`px-3 py-2 text-xs font-medium rounded-lg border transition-all ${
+                    mode === 'reactive'
+                      ? 'bg-cyan-100 border-cyan-300 text-cyan-700'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  Reactive
+                </button>
+                <button
+                  onClick={() => onUpdate({ stream: { ...streamConfig, mode: 'batch' } } as any)}
+                  className={`px-3 py-2 text-xs font-medium rounded-lg border transition-all ${
+                    mode === 'batch'
+                      ? 'bg-cyan-100 border-cyan-300 text-cyan-700'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  Batch
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-400">
+                {mode === 'reactive' 
+                  ? 'Process each chunk as it arrives' 
+                  : 'Collect all chunks, then process once'}
+              </p>
             </div>
           </div>
         )}

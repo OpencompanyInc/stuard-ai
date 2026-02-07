@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { NotificationProvider, useNotification, NotificationConfig } from './components/NotificationSystem';
 
 // Component to handle IPC events and show notifications
@@ -58,11 +58,13 @@ const NotificationListener = () => {
         };
 
         // Auto-run demo on mount for immediate feedback
+        /*
         setTimeout(() => {
             if ((window as any).runNotificationDemo) {
                 (window as any).runNotificationDemo();
             }
         }, 1500);
+        */
 
         return () => {
             removeListener && removeListener();
@@ -74,27 +76,63 @@ const NotificationListener = () => {
 };
 
 export const NotificationApp = () => {
-    useEffect(() => {
-        const handleMouseMove = (e: MouseEvent) => {
-            const el = document.elementFromPoint(e.clientX, e.clientY);
-            const isInteractive = el?.closest('.pointer-events-auto');
-
-            if (isInteractive) {
-                (window as any).desktopAPI?.setIgnoreMouseEvents?.(false);
-            } else {
-                (window as any).desktopAPI?.setIgnoreMouseEvents?.(true, { forward: true });
-            }
-        };
-
-        window.addEventListener('mousemove', handleMouseMove);
-        return () => window.removeEventListener('mousemove', handleMouseMove);
-    }, []);
-
     return (
         <NotificationProvider defaultPosition="top-right" maxNotifications={6}>
+            <NotificationOverlayHandler />
             <div className="w-screen h-screen overflow-hidden pointer-events-none">
                 <NotificationListener />
             </div>
         </NotificationProvider>
     );
+};
+
+const NotificationOverlayHandler = () => {
+    const { notifications } = useNotification();
+    const lastIgnoreRef = useRef<boolean | null>(null);
+
+    useEffect(() => {
+        const handleMouseMove = (e: MouseEvent) => {
+            // If no notifications, we should be completely click-through without forwarding to avoid flicker
+            if (notifications.length === 0) {
+                if (lastIgnoreRef.current !== true) {
+                    (window as any).desktopAPI?.setIgnoreMouseEvents?.(true);
+                    lastIgnoreRef.current = true;
+                }
+                return;
+            }
+
+            const el = document.elementFromPoint(e.clientX, e.clientY);
+            // elementFromPoint skips pointer-events: none, so if we hit something 
+            // that isn't the body or html, it MUST be a notification element.
+            const isInteractive = !!(el && el !== document.body && el !== document.documentElement);
+            const shouldIgnore = !isInteractive;
+
+            // Only update if state changed to avoid rapid cursor flickering and IPC spam
+            if (lastIgnoreRef.current !== shouldIgnore) {
+                if (shouldIgnore) {
+                    // Use forward: true when notifications ARE present so we can detect when mouse enters them
+                    (window as any).desktopAPI?.setIgnoreMouseEvents?.(true, { forward: true });
+                } else {
+                    (window as any).desktopAPI?.setIgnoreMouseEvents?.(false);
+                }
+                lastIgnoreRef.current = shouldIgnore;
+            }
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+
+        // Initial state
+        if (notifications.length === 0) {
+            (window as any).desktopAPI?.setIgnoreMouseEvents?.(true);
+            lastIgnoreRef.current = true;
+        } else {
+            // Force a check if notifications appear while mouse is already there
+            (window as any).desktopAPI?.setIgnoreMouseEvents?.(true, { forward: true });
+            lastIgnoreRef.current = true;
+        }
+
+        return () => window.removeEventListener('mousemove', handleMouseMove);
+    }, [notifications.length]);
+
+    return null;
 };

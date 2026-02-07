@@ -7,10 +7,12 @@ import React, { useRef, useState, useEffect, useCallback, forwardRef, useImperat
 
 export interface UIBuilderCanvasRef {
   refresh: () => void;
-  updateElement: (path: string, updates: { textContent?: string; className?: string; style?: string }) => void;
+  updateElement: (path: string, updates: { textContent?: string; className?: string; style?: string; id?: string }) => void;
+  deleteElement: (path: string) => void;
   requestHtml: () => void;
   appendHtml: (html: string) => void;
   insertHtmlAtPoint: (html: string, point: { clientX: number; clientY: number }) => void;
+  focus: () => void;
 }
 
 export interface SelectedElementInfo {
@@ -76,6 +78,22 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   <meta charset="UTF-8">
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
+    /* Custom Scrollbars */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+
     * { box-sizing: border-box; }
     html, body {
       width: 100%;
@@ -83,7 +101,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       overflow: auto;
       margin: 0;
       padding: 0;
-      background: ${backgroundColor || '#ffffff'};
+      background: ${backgroundColor || 'transparent'};
     }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -98,11 +116,18 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     .btn-danger { background: #ef4444; color: white; }
     .btn-danger:hover { background: #dc2626; }
 
+    /* Window Drag Region */
+    .drag { -webkit-app-region: drag; }
+    .no-drag { -webkit-app-region: no-drag; }
+
     /* User CSS */
     ${css || ''}
 
     /* Design mode element highlighting */
     ${!previewMode ? `
+    /* Disable window dragging in design mode so we can edit the element */
+    .drag { -webkit-app-region: no-drag !important; }
+
     [data-elements-path] {
       cursor: pointer !important;
     }
@@ -266,6 +291,8 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
 
     // Handle mousedown for drag start
     document.body.addEventListener('mousedown', (e) => {
+      window.focus(); // Focus window to capture key events
+      
       const target = e.target.closest('[data-elements-path]');
       if (target && target.classList.contains('ui-selected')) {
         // Start dragging the selected element
@@ -333,8 +360,32 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       }
     });
 
+    // Keyboard delete handler
+    document.addEventListener('keydown', (e) => {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedPath) {
+        const target = findElementByPath(selectedPath);
+        if (target && target.parentNode) {
+          e.preventDefault();
+          target.parentNode.removeChild(target);
+          selectedPath = null;
+          document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
+          window.parent.postMessage({ type: 'select', element: null }, '*');
+          
+          // Sync HTML back
+          const clone = document.body.cloneNode(true);
+          clone.querySelectorAll('[data-elements-path]').forEach(el => {
+            el.removeAttribute('data-elements-path');
+            el.classList.remove('ui-selected', 'ui-hovered', 'ui-dragging');
+          });
+          window.parent.postMessage({ type: 'html', html: clone.innerHTML }, '*');
+        }
+      }
+    });
+
     // Handle click for selection
     document.body.addEventListener('click', (e) => {
+      window.focus(); // Ensure focus for keydown events
+      
       // Don't process click if we just finished dragging
       if (isDragging) {
         isDragging = false;
@@ -362,6 +413,35 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       }
     }, true);
 
+    // Handle keydown for delete
+    document.addEventListener('keydown', (e) => {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedPath) {
+        // Don't delete if editing text or input
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
+          return;
+        }
+        
+        const el = findElementByPath(selectedPath);
+        if (el && el !== document.body) {
+          e.preventDefault();
+          el.remove();
+          
+          // Clear selection
+          selectedPath = null;
+          document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
+          window.parent.postMessage({ type: 'select', element: null }, '*');
+          
+          // Sync HTML
+          const clone = document.body.cloneNode(true);
+          clone.querySelectorAll('[data-elements-path]').forEach(el => {
+            el.removeAttribute('data-elements-path');
+            el.classList.remove('ui-selected', 'ui-hovered', 'ui-dragging');
+          });
+          window.parent.postMessage({ type: 'html', html: clone.innerHTML }, '*');
+        }
+      }
+    });
+
     // Listen for commands from parent
     window.addEventListener('message', (e) => {
       if (e.data.type === 'setSelected') {
@@ -371,6 +451,24 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
           if (el) {
             el.classList.add('ui-selected');
             selectedPath = e.data.path;
+          }
+        }
+      } else if (e.data.type === 'deleteSelected') {
+        if (selectedPath) {
+          const el = findElementByPath(selectedPath);
+          if (el && el !== document.body) {
+            el.remove();
+            selectedPath = null;
+            document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
+            window.parent.postMessage({ type: 'select', element: null }, '*');
+            
+            // Sync HTML
+            const clone = document.body.cloneNode(true);
+            clone.querySelectorAll('[data-elements-path]').forEach(el => {
+              el.removeAttribute('data-elements-path');
+              el.classList.remove('ui-selected', 'ui-hovered', 'ui-dragging');
+            });
+            window.parent.postMessage({ type: 'html', html: clone.innerHTML }, '*');
           }
         }
       } else if (e.data.type === 'updateElement') {
@@ -414,6 +512,21 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       } else if (e.data.type === 'updateScript') {
         // Scripts cannot be hot-reloaded safely, just log for now
         console.log('[Preview] Script updated - refresh for full effect');
+      } else if (e.data.type === 'deleteElement') {
+        const el = findElementByPath(e.data.path);
+        if (el && el.parentNode) {
+          el.parentNode.removeChild(el);
+          selectedPath = null;
+          document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
+          
+          // Sync HTML back
+          const clone = document.body.cloneNode(true);
+          clone.querySelectorAll('[data-elements-path]').forEach(el => {
+            el.removeAttribute('data-elements-path');
+            el.classList.remove('ui-selected', 'ui-hovered', 'ui-dragging');
+          });
+          window.parent.postMessage({ type: 'html', html: clone.innerHTML }, '*');
+        }
       } else if (e.data.type === 'insertHtmlAtPoint') {
         const point = e.data.point || {};
         if (typeof point.x !== 'number' || typeof point.y !== 'number') {
@@ -496,6 +609,11 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         iframeRef.current.contentWindow.postMessage({ type: 'updateElement', path, updates }, '*');
       }
     },
+    deleteElement: (path: string) => {
+      if (iframeRef.current?.contentWindow) {
+        iframeRef.current.contentWindow.postMessage({ type: 'deleteElement', path }, '*');
+      }
+    },
     requestHtml: () => {
       if (iframeRef.current?.contentWindow) {
         iframeRef.current.contentWindow.postMessage({ type: 'getHtml' }, '*');
@@ -512,6 +630,11 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         const x = (point.clientX - rect.left) / zoom;
         const y = (point.clientY - rect.top) / zoom;
         iframeRef.current.contentWindow.postMessage({ type: 'insertHtmlAtPoint', html, point: { x, y } }, '*');
+      }
+    },
+    focus: () => {
+      if (iframeRef.current?.contentWindow) {
+        iframeRef.current.contentWindow.focus();
       }
     },
   }));

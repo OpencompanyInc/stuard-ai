@@ -1122,6 +1122,230 @@ class MemoryDB:
             filtered.sort(key=lambda x: x[0], reverse=True)
 
         return [seg for _, seg in filtered[:limit]]
+
+    def list_recent_segments_with_embeddings(
+        self,
+        limit: int = 500,
+        since: Optional[str] = None,
+        before: Optional[str] = None,
+    ) -> List[ConversationSegment]:
+        limit = max(1, min(int(limit), 5000))
+
+        def _parse_iso_ts(v: Optional[str]) -> Optional[float]:
+            if not v:
+                return None
+            try:
+                s = str(v).strip()
+                if not s:
+                    return None
+                if s.endswith('Z'):
+                    s = s[:-1] + '+00:00'
+                return datetime.fromisoformat(s).timestamp()
+            except Exception:
+                return None
+
+        since_ts = _parse_iso_ts(since)
+        before_ts = _parse_iso_ts(before)
+
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM conversation_segments ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+
+        filtered: List[Tuple[float, ConversationSegment]] = []
+        for row in rows:
+            created_ts = _parse_iso_ts(row['created_at'])
+            if created_ts is not None:
+                if since_ts is not None and created_ts < since_ts:
+                    continue
+                if before_ts is not None and created_ts > before_ts:
+                    continue
+            seg = ConversationSegment(
+                id=row['id'],
+                conversation_id=row['conversation_id'],
+                start_turn=row['start_turn'],
+                end_turn=row['end_turn'],
+                summary=_decrypt_content(row['summary_enc'], self._crypto),
+                topics=_decrypt_json(row['topics_enc'], self._crypto),
+                embedding=_deserialize_vector(row['embedding']),
+                created_at=row['created_at'],
+                updated_at=row['updated_at'],
+            )
+            filtered.append((created_ts if created_ts is not None else float('-inf'), seg))
+
+        filtered.sort(key=lambda x: x[0], reverse=True)
+        return [seg for _, seg in filtered[:limit]]
+
+    def build_topic_drawers(
+        self,
+        query: Optional[str] = None,
+        limit_topics: int = 50,
+        limit_segments_per_topic: int = 200,
+        cluster_threshold: float = 0.82,
+        max_clusters_per_topic: int = 12,
+        segments_scan_limit: int = 2000,
+    ) -> List[Dict[str, Any]]:
+        q = str(query or '').strip().lower()
+        limit_topics = max(1, min(int(limit_topics), 200))
+        limit_segments_per_topic = max(1, min(int(limit_segments_per_topic), 1000))
+        max_clusters_per_topic = max(1, min(int(max_clusters_per_topic), 50))
+        segments_scan_limit = max(50, min(int(segments_scan_limit), 10000))
+        try:
+            cluster_threshold = float(cluster_threshold)
+        except Exception:
+            cluster_threshold = 0.82
+        cluster_threshold = max(0.0, min(cluster_threshold, 0.999))
+
+        segments = self.list_recent_segments_with_embeddings(limit=segments_scan_limit)
+
+        def _cosine(a: List[float], b: List[float]) -> float:
+            try:
+                av = np.array(a, dtype=np.float32)
+                bv = np.array(b, dtype=np.float32)
+                denom = float(np.linalg.norm(av) * np.linalg.norm(bv))
+                if denom <= 0:
+                    return 0.0
+                return float(np.dot(av, bv) / denom)
+            except Exception:
+                return 0.0
+
+        def _make_cluster_title(text: str) -> str:
+            s = str(text or '').strip()
+            if not s:
+                return 'Untitled'
+            s = re.sub(r'\s+', ' ', s)
+            return s[:80]
+
+        def _cluster_segments(segs: List[ConversationSegment]) -> List[Dict[str, Any]]:
+            clusters: List[Dict[str, Any]] = []
+            unclustered: List[ConversationSegment] = []
+
+            for seg in segs:
+                if not seg.embedding or not isinstance(seg.embedding, list) or len(seg.embedding) == 0:
+                    unclustered.append(seg)
+                    continue
+
+                best_idx = -1
+                best_score = -1.0
+                for i, c in enumerate(clusters):
+                    centroid = c.get('centroid')
+                    if not centroid:
+                        continue
+                    score = _cosine(seg.embedding, centroid)
+                    if score > best_score:
+                        best_score = score
+                        best_idx = i
+
+                if best_idx >= 0 and best_score >= cluster_threshold:
+                    c = clusters[best_idx]
+                    c['items'].append(seg)
+                    n = float(c.get('count', 1))
+                    try:
+                        centroid_np = np.array(c['centroid'], dtype=np.float32)
+                        seg_np = np.array(seg.embedding, dtype=np.float32)
+                        new_centroid = (centroid_np * n + seg_np) / (n + 1.0)
+                        c['centroid'] = new_centroid.tolist()
+                    except Exception:
+                        pass
+                    c['count'] = int(c.get('count', 1)) + 1
+                else:
+                    if len(clusters) >= max_clusters_per_topic:
+                        unclustered.append(seg)
+                        continue
+                    clusters.append({
+                        'cluster_id': str(uuid.uuid4()),
+                        'title': _make_cluster_title(seg.summary),
+                        'centroid': seg.embedding,
+                        'count': 1,
+                        'items': [seg],
+                    })
+
+            out: List[Dict[str, Any]] = []
+            for c in clusters:
+                items = c.get('items') or []
+                out.append({
+                    'id': c.get('cluster_id'),
+                    'title': c.get('title') or 'Cluster',
+                    'count': int(c.get('count') or len(items)),
+                    'segments': [
+                        {
+                            'id': s.id,
+                            'conversation_id': s.conversation_id,
+                            'start_turn': s.start_turn,
+                            'end_turn': s.end_turn,
+                            'summary': s.summary,
+                            'topics': s.topics,
+                            'created_at': s.created_at,
+                            'updated_at': s.updated_at,
+                        }
+                        for s in items
+                    ],
+                })
+
+            if unclustered:
+                out.append({
+                    'id': 'unclustered',
+                    'title': 'Unsorted',
+                    'count': len(unclustered),
+                    'segments': [
+                        {
+                            'id': s.id,
+                            'conversation_id': s.conversation_id,
+                            'start_turn': s.start_turn,
+                            'end_turn': s.end_turn,
+                            'summary': s.summary,
+                            'topics': s.topics,
+                            'created_at': s.created_at,
+                            'updated_at': s.updated_at,
+                        }
+                        for s in unclustered
+                    ],
+                })
+
+            return out
+
+        topic_map: Dict[str, List[ConversationSegment]] = {}
+        topic_latest_ts: Dict[str, float] = {}
+
+        for seg in segments:
+            summary_l = str(seg.summary or '').lower()
+            seg_topics = seg.topics if isinstance(seg.topics, list) else []
+            try:
+                ts = datetime.fromisoformat(str(seg.created_at).replace('Z', '+00:00')).timestamp()
+            except Exception:
+                ts = 0.0
+
+            for topic in seg_topics:
+                t = str(topic or '').strip()
+                if not t:
+                    continue
+
+                if q:
+                    if q not in t.lower() and q not in summary_l:
+                        continue
+
+                topic_map.setdefault(t, []).append(seg)
+                topic_latest_ts[t] = max(topic_latest_ts.get(t, 0.0), ts)
+
+        ordered_topics = sorted(topic_map.keys(), key=lambda t: topic_latest_ts.get(t, 0.0), reverse=True)
+        ordered_topics = ordered_topics[:limit_topics]
+
+        drawers: List[Dict[str, Any]] = []
+        for topic in ordered_topics:
+            segs = topic_map.get(topic, [])
+            segs_sorted = sorted(segs, key=lambda s: str(s.created_at or ''), reverse=True)
+            segs_sorted = segs_sorted[:limit_segments_per_topic]
+            clusters = _cluster_segments(segs_sorted)
+
+            drawers.append({
+                'topic': topic,
+                'count': len(segs_sorted),
+                'clusters': clusters,
+                'latest_at': segs_sorted[0].created_at if segs_sorted else None,
+            })
+
+        return drawers
     
     # ═══════════════════════════════════════════════════════════════════════════
     # SPACES

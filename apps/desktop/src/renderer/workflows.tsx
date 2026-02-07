@@ -41,6 +41,7 @@ interface ExecutionState {
   stepStates: Record<string, StepExecutionStatus>;
   activeWireFrom?: string;
   activeWireTo?: string;
+  activeStreams?: Set<string>; // Set of "sourceId->consumerId" keys for active stream wires
 }
 
 import { Play, Square, Save, Code, Settings, Wand2, Rocket, Zap, Terminal, Command, Layout, Plus, ZoomIn, ZoomOut, Maximize2, ChevronDown, Lock, Undo2, Redo2, Copy, Trash2, LayoutGrid, SkipForward, PlayCircle } from "lucide-react";
@@ -316,7 +317,10 @@ function WorkflowsApp() {
       if (!flowId || !stepId) return;
 
       setExecutionState(prev => {
-        if (!prev || prev.flowId !== flowId) {
+        // If no existing execution state, ignore late/stale step events
+        // (prevents re-creating isRunning:true after flow already completed)
+        if (!prev) return prev;
+        if (prev.flowId !== flowId) {
           return {
             flowId,
             isRunning: true,
@@ -344,10 +348,16 @@ function WorkflowsApp() {
           flowId,
           isRunning: true,
           stepStates: {},
+          activeStreams: new Set(),
         });
         setRunningIds(p => ({ ...p, [flowId]: true }));
       } else {
-        // Clear execution state after a short delay to show completion
+        // Immediately mark as not running and clear active streams (stops animations)
+        setExecutionState(prev => {
+          if (!prev || prev.flowId !== flowId) return prev;
+          return { ...prev, isRunning: false, activeStreams: new Set() };
+        });
+        // Clear execution state fully after a short delay to show completion status
         setTimeout(() => {
           setExecutionState(prev => {
             if (prev?.flowId === flowId) return null;
@@ -358,9 +368,30 @@ function WorkflowsApp() {
       }
     });
 
+    // Handle stream wire activity events for animation control
+    const unsubStream = (window as any).desktopAPI?.onWorkflowsStream?.((d: any) => {
+      const { flowId, sourceStepId, consumerStepId, isActive } = d || {};
+      if (!flowId || !sourceStepId || !consumerStepId) return;
+
+      const streamKey = `${sourceStepId}->${consumerStepId}`;
+      setExecutionState(prev => {
+        if (!prev || prev.flowId !== flowId) return prev;
+        // Don't add streams if workflow already finished (isRunning: false)
+        if (isActive && !prev.isRunning) return prev;
+        const activeStreams = new Set(prev.activeStreams || []);
+        if (isActive) {
+          activeStreams.add(streamKey);
+        } else {
+          activeStreams.delete(streamKey);
+        }
+        return { ...prev, activeStreams };
+      });
+    });
+
     return () => {
       try { unsubStep?.(); } catch { }
       try { unsubExec?.(); } catch { }
+      try { unsubStream?.(); } catch { }
     };
   }, []);
 
@@ -370,7 +401,13 @@ function WorkflowsApp() {
     if (res?.ok) {
       setSelectedId(res.id);
       let loadedModel: DesignerModel | null = null;
-      try { loadedModel = JSON.parse(res.content || '{}'); } catch { loadedModel = null; }
+      try {
+        const parsed = JSON.parse(res.content || '{}');
+        // Normalize: allow loading either DesignerModel (nodes/wires) or StuardSpec (steps/next)
+        loadedModel = specToDesignerModel({ ...parsed, id: res.id } as any) as any;
+      } catch {
+        loadedModel = null;
+      }
       setModel(loadedModel);
       setDirty(false);
       setSelectedNodeId("");
@@ -1427,7 +1464,7 @@ function WorkflowsApp() {
                         onDoubleClick={() => setManualRightWidth(320)}
                       />
                       <div
-                        className="bg-white border-l border-slate-200 flex flex-col shrink-0 z-20 shadow-xl relative transition-all duration-300 min-h-0"
+                        className="bg-white border-l border-slate-200 flex flex-col shrink-0 z-20 shadow-xl relative transition-all duration-300 min-h-0 overflow-hidden"
                         style={{ width: manualRightWidth }}
                       >
                         {rightPanel === 'inspector' && (
@@ -1461,7 +1498,7 @@ function WorkflowsApp() {
               {viewMode === 'manual' && (
                 <>
                   {/* Left: ToolPalette */}
-                  <div className="w-64 bg-white border-r border-slate-200 flex flex-col shrink-0 z-10 min-h-0 shadow-[4px_0_24px_-12px_rgba(0,0,0,0.1)]">
+                  <div className="w-64 bg-white border-r border-slate-200 flex flex-col shrink-0 z-10 min-h-0 overflow-hidden shadow-[4px_0_24px_-12px_rgba(0,0,0,0.1)]">
                     <ToolPalette
                       onDragStart={(e, item) => {
                         e.dataTransfer.setData('text/plain', JSON.stringify(item));
@@ -1532,7 +1569,7 @@ function WorkflowsApp() {
                         onDoubleClick={() => setManualRightWidth(320)}
                       />
                       <div
-                        className="bg-white border-l border-slate-200 flex flex-col shrink-0 z-20 shadow-xl relative transition-all duration-300 min-h-0"
+                        className="bg-white border-l border-slate-200 flex flex-col shrink-0 z-20 shadow-xl relative transition-all duration-300 min-h-0 overflow-hidden"
                         style={{ width: manualRightWidth }}
                       >
                         {rightPanel === 'inspector' && (

@@ -238,6 +238,41 @@ contextBridge.exposeInMainWorld('stuard', {
   },
 
   /**
+   * Navigate to a different page (requires pages to be defined in custom_ui args)
+   * @param page - Name of the page to navigate to
+   * @param data - Optional data to merge into formData on navigation
+   */
+  navigate: (page: string, data?: any): void => {
+    ipcRenderer.send('stuard:navigate', { page, data });
+  },
+
+  /**
+   * Get the current page name (only applicable when pages are defined)
+   */
+  getCurrentPage: (): Promise<string | null> => {
+    return ipcRenderer.invoke('stuard:getCurrentPage');
+  },
+
+  /**
+   * Listen for page navigation events
+   * @param callback - Called with { page, data } when navigation occurs
+   * @returns Unsubscribe function
+   */
+  onPageChange: (callback: (info: { page: string; data?: any }) => void): (() => void) => {
+    if (!eventListeners.has('__page_change__')) {
+      eventListeners.set('__page_change__', new Set());
+    }
+    eventListeners.get('__page_change__')!.add(callback);
+
+    return () => {
+      const listeners = eventListeners.get('__page_change__');
+      if (listeners) {
+        listeners.delete(callback);
+      }
+    };
+  },
+
+  /**
    * Stop the current workflow
    */
   stopWorkflow: (): void => {
@@ -305,6 +340,20 @@ contextBridge.exposeInMainWorld('stuard', {
   },
 });
 
+// Handle page navigation events from main process
+ipcRenderer.on('stuard:page-change', (_event, info) => {
+  const listeners = eventListeners.get('__page_change__');
+  if (listeners) {
+    listeners.forEach(cb => {
+      try {
+        cb(info);
+      } catch (e) {
+        console.error('[stuard] Error in page change listener:', e);
+      }
+    });
+  }
+});
+
 // Also expose a simpler API for quick access
 contextBridge.exposeInMainWorld('$stuard', {
   // Shorthand for common operations
@@ -312,4 +361,5 @@ contextBridge.exposeInMainWorld('$stuard', {
   emit: (event: string, data?: any) => ipcRenderer.send('stuard:emit', { event, data }),
   close: (data?: any) => ipcRenderer.send('stuard:close', { data }),
   submit: (data?: any) => ipcRenderer.send('stuard:submit', { data }),
+  nav: (page: string, data?: any) => ipcRenderer.send('stuard:navigate', { page, data }),
 });

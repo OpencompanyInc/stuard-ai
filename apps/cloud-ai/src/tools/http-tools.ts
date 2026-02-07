@@ -53,6 +53,8 @@ export const http_request = createTool({
     max_response_bytes: z.number().int().optional().describe('Max bytes to read into memory before truncating (default 5MB)'),
     save_to: z.string().optional().describe('If set, stream response body to this local file path'),
 
+    forwardToStreamId: z.string().optional().describe('If set, stream response body chunks to this stream id and close it when complete'),
+
     retries: z.number().int().optional().default(0).describe('Retry count on transient errors / statuses'),
     retry_delay_ms: z.number().int().optional().default(500).describe('Delay between retries in ms'),
     retry_on_status: z.array(z.number().int()).optional().describe('HTTP statuses to retry on'),

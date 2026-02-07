@@ -59,7 +59,7 @@ export function ToolPalette({ onDragStart, disabled }: ToolPaletteProps) {
     if (ffmpegConnected) return PALETTE_CATEGORIES;
     return PALETTE_CATEGORIES.filter((c) => c.id !== 'ffmpeg');
   }, [ffmpegConnected]);
-  
+
   const toggleCategory = (id: string) => {
     setExpandedCategories(prev => {
       const next = new Set(prev);
@@ -68,19 +68,19 @@ export function ToolPalette({ onDragStart, disabled }: ToolPaletteProps) {
       return next;
     });
   };
-  
+
   const filteredCategories = useMemo(() => {
     if (!searchQuery.trim()) return paletteCategories;
     const q = searchQuery.toLowerCase();
     return paletteCategories.map(cat => ({
       ...cat,
-      items: cat.items.filter(item => 
-        item.label.toLowerCase().includes(q) || 
+      items: cat.items.filter(item =>
+        item.label.toLowerCase().includes(q) ||
         item.t.toLowerCase().includes(q)
       ),
     })).filter(cat => cat.items.length > 0);
   }, [searchQuery, paletteCategories]);
-  
+
   return (
     <div className="flex flex-col h-full bg-[#fdfdfd] border-r border-slate-100" data-onboarding="node-palette">
       {/* Header */}
@@ -140,24 +140,21 @@ export function ToolPalette({ onDragStart, disabled }: ToolPaletteProps) {
           const isExpanded = expandedCategories.has(cat.id) || !!searchQuery;
           const Icon = cat.icon;
           const styles = CATEGORY_COLORS[cat.color] || CATEGORY_COLORS.slate;
-          
+
           return (
             <div key={cat.id} className="rounded-xl overflow-hidden transition-all duration-300">
               <button
                 onClick={() => toggleCategory(cat.id)}
-                className={`w-full px-3 py-2.5 flex items-center justify-between text-left transition-all select-none group border border-transparent ${
-                  isExpanded ? 'bg-white shadow-sm border-slate-100 mb-1 rounded-xl' : 'hover:bg-slate-50 rounded-xl'
-                }`}
+                className={`w-full px-3 py-2.5 flex items-center justify-between text-left transition-all select-none group border border-transparent ${isExpanded ? 'bg-white shadow-sm border-slate-100 mb-1 rounded-xl' : 'hover:bg-slate-50 rounded-xl'
+                  }`}
               >
                 <div className="flex items-center gap-3">
-                  <div className={`p-1.5 rounded-lg transition-colors ${
-                    isExpanded ? `${styles.bg} ${styles.text}` : 'bg-slate-100 text-slate-400 group-hover:text-slate-600'
-                  }`}>
+                  <div className={`p-1.5 rounded-lg transition-colors ${isExpanded ? `${styles.bg} ${styles.text}` : 'bg-slate-100 text-slate-400 group-hover:text-slate-600'
+                    }`}>
                     <Icon className="w-4 h-4" />
                   </div>
-                  <span className={`text-xs font-bold transition-colors ${
-                    isExpanded ? 'text-slate-800' : 'text-slate-600 group-hover:text-slate-800'
-                  }`}>
+                  <span className={`text-xs font-bold transition-colors ${isExpanded ? 'text-slate-800' : 'text-slate-600 group-hover:text-slate-800'
+                    }`}>
                     {cat.label}
                   </span>
                 </div>
@@ -167,12 +164,12 @@ export function ToolPalette({ onDragStart, disabled }: ToolPaletteProps) {
                       {cat.items.length}
                     </span>
                   )}
-                  <ChevronRight 
-                    className={`w-3.5 h-3.5 text-slate-300 group-hover:text-slate-500 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} 
+                  <ChevronRight
+                    className={`w-3.5 h-3.5 text-slate-300 group-hover:text-slate-500 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}
                   />
                 </div>
               </button>
-              
+
               {isExpanded && (
                 <div className="pl-3 pr-1 pb-2 space-y-1 animate-in slide-in-from-top-1 fade-in duration-200">
                   {cat.items.map((item, i) => {
@@ -184,11 +181,10 @@ export function ToolPalette({ onDragStart, disabled }: ToolPaletteProps) {
                         key={`${item.t}-${i}`}
                         draggable={!disabled}
                         onDragStart={e => !disabled && onDragStart(e, dragData)}
-                        className={`flex items-center gap-3 px-3 py-2 bg-white border border-slate-100 rounded-lg transition-all group/item relative overflow-hidden ${
-                          disabled
-                            ? 'opacity-50 cursor-not-allowed'
-                            : `cursor-grab hover:border-${cat.color}-200 hover:shadow-sm hover:translate-x-1 active:cursor-grabbing`
-                        }`}
+                        className={`flex items-center gap-3 px-3 py-2 bg-white border border-slate-100 rounded-lg transition-all group/item relative overflow-hidden ${disabled
+                          ? 'opacity-50 cursor-not-allowed'
+                          : `cursor-grab hover:border-${cat.color}-200 hover:shadow-sm hover:translate-x-1 active:cursor-grabbing`
+                          }`}
                       >
                         {/* Hover accent strip */}
                         <div className={`absolute left-0 top-0 bottom-0 w-1 ${styles.bg} opacity-0 ${!disabled && 'group-hover/item:opacity-100'} transition-opacity`} />
@@ -212,7 +208,7 @@ export function ToolPalette({ onDragStart, disabled }: ToolPaletteProps) {
             </div>
           );
         })}
-        
+
         {filteredCategories.length === 0 && (
           <div className="py-12 text-center">
             <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-3 text-slate-300 border border-slate-100">

@@ -90,11 +90,12 @@ async def capture_media(
     emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None,
 ) -> Dict[str, Any]:
     """
-    Capture photo, video, or audio media.
+    Capture photo, video, audio, or combined audiovideo media.
     
     Args:
-        kind: 'photo' | 'video' | 'audio'
+        kind: 'photo' | 'video' | 'audio' | 'audiovideo'
         device: Device ID/index (optional)
+        audioDevice: Audio device ID/index for audiovideo mode (optional)
         durationMs: Fixed duration for 'fixed' mode (required for video/audio in fixed mode)
         filePath: Output file path (optional, auto-generated if not provided)
         mode: 'fixed' (default) | 'until_stop' (capture until stop_capture is called)
@@ -115,18 +116,19 @@ async def capture_media(
     mode = str(args.get("mode") or "fixed").strip().lower()
     session_id = str(args.get("sessionId") or "").strip() or str(uuid.uuid4())[:8]
     max_duration_ms = int(args.get("maxDurationMs") or 7200000)  # 2 hour default safety limit
-    duration_ms = int(args.get("durationMs") or (5000 if kind in ("audio", "video") else 0))
+    duration_ms = int(args.get("durationMs") or (5000 if kind in ("audio", "video", "audiovideo") else 0))
     explicit_path = str(args.get("filePath") or "").strip()
     silence_threshold = float(args.get("silenceThreshold") or 0.01)
     silence_duration_ms = int(args.get("silenceDurationMs") or 2000)
+    audio_device = args.get("audioDevice")  # For audiovideo mode
 
-    if kind not in ("photo", "video", "audio"):
-        raise ValueError("kind must be one of 'photo' | 'video' | 'audio'")
+    if kind not in ("photo", "video", "audio", "audiovideo"):
+        raise ValueError("kind must be one of 'photo' | 'video' | 'audio' | 'audiovideo'")
     
-    # Use bus for ALL audio/video captures (both fixed and until_stop/silence)
+    # Use bus for ALL audio/video/audiovideo captures (both fixed and until_stop/silence)
     # This allows multiple workflows to share the same camera/microphone seamlessly
     # Without blocking each other
-    if kind in ("audio", "video"):
+    if kind in ("audio", "video", "audiovideo"):
         return await _capture_via_bus(
             kind,
             device,
@@ -138,19 +140,20 @@ async def capture_media(
             silence_threshold,
             silence_duration_ms,
             max_duration_ms,
+            audio_device,
         )
 
     # Validate mode
     if mode not in ("fixed", "until_stop", "silence"):
         raise ValueError("mode must be 'fixed', 'until_stop', or 'silence'")
 
-    # For fixed mode, duration is required for video/audio
-    if mode == "fixed" and kind in ("video", "audio") and duration_ms <= 0:
-        raise ValueError("durationMs must be > 0 for video/audio in fixed mode")
+    # For fixed mode, duration is required for video/audio/audiovideo
+    if mode == "fixed" and kind in ("video", "audio", "audiovideo") and duration_ms <= 0:
+        raise ValueError("durationMs must be > 0 for video/audio/audiovideo in fixed mode")
 
-    # For silence mode, only audio is supported
-    if mode == "silence" and kind != "audio":
-        raise ValueError("silence mode is only supported for audio capture")
+    # For silence mode, only audio and audiovideo are supported
+    if mode == "silence" and kind not in ("audio", "audiovideo"):
+        raise ValueError("silence mode is only supported for audio and audiovideo capture")
 
     # For until_stop or silence mode, use max_duration_ms as the limit
     if mode in ("until_stop", "silence"):
@@ -214,6 +217,7 @@ async def _capture_via_bus(
     silence_threshold: float = 0.01,
     silence_duration_ms: int = 2000,
     max_duration_ms: int = 7200000,
+    audio_device: Any = None,
 ) -> Dict[str, Any]:
     """
     Capture media using the shared media bus system.
@@ -225,6 +229,9 @@ async def _capture_via_bus(
     
     For 'fixed' mode: waits for duration_ms then auto-unsubscribes.
     For 'until_stop' mode: returns immediately, waits for stop_capture call.
+    
+    For 'audiovideo' kind: captures both video (from device) and audio (from audio_device)
+    and muxes them into a single output file.
     """
     # Parse device index
     device_idx = None
@@ -234,12 +241,94 @@ async def _capture_via_bus(
         elif isinstance(device, str) and device.strip().isdigit():
             device_idx = int(device.strip())
     
+    # Parse audio device index for audiovideo mode
+    audio_device_idx = None
+    if audio_device is not None:
+        if isinstance(audio_device, int):
+            audio_device_idx = audio_device
+        elif isinstance(audio_device, str) and audio_device.strip().isdigit():
+            audio_device_idx = int(audio_device.strip())
+    
     print(f"[capture_media] Using bus mode for {kind} capture, session={session_id}, mode={mode}, duration={duration_ms}ms")
+    
+    # For 'stream' mode: create a Stream, link it to the bus subscriber, return streamId
+    if mode == "stream":
+        from . import streams as _streams_mod
+        
+        stream_kind = "video_frames" if kind == "video" else "audio_chunks" if kind == "audio" else "media_chunks"
+        stream_result = await _streams_mod.stream_create({
+            "kind": stream_kind,
+            "flowId": session_id,
+            "sourceStepId": session_id,
+            "metadata": {"captureKind": kind, "device": device_idx},
+        })
+        stream_id = stream_result.get("streamId", "")
+        
+        # Subscribe to the bus with stream linked (no file recording needed)
+        subscribe_result = await media_bus.subscribe_media_bus({
+            "kind": kind,
+            "device": device_idx,
+            "audioDevice": audio_device_idx,
+            "subscriberId": session_id,
+            "startRecording": False,
+        }, emit)
+        
+        if not subscribe_result.get("ok"):
+            # Clean up stream
+            await _streams_mod.stream_close({"streamId": stream_id, "cleanup": True})
+            raise RuntimeError(f"Failed to subscribe to media bus: {subscribe_result}")
+        
+        # Link stream to the bus subscriber
+        bus_key = media_bus._bus_key(kind, device_idx)
+        with media_bus._buses_lock:
+            bus = media_bus._buses.get(bus_key)
+        if bus:
+            with bus.subscribers_lock:
+                sub = bus.subscribers.get(session_id)
+                if sub:
+                    sub.stream_id = stream_id
+        
+        # Store in active recordings for stop_capture cleanup
+        with _sessions_lock:
+            _active_recordings[session_id] = {
+                "kind": kind,
+                "device": device_idx,
+                "bus_mode": True,
+                "bus_id": subscribe_result.get("busId"),
+                "stream_id": stream_id,
+                "started_at": time.time(),
+                "completed": False,
+                "error": None,
+                "mode": "stream",
+            }
+            _active_sessions[session_id] = threading.Event()
+        
+        if emit:
+            await emit("streaming", {
+                "sessionId": session_id,
+                "streamId": stream_id,
+                "kind": kind,
+                "busId": subscribe_result.get("busId"),
+            })
+        
+        return {
+            "ok": True,
+            "sessionId": session_id,
+            "streamId": stream_id,
+            "mode": "stream",
+            "status": "streaming",
+            "kind": kind,
+            "useBus": True,
+            "busId": subscribe_result.get("busId"),
+            "isNewBus": subscribe_result.get("isNewBus"),
+            "subscriberCount": subscribe_result.get("subscriberCount"),
+        }
     
     # Subscribe to the bus (starts it if not running)
     subscribe_result = await media_bus.subscribe_media_bus({
         "kind": kind,
         "device": device_idx,
+        "audioDevice": audio_device_idx,
         "subscriberId": session_id,
         "startRecording": True,
         "filePath": explicit_path,
@@ -911,12 +1000,21 @@ async def stop_capture(
         device = recording_info.get("device")
         mode = recording_info.get("mode", "fixed")
         
+        # Close linked stream if this was a stream-mode capture
+        linked_stream_id = recording_info.get("stream_id")
+        if linked_stream_id:
+            try:
+                from . import streams as _streams_mod
+                await _streams_mod.stream_close({"streamId": linked_stream_id})
+            except Exception:
+                pass
+        
         # Unsubscribe from the bus (this will save the recording)
         unsubscribe_result = await media_bus.unsubscribe_media_bus({
             "kind": kind,
             "device": device,
             "subscriberId": session_id,
-            "saveRecording": True,
+            "saveRecording": mode != "stream",  # Don't save file for stream mode
         }, emit)
         
         # Clean up local state

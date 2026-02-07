@@ -11,7 +11,7 @@ import {
   Monitor, Volume2, Search, Globe, Brain, Calculator, Sigma,
   Sparkles, BarChart3, Hash, Speaker, Download, Archive, CheckCircle,
   MessageSquare, ListChecks, GitPullRequest, Play, Inbox,
-  Send, User, type LucideIcon
+  Send, User, Activity, Radio, type LucideIcon
 } from "lucide-react";
 
 export interface PaletteCategoryItem {
@@ -135,6 +135,7 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'local.tool', t: 'capture_media', label: 'Capture Photo', icon: Camera, args: { kind: 'photo' } },
       { k: 'local.tool', t: 'capture_media', label: 'Record Mic Audio', icon: Mic, args: { kind: 'audio', mode: 'until_stop', sessionId: 'rec' } },
       { k: 'local.tool', t: 'capture_media', label: 'Record Webcam', icon: Video, args: { kind: 'video', mode: 'until_stop', sessionId: 'rec' } },
+      { k: 'local.tool', t: 'capture_media', label: 'Record Webcam + Mic', icon: Video, args: { kind: 'audiovideo', mode: 'until_stop', sessionId: 'rec' } },
       { k: 'local.tool', t: 'capture_screen', label: 'Record Screen', icon: Monitor, args: { mode: 'until_stop', target: 'fullscreen', fps: 30, quality: 'medium' } },
       { k: 'local.tool', t: 'capture_screen', label: 'Record Screen + Audio', icon: Monitor, args: { mode: 'until_stop', target: 'fullscreen', includeSystemAudio: true, fps: 30, quality: 'medium' } },
       { k: 'local.tool', t: 'capture_system_audio', label: 'Record System Audio', icon: Volume2, args: { mode: 'until_stop', format: 'wav' } },
@@ -155,31 +156,17 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
     ],
   },
   {
-    id: 'ffmpeg',
-    label: 'FFmpeg',
-    icon: Video,
-    color: 'yellow',
-    items: [
-      { k: 'local.tool', t: 'ffmpeg_convert_media', label: 'Convert Media', icon: Video, args: { inputPath: '', outputPath: '', overwrite: true } },
-      { k: 'local.tool', t: 'ffmpeg_extract_audio', label: 'Extract Audio', icon: Mic, args: { inputPath: '', outputPath: '' } },
-      { k: 'local.tool', t: 'ffmpeg_trim_media', label: 'Trim Media', icon: Clock, args: { inputPath: '', outputPath: '', startSeconds: 0, durationSeconds: 10 } },
-      { k: 'local.tool', t: 'ffmpeg_extract_frames', label: 'Extract Frames', icon: Camera, args: { inputPath: '', outputPattern: '', fps: 1 } },
-      { k: 'local.tool', t: 'ffmpeg_probe_media', label: 'Probe Media', icon: Eye, args: { inputPath: '' } },
-      { k: 'local.tool', t: 'ffmpeg_run', label: 'Run FFmpeg (Advanced)', icon: Terminal, args: { args: [] } },
-    ],
-  },
-  {
     id: 'files',
     label: 'Files',
     icon: FolderOpen,
     color: 'cyan',
     items: [
       { k: 'local.tool', t: 'read_file', label: 'Read File', icon: FileText, args: { path: '' } },
-      { k: 'local.tool', t: 'write_file', label: 'Write File', icon: PenLine, args: { path: '', content: '' } },
+      { k: 'local.tool', t: 'write_file', label: 'Write File', icon: PenLine, args: { path: '', content: '', description: '' } },
       { k: 'local.tool', t: 'list_directory', label: 'List Directory', icon: Folder, args: { path: '' } },
       { k: 'local.tool', t: 'create_directory', label: 'Create Folder', icon: FolderPlus, args: { path: '' } },
       { k: 'local.tool', t: 'move_file', label: 'Move File', icon: Package, args: { src: '', dest: '' } },
-      { k: 'local.tool', t: 'run_command', label: 'Run Command', icon: Terminal, args: { command: 'echo hello' } },
+      { k: 'local.tool', t: 'run_command', label: 'Run Command', icon: Terminal, args: { command: 'echo hello', description: '' } },
       { k: 'local.tool', t: 'launch_application_or_uri', label: 'Launch App/URL', icon: Rocket, args: { target: '' } },
     ],
   },
@@ -382,6 +369,27 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'local.tool', t: 'math_min', label: 'Min', icon: BarChart3, args: { x: [1, 5, 3] } },
       { k: 'local.tool', t: 'math_compare', label: 'Compare', icon: Calculator, args: { a: 5, b: 3, op: 'gt' } },
       { k: 'local.tool', t: 'math_range', label: 'Range', icon: ListOrdered, args: { start: 1, stop: 10 } },
+    ],
+  },
+  {
+    id: 'streaming',
+    label: 'Streaming',
+    icon: Activity,
+    color: 'cyan',
+    items: [
+      { k: 'local.tool', t: 'stream_create', label: 'Create Stream', icon: Radio, args: { kind: 'bytes', bufferSize: 500 } },
+      { k: 'local.tool', t: 'stream_write', label: 'Write to Stream', icon: Send, args: { streamId: '', chunk: '' } },
+      { k: 'local.tool', t: 'stream_read', label: 'Read from Stream', icon: Download, args: { streamId: '', subscriberId: '', maxChunks: 50, waitMs: 100 } },
+      { k: 'local.tool', t: 'stream_close', label: 'Close Stream', icon: StopCircle, args: { streamId: '' } },
+      { k: 'local.tool', t: 'stream_subscribe', label: 'Subscribe', icon: Inbox, args: { streamId: '', fromStart: false } },
+      { k: 'local.tool', t: 'stream_unsubscribe', label: 'Unsubscribe', icon: X, args: { streamId: '', subscriberId: '' } },
+      { k: 'local.tool', t: 'stream_add_transform', label: 'Add Transform', icon: Wand2, args: { streamId: '', type: 'python', code: 'def transform(chunk, params):\n    return chunk', params: {} } },
+      { k: 'local.tool', t: 'stream_update_transform', label: 'Update Transform', icon: PenLine, args: { streamId: '', transformId: '', params: {} } },
+      { k: 'local.tool', t: 'stream_list', label: 'List Streams', icon: List, args: {} },
+      { k: 'local.tool', t: 'stream_get_status', label: 'Stream Status', icon: Activity, args: { streamId: '' } },
+      { k: 'local.tool', t: 'stream_from_script', label: 'Stream from Script', icon: FileCode, args: { code: 'import time\nfor i in range(10):\n    emit_chunk({"count": i})\n    time.sleep(0.5)', kind: 'json' } },
+      { k: 'local.tool', t: 'stream_from_api', label: 'Stream from API', icon: Globe, args: { url: '', method: 'sse', chunkType: 'json' } },
+      { k: 'local.tool', t: 'stream_from_llm', label: 'Stream from LLM', icon: Sparkles, args: { prompt: '', model: 'gpt-4o-mini' } },
     ],
   },
 ];

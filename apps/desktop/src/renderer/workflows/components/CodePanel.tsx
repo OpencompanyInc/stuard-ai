@@ -7,6 +7,7 @@ import { generateDebugView } from "../utils/debugView";
 import { RichCodeEditor } from "./RichCodeEditor";
 import type { DesignerModel } from "../types";
 import type { ValidationError } from "../builder/compiler";
+import { specToDesignerModel } from "../utils/conversions";
 
 interface CodePanelProps {
   model: DesignerModel;
@@ -60,8 +61,8 @@ export function CodePanel({ model, errors, onClose, onUpdateModel }: CodePanelPr
   
   const applyEdit = () => {
     try {
-      let newModel: DesignerModel;
-      newModel = JSON.parse(editText);
+      const parsed = JSON.parse(editText);
+      const newModel: DesignerModel = specToDesignerModel(parsed);
       onUpdateModel(newModel);
       setEditing(false);
       setParseError('');

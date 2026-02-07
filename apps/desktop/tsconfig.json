@@ -7,7 +7,7 @@
     "lib": ["ES2020", "DOM"],
     "rootDir": ".",
     "outDir": "dist",
-    "types": ["node", "vite/client"],
+    "types": ["node"],
     "noEmit": false,
     "strict": true
   },

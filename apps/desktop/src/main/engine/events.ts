@@ -18,3 +18,13 @@ export function emitFlowEvent(flowId: string, isRunning: boolean) {
     }
   } catch { }
 }
+
+// Emit stream wire activity events for UI animation control
+export function emitStreamEvent(flowId: string, sourceStepId: string, consumerStepId: string, isActive: boolean) {
+  const payload = { flowId, sourceStepId, consumerStepId, isActive, ts: new Date().toISOString() };
+  try {
+    for (const win of BrowserWindow.getAllWindows()) {
+      try { win.webContents.send('workflows:stream', payload); } catch { }
+    }
+  } catch { }
+}

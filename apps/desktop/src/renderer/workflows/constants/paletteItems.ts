@@ -12,7 +12,7 @@ export const TRIGGER_ITEMS: PaletteItem[] = [
 
 export const LOCAL_TOOL_ITEMS: PaletteItem[] = [
   // Commands & apps
-  { k: 'local.tool', t: 'run_command', label: 'Run Command', args: { command: 'echo hello', shell: 'auto' } },
+  { k: 'local.tool', t: 'run_command', label: 'Run Command', args: { command: 'echo hello', shell: 'auto', description: '' } },
   { k: 'local.tool', t: 'launch_application_or_uri', label: 'Launch App / URL', args: { target: 'C:/Path/To/App.exe', args: [] } },
 
   // Notifications
@@ -64,6 +64,8 @@ export const LOCAL_TOOL_ITEMS: PaletteItem[] = [
   { k: 'local.tool', t: 'capture_media', label: 'Record Video (until stop)', args: { kind: 'video', mode: 'until_stop', maxDurationMs: 300000 } },
   { k: 'local.tool', t: 'capture_media', label: 'Record Audio (fixed)', args: { kind: 'audio', mode: 'fixed', durationMs: 5000 } },
   { k: 'local.tool', t: 'capture_media', label: 'Record Audio (until stop)', args: { kind: 'audio', mode: 'until_stop', maxDurationMs: 300000 } },
+  { k: 'local.tool', t: 'capture_media', label: 'Record Webcam + Mic (fixed)', args: { kind: 'audiovideo', mode: 'fixed', durationMs: 5000 } },
+  { k: 'local.tool', t: 'capture_media', label: 'Record Webcam + Mic (until stop)', args: { kind: 'audiovideo', mode: 'until_stop', maxDurationMs: 300000 } },
   { k: 'local.tool', t: 'stop_capture', label: 'Stop Recording', args: { sessionId: '' } },
 
   // Screen recording & system audio
@@ -92,7 +94,7 @@ export const LOCAL_TOOL_ITEMS: PaletteItem[] = [
 
   // File system
   { k: 'local.tool', t: 'read_file', label: 'Read File', args: { path: 'C:/file.txt' } },
-  { k: 'local.tool', t: 'write_file', label: 'Write File', args: { path: 'C:/file.txt', content: 'text', append: false } },
+  { k: 'local.tool', t: 'write_file', label: 'Write File', args: { path: 'C:/file.txt', content: 'text', description: '', append: false } },
   { k: 'local.tool', t: 'create_directory', label: 'Create Directory', args: { path: 'C:/folder' } },
   { k: 'local.tool', t: 'list_directory', label: 'List Directory', args: { path: 'C:/folder' } },
   { k: 'local.tool', t: 'move_file', label: 'Move File', args: { src: 'C:/old.txt', dest: 'C:/new.txt' } },
@@ -169,6 +171,23 @@ export const MATH_ITEMS: PaletteItem[] = [
   { k: 'local.tool', t: 'math_min', label: 'Min', args: { x: [1, 5, 3] } },
   { k: 'local.tool', t: 'math_compare', label: 'Compare', args: { a: 5, b: 3, op: 'gt' } },
   { k: 'local.tool', t: 'math_range', label: 'Range', args: { start: 1, stop: 10 } },
+];
+
+// Streaming — Real-time data pipeline primitives
+export const STREAM_ITEMS: PaletteItem[] = [
+  { k: 'local.tool', t: 'stream_create', label: 'Create Stream', args: { kind: 'bytes', bufferSize: 500 } },
+  { k: 'local.tool', t: 'stream_write', label: 'Write to Stream', args: { streamId: '', chunk: '' } },
+  { k: 'local.tool', t: 'stream_read', label: 'Read from Stream', args: { streamId: '', subscriberId: '', maxChunks: 50, waitMs: 100 } },
+  { k: 'local.tool', t: 'stream_close', label: 'Close Stream', args: { streamId: '' } },
+  { k: 'local.tool', t: 'stream_subscribe', label: 'Subscribe to Stream', args: { streamId: '', fromStart: false } },
+  { k: 'local.tool', t: 'stream_unsubscribe', label: 'Unsubscribe from Stream', args: { streamId: '', subscriberId: '' } },
+  { k: 'local.tool', t: 'stream_add_transform', label: 'Add Stream Transform', args: { streamId: '', type: 'python', code: 'def transform(chunk, params):\n    return chunk', params: {} } },
+  { k: 'local.tool', t: 'stream_update_transform', label: 'Update Transform Params', args: { streamId: '', transformId: '', params: {} } },
+  { k: 'local.tool', t: 'stream_list', label: 'List Streams', args: {} },
+  { k: 'local.tool', t: 'stream_get_status', label: 'Stream Status', args: { streamId: '' } },
+  { k: 'local.tool', t: 'stream_from_script', label: 'Stream from Script', args: { code: 'import time\nfor i in range(10):\n    emit_chunk({"count": i})\n    time.sleep(0.5)', kind: 'json' } },
+  { k: 'local.tool', t: 'stream_from_api', label: 'Stream from API', args: { url: '', method: 'sse', chunkType: 'json' } },
+  { k: 'local.tool', t: 'stream_from_llm', label: 'Stream from LLM', args: { prompt: '', model: 'gpt-4o-mini' } },
 ];
 
 export const INTEGRATION_ITEMS: PaletteItem[] = [

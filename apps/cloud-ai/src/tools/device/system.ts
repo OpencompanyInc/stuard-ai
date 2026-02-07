@@ -23,6 +23,10 @@ export const run_system_command = makeLocalTool(
       .default(false)
       .describe('If true, run in background and return a terminalId for live polling.'),
     terminalId: z.string().optional().describe('Optional caller-provided terminal ID to reuse/track a session.'),
+    forwardToStreamId: z
+      .string()
+      .optional()
+      .describe('If set, forward live stdout/stderr output chunks to this stream id (only meaningful when background=true).'),
   }),
   z.object({
     ok: z.boolean().optional(),
@@ -53,6 +57,10 @@ export const run_command = makeLocalTool(
       .default(false)
       .describe('If true, run in background and return a terminalId for live polling.'),
     terminalId: z.string().optional().describe('Optional caller-provided terminal ID to reuse/track a session.'),
+    forwardToStreamId: z
+      .string()
+      .optional()
+      .describe('If set, forward live stdout/stderr output chunks to this stream id (only meaningful when background=true).'),
   }),
   z.object({
     ok: z.boolean().optional(),

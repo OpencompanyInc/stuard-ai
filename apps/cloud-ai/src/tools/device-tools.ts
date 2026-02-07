@@ -397,3 +397,23 @@ export {
   sync_file_index_batch_jobs,
   semantic_file_search,
 } from './device/file-index';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STREAMING — Real-time data pipeline primitives
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  stream_create,
+  stream_write,
+  stream_read,
+  stream_close,
+  stream_subscribe,
+  stream_unsubscribe,
+  stream_add_transform,
+  stream_remove_transform,
+  stream_update_transform,
+  stream_list,
+  stream_get_status,
+  stream_from_script,
+  stream_from_api,
+  stream_from_llm,
+} from './device/streams';

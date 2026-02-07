@@ -56,6 +56,7 @@ export function specToDesignerModel(spec: any): DesignerModel {
         loop: (w as any)?.loop,
         loopBreak: (w as any)?.loopBreak,
         loopFanoutMode: (w as any)?.loopFanoutMode,
+        stream: (w as any)?.stream,
       })).filter((w: any) => w.from && w.to);
 
       console.log('[conversions] Detected DesignerModel format:', { triggers: trigNodes.length, nodes: normNodes.length, wires: normWires.length });
@@ -106,6 +107,7 @@ export function specToDesignerModel(spec: any): DesignerModel {
             loop: (e as any)?.loop,
             loopBreak: (e as any)?.loopBreak,
             loopFanoutMode: (e as any)?.loopFanoutMode,
+            stream: (e as any)?.stream,
           });
         }
       }
@@ -166,6 +168,7 @@ export function designerModelToStuardSpec(m: any): StuardSpec {
       const loop = (w as any)?.loop;
       const loopBreak = (w as any)?.loopBreak;
       const loopFanoutMode = (w as any)?.loopFanoutMode;
+      const stream = (w as any)?.stream;
       const edge: any = { to, guard };
       if (label) edge.label = String(label);
 
@@ -188,6 +191,14 @@ export function designerModelToStuardSpec(m: any): StuardSpec {
 
       if (loopFanoutMode === 'wait' || loopFanoutMode === 'parallel') {
         edge.loopFanoutMode = loopFanoutMode;
+      }
+
+      if (stream && typeof stream === 'object') {
+        edge.stream = {
+          sourceField: stream.sourceField || 'streamId',
+          mode: stream.mode || 'reactive',
+          ...(stream.bufferSize ? { bufferSize: stream.bufferSize } : {}),
+        };
       }
       return edge;
     });

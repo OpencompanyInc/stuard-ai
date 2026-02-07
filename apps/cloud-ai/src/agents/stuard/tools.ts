@@ -406,31 +406,14 @@ async function getSis(): Promise<SISType | null> {
   return _sis;
 }
 
-// Always available core tools (keep minimal; rely on SIS for the rest)
-export const CORE_TOOLS_LIST = [
-  // Orchestration (3)
-  'wait', 'run_sequential', 'run_parallel',
-  // File system basics (6)
-  'list_directory', 'read_file', 'write_file', 'create_directory', 'file_read', 'file_edit',
-  // Commands (1)
-  'run_command',
-  // SIS discovery + execution (3)
-  'sis_search_tools', 'sis_execute_tool', 'sis_list_categories',
-  // Web research (2)
-  'web_search', 'scrape_url',
-  // Memory (2)
-  'search_past_conversations', 'get_conversation_context',
-];
+// Core tools list removed - using ALL_TOOLS by default
 
 export function getTools(enabledIntegrations: string[] = [], mcpTools: Record<string, any> = {}): Record<string, any> {
-  const tools: Record<string, any> = {};
+  // Start with MCP tools
+  const tools: Record<string, any> = { ...mcpTools };
 
-  // Add core tools
-  CORE_TOOLS_LIST.forEach(name => {
-    if ((ALL_TOOLS as any)[name]) {
-      tools[name] = (ALL_TOOLS as any)[name];
-    }
-  });
+  // Add ALL registered tools
+  Object.assign(tools, ALL_TOOLS);
 
   return tools;
 }
@@ -440,20 +423,17 @@ export async function getToolsForQuery(
   enabledIntegrations: string[] = [],
   mcpTools: Record<string, any> = {}
 ): Promise<Record<string, any>> {
-  const selected: Record<string, any> = {};
+  // Start with MCP tools
+  const selected: Record<string, any> = { ...mcpTools };
 
   // =========================================================================
-  // Load ONLY the 16 core tools; everything else should be discovered via SIS
+  // Load ALL registered tools (~200+ tools)
   // =========================================================================
-  for (const name of CORE_TOOLS_LIST) {
-    if ((ALL_TOOLS as any)[name]) {
-      selected[name] = (ALL_TOOLS as any)[name];
-    }
-  }
+  Object.assign(selected, ALL_TOOLS);
 
   if (process.env.SIS_DEBUG === '1') {
     const searchMode = isSupabaseSISEnabled() ? 'semantic (Supabase)' : 'keyword (fallback)';
-    console.log(`[sis-runtime] Loaded ${Object.keys(selected).length} tools (Tier 1 + SIS discovery)`);
+    console.log(`[sis-runtime] Loaded ${Object.keys(selected).length} tools (Full + MCP)`);
     console.log(`[sis-runtime] Search mode: ${searchMode}`);
     console.log('[sis-runtime] SIS tools added: sis_search_tools, sis_execute_tool, sis_list_categories');
   }

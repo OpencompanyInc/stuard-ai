@@ -4,7 +4,8 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { X, Eye, EyeOff, Grid3x3, ZoomIn, ZoomOut, Code2, Type, Square, MousePointer2, Image, ToggleLeft, List, Minus, LayoutGrid } from 'lucide-react';
+import ReactDOM from 'react-dom';
+import { X, Eye, EyeOff, Grid3x3, ZoomIn, ZoomOut, Code2, Type, Square, MousePointer2, Image, ToggleLeft, List, Minus, LayoutGrid, Plus, FileText, Trash2 } from 'lucide-react';
 import { UIBuilderCanvas, type UIBuilderCanvasRef, type SelectedElementInfo } from './UIBuilderCanvas';
 
 // Helper to convert RGB/RGBA color strings to hex format for color inputs
@@ -117,6 +118,9 @@ interface UIBuilderModalProps {
   html: string;
   css: string;
   js: string;
+  pages?: Record<string, any>;
+  startPage?: string;
+  mode?: 'create' | 'update';
   windowConfig: {
     width?: number;
     height?: number;
@@ -126,7 +130,7 @@ interface UIBuilderModalProps {
     frameless?: boolean;
     borderRadius?: number;
   };
-  onSave: (args: { html: string; css: string; js: string; window: any }) => void;
+  onSave: (args: { html: string; css: string; js: string; window: any; pages?: Record<string, any>; startPage?: string }) => void;
   onClose: () => void;
 }
 
@@ -134,6 +138,9 @@ export function UIBuilderModal({
   html: initialHtml,
   css: initialCss,
   js: initialJs,
+  pages: initialPages,
+  startPage: initialStartPage,
+  mode = 'create',
   windowConfig,
   onSave,
   onClose,
@@ -144,6 +151,15 @@ export function UIBuilderModal({
   const [html, setHtml] = useState(initialHtml || '');
   const [css, setCss] = useState(initialCss || '');
   const [js, setJs] = useState(initialJs || '');
+  const [pages, setPages] = useState<Record<string, any> | undefined>(initialPages);
+  const [startPage, setStartPage] = useState<string | undefined>(initialStartPage);
+  const [currentPage, setCurrentPage] = useState<string | null>(
+    initialPages && Object.keys(initialPages).length > 0
+      ? (initialStartPage || Object.keys(initialPages)[0])
+      : null
+  );
+  const [showAddPage, setShowAddPage] = useState(false);
+  const [newPageName, setNewPageName] = useState('');
 
   // Track if we need to sync on close
   const needsSyncRef = useRef(false);
@@ -164,6 +180,109 @@ export function UIBuilderModal({
   const [draggedComponent, setDraggedComponent] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
 
+  // Get current page content or root content
+  const getCurrentHtml = useCallback(() => {
+    if (currentPage && pages?.[currentPage]) {
+      return pages[currentPage].html || '';
+    }
+    return html;
+  }, [currentPage, pages, html]);
+
+  const getCurrentCss = useCallback(() => {
+    if (currentPage && pages?.[currentPage]) {
+      return pages[currentPage].css || css;
+    }
+    return css;
+  }, [currentPage, pages, css]);
+
+  const getCurrentJs = useCallback(() => {
+    if (currentPage && pages?.[currentPage]) {
+      return pages[currentPage].js || '';
+    }
+    return js;
+  }, [currentPage, pages, js]);
+
+  // Update content for current page or root
+  const updateCurrentHtml = useCallback((newHtml: string) => {
+    if (currentPage && pages) {
+      setPages(prev => ({
+        ...prev,
+        [currentPage]: { ...prev?.[currentPage], html: newHtml }
+      }));
+    } else {
+      setHtml(newHtml);
+    }
+    needsSyncRef.current = true;
+  }, [currentPage, pages]);
+
+  const updateCurrentCss = useCallback((newCss: string) => {
+    if (currentPage && pages) {
+      setPages(prev => ({
+        ...prev,
+        [currentPage]: { ...prev?.[currentPage], css: newCss }
+      }));
+    } else {
+      setCss(newCss);
+    }
+    needsSyncRef.current = true;
+  }, [currentPage, pages]);
+
+  const updateCurrentJs = useCallback((newJs: string) => {
+    if (currentPage && pages) {
+      setPages(prev => ({
+        ...prev,
+        [currentPage]: { ...prev?.[currentPage], js: newJs }
+      }));
+    } else {
+      setJs(newJs);
+    }
+    needsSyncRef.current = true;
+  }, [currentPage, pages]);
+
+  // Page management functions
+  const addPage = useCallback((pageName: string) => {
+    if (!pageName.trim()) return;
+    const name = pageName.trim().toLowerCase().replace(/\s+/g, '-');
+    setPages(prev => ({
+      ...prev,
+      [name]: { html: '<div class="p-4">New page content</div>', css: '', js: '' }
+    }));
+    if (!startPage) {
+      setStartPage(name);
+    }
+    setCurrentPage(name);
+    setShowAddPage(false);
+    setNewPageName('');
+    needsSyncRef.current = true;
+  }, [startPage]);
+
+  const deletePage = useCallback((pageName: string) => {
+    if (!pages) return;
+    const newPages = { ...pages };
+    delete newPages[pageName];
+    
+    if (Object.keys(newPages).length === 0) {
+      setPages(undefined);
+      setCurrentPage(null);
+      setStartPage(undefined);
+    } else {
+      setPages(newPages);
+      if (currentPage === pageName) {
+        setCurrentPage(Object.keys(newPages)[0]);
+      }
+      if (startPage === pageName) {
+        setStartPage(Object.keys(newPages)[0]);
+      }
+    }
+    needsSyncRef.current = true;
+  }, [pages, currentPage, startPage]);
+
+  const switchPage = useCallback((pageName: string | null) => {
+    setCurrentPage(pageName);
+    setSelectedElement(null);
+    setSelectedPath(null);
+  }, []);
+
   // Canvas dimensions from window config
   const canvasWidth = windowConfig.width || 800;
   const canvasHeight = windowConfig.height || 600;
@@ -175,7 +294,7 @@ export function UIBuilderModal({
       return;
     }
     needsSyncRef.current = true;
-  }, [html, css, js]);
+  }, [html, css, js, pages, startPage]);
 
   // Handle element selection
   const handleSelectElement = useCallback((element: SelectedElementInfo | null) => {
@@ -246,30 +365,46 @@ export function UIBuilderModal({
         css,
         js,
         window: windowConfigRef.current,
+        pages,
+        startPage,
       });
       needsSyncRef.current = false;
     }, 300);
 
     return () => window.clearTimeout(timeout);
-  }, [html, css, js, onSave]);
+  }, [html, css, js, pages, startPage, onSave]);
 
   // Handle HTML change from canvas (after element updates or on close)
   const handleHtmlChange = useCallback((newHtml: string) => {
-    setHtml(newHtml);
+    // Update the correct content based on current page
+    if (currentPage && pages) {
+      setPages(prev => ({
+        ...prev,
+        [currentPage]: { ...prev?.[currentPage], html: newHtml }
+      }));
+    } else {
+      setHtml(newHtml);
+    }
     needsSyncRef.current = true;
 
     // If we're pending close, save and close now
     if (pendingCloseRef.current) {
       pendingCloseRef.current = false;
+      const finalPages = currentPage && pages 
+        ? { ...pages, [currentPage]: { ...pages[currentPage], html: newHtml } }
+        : pages;
+      const finalHtml = currentPage ? html : newHtml;
       onSave({
-        html: newHtml,
+        html: finalHtml,
         css,
         js,
         window: windowConfig,
+        pages: finalPages,
+        startPage,
       });
       onClose();
     }
-  }, [css, js, windowConfig, onSave, onClose]);
+  }, [currentPage, pages, html, css, js, windowConfig, startPage, onSave, onClose]);
 
   // Handle close - sync final state before closing
   const handleClose = useCallback(() => {
@@ -286,6 +421,8 @@ export function UIBuilderModal({
             css,
             js,
             window: windowConfig,
+            pages,
+            startPage,
           });
           onClose();
         }
@@ -297,13 +434,15 @@ export function UIBuilderModal({
         css,
         js,
         window: windowConfig,
+        pages,
+        startPage,
       });
       onClose();
     } else {
       // No changes, just close
       onClose();
     }
-  }, [html, css, js, windowConfig, onSave, onClose]);
+  }, [html, css, js, windowConfig, pages, startPage, onSave, onClose]);
 
   // Add component to canvas - injects directly into iframe for smooth experience
   const addComponent = useCallback((componentId: string, dropPoint?: { clientX: number; clientY: number }) => {
@@ -372,18 +511,18 @@ export function UIBuilderModal({
   const handleZoomOut = () => setZoom(z => Math.max(z - 0.25, 0.25));
   const handleResetZoom = () => setZoom(1);
 
-  return (
-    <div className="fixed inset-0 z-50 bg-slate-900/90 flex flex-col">
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 z-[100] bg-slate-900/90 flex flex-col">
       {/* Toolbar */}
       <div className="h-12 px-4 bg-white border-b border-slate-200 flex items-center justify-between">
         {/* Left - Title */}
         <div className="flex items-center gap-3">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
+          <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${mode === 'update' ? 'bg-gradient-to-br from-amber-500 to-orange-600' : 'bg-gradient-to-br from-indigo-500 to-purple-600'}`}>
             <Grid3x3 className="w-4 h-4 text-white" />
           </div>
           <div>
             <div className="text-sm font-semibold text-slate-800">
-              UI Designer
+              {mode === 'update' ? 'Update UI' : 'UI Designer'}
             </div>
             <div className="text-[10px] text-slate-400">Drag components • Click to edit</div>
           </div>
@@ -525,6 +664,89 @@ export function UIBuilderModal({
             isDragOver ? 'ring-4 ring-indigo-300 ring-inset bg-indigo-50/30' : ''
           }`}
         >
+          {/* Page Tabs */}
+          {!previewMode && (
+            <div className="flex items-center gap-1 px-3 py-2 bg-slate-50 border-b border-slate-200 overflow-x-auto">
+              {/* Root/Main tab (shown when no pages or as fallback) */}
+              <button
+                onClick={() => switchPage(null)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
+                  currentPage === null
+                    ? 'bg-white text-indigo-700 border border-indigo-200 shadow-sm'
+                    : 'text-slate-600 hover:bg-white hover:text-slate-800 border border-transparent'
+                }`}
+              >
+                <FileText className="w-3.5 h-3.5" />
+                Main
+              </button>
+
+              {/* Page tabs */}
+              {pages && Object.keys(pages).map(pageName => (
+                <div key={pageName} className="flex items-center group">
+                  <button
+                    onClick={() => switchPage(pageName)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-l-md transition-all whitespace-nowrap ${
+                      currentPage === pageName
+                        ? 'bg-white text-indigo-700 border border-indigo-200 border-r-0 shadow-sm'
+                        : 'text-slate-600 hover:bg-white hover:text-slate-800 border border-transparent'
+                    }`}
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                    {pageName}
+                    {startPage === pageName && (
+                      <span className="text-[9px] bg-emerald-100 text-emerald-700 px-1 rounded">start</span>
+                    )}
+                  </button>
+                  {currentPage === pageName && (
+                    <button
+                      onClick={() => deletePage(pageName)}
+                      className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-r-md border border-indigo-200 border-l-0 bg-white transition-colors"
+                      title="Delete page"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              ))}
+
+              {/* Add page button */}
+              {showAddPage ? (
+                <div className="flex items-center gap-1 ml-1">
+                  <input
+                    type="text"
+                    value={newPageName}
+                    onChange={(e) => setNewPageName(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && addPage(newPageName)}
+                    placeholder="page-name"
+                    className="w-24 px-2 py-1 text-xs border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                    autoFocus
+                  />
+                  <button
+                    onClick={() => addPage(newPageName)}
+                    className="p-1 text-emerald-600 hover:bg-emerald-50 rounded"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => { setShowAddPage(false); setNewPageName(''); }}
+                    className="p-1 text-slate-400 hover:bg-slate-100 rounded"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowAddPage(true)}
+                  className="flex items-center gap-1 px-2 py-1.5 text-xs text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors ml-1"
+                  title="Add new page"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add Page
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Transparent overlay during drag to catch events (iframe blocks them otherwise) */}
           {draggedComponent && (
             <div
@@ -544,9 +766,9 @@ export function UIBuilderModal({
           )}
           <UIBuilderCanvas
             ref={canvasRef}
-            html={html}
-            css={css}
-            js={js}
+            html={getCurrentHtml()}
+            css={getCurrentCss()}
+            js={getCurrentJs()}
             canvasWidth={canvasWidth}
             canvasHeight={canvasHeight}
             backgroundColor="#ffffff"
@@ -571,12 +793,18 @@ export function UIBuilderModal({
                   <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Code Editor</div>
                 </div>
                 <div className="flex-1 overflow-auto p-3 space-y-4">
+                  {/* Current page indicator */}
+                  {currentPage && (
+                    <div className="text-xs text-indigo-600 font-medium bg-indigo-50 px-2 py-1 rounded">
+                      Editing page: {currentPage}
+                    </div>
+                  )}
                   {/* HTML */}
                   <div>
                     <label className="block text-xs font-semibold text-slate-600 mb-1">HTML</label>
                     <textarea
-                      value={html}
-                      onChange={(e) => setHtml(e.target.value)}
+                      value={getCurrentHtml()}
+                      onChange={(e) => updateCurrentHtml(e.target.value)}
                       className="w-full h-32 px-2 py-1.5 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
                       placeholder="<div>...</div>"
                     />
@@ -585,8 +813,8 @@ export function UIBuilderModal({
                   <div>
                     <label className="block text-xs font-semibold text-slate-600 mb-1">CSS</label>
                     <textarea
-                      value={css}
-                      onChange={(e) => setCss(e.target.value)}
+                      value={getCurrentCss()}
+                      onChange={(e) => updateCurrentCss(e.target.value)}
                       className="w-full h-24 px-2 py-1.5 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
                       placeholder=".class { ... }"
                     />
@@ -595,8 +823,8 @@ export function UIBuilderModal({
                   <div>
                     <label className="block text-xs font-semibold text-slate-600 mb-1">JavaScript</label>
                     <textarea
-                      value={js}
-                      onChange={(e) => setJs(e.target.value)}
+                      value={getCurrentJs()}
+                      onChange={(e) => updateCurrentJs(e.target.value)}
                       className="w-full h-24 px-2 py-1.5 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
                       placeholder="// code..."
                     />
@@ -825,6 +1053,7 @@ export function UIBuilderModal({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
