@@ -72,6 +72,48 @@ function isDevMode() {
   return process.env.NODE_ENV !== 'production';
 }
 
+async function sleep(ms: number) {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
+async function pushOriginWithRetry(opts: {
+  branch: string;
+  upstream?: boolean;
+  maxAttempts?: number;
+}): Promise<{ ok: true; output?: string } | { ok: false; error: string }> {
+  const maxAttempts = opts.maxAttempts ?? 2;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const args = [
+        '-c',
+        'http.postBuffer=524288000',
+        '-c',
+        'http.lowSpeedLimit=0',
+        '-c',
+        'http.lowSpeedTime=999999',
+        'push',
+      ];
+
+      if (opts.upstream) args.push('-u');
+      args.push('origin', opts.branch);
+
+      const output = await git.raw(args);
+      return { ok: true, output };
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (attempt >= maxAttempts) {
+        return { ok: false, error: msg };
+      }
+
+      // brief backoff for transient network/proxy/GitHub hiccups
+      await sleep(1500);
+    }
+  }
+
+  return { ok: false, error: 'Unknown push failure' };
+}
+
 export async function POST(req: Request) {
   try {
     const { type, payload = {} } = await req.json();
@@ -103,7 +145,12 @@ export async function POST(req: Request) {
 
         // Creates and checks out the new branch
         await git.checkoutLocalBranch(branchName);
-        await git.push(['-u', 'origin', branchName]);
+
+        const pushed = await pushOriginWithRetry({ branch: branchName, upstream: true, maxAttempts: 2 });
+        if (!pushed.ok) {
+          return NextResponse.json({ error: pushed.error }, { status: 500 });
+        }
+
         return NextResponse.json({ message: `Created branch: ${branchName}` });
       }
 
@@ -133,7 +180,12 @@ export async function POST(req: Request) {
         }
 
         const current = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
-        await git.push('origin', current);
+
+        const pushed = await pushOriginWithRetry({ branch: current, upstream: false, maxAttempts: 2 });
+        if (!pushed.ok) {
+          return NextResponse.json({ error: pushed.error }, { status: 500 });
+        }
+
         return NextResponse.json({ message: `Pushed ${current} to remote` });
       }
 
@@ -151,7 +203,12 @@ export async function POST(req: Request) {
         const slug = rawName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-_]/g, '');
         const branchName = `feature/${slug || 'unnamed'}`;
         await git.checkoutLocalBranch(branchName);
-        await git.push(['-u', 'origin', branchName]);
+
+        const pushed = await pushOriginWithRetry({ branch: branchName, upstream: true, maxAttempts: 2 });
+        if (!pushed.ok) {
+          return NextResponse.json({ error: pushed.error }, { status: 500 });
+        }
+
         return NextResponse.json({ message: `Started feature branch: ${branchName}` });
       }
 
@@ -167,7 +224,12 @@ export async function POST(req: Request) {
           await git.commit('wip: sync shared branch');
         }
         const current = await git.revparse(['--abbrev-ref', 'HEAD']);
-        await git.push('origin', current);
+
+        const pushed = await pushOriginWithRetry({ branch: String(current).trim(), upstream: false, maxAttempts: 2 });
+        if (!pushed.ok) {
+          return NextResponse.json({ error: pushed.error }, { status: 500 });
+        }
+
         return NextResponse.json({ message: `Synced ${current} to remote (with auto-commit)` });
       }
 
@@ -355,6 +417,19 @@ export async function POST(req: Request) {
   } catch (error: unknown) {
     console.error(error);
     const message = error instanceof Error ? error.message : 'Git operation failed';
+
+    if (typeof message === 'string' && message.includes('HTTP 408')) {
+      return NextResponse.json(
+        {
+          error:
+            `${message}\n\nHint: This is usually a network/proxy timeout pushing over HTTPS. ` +
+            `Retry, or switch your origin remote to SSH (git@github.com:Ifesol-backup/Stuard-AI.git). ` +
+            `If the push is very large, consider pushing smaller batches.`,
+        },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
