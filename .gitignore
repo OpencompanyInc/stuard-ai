@@ -251,3 +251,68 @@ cython_debug/
 .idea/
 *.swp
 *.swo
+
+# ============================================================================
+# Monorepo Build Artifacts & Platform-Specific Outputs
+# ============================================================================
+
+# Electron Desktop App (apps/desktop/)
+dist/
+release/
+build/
+out/
+*.asar
+*.exe
+*.dmg
+*.AppImage
+*.snap
+*.deb
+*.rpm
+*.pkg
+*.zip
+*.tar.gz
+
+# Python Agent Builds (apps/agent/)
+*.spec
+PyInstaller/
+
+# Next.js (apps/website/, apps/ops-console/)
+.next/
+.vercel/
+.turbo/
+
+# Browser Extension (apps/browser-extension/)
+manifest.json.tmp
+
+# Cloud API (apps/cloud-ai/)
+.output/
+
+# General TypeScript/Node Build Outputs
+*.tsbuildinfo
+
+# Electron-specific
+app-update.yml
+latest.yml
+latest-*.yml
+builder-debug.yml
+builder-effective-config.yaml
+
+# Platform installers & packages
+*.msi
+*.msix
+*.appx
+*.nupkg
+*.blockmap
+
+# Auto-update artifacts
+auto_updater/
+
+# Test outputs
+test-results/
+playwright-report/
+e2e-results/
+
+# Temporary monorepo outputs
+tmp/
+temp/
+.cache/

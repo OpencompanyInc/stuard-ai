@@ -5,7 +5,9 @@ node_modules/
 dist/
 
 # Environment
-
+.env
+.env.local
+.env.*.local
 
 # Logs
 *.log

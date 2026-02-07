@@ -6,3 +6,26 @@ __pycache__/
 .venv/
 venv/
 .env
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+*.manifest
+
+# Built agent executables
+stuard-agent.exe
+stuard-agent-macos
+stuard-agent-linux
+Stuard AI Agent.exe
+
+# PyInstaller cache
+PyInstaller/
+
+# Test/dev recordings
+*.wav
+*.mp3
+*.lock
+
+# Logs
+*.log
