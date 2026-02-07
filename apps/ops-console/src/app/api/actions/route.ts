@@ -289,10 +289,10 @@ export async function POST(req: Request) {
         const targetLabel = formatTargets(targets);
         const github = getGithubConfig();
 
-        // Merge source branch into develop
+        // Merge source branch into develop with "ours" strategy to resolve conflicts using dev branch
         await git.checkout('develop');
         await git.pull('origin', 'develop');
-        await git.merge([sourceBranch, '--allow-unrelated-histories']);
+        await git.merge([sourceBranch, '--strategy-option', 'ours', '--allow-unrelated-histories']);
         await git.push('origin', 'develop');
         await git.checkout(sourceBranch);
 
