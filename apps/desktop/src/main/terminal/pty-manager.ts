@@ -6,9 +6,9 @@ let _pty: any = null;
 function getPty(): any {
   if (_pty) return _pty;
   try {
-    _pty = require('node-pty-prebuilt-multiarch');
+    _pty = require('node-pty');
   } catch (e) {
-    logger.error('Failed to load node-pty-prebuilt-multiarch:', e);
+    logger.error('Failed to load node-pty:', e);
     _pty = null;
   }
   return _pty;

@@ -1,9 +1,6 @@
-// Compatibility shim for `node-pty` when installed via
-// `npm:@homebridge/node-pty-prebuilt-multiarch`.
-//
-// The prebuilt package declares its types under
-// `declare module '@homebridge/node-pty-prebuilt-multiarch'`, but our codebase
-// imports `node-pty`. This bridges the module name for TypeScript.
+// Type shim for `node-pty`.
+// We use dynamic require() with `any` typing in pty-manager.ts,
+// so this keeps TypeScript happy without pulling in full typings.
 
 declare module 'node-pty' {
   const pty: any;
