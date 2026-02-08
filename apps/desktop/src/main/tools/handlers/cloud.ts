@@ -97,9 +97,14 @@ async function execAnalyzeMedia(args: any, ctx: RouterContext): Promise<any> {
     const url = `${ctx.cloudAiUrl}/inference/ai/analyze-media`;
     ctx.logFn(`analyze_media: Calling Gemini...`);
     
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (ctx.accessToken) {
+      headers['Authorization'] = `Bearer ${ctx.accessToken}`;
+    }
+    
     const resp = await net.fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ task, media: mediaParts }),
     });
     
@@ -141,9 +146,13 @@ async function execTextToSpeech(args: any, ctx: RouterContext): Promise<any> {
     
     // Call cloud to generate audio
     const url = `${ctx.cloudAiUrl}/tools/text_to_speech`;
+    const ttsHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (ctx.accessToken) {
+      ttsHeaders['Authorization'] = `Bearer ${ctx.accessToken}`;
+    }
     const resp = await net.fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: ttsHeaders,
       body: JSON.stringify({ text, voice, speed, format }),
     });
     

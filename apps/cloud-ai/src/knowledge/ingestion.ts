@@ -7,7 +7,7 @@
 
 import { embed } from 'ai';
 import { openai } from '@ai-sdk/openai';
-import { execLocalTool } from '../tools/bridge';
+import { execLocalTool, hasClientBridge } from '../tools/bridge';
 import { writeLog } from '../utils/logger';
 import { extractKnowledge, ExtractionResult, KnowledgeAction } from './extraction';
 
@@ -246,6 +246,15 @@ export async function ingestConversationTurn(
   executed: { success: number; failed: number; results: any[] };
 }> {
   console.log('[knowledge] ingestConversationTurn called, history length:', conversationHistory.length);
+
+  // Guard: skip if no desktop bridge is available (e.g., WS closed before ingestion runs)
+  if (!hasClientBridge()) {
+    console.log('[knowledge] No client bridge available, skipping ingestion');
+    return {
+      extracted: { actions: [], detected_entities: [] },
+      executed: { success: 0, failed: 0, results: [] },
+    };
+  }
 
   // Step 0: Fetch existing context to inform extraction decisions
   let existingContext: {
