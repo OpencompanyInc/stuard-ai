@@ -250,11 +250,12 @@ jobs:
           "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMY_APP_VERSION=${{ steps.version.outputs.version }} apps\desktop\inno\setup.iss
       
       - name: Configure R2 credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+        shell: bash
+        run: |
+          echo "AWS_ACCESS_KEY_ID=${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}" >> $GITHUB_ENV
+          echo "AWS_REGION=auto" >> $GITHUB_ENV
+          echo "AWS_DEFAULT_REGION=auto" >> $GITHUB_ENV
       
       # Generate update manifest
       - name: Generate Update Manifest (Windows)
