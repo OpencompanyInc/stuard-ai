@@ -254,7 +254,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-          aws-region: auto
+          aws-region: us-east-1
       
       # Generate update manifest
       - name: Generate Update Manifest (Windows)
