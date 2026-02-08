@@ -166,10 +166,11 @@ jobs:
       - name: Write Cloud Config for Production
         shell: bash
         run: |
+          mkdir -p apps/desktop/build
+          mkdir -p apps/desktop/build/agent
           echo "CLOUD_PUBLIC_URL=https://api.stuard.ai" > apps/desktop/build/.env
           echo "CLOUD_AI_HTTP=https://api.stuard.ai" >> apps/desktop/build/.env
           echo "UPDATE_CHANNEL=stable" >> apps/desktop/build/.env
-          mkdir -p apps/desktop/build/agent
           cp apps/desktop/build/.env apps/desktop/build/agent/.env
       - name: Build Desktop App
         working-directory: apps/desktop
