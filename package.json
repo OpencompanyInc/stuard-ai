@@ -12,6 +12,7 @@
     "dev:stack": "concurrently -k -n CLOUD,AGENT,DESKTOP,OPS,WEB \"pnpm -F @stuardai/cloud-ai dev\" \"powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts\\run-agent.ps1\" \"npm --prefix apps/desktop run dev\" \"pnpm -F ops-console dev\" \"pnpm -F stuard-ai-website dev\""
   },
   "devDependencies": {
+    "@types/node": "^24.10.1",
     "concurrently": "^8.2.2",
     "turbo": "^1.10.12",
     "typescript": "^5.3.3"
