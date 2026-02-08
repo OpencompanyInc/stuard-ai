@@ -36,7 +36,7 @@ interface UpdateState {
   apiEndpoint?: string; // Current API endpoint based on channel
 }
 
-const DEFAULT_UPDATE_BASE_URL = "https://storage.googleapis.com/stuardai-updates/desktop";
+const DEFAULT_UPDATE_BASE_URL = "https://updates.stuard.ai/desktop";
 
 function normalizeBaseUrl(url: string): string {
   return url.replace(/\/+$/, "");

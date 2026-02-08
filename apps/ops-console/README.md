@@ -21,7 +21,7 @@ To create a GitHub token:
 1. Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
 2. Generate new token with `repo` and `workflow` scopes
 
-Update manifests for the desktop auto-updater are read from the public bucket `https://storage.googleapis.com/stuardai-updates/desktop/{channel}/latest.yml` for `beta`, `staging`, and `stable`.
+Update manifests for the desktop auto-updater are read from the public bucket `https://updates.stuard.ai/desktop/{channel}/latest.yml` for `beta`, `staging`, and `stable`.
 
 ## Getting Started
 

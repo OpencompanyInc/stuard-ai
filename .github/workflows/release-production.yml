@@ -170,6 +170,7 @@ jobs:
           echo "CLOUD_PUBLIC_URL=https://api.stuard.ai" > "$GITHUB_WORKSPACE/apps/desktop/build/.env"
           echo "CLOUD_AI_HTTP=https://api.stuard.ai" >> "$GITHUB_WORKSPACE/apps/desktop/build/.env"
           echo "UPDATE_CHANNEL=stable" >> "$GITHUB_WORKSPACE/apps/desktop/build/.env"
+          echo "STUARD_UPDATE_BASE_URL=https://updates.stuard.ai/desktop" >> "$GITHUB_WORKSPACE/apps/desktop/build/.env"
           cp "$GITHUB_WORKSPACE/apps/desktop/build/.env" "$GITHUB_WORKSPACE/apps/desktop/build/agent/.env"
       - name: Build Desktop App
         working-directory: apps/desktop

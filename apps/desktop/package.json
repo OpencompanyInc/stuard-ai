@@ -152,7 +152,7 @@
     },
     "publish": {
       "provider": "generic",
-      "url": "${UPDATE_BASE_URL:-https://storage.googleapis.com/stuardai-updates/desktop}",
+      "url": "${UPDATE_BASE_URL:-https://updates.stuard.ai/desktop}",
       "channel": "${UPDATE_CHANNEL:-stable}"
     }
   }

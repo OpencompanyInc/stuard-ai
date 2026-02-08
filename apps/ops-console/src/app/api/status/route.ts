@@ -46,7 +46,7 @@ function readPackageVersion(relativeDir: string): string | null {
 }
 
 async function fetchDesktopUpdate(channel: UpdateChannel): Promise<UpdateChannelInfo> {
-  const url = `https://storage.googleapis.com/stuardai-updates/desktop/${channel}/latest.yml`;
+  const url = `https://updates.stuard.ai/desktop/${channel}/latest.yml`;
   try {
     const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) {
