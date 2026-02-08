@@ -161,12 +161,11 @@ jobs:
       - name: Write Cloud Config for Staging
         shell: bash
         run: |
-          mkdir -p apps/desktop/build
-          mkdir -p apps/desktop/build/agent
-          echo "CLOUD_PUBLIC_URL=https://staging-api.stuard.ai" > apps/desktop/build/.env
-          echo "CLOUD_AI_HTTP=https://staging-api.stuard.ai" >> apps/desktop/build/.env
-          echo "UPDATE_CHANNEL=staging" >> apps/desktop/build/.env
-          cp apps/desktop/build/.env apps/desktop/build/agent/.env
+          mkdir -p "$GITHUB_WORKSPACE/apps/desktop/build/agent"
+          echo "CLOUD_PUBLIC_URL=https://staging-api.stuard.ai" > "$GITHUB_WORKSPACE/apps/desktop/build/.env"
+          echo "CLOUD_AI_HTTP=https://staging-api.stuard.ai" >> "$GITHUB_WORKSPACE/apps/desktop/build/.env"
+          echo "UPDATE_CHANNEL=staging" >> "$GITHUB_WORKSPACE/apps/desktop/build/.env"
+          cp "$GITHUB_WORKSPACE/apps/desktop/build/.env" "$GITHUB_WORKSPACE/apps/desktop/build/agent/.env"
       - name: Build Desktop App
         working-directory: apps/desktop
         run: |

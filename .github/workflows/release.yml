@@ -292,14 +292,14 @@ jobs:
       - name: Write Build Config
         shell: bash
         run: |
-          mkdir -p apps/desktop/build/agent
-          cat > apps/desktop/build/.env << EOF
+          mkdir -p "$GITHUB_WORKSPACE/apps/desktop/build/agent"
+          cat > "$GITHUB_WORKSPACE/apps/desktop/build/.env" << EOF
           CLOUD_PUBLIC_URL=${{ steps.env.outputs.API_URL }}
           CLOUD_AI_HTTP=${{ steps.env.outputs.API_URL }}
           UPDATE_CHANNEL=${{ steps.env.outputs.UPDATE_CHANNEL }}
           STUARD_UPDATE_BASE_URL=https://updates.stuard.ai/desktop
           EOF
-          cp apps/desktop/build/.env apps/desktop/build/agent/.env
+          cp "$GITHUB_WORKSPACE/apps/desktop/build/.env" "$GITHUB_WORKSPACE/apps/desktop/build/agent/.env"
 
       - name: Build Desktop App
         working-directory: apps/desktop
