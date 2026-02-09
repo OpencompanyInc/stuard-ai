@@ -66,6 +66,7 @@ export async function handleOpsRoutes(
   parsedUrl: URL
 ): Promise<boolean> {
   const path = parsedUrl.pathname;
+  const searchParams = parsedUrl.searchParams;
 
   // ─────────────────────────────────────────────────────────────────────────
   // GET /v1/ops/status - Get current environment status
@@ -146,7 +147,7 @@ export async function handleOpsRoutes(
 
       const body = await readBody(req);
       const email = body.email?.toLowerCase()?.trim();
-      const access_level = body.access_level || "beta";
+      const access_level = String(body.access_level || "beta").trim().toLowerCase();
       const notes = body.notes || null;
       const expires_at = body.expires_at || null;
 
@@ -232,6 +233,153 @@ export async function handleOpsRoutes(
       return true;
     } catch (err: any) {
       console.error("Delete beta user error:", err);
+      json(res, 500, { ok: false, error: "internal_error" });
+      return true;
+    }
+  }
+
+  if (path === "/v1/ops/waitlist" && req.method === "GET") {
+    try {
+      const auth = await requireAdmin(req);
+      if (!auth.ok) {
+        json(res, auth.error === "forbidden" ? 403 : 401, { ok: false, error: auth.error });
+        return true;
+      }
+
+      const supabase = getSupabaseService();
+      if (!supabase) {
+        json(res, 500, { ok: false, error: "service_unavailable" });
+        return true;
+      }
+
+      const q = (searchParams.get("q") || "").trim();
+      const limitRaw = Number(searchParams.get("limit") || 50);
+      const offsetRaw = Number(searchParams.get("offset") || 0);
+      const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, Math.floor(limitRaw))) : 50;
+      const offset = Number.isFinite(offsetRaw) ? Math.max(0, Math.floor(offsetRaw)) : 0;
+
+      let query = supabase
+        .from("waitlist")
+        .select("id,email,name,company,use_case,referral_source,position,created_at,notified", { count: "exact" })
+        .order("created_at", { ascending: false });
+
+      if (q) {
+        const esc = q.replace(/%/g, "\\%").replace(/,/g, " ");
+        query = query.or(
+          `email.ilike.%${esc}%,name.ilike.%${esc}%,company.ilike.%${esc}%,use_case.ilike.%${esc}%,referral_source.ilike.%${esc}%`
+        );
+      }
+
+      const { data, error, count } = await query.range(offset, offset + limit - 1);
+
+      if (error) {
+        json(res, 500, { ok: false, error: error.message });
+        return true;
+      }
+
+      json(res, 200, {
+        ok: true,
+        entries: data || [],
+        total: count || 0,
+        limit,
+        offset,
+      });
+      return true;
+    } catch (err: any) {
+      console.error("List waitlist error:", err);
+      json(res, 500, { ok: false, error: "internal_error" });
+      return true;
+    }
+  }
+
+  if (path === "/v1/ops/waitlist/promote" && req.method === "POST") {
+    try {
+      const auth = await requireAdmin(req);
+      if (!auth.ok) {
+        json(res, auth.error === "forbidden" ? 403 : 401, { ok: false, error: auth.error });
+        return true;
+      }
+
+      const supabase = getSupabaseService();
+      if (!supabase) {
+        json(res, 500, { ok: false, error: "service_unavailable" });
+        return true;
+      }
+
+      const body = await readBody(req);
+      const email = body.email?.toLowerCase()?.trim();
+      const access_level = String(body.access_level || "beta").trim().toLowerCase();
+      const notes = body.notes || null;
+      const expires_at = body.expires_at || null;
+      const removeFromWaitlist = body.removeFromWaitlist !== false;
+      const markNotified = body.markNotified === true;
+
+      if (!email) {
+        json(res, 400, { ok: false, error: "email_required" });
+        return true;
+      }
+
+      if (!["beta", "staging", "all"].includes(access_level)) {
+        json(res, 400, { ok: false, error: "invalid_access_level" });
+        return true;
+      }
+
+      const { data: waitlistEntry, error: waitlistError } = await supabase
+        .from("waitlist")
+        .select("id,email,name,company,use_case,referral_source,position,created_at,notified")
+        .eq("email", email)
+        .maybeSingle();
+
+      if (waitlistError) {
+        json(res, 500, { ok: false, error: waitlistError.message });
+        return true;
+      }
+
+      if (!waitlistEntry) {
+        json(res, 404, { ok: false, error: "waitlist_entry_not_found" });
+        return true;
+      }
+
+      const { data: betaUser, error: betaError } = await supabase
+        .from("beta_users")
+        .upsert(
+          {
+            email,
+            access_level,
+            invited_by: auth.email,
+            notes,
+            expires_at,
+          },
+          { onConflict: "email" }
+        )
+        .select()
+        .single();
+
+      if (betaError) {
+        json(res, 500, { ok: false, error: betaError.message });
+        return true;
+      }
+
+      let waitlistAction: { ok: boolean; action: string; error?: string } = { ok: true, action: "none" };
+      if (removeFromWaitlist) {
+        const { error } = await supabase.from("waitlist").delete().eq("id", waitlistEntry.id);
+        if (error) waitlistAction = { ok: false, action: "delete", error: error.message };
+        else waitlistAction = { ok: true, action: "delete" };
+      } else if (markNotified) {
+        const { error } = await supabase.from("waitlist").update({ notified: true }).eq("id", waitlistEntry.id);
+        if (error) waitlistAction = { ok: false, action: "mark_notified", error: error.message };
+        else waitlistAction = { ok: true, action: "mark_notified" };
+      }
+
+      json(res, 200, {
+        ok: true,
+        user: betaUser,
+        waitlistEntry,
+        waitlistAction,
+      });
+      return true;
+    } catch (err: any) {
+      console.error("Promote waitlist error:", err);
       json(res, 500, { ok: false, error: "internal_error" });
       return true;
     }

@@ -241,6 +241,7 @@ export async function buildKnowledgeContext(
     includePendingMemories?: boolean;
     maxGlobalFacts?: number;
     detectEntities?: boolean;
+    queryEmbedding?: number[];
   }
 ): Promise<BuiltContext> {
   const opts = {
@@ -346,12 +347,15 @@ export async function buildKnowledgeContext(
   // Layer 5: Global search (semantic)
   if (opts.maxGlobalFacts > 0) {
     try {
-      const { embedding } = await embed({
-        model: openai.embedding('text-embedding-3-large'),
-        value: userMessage,
-      });
+      // Reuse pre-computed embedding when available; otherwise generate one
+      const embeddingVec = opts.queryEmbedding && opts.queryEmbedding.length > 0
+        ? opts.queryEmbedding
+        : (await embed({
+            model: openai.embedding('text-embedding-3-large'),
+            value: userMessage,
+          })).embedding;
 
-      const searchResults = await searchGlobalFacts(embedding, opts.maxGlobalFacts);
+      const searchResults = await searchGlobalFacts(embeddingVec, opts.maxGlobalFacts);
       
       // Filter out facts already shown in entity context
       const entityFactIds = new Set(lenses.activeEntity?.facts.map(f => f.id) || []);

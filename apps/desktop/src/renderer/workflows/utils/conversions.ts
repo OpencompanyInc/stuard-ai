@@ -64,6 +64,9 @@ export function specToDesignerModel(spec: any): DesignerModel {
       return {
         id, name, version, autostart, requirements, scripts,
         triggers: trigNodes, nodes: normNodes, wires: normWires,
+        variables: Array.isArray(spec?.variables) ? spec.variables : undefined,
+        description: spec?.description || undefined,
+        outputSchema: Array.isArray(spec?.outputSchema) ? spec.outputSchema : undefined,
         marketplaceSlug: spec?.marketplaceSlug,
         locked: !!spec?.locked
       };
@@ -126,6 +129,9 @@ export function specToDesignerModel(spec: any): DesignerModel {
     return {
       id, name, version, autostart, requirements, scripts,
       triggers: trigNodes, nodes, wires: wiresFull.length ? wiresFull : wires,
+      variables: Array.isArray(spec?.variables) ? spec.variables : undefined,
+      description: spec?.description || undefined,
+      outputSchema: Array.isArray(spec?.outputSchema) ? spec.outputSchema : undefined,
       marketplaceSlug: spec?.marketplaceSlug,
       locked: !!spec?.locked
     };
@@ -213,7 +219,7 @@ export function designerModelToStuardSpec(m: any): StuardSpec {
   const startNode = nodes.find((n: any) => !inbound.has(String(n?.id || ''))) || nodes[0];
   const triggers = triggersIn.map((t: any) => ({ type: String(t?.type || ''), args: t?.args || {} }));
 
-  return {
+  const result: any = {
     id,
     name,
     version,
@@ -224,4 +230,8 @@ export function designerModelToStuardSpec(m: any): StuardSpec {
     steps,
     start: startNode ? String(startNode.id) : undefined
   };
+  if (Array.isArray(m?.variables) && m.variables.length > 0) result.variables = m.variables;
+  if (Array.isArray(m?.outputSchema) && m.outputSchema.length > 0) result.outputSchema = m.outputSchema;
+  if (m?.description) result.description = m.description;
+  return result;
 }

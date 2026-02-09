@@ -351,8 +351,21 @@ const _FFMPEG_TIER_1_TOOLS = [
 
 const SIS_ESSENTIAL_TOOLS = ['wait', 'run_sequential', 'run_parallel'] as const;
 
+const SIS_META_TOOL_NAMES = ['sis_search_tools', 'sis_execute_tool', 'sis_list_categories'] as const;
+
 let _sis: SISType | null = null;
 let _sisInitPromise: Promise<void> | null = null;
+
+/**
+ * xAI models have stricter grammar complexity limits.
+ * Limit to ~50 tools max to avoid "Grammar is too complex" errors.
+ */
+const XAI_MAX_TOOLS = 50;
+
+function isXaiModel(modelId?: string): boolean {
+  if (!modelId) return false;
+  return modelId.startsWith('xai/') || modelId.includes('grok');
+}
 
 async function getSis(): Promise<SISType | null> {
   if (_sis) return _sis;
@@ -408,11 +421,28 @@ async function getSis(): Promise<SISType | null> {
 
 // Core tools list removed - using ALL_TOOLS by default
 
-export function getTools(enabledIntegrations: string[] = [], mcpTools: Record<string, any> = {}): Record<string, any> {
+export function getTools(
+  enabledIntegrations: string[] = [],
+  mcpTools: Record<string, any> = {},
+  modelId?: string
+): Record<string, any> {
   // Start with MCP tools
   const tools: Record<string, any> = { ...mcpTools };
 
-  // Add ALL registered tools
+  // xAI models have stricter grammar limits - use only Tier 1 tools
+  if (isXaiModel(modelId)) {
+    for (const name of TIER_1_PARAMOUNT_TOOLS) {
+      if ((ALL_TOOLS as any)[name]) {
+        tools[name] = (ALL_TOOLS as any)[name];
+      }
+    }
+    if (process.env.SIS_DEBUG === '1') {
+      console.log(`[tools] xAI model detected (${modelId}), limited to ${Object.keys(tools).length} Tier 1 tools`);
+    }
+    return tools;
+  }
+
+  // Add ALL registered tools for other providers
   Object.assign(tools, ALL_TOOLS);
 
   return tools;
@@ -421,13 +451,69 @@ export function getTools(enabledIntegrations: string[] = [], mcpTools: Record<st
 export async function getToolsForQuery(
   query: string,
   enabledIntegrations: string[] = [],
-  mcpTools: Record<string, any> = {}
+  mcpTools: Record<string, any> = {},
+  modelId?: string,
+  rankedToolNames?: string[]
 ): Promise<Record<string, any>> {
   // Start with MCP tools
   const selected: Record<string, any> = { ...mcpTools };
 
+  // xAI models have stricter grammar limits - use only Tier 1 tools
+  if (isXaiModel(modelId)) {
+    for (const name of TIER_1_PARAMOUNT_TOOLS) {
+      if ((ALL_TOOLS as any)[name]) {
+        selected[name] = (ALL_TOOLS as any)[name];
+      }
+    }
+    if (process.env.SIS_DEBUG === '1') {
+      console.log(`[tools] xAI model detected (${modelId}), limited to ${Object.keys(selected).length} Tier 1 tools`);
+    }
+    return selected;
+  }
+
   // =========================================================================
-  // Load ALL registered tools (~200+ tools)
+  // SIS_TOOL_PREFILTER mode: Tier 1 + SIS meta + top-N ranked tools
+  // Default (off): load ALL registered tools as before
+  // =========================================================================
+  if (process.env.SIS_TOOL_PREFILTER === '1') {
+    // 1. Always load Tier 1 paramount tools
+    for (const name of TIER_1_PARAMOUNT_TOOLS) {
+      if ((ALL_TOOLS as any)[name]) {
+        selected[name] = (ALL_TOOLS as any)[name];
+      }
+    }
+
+    // 2. Always load SIS meta-tools (for long-tail discovery)
+    for (const name of SIS_META_TOOL_NAMES) {
+      if ((ALL_TOOLS as any)[name]) {
+        selected[name] = (ALL_TOOLS as any)[name];
+      }
+    }
+
+    // 3. Add top-N ranked tools from embedding-based likelihood ranking
+    if (rankedToolNames && rankedToolNames.length > 0) {
+      for (const name of rankedToolNames) {
+        if ((ALL_TOOLS as any)[name] && !selected[name]) {
+          selected[name] = (ALL_TOOLS as any)[name];
+        }
+      }
+    }
+
+    if (process.env.SIS_DEBUG === '1') {
+      const tier1Count = TIER_1_PARAMOUNT_TOOLS.length;
+      const sisCount = SIS_META_TOOL_NAMES.length;
+      const rankedCount = rankedToolNames?.length || 0;
+      console.log(`[sis-prefilter] Loaded ${Object.keys(selected).length} tools (Tier1=${tier1Count}, SIS=${sisCount}, Ranked=${rankedCount}, MCP=${Object.keys(mcpTools).length})`);
+      if (rankedToolNames && rankedToolNames.length > 0) {
+        console.log(`[sis-prefilter] Ranked tools added: ${rankedToolNames.join(', ')}`);
+      }
+    }
+
+    return selected;
+  }
+
+  // =========================================================================
+  // Default: Load ALL registered tools (~200+ tools) for non-xAI providers
   // =========================================================================
   Object.assign(selected, ALL_TOOLS);
 

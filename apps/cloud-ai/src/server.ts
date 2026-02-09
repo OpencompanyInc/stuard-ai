@@ -21,6 +21,8 @@ import { buildKnowledgeContext } from './knowledge/retrieval';
 import { ensureToolEmbeddings } from './tools/meta-tools';
 import * as memoryService from './memory/conversations';
 import { registerWebhookClient, deliverQueuedWebhooks } from './webhooks/dispatch';
+import { getOrCreateQueryEmbedding } from './utils/shared-embedding';
+import { getRankedToolNames } from './utils/tool-ranking';
 
 import { getAgentForQuery } from './agents/stuard/index';
 
@@ -505,7 +507,31 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             return;
           }
         } else {
-          agent = await getAgentForQuery(routedTier, prompt, undefined, enabledIntegrations, mcpTools, chosenModelId);
+          // ─── Parallel embedding + tool ranking pipeline ───────────────
+          // When SIS flags are enabled, start the embedding early and run
+          // tool ranking in parallel so we can build a smaller, focused toolset.
+          let rankedToolNames: string[] | undefined;
+
+          if (process.env.SIS_PARALLEL_EMBEDDINGS === '1' && process.env.SIS_TOOL_PREFILTER === '1' && prompt) {
+            try {
+              // Kick off the shared embedding (memoized promise — reused by knowledge/memory later)
+              const embeddingPromise = getOrCreateQueryEmbedding(prompt);
+
+              // Run tool ranking in parallel (awaits the same embedding internally)
+              const queryEmbedding = await embeddingPromise;
+              const topN = Number(process.env.SIS_RANKED_TOPN || '5');
+              rankedToolNames = await getRankedToolNames(queryEmbedding, enabledIntegrations, topN);
+
+              if (process.env.SIS_DEBUG === '1') {
+                console.log(`[sis-parallel] Ranked ${rankedToolNames.length} tools for agent toolset`);
+              }
+            } catch (e: any) {
+              console.warn('[sis-parallel] Tool ranking failed, falling back to default:', e.message);
+              rankedToolNames = undefined;
+            }
+          }
+
+          agent = await getAgentForQuery(routedTier, prompt, undefined, enabledIntegrations, mcpTools, chosenModelId, rankedToolNames);
         }
 
         let conversationCreatedNow = false;
@@ -693,51 +719,116 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           }
         } catch { }
 
-        // Retrieve knowledge context and inject into messages
+        // Retrieve knowledge context and similar conversations, inject into messages
         if (agentType !== 'workflow') {
-          try {
-            const knowledgeCtx = await buildKnowledgeContext(prompt, {
-              includeIdentity: true,
-              includeDirectives: true,
-              includeBio: true,
-              maxGlobalFacts: 8,
-              detectEntities: true,
-            });
-            if (knowledgeCtx.text.trim()) {
-              console.log('[cloud-ai] Knowledge context retrieved:', {
-                length: knowledgeCtx.text.length,
-                entities: knowledgeCtx.detectedEntities,
-                hasIdentity: knowledgeCtx.lenses.identity.length > 0,
-                hasDirectives: knowledgeCtx.lenses.directives.length > 0,
-                hasBio: knowledgeCtx.lenses.bio.length > 0,
-                globalFacts: knowledgeCtx.lenses.globalSearch.length,
-              });
-              inputMessages = [{ role: 'system', content: knowledgeCtx.text }, ...inputMessages];
-            }
-          } catch (knowledgeErr) {
-            console.error('[cloud-ai] Knowledge context retrieval failed:', knowledgeErr);
-          }
+          // ─── Parallel knowledge + memory retrieval ───────────────────
+          // When SIS_PARALLEL_EMBEDDINGS=1, reuse the shared embedding
+          // so knowledge and memory search run in parallel without
+          // duplicate OpenAI embedding calls.
+          const useParallelEmbeddings = process.env.SIS_PARALLEL_EMBEDDINGS === '1';
 
-          // Semantic search over past conversation segments (summary + conversation id)
-          try {
-            const query = String(prompt || '').trim();
-            if (query) {
-              const matches = await memoryService.searchSegments(query, { limit: 6, threshold: 0.5 });
-              const similar = matches.filter(({ score }) => score >= 0.5);
-              if (similar.length > 0) {
-                const lines = ['[SIMILAR CONVERSATIONS]'];
-                for (const { segment } of similar) {
-                  const summary = String(segment.summary || '').trim();
-                  if (!summary) continue;
-                  lines.push(`- ${segment.conversation_id}: ${summary}`);
-                }
-                if (lines.length > 1) {
-                  inputMessages = [{ role: 'system', content: lines.join('\n') }, ...inputMessages];
+          if (useParallelEmbeddings && prompt) {
+            try {
+              // Get (or reuse) the shared embedding for this prompt
+              const queryEmbedding = await getOrCreateQueryEmbedding(prompt);
+
+              // Run knowledge and memory search in parallel using the same embedding
+              const [knowledgeCtx, segmentMatches] = await Promise.all([
+                buildKnowledgeContext(prompt, {
+                  includeIdentity: true,
+                  includeDirectives: true,
+                  includeBio: true,
+                  maxGlobalFacts: 8,
+                  detectEntities: true,
+                  queryEmbedding,
+                }).catch((err: any) => {
+                  console.error('[cloud-ai] Knowledge context retrieval failed:', err);
+                  return null;
+                }),
+                memoryService.searchSegmentsByEmbedding(queryEmbedding, { limit: 6, threshold: 0.5 })
+                  .catch((err: any) => {
+                    console.error('[cloud-ai] Semantic conversation search failed:', err);
+                    return [] as Awaited<ReturnType<typeof memoryService.searchSegmentsByEmbedding>>;
+                  }),
+              ]);
+
+              // Inject similar conversations
+              if (segmentMatches.length > 0) {
+                const similar = segmentMatches.filter(({ score }) => score >= 0.5);
+                if (similar.length > 0) {
+                  const lines = ['[SIMILAR CONVERSATIONS]'];
+                  for (const { segment } of similar) {
+                    const summary = String(segment.summary || '').trim();
+                    if (!summary) continue;
+                    lines.push(`- ${segment.conversation_id}: ${summary}`);
+                  }
+                  if (lines.length > 1) {
+                    inputMessages = [{ role: 'system', content: lines.join('\n') }, ...inputMessages];
+                  }
                 }
               }
+
+              // Inject knowledge context
+              if (knowledgeCtx && knowledgeCtx.text.trim()) {
+                console.log('[cloud-ai] Knowledge context retrieved:', {
+                  length: knowledgeCtx.text.length,
+                  entities: knowledgeCtx.detectedEntities,
+                  hasIdentity: knowledgeCtx.lenses.identity.length > 0,
+                  hasDirectives: knowledgeCtx.lenses.directives.length > 0,
+                  hasBio: knowledgeCtx.lenses.bio.length > 0,
+                  globalFacts: knowledgeCtx.lenses.globalSearch.length,
+                });
+                inputMessages = [{ role: 'system', content: knowledgeCtx.text }, ...inputMessages];
+              }
+            } catch (parallelErr) {
+              console.error('[cloud-ai] Parallel knowledge/memory pipeline failed:', parallelErr);
             }
-          } catch (searchErr) {
-            console.error('[cloud-ai] Semantic conversation search failed:', searchErr);
+          } else {
+            // ─── Legacy sequential path (SIS_PARALLEL_EMBEDDINGS off) ──
+            try {
+              const knowledgeCtx = await buildKnowledgeContext(prompt, {
+                includeIdentity: true,
+                includeDirectives: true,
+                includeBio: true,
+                maxGlobalFacts: 8,
+                detectEntities: true,
+              });
+              if (knowledgeCtx.text.trim()) {
+                console.log('[cloud-ai] Knowledge context retrieved:', {
+                  length: knowledgeCtx.text.length,
+                  entities: knowledgeCtx.detectedEntities,
+                  hasIdentity: knowledgeCtx.lenses.identity.length > 0,
+                  hasDirectives: knowledgeCtx.lenses.directives.length > 0,
+                  hasBio: knowledgeCtx.lenses.bio.length > 0,
+                  globalFacts: knowledgeCtx.lenses.globalSearch.length,
+                });
+                inputMessages = [{ role: 'system', content: knowledgeCtx.text }, ...inputMessages];
+              }
+            } catch (knowledgeErr) {
+              console.error('[cloud-ai] Knowledge context retrieval failed:', knowledgeErr);
+            }
+
+            // Semantic search over past conversation segments (summary + conversation id)
+            try {
+              const query = String(prompt || '').trim();
+              if (query) {
+                const matches = await memoryService.searchSegments(query, { limit: 6, threshold: 0.5 });
+                const similar = matches.filter(({ score }) => score >= 0.5);
+                if (similar.length > 0) {
+                  const lines = ['[SIMILAR CONVERSATIONS]'];
+                  for (const { segment } of similar) {
+                    const summary = String(segment.summary || '').trim();
+                    if (!summary) continue;
+                    lines.push(`- ${segment.conversation_id}: ${summary}`);
+                  }
+                  if (lines.length > 1) {
+                    inputMessages = [{ role: 'system', content: lines.join('\n') }, ...inputMessages];
+                  }
+                }
+              }
+            } catch (searchErr) {
+              console.error('[cloud-ai] Semantic conversation search failed:', searchErr);
+            }
           }
         }
 

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import {
   GitBranch, Rocket, RefreshCw, CheckCircle, AlertCircle, Clock, Activity,
   Beaker, ShieldCheck, Database, Cloud, Webhook, MessageSquare, Users, Store, Bug,
-  Monitor, HardDrive, Wrench, Cpu, Play, Layers, Terminal
+  Monitor, HardDrive, Wrench, Cpu, Play, Layers, Terminal, Search, UserPlus, Trash2
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -33,6 +33,28 @@ interface SyncSystemData {
 
 interface DatabaseStats {
   [key: string]: number;
+}
+
+interface BetaUser {
+  id: string;
+  email: string;
+  access_level: 'beta' | 'staging' | 'all' | string;
+  invited_by?: string | null;
+  created_at?: string | null;
+  expires_at?: string | null;
+  notes?: string | null;
+}
+
+interface WaitlistEntry {
+  id: string;
+  email: string;
+  name?: string | null;
+  company?: string | null;
+  use_case?: string | null;
+  referral_source?: string | null;
+  position?: number | null;
+  created_at?: string | null;
+  notified?: boolean | null;
 }
 
 interface StatusData {
@@ -83,9 +105,7 @@ export default function OpsDashboard() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [commitMsg, setCommitMsg] = useState('');
-  const [_featureName, _setFeatureName] = useState('');
   const [version, setVersion] = useState('');
-  const [_selectedCheckoutBranch, _setSelectedCheckoutBranch] = useState('');
   const [newBranchName, setNewBranchName] = useState('');
   const [newBranchBase, setNewBranchBase] = useState('');
   const [checkoutBranch, setCheckoutBranch] = useState('');
@@ -95,6 +115,14 @@ export default function OpsDashboard() {
   const [stagingTargets, setStagingTargets] = useState({ website: true, cloud: true, desktop: true });
   const [prodTargets, setProdTargets] = useState({ website: true, cloud: true, desktop: true });
 
+  const [betaUsers, setBetaUsers] = useState<BetaUser[]>([]);
+  const [waitlistEntries, setWaitlistEntries] = useState<WaitlistEntry[]>([]);
+  const [waitlistTotal, setWaitlistTotal] = useState(0);
+  const [waitlistQuery, setWaitlistQuery] = useState('');
+  const [betaEmail, setBetaEmail] = useState('');
+  const [betaAccessLevel, setBetaAccessLevel] = useState<'beta' | 'staging' | 'all'>('beta');
+  const [betaNotes, setBetaNotes] = useState('');
+
   const fetchStatus = async () => {
     try {
       const res = await fetch('/api/status');
@@ -102,6 +130,143 @@ export default function OpsDashboard() {
       setStatus(data);
     } catch (error) {
       console.error(error);
+    }
+  };
+
+  const fetchBetaUsers = async () => {
+    try {
+      const token = localStorage.getItem('stuard_access_token');
+      if (!token) return;
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://api.stuard.ai';
+      const res = await fetch(`${apiUrl}/v1/ops/beta-users`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.ok) setBetaUsers(data.users || []);
+    } catch (error) {
+      console.error('Failed to fetch beta users:', error);
+    }
+  };
+
+  const fetchWaitlist = async (q?: string) => {
+    try {
+      const token = localStorage.getItem('stuard_access_token');
+      if (!token) return;
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://api.stuard.ai';
+      const params = new URLSearchParams();
+      const query = (q ?? waitlistQuery).trim();
+      if (query) params.set('q', query);
+      params.set('limit', '50');
+      params.set('offset', '0');
+      const res = await fetch(`${apiUrl}/v1/ops/waitlist?${params.toString()}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.ok) {
+        setWaitlistEntries(data.entries || []);
+        setWaitlistTotal(data.total || 0);
+      }
+    } catch (error) {
+      console.error('Failed to fetch waitlist:', error);
+    }
+  };
+
+  const upsertBetaUser = async () => {
+    const email = betaEmail.trim().toLowerCase();
+    if (!email) {
+      setMessage('Error: Email is required');
+      return;
+    }
+
+    setLoading(true);
+    setMessage('Processing...');
+    try {
+      const token = localStorage.getItem('stuard_access_token');
+      if (!token) {
+        setMessage('Error: Missing access token');
+        return;
+      }
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://api.stuard.ai';
+      const res = await fetch(`${apiUrl}/v1/ops/beta-users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ email, access_level: betaAccessLevel, notes: betaNotes || null }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setMessage(`Error: ${data.error || 'Action failed'}`);
+        return;
+      }
+      setMessage('Beta user updated');
+      setBetaEmail('');
+      setBetaNotes('');
+      await Promise.all([fetchBetaUsers(), fetchDbStats()]);
+    } catch (err) {
+      console.error(err);
+      setMessage('Error: Network request failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteBetaUser = async (email: string) => {
+    const target = email.trim().toLowerCase();
+    if (!target) return;
+    setLoading(true);
+    setMessage('Processing...');
+    try {
+      const token = localStorage.getItem('stuard_access_token');
+      if (!token) {
+        setMessage('Error: Missing access token');
+        return;
+      }
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://api.stuard.ai';
+      const res = await fetch(`${apiUrl}/v1/ops/beta-users/${encodeURIComponent(target)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setMessage(`Error: ${data.error || 'Action failed'}`);
+        return;
+      }
+      setMessage('Beta user removed');
+      await Promise.all([fetchBetaUsers(), fetchDbStats()]);
+    } catch (err) {
+      console.error(err);
+      setMessage('Error: Network request failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const promoteWaitlist = async (email: string, accessLevel: 'beta' | 'staging') => {
+    const target = email.trim().toLowerCase();
+    if (!target) return;
+    setLoading(true);
+    setMessage('Processing...');
+    try {
+      const token = localStorage.getItem('stuard_access_token');
+      if (!token) {
+        setMessage('Error: Missing access token');
+        return;
+      }
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://api.stuard.ai';
+      const res = await fetch(`${apiUrl}/v1/ops/waitlist/promote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ email: target, access_level: accessLevel, removeFromWaitlist: true }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setMessage(`Error: ${data.error || 'Action failed'}`);
+        return;
+      }
+      setMessage(`Promoted to ${accessLevel}`);
+      await Promise.all([fetchWaitlist(), fetchBetaUsers(), fetchDbStats()]);
+    } catch (err) {
+      console.error(err);
+      setMessage('Error: Network request failed');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -139,9 +304,12 @@ export default function OpsDashboard() {
     fetchStatus();
     fetchSyncSystems();
     fetchDbStats();
+    fetchBetaUsers();
+    fetchWaitlist();
     const interval = setInterval(fetchStatus, 5000);
-    const syncInterval = setInterval(() => { fetchSyncSystems(); fetchDbStats(); }, 30000);
+    const syncInterval = setInterval(() => { fetchSyncSystems(); fetchDbStats(); fetchBetaUsers(); fetchWaitlist(); }, 30000);
     return () => { clearInterval(interval); clearInterval(syncInterval); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const doAction = async (type: string, payload: Record<string, unknown> = {}): Promise<boolean> => {
@@ -153,23 +321,22 @@ export default function OpsDashboard() {
 
     setLoading(true);
     setMessage(type === 'run-checks' ? 'Running local checks (this may take a minute)...' : 'Processing...');
-    
+
     try {
       const res = await fetch('/api/actions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, payload }),
       });
-      
+
       const data = await res.json();
-      
+
       if (res.ok) {
         setMessage(data.message || 'Action completed');
         // Clear inputs on success
         if (type === 'commit') setCommitMsg('');
-        if (type === 'start-feature') _setFeatureName('');
         if (type === 'create-branch') setNewBranchName('');
-        
+
         await fetchStatus();
         return true;
       } else {
@@ -193,7 +360,7 @@ export default function OpsDashboard() {
     // 2. If passed, proceed to ship
     // Small delay to let the user see the success message
     await new Promise(resolve => setTimeout(resolve, 1000));
-    
+
     await doAction('ship-to-beta', { targets: betaTargets, sourceBranch: selectedBetaBranch || undefined });
   };
 
@@ -388,6 +555,173 @@ export default function OpsDashboard() {
               <div className="p-4 bg-gray-50 rounded-lg"><div className="font-mono text-sm text-[#007AFF] mb-1">GET /v1/ops/database-stats</div><div className="text-xs text-gray-500">Database table row counts</div></div>
               <div className="p-4 bg-gray-50 rounded-lg"><div className="font-mono text-sm text-[#007AFF] mb-1">GET /v1/ops/beta-users</div><div className="text-xs text-gray-500">List all beta access users</div></div>
               <div className="p-4 bg-gray-50 rounded-lg"><div className="font-mono text-sm text-[#007AFF] mb-1">POST /v1/ops/beta-users</div><div className="text-xs text-gray-500">Add or update beta user access</div></div>
+            </div>
+          </div>
+
+          <div className="card p-6">
+            <div className="flex items-center justify-between gap-4 mb-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Access Control</h3>
+                <p className="text-sm text-gray-500">Manage waitlist and beta/staging users</p>
+              </div>
+              <button onClick={() => { fetchBetaUsers(); fetchWaitlist(); fetchDbStats(); }} className="btn-secondary px-4 py-2 text-sm flex items-center gap-2">
+                <RefreshCw className="w-4 h-4" /> Refresh
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Beaker className="w-4 h-4 text-purple-600" />
+                    <div className="text-sm font-semibold text-gray-800">Beta Users</div>
+                  </div>
+                  <div className="text-xs text-gray-500">{betaUsers.length.toLocaleString()} users</div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
+                  <input
+                    type="email"
+                    className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800"
+                    placeholder="email@domain.com"
+                    value={betaEmail}
+                    onChange={(e) => setBetaEmail(e.target.value)}
+                  />
+                  <select
+                    className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800"
+                    value={betaAccessLevel}
+                    onChange={(e) => setBetaAccessLevel(e.target.value as 'beta' | 'staging' | 'all')}
+                  >
+                    <option value="beta">beta</option>
+                    <option value="staging">staging</option>
+                    <option value="all">all</option>
+                  </select>
+                  <button
+                    onClick={upsertBetaUser}
+                    disabled={loading}
+                    className="btn-primary w-full py-2 text-xs disabled:opacity-40 flex items-center justify-center gap-2"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" /> Add / Update
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 mb-4"
+                  placeholder="notes (optional)"
+                  value={betaNotes}
+                  onChange={(e) => setBetaNotes(e.target.value)}
+                />
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs text-gray-500">
+                        <th className="py-2 pr-3">Email</th>
+                        <th className="py-2 pr-3">Access</th>
+                        <th className="py-2 pr-3">Invited By</th>
+                        <th className="py-2 pr-3"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {betaUsers.slice(0, 50).map((u) => (
+                        <tr key={u.id || u.email} className="border-t border-gray-200/60">
+                          <td className="py-2 pr-3 font-mono text-xs text-gray-800">{u.email}</td>
+                          <td className="py-2 pr-3"><span className="font-mono text-xs text-gray-700">{String(u.access_level || '')}</span></td>
+                          <td className="py-2 pr-3 text-xs text-gray-600">{u.invited_by || '—'}</td>
+                          <td className="py-2 pr-3 text-right">
+                            <button
+                              onClick={() => deleteBetaUser(u.email)}
+                              disabled={loading}
+                              className="btn-secondary px-3 py-1 text-xs disabled:opacity-40 inline-flex items-center gap-2"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" /> Remove
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {betaUsers.length === 0 && (
+                        <tr><td colSpan={4} className="py-4 text-xs text-gray-500">No beta users found</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Users className="w-4 h-4 text-pink-600" />
+                    <div className="text-sm font-semibold text-gray-800">Waitlist</div>
+                  </div>
+                  <div className="text-xs text-gray-500">{waitlistTotal.toLocaleString()} signups</div>
+                </div>
+
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="flex-1 relative">
+                    <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      className="w-full bg-white border border-gray-200 rounded-lg pl-9 pr-3 py-2 text-sm text-gray-800"
+                      placeholder="Search email, name, company, use case..."
+                      value={waitlistQuery}
+                      onChange={(e) => setWaitlistQuery(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') fetchWaitlist(e.currentTarget.value); }}
+                    />
+                  </div>
+                  <button
+                    onClick={() => fetchWaitlist()}
+                    disabled={loading}
+                    className="btn-secondary px-4 py-2 text-sm disabled:opacity-40"
+                  >
+                    Search
+                  </button>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs text-gray-500">
+                        <th className="py-2 pr-3">Email</th>
+                        <th className="py-2 pr-3">Name</th>
+                        <th className="py-2 pr-3">Company</th>
+                        <th className="py-2 pr-3">Created</th>
+                        <th className="py-2 pr-3"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {waitlistEntries.slice(0, 50).map((e) => (
+                        <tr key={e.id || e.email} className="border-t border-gray-200/60">
+                          <td className="py-2 pr-3 font-mono text-xs text-gray-800">{e.email}</td>
+                          <td className="py-2 pr-3 text-xs text-gray-700">{e.name || '—'}</td>
+                          <td className="py-2 pr-3 text-xs text-gray-700">{e.company || '—'}</td>
+                          <td className="py-2 pr-3 text-xs text-gray-600">{formatDateLabel(e.created_at)}</td>
+                          <td className="py-2 pr-3 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => promoteWaitlist(e.email, 'beta')}
+                                disabled={loading}
+                                className="btn-primary px-3 py-1 text-xs disabled:opacity-40"
+                              >
+                                Promote Beta
+                              </button>
+                              <button
+                                onClick={() => promoteWaitlist(e.email, 'staging')}
+                                disabled={loading}
+                                className="btn-secondary px-3 py-1 text-xs disabled:opacity-40"
+                              >
+                                Promote Staging
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {waitlistEntries.length === 0 && (
+                        <tr><td colSpan={5} className="py-4 text-xs text-gray-500">No waitlist entries found</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           </div>
         </div>

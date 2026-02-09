@@ -18,7 +18,7 @@ export function getAgent(
   mcpTools: Record<string, any> = {},
   modelId?: string
 ): Agent {
-  const tools = getTools(enabledIntegrations, mcpTools);
+  const tools = getTools(enabledIntegrations, mcpTools, modelId);
   const selectedModel = getModel(model, modelId);
   const name = getAgentName(model);
 
@@ -51,9 +51,10 @@ export async function getAgentForQuery(
   effort?: 'low' | 'medium' | 'high',
   enabledIntegrations: string[] = [],
   mcpTools: Record<string, any> = {},
-  modelId?: string
+  modelId?: string,
+  rankedToolNames?: string[]
 ): Promise<Agent> {
-  const tools = await getToolsForQuery(query, enabledIntegrations, mcpTools);
+  const tools = await getToolsForQuery(query, enabledIntegrations, mcpTools, modelId, rankedToolNames);
   const selectedModel = getModel(model, modelId);
   const name = getAgentName(model);
 

@@ -499,6 +499,20 @@ export async function searchSegments(
   const embedding = await generateEmbedding(query);
   if (!embedding.length) return [];
 
+  return searchSegmentsByEmbedding(embedding, options);
+}
+
+/**
+ * Search segments using a pre-computed embedding vector.
+ * Use this when the embedding has already been generated (e.g. via shared-embedding)
+ * to avoid duplicate OpenAI embedding calls.
+ */
+export async function searchSegmentsByEmbedding(
+  embedding: number[],
+  options?: { limit?: number; threshold?: number }
+): Promise<Array<{ segment: ConversationSegment; score: number }>> {
+  if (!embedding.length) return [];
+
   const result = await execLocalTool('segment_search', {
     embedding,
     limit: options?.limit ?? 10,
