@@ -52,7 +52,7 @@ except Exception:
         from connections import manager
         from websocket import ws_endpoint
 
-app = FastAPI(title="StuardAI Local Agent", version="0.1.0")
+app = FastAPI(title="StuardAI Local Agent", version="0.1.1")
 # Mount modular API routes under /v1 to avoid duplicate paths with legacy inline routes
 app.include_router(core_router, prefix="/v1")
 
