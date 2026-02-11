@@ -79,6 +79,11 @@ async def handle_cloud_tool_request(
         logger.info("cloud_tool_request id=%s tool=%s silent=%s", req_id, tool, is_silent)
 
         async def emit(status: str, extra: Dict[str, Any] | None = None):
+            if status == "delta" and extra and "text" in extra:
+                if not is_silent:
+                    await session.progress("delta", {"text": extra["text"]}, request_id=request_id)
+                return
+
             tool_payload: Dict[str, Any] = {
                 "type": "tool_event",
                 "id": req_id,
@@ -201,6 +206,10 @@ async def handle_tool_exec(msg: Dict[str, Any], session: WebSocketSession) -> No
     logger.info("tool_exec_start id=%s tool=%s", req_id, tool)
 
     async def emit(status: str, extra: Dict[str, Any] | None = None):
+        if status == "delta" and extra and "text" in extra:
+            await session.progress("delta", {"text": extra["text"]})
+            return
+
         payload = {"type": "tool_event", "id": req_id, "tool": tool, "status": status, "toolOriginal": raw_tool}
         if extra:
             payload.update(extra)
@@ -240,3 +249,4 @@ def sanitize_result(result: Any) -> Any:
     except Exception:
         pass
     return safe_result
+

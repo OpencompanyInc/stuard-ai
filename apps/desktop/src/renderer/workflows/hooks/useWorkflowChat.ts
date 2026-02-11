@@ -61,6 +61,11 @@ export function useWorkflowChat({
     const newMessages = [...messages, { role: 'user' as const, content: displayContent, images: attachedImages }];
     setMessages(newMessages);
 
+    // Declare outside try so catch can access accumulated work for error recovery
+    let fullText = "";
+    let currentItems: StreamItem[] = [];
+    let currentReasoning = "";
+
     try {
       // Build context prompts (reused from ChatPanel)
       const designerModel = model || {};
@@ -137,10 +142,6 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
       }
 
       // Execute Chat
-      let fullText = "";
-      let currentItems: StreamItem[] = [];
-      let currentReasoning = "";
-
       await new Promise<void>((resolve, reject) => {
         let done = false;
         let ws: WebSocket;
@@ -154,15 +155,21 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
         ws.onopen = () => {
           try {
             // Build messages with context as a system message, user request as user message
-            const conversationMessages = newMessages.filter(m => m.role !== 'system').map(m => ({ role: m.role, content: m.content }));
-            
+            const conversationMessages = newMessages.filter(m => m.role !== 'system').map(m => {
+              const msg: any = { role: m.role, content: m.content };
+              if ((m as any).parts && (m as any).parts.length > 0) {
+                msg.parts = (m as any).parts;
+              }
+              return msg;
+            });
+
             // Insert workflow context as a system message before the conversation
             const messagesWithContext = [
               { role: 'system', content: workflowContextText },
               ...conversationMessages.slice(0, -1), // All messages except the last user message
               { role: 'user', content: userRequest } // The actual user request
             ];
-            
+
             const payloadContext: any = { mode: 'workflow_architect' };
             if (designerModel && (designerModel.id || designerModel.triggers || designerModel.nodes)) {
               payloadContext.workflow = designerModel;
@@ -249,7 +256,7 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
 
             if (msg.type === 'progress') {
               const evt = msg as { event: string; data: any };
-              
+
               if (evt.event === 'delta') {
                 const chunk = typeof evt.data?.text === 'string' ? evt.data.text : '';
                 if (!chunk) return;
@@ -279,7 +286,7 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
               } else if (evt.event === 'tool_event') {
                 const d = evt.data || {};
                 const tool = String(d.tool || d.toolName || (d.step && (d.step.tool || d.step.toolName)) || 'unknown');
-                
+
                 // Skip hidden tools (knowledge tools and internal discovery tools)
                 const HIDDEN_TOOLS = [
                   'knowledge_get_identity', 'knowledge_get_directives', 'knowledge_get_bio',
@@ -289,7 +296,7 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
                   'invoke_workflow', 'execute_workflow', 'list_local_stuards'
                 ];
                 if (HIDDEN_TOOLS.includes(tool)) {
-                   return;
+                  return;
                 }
 
                 const rawStatus = typeof d.status === 'string' ? d.status : undefined;
@@ -316,13 +323,13 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
                 // Handle workflow_modify / modify_workflow - returns modified workflow directly
                 // IMPORTANT: Apply immediately when we receive the completed event, don't wait for stream end
                 if ((tool === 'workflow_modify' || tool === 'modify_workflow') && (normalizedStatus === 'completed' || normalizedStatus === 'error')) {
-                  console.log('[useWorkflowChat] Received workflow_modify event:', { 
-                    status: normalizedStatus, 
+                  console.log('[useWorkflowChat] Received workflow_modify event:', {
+                    status: normalizedStatus,
                     hasResult: !!d.result,
                     hasWorkflow: !!d.result?.workflow,
                     changes: d.result?.changes
                   });
-                  
+
                   try {
                     const result = d.result;
                     // Success - apply the workflow (tool returns 'workflow', not 'spec')
@@ -331,19 +338,19 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
                       if (typeof workflowValue === 'string') {
                         try { workflowValue = JSON.parse(workflowValue); } catch { }
                       }
-                      
+
                       // Normalize triggers - ensure it's an array (tool might return object instead)
                       if (workflowValue.triggers && !Array.isArray(workflowValue.triggers)) {
                         workflowValue.triggers = [workflowValue.triggers];
                       }
-                      
+
                       // workflow_modify may return DesignerModel (nodes/wires) or StuardSpec (steps/next)
                       // Always normalize through specToDesignerModel to handle both formats
                       if (workflowValue && (Array.isArray(workflowValue.nodes) || Array.isArray(workflowValue.triggers) || Array.isArray(workflowValue.steps))) {
                         const normalizedModel = specToDesignerModel(workflowValue);
                         // CRITICAL: Apply immediately - this updates the workflow canvas in real-time
-                        console.log('[useWorkflowChat] APPLYING workflow_modify result NOW:', { 
-                          nodes: normalizedModel.nodes?.length, 
+                        console.log('[useWorkflowChat] APPLYING workflow_modify result NOW:', {
+                          nodes: normalizedModel.nodes?.length,
                           triggers: normalizedModel.triggers?.length,
                           wires: normalizedModel.wires?.length,
                           changes: result.changes
@@ -357,27 +364,27 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
                     } else {
                       console.warn('[useWorkflowChat] workflow_modify completed but no result/workflow:', { result });
                     }
-                  } catch (e) { 
+                  } catch (e) {
                     console.error('[useWorkflowChat] Error applying workflow_modify result:', e);
                   }
                 }
 
                 // Update stream items
                 let idx = id ? currentItems.findIndex(item => item.type === 'tool' && item.event.id === id) : -1;
-                
+
                 // FALLBACK: If no ID match and this is a completed workflow_modify with result,
                 // find any pending workflow_modify entry and update it
                 if (idx < 0 && (tool === 'workflow_modify' || tool === 'modify_workflow') && normalizedStatus === 'completed' && d.result) {
-                  idx = currentItems.findIndex(item => 
-                    item.type === 'tool' && 
-                    (item.event.tool === 'workflow_modify' || item.event.tool === 'modify_workflow') && 
+                  idx = currentItems.findIndex(item =>
+                    item.type === 'tool' &&
+                    (item.event.tool === 'workflow_modify' || item.event.tool === 'modify_workflow') &&
                     !item.event.result // Find one without a result yet
                   );
                   if (idx >= 0) {
                     console.log('[useWorkflowChat] Found pending workflow_modify entry to update with result');
                   }
                 }
-                
+
                 if (idx >= 0) {
                   const existingItem = currentItems[idx] as { type: 'tool'; event: ToolEvent };
                   const existing = existingItem.event;
@@ -444,7 +451,7 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
           }
         };
         ws.onerror = () => { if (!done) { done = true; try { ws.close(); } catch { } reject(new Error('WebSocket error')); } };
-        ws.onclose = () => { if (!done) { done = true; if (fullText) resolve(); else reject(new Error('Connection closed')); } };
+        ws.onclose = () => { if (!done) { done = true; resolve(); } };
       });
 
       // Finish
@@ -476,8 +483,15 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
     } catch (e: any) {
       const rawMsg = e?.message || 'Unknown error';
       const friendly = rawMsg === 'unauthorized' ? 'Error: unauthorized – please sign in first.' : `Error: ${rawMsg}`;
-      setMessages(prev => [...prev, { role: 'assistant', content: friendly }]);
+      // Preserve accumulated tool events and reasoning so users see what the AI did before failing
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: friendly,
+        parts: currentItems.length > 0 ? [...currentItems] : undefined,
+        reasoning: currentReasoning || undefined
+      }]);
     } finally {
+      setStreamItems([]);
       setBusy(false);
     }
   }, [messages, busy, model, errors, cloudAiHttp, onApplyModel]);

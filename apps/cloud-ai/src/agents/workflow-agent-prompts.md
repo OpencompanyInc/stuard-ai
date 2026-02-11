@@ -333,7 +333,7 @@ Output: { ok: true, text: "• Point 1\n• Point 2\n• Point 3" }
 ```
 Output: { ok: true, json: { sentiment: "positive", confidence: 0.95, keywords: ["great", "helpful"] } }
 
-**Models**: e.g., "openai/gpt-4.1-mini" (default), "google/gemini-2.5-pro", "deepseek/deepseek-chat"
+**Models**: e.g., "openai/gpt-4o" (default), "google/gemini-2.5-pro", "openai/gpt-5.2-codex", "openai/gpt-5.3-codex", "deepseek/deepseek-chat"
 
 ═══════════════════════════════════════════════════════════════════════════════
 CUSTOM UI TOOL - ENHANCED WITH JAVASCRIPT SUPPORT

@@ -253,3 +253,4 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   );
 };
 
+

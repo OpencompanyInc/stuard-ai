@@ -294,6 +294,8 @@ const MODEL_OPTIONS: ArgOption[] = [
   { value: 'openai/gpt-4o', label: 'GPT-4o', description: 'OpenAI GPT-4o' },
   { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini', description: 'OpenAI GPT-4o Mini' },
   { value: 'openai/o3-mini', label: 'o3-mini', description: 'OpenAI o3-mini reasoning' },
+  { value: 'openai/gpt-5.2-codex', label: 'GPT-5.2 Codex', description: 'OpenAI GPT-5.2 Codex — advanced coding' },
+  { value: 'openai/gpt-5.3-codex', label: 'GPT-5.3 Codex', description: 'OpenAI GPT-5.3 Codex' },
   { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', description: 'Google Gemini 2.5 Flash' },
   { value: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro', description: 'Google Gemini 2.5 Pro' },
   { value: 'anthropic/claude-sonnet-4-20250514', label: 'Claude Sonnet 4', description: 'Anthropic Claude Sonnet 4' },

@@ -1,18 +1,16 @@
 import React, { useEffect, useState } from 'react'
 import ReactDOM from 'react-dom/client'
-import { Activity, Globe, Zap, Cpu, MousePointerClick } from 'lucide-react'
+import { Activity, Globe, Zap, Cpu, MousePointerClick, Settings, Menu, Search } from 'lucide-react'
 import './index.css'
 
 const Popup = () => {
     const [isConnected, setIsConnected] = useState(false);
 
     useEffect(() => {
-        // Initial status fetch
-        chrome.runtime.sendMessage({ type: 'get_status' }, (response) => {
+        chrome.runtime.sendMessage({ type: 'get_status' }, (response: { connected: boolean }) => {
             if (response) setIsConnected(response.connected);
         });
 
-        // Listen for status changes
         const listener = (message: any) => {
             if (message.type === 'status') {
                 setIsConnected(message.connected);
@@ -23,51 +21,68 @@ const Popup = () => {
     }, []);
 
     return (
-        <div className="container">
-            <header className="header">
-                <h1 className="font-stuard">Stuard</h1>
-                <div style={{ opacity: 0.5 }}>
-                    <Cpu size={14} />
+        <div className="overlay-container">
+            <div className="status-row">
+                <div className="status-pill">
+                    <div className={`status-dot ${isConnected ? 'active' : ''}`} />
+                    <span className="status-text">{isConnected ? 'System Connected' : 'System Offline'}</span>
                 </div>
-            </header>
+                <div style={{ display: 'flex', gap: '10px', opacity: 0.6 }}>
+                    <Settings size={16} strokeWidth={2.5} style={{ cursor: 'pointer' }} />
+                    <Activity size={16} strokeWidth={2.5} style={{ cursor: 'pointer' }} />
+                </div>
+            </div>
 
-            <main className="main-content">
-                <div className="status-panel">
-                    <div className="status-info">
-                        <span className="status-label">System Connection</span>
-                        <div className="status-connection">
-                            <div className={`indicator ${isConnected ? 'online' : 'offline'}`} />
-                            {isConnected ? 'Active' : 'Offline'}
-                        </div>
-                    </div>
-                    <Activity
-                        size={18}
-                        color={isConnected ? 'var(--accent-active)' : 'var(--foreground-muted)'}
-                        style={{ opacity: isConnected ? 1 : 0.3 }}
-                    />
-                </div>
+            <div className="hero-section">
+                <h2>What can I help with?</h2>
+                <p>Ask Stuard, search web, or run automations</p>
+            </div>
 
-                <div className="action-grid">
-                    <div className="action-card">
-                        <Globe size={16} color="var(--primary)" />
-                        <span>Web Observer</span>
+            <div className="search-fake">
+                <Search size={18} strokeWidth={2.5} />
+                <span>Ask Stuard anything...</span>
+            </div>
+
+            <div className="action-grid">
+                <div className="action-button">
+                    <div className="action-icon">
+                        <Globe size={20} strokeWidth={2.5} />
                     </div>
-                    <div className="action-card">
-                        <MousePointerClick size={16} color="var(--primary)" />
-                        <span>Click Helper</span>
-                    </div>
+                    <span className="action-label">Web Search</span>
                 </div>
-            </main>
+                <div className="action-button">
+                    <div className="action-icon" style={{ background: 'rgba(245, 158, 11, 0.1)', color: 'var(--accent-warning)' }}>
+                        <Zap size={20} strokeWidth={2.5} />
+                    </div>
+                    <span className="action-label">Workflows</span>
+                </div>
+                <div className="action-button">
+                    <div className="action-icon">
+                        <MousePointerClick size={20} strokeWidth={2.5} />
+                    </div>
+                    <span className="action-label">Click Helper</span>
+                </div>
+                <div className="action-button">
+                    <div className="action-icon" style={{ background: 'rgba(16, 185, 129, 0.1)', color: 'var(--accent-active)' }}>
+                        <Cpu size={20} strokeWidth={2.5} />
+                    </div>
+                    <span className="action-label">Diagnostics</span>
+                </div>
+            </div>
 
             <footer className="footer">
-                Stuard AI Browser Extension v1.0.0
+                <span>Stuard AI</span>
+                <div className="footer-dot" />
+                <span>v1.0.0</span>
             </footer>
         </div>
     )
 }
+
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
         <Popup />
     </React.StrictMode>,
 )
+

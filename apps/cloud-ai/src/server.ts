@@ -1232,6 +1232,22 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
           try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
           wsAbortControllers.delete(ws);
           const msgText = String(streamIterationError?.message || streamIterationError || 'Agent stream failed');
+          const errorFinalText = aggregatedText ? aggregatedText.trim() : `Error: ${msgText}`;
+
+          // Persist partial work (tool calls, text) even on error
+          if (authUser && conversationId) {
+            try {
+              const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
+              const metadata = {
+                mode: requestedMode, tier: routedTier, modelId: chosenModelId,
+                toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
+                streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+                finishReason: 'error',
+              };
+              await addAssistantMessage(authUser.userId, conversationId, errorFinalText, metadata);
+            } catch { }
+          }
+
           send(
             ws,
             {
@@ -1239,7 +1255,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               origin: 'cloud-ai',
               model: chosenModelId || routedTier,
               conversationId,
-              result: { text: `Error: ${msgText}`, steps: [], finishReason: 'error' },
+              result: { text: errorFinalText, steps: [], finishReason: 'error' },
               error: true,
             },
             requestId
@@ -1269,6 +1285,21 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
           try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
           wsAbortControllers.delete(ws);
           const partialText = aggregatedText ? aggregatedText.trim() : '';
+
+          // Persist partial work even on abort so conversation history isn't lost
+          if (authUser && conversationId && partialText) {
+            try {
+              const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
+              const metadata = {
+                mode: requestedMode, tier: routedTier, modelId: chosenModelId,
+                toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
+                streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+                finishReason: 'aborted',
+              };
+              await addAssistantMessage(authUser.userId, conversationId, partialText, metadata);
+            } catch { }
+          }
+
           send(
             ws,
             {
@@ -1333,6 +1364,21 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
         if (e?.name === 'AbortError' || abortController?.signal.aborted) {
           console.log('[cloud-ai] Stream aborted by user');
           const partialText = aggregatedText ? aggregatedText.trim() : '';
+
+          // Persist partial work on abort
+          if (authUser && conversationId && partialText) {
+            try {
+              const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
+              const metadata = {
+                mode: requestedMode, tier: routedTier, modelId: chosenModelId,
+                toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
+                streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+                finishReason: 'aborted',
+              };
+              await addAssistantMessage(authUser.userId, conversationId, partialText, metadata);
+            } catch { }
+          }
+
           send(ws, {
             type: 'final',
             origin: 'cloud-ai',
@@ -1385,6 +1431,21 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
           } catch { }
 
           const finalText = `Tool call failed: ${errMsg}. Please retry.`;
+
+          // Persist partial work on tool parse error
+          if (authUser && conversationId) {
+            try {
+              const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
+              const metadata = {
+                mode: requestedMode, tier: routedTier, modelId: chosenModelId,
+                toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
+                streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+                finishReason: 'error',
+              };
+              await addAssistantMessage(authUser.userId, conversationId, finalText, metadata);
+            } catch { }
+          }
+
           send(
             ws,
             {
@@ -1395,6 +1456,21 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
             requestId
           );
           return;
+        }
+
+        // Persist partial work on generic errors too
+        if (authUser && conversationId) {
+          try {
+            const errorText = aggregatedText ? aggregatedText.trim() : `Error: ${e?.message || String(e)}`;
+            const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
+            const metadata = {
+              mode: requestedMode, tier: routedTier, modelId: chosenModelId,
+              toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
+              streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+              finishReason: 'error',
+            };
+            await addAssistantMessage(authUser.userId, conversationId, errorText, metadata);
+          } catch { }
         }
 
         send(ws, { type: 'error', message: e?.message || String(e) }, requestId);

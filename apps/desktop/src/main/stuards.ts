@@ -3,8 +3,9 @@ import * as fs from "fs";
 import * as path from "path";
 import WebSocket from "ws";
 
+import { unifiedTasksService } from "./services";
 let nodeCron: any = null;
-try { nodeCron = require('node-cron'); } catch {}
+try { nodeCron = require('node-cron'); } catch { }
 
 export type StuardEdge = { to: string; guard?: any; label?: string };
 export type StuardStep = {
@@ -54,31 +55,107 @@ export function handleStuardWebhook(idOrNull: string | null, payload: any): numb
     if (idOrNull) {
       const safe = safeStuardId(idOrNull);
       if (webhookEnabledStuards.has(safe)) {
-        try { runStuardOnce(safe, payload); delivered++; } catch {}
+        try { runStuardOnce(safe, payload); delivered++; } catch { }
       }
     } else {
       for (const sid of Array.from(webhookEnabledStuards.values())) {
-        try { runStuardOnce(sid, payload); delivered++; } catch {}
+        try { runStuardOnce(sid, payload); delivered++; } catch { }
       }
     }
-  } catch {}
+  } catch { }
   return delivered;
 }
 
+// Helper to attach unified tasks listener
+function attachUnifiedTasksListener(ws: WebSocket) {
+  if ((ws as any).__unifiedTasksListenerAttached) return;
+  (ws as any).__unifiedTasksListenerAttached = true;
+
+  ws.on('message', async (raw: WebSocket.RawData) => {
+    try {
+      const s = raw.toString('utf8');
+      const msg = JSON.parse(s);
+
+      if (msg?.type === 'request' && msg.event && msg.event.startsWith('unified_tasks_')) {
+        const { event, data, id } = msg;
+        console.log(`[stuards] Received unified_tasks request: ${event} id=${id}`);
+        let result: any = { ok: false, error: 'unknown_event' };
+
+        if (event === 'unified_tasks_get_pending') {
+          result = unifiedTasksService.getPendingAssignments();
+        } else if (event === 'unified_tasks_mark_triggered') {
+          result = { ok: true };
+        } else if (event === 'unified_tasks_mark_completed') {
+          if (data?.taskId && data?.assignmentId) {
+            result = unifiedTasksService.updateAgentAssignment(data.taskId, data.assignmentId, { status: 'completed' });
+          } else {
+            result = { ok: false, error: 'missing_ids' };
+          }
+        } else if (event === 'unified_tasks_get_task') {
+          if (data?.taskId) {
+            result = unifiedTasksService.get(data.taskId);
+          } else {
+            result = { ok: false, error: 'missing_id' };
+          }
+        } else if (event === 'unified_tasks_add') {
+          result = unifiedTasksService.add(data);
+        } else if (event === 'unified_tasks_list') {
+          result = unifiedTasksService.list();
+          // Filter out implementation/dev data from logs if needed, but logging status is fine
+          console.log(`[stuards] unified_tasks_list result count: ${result.tasks?.length}`);
+        } else if (event === 'unified_tasks_update') {
+          result = unifiedTasksService.update(data);
+        } else if (event === 'unified_tasks_delete') {
+          result = unifiedTasksService.delete(data?.id);
+        } else if (event === 'unified_tasks_add_subtodo') {
+          result = unifiedTasksService.addSubtodo(data?.taskId, data?.subtodo);
+        } else if (event === 'unified_tasks_toggle_subtodo') {
+          result = unifiedTasksService.toggleSubtodo(data?.taskId, data?.subtodoId);
+        } else if (event === 'unified_tasks_delete_subtodo') {
+          result = unifiedTasksService.deleteSubtodo(data?.taskId, data?.subtodoId);
+        } else if (event === 'unified_tasks_add_agent_assignment') {
+          result = unifiedTasksService.addAgentAssignment(data?.taskId, data?.assignment);
+        } else if (event === 'unified_tasks_update_agent_assignment') {
+          result = unifiedTasksService.updateAgentAssignment(data?.taskId, data?.assignmentId, data?.updates);
+        } else if (event === 'unified_tasks_delete_agent_assignment') {
+          result = unifiedTasksService.deleteAgentAssignment(data?.taskId, data?.assignmentId);
+        }
+
+        if (id) {
+          console.log(`[stuards] Sending response for ${id}: ok=${result?.ok} error=${result?.error}`);
+          ws.send(JSON.stringify({
+            type: 'response',
+            id,
+            event: event + '_response',
+            data: result,
+            source: 'desktop-main'
+          }));
+        }
+      }
+    } catch (e) {
+      console.error('[stuards] Error in unified tasks message handler:', e);
+    }
+  });
+}
+
 function ensureAgentWs(): Promise<WebSocket> {
-  if (agentWs && agentWs.readyState === WebSocket.OPEN) return Promise.resolve(agentWs);
+  if (agentWs && agentWs.readyState === WebSocket.OPEN) {
+    attachUnifiedTasksListener(agentWs);
+    return Promise.resolve(agentWs);
+  }
   if (agentReady) return agentReady;
   agentReady = new Promise<WebSocket>((resolve, reject) => {
     try {
       const url = getAgentWsUrl();
       const ws = new WebSocket(url);
       const to = setTimeout(() => {
-        try { ws.terminate(); } catch {}
+        try { ws.terminate(); } catch { }
         reject(new Error('agent_ws_timeout'));
       }, 10000);
       ws.on('open', () => {
         clearTimeout(to);
         agentWs = ws;
+        attachUnifiedTasksListener(ws);
         resolve(ws);
       });
       ws.on('error', (e: Error) => {
@@ -127,7 +204,7 @@ export async function execLocalTool(tool: string, args: any): Promise<any> {
           if (!done) { done = true; resolve(msg?.result ?? { ok: false, error: 'invalid_result' }); }
           return;
         }
-      } catch {}
+      } catch { }
     };
     ws.on('message', onMessage);
     try { ws.send(JSON.stringify(payload)); } catch {
@@ -140,7 +217,7 @@ export async function execLocalTool(tool: string, args: any): Promise<any> {
 
 function getStuardsDir() {
   const dir = path.join(app.getPath("userData"), "stuards");
-  try { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); } catch {}
+  try { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); } catch { }
   return dir;
 }
 
@@ -171,7 +248,7 @@ export function stuards_list() {
         if (Array.isArray(j?.triggers)) {
           triggers = (j.triggers as any[]).map((t: any) => String(t?.type || '')).filter((s: string) => !!s);
         }
-      } catch {}
+      } catch { }
       const hasRuntime = stuardRuntimes.has(id);
       return { id, name, updatedAt, hasRuntime, triggers, isRunning: hasRuntime };
     });
@@ -185,36 +262,36 @@ async function aiVisionStructured(args: any): Promise<{ ok: boolean; object?: an
   try {
     const aiConfig = args.__aiConfig as OllamaConfig | undefined;
     if (aiConfig?.provider === 'ollama') {
-        const promptText = String(args?.prompt || '').trim() || 'Analyze the image and return structured results.';
-        const imagePath = String(args?.imagePath || args?.filePath || '').trim();
-        const schema = args?.schema;
-        
-        if (!imagePath) return { ok: false, error: 'missing_imagePath' };
-        
-        let imageB64: string;
-        try {
-          const buf = fs.readFileSync(imagePath);
-          imageB64 = buf.toString('base64');
-        } catch (e: any) {
-          return { ok: false, error: 'read_image_failed' };
-        }
+      const promptText = String(args?.prompt || '').trim() || 'Analyze the image and return structured results.';
+      const imagePath = String(args?.imagePath || args?.filePath || '').trim();
+      const schema = args?.schema;
 
-        const prompt = `
+      if (!imagePath) return { ok: false, error: 'missing_imagePath' };
+
+      let imageB64: string;
+      try {
+        const buf = fs.readFileSync(imagePath);
+        imageB64 = buf.toString('base64');
+      } catch (e: any) {
+        return { ok: false, error: 'read_image_failed' };
+      }
+
+      const prompt = `
 ${promptText}
 
 Analyze the image and fill the schema.
 `;
-        
-        const msg = {
-            role: 'user',
-            content: prompt,
-            images: [imageB64]
-        };
-        
-        const res = await callOllama(aiConfig, [msg], { format: schema });
-        if (!res.ok) return { ok: false, error: res.error };
-        
-        return { ok: true, object: res.content };
+
+      const msg = {
+        role: 'user',
+        content: prompt,
+        images: [imageB64]
+      };
+
+      const res = await callOllama(aiConfig, [msg], { format: schema });
+      if (!res.ok) return { ok: false, error: res.error };
+
+      return { ok: true, object: res.content };
     }
 
     const base = String(process.env.CLOUD_AI_HTTP || '').trim();
@@ -280,9 +357,9 @@ function logStuard(id: string, message: string) {
   const payload = { stuardId: id, ts: new Date().toISOString(), message } as any;
   try {
     for (const w of BrowserWindow.getAllWindows()) {
-      try { w.webContents.send('stuards:log', payload); } catch {}
+      try { w.webContents.send('stuards:log', payload); } catch { }
     }
-  } catch {}
+  } catch { }
 }
 
 function pickStartStep(spec: StuardSpec): StuardStep | null {
@@ -393,51 +470,51 @@ async function callOllama(config: OllamaConfig, messages: any[], options: { form
     const baseUrl = (config.baseUrl || 'http://127.0.0.1:11434').replace(/\/$/, '');
     const model = config.model || 'llama3';
     const url = `${baseUrl}/api/chat`;
-    
+
     const body: any = {
       model,
       messages,
       stream: false,
     };
-    
+
     if (options.format) {
       body.format = options.format;
     }
-    
+
     const resp = await net.fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
-    
+
     if (!resp.ok) {
       return { ok: false, error: `ollama_error_${resp.status}` };
     }
-    
+
     const data: any = await resp.json();
     if (data && data.message && data.message.content) {
-        let content = data.message.content;
-        // If structured output was requested (json or schema), try to parse it
-        if (options.format) {
-            try {
-                if (typeof content === 'string') {
-                     content = JSON.parse(content);
-                }
-            } catch (e) {
-                // Fallback: try to find JSON block if strict parse fails (though schema mode should prevent this)
-                if (typeof content === 'string') {
-                    const jsonMatch = content.match(/\{[\s\S]*\}/);
-                    if (jsonMatch) {
-                        try {
-                            content = JSON.parse(jsonMatch[0]);
-                        } catch {}
-                    }
-                }
+      let content = data.message.content;
+      // If structured output was requested (json or schema), try to parse it
+      if (options.format) {
+        try {
+          if (typeof content === 'string') {
+            content = JSON.parse(content);
+          }
+        } catch (e) {
+          // Fallback: try to find JSON block if strict parse fails (though schema mode should prevent this)
+          if (typeof content === 'string') {
+            const jsonMatch = content.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              try {
+                content = JSON.parse(jsonMatch[0]);
+              } catch { }
             }
+          }
         }
-        return { ok: true, content };
+      }
+      return { ok: true, content };
     }
-    
+
     return { ok: false, error: 'ollama_invalid_response' };
   } catch (e: any) {
     return { ok: false, error: String(e?.message || 'ollama_failed') };
@@ -471,7 +548,7 @@ Return a JSON object with:
 - "reason": A short explanation.
 - "argsPatch": (Optional) A dictionary of arguments to pass/override for the next step.
 `;
-      const res = await callOllama(config, [{ role: 'user', content: prompt }], { 
+      const res = await callOllama(config, [{ role: 'user', content: prompt }], {
         format: {
           type: 'object',
           properties: {
@@ -483,12 +560,12 @@ Return a JSON object with:
         }
       });
       if (!res.ok) return { ok: false, error: res.error };
-      
+
       const j = res.content;
       if (j && typeof j.next === 'string' && j.next) {
         // Validate "next" is a valid option
         if (options.some(o => o.to === j.next)) {
-             return { ok: true, next: j.next, argsPatch: j.argsPatch };
+          return { ok: true, next: j.next, argsPatch: j.argsPatch };
         }
         return { ok: false, error: `ollama_invalid_choice: ${j.next}` };
       }
@@ -540,7 +617,7 @@ async function executeStep(spec: StuardSpec, step: StuardStep, ctx: any): Promis
           if (fs.existsSync(p)) {
             args.path = p;
           }
-        } catch {}
+        } catch { }
       }
       const result = await execLocalTool('run_python_script', args);
       (ctx as any)[step.id] = result;
@@ -593,7 +670,7 @@ async function executeStep(spec: StuardSpec, step: StuardStep, ctx: any): Promis
           if (res && typeof res === 'object' && !Array.isArray(res)) {
             for (const [k, v] of Object.entries(res)) {
               if (Array.isArray(v) && Array.isArray((combined as any)[k])) {
-                (combined as any)[k] = [ ...(combined as any)[k], ...v ];
+                (combined as any)[k] = [...(combined as any)[k], ...v];
               } else {
                 (combined as any)[k] = v;
               }
@@ -602,7 +679,7 @@ async function executeStep(spec: StuardSpec, step: StuardStep, ctx: any): Promis
             (combined as any)[`value_${autoIdx++}`] = res;
           }
         }
-      } catch {}
+      } catch { }
       (ctx as any)[step.id] = { ok: allOk, results, combined, firstError };
       if (!allOk) return { ok: false, error: String(firstError || 'run_sequential_failed'), ctx };
     } else if (step.tool === 'run_parallel') {
@@ -633,7 +710,7 @@ async function executeStep(spec: StuardSpec, step: StuardStep, ctx: any): Promis
           if (res && typeof res === 'object' && !Array.isArray(res)) {
             for (const [k, v] of Object.entries(res)) {
               if (Array.isArray(v) && Array.isArray((combined as any)[k])) {
-                (combined as any)[k] = [ ...(combined as any)[k], ...v ];
+                (combined as any)[k] = [...(combined as any)[k], ...v];
               } else {
                 (combined as any)[k] = v;
               }
@@ -642,7 +719,7 @@ async function executeStep(spec: StuardSpec, step: StuardStep, ctx: any): Promis
             (combined as any)[`value_${autoIdx++}`] = res;
           }
         }
-      } catch {}
+      } catch { }
       (ctx as any)[step.id] = { ok: allOk, results, combined };
       if (!allOk) return { ok: false, error: 'run_parallel_failed', ctx };
     } else if (step.tool === 'analyze_current_screen') {
@@ -685,7 +762,7 @@ async function executeStep(spec: StuardSpec, step: StuardStep, ctx: any): Promis
         const raw: any = (result as any)?.object ?? result;
         const s = typeof raw === 'string' ? raw : JSON.stringify(raw);
         logStuard(spec.id, `${step.id}: analyze_current_screen -> ${s}`);
-      } catch {}
+      } catch { }
       const stepOut: any = { ...(result || {}), filePath };
       try {
         const obj: any = (result as any)?.object;
@@ -695,7 +772,7 @@ async function executeStep(spec: StuardSpec, step: StuardStep, ctx: any): Promis
             (ctx as any)[k] = v;
           }
         }
-      } catch {}
+      } catch { }
       (ctx as any)[step.id] = stepOut;
       if (!result?.ok) return { ok: false, error: String(result?.error || 'analyze_current_screen_failed'), ctx };
     } else if (step.tool === 'cloud_ai_vision') {
@@ -728,18 +805,18 @@ async function executeStep(spec: StuardSpec, step: StuardStep, ctx: any): Promis
       try {
         const pass = evalIfGuard(g.if, ctx);
         if (pass) return { ok: true, nextId: edge.to, ctx };
-      } catch {}
+      } catch { }
     }
     if (g && typeof g === 'object' && g.ai) {
       // AI decision: if the AI cannot pick a route (no_routing_decision), fall back or end gracefully instead of hard erroring.
       const options = edges.filter(e => e.to).map(e => ({ to: e.to, label: e.label }));
       try {
         logStuard(spec.id, `${step.id}: ai_route_request options=${JSON.stringify(options)}`);
-      } catch {}
+      } catch { }
       const out = await aiDecideNext(spec, step, ctx, options, g.ai);
       try {
         logStuard(spec.id, `${step.id}: ai_route_response result=${JSON.stringify(out)}`);
-      } catch {}
+      } catch { }
       if (!out.ok) {
         const fb = step.fallback && typeof step.fallback.to === 'string' ? step.fallback.to : '';
         const err = String(out.error || '');
@@ -762,10 +839,10 @@ async function executeStep(spec: StuardSpec, step: StuardStep, ctx: any): Promis
         try {
           if (!ctx.__argsPatch) ctx.__argsPatch = {};
           ctx.__argsPatch[out.next] = deepMerge(ctx.__argsPatch[out.next] || {}, out.argsPatch);
-        } catch {}
+        } catch { }
       }
       if (out.next) {
-        try { logStuard(spec.id, `${step.id}: ai_route -> next=${out.next}`); } catch {}
+        try { logStuard(spec.id, `${step.id}: ai_route -> next=${out.next}`); } catch { }
       }
       return { ok: true, nextId: out.next, ctx };
     }
@@ -805,7 +882,7 @@ export async function runStuardOnce(id: string, payload?: any) {
         ctx.input = payload;
         ctx.webhook = payload;
       }
-    } catch {}
+    } catch { }
   }
   let guard = 0;
   while (current && guard < 500) {
@@ -834,7 +911,7 @@ export function startStuardRuntime(id: string) {
     const p = getStuardPathById(safe);
     const raw = fs.readFileSync(p, 'utf-8');
     spec = JSON.parse(raw || '{}');
-  } catch {}
+  } catch { }
   if (!spec) return;
   const rt: StuardRuntime = { id: safe, timers: [], hotkeys: [], cronJobs: [] };
   const triggers = Array.isArray(spec.triggers) ? spec.triggers : [];
@@ -845,42 +922,42 @@ export function startStuardRuntime(id: string) {
       // no-op: will be triggered explicitly via stuards:run
     } else if (type === 'app_start') {
       // fire immediately
-      try { runStuardOnce(safe); } catch {}
+      try { runStuardOnce(safe); } catch { }
     } else if (type === 'one_time') {
       const ts = String(args?.at || args?.timestamp || '');
       const at = Date.parse(ts);
       if (!Number.isFinite(at)) continue;
       const delay = Math.max(0, at - Date.now());
       try {
-        const h = setTimeout(() => { try { runStuardOnce(safe); } catch {} }, delay);
+        const h = setTimeout(() => { try { runStuardOnce(safe); } catch { } }, delay);
         rt.timers.push(h);
-      } catch {}
+      } catch { }
     } else if (type === 'schedule.cron' && nodeCron && typeof nodeCron.schedule === 'function') {
       const cronExp = String(args?.cron || '*/5 * * * *');
       try {
         const job = nodeCron.schedule(cronExp, () => {
-          try { runStuardOnce(safe); } catch {}
+          try { runStuardOnce(safe); } catch { }
         });
-        try { job.start?.(); } catch {}
+        try { job.start?.(); } catch { }
         rt.cronJobs.push(job);
-      } catch {}
+      } catch { }
     } else if (type === 'webhook.local') {
       webhookEnabledStuards.add(safe);
     } else if (type === 'hotkey') {
       const accel = String(args?.accelerator || 'CommandOrControl+Alt+K');
       try {
-        try { globalShortcut.unregister(accel); } catch {}
+        try { globalShortcut.unregister(accel); } catch { }
         const ok = globalShortcut.register(accel, () => {
-          try { runStuardOnce(safe); } catch {}
+          try { runStuardOnce(safe); } catch { }
         });
         rt.hotkeys.push(accel);
         try {
           const reg = globalShortcut.isRegistered(accel);
           if (ok && reg) logStuard(safe, `Hotkey registered: ${accel}`);
           else logStuard(safe, `Hotkey FAILED to register: ${accel} (isRegistered=${reg})`);
-        } catch {}
-      } catch (e:any) {
-        try { logStuard(safe, `Hotkey error for ${accel}: ${String(e?.message || e)}`); } catch {}
+        } catch { }
+      } catch (e: any) {
+        try { logStuard(safe, `Hotkey error for ${accel}: ${String(e?.message || e)}`); } catch { }
       }
     }
   }
@@ -892,9 +969,9 @@ export function stopStuardRuntime(id: string) {
   const safe = safeStuardId(id);
   const rt = stuardRuntimes.get(safe);
   if (!rt) return;
-  try { for (const t of rt.timers) { try { clearTimeout(t); } catch {} } } catch {}
-  try { for (const j of rt.cronJobs) { try { j.stop?.(); } catch {} } } catch {}
-  try { for (const a of rt.hotkeys) { try { globalShortcut.unregister(a); } catch {} } } catch {}
+  try { for (const t of rt.timers) { try { clearTimeout(t); } catch { } } } catch { }
+  try { for (const j of rt.cronJobs) { try { j.stop?.(); } catch { } } } catch { }
+  try { for (const a of rt.hotkeys) { try { globalShortcut.unregister(a); } catch { } } } catch { }
   stuardRuntimes.delete(safe);
   logStuard(safe, 'Stuard runtime stopped');
   webhookEnabledStuards.delete(safe);
@@ -933,7 +1010,7 @@ export function stuards_autostart() {
         const raw = fs.readFileSync(path.join(dir, f), 'utf-8');
         const spec: StuardSpec = JSON.parse(raw || '{}');
         if (spec && spec.autostart) startStuardRuntime(spec.id);
-      } catch {}
+      } catch { }
     }
-  } catch {}
+  } catch { }
 }

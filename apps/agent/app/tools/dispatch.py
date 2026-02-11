@@ -712,6 +712,9 @@ async def execute(tool: str, args: Dict[str, Any], emit: Callable[[str, Dict[str
         "stream_from_script",
         "stream_from_api",
         "stream_from_llm",
+
+        # Agent Todo
+        "agent_todo",
     ):
         return await handler(args, emit)  # type: ignore[misc]
     else:

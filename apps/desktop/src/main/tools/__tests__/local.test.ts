@@ -21,3 +21,4 @@ describe('calcToolTimeout', () => {
     expect(calcToolTimeout('capture_media', { mode: 'fixed', durationMs: 10000 })).toBe(70000);
   });
 });
+

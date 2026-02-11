@@ -75,3 +75,4 @@ export async function handleListSharedWithMe(req: IncomingMessage, res: ServerRe
     json(res, { ok: false, error: String(error) }, 500);
   }
 }
+

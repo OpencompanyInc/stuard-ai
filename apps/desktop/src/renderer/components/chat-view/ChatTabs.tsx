@@ -73,3 +73,4 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({
     </div>
   );
 };
+

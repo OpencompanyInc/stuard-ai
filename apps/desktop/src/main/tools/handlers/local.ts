@@ -273,3 +273,4 @@ export function calcToolTimeout(tool: string, args: any): number {
   // Default: 5 minutes for most tools
   return 300000;
 }
+

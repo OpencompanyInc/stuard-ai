@@ -6,7 +6,7 @@ import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
 import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } from "../integrations/outlook";
-import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, createCheckout, getCustomer, listProducts, openCustomerPortal, purchaseCredits } from "../services";
+import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, createCheckout, getCustomer, listProducts, openCustomerPortal, purchaseCredits, unifiedTasksService } from "../services";
 import { setupSpeechIpc } from "./speech";
 import { setupTerminalIpc } from "../terminal";
 import logger from "../utils/logger";
@@ -954,229 +954,21 @@ export function setupIpc() {
   // ==========================================
   // UNIFIED TASKS SYSTEM
   // ==========================================
-  const unifiedTasksPath = () => {
-    const userDataPath = app.getPath('userData');
-    return require('path').join(userDataPath, 'unified-tasks.json');
-  };
 
-  const loadUnifiedTasks = (): any[] => {
-    try {
-      const p = unifiedTasksPath();
-      if (fs.existsSync(p)) {
-        return JSON.parse(fs.readFileSync(p, 'utf-8'));
-      }
-    } catch (e) {
-      logger.warn('Failed to load unified tasks:', e);
-    }
-    return [];
-  };
-
-  const saveUnifiedTasks = (tasks: any[]) => {
-    try {
-      fs.writeFileSync(unifiedTasksPath(), JSON.stringify(tasks, null, 2), 'utf-8');
-    } catch (e) {
-      logger.warn('Failed to save unified tasks:', e);
-    }
-  };
-
-  ipcMain.handle('unified-tasks:list', () => {
-    return { ok: true, tasks: loadUnifiedTasks() };
-  });
-
-  ipcMain.handle('unified-tasks:get', (_e, taskId: string) => {
-    const tasks = loadUnifiedTasks();
-    const task = tasks.find((t: any) => t.id === taskId);
-    return task ? { ok: true, task } : { ok: false, error: 'Task not found' };
-  });
-
-  ipcMain.handle('unified-tasks:add', (_e, task: any) => {
-    const tasks = loadUnifiedTasks();
-    const now = new Date().toISOString();
-    const newTask = {
-      ...task,
-      id: task.id || `task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      createdAt: now,
-      updatedAt: now,
-      status: task.status || 'pending',
-      priority: task.priority || 'normal',
-      subTodos: task.subTodos || [],
-      agentAssignments: task.agentAssignments || [],
-      showInCalendar: task.showInCalendar !== false,
-    };
-    tasks.unshift(newTask);
-    saveUnifiedTasks(tasks);
-    return { ok: true, task: newTask, tasks };
-  });
-
-  ipcMain.handle('unified-tasks:update', (_e, task: any) => {
-    const tasks = loadUnifiedTasks();
-    const idx = tasks.findIndex((t: any) => t.id === task.id);
-    if (idx >= 0) {
-      tasks[idx] = { ...tasks[idx], ...task, updatedAt: new Date().toISOString() };
-      saveUnifiedTasks(tasks);
-      return { ok: true, task: tasks[idx], tasks };
-    }
-    return { ok: false, error: 'Task not found' };
-  });
-
-  ipcMain.handle('unified-tasks:delete', (_e, taskId: string) => {
-    const tasks = loadUnifiedTasks();
-    const filtered = tasks.filter((t: any) => t.id !== taskId);
-    saveUnifiedTasks(filtered);
-    return { ok: true, tasks: filtered };
-  });
-
-  ipcMain.handle('unified-tasks:toggle-status', (_e, taskId: string) => {
-    const tasks = loadUnifiedTasks();
-    const idx = tasks.findIndex((t: any) => t.id === taskId);
-    if (idx >= 0) {
-      const task = tasks[idx];
-      const isCompleted = task.status === 'completed';
-      tasks[idx] = {
-        ...task,
-        status: isCompleted ? 'pending' : 'completed',
-        completedAt: isCompleted ? null : new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      saveUnifiedTasks(tasks);
-      return { ok: true, task: tasks[idx], tasks };
-    }
-    return { ok: false, error: 'Task not found' };
-  });
-
-  ipcMain.handle('unified-tasks:add-subtodo', (_e, taskId: string, subtodo: any) => {
-    const tasks = loadUnifiedTasks();
-    const idx = tasks.findIndex((t: any) => t.id === taskId);
-    if (idx >= 0) {
-      const newSubtodo = {
-        id: `subtodo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        content: subtodo.content || '',
-        completed: false,
-        createdAt: new Date().toISOString(),
-      };
-      tasks[idx].subTodos = [...(tasks[idx].subTodos || []), newSubtodo];
-      tasks[idx].updatedAt = new Date().toISOString();
-      saveUnifiedTasks(tasks);
-      return { ok: true, subtodo: newSubtodo, task: tasks[idx] };
-    }
-    return { ok: false, error: 'Task not found' };
-  });
-
-  ipcMain.handle('unified-tasks:toggle-subtodo', (_e, taskId: string, subtodoId: string) => {
-    const tasks = loadUnifiedTasks();
-    const idx = tasks.findIndex((t: any) => t.id === taskId);
-    if (idx >= 0) {
-      const subIdx = (tasks[idx].subTodos || []).findIndex((s: any) => s.id === subtodoId);
-      if (subIdx >= 0) {
-        const sub = tasks[idx].subTodos[subIdx];
-        tasks[idx].subTodos[subIdx] = {
-          ...sub,
-          completed: !sub.completed,
-          completedAt: sub.completed ? null : new Date().toISOString(),
-        };
-        tasks[idx].updatedAt = new Date().toISOString();
-        saveUnifiedTasks(tasks);
-        return { ok: true, task: tasks[idx] };
-      }
-    }
-    return { ok: false, error: 'Subtodo not found' };
-  });
-
-  ipcMain.handle('unified-tasks:delete-subtodo', (_e, taskId: string, subtodoId: string) => {
-    const tasks = loadUnifiedTasks();
-    const idx = tasks.findIndex((t: any) => t.id === taskId);
-    if (idx >= 0) {
-      tasks[idx].subTodos = (tasks[idx].subTodos || []).filter((s: any) => s.id !== subtodoId);
-      tasks[idx].updatedAt = new Date().toISOString();
-      saveUnifiedTasks(tasks);
-      return { ok: true, task: tasks[idx] };
-    }
-    return { ok: false, error: 'Task not found' };
-  });
-
-  ipcMain.handle('unified-tasks:add-agent-assignment', (_e, taskId: string, assignment: any) => {
-    const tasks = loadUnifiedTasks();
-    const idx = tasks.findIndex((t: any) => t.id === taskId);
-    if (idx >= 0) {
-      const newAssignment = {
-        id: `assign_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        type: assignment.type || 'reminder',
-        scheduledAt: assignment.scheduledAt,
-        message: assignment.message || '',
-        recurring: assignment.recurring || 'none',
-        status: 'pending',
-      };
-      tasks[idx].agentAssignments = [...(tasks[idx].agentAssignments || []), newAssignment];
-      tasks[idx].updatedAt = new Date().toISOString();
-      saveUnifiedTasks(tasks);
-      return { ok: true, assignment: newAssignment, task: tasks[idx] };
-    }
-    return { ok: false, error: 'Task not found' };
-  });
-
-  ipcMain.handle('unified-tasks:update-agent-assignment', (_e, taskId: string, assignmentId: string, updates: any) => {
-    const tasks = loadUnifiedTasks();
-    const idx = tasks.findIndex((t: any) => t.id === taskId);
-    if (idx >= 0) {
-      const aIdx = (tasks[idx].agentAssignments || []).findIndex((a: any) => a.id === assignmentId);
-      if (aIdx >= 0) {
-        tasks[idx].agentAssignments[aIdx] = { ...tasks[idx].agentAssignments[aIdx], ...updates };
-        tasks[idx].updatedAt = new Date().toISOString();
-        saveUnifiedTasks(tasks);
-        return { ok: true, task: tasks[idx] };
-      }
-    }
-    return { ok: false, error: 'Assignment not found' };
-  });
-
-  ipcMain.handle('unified-tasks:delete-agent-assignment', (_e, taskId: string, assignmentId: string) => {
-    const tasks = loadUnifiedTasks();
-    const idx = tasks.findIndex((t: any) => t.id === taskId);
-    if (idx >= 0) {
-      tasks[idx].agentAssignments = (tasks[idx].agentAssignments || []).filter((a: any) => a.id !== assignmentId);
-      tasks[idx].updatedAt = new Date().toISOString();
-      saveUnifiedTasks(tasks);
-      return { ok: true, task: tasks[idx] };
-    }
-    return { ok: false, error: 'Task not found' };
-  });
-
-  ipcMain.handle('unified-tasks:get-pending-assignments', () => {
-    const tasks = loadUnifiedTasks();
-    const now = new Date().getTime();
-    const pending: any[] = [];
-    for (const task of tasks) {
-      if (task.status === 'completed' || task.status === 'cancelled') continue;
-      for (const assignment of (task.agentAssignments || [])) {
-        if (assignment.status !== 'pending') continue;
-        const scheduledTime = new Date(assignment.scheduledAt).getTime();
-        if (scheduledTime <= now) {
-          pending.push({ task, assignment });
-        }
-      }
-    }
-    return { ok: true, pending };
-  });
-
-  ipcMain.handle('unified-tasks:get-calendar-items', () => {
-    const tasks = loadUnifiedTasks();
-    const items = tasks
-      .filter((t: any) => t.showInCalendar && (t.dueDate || t.startDate) && t.status !== 'completed' && t.status !== 'cancelled')
-      .map((t: any) => ({
-        id: t.id,
-        title: t.title,
-        start: t.startDate || t.dueDate,
-        end: t.dueDate || t.startDate,
-        allDay: t.allDay ?? true,
-        source: 'unified-tasks',
-        type: 'task',
-        priority: t.priority,
-        status: t.status,
-        subTodosTotal: (t.subTodos || []).length,
-        subTodosCompleted: (t.subTodos || []).filter((s: any) => s.completed).length,
-      }));
-    return { ok: true, items };
-  });
+  ipcMain.handle('unified-tasks:list', () => unifiedTasksService.list());
+  ipcMain.handle('unified-tasks:get', (_e, taskId: string) => unifiedTasksService.get(taskId));
+  ipcMain.handle('unified-tasks:add', (_e, task: any) => unifiedTasksService.add(task));
+  ipcMain.handle('unified-tasks:update', (_e, task: any) => unifiedTasksService.update(task));
+  ipcMain.handle('unified-tasks:delete', (_e, taskId: string) => unifiedTasksService.delete(taskId));
+  ipcMain.handle('unified-tasks:toggle-status', (_e, taskId: string) => unifiedTasksService.toggleStatus(taskId));
+  ipcMain.handle('unified-tasks:add-subtodo', (_e, taskId: string, subtodo: any) => unifiedTasksService.addSubtodo(taskId, subtodo));
+  ipcMain.handle('unified-tasks:toggle-subtodo', (_e, taskId: string, subtodoId: string) => unifiedTasksService.toggleSubtodo(taskId, subtodoId));
+  ipcMain.handle('unified-tasks:delete-subtodo', (_e, taskId: string, subtodoId: string) => unifiedTasksService.deleteSubtodo(taskId, subtodoId));
+  ipcMain.handle('unified-tasks:add-agent-assignment', (_e, taskId: string, assignment: any) => unifiedTasksService.addAgentAssignment(taskId, assignment));
+  ipcMain.handle('unified-tasks:update-agent-assignment', (_e, taskId: string, assignmentId: string, updates: any) => unifiedTasksService.updateAgentAssignment(taskId, assignmentId, updates));
+  ipcMain.handle('unified-tasks:delete-agent-assignment', (_e, taskId: string, assignmentId: string) => unifiedTasksService.deleteAgentAssignment(taskId, assignmentId));
+  ipcMain.handle('unified-tasks:get-pending-assignments', () => unifiedTasksService.getPendingAssignments());
+  ipcMain.handle('unified-tasks:get-calendar-items', () => unifiedTasksService.getCalendarItems());
 
   // Legacy User To-Do List (for backwards compatibility)
   const todosPath = () => {

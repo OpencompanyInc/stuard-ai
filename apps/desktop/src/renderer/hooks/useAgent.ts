@@ -1049,40 +1049,36 @@ export function useAgent(options?: string | UseAgentOptions) {
               ? (text || '') // Server sends partial text
               : text;
 
-            if (finalText || isAborted) {
-              updateStreamingTab(t => {
-                // For aborted, prefer the current streamed response over server text
-                const displayText = isAborted && t.currentResponse ? t.currentResponse : finalText;
-                return {
-                  ...t,
-                  messages: displayText ? [...t.messages, {
-                    id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                    role: 'assistant',
-                    text: displayText + (isAborted ? '\n\n*(Stopped)*' : ''),
-                    reasoning: t.currentReasoning,
-                    reasoningDuration: t.currentReasoning ? reasoningDuration : undefined,
-                    toolCalls: t.currentToolCalls.length > 0 ? [...t.currentToolCalls] : undefined,
-                    streamChunks: t.currentStreamChunks.length > 0 ? [...t.currentStreamChunks] : undefined,
-                    timestamp: Date.now(),
-                    aborted: isAborted,
-                  }] : t.messages,
-                  currentResponse: '',
-                  currentReasoning: '',
-                  currentToolCalls: [],
-                  currentStreamChunks: [],
-                  aiState: { ...t.aiState, phase: 'idle', statusText: isAborted ? 'Stopped' : 'Idle' }
-                };
-              });
-            } else {
-              updateStreamingTab(t => ({
+            // Always commit accumulated work into a message - even when text is empty
+            // but tools were called or chunks streamed, so users see what happened.
+            updateStreamingTab(t => {
+              // For aborted, prefer the current streamed response over server text
+              const displayText = isAborted && t.currentResponse ? t.currentResponse : finalText;
+              const hasAccumulatedWork = t.currentToolCalls.length > 0 || t.currentStreamChunks.length > 0 || t.currentReasoning;
+
+              // Commit a message if we have text OR if there was accumulated work (tool calls, reasoning, etc.)
+              const shouldCommitMessage = displayText || hasAccumulatedWork;
+
+              return {
                 ...t,
+                messages: shouldCommitMessage ? [...t.messages, {
+                  id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                  role: 'assistant',
+                  text: (displayText || '') + (isAborted ? '\n\n*(Stopped)*' : ''),
+                  reasoning: t.currentReasoning || undefined,
+                  reasoningDuration: t.currentReasoning ? reasoningDuration : undefined,
+                  toolCalls: t.currentToolCalls.length > 0 ? [...t.currentToolCalls] : undefined,
+                  streamChunks: t.currentStreamChunks.length > 0 ? [...t.currentStreamChunks] : undefined,
+                  timestamp: Date.now(),
+                  aborted: isAborted,
+                }] : t.messages,
                 currentResponse: '',
                 currentReasoning: '',
                 currentToolCalls: [],
                 currentStreamChunks: [],
-                aiState: { ...t.aiState, phase: 'idle', statusText: 'Idle' }
-              }));
-            }
+                aiState: { ...t.aiState, phase: 'idle', statusText: isAborted ? 'Stopped' : 'Idle' }
+              };
+            });
 
             setState((s) => ({ ...s, status: 'idle' }));
 
@@ -1170,7 +1166,34 @@ export function useAgent(options?: string | UseAgentOptions) {
               setLastError({ code: String(msg.message || ''), data: msg.data });
             }
 
-            updateStreamingTab(t => ({ ...t, currentResponse: '', currentReasoning: '', currentToolCalls: [], currentStreamChunks: [] }));
+            // Preserve any accumulated tool calls, stream chunks, and partial text
+            // by committing them as an error assistant message instead of discarding them.
+            updateStreamingTab(t => {
+              const hasAccumulatedWork = t.currentToolCalls.length > 0 || t.currentStreamChunks.length > 0 || t.currentResponse || t.currentReasoning;
+              const errorSuffix = `\n\n⚠️ *Error: ${msg.message || 'Something went wrong'}*`;
+
+              if (hasAccumulatedWork) {
+                // Commit partial work as an assistant message so it's not lost
+                return {
+                  ...t,
+                  messages: [...t.messages, {
+                    id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                    role: 'assistant',
+                    text: (t.currentResponse || '').trim() + errorSuffix,
+                    reasoning: t.currentReasoning || undefined,
+                    toolCalls: t.currentToolCalls.length > 0 ? [...t.currentToolCalls] : undefined,
+                    streamChunks: t.currentStreamChunks.length > 0 ? [...t.currentStreamChunks] : undefined,
+                    timestamp: Date.now(),
+                  }],
+                  currentResponse: '',
+                  currentReasoning: '',
+                  currentToolCalls: [],
+                  currentStreamChunks: [],
+                };
+              }
+              // No accumulated work - just clear streaming state
+              return { ...t, currentResponse: '', currentReasoning: '', currentToolCalls: [], currentStreamChunks: [] };
+            });
             // Clean up request tracking and mark tab as no longer running
             const completedTabId = getTargetTabId();
             if (msg.requestId) {
@@ -1277,7 +1300,13 @@ export function useAgent(options?: string | UseAgentOptions) {
       // Build history with the new message (for sending to server)
       const hist = [...currentMsgs, userMsg]
         .slice(-50)
-        .map((m) => ({ role: m.role === 'assistant' || m.role === 'system' ? m.role : 'user', content: m.text }));
+        .map((m) => {
+          const msgDetails: any = { role: m.role === 'assistant' || m.role === 'system' ? m.role : 'user', content: m.text };
+          if (Array.isArray(m.toolCalls) && m.toolCalls.length > 0) {
+            msgDetails.toolCalls = m.toolCalls;
+          }
+          return msgDetails;
+        });
 
       // If this tab is not currently running, show the user's message immediately
       // The message will NOT be re-added on progress:start because it's already in the tab

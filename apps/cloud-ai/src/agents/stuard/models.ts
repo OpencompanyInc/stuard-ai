@@ -35,3 +35,4 @@ export function getAgentName(model: ModelChoice): string {
 export function getEffort(model: ModelChoice, effort?: 'low' | 'medium' | 'high'): 'low' | 'medium' | 'high' {
   return effort || (model === 'smart' ? 'high' : 'medium');
 }
+

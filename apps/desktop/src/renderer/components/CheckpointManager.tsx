@@ -220,3 +220,4 @@ export const CheckpointManager: React.FC<CheckpointManagerProps> = ({ onRevert, 
 };
 
 export default CheckpointManager;
+

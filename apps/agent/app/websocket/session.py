@@ -36,3 +36,4 @@ class WebSocketSession:
             "event": event,
             "data": payload
         }, request_id=request_id)
+

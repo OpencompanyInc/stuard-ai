@@ -47,3 +47,4 @@ export async function handleGetSpace(req: IncomingMessage, res: ServerResponse, 
     json(res, { ok: false, error: String(error) }, 500);
   }
 }
+

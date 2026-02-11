@@ -2,7 +2,7 @@
 
 console.log('Stuard AI Extension Content Script Ready');
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: any, sender: chrome.runtime.MessageSender, sendResponse: (response?: any) => void) => {
     if (message.target !== 'content') return;
 
     const { action, payload, requestId } = message;

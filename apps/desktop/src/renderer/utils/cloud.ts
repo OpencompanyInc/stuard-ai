@@ -490,3 +490,4 @@ export function createMCPApi(getToken: () => string | null): MCPApi {
 export function getMCPApi(getToken: () => string | null): MCPApi {
   return createMCPApi(getToken);
 }
+

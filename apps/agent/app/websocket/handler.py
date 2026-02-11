@@ -8,6 +8,7 @@ from ..connections import manager
 from .session import WebSocketSession
 from .chat import handle_chat
 from .tools import handle_tool_exec
+from ..tools import tasks as tasks_tools
 
 logger = get_logger("agent")
 
@@ -35,6 +36,11 @@ async def ws_endpoint(ws: WebSocket) -> None:
         "origin": "agent",
         "message": "connected",
     }))
+
+    try:
+        await tasks_tools.task_reminders({"action": "resume"})
+    except Exception:
+        pass
 
     session = WebSocketSession(ws)
 
@@ -108,6 +114,14 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 except Exception:
                     pass
 
+            elif kind == "response":
+                try:
+                    req_id = str(msg.get("id") or "").strip()
+                    data = msg.get("data")
+                    manager.resolve_request(req_id, data)
+                except Exception:
+                    pass
+
             elif kind == "stop" or kind == "abort":
                 # Cancel all active chat tasks to stop streaming
                 cancelled_count = 0
@@ -141,3 +155,4 @@ async def ws_endpoint(ws: WebSocket) -> None:
             pass
         await manager.disconnect(ws)
         logger.info("ws_disconnected")
+

@@ -199,7 +199,7 @@ function sendResponse(requestId: string, payload: any) {
 connect();
 
 // Listen for status requests from popup
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: any, sender: chrome.runtime.MessageSender, sendResponse: (response?: any) => void) => {
     if (message.type === 'get_status') {
         sendResponse({ connected: isConnected });
     }
@@ -218,7 +218,7 @@ setInterval(() => {
 }, 25000);
 
 // Listen for tab updates to know when pages finish loading
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+chrome.tabs.onUpdated.addListener((tabId: number, changeInfo: chrome.tabs.TabChangeInfo, tab: chrome.tabs.Tab) => {
     if (changeInfo.status === 'complete' && tab.active) {
         // Content script should auto-inject on page load
         // But we can use this to track which tabs are ready

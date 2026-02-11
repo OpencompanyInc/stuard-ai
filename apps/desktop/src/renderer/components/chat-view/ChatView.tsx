@@ -373,3 +373,4 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
 };
 
 export const ChatView = memo(ChatViewInner);
+

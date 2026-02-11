@@ -27,3 +27,4 @@ export async function getAuth(req: IncomingMessage): Promise<{ userId: string; e
 }
 
 export { getSupabaseService };
+

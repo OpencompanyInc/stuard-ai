@@ -48,3 +48,4 @@ export const FileNavigatorOverlay = forwardRef<FileNavRef, FileNavigatorOverlayP
     document.body
   );
 });
+

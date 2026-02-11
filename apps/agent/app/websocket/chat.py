@@ -164,3 +164,4 @@ async def handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
     except Exception as e:
         logger.exception("cloud_bridge_failed")
         await session.send_json({"type": "error", "message": f"cloud bridge failed: {e}"}, request_id=request_id)
+

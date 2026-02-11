@@ -152,3 +152,4 @@ export async function handleAcceptShare(req: IncomingMessage, res: ServerRespons
     json(res, { ok: false, error: String(error) }, 500);
   }
 }
+

@@ -216,3 +216,4 @@ export async function execTerminalDestroy(args: any, ctx: RouterContext): Promis
     return { ok: false, error: e?.message || 'terminal_destroy_failed' };
   }
 }
+

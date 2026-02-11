@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable, Awaitable
 from dataclasses import dataclass, field, asdict
 from enum import Enum
+import json
 
 
 class TodoStatus(Enum):
@@ -83,7 +84,7 @@ def _find_todo(session_id: str, todo_id: str) -> Optional[AgentTodo]:
     return None
 
 
-async def agent_todo(args: Dict[str, Any]) -> Dict[str, Any]:
+async def agent_todo(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None) -> Dict[str, Any]:
     """
     Agent's internal todo management for long-running tasks.
 
@@ -107,6 +108,53 @@ async def agent_todo(args: Dict[str, Any]) -> Dict[str, Any]:
     action = str(args.get("action") or "").lower()
     session_id = str(args.get("sessionId") or args.get("session_id") or "default")
     data = args.get("data") or {}
+
+    async def _emit_update(current_session_id: str) -> None:
+        if not emit:
+            return
+            
+        todos = _get_session_todos(current_session_id)
+        
+        # Calculate progress stats
+        total = len(todos)
+        completed = sum(1 for t in todos if t.status == TodoStatus.COMPLETED)
+        failed = sum(1 for t in todos if t.status == TodoStatus.FAILED)
+        in_progress = sum(1 for t in todos if t.status == TodoStatus.IN_PROGRESS)
+        pending = sum(1 for t in todos if t.status == TodoStatus.PENDING)
+        blocked = sum(1 for t in todos if t.status == TodoStatus.BLOCKED)
+        percentage = round((completed / total * 100) if total > 0 else 0, 1)
+
+        # Build GenUI payload
+        # Sort items for display
+        display_items = [t.to_dict() for t in todos]
+        
+        # Sort by status priority then creation time
+        def sort_key(item):
+            status_order = {"in_progress": 0, "pending": 1, "blocked": 2, "completed": 3, "failed": 4}
+            return (status_order.get(item["status"], 5), -item["priority"], item["createdAt"])
+        
+        display_items.sort(key=sort_key)
+
+        genui_payload = {
+            "items": display_items,
+            "title": "Agent Plan",
+            "progress": {
+                "total": total,
+                "completed": completed,
+                "failed": failed,
+                "inProgress": in_progress,
+                "pending": pending,
+                "blocked": blocked,
+                "percentage": percentage,
+            }
+        }
+        
+        # Format as markdown block
+        json_str = json.dumps(genui_payload, indent=2)
+        markdown = f"\n```genui:agent_todo\n{json_str}\n```\n"
+        
+        # Emit as delta to append to chat stream
+        await emit("delta", {"text": markdown})
 
     if not action:
         return {"ok": False, "error": "action_required"}
@@ -150,6 +198,7 @@ async def agent_todo(args: Dict[str, Any]) -> Dict[str, Any]:
         )
 
         _get_session_todos(session_id).append(todo)
+        await _emit_update(session_id)
         return {"ok": True, "todo": todo.to_dict()}
 
     # BULK_CREATE - Create multiple todos at once
@@ -179,6 +228,9 @@ async def agent_todo(args: Dict[str, Any]) -> Dict[str, Any]:
             _get_session_todos(session_id).append(todo)
             created.append(todo.to_dict())
 
+        if created:
+            await _emit_update(session_id)
+            
         return {"ok": True, "items": created, "count": len(created)}
 
     # UPDATE - Update a todo
@@ -212,6 +264,7 @@ async def agent_todo(args: Dict[str, Any]) -> Dict[str, Any]:
         if todo.status == TodoStatus.COMPLETED and not todo.completed_at:
             todo.completed_at = _now_iso()
 
+        await _emit_update(session_id)
         return {"ok": True, "todo": todo.to_dict()}
 
     # START - Mark a todo as in_progress
@@ -227,6 +280,7 @@ async def agent_todo(args: Dict[str, Any]) -> Dict[str, Any]:
         todo.status = TodoStatus.IN_PROGRESS
         todo.updated_at = _now_iso()
 
+        await _emit_update(session_id)
         return {"ok": True, "todo": todo.to_dict()}
 
     # COMPLETE - Mark a todo as completed
@@ -247,6 +301,7 @@ async def agent_todo(args: Dict[str, Any]) -> Dict[str, Any]:
         if data.get("note"):
             todo.metadata["completion_note"] = str(data["note"])
 
+        await _emit_update(session_id)
         return {"ok": True, "todo": todo.to_dict()}
 
     # FAIL - Mark a todo as failed
@@ -263,6 +318,7 @@ async def agent_todo(args: Dict[str, Any]) -> Dict[str, Any]:
         todo.error_message = str(data.get("error") or data.get("reason") or "Unknown error")
         todo.updated_at = _now_iso()
 
+        await _emit_update(session_id)
         return {"ok": True, "todo": todo.to_dict()}
 
     # BLOCK - Mark a todo as blocked
@@ -279,6 +335,7 @@ async def agent_todo(args: Dict[str, Any]) -> Dict[str, Any]:
         todo.error_message = str(data.get("reason") or "Blocked")
         todo.updated_at = _now_iso()
 
+        await _emit_update(session_id)
         return {"ok": True, "todo": todo.to_dict()}
 
     # DELETE - Remove a todo
@@ -291,6 +348,7 @@ async def agent_todo(args: Dict[str, Any]) -> Dict[str, Any]:
         for i, t in enumerate(todos):
             if t.id == todo_id:
                 todos.pop(i)
+                await _emit_update(session_id)
                 return {"ok": True, "deleted": True}
 
         return {"ok": False, "error": "not_found"}
@@ -305,6 +363,7 @@ async def agent_todo(args: Dict[str, Any]) -> Dict[str, Any]:
         else:
             _SESSION_TODOS[session_id] = []
 
+        await _emit_update(session_id)
         return {"ok": True, "cleared": True}
 
     # GET_CURRENT - Get the currently in-progress todo
