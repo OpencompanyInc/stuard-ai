@@ -109,8 +109,99 @@ RETURNS:
   }),
 );
 
+/**
+ * Glob Tool
+ *
+ * Finds files/folders using a glob pattern.
+ */
+export const glob = makeLocalTool(
+  'glob',
+  `Find files/folders using a glob pattern.
+
+PARAMS:
+- pattern: Glob pattern (required)
+- root: Optional base path
+- recursive: Enable ** to match recursively (default true)
+- include_files/include_dirs: Filter results
+- max_results: Max results to return
+
+RETURNS:
+- items: [{ path, type }]
+- count: Number of results
+- truncated: True if max_results hit`,
+  z.object({
+    pattern: z.string().describe('Glob pattern to match'),
+    root: z.string().optional().describe('Optional base path for the pattern'),
+    recursive: z.boolean().optional().describe('Enable recursive glob (**). Default true'),
+    include_files: z.boolean().optional().describe('Include files (default true)'),
+    include_dirs: z.boolean().optional().describe('Include directories (default true)'),
+    max_results: z.number().int().positive().optional().describe('Max results to return'),
+  }),
+  z.object({
+    ok: z.boolean(),
+    items: z.array(z.object({
+      path: z.string(),
+      type: z.enum(['file', 'dir']),
+    })).optional(),
+    count: z.number().optional(),
+    truncated: z.boolean().optional(),
+    error: z.string().optional(),
+    message: z.string().optional(),
+  }),
+);
+
+/**
+ * Grep Tool
+ *
+ * Searches for text in files within a file or directory.
+ */
+export const grep = makeLocalTool(
+  'grep',
+  `Search text in files (regex or literal).
+
+PARAMS:
+- path: File or directory to search
+- pattern: Search pattern
+- regex: Treat pattern as regex (default true)
+- case_sensitive: Default true
+- include_glob/exclude_glob: Filter filenames (string or string[])
+- max_results: Max matches to return
+- max_file_size: Skip files larger than this (bytes)
+
+RETURNS:
+- results: [{ path, line_number, line, match }]
+- count: Number of matches
+- truncated: True if max_results hit`,
+  z.object({
+    path: z.string().describe('File or directory to search'),
+    pattern: z.string().describe('Search pattern'),
+    regex: z.boolean().optional().describe('Treat pattern as regex (default true)'),
+    case_sensitive: z.boolean().optional().describe('Case-sensitive search (default true)'),
+    include_glob: z.union([z.string(), z.array(z.string())]).optional().describe('Include filename glob(s)'),
+    exclude_glob: z.union([z.string(), z.array(z.string())]).optional().describe('Exclude filename glob(s)'),
+    max_results: z.number().int().positive().optional().describe('Max matches to return'),
+    max_file_size: z.number().int().positive().optional().describe('Skip files larger than this in bytes'),
+  }),
+  z.object({
+    ok: z.boolean(),
+    results: z.array(z.object({
+      path: z.string(),
+      line_number: z.number(),
+      line: z.string(),
+      match: z.string(),
+    })).optional(),
+    count: z.number().optional(),
+    truncated: z.boolean().optional(),
+    skipped_too_large: z.number().optional(),
+    error: z.string().optional(),
+    message: z.string().optional(),
+  }),
+);
+
 // Export all tools
 export const agenticFileTools = {
   file_read,
   file_edit,
+  glob,
+  grep,
 };

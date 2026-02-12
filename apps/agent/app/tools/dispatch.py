@@ -41,6 +41,9 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "write_file_base64": ("system", "Write base64 encoded string to a file"),
     "file_read": ("system", "Read file contents with line numbers for AI agents"),
     "file_edit": ("system", "Edit file contents using string-based matching"),
+    "file_edit": ("system", "Edit file contents using string-based matching"),
+    "glob": ("system", "Find files and folders using a glob pattern"),
+    "grep": ("system", "Search text in files (regex or literal)"),
 
     # Filesystem Checkpoints
     "checkpoint_create": ("system", "Create a checkpoint of files for rollback"),
@@ -346,6 +349,9 @@ _HANDLERS = {
     # Agentic File Tools (for AI agents)
     "file_read": fs.file_read,
     "file_edit": fs.file_edit,
+    "file_edit": fs.file_edit,
+    "glob": fs.glob_paths,
+    "grep": fs.grep,
 
     # Filesystem Checkpoints
     "checkpoint_create": fs.checkpoint_create,

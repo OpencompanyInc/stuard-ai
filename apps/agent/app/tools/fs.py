@@ -3,6 +3,10 @@ from __future__ import annotations
 import base64
 import mimetypes
 import os
+import mimetypes
+import os
+import fnmatch
+import glob
 import shutil
 import subprocess
 import sys
@@ -37,6 +41,10 @@ def _is_safe_path(path: str) -> bool:
 MAX_READ_FILE_BINARY_BYTES = int(os.getenv("READ_FILE_BINARY_MAX_BYTES", "524288000"))  # 500MB default
 MAX_READ_FILE_LINES = int(os.getenv("READ_FILE_MAX_LINES", "500"))
 MAX_AGENTIC_FILE_LINES = 650  # Stricter limit for agentic file tools
+MAX_AGENTIC_FILE_LINES = 650  # Stricter limit for agentic file tools
+MAX_GLOB_RESULTS = int(os.getenv("GLOB_MAX_RESULTS", "20000"))
+MAX_GREP_RESULTS = int(os.getenv("GREP_MAX_RESULTS", "2000"))
+MAX_GREP_FILE_BYTES = int(os.getenv("GREP_MAX_FILE_BYTES", "5242880"))  # 5MB
 CHECKPOINT_DIR = os.path.expanduser("~/.stuard/checkpoints")
 
 class CheckpointManager:
@@ -313,6 +321,160 @@ async def read_file(args: Dict[str, Any]) -> Dict[str, Any]:
     # Return full content for small files
     content = "".join(lines)
     return {"ok": True, "content": content, "total_lines": total_lines}
+
+
+async def glob_paths(args: Dict[str, Any]) -> Dict[str, Any]:
+    pattern = str(args.get("pattern") or args.get("glob") or "").strip()
+    if not pattern:
+        return {"ok": False, "error": "missing pattern"}
+
+    root = str(args.get("root") or args.get("base_path") or args.get("cwd") or "").strip()
+    recursive = bool(args.get("recursive", True))
+    include_files = args.get("include_files")
+    include_dirs = args.get("include_dirs")
+    if include_files is None:
+        include_files = True
+    if include_dirs is None:
+        include_dirs = True
+    max_results = int(args.get("max_results") or MAX_GLOB_RESULTS)
+    if max_results <= 0:
+        max_results = MAX_GLOB_RESULTS
+
+    if root:
+        root = os.path.expanduser(root)
+        if not _is_safe_path(root):
+            return {"ok": False, "error": f"Access denied to system path: {root}"}
+        pattern_path = os.path.join(root, pattern) if not os.path.isabs(pattern) else pattern
+    else:
+        pattern_path = pattern
+
+    pattern_path = os.path.expanduser(pattern_path)
+
+    try:
+        matches = glob.glob(pattern_path, recursive=recursive)
+    except Exception as e:
+        return {"ok": False, "error": f"glob_failed: {str(e)}"}
+
+    items = []
+    truncated = False
+    for m in sorted(matches):
+        if not _is_safe_path(m):
+            continue
+        typ = "dir" if os.path.isdir(m) else "file"
+        if typ == "dir" and not include_dirs:
+            continue
+        if typ == "file" and not include_files:
+            continue
+        items.append({"path": m, "type": typ})
+        if len(items) >= max_results:
+            truncated = True
+            break
+
+    return {"ok": True, "items": items, "count": len(items), "truncated": truncated}
+
+
+async def grep(args: Dict[str, Any]) -> Dict[str, Any]:
+    import re
+
+    p = str(args.get("path") or "").strip()
+    pattern = str(args.get("pattern") or args.get("query") or "").strip()
+
+    if not p:
+        return {"ok": False, "error": "missing path"}
+    if not pattern:
+        return {"ok": False, "error": "missing pattern"}
+
+    p = os.path.expanduser(p)
+    if not _is_safe_path(p):
+        return {"ok": False, "error": f"Access denied to system path: {p}"}
+
+    regex = args.get("regex")
+    if regex is None:
+        regex = True
+    case_sensitive = args.get("case_sensitive")
+    if case_sensitive is None:
+        case_sensitive = True
+
+    include_glob = args.get("include_glob") or args.get("includeGlob")
+    exclude_glob = args.get("exclude_glob") or args.get("excludeGlob")
+    max_results = int(args.get("max_results") or MAX_GREP_RESULTS)
+    if max_results <= 0:
+        max_results = MAX_GREP_RESULTS
+    max_file_size = int(args.get("max_file_size") or MAX_GREP_FILE_BYTES)
+    if max_file_size < 0:
+        max_file_size = MAX_GREP_FILE_BYTES
+
+    def normalize_globs(val: Any) -> list[str]:
+        if val is None:
+            return []
+        if isinstance(val, (list, tuple)):
+            return [str(v) for v in val if str(v).strip()]
+        v = str(val).strip()
+        return [v] if v else []
+
+    includes = normalize_globs(include_glob)
+    excludes = normalize_globs(exclude_glob)
+
+    flags = 0 if case_sensitive else re.IGNORECASE
+    if regex:
+        try:
+            rx = re.compile(pattern, flags)
+        except re.error as e:
+            return {"ok": False, "error": f"invalid_regex: {str(e)}"}
+    else:
+        rx = re.compile(re.escape(pattern), flags)
+
+    files: list[str] = []
+    if os.path.isfile(p):
+        files = [p]
+    elif os.path.isdir(p):
+        for root, _, filenames in os.walk(p):
+            for name in filenames:
+                if includes and not any(fnmatch.fnmatch(name, g) for g in includes):
+                    continue
+                if excludes and any(fnmatch.fnmatch(name, g) for g in excludes):
+                    continue
+                files.append(os.path.join(root, name))
+    else:
+        return {"ok": False, "error": f"path not found: {p}"}
+
+    results = []
+    truncated = False
+    skipped_too_large = 0
+
+    for fp in files:
+        if not _is_safe_path(fp):
+            continue
+        try:
+            if max_file_size and os.path.getsize(fp) > max_file_size:
+                skipped_too_large += 1
+                continue
+            with open(fp, "r", encoding="utf-8", errors="replace") as f:
+                for line_no, line in enumerate(f, 1):
+                    m = rx.search(line)
+                    if not m:
+                        continue
+                    results.append({
+                        "path": fp,
+                        "line_number": line_no,
+                        "line": line.rstrip("\n"),
+                        "match": m.group(0)
+                    })
+                    if len(results) >= max_results:
+                        truncated = True
+                        break
+            if truncated:
+                break
+        except Exception:
+            continue
+
+    return {
+        "ok": True,
+        "results": results,
+        "count": len(results),
+        "truncated": truncated,
+        "skipped_too_large": skipped_too_large
+    }
 
 
 async def write_file(args: Dict[str, Any]) -> Dict[str, Any]:

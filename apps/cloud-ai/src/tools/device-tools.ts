@@ -150,7 +150,7 @@ export {
 } from './device/filesystem';
 
 // Agentic File Tools (for AI agents - Stuard & Workflow Agent)
-export { file_read, file_edit } from './agentic-file-tools';
+export { file_read, file_edit, glob, grep } from './agentic-file-tools';
 
 // Clipboard Operations
 export { get_clipboard_content, set_clipboard_content } from './device/filesystem';
