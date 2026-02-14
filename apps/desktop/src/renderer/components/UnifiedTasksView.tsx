@@ -13,8 +13,8 @@ import {
   X,
   Bell,
   Clock,
-  Flag,
-  ListChecks
+  ListChecks,
+  Pencil
 } from 'lucide-react';
 import type { UnifiedTask, TaskPriority, AgentAssignment } from '../types/tasks';
 
@@ -139,6 +139,23 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
 
   const updateTask = (updatedTask: UnifiedTask) => {
     setTasks(prev => prev.map(t => t.id === updatedTask.id ? updatedTask : t));
+  };
+
+  const handleUpdateTask = async (taskId: string, updates: Partial<UnifiedTask>): Promise<boolean> => {
+    try {
+      const res = await (window as any).desktopAPI?.unifiedTasksUpdate?.({ id: taskId, ...updates });
+      if (res?.ok) {
+        if (Array.isArray(res.tasks)) {
+          setTasks(res.tasks);
+        } else if (res.task) {
+          updateTask(res.task);
+        }
+        return true;
+      }
+    } catch (e) {
+      console.error('Failed to update task:', e);
+    }
+    return false;
   };
 
   const filteredTasks = useMemo(() => {
@@ -310,9 +327,38 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
                     </div>
                     <button
                       onClick={async () => {
+                        const defaultDateTime = reminder.scheduledAt ? String(reminder.scheduledAt).slice(0, 16) : '';
+                        const dateTime = prompt('Edit reminder date/time (YYYY-MM-DDTHH:mm):', defaultDateTime);
+                        if (dateTime === null) return;
+                        const message = prompt('Edit reminder message:', reminder.message || reminder.taskTitle || 'Reminder');
+                        if (message === null) return;
+                        const dt = dateTime.trim();
+                        const scheduledAt = dt ? (dt.length === 16 ? `${dt}:00` : dt) : reminder.scheduledAt;
+                        try {
+                          const res = await (window as any).desktopAPI?.unifiedTasksUpdateReminder?.(reminder.taskId, reminder.id, {
+                            scheduledAt,
+                            message,
+                          });
+                          if (res?.ok) {
+                            if (Array.isArray(res.tasks)) setTasks(res.tasks);
+                            else if (res.task) updateTask(res.task);
+                          }
+                        } catch (e) {
+                          console.error(e);
+                        }
+                      }}
+                      className="p-1.5 text-theme-muted hover:text-theme-fg hover:bg-theme-hover rounded-lg transition-colors"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={async () => {
                         try {
                           const res = await (window as any).desktopAPI?.unifiedTasksDeleteReminder?.(reminder.taskId, reminder.id);
-                          if (res?.ok) setTasks(res.tasks || []);
+                          if (res?.ok) {
+                            if (Array.isArray(res.tasks)) setTasks(res.tasks);
+                            else if (res.task) updateTask(res.task);
+                          }
                         } catch (e) { console.error(e); }
                       }}
                       className="p-1.5 text-theme-muted hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
@@ -414,6 +460,7 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
                   onToggleExpand={() => setExpandedTaskId(expandedTaskId === task.id ? null : task.id)}
                   onToggle={() => handleToggleTask(task.id)}
                   onDelete={() => handleDeleteTask(task.id)}
+                  onUpdateTask={handleUpdateTask}
                   onUpdate={updateTask}
                   onRefreshTasks={() => loadTasks()}
                 />
@@ -433,12 +480,13 @@ interface TaskCardProps {
   onToggleExpand: () => void;
   onToggle: () => void;
   onDelete: () => void;
+  onUpdateTask: (taskId: string, updates: Partial<UnifiedTask>) => Promise<boolean>;
   onUpdate: (task: UnifiedTask) => void;
   onRefreshTasks: () => void;
 }
 
 const TaskCard: React.FC<TaskCardProps> = ({
-  task, compact, expanded, onToggleExpand, onToggle, onDelete, onUpdate, onRefreshTasks
+  task, compact, expanded, onToggleExpand, onToggle, onDelete, onUpdateTask, onUpdate, onRefreshTasks
 }) => {
   const isCompleted = task.status === 'completed';
   const priorityCfg = PRIORITY_CONFIG[task.priority];
@@ -463,6 +511,48 @@ const TaskCard: React.FC<TaskCardProps> = ({
         setNewSubtodo('');
       }
     } catch (e) { console.error(e); }
+  };
+
+  const handleEditTask = async () => {
+    const title = prompt('Edit task title:', task.title || '');
+    if (title === null) return;
+    const nextTitle = title.trim();
+    if (!nextTitle) return;
+    await onUpdateTask(task.id, { title: nextTitle });
+  };
+
+  const handleEditSubtodo = async (sub: { id: string; content: string }) => {
+    const content = prompt('Edit sub-task:', sub.content || '');
+    if (content === null) return;
+    const nextContent = content.trim();
+    if (!nextContent) return;
+    try {
+      const res = await (window as any).desktopAPI?.unifiedTasksUpdateSubtodo?.(task.id, sub.id, { content: nextContent });
+      if (res?.ok && res.task) onUpdate(res.task);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleEditReminder = async (reminder: AgentAssignment) => {
+    const defaultDateTime = reminder.scheduledAt ? String(reminder.scheduledAt).slice(0, 16) : '';
+    const dateTime = prompt('Edit reminder date/time (YYYY-MM-DDTHH:mm):', defaultDateTime);
+    if (dateTime === null) return;
+    const message = prompt('Edit reminder message:', reminder.message || `Reminder: ${task.title}`);
+    if (message === null) return;
+
+    const dt = dateTime.trim();
+    const scheduledAt = dt ? (dt.length === 16 ? `${dt}:00` : dt) : reminder.scheduledAt;
+
+    try {
+      const res = await (window as any).desktopAPI?.unifiedTasksUpdateReminder?.(task.id, reminder.id, {
+        scheduledAt,
+        message,
+      });
+      if (res?.ok) onRefreshTasks();
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const handleAddReminder = async () => {
@@ -556,6 +646,12 @@ const TaskCard: React.FC<TaskCardProps> = ({
           "flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity",
           expanded && "opacity-100"
         )}>
+          <button
+            onClick={(e) => { e.stopPropagation(); handleEditTask(); }}
+            className="p-1.5 text-theme-muted hover:text-theme-fg hover:bg-theme-hover rounded-lg transition-colors"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
           <button 
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
             className="p-1.5 text-theme-muted hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
@@ -636,6 +732,12 @@ const TaskCard: React.FC<TaskCardProps> = ({
                     {new Date(reminder.scheduledAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
                   </span>
                   <button
+                    onClick={() => handleEditReminder(reminder)}
+                    className="p-0.5 text-theme-muted hover:text-theme-fg"
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                  <button
                     onClick={async () => {
                       try {
                         const res = await (window as any).desktopAPI?.unifiedTasksDeleteReminder?.(task.id, reminder.id);
@@ -672,6 +774,12 @@ const TaskCard: React.FC<TaskCardProps> = ({
                   <span className={clsx("text-xs flex-1", sub.completed ? "text-theme-muted line-through" : "text-theme-fg")}>
                     {sub.content}
                   </span>
+                  <button
+                    onClick={() => handleEditSubtodo(sub)}
+                    className="opacity-0 group-hover/sub:opacity-100 p-0.5 text-theme-muted hover:text-theme-fg"
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
                   <button
                     onClick={() => {
                       (window as any).desktopAPI?.unifiedTasksDeleteSubtodo?.(task.id, sub.id)

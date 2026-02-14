@@ -177,6 +177,19 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.invoke('workflows:runStep', id, options),
   workflowsRunFromStep: (id: string, options: { startStepId: string; accessToken?: string }) =>
     ipcRenderer.invoke('workflows:runFromStep', id, options),
+  // Folder operations
+  workflowsCreateFolder: (name: string) => ipcRenderer.invoke('workflows:createFolder', name),
+  workflowsRenameFolder: (oldName: string, newName: string) => ipcRenderer.invoke('workflows:renameFolder', oldName, newName),
+  workflowsDeleteFolder: (name: string, deleteContents?: boolean) => ipcRenderer.invoke('workflows:deleteFolder', name, deleteContents),
+  workflowsMoveToFolder: (id: string, folder: string | null) => ipcRenderer.invoke('workflows:moveToFolder', id, folder),
+  // Workspace file management
+  workflowsEnsureWorkspace: (id: string) => ipcRenderer.invoke('workflows:ensureWorkspace', id),
+  workflowsGetWorkspaceInfo: (id: string) => ipcRenderer.invoke('workflows:getWorkspaceInfo', id),
+  workflowsListWorkspaceFiles: (id: string, subpath?: string) => ipcRenderer.invoke('workflows:listWorkspaceFiles', id, subpath),
+  workflowsReadWorkspaceFile: (id: string, filePath: string) => ipcRenderer.invoke('workflows:readWorkspaceFile', id, filePath),
+  workflowsWriteWorkspaceFile: (id: string, filePath: string, content: string) => ipcRenderer.invoke('workflows:writeWorkspaceFile', id, filePath, content),
+  workflowsDeleteWorkspaceFile: (id: string, filePath: string) => ipcRenderer.invoke('workflows:deleteWorkspaceFile', id, filePath),
+  workflowsCreateWorkspaceSubdir: (id: string, subpath: string) => ipcRenderer.invoke('workflows:createWorkspaceSubdir', id, subpath),
   onWorkflowsLog: (cb: (data: any) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('workflows:log', handler);
@@ -268,6 +281,17 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     const handler = () => cb();
     ipcRenderer.on('speech:stopped', handler);
     return () => { try { ipcRenderer.off('speech:stopped', handler); } catch { } };
+  },
+  // Browser Extension
+  onBrowserExtensionStatus: (cb: (status: { connected: boolean; clients: number }) => void) => {
+    const handler = (_e: any, status: any) => cb(status);
+    ipcRenderer.on('browser-extension:status', handler);
+    return () => { try { ipcRenderer.off('browser-extension:status', handler); } catch { } };
+  },
+  onBrowserExtensionChat: (cb: (data: { text: string; messageId: string; pageContext?: any }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('browser-extension:chat', handler);
+    return () => { try { ipcRenderer.off('browser-extension:chat', handler); } catch { } };
   },
   // Tools
   execTool: (tool: string, args: any) => ipcRenderer.invoke('tools:exec', tool, args),
@@ -375,6 +399,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   unifiedTasksDelete: (taskId: string) => ipcRenderer.invoke('unified-tasks:delete', taskId),
   unifiedTasksToggleStatus: (taskId: string) => ipcRenderer.invoke('unified-tasks:toggle-status', taskId),
   unifiedTasksAddSubtodo: (taskId: string, subtodo: any) => ipcRenderer.invoke('unified-tasks:add-subtodo', taskId, subtodo),
+  unifiedTasksUpdateSubtodo: (taskId: string, subtodoId: string, updates: any) => ipcRenderer.invoke('unified-tasks:update-subtodo', taskId, subtodoId, updates),
   unifiedTasksToggleSubtodo: (taskId: string, subtodoId: string) => ipcRenderer.invoke('unified-tasks:toggle-subtodo', taskId, subtodoId),
   unifiedTasksDeleteSubtodo: (taskId: string, subtodoId: string) => ipcRenderer.invoke('unified-tasks:delete-subtodo', taskId, subtodoId),
   unifiedTasksAddAgentAssignment: (taskId: string, assignment: any) => ipcRenderer.invoke('unified-tasks:add-agent-assignment', taskId, assignment),
@@ -382,6 +407,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   unifiedTasksDeleteAgentAssignment: (taskId: string, assignmentId: string) => ipcRenderer.invoke('unified-tasks:delete-agent-assignment', taskId, assignmentId),
   // Reminder convenience aliases (reminders are agent assignments with type='reminder')
   unifiedTasksAddReminder: (taskId: string, reminder: any) => ipcRenderer.invoke('unified-tasks:add-agent-assignment', taskId, { ...reminder, type: 'reminder' }),
+  unifiedTasksUpdateReminder: (taskId: string, reminderId: string, updates: any) => ipcRenderer.invoke('unified-tasks:update-agent-assignment', taskId, reminderId, updates),
   unifiedTasksDeleteReminder: (taskId: string, reminderId: string) => ipcRenderer.invoke('unified-tasks:delete-agent-assignment', taskId, reminderId),
   unifiedTasksGetPendingAssignments: () => ipcRenderer.invoke('unified-tasks:get-pending-assignments'),
   unifiedTasksGetCalendarItems: () => ipcRenderer.invoke('unified-tasks:get-calendar-items'),

@@ -400,6 +400,142 @@ RUNTIME VARIABLE TOOLS (persist across runs):
 ACCESS RUNTIME VARS: {{$vars.varName}} or {{varName}}
 
 ═══════════════════════════════════════════════════════════════════════════════
+WORKSPACE - Per-Workflow File System
+═══════════════════════════════════════════════════════════════════════════════
+
+Every workflow has a dedicated workspace directory on disk. This directory
+contains the main.stuard file plus subdirectories for organizing scripts,
+data files, and assets.
+
+DEFAULT STRUCTURE:
+  flowId/
+  ├── main.stuard          (the workflow definition)
+  ├── data/                (data files, CSVs, JSON, etc.)
+  ├── scripts/             (Python/Node scripts)
+  └── assets/              (images, templates, etc.)
+
+WORKSPACE TEMPLATES (use in any node args):
+┌─────────────────────────────┬─────────────────────────────────────────────┐
+│ Template                    │ Resolves To                                 │
+├─────────────────────────────┼─────────────────────────────────────────────┤
+│ {{$workspace.path}}         │ Full path to workspace root directory       │
+│ {{$workspace.data}}         │ Full path to data/ subdirectory             │
+│ {{$workspace.scripts}}      │ Full path to scripts/ subdirectory          │
+│ {{$workspace.assets}}       │ Full path to assets/ subdirectory           │
+│ {{$workspace.file.X.Y}}     │ Full path to file X/Y in workspace         │
+│ {{$workspace.id}}           │ The workflow ID                             │
+└─────────────────────────────┴─────────────────────────────────────────────┘
+
+SCRIPT TOOLS WITH FILE PATHS (game changer!):
+  Instead of writing inline code, point to a workspace file:
+
+  run_python_script:
+    { filePath: "{{$workspace.scripts}}/process.py", packages: ["pandas"] }
+    // Falls back to "code" arg if filePath is empty or file doesn't exist
+
+  run_node_script:
+    { filePath: "{{$workspace.scripts}}/transform.js" }
+
+  Benefits:
+  • Code lives in versioned files, not embedded in JSON
+  • Easy to edit, debug, and reuse scripts
+  • Reference data files: open("{{$workspace.data}}/input.csv")
+
+FILE OPERATIONS IN WORKSPACE:
+  • write_file: { path: "{{$workspace.data}}/results.json", content: "..." }
+  • read_file: { path: "{{$workspace.data}}/config.json" }
+  • list_directory: { path: "{{$workspace.scripts}}" }
+
+BEST PRACTICES:
+  • Put Python/Node scripts in scripts/ and reference with filePath
+  • Store input/output data in data/
+  • Store templates, images in assets/
+  • Use {{$workspace.path}} as cwd for run_command when needed
+  • When creating scripts for the user, use write_file to create the file
+    in the workspace, then reference it with filePath in the script node
+
+═══════════════════════════════════════════════════════════════════════════════
+CUSTOM UI - Preact Component Mode (Preferred)
+═══════════════════════════════════════════════════════════════════════════════
+
+Use the 'component' field to write React-like UIs with Preact + htm.
+This replaces the old html/script/css split. css field still works for overrides.
+
+SYNTAX: htm tagged templates (like JSX but with backticks)
+  - html\`<div>...</div>\`  instead of  <div>...</div>
+  - \${expression}          instead of  {expression}
+  - onClick=\${handler}     instead of  onClick={handler}
+  - class="..."            (same as JSX className, both work)
+
+AVAILABLE HOOKS:
+  - useState, useEffect, useRef, useMemo, useCallback, useReducer, useContext
+  - useVar(name, default)  — bridges Preact state to workflow variables
+
+useVar HOOK:
+  const [count, setCount] = useVar('counter', 0);
+  // count is reactive — re-renders component on change
+  // setCount(5) updates everywhere (other UIs, workflow context)
+  // External set_variable calls also trigger re-render
+
+INTERACTION:
+  stuard.submit(data)          // Submit and resolve blocking promise
+  stuard.close()               // Close window
+  stuard.callTool(name, args)  // Call a workflow tool
+
+TIMEOUTS: No timeout by default. Set timeoutMs if needed.
+
+WINDOW CONFIG (optional):
+  window: { width: 400, height: 300, position: "center", alwaysOnTop: true,
+            frameless: true, borderRadius: 12, backgroundColor: "#1a1a2e" }
+
+JSON ESCAPING for component field:
+  In JSON, the component is a string. Use \\n for newlines and \\" for quotes.
+  Do NOT double-escape: write \\n not \\\\n, write \\" not \\\\".
+  Backticks do NOT need escaping in JSON strings.
+
+EXAMPLE - Counter:
+  {
+    id: "counter_ui", tool: "custom_ui",
+    args: {
+      title: "Counter",
+      component: "function App() {\\n  const [count, setCount] = useVar('counter', 0);\\n  return html\`<div class=\\"p-6 text-center\\">\\n    <h2 class=\\"text-4xl font-bold text-white\\">\${count}</h2>\\n    <div class=\\"flex gap-2 mt-4 justify-center\\">\\n      <button onClick=\${() => setCount(count - 1)} class=\\"btn-secondary px-4\\">-</button>\\n      <button onClick=\${() => setCount(count + 1)} class=\\"btn-primary px-4\\">+</button>\\n    </div>\\n  </div>\`;\\n}",
+      window: { width: 250, height: 180 }
+    }
+  }
+
+The above component when parsed from JSON becomes this JavaScript:
+  function App() {
+    const [count, setCount] = useVar('counter', 0);
+    return html\`<div class="p-6 text-center">
+      <h2 class="text-4xl font-bold text-white">\${count}</h2>
+      <div class="flex gap-2 mt-4 justify-center">
+        <button onClick=\${() => setCount(count - 1)} class="btn-secondary px-4">-</button>
+        <button onClick=\${() => setCount(count + 1)} class="btn-primary px-4">+</button>
+      </div>
+    </div>\`;
+  }
+
+EXAMPLE - Timer with useEffect:
+  {
+    id: "timer_ui", tool: "custom_ui",
+    args: {
+      title: "Timer",
+      component: "function App() {\\n  const [seconds, setSeconds] = useVar('timer', 0);\\n  useEffect(() => {\\n    const id = setInterval(() => setSeconds(s => s + 1), 1000);\\n    return () => clearInterval(id);\\n  }, []);\\n  return html\`<div class=\\"p-6 text-center\\">\\n    <h1 class=\\"text-5xl font-mono text-white\\">\${String(Math.floor(seconds/60)).padStart(2,'0')}:\${String(seconds%60).padStart(2,'0')}</h1>\\n    <button onClick=\${() => stuard.submit({seconds})} class=\\"btn-primary mt-4\\">Done</button>\\n  </div>\`;\\n}",
+      window: { width: 280, height: 160 }
+    }
+  }
+
+EXAMPLE - Form with submit:
+  {
+    id: "form_ui", tool: "custom_ui",
+    args: {
+      title: "Quick Form",
+      component: "function App() {\\n  const [name, setName] = useState('');\\n  const [email, setEmail] = useState('');\\n  return html\`<div class=\\"p-6 space-y-4\\">\\n    <input value=\${name} onInput=\${e => setName(e.target.value)} placeholder=\\"Name\\" class=\\"w-full p-2 rounded bg-dark-700 text-white\\" />\\n    <input value=\${email} onInput=\${e => setEmail(e.target.value)} placeholder=\\"Email\\" class=\\"w-full p-2 rounded bg-dark-700 text-white\\" />\\n    <button onClick=\${() => stuard.submit({name, email})} class=\\"btn-primary w-full\\">Submit</button>\\n  </div>\`;\\n}",
+      window: { width: 320, height: 250 }
+    }
+  }
+
+═══════════════════════════════════════════════════════════════════════════════
 OUTPUT SCHEMA - Workflow Return Value (Workflow-as-Function)
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -491,6 +627,8 @@ TEMPLATE SOURCES:
 │ Webhook payload     │ {{webhook.body}}, {{webhook.headers.authorization}}   │
 │ Workflow vars       │ {{workflow.outputDir}}, {{workflow.apiKey}}           │
 │ Runtime vars        │ {{$vars.counter}}, {{$vars.isEnabled}}                │
+│ Workspace paths     │ {{$workspace.path}}, {{$workspace.scripts}},          │
+│                     │ {{$workspace.data}}, {{$workspace.assets}}            │
 │ Loop vars           │ {{loop.item}}, {{loop.index}}                         │
 │ Args (function)     │ {{args.input}}, {{args.options}}                      │
 └─────────────────────┴────────────────────────────────────────────────────────┘

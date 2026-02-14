@@ -21,6 +21,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   const [pyRunning, setPyRunning] = useState<boolean>(false);
   const [pyRunCode, setPyRunCode] = useState<string>("print(\"hello from python\")");
   const [pyRunResult, setPyRunResult] = useState<any | null>(null);
+  const [browserStatus, setBrowserStatus] = useState<{ connected: boolean; clients: number }>({ connected: false, clients: 0 });
 
   const emitConnectedChanged = () => {
     try {
@@ -99,6 +100,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     () => [
       { slug: "python", name: "Python", description: "Local Python runtime and managed envs.", category: "Local", homepage: "https://www.python.org/", available: true },
       { slug: "ffmpeg", name: "FFmpeg", description: "Local media conversion and editing (auto-installs when needed).", category: "Local", homepage: "https://ffmpeg.org/", available: true },
+      { slug: "browser", name: "Browser", description: "Web automation and page interaction via browser extension.", category: "Local", homepage: "https://stuard.ai/extension", available: true },
       { slug: "outlook", name: "Outlook", description: "Connect Microsoft Outlook via PKCE to read mail (Mail.Read).", category: "Communication", homepage: "https://learn.microsoft.com/graph/", available: true },
       { slug: "github", name: "GitHub", description: "Read repos and issues.", category: "Development", homepage: "https://github.com/", available: true },
       { slug: "google-drive", name: "Google Drive", description: "Access and search files.", category: "Files", homepage: "https://drive.google.com/", available: true },
@@ -161,6 +163,35 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     })();
   }, []);
 
+  const refreshBrowserStatus = async () => {
+    try {
+      const res = await (window as any).desktopAPI?.execTool?.('browser_status', {});
+      if (res && typeof res === 'object') {
+        setBrowserStatus({ connected: !!res.connected, clients: res.clients || 0 });
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    // Initial poll
+    refreshBrowserStatus();
+    // Poll fallback every 8s
+    const interval = setInterval(refreshBrowserStatus, 8000);
+
+    // Real-time push from browser-server (instant status updates)
+    let unsub: (() => void) | undefined;
+    try {
+      unsub = (window as any).desktopAPI?.onBrowserExtensionStatus?.((status: { connected: boolean; clients: number }) => {
+        setBrowserStatus({ connected: !!status.connected, clients: status.clients || 0 });
+      });
+    } catch {}
+
+    return () => {
+      clearInterval(interval);
+      try { unsub?.(); } catch {}
+    };
+  }, []);
+
   const setupFfmpeg = async () => {
     setFfInstalling(true);
     try {
@@ -218,6 +249,12 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   };
 
   const handleDisconnect = (slug: string) => {
+    if (slug === "browser") {
+      try {
+        localStorage.setItem("stuard.pref.browser_enabled", "false");
+        window.dispatchEvent(new StorageEvent('storage', { key: 'stuard.pref.browser_enabled', newValue: 'false' }));
+      } catch {}
+    }
     setConnectedMap((prev) => {
       const next = { ...prev };
       delete next[slug];
@@ -257,6 +294,19 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     if (slug === "ffmpeg") {
       try {
         await setupFfmpeg();
+      } catch {}
+      return;
+    }
+
+    if (slug === "browser") {
+      try {
+        const raw = localStorage.getItem("stuard.pref.browser_enabled");
+        const isEnabled = raw === "true";
+        if (!isEnabled) {
+          localStorage.setItem("stuard.pref.browser_enabled", "true");
+          window.dispatchEvent(new StorageEvent('storage', { key: 'stuard.pref.browser_enabled', newValue: 'true' }));
+        }
+        await refreshBrowserStatus();
       } catch {}
       return;
     }
@@ -358,6 +408,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     pyRunCode,
     setPyRunCode,
     pyRunResult,
+    browserStatus,
     // derived
     intCategories,
     filteredIntegrations,
@@ -368,6 +419,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     handleLearnMore,
     refreshPythonStatus,
     refreshFfmpegStatus,
+    refreshBrowserStatus,
     setupPython,
     setupFfmpeg,
     installPython,

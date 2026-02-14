@@ -63,12 +63,12 @@ export function HotkeyEditor({ value, onChange }: HotkeyEditorProps) {
     <div className="space-y-2">
       {editing ? (
         <div className="relative">
-          <div className="w-full px-4 py-4 text-sm border-2 border-indigo-400 rounded-xl bg-gradient-to-r from-indigo-50 to-purple-50 flex flex-col items-center justify-center gap-2">
-            <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center animate-pulse">
-              <Keyboard className="w-5 h-5 text-indigo-600" />
+          <div className="w-full px-4 py-4 text-sm border-2 border-blue-400 rounded-xl bg-gradient-to-r from-blue-50 to-sky-50 flex flex-col items-center justify-center gap-2">
+            <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center animate-pulse">
+              <Keyboard className="w-5 h-5 text-blue-600" />
             </div>
-            <span className="font-semibold text-indigo-700">Press your shortcut keys...</span>
-            <span className="text-xs text-indigo-500">Example: Ctrl + Shift + K</span>
+            <span className="font-semibold text-blue-700">Press your shortcut keys...</span>
+            <span className="text-xs text-blue-500">Example: Ctrl + Shift + K</span>
           </div>
           <input
             ref={inputRef}
@@ -83,7 +83,7 @@ export function HotkeyEditor({ value, onChange }: HotkeyEditorProps) {
         <div className="flex gap-2">
           <button
             onClick={() => setEditing(true)}
-            className="flex-1 px-4 py-3 text-sm border border-slate-200 rounded-xl bg-white hover:bg-slate-50 hover:border-indigo-300 flex items-center justify-center gap-3 transition-all shadow-sm group"
+            className="flex-1 px-4 py-3 text-sm border border-slate-200 rounded-xl bg-white hover:bg-slate-50 hover:border-blue-300 flex items-center justify-center gap-3 transition-all shadow-sm group"
           >
             {keys.length > 0 ? (
               <div className="flex items-center gap-1.5">

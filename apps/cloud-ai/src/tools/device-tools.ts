@@ -82,6 +82,8 @@ export {
   browser_wait_for_element,
   browser_scroll_to,
   browser_get_page_info,
+  browser_upload_file,
+  browser_set_toggle,
   browser_execute_script,
 } from './device/browser';
 
@@ -154,6 +156,15 @@ export { file_read, file_edit, glob, grep } from './agentic-file-tools';
 
 // Clipboard Operations
 export { get_clipboard_content, set_clipboard_content } from './device/filesystem';
+
+// Folder Permissions
+export {
+  folder_permission_add,
+  folder_permission_remove,
+  folder_permission_list,
+  folder_permission_set_enabled,
+  folder_permission_check,
+} from './device/folder-permissions';
 
 // Media & Audio Capture (Webcam/Microphone)
 export {
@@ -317,6 +328,11 @@ export { listHeadlessAgentTasks } from './list-headless-agent-tasks';
 export { getHeadlessAgentStatus } from './get-headless-agent-status';
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// AI AGENT WORKFLOW NODES — Synchronous agent steps for workflows
+// ═══════════════════════════════════════════════════════════════════════════════
+export { agent_node, agent_decision, agent_extract } from './device/agent-node';
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MATH & NEURAL NETWORK OPERATIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 export {
@@ -399,21 +415,47 @@ export {
 } from './device/file-index';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// STREAMING — Real-time data pipeline primitives
+// DATABASE STORAGE — Local SQLite persistent storage for workflows
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  db_query,
+  db_store,
+  db_retrieve,
+  db_search,
+  db_delete,
+  db_list_tables,
+} from './device/database';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VECTOR EMBEDDINGS — Text embedding and similarity search
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  embed_text,
+  vector_similarity,
+  embed_and_store,
+} from './device/embeddings';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STREAMING — Advanced stream management (user-facing)
+// Most streaming is now handled via `stream: true` on tools like agent_node,
+// ai_inference, http_request, run_python_script. These advanced tools are for
+// manual stream control when needed.
 // ═══════════════════════════════════════════════════════════════════════════════
 export {
   stream_create,
-  stream_write,
-  stream_read,
   stream_close,
-  stream_subscribe,
-  stream_unsubscribe,
-  stream_add_transform,
-  stream_remove_transform,
-  stream_update_transform,
   stream_list,
   stream_get_status,
-  stream_from_script,
-  stream_from_api,
-  stream_from_llm,
+} from './device/streams';
+
+// Engine-internal stream tools (not user-facing, used by engine stream wires)
+// Re-exported so the engine/tool-router can still call them internally
+export {
+  stream_write as _stream_write,
+  stream_read as _stream_read,
+  stream_subscribe as _stream_subscribe,
+  stream_unsubscribe as _stream_unsubscribe,
+  stream_add_transform as _stream_add_transform,
+  stream_remove_transform as _stream_remove_transform,
+  stream_update_transform as _stream_update_transform,
 } from './device/streams';

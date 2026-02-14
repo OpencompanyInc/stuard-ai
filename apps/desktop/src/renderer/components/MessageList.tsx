@@ -43,6 +43,9 @@ interface Message {
   toolCalls?: ToolCall[];
   streamChunks?: StreamChunk[];
   contextPaths?: ContextPath[];
+  modifiedFiles?: string[];
+  checkpointId?: string;
+  reverted?: boolean;
 }
 
 interface MessageListProps {
@@ -55,6 +58,8 @@ interface MessageListProps {
   className?: string;
   onSubmitToolOutput?: (id: string, result: any) => void;
   onGenUIResponse?: (component: string, result: any) => void;
+  onEditMessage?: (messageId: string, newText: string) => void;
+  onRevertFiles?: (messageId: string) => void;
 }
 
 // Format seconds to human readable
@@ -178,7 +183,9 @@ const MemoizedMessageBubble = memo(MessageBubble, (prevProps, nextProps) => {
     prevProps.reasoningDuration === nextProps.reasoningDuration &&
     prevProps.isStreaming === nextProps.isStreaming &&
     prevProps.toolCalls === nextProps.toolCalls &&
-    prevProps.streamChunks === nextProps.streamChunks
+    prevProps.streamChunks === nextProps.streamChunks &&
+    prevProps.reverted === nextProps.reverted &&
+    prevProps.messageId === nextProps.messageId
   );
 });
 
@@ -217,6 +224,8 @@ const MessageList: React.FC<MessageListProps> = ({
   className,
   onSubmitToolOutput,
   onGenUIResponse,
+  onEditMessage,
+  onRevertFiles,
 }) => {
   const endRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -349,6 +358,12 @@ const MessageList: React.FC<MessageListProps> = ({
               contextPaths={m.contextPaths}
               onSubmitToolOutput={onSubmitToolOutput}
               onGenUIResponse={onGenUIResponse}
+              messageId={m.id}
+              onEditMessage={onEditMessage}
+              modifiedFiles={m.modifiedFiles}
+              checkpointId={m.checkpointId}
+              reverted={m.reverted}
+              onRevertFiles={onRevertFiles}
             />
           ))}
           {/* Streaming response with interleaved content */}

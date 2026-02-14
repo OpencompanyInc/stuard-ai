@@ -30,6 +30,28 @@ const variableDefinitions = new Map<string, Map<string, WorkflowVariableDefiniti
 export const variableStore = new Map<string, VariableEntry>();
 const VARIABLES_FILE = path.join(app.getPath('userData'), 'workflow-variables.json');
 
+/** Callback fired after a variable changes */
+export type VariableChangeCallback = (name: string, entry: VariableEntry, previousValue: any) => void;
+
+const variableChangeListeners = new Set<VariableChangeCallback>();
+
+/** Register a listener that fires whenever any variable is set/changed */
+export function onVariableChange(cb: VariableChangeCallback): () => void {
+  variableChangeListeners.add(cb);
+  return () => { variableChangeListeners.delete(cb); };
+}
+
+/** Notify all listeners of a variable change */
+function notifyListeners(name: string, entry: VariableEntry, previousValue: any): void {
+  for (const cb of variableChangeListeners) {
+    try {
+      cb(name, entry, previousValue);
+    } catch (e) {
+      console.error('[VARS] Error in variable change listener:', e);
+    }
+  }
+}
+
 export function loadVariables(): void {
   try {
     if (fs.existsSync(VARIABLES_FILE)) {
@@ -95,7 +117,9 @@ export function getVariable(name: string, defaultValue?: VariableValue): Variabl
   return entry ? entry.value : defaultValue;
 }
 
-export function setVariable(name: string, value: VariableValue, type?: VariableType, flowId?: string): VariableEntry {
+export function setVariable(name: string, value: VariableValue, type?: VariableType, flowId?: string, silent?: boolean): VariableEntry {
+  const previousEntry = variableStore.get(name);
+  const previousValue = previousEntry?.value;
   const actualType = type || inferType(value);
   const coerced = coerceValue(value, actualType);
   const entry: VariableEntry = {
@@ -106,6 +130,10 @@ export function setVariable(name: string, value: VariableValue, type?: VariableT
   };
   variableStore.set(name, entry);
   saveVariables();
+  // Notify listeners (used by custom_ui to push live updates to data-var bindings)
+  if (!silent) {
+    notifyListeners(name, entry, previousValue);
+  }
   return entry;
 }
 

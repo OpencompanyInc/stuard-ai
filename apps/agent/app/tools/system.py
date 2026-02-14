@@ -14,9 +14,12 @@ import tempfile
 import threading
 import uuid
 
+from .fs import CheckpointManager, _is_safe_path
+
 
 _terminal_lock = threading.Lock()
 _terminal_sessions: Dict[str, Dict[str, Any]] = {}
+COMMAND_CHECKPOINT_MAX_ENTRIES = int(os.getenv("COMMAND_CHECKPOINT_MAX_ENTRIES", "2000"))
 
 
 def _now_ms() -> int:
@@ -38,6 +41,87 @@ def _cleanup_terminals(now_ms: Optional[int] = None) -> None:
                 _terminal_sessions.pop(tid, None)
             except Exception:
                 pass
+
+
+def _collect_path_snapshot(root: str, max_entries: int = COMMAND_CHECKPOINT_MAX_ENTRIES) -> Dict[str, Any]:
+    root_abs = os.path.abspath(os.path.expanduser(root))
+    files: Dict[str, tuple[int, int]] = {}
+    dirs: set[str] = set()
+    truncated = False
+
+    if not os.path.isdir(root_abs):
+        return {"root": root_abs, "files": files, "dirs": dirs, "truncated": truncated}
+
+    count = 0
+    for cur_root, dirnames, filenames in os.walk(root_abs):
+        dirs.add(cur_root)
+        for name in filenames:
+            fp = os.path.join(cur_root, name)
+            try:
+                st = os.stat(fp)
+                files[fp] = (int(st.st_mtime_ns), int(st.st_size))
+            except Exception:
+                continue
+
+            count += 1
+            if count >= max_entries:
+                truncated = True
+                break
+
+        if truncated:
+            break
+
+    return {"root": root_abs, "files": files, "dirs": dirs, "truncated": truncated}
+
+
+def _start_command_checkpoint(cwd: Optional[str]) -> Optional[Dict[str, Any]]:
+    root_input = cwd if isinstance(cwd, str) and cwd.strip() else os.getcwd()
+    root = os.path.abspath(os.path.expanduser(root_input))
+    if not os.path.isdir(root):
+        return None
+
+    if not _is_safe_path(root):
+        return None
+
+    snap = _collect_path_snapshot(root)
+    for fp in snap["files"].keys():
+        try:
+            CheckpointManager.record_change(fp, "modify")
+        except Exception:
+            continue
+
+    return snap
+
+
+def _finish_command_checkpoint(before: Optional[Dict[str, Any]]) -> None:
+    if not before:
+        return
+
+    root = str(before.get("root") or "").strip()
+    if not root:
+        return
+
+    after = _collect_path_snapshot(root)
+    before_files = set(before.get("files", {}).keys())
+    after_files = set(after.get("files", {}).keys())
+    created_files = after_files - before_files
+
+    before_dirs = set(before.get("dirs", set()))
+    after_dirs = set(after.get("dirs", set()))
+    created_dirs = after_dirs - before_dirs
+
+    for fp in created_files:
+        try:
+            CheckpointManager.record_change(fp, "create")
+        except Exception:
+            continue
+
+    # Delete deepest directories first on restore
+    for dp in sorted(created_dirs, key=len, reverse=True):
+        try:
+            CheckpointManager.record_change(dp, "create")
+        except Exception:
+            continue
 
 
 def _append_terminal_chunk(terminal_id: str, stream: str, text: str) -> None:
@@ -82,6 +166,7 @@ def _start_terminal_session(
     shell_used: str = "",
     cwd: Optional[str] = None,
     terminal_id: Optional[str] = None,
+    checkpoint_before: Optional[Dict[str, Any]] = None,
     max_chars: int = 200_000,
     ttl_ms: int = 3600_000,
 ) -> Dict[str, Any]:
@@ -146,6 +231,12 @@ def _start_terminal_session(
             rc = proc.wait()
         except Exception:
             rc = None
+
+        try:
+            _finish_command_checkpoint(checkpoint_before)
+        except Exception:
+            pass
+
         ts2 = _now_ms()
         with _terminal_lock:
             s2 = _terminal_sessions.get(tid)
@@ -192,9 +283,13 @@ async def run_system_command(args: Dict[str, Any], emit: Callable[[str, Dict[str
     background = bool(args.get("background") or False)
     # SECURITY: Default to shell=False unless explicitly requested to prevent injection
     use_shell = bool(args.get("shell") or False)
+    cwd = args.get("cwd")
     terminal_id = args.get("terminalId")
     if not cmd:
         raise ValueError("missing command")
+
+    checkpoint = _start_command_checkpoint(cwd if isinstance(cwd, str) else None)
+
     if emit:
         await emit("executing", {"command": cmd})
     if background:
@@ -203,18 +298,38 @@ async def run_system_command(args: Dict[str, Any], emit: Callable[[str, Dict[str
             argv=None if use_shell else shlex.split(cmd),
             shell=use_shell,
             shell_used="system",
-            cwd=None,
+            cwd=cwd if isinstance(cwd, str) and cwd else None,
             terminal_id=str(terminal_id) if terminal_id is not None else None,
+            checkpoint_before=checkpoint,
         )
     try:
         if use_shell:
-            completed = await asyncio.to_thread(subprocess.run, cmd, shell=True, capture_output=True, text=True, timeout=timeout_ms/1000)
+            completed = await asyncio.to_thread(
+                subprocess.run,
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout_ms/1000,
+                cwd=cwd if isinstance(cwd, str) and cwd else None,
+            )
         else:
             argv = shlex.split(cmd)
-            completed = await asyncio.to_thread(subprocess.run, argv, shell=False, capture_output=True, text=True, timeout=timeout_ms/1000)
+            completed = await asyncio.to_thread(
+                subprocess.run,
+                argv,
+                shell=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout_ms/1000,
+                cwd=cwd if isinstance(cwd, str) and cwd else None,
+            )
+
+        _finish_command_checkpoint(checkpoint)
             
         return {"ok": True, "exitCode": completed.returncode, "stdout": completed.stdout, "stderr": completed.stderr}
     except subprocess.TimeoutExpired:
+        _finish_command_checkpoint(checkpoint)
         return {"ok": False, "error": "timeout"}
 
 
@@ -227,6 +342,8 @@ async def run_command(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] 
     terminal_id = args.get("terminalId")
     if not cmd:
         raise ValueError("missing command")
+
+    checkpoint = _start_command_checkpoint(cwd if isinstance(cwd, str) else None)
 
     def _is_windows() -> bool:
         return sys.platform.startswith("win")
@@ -274,6 +391,7 @@ async def run_command(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] 
             shell_used=shell_used,
             cwd=cwd if isinstance(cwd, str) and cwd else None,
             terminal_id=str(terminal_id) if terminal_id is not None else None,
+            checkpoint_before=checkpoint,
         )
     try:
         completed = await asyncio.to_thread(
@@ -285,8 +403,10 @@ async def run_command(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] 
             timeout=timeout_ms / 1000,
             cwd=cwd if isinstance(cwd, str) and cwd else None,
         )
+        _finish_command_checkpoint(checkpoint)
         return {"ok": True, "exitCode": completed.returncode, "stdout": completed.stdout, "stderr": completed.stderr, "shell": shell_used}
     except subprocess.TimeoutExpired:
+        _finish_command_checkpoint(checkpoint)
         return {"ok": False, "error": "timeout", "shell": shell_used}
 
 
@@ -523,6 +643,7 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
         req_txt = str(args.get("requirementsTxt") or "")
         timeout_ms = int(args.get("timeoutMs") or 30000)
         cwd = args.get("cwd")
+        checkpoint = _start_command_checkpoint(cwd if isinstance(cwd, str) else None)
         auto_install = args.get("autoInstall", True)
 
         # Normalize packages to list
@@ -711,6 +832,7 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
                 "stderr": proc.stderr,
                 "python": py_bin,
             }
+            _finish_command_checkpoint(checkpoint)
             if env_id:
                 result["envId"] = env_id
             if packages_installed:
@@ -724,6 +846,7 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
             
             return result
         except subprocess.TimeoutExpired:
+            _finish_command_checkpoint(checkpoint)
             if emit:
                 await emit("timeout", {"timeoutMs": timeout_ms})
             return {"ok": False, "error": "timeout", "python": py_bin, "envId": env_id or None}
@@ -747,6 +870,7 @@ async def run_node_script(args: Dict[str, Any], emit: Callable[[str, Dict[str, A
         arg_list = [str(a) for a in (args.get("args") or [])]
         timeout_ms = int(args.get("timeoutMs") or 30000)
         cwd = args.get("cwd")
+        checkpoint = _start_command_checkpoint(cwd if isinstance(cwd, str) else None)
 
         # Find node executable
         node_bin = shutil.which("node") or shutil.which("nodejs")
@@ -810,8 +934,10 @@ async def run_node_script(args: Dict[str, Any], emit: Callable[[str, Dict[str, A
                 timeout=max(0.1, timeout_ms / 1000),
                 cwd=cwd if isinstance(cwd, str) and cwd else None,
             )
+            _finish_command_checkpoint(checkpoint)
             return {"ok": True, "exitCode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
         except subprocess.TimeoutExpired:
+            _finish_command_checkpoint(checkpoint)
             return {"ok": False, "error": "timeout"}
         finally:
             for p in cleanup:

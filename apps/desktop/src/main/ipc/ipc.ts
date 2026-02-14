@@ -2,7 +2,7 @@
 import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut } from "electron";
 import { selectFiles, selectImages, listDirectory, selectFolder } from "../utils/files";
 import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, getInternalSidebarState, getNotificationWindow } from "../windows";
-import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition } from "../workflows";
+import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_writeWorkspaceFile, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir } from "../workflows";
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
 import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } from "../integrations/outlook";
@@ -606,6 +606,19 @@ export function setupIpc() {
   ipcMain.handle('workflows:validate', async (_e, id: string) => {
     return await execLocalTool('validate_workflow_requirements', { id });
   });
+  // Folder operations
+  ipcMain.handle('workflows:createFolder', (_e, name: string) => workflows_createFolder(name));
+  ipcMain.handle('workflows:renameFolder', (_e, oldName: string, newName: string) => workflows_renameFolder(oldName, newName));
+  ipcMain.handle('workflows:deleteFolder', (_e, name: string, deleteContents?: boolean) => workflows_deleteFolder(name, deleteContents));
+  ipcMain.handle('workflows:moveToFolder', (_e, id: string, folder: string | null) => workflows_moveToFolder(id, folder));
+  // Workspace file management
+  ipcMain.handle('workflows:ensureWorkspace', (_e, id: string) => workflows_ensureWorkspace(id));
+  ipcMain.handle('workflows:getWorkspaceInfo', (_e, id: string) => workflows_getWorkspaceInfo(id));
+  ipcMain.handle('workflows:listWorkspaceFiles', (_e, id: string, subpath?: string) => workflows_listWorkspaceFiles(id, subpath));
+  ipcMain.handle('workflows:readWorkspaceFile', (_e, id: string, filePath: string) => workflows_readWorkspaceFile(id, filePath));
+  ipcMain.handle('workflows:writeWorkspaceFile', (_e, id: string, filePath: string, content: string) => workflows_writeWorkspaceFile(id, filePath, content));
+  ipcMain.handle('workflows:deleteWorkspaceFile', (_e, id: string, filePath: string) => workflows_deleteWorkspaceFile(id, filePath));
+  ipcMain.handle('workflows:createWorkspaceSubdir', (_e, id: string, subpath: string) => workflows_createWorkspaceSubdir(id, subpath));
 
   // Python Environment Management
   ipcMain.handle('python:status', async () => {
@@ -962,6 +975,7 @@ export function setupIpc() {
   ipcMain.handle('unified-tasks:delete', (_e, taskId: string) => unifiedTasksService.delete(taskId));
   ipcMain.handle('unified-tasks:toggle-status', (_e, taskId: string) => unifiedTasksService.toggleStatus(taskId));
   ipcMain.handle('unified-tasks:add-subtodo', (_e, taskId: string, subtodo: any) => unifiedTasksService.addSubtodo(taskId, subtodo));
+  ipcMain.handle('unified-tasks:update-subtodo', (_e, taskId: string, subtodoId: string, updates: any) => unifiedTasksService.updateSubtodo(taskId, subtodoId, updates));
   ipcMain.handle('unified-tasks:toggle-subtodo', (_e, taskId: string, subtodoId: string) => unifiedTasksService.toggleSubtodo(taskId, subtodoId));
   ipcMain.handle('unified-tasks:delete-subtodo', (_e, taskId: string, subtodoId: string) => unifiedTasksService.deleteSubtodo(taskId, subtodoId));
   ipcMain.handle('unified-tasks:add-agent-assignment', (_e, taskId: string, assignment: any) => unifiedTasksService.addAgentAssignment(taskId, assignment));

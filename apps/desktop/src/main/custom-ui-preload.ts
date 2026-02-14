@@ -238,6 +238,53 @@ contextBridge.exposeInMainWorld('stuard', {
   },
 
   /**
+   * Subscribe to workflow variable updates.
+   * Elements with data-var="varName" will auto-update when the variable changes.
+   * @param varNames - Array of variable names to subscribe to (use '*' for all)
+   */
+  subscribeVars: (varNames: string[]): Promise<void> => {
+    return ipcRenderer.invoke('stuard:subscribeVars', varNames);
+  },
+
+  /**
+   * Get the current value of a workflow variable
+   * @param varName - Variable name (with or without 'workflow.' prefix)
+   */
+  getVar: (varName: string): Promise<{ ok: boolean; name: string; value: any; type?: string }> => {
+    return ipcRenderer.invoke('stuard:getVar', varName);
+  },
+
+  /**
+   * Set a workflow variable directly from custom UI.
+   * This triggers reactive updates to all data-var bindings and useState listeners.
+   * @param varName - Variable name (with or without 'workflow.' prefix)
+   * @param value - Value to set
+   * @param type - Optional type hint ('boolean' | 'string' | 'number' | 'list')
+   */
+  setVar: (varName: string, value: any, type?: string): Promise<{ ok: boolean; name: string; value: any; type: string }> => {
+    return ipcRenderer.invoke('stuard:setVar', { name: varName, value, type });
+  },
+
+  /**
+   * Listen for workflow variable updates
+   * @param callback - Called with { name, shortName, value, type, updatedAt } when a subscribed variable changes
+   * @returns Unsubscribe function
+   */
+  onVarUpdate: (callback: (data: { name: string; shortName: string; value: any; type: string; updatedAt: string }) => void): (() => void) => {
+    if (!eventListeners.has('__var_update__')) {
+      eventListeners.set('__var_update__', new Set());
+    }
+    eventListeners.get('__var_update__')!.add(callback);
+
+    return () => {
+      const listeners = eventListeners.get('__var_update__');
+      if (listeners) {
+        listeners.delete(callback);
+      }
+    };
+  },
+
+  /**
    * Navigate to a different page (requires pages to be defined in custom_ui args)
    * @param page - Name of the page to navigate to
    * @param data - Optional data to merge into formData on navigation
@@ -340,6 +387,20 @@ contextBridge.exposeInMainWorld('stuard', {
   },
 });
 
+// Handle variable update events from main process
+ipcRenderer.on('stuard:var-update', (_event, data) => {
+  const listeners = eventListeners.get('__var_update__');
+  if (listeners) {
+    listeners.forEach(cb => {
+      try {
+        cb(data);
+      } catch (e) {
+        console.error('[stuard] Error in variable update listener:', e);
+      }
+    });
+  }
+});
+
 // Handle page navigation events from main process
 ipcRenderer.on('stuard:page-change', (_event, info) => {
   const listeners = eventListeners.get('__page_change__');
@@ -362,4 +423,6 @@ contextBridge.exposeInMainWorld('$stuard', {
   close: (data?: any) => ipcRenderer.send('stuard:close', { data }),
   submit: (data?: any) => ipcRenderer.send('stuard:submit', { data }),
   nav: (page: string, data?: any) => ipcRenderer.send('stuard:navigate', { page, data }),
+  setVar: (name: string, value: any, type?: string) => ipcRenderer.invoke('stuard:setVar', { name, value, type }),
+  getVar: (name: string) => ipcRenderer.invoke('stuard:getVar', name),
 });

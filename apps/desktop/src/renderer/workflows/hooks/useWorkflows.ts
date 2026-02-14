@@ -5,6 +5,7 @@ import { getValidAccessToken } from "../../auth/authManager";
 
 export function useWorkflows() {
   const [items, setItems] = useState<WorkflowItem[]>([]);
+  const [folders, setFolders] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [updates, setUpdates] = useState<Record<string, MarketplaceUpdate>>({});
 
@@ -13,6 +14,7 @@ export function useWorkflows() {
     try {
       const res = await (window as any).desktopAPI?.workflowsList?.();
       if (res && res.ok && Array.isArray(res.items)) {
+        if (Array.isArray(res.folders)) setFolders(res.folders);
         // Sort by last modified (updatedAt desc), then by name/id
         const sorted = [...res.items].sort((a: WorkflowItem, b: WorkflowItem) => {
           const ta = a.updatedAt ? Date.parse(a.updatedAt) : 0;
@@ -57,5 +59,5 @@ export function useWorkflows() {
     refresh();
   }, []);
 
-  return { items, loading, refresh, updates };
+  return { items, folders, loading, refresh, updates };
 }

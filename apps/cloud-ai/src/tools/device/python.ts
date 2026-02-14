@@ -46,6 +46,7 @@ export const run_python_script = makeLocalTool(
     autoInstall: z.boolean().optional().default(true).describe('Auto-install missing packages (default: true)'),
     timeoutMs: z.number().int().min(100).max(600000).default(30000).describe('Script execution timeout'),
     cwd: z.string().optional().describe('Working directory'),
+    stream: z.boolean().optional().default(false).describe('Enable streaming output. Your script can call emit_chunk(data) to push chunks in real-time. Returns a streamId — connect a stream wire to consume. When this script is a stream consumer, use {{stream_chunk}} in code to access each incoming chunk.'),
   }),
   z.object({
     ok: z.boolean().optional(),
@@ -55,6 +56,7 @@ export const run_python_script = makeLocalTool(
     python: z.string().optional(),
     envId: z.string().optional().describe('Environment ID used'),
     packagesInstalled: z.array(z.string()).optional().describe('List of packages that were installed'),
+    streamId: z.string().optional().describe('Stream ID when stream=true'),
   }),
   (ctx) => {
     try {

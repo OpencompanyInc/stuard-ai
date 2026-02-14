@@ -836,8 +836,8 @@ export function ChatPanel({
     <div className="flex flex-col h-full w-full bg-[#fdfdfd] font-sans overflow-hidden">
       <div className="h-12 border-b border-slate-200/80 flex items-center justify-between px-4 bg-white/80 backdrop-blur-sm sticky top-0 z-10">
         <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 bg-indigo-50 rounded-lg flex items-center justify-center border border-indigo-100">
-            <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+          <div className="w-6 h-6 bg-blue-50 rounded-lg flex items-center justify-center border border-blue-100">
+            <Sparkles className="w-3.5 h-3.5 text-blue-600" />
           </div>
           <span className="font-semibold text-[13px] text-slate-800">Architect</span>
         </div>
@@ -855,7 +855,7 @@ export function ChatPanel({
             <button
               onClick={() => setShowSessionHistory(!showSessionHistory)}
               title="Chat history"
-              className={`p-1.5 rounded-md transition-colors ${showSessionHistory ? 'text-indigo-600 bg-indigo-50' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'}`}
+              className={`p-1.5 rounded-md transition-colors ${showSessionHistory ? 'text-blue-600 bg-blue-50' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'}`}
             >
               <History className="w-4 h-4" />
             </button>

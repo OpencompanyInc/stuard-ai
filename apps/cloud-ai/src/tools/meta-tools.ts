@@ -121,25 +121,45 @@ registerTool(executeAgenticTask, 'Core');
 // Virtual tools for workflow authoring (not executable directly by agent, but valid in workflows)
 const customUiTool = createTool({
     id: 'custom_ui',
-    description: 'Display a custom overlay UI for user interaction or status display. Supports multi-page SPA mode with client-side navigation.',
+    description: `Display a custom overlay UI window using Preact+htm components.
+
+COMPONENT FIELD (primary):
+  Define a function App() that returns htm tagged templates.
+  - html\`<div>...\${expr}...</div>\`
+  - onClick=\${handler}, onInput=\${e => ...}
+  - class="tailwind-classes" (Tailwind CSS is loaded)
+  - Hooks: useState, useEffect, useRef, useMemo, useCallback
+  - useVar(name, default) — bridges Preact state to workflow variables
+  - stuard.submit(data) — submit data and close (resolves blocking)
+  - stuard.close() — close window
+  - stuard.callTool(name, args) — call any workflow tool
+
+IMPORTANT: The component field is raw JavaScript, NOT a JSON string.
+  Write it with real newlines and unescaped quotes.
+  Do NOT double-escape: use actual newlines, not literal \\n.`,
     inputSchema: z.object({
-        title: z.string().optional(),
-        position: z.union([z.string(), z.object({ x: z.number(), y: z.number() })]).optional(),
-        width: z.number().optional(),
-        height: z.number().optional(),
-        content: z.array(z.any()).describe('List of UI nodes: { type: "button"|"text"|..., ... }').optional(),
-        html: z.string().describe('Raw HTML content (single-page mode)').optional(),
-        data: z.record(z.string(), z.any()).optional(),
-        pages: z.record(z.string(), z.object({
-            html: z.string().optional(),
-            layout: z.any().optional(),
-            css: z.string().optional(),
-            script: z.string().optional(),
-        })).describe('Multi-page SPA mode: map of pageName → { html, layout?, css?, script? }').optional(),
-        startPage: z.string().describe('Initial page to show (defaults to first key in pages)').optional(),
-        blocking: z.boolean().optional(),
+        id: z.string().optional().describe('Window ID. Same ID reuses existing window.'),
+        title: z.string().optional().describe('Window title'),
+        component: z.string().describe('Preact function component. Must define function App(). Uses html`` tagged templates with ${} for expressions. All Preact hooks available plus useVar(name, default).'),
+        css: z.string().optional().describe('Additional CSS styles'),
+        data: z.record(z.string(), z.any()).optional().describe('Initial data accessible as initialData/formData'),
+        blocking: z.boolean().optional().describe('If true (default), workflow waits for user action'),
         keepOpen: z.boolean().optional(),
-        script: z.string().describe('JavaScript to run after UI loads').optional(),
+        timeoutMs: z.number().optional().describe('Timeout in ms. 0 = no timeout (default)'),
+        window: z.object({
+            width: z.number().optional().describe('Window width in px (default 400)'),
+            height: z.number().optional().describe('Window height in px (default 300)'),
+            position: z.union([
+                z.enum(['center', 'top-left', 'top-right', 'bottom-left', 'bottom-right']),
+                z.object({ x: z.number(), y: z.number() })
+            ]).optional().describe('Window position (default center)'),
+            alwaysOnTop: z.boolean().optional().describe('Keep above other windows (default true)'),
+            frameless: z.boolean().optional().describe('Hide window frame/titlebar (default true)'),
+            resizable: z.boolean().optional(),
+            transparent: z.boolean().optional(),
+            borderRadius: z.number().optional().describe('Corner radius in px'),
+            backgroundColor: z.string().optional().describe('Background color hex (default #1a1a2e)'),
+        }).optional().describe('Window appearance configuration'),
     }),
     execute: async () => { throw new Error("This tool is for workflow definitions only, not direct execution."); }
 });
@@ -200,7 +220,7 @@ Object.values(deviceTools).forEach(t => {
         return;
     }
 
-    if (['list_directory', 'read_file', 'write_file', 'create_directory', 'move_file', 'copy_file', 'delete_file'].includes(name)) {
+    if (['list_directory', 'read_file', 'write_file', 'create_directory', 'move_file', 'copy_file', 'delete_file', 'folder_permission_add', 'folder_permission_remove', 'folder_permission_list', 'folder_permission_set_enabled', 'folder_permission_check'].includes(name)) {
         registerTool(t, 'FileSystem');
     } else if (['file_index_add_root', 'file_index_remove_root', 'file_index_list_roots', 'file_index_scan', 'file_index_get_pending', 'file_index_stats', 'file_index_update', 'file_search', 'file_search_by_filename', 'file_search_by_kind', 'file_search_recent', 'file_search_details', 'file_search_similar', 'process_pending_file_index', 'process_pending_file_index_batch', 'sync_file_index_batch_jobs', 'semantic_file_search'].includes(name)) {
         registerTool(t, 'FileSearch');
@@ -212,8 +232,12 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'Media');
     } else if (['ffmpeg_status', 'ffmpeg_setup', 'ffmpeg_run', 'ffmpeg_convert_media', 'ffmpeg_extract_audio', 'ffmpeg_trim_media', 'ffmpeg_probe_media', 'ffmpeg_extract_frames'].includes(name)) {
         registerTool(t, 'Media');
-    } else if (name.startsWith('stream_')) {
+    } else if (['stream_create', 'stream_close', 'stream_list', 'stream_get_status'].includes(name)) {
         registerTool(t, 'Streaming');
+    } else if (name.startsWith('_stream_') || name.startsWith('stream_')) {
+        // Internal stream tools (prefixed with _) and deprecated stream_from_* — skip registration
+    } else if (['agent_node', 'agent_decision', 'agent_extract', 'deploy_headless_agent', 'get_headless_agent_status', 'list_headless_agent_tasks'].includes(name)) {
+        registerTool(t, 'AI');
     } else if (['search_local_workflows', 'list_local_stuards', 'show_json_workflow_code', 'import_workflow', 'run_automation', 'stop_automation', 'create_workflow', 'workflow_modify', 'retrieve_tool_format', 'run_workflow', 'execute_workflow', 'invoke_workflow'].includes(name)) {
         registerTool(t, 'Workflow');
     } else if (['search_past_conversations', 'get_conversation_context'].includes(name)) {
@@ -226,6 +250,10 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'Canvas');
     } else if (['set_variable', 'get_variable', 'toggle_variable', 'increment_variable', 'append_to_list', 'list_variables', 'delete_variable'].includes(name)) {
         registerTool(t, 'Variables');
+    } else if (['db_query', 'db_store', 'db_retrieve', 'db_search', 'db_delete', 'db_list_tables'].includes(name)) {
+        registerTool(t, 'Database');
+    } else if (['embed_text', 'vector_similarity', 'embed_and_store'].includes(name)) {
+        registerTool(t, 'Embeddings');
     } else if (['name_conversation'].includes(name)) {
         registerTool(t, 'Core');
     } else if (name.startsWith('math_')) {
@@ -287,7 +315,7 @@ export const search_tools = createTool({
     id: 'search_tools',
     description: 'Search for available tools by category or query string. Returns tool names and descriptions.',
     inputSchema: z.object({
-        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Streaming', 'Workflow', 'Memory', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'YouTube', 'Marketplace', 'Variables', 'Math', 'Feedback', 'Webhooks', 'Integrations', 'Other']).optional(),
+        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Streaming', 'Workflow', 'Memory', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'YouTube', 'Marketplace', 'Variables', 'Database', 'Embeddings', 'Math', 'Feedback', 'Webhooks', 'Integrations', 'Canvas', 'Other']).optional(),
         query: z.string().optional(),
     }),
     outputSchema: z.object({

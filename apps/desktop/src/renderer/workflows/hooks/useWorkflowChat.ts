@@ -35,6 +35,8 @@ export function useWorkflowChat({
   const [reasoningText, setReasoningText] = useState('');
   const [busy, setBusy] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
+  const wsRef = useRef<WebSocket | null>(null);
+  const abortedRef = useRef(false);
 
   // Initialize welcome message
   useEffect(() => {
@@ -142,11 +144,13 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
       }
 
       // Execute Chat
+      abortedRef.current = false;
       await new Promise<void>((resolve, reject) => {
         let done = false;
         let ws: WebSocket;
         try {
           ws = new WebSocket(wsUrl);
+          wsRef.current = ws;
         } catch (err) {
           reject(err);
           return;
@@ -455,8 +459,9 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
       });
 
       // Finish
+      wsRef.current = null;
       setStreamItems([]);
-      let responseText = fullText || "Done.";
+      let responseText = abortedRef.current ? (fullText || '(Stopped by user)') : (fullText || "Done.");
       let newSpec = null as any;
       if (typeof responseText === 'string') {
         const jsonMatch = responseText.match(/```json\s*(\{[\s\S]*?\})\s*```/);
@@ -491,10 +496,20 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
         reasoning: currentReasoning || undefined
       }]);
     } finally {
+      wsRef.current = null;
       setStreamItems([]);
       setBusy(false);
     }
   }, [messages, busy, model, errors, cloudAiHttp, onApplyModel]);
+
+  const stopGeneration = useCallback(() => {
+    abortedRef.current = true;
+    const ws = wsRef.current;
+    if (ws) {
+      try { ws.close(); } catch { }
+      wsRef.current = null;
+    }
+  }, []);
 
   return useMemo(() => ({
     messages,
@@ -506,7 +521,8 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
     busy,
     setBusy,
     sendMessage,
+    stopGeneration,
     showReasoning,
     setShowReasoning
-  }), [messages, streamItems, reasoningText, busy, sendMessage, showReasoning]);
+  }), [messages, streamItems, reasoningText, busy, sendMessage, stopGeneration, showReasoning]);
 }

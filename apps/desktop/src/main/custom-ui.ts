@@ -16,6 +16,7 @@ import { pathToFileURL } from 'url';
 import type { RouterContext } from './tool-router';
 import { execTool } from './tools/index';
 import logger from './utils/logger';
+import { onVariableChange, variableStore, setVariable, type VariableEntry } from './workflow-variables';
 
 // Security: Allowed base directories for file operations
 // Custom UIs can only read/write within these directories
@@ -64,7 +65,75 @@ function isPathApprovedForWindow(webContentsId: number, filePath: string): boole
 export const customUiWindows = new Map<string, BrowserWindow>();
 
 // Per-window data storage
-const windowData = new Map<string, { data: any; flowId: string; resolve?: (result: any) => void; keepOpen?: boolean; currentPage?: string; pages?: Record<string, any> }>();
+const windowData = new Map<string, { data: any; flowId: string; resolve?: (result: any) => void; keepOpen?: boolean; currentPage?: string; pages?: Record<string, any>; subscribedVars?: Set<string> }>();
+
+// ─── Variable → UI Live Binding System ──────────────────────────────────────
+
+/**
+ * Subscribe a custom_ui window to a workflow variable.
+ * When that variable changes, the window receives a stuard:var-update IPC message.
+ */
+export function subscribeWindowToVar(windowId: string, varName: string): void {
+  const wd = windowData.get(windowId);
+  if (!wd) return;
+  if (!wd.subscribedVars) wd.subscribedVars = new Set();
+  wd.subscribedVars.add(varName);
+}
+
+/**
+ * Normalise a variable name for matching.
+ * Users write `data-var="counter"` but the store key might be `workflow.counter` or just `counter`.
+ * We match if the store key equals the name OR ends with `.${name}`.
+ */
+function varNameMatches(storeKey: string, bindName: string): boolean {
+  if (storeKey === bindName) return true;
+  if (storeKey.endsWith(`.${bindName}`)) return true;
+  return false;
+}
+
+/**
+ * Broadcast a variable change to all open custom_ui windows that reference it.
+ * Called automatically by the onVariableChange listener.
+ */
+function broadcastVariableUpdate(name: string, entry: VariableEntry, _previousValue: any): void {
+  for (const [id, win] of customUiWindows) {
+    if (win.isDestroyed()) continue;
+    const wd = windowData.get(id);
+
+    // If this window explicitly subscribed to this variable, push the update
+    const subs = wd?.subscribedVars;
+    let shouldSend = false;
+    if (subs) {
+      for (const sub of subs) {
+        if (varNameMatches(name, sub)) { shouldSend = true; break; }
+      }
+    }
+
+    // Also send to windows that registered '*' (wildcard = all variables)
+    if (!shouldSend && subs?.has('*')) {
+      shouldSend = true;
+    }
+
+    if (shouldSend) {
+      try {
+        // Strip 'workflow.' prefix for the bind name so `data-var="counter"` matches
+        const shortName = name.startsWith('workflow.') ? name.slice('workflow.'.length) : name;
+        win.webContents.send('stuard:var-update', {
+          name,
+          shortName,
+          value: entry.value,
+          type: entry.type,
+          updatedAt: entry.updatedAt,
+        });
+      } catch (e) {
+        console.error(`[CUSTOM-UI] Error broadcasting var update to window "${id}":`, e);
+      }
+    }
+  }
+}
+
+// Register the global variable change listener
+onVariableChange(broadcastVariableUpdate);
 
 // Audio player (hidden window for audio playback)
 let audioPlayerWindow: BrowserWindow | null = null;
@@ -120,6 +189,56 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
       }
     }
     return null;
+  });
+
+  // Subscribe to workflow variable updates (called by renderer when data-var elements are found)
+  ipcMain.handle('stuard:subscribeVars', (event, varNames: string[]) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return;
+    for (const [id, w] of customUiWindows) {
+      if (w === win) {
+        const wd = windowData.get(id);
+        if (wd) {
+          if (!wd.subscribedVars) wd.subscribedVars = new Set();
+          for (const v of varNames) {
+            wd.subscribedVars.add(v);
+          }
+          console.log(`[CUSTOM-UI] Window "${id}" subscribed to vars: [${varNames.join(', ')}]`);
+        }
+        break;
+      }
+    }
+  });
+
+  // Get current value of a workflow variable (for initial rendering of data-var elements)
+  ipcMain.handle('stuard:getVar', (_event, varName: string) => {
+    // Try exact match first, then with workflow. prefix
+    let entry = variableStore.get(varName);
+    if (!entry) entry = variableStore.get(`workflow.${varName}`);
+    if (entry) {
+      return { ok: true, name: varName, value: entry.value, type: entry.type };
+    }
+    return { ok: false, name: varName, value: undefined };
+  });
+
+  // Set a workflow variable directly from custom UI
+  ipcMain.handle('stuard:setVar', (_event, args: { name: string; value: any; type?: string }) => {
+    const { name, value, type } = args || {};
+    if (!name) return { ok: false, error: 'missing_variable_name' };
+
+    // Resolve name: try exact first, then with workflow. prefix for existing vars
+    let resolvedName = name;
+    if (!variableStore.has(name) && !name.startsWith('workflow.')) {
+      const wfName = `workflow.${name}`;
+      if (variableStore.has(wfName)) {
+        resolvedName = wfName;
+      }
+    }
+
+    const entry = setVariable(resolvedName, value, type as any);
+    const ctx = getRouterContext();
+    ctx.logFn(`[custom_ui] setVar: ${resolvedName} = ${JSON.stringify(entry.value)} (${entry.type})`);
+    return { ok: true, name: resolvedName, value: entry.value, type: entry.type };
   });
 
   // Call a workflow tool
@@ -651,11 +770,12 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     windowCfg?.blocking === false ||
     windowCfg?.blocking === 'false'
   );
-  const timeoutMs = Number(args?.timeoutMs || 60000);
+  const timeoutMs = Number(args?.timeoutMs || 0);
   const css = String(args?.css || '');
   const layout = args?.layout || args?.content || {};
   const rawHtml = typeof args?.html === 'string' ? args.html : undefined;
   const initScript = typeof args?.script === 'string' ? args.script : undefined;
+  const component = typeof args?.component === 'string' ? args.component : undefined;
   const data = args?.data || {};
   const keepOpen = args?.keepOpen === true;
   const borderRadius = Number(windowCfg.borderRadius ?? windowCfg.radius ?? 0);
@@ -704,7 +824,7 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
   // Auto-merge non-reserved arguments into data
   const reservedArgs = new Set([
     'id', 'title', 'window', 'width', 'height', 'blocking', 'timeoutMs',
-    'css', 'layout', 'content', 'html', 'script', 'keepOpen', 'forceNew', 'flowId', 'data',
+    'css', 'layout', 'content', 'html', 'script', 'component', 'keepOpen', 'forceNew', 'flowId', 'data',
     'pages', 'startPage'
   ]);
 
@@ -747,6 +867,7 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
       flowId,
       transparentBg,
       initScript,
+      component,
       pages,
       startPage,
       backgroundType,
@@ -861,6 +982,7 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     flowId,
     transparentBg,
     initScript,
+    component,
     pages,
     startPage,
     backgroundType,
@@ -941,6 +1063,32 @@ function waitForUiAction(
       }, timeoutMs);
     }
   });
+}
+
+/**
+ * Close all custom_ui windows associated with a specific workflow flowId.
+ * Called when a workflow stops/aborts to clean up blocking promises.
+ */
+export function closeCustomUiByFlowId(flowId: string): number {
+  let closed = 0;
+  for (const [id, win] of customUiWindows) {
+    const wd = windowData.get(id);
+    if (wd?.flowId === flowId) {
+      // Resolve any blocking promise
+      if (wd.resolve) {
+        wd.resolve({ ok: true, action: 'workflow_stopped', data: wd.data || {} });
+        wd.resolve = undefined;
+      }
+      // Close the window
+      if (!win.isDestroyed()) {
+        try { win.close(); } catch { }
+      }
+      customUiWindows.delete(id);
+      windowData.delete(id);
+      closed++;
+    }
+  }
+  return closed;
 }
 
 export function execCloseCustomUi(args: any): { ok: boolean } {
@@ -1663,6 +1811,148 @@ function generateCustomUiHtml(
       });
     }
 
+    // ─── Workflow Variable Binding (data-var) ─────────────────────────────
+    // Elements with data-var="varName" will auto-update when the variable changes.
+    // Supports: text content, input values, data-var-format for templates.
+    // Example: <span data-var="counter">0</span>
+    //          <span data-var="counter" data-var-format="Count: {value}">Count: 0</span>
+    //          <input data-var="username" />
+    //          <div data-var="status" data-html>...</div>
+    (function __initVarBindings() {
+      if (!hasStuardApi) return;
+
+      function __updateVarElement(el, value) {
+        const fmt = el.getAttribute('data-var-format');
+        const displayVal = fmt ? fmt.replace(/\{value\}/g, value ?? '') : (value ?? '');
+
+        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
+          if (el.type === 'checkbox') {
+            el.checked = !!value;
+          } else {
+            el.value = displayVal;
+          }
+        } else if (el.hasAttribute('data-html') || el.hasAttribute('data-render-html')) {
+          el.innerHTML = displayVal;
+        } else {
+          el.textContent = displayVal;
+        }
+      }
+
+      // Scan for all data-var elements and collect unique variable names
+      const varEls = document.querySelectorAll('[data-var]');
+      const varNames = new Set();
+      varEls.forEach(el => {
+        const v = el.getAttribute('data-var');
+        if (v) varNames.add(v);
+      });
+
+      const varNameArr = Array.from(varNames);
+      if (varNameArr.length > 0) {
+        console.log('[stuard] data-var bindings found:', varNameArr);
+      }
+
+      // Always subscribe to '*' so useState() works for any variable
+      window.stuard.subscribeVars(['*']);
+
+      // Fetch initial values and populate data-var elements
+      if (varNameArr.length > 0) {
+        Promise.all(varNameArr.map(v => window.stuard.getVar(v))).then(results => {
+          for (const res of results) {
+            if (res.ok) {
+              document.querySelectorAll('[data-var="' + res.name + '"]').forEach(el => {
+                __updateVarElement(el, res.value);
+              });
+            }
+          }
+        });
+      }
+
+      // Listen for live variable updates (data-var elements + useState listeners)
+      window.stuard.onVarUpdate(({ name, shortName, value }) => {
+        // Update data-var elements
+        const matchNames = [name, shortName];
+        for (const mn of matchNames) {
+          document.querySelectorAll('[data-var="' + mn + '"]').forEach(el => {
+            __updateVarElement(el, value);
+          });
+        }
+
+        // Notify useState listeners
+        const listeners = window.__varListeners || {};
+        for (const mn of matchNames) {
+          if (listeners[mn]) {
+            listeners[mn].forEach(cb => { try { cb(value); } catch(e) { console.error('[useState] listener error:', e); } });
+          }
+        }
+
+        // Dispatch a DOM event for custom script listeners
+        window.dispatchEvent(new CustomEvent('stuard:var-changed', {
+          detail: { name, shortName, value }
+        }));
+      });
+    })();
+
+    // ─── useState API ─────────────────────────────────────────────────────
+    // React-like reactive variable hook for custom UI scripts.
+    // Usage: const [value, setValue] = useState('counter', 0);
+    //   - value is the current value (updates in-place via .value proxy or re-call)
+    //   - setValue(newVal) sets the variable and triggers reactive updates everywhere
+    //
+    // With callback: useState('counter', 0, (newVal) => { /* re-render */ });
+    //   - callback fires whenever the variable changes from any source
+    window.__varListeners = window.__varListeners || {};
+    window.__varCache = window.__varCache || {};
+
+    window.useState = function useState(varName, defaultValue, onChange) {
+      if (!hasStuardApi) {
+        // Fallback: local-only state
+        let _val = defaultValue;
+        return [
+          { get value() { return _val; }, toString() { return String(_val); }, valueOf() { return _val; } },
+          function(v) { _val = v; if (onChange) onChange(v); }
+        ];
+      }
+
+      // Initialize cache
+      if (!(varName in window.__varCache)) {
+        window.__varCache[varName] = defaultValue;
+        // Set default in store if not already set
+        window.stuard.getVar(varName).then(res => {
+          if (res.ok && res.value !== undefined && res.value !== null) {
+            window.__varCache[varName] = res.value;
+            if (onChange) onChange(res.value);
+          } else if (defaultValue !== undefined) {
+            window.stuard.setVar(varName, defaultValue);
+          }
+        });
+      }
+
+      // Register change listener
+      if (onChange) {
+        if (!window.__varListeners[varName]) window.__varListeners[varName] = [];
+        window.__varListeners[varName].push(onChange);
+      }
+
+      // Create reactive getter
+      const state = {
+        get value() { return window.__varCache[varName]; },
+        toString() { return String(window.__varCache[varName]); },
+        valueOf() { return window.__varCache[varName]; }
+      };
+
+      // Setter
+      function setValue(newVal) {
+        window.__varCache[varName] = newVal;
+        window.stuard.setVar(varName, newVal);
+      }
+
+      // Keep cache in sync from external updates
+      if (!window.__varListeners[varName]) window.__varListeners[varName] = [];
+      window.__varListeners[varName].push(v => { window.__varCache[varName] = v; });
+
+      return [state, setValue];
+    };
+
     // Run initialization script if provided
     ${initScript ? `
     (async () => {
@@ -1689,6 +1979,7 @@ function generateEnhancedCustomUiHtml(options: {
   flowId: string;
   transparentBg: boolean;
   initScript?: string;
+  component?: string;
   pages?: Record<string, any>;
   startPage?: string;
   backgroundType?: string;
@@ -1711,6 +2002,7 @@ function generateEnhancedCustomUiHtml(options: {
     flowId,
     transparentBg,
     initScript,
+    component,
     pages,
     startPage,
     backgroundType = 'color',
@@ -2012,6 +2304,178 @@ function generateEnhancedCustomUiHtml(options: {
     }
   ` : '';
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PREACT COMPONENT MODE — React-like single-field rendering
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (component) {
+    // Sanitize component string: fix double-escaping from LLM JSON output.
+    // Models often produce \\n (literal backslash+n) instead of actual newlines,
+    // and \\" instead of plain quotes, when generating JSON component strings.
+    let sanitizedComponent = component;
+
+    // Detect double-escaping: if the string has literal \n but no real newlines,
+    // or has \\" sequences, it's double-escaped
+    const hasRealNewlines = sanitizedComponent.includes('\n');
+    const hasLiteralBackslashN = sanitizedComponent.includes('\\n');
+    const hasLiteralBackslashQuote = sanitizedComponent.includes('\\"');
+    const hasLiteralBackslashBackslash = sanitizedComponent.includes('\\\\');
+
+    if (hasLiteralBackslashN || hasLiteralBackslashQuote) {
+      // Fix double-escaped sequences
+      if (hasLiteralBackslashBackslash) {
+        sanitizedComponent = sanitizedComponent.replace(/\\\\/g, '\x00BACKSLASH\x00');
+      }
+      sanitizedComponent = sanitizedComponent
+        .replace(/\\n/g, '\n')
+        .replace(/\\t/g, '\t')
+        .replace(/\\"/g, '"')
+        .replace(/\\'/g, "'");
+      if (hasLiteralBackslashBackslash) {
+        sanitizedComponent = sanitizedComponent.replace(/\x00BACKSLASH\x00/g, '\\');
+      }
+    }
+    const bgOverlay = backgroundType !== 'color' && !transparentBg ? '<div class="stuard-background"></div>' : '';
+    return `<!DOCTYPE html>
+<html${transparentBg ? ' style="background:transparent!important"' : ''}>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https:; img-src * data: blob: local-file: file:; media-src * data: blob: local-file: file:; font-src * data:;">
+  <title>${escapeHtml(title)}</title>
+  <script src="https://cdn.tailwindcss.com"><\/script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            dark: { 900: '#0f0f1a', 800: '#1a1a2e', 700: '#2d2d44' }
+          }
+        }
+      }
+    }
+  <\/script>
+  <script src="https://unpkg.com/preact@10/dist/preact.umd.js" crossorigin><\/script>
+  <script src="https://unpkg.com/preact@10/hooks/dist/hooks.umd.js" crossorigin><\/script>
+  <script src="https://unpkg.com/htm@3/dist/htm.umd.js" crossorigin><\/script>
+  <style>${defaultCss}\n${css}\n${transparentOverride}\n${animationKeyframes}</style>
+</head>
+<body class="dark"${transparentBg ? ' style="background:transparent!important"' : ''}>
+  ${bgOverlay}
+  <div class="stuard-root"></div>
+  <script>
+    // ─── Constants ──────────────────────────────────────────────────────
+    const CUSTOM_UI_ID = ${JSON.stringify(id)};
+    const FLOW_ID = ${JSON.stringify(flowId)};
+    const initialData = ${JSON.stringify(data)};
+    const formData = { ...initialData, flowId: FLOW_ID };
+    const hasStuardApi = typeof window.stuard !== 'undefined';
+
+    // ─── CDN Load Check ─────────────────────────────────────────────────
+    if (typeof preact === 'undefined' || typeof preactHooks === 'undefined' || typeof htm === 'undefined') {
+      const missing = [];
+      if (typeof preact === 'undefined') missing.push('preact');
+      if (typeof preactHooks === 'undefined') missing.push('preact/hooks');
+      if (typeof htm === 'undefined') missing.push('htm');
+      document.querySelector('.stuard-root').innerHTML =
+        '<div style="padding:24px;color:#f87171;font-family:system-ui">' +
+        '<h2 style="font-size:18px;font-weight:bold;margin-bottom:8px">Failed to load UI libraries</h2>' +
+        '<p style="color:#94a3b8;font-size:13px">Could not load: ' + missing.join(', ') + ' from CDN.</p>' +
+        '<p style="color:#94a3b8;font-size:13px;margin-top:8px">Check your internet connection and try again.</p></div>';
+      throw new Error('CDN libraries not loaded: ' + missing.join(', '));
+    }
+
+    // ─── Preact Runtime ─────────────────────────────────────────────────
+    const { h, render: preactRender, Fragment } = preact;
+    const { useState, useEffect, useRef, useMemo, useCallback, useReducer, useContext, useLayoutEffect } = preactHooks;
+    const html = htm.bind(h);
+
+    // ─── Variable Subscription ──────────────────────────────────────────
+    window.__varListeners = {};
+    if (hasStuardApi) {
+      window.stuard.subscribeVars(['*']);
+      window.stuard.onVarUpdate(({ name, shortName, value }) => {
+        const matchNames = [name, shortName];
+        for (const mn of matchNames) {
+          if (window.__varListeners[mn]) {
+            window.__varListeners[mn].forEach(cb => {
+              try { cb(value); } catch(e) { console.error('[useVar] listener error:', e); }
+            });
+          }
+        }
+      });
+    }
+
+    // ─── useVar Hook ────────────────────────────────────────────────────
+    // React-like hook bridging Preact state to workflow variables.
+    // Usage: const [count, setCount] = useVar('counter', 0);
+    function useVar(varName, defaultValue) {
+      const [value, _setValue] = useState(defaultValue);
+
+      useEffect(() => {
+        if (!hasStuardApi) return;
+
+        window.stuard.getVar(varName).then(res => {
+          if (res.ok && res.value !== undefined && res.value !== null) {
+            _setValue(res.value);
+          } else if (defaultValue !== undefined) {
+            window.stuard.setVar(varName, defaultValue);
+          }
+        });
+
+        const handler = (newVal) => _setValue(newVal);
+        if (!window.__varListeners[varName]) window.__varListeners[varName] = [];
+        window.__varListeners[varName].push(handler);
+
+        return () => {
+          const arr = window.__varListeners[varName];
+          if (arr) {
+            const idx = arr.indexOf(handler);
+            if (idx >= 0) arr.splice(idx, 1);
+          }
+        };
+      }, []);
+
+      const setVar = (newVal) => {
+        _setValue(newVal);
+        if (hasStuardApi) window.stuard.setVar(varName, newVal);
+      };
+
+      return [value, setVar];
+    }
+
+    // ─── User Component ─────────────────────────────────────────────────
+    try {
+      ${sanitizedComponent}
+    } catch (__compDefError) {
+      console.error('[stuard] Component definition error:', __compDefError);
+      function App() {
+        return html\`<div class="p-6 space-y-3">
+          <h2 class="text-red-400 font-bold text-lg">Component Error</h2>
+          <pre class="text-xs text-red-300 bg-red-900/30 rounded-lg p-3 overflow-auto max-h-60 whitespace-pre-wrap">\${String(__compDefError?.message || __compDefError)}</pre>
+          <p class="text-slate-400 text-sm">Check the component code for syntax errors.</p>
+          <button onClick=\${() => stuard.close()} class="btn-secondary mt-2">Close</button>
+        </div>\`;
+      }
+    }
+
+    // ─── Render ─────────────────────────────────────────────────────────
+    try {
+      preactRender(
+        html\`<\${typeof App !== 'undefined' ? App : () => html\`<div class="p-4 text-red-400">No App component defined. Your component must define a function named App.</div>\`} />\`,
+        document.querySelector('.stuard-root')
+      );
+    } catch (__renderError) {
+      console.error('[stuard] Render error:', __renderError);
+      document.querySelector('.stuard-root').innerHTML = '<div style="padding:24px;color:#f87171;font-family:monospace"><h2 style="font-size:18px;font-weight:bold;margin-bottom:8px">Render Error</h2><pre style="font-size:12px;background:rgba(127,29,29,0.3);padding:12px;border-radius:8px;white-space:pre-wrap;overflow:auto;max-height:300px">' + String(__renderError?.message || __renderError).replace(/</g,'&lt;') + '</pre><p style="color:#94a3b8;font-size:13px;margin-top:12px">The component defined an App function but it failed to render.</p></div>';
+    }
+  <\/script>
+</body>
+</html>`;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LEGACY MODE — html/script/layout/pages
+  // ═══════════════════════════════════════════════════════════════════════════
   return `<!DOCTYPE html>
 <html${transparentBg ? ' style="background:transparent!important"' : ''}>
 <head>
@@ -2301,6 +2765,123 @@ function generateEnhancedCustomUiHtml(options: {
       });
     }
 
+    // ─── Workflow Variable Binding (data-var) ─────────────────────────────
+    (function __initVarBindings() {
+      if (!hasStuardApi) return;
+
+      function __updateVarElement(el, value) {
+        const fmt = el.getAttribute('data-var-format');
+        const displayVal = fmt ? fmt.replace(/\{value\}/g, value ?? '') : (value ?? '');
+
+        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
+          if (el.type === 'checkbox') {
+            el.checked = !!value;
+          } else {
+            el.value = displayVal;
+          }
+        } else if (el.hasAttribute('data-html') || el.hasAttribute('data-render-html')) {
+          el.innerHTML = displayVal;
+        } else {
+          el.textContent = displayVal;
+        }
+      }
+
+      const varEls = document.querySelectorAll('[data-var]');
+      const varNames = new Set();
+      varEls.forEach(el => {
+        const v = el.getAttribute('data-var');
+        if (v) varNames.add(v);
+      });
+
+      const varNameArr = Array.from(varNames);
+      if (varNameArr.length > 0) {
+        console.log('[stuard] data-var bindings found:', varNameArr);
+      }
+
+      // Always subscribe to '*' so useState() works for any variable
+      window.stuard.subscribeVars(['*']);
+
+      if (varNameArr.length > 0) {
+        Promise.all(varNameArr.map(v => window.stuard.getVar(v))).then(results => {
+          for (const res of results) {
+            if (res.ok) {
+              document.querySelectorAll('[data-var="' + res.name + '"]').forEach(el => {
+                __updateVarElement(el, res.value);
+              });
+            }
+          }
+        });
+      }
+
+      window.stuard.onVarUpdate(({ name, shortName, value }) => {
+        const matchNames = [name, shortName];
+        for (const mn of matchNames) {
+          document.querySelectorAll('[data-var="' + mn + '"]').forEach(el => {
+            __updateVarElement(el, value);
+          });
+        }
+
+        // Notify useState listeners
+        const listeners = window.__varListeners || {};
+        for (const mn of matchNames) {
+          if (listeners[mn]) {
+            listeners[mn].forEach(cb => { try { cb(value); } catch(e) { console.error('[useState] listener error:', e); } });
+          }
+        }
+
+        window.dispatchEvent(new CustomEvent('stuard:var-changed', {
+          detail: { name, shortName, value }
+        }));
+      });
+    })();
+
+    // ─── useState API ─────────────────────────────────────────────────────
+    window.__varListeners = window.__varListeners || {};
+    window.__varCache = window.__varCache || {};
+
+    window.useState = function useState(varName, defaultValue, onChange) {
+      if (!hasStuardApi) {
+        let _val = defaultValue;
+        return [
+          { get value() { return _val; }, toString() { return String(_val); }, valueOf() { return _val; } },
+          function(v) { _val = v; if (onChange) onChange(v); }
+        ];
+      }
+
+      if (!(varName in window.__varCache)) {
+        window.__varCache[varName] = defaultValue;
+        window.stuard.getVar(varName).then(res => {
+          if (res.ok && res.value !== undefined && res.value !== null) {
+            window.__varCache[varName] = res.value;
+            if (onChange) onChange(res.value);
+          } else if (defaultValue !== undefined) {
+            window.stuard.setVar(varName, defaultValue);
+          }
+        });
+      }
+
+      if (onChange) {
+        if (!window.__varListeners[varName]) window.__varListeners[varName] = [];
+        window.__varListeners[varName].push(onChange);
+      }
+
+      const state = {
+        get value() { return window.__varCache[varName]; },
+        toString() { return String(window.__varCache[varName]); },
+        valueOf() { return window.__varCache[varName]; }
+      };
+
+      function setValue(newVal) {
+        window.__varCache[varName] = newVal;
+        window.stuard.setVar(varName, newVal);
+      }
+
+      if (!window.__varListeners[varName]) window.__varListeners[varName] = [];
+      window.__varListeners[varName].push(v => { window.__varCache[varName] = v; });
+
+      return [state, setValue];
+    };
+
     ${initScript ? `
     (async () => {
       try {
@@ -2328,6 +2909,8 @@ function renderLayout(node: any, data: any): string {
       .join(';')}"`
     : '';
   const bind = node.bind ? ` data-bind="${escapeHtml(node.bind)}"` : '';
+  const varBind = node.var ? ` data-var="${escapeHtml(node.var)}"` : '';
+  const varFormat = node.varFormat ? ` data-var-format="${escapeHtml(node.varFormat)}"` : '';
   const placeholder = node.placeholder ? ` placeholder="${escapeHtml(node.placeholder)}"` : '';
 
   let action = '';
@@ -2365,7 +2948,7 @@ function renderLayout(node: any, data: any): string {
       const val = node.bind.split('.').reduce((o: any, key: string) => (o || {})[key], data);
       if (val !== undefined) value = ` value="${escapeHtml(String(val))}"`;
     }
-    return `<input type="text"${className}${style}${bind}${placeholder}${value}${action}>`;
+    return `<input type="text"${className}${style}${bind}${varBind}${varFormat}${placeholder}${value}${action}>`;
   }
 
   if (type === 'button') {
@@ -2382,8 +2965,8 @@ function renderLayout(node: any, data: any): string {
           return escapeHtml(String(val !== undefined ? val : ''));
         })
         : renderLayout(content, data);
-    return `<span${className}${style}>${text}</span>`;
+    return `<span${className}${style}${varBind}${varFormat}>${text}</span>`;
   }
 
-  return `<${type}${className}${style}${bind}${action}>${children}</${type}>`;
+  return `<${type}${className}${style}${bind}${varBind}${varFormat}${action}>${children}</${type}>`;
 }

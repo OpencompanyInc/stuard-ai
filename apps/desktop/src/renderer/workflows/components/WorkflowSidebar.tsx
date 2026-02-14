@@ -1,8 +1,8 @@
 /**
- * WorkflowSidebar - Left sidebar with workflow list and actions
+ * WorkflowSidebar - VS Code-style explorer sidebar
  */
-import React, { useState, useMemo } from "react";
-import { Plus, ChevronLeft, ChevronRight, Home, Upload, Grid, Trash2, Search, Zap, LayoutGrid, ArrowUpCircle, Bell, Lock, Globe } from "lucide-react";
+import React, { useState, useMemo, useCallback } from "react";
+import { Plus, ChevronLeft, ChevronRight, ChevronDown, Home, Upload, Grid, Trash2, Search, Zap, ArrowUpCircle, Bell, Lock, Globe, FolderPlus, Folder, FolderOpen, Pencil, Play, MoreHorizontal } from "lucide-react";
 import type { MarketplaceUpdate } from "../../utils/cloud";
 
 interface WorkflowItem {
@@ -11,10 +11,12 @@ interface WorkflowItem {
   marketplaceSlug?: string;
   locked?: boolean;
   version?: string;
+  folder?: string;
 }
 
 interface WorkflowSidebarProps {
   items: WorkflowItem[];
+  folders: string[];
   loading: boolean;
   selectedId: string;
   runningIds: Record<string, boolean>;
@@ -29,255 +31,333 @@ interface WorkflowSidebarProps {
   onDelete: (id: string) => Promise<void>;
   onUpdate?: (id: string, update: MarketplaceUpdate) => void;
   onDashboard: () => void;
+  onCreateFolder?: () => void;
+  onRenameFolder?: (oldName: string, newName: string) => void;
+  onDeleteFolder?: (name: string) => void;
+  onMoveToFolder?: (id: string, folder: string | null) => void;
 }
 
 export function WorkflowSidebar({
-  items, loading, selectedId, runningIds, sidebarCollapsed, credits, updates,
-  onToggleCollapse, onCreate, onImport, onMarketplace, onSelect, onDelete, onUpdate, onDashboard
+  items, folders, loading, selectedId, runningIds, sidebarCollapsed, credits, updates,
+  onToggleCollapse, onCreate, onImport, onMarketplace, onSelect, onDelete, onUpdate, onDashboard,
+  onCreateFolder, onRenameFolder, onDeleteFolder, onMoveToFolder
 }: WorkflowSidebarProps) {
   const [search, setSearch] = useState("");
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [folderMenu, setFolderMenu] = useState<{ name: string; x: number; y: number } | null>(null);
+  const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
 
   const filteredItems = items.filter(i =>
     (i.name || i.id).toLowerCase().includes(search.toLowerCase())
   );
 
-  // Count available updates
+  const { rootItems, folderItems } = useMemo(() => {
+    const root: WorkflowItem[] = [];
+    const byFolder: Record<string, WorkflowItem[]> = {};
+    for (const item of filteredItems) {
+      if (item.folder) {
+        if (!byFolder[item.folder]) byFolder[item.folder] = [];
+        byFolder[item.folder].push(item);
+      } else {
+        root.push(item);
+      }
+    }
+    return { rootItems: root, folderItems: byFolder };
+  }, [filteredItems]);
+
+  const toggleFolder = useCallback((name: string) => {
+    setCollapsedFolders(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  }, []);
+
   const updateCount = useMemo(() => {
     if (!updates) return 0;
     return items.filter(i => i.marketplaceSlug && updates[i.marketplaceSlug]).length;
   }, [items, updates]);
 
+  const handleDragStart = useCallback((e: React.DragEvent, itemId: string) => {
+    e.dataTransfer.setData('workflow-id', itemId);
+    e.dataTransfer.effectAllowed = 'move';
+  }, []);
+
+  const handleFolderDrop = useCallback((e: React.DragEvent, folder: string | null) => {
+    e.preventDefault();
+    setDragOverFolder(null);
+    const wfId = e.dataTransfer.getData('workflow-id');
+    if (wfId && onMoveToFolder) onMoveToFolder(wfId, folder);
+  }, [onMoveToFolder]);
+
+  const renderWorkflowItem = (i: WorkflowItem, depth: number = 0) => {
+    const update = i.marketplaceSlug ? updates?.[i.marketplaceSlug] : undefined;
+    const hasUpdate = !!update;
+    const isSelected = selectedId === i.id;
+    const isRunning = runningIds[i.id];
+
+    return (
+      <div
+        key={i.id}
+        draggable
+        onDragStart={(e) => handleDragStart(e, i.id)}
+        onClick={() => onSelect(i.id)}
+        className={`group flex items-center gap-2 py-[5px] pr-2 cursor-pointer transition-colors relative ${
+          isSelected
+            ? 'bg-[#04395e] text-white'
+            : 'text-slate-600 hover:bg-slate-100/80'
+        }`}
+        style={{ paddingLeft: `${12 + depth * 12}px` }}
+      >
+        {/* Running indicator */}
+        {isRunning && (
+          <div className="absolute left-1 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
+        )}
+
+        {/* Workflow icon */}
+        <Zap className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-blue-300' : hasUpdate ? 'text-blue-500' : 'text-slate-400'}`} />
+
+        {/* Name */}
+        <span className={`flex-1 truncate text-[12px] ${isSelected ? 'text-white font-medium' : 'text-slate-700'}`}>
+          {i.name || i.id}
+        </span>
+
+        {/* Badges */}
+        {i.locked && <Lock className="w-3 h-3 text-amber-500 shrink-0" />}
+        {i.marketplaceSlug && !i.locked && <Globe className="w-3 h-3 shrink-0 opacity-40" />}
+
+        {/* Update badge */}
+        {hasUpdate && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onUpdate?.(i.id, update); }}
+            className="p-0.5 rounded text-blue-500 hover:text-blue-600 hover:bg-blue-50 transition-all"
+            title={`Update to v${update.latestVersion}`}
+          >
+            <ArrowUpCircle className="w-3.5 h-3.5" />
+          </button>
+        )}
+
+        {/* Delete (on hover) */}
+        <button
+          onClick={async (e) => {
+            e.stopPropagation();
+            if (!confirm(`Delete "${i.name || i.id}"?`)) return;
+            await onDelete(i.id);
+          }}
+          className={`p-0.5 rounded transition-all shrink-0 ${
+            isSelected ? 'text-white/50 hover:text-white hover:bg-white/10' : 'text-transparent group-hover:text-slate-400 hover:!text-red-500 hover:!bg-red-50'
+          }`}
+          title="Delete"
+        >
+          <Trash2 className="w-3 h-3" />
+        </button>
+      </div>
+    );
+  };
+
+  // --- Collapsed state ---
   if (sidebarCollapsed) {
     return (
-      <aside className="w-18 bg-white border-r border-slate-100 flex flex-col items-center py-4 gap-4 shrink-0 z-20 shadow-[4px_0_24px_-12px_rgba(0,0,0,0.05)]">
-        <button
-          onClick={onToggleCollapse}
-          className="p-3 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-900 rounded-xl transition-all"
-          title="Expand sidebar"
-        >
-          <ChevronRight className="w-5 h-5" />
+      <aside className="w-12 bg-white border-r border-slate-200/80 flex flex-col items-center py-3 gap-3 shrink-0 z-20">
+        <button onClick={onToggleCollapse} className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-all" title="Expand">
+          <ChevronRight className="w-4 h-4" />
         </button>
-
-        <div className="w-8 h-px bg-slate-100" />
-
-        <button
-          onClick={onCreate}
-          className="p-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl shadow-lg shadow-slate-200 transition-all hover:scale-105 active:scale-95"
-          title="New Workflow"
-        >
-          <Plus className="w-5 h-5" />
+        <div className="w-6 h-px bg-slate-100" />
+<button onClick={onCreate} className="p-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-sm transition-all" title="New Flow">
+          <Plus className="w-4 h-4" />
         </button>
-
+        <button onClick={onMarketplace} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all" title="Store">
+          <Grid className="w-4 h-4" />
+        </button>
         <div className="flex-1" />
-
-        <button
-          onClick={onDashboard}
-          className="p-3 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-xl transition-colors"
-          title="Back to Dashboard"
-        >
-          <Home className="w-5 h-5" />
+        <button onClick={onDashboard} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="Dashboard">
+          <Home className="w-4 h-4" />
         </button>
       </aside>
     );
   }
 
+  // --- Expanded state ---
   return (
-    <aside className="w-[280px] bg-[#fdfdfd] border-r border-slate-100 flex flex-col h-full shrink-0 z-20" data-onboarding="workflow-sidebar">
-      <div className="h-14 px-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
-        <div className="flex items-center gap-2.5 font-bold text-slate-800 text-sm">
-          <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-xl flex items-center justify-center shadow-sm text-white">
-            <Zap className="w-4 h-4 fill-current" />
-          </div>
-          <span>Automations</span>
+    <aside className="w-[260px] bg-white border-r border-slate-200/80 flex flex-col h-full shrink-0 z-20" data-onboarding="workflow-sidebar">
+      {/* Header */}
+      <div className="h-10 px-3 border-b border-slate-100 flex items-center justify-between shrink-0">
+        <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Explorer</span>
+        <div className="flex items-center gap-0.5">
+          <button onClick={onCreateFolder} className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded transition-colors" title="New Folder">
+            <FolderPlus className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={onCreate} className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="New Flow">
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={onToggleCollapse} className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded transition-colors" title="Collapse">
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </button>
         </div>
-        <button
-          onClick={onToggleCollapse}
-          className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-lg transition-colors"
-          title="Collapse sidebar"
-        >
-          <ChevronLeft className="w-4 h-4" />
-        </button>
       </div>
 
-      {/* Action Buttons */}
-      <div className="p-4 space-y-3">
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            onClick={onCreate}
-            className="col-span-2 flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl shadow-sm transition-all hover:shadow hover:scale-[1.01] active:scale-[0.99]"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>New Flow</span>
-          </button>
-          <button
-            onClick={onImport}
-            className="flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 text-xs font-medium rounded-xl transition-colors"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            <span>Import</span>
-          </button>
-          <button
-            onClick={onMarketplace}
-            className="flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 hover:border-violet-200 text-slate-600 hover:text-violet-600 text-xs font-medium rounded-xl transition-colors group"
-          >
-            <Grid className="w-3.5 h-3.5 group-hover:text-violet-500 transition-colors" />
-            <span>Store</span>
-          </button>
-        </div>
-
-        {/* Search */}
-        <div className="relative group">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
+      {/* Search */}
+      <div className="px-2 py-2">
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
           <input
             type="text"
-            placeholder="Search workflows..."
+            placeholder="Search..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-slate-50 hover:bg-white focus:bg-white border border-slate-200 focus:border-indigo-300 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-50 transition-all font-medium"
+            className="w-full bg-slate-50 border border-slate-200 focus:border-blue-400 rounded-lg pl-8 pr-3 py-1.5 text-[12px] text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 transition-all"
           />
         </div>
       </div>
 
-      <div className="h-px bg-slate-100 mx-4 mb-2" />
+      {/* Action buttons row */}
+      <div className="px-2 pb-2 flex gap-1.5">
+        <button onClick={onCreate} className="flex-1 flex items-center justify-center gap-1.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-medium rounded-lg shadow-sm transition-all">
+          <Plus className="w-3 h-3" /> New
+        </button>
+        <button onClick={onImport} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-medium rounded-lg transition-colors">
+          <Upload className="w-3 h-3" />
+        </button>
+        <button onClick={onMarketplace} className="px-3 py-1.5 bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 text-[11px] font-medium rounded-lg transition-colors">
+          <Grid className="w-3 h-3" />
+        </button>
+      </div>
 
-      {/* List Section */}
-      <div className="flex-1 overflow-y-auto scrollbar-minimal px-3 pb-2 space-y-1">
-        <div className="px-2 py-1.5 mb-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-          <span>Your Library</span>
-          <span className="bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-md text-[9px]">{items.length}</span>
+      {/* Update banner */}
+      {updateCount > 0 && (
+<div className="mx-2 mb-2 px-3 py-2 bg-blue-50 border border-blue-100 rounded-lg flex items-center gap-2">
+          <Bell className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+          <span className="text-[11px] font-medium text-blue-700">{updateCount} update{updateCount !== 1 ? 's' : ''}</span>
         </div>
+      )}
 
-        {/* Updates Banner */}
-        {updateCount > 0 && (
-          <div className="mx-2 mb-2 p-2.5 bg-gradient-to-r from-indigo-50 to-violet-50 border border-indigo-100 rounded-xl">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-600">
-                <Bell className="w-3.5 h-3.5" />
-              </div>
-              <div className="flex-1">
-                <div className="text-xs font-semibold text-indigo-900">
-                  {updateCount} update{updateCount !== 1 ? 's' : ''} available
-                </div>
-                <div className="text-[10px] text-indigo-600/70">
-                  From Marketplace
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+      {/* Tree section header */}
+      <div className="px-3 py-1 flex items-center gap-1.5 border-t border-slate-100">
+        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex-1">Workflows</span>
+        <span className="text-[10px] text-slate-400 tabular-nums">{items.length}</span>
+      </div>
 
+      {/* File tree */}
+      <div className="flex-1 overflow-y-auto scrollbar-minimal pb-2">
         {loading ? (
-          <div className="py-12 text-center space-y-3 opacity-50">
-            <div className="w-6 h-6 border-2 border-slate-200 border-t-indigo-500 rounded-full animate-spin mx-auto" />
+          <div className="py-12 flex justify-center">
+            <div className="w-5 h-5 border-2 border-slate-200 border-t-blue-500 rounded-full animate-spin" />
           </div>
-        ) : filteredItems.length === 0 ? (
-          <div className="py-12 text-center">
-            <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-3 text-slate-300 border border-slate-100">
-              <Search className="w-5 h-5" />
-            </div>
-            <p className="text-xs font-semibold text-slate-500">No workflows found</p>
+        ) : filteredItems.length === 0 && folders.length === 0 ? (
+          <div className="py-8 text-center px-4">
+            <Search className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+            <p className="text-[12px] text-slate-400">No workflows found</p>
           </div>
         ) : (
-          filteredItems.map(i => {
-            const update = i.marketplaceSlug ? updates?.[i.marketplaceSlug] : undefined;
-            const hasUpdate = !!update;
-            const isFromMarketplace = !!i.marketplaceSlug;
-            return (
-              <div
-                key={i.id}
-                onClick={() => onSelect(i.id)}
-                className={`group relative w-full text-left px-3 py-3 rounded-xl flex items-center gap-3 transition-all cursor-pointer border ${selectedId === i.id
-                  ? 'bg-white border-slate-200 shadow-sm z-10'
-                  : hasUpdate
-                    ? 'border-indigo-100 bg-indigo-50/30 hover:bg-indigo-50/50'
-                    : 'border-transparent hover:bg-slate-50 text-slate-600'
-                  }`}
-              >
-                {/* Status Indicator */}
-                <div className={`w-2 h-2 rounded-full shrink-0 transition-all duration-300 ${runningIds[i.id]
-                  ? 'bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.6)]'
-                  : hasUpdate ? 'bg-indigo-500 animate-pulse'
-                    : selectedId === i.id ? 'bg-indigo-500 scale-110' : 'bg-slate-200 group-hover:bg-slate-300'
-                  }`} />
-
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className={`truncate text-xs font-medium ${selectedId === i.id ? 'text-slate-900' : 'text-slate-600'}`}>
-                      {i.name || i.id}
-                    </span>
-                    {i.locked && (
-                      <span title="Locked workflow"><Lock className="w-3 h-3 text-amber-500 shrink-0" /></span>
-                    )}
-                    {isFromMarketplace && !i.locked && (
-                      <span title="From Marketplace"><Globe className="w-3 h-3 text-slate-400 shrink-0" /></span>
-                    )}
+          <>
+            {/* Folders */}
+            {folders.map(folderName => {
+              const isCollapsed = collapsedFolders.has(folderName);
+              const folderWorkflows = folderItems[folderName] || [];
+              const isDragOver = dragOverFolder === folderName;
+              return (
+                <div key={`folder-${folderName}`}>
+                  <div
+                    className={`flex items-center gap-1.5 py-[5px] px-3 cursor-pointer transition-all select-none ${
+                      isDragOver ? 'bg-blue-50' : 'hover:bg-slate-50'
+                    }`}
+                    onClick={() => toggleFolder(folderName)}
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverFolder(folderName); }}
+                    onDragLeave={() => setDragOverFolder(null)}
+                    onDrop={(e) => handleFolderDrop(e, folderName)}
+                    onContextMenu={(e) => { e.preventDefault(); setFolderMenu({ name: folderName, x: e.clientX, y: e.clientY }); }}
+                  >
+                    <ChevronRight className={`w-3 h-3 text-slate-400 transition-transform duration-150 ${isCollapsed ? '' : 'rotate-90'}`} />
+                    {isCollapsed
+                      ? <Folder className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      : <FolderOpen className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                    }
+                    <span className="text-[12px] font-medium text-slate-700 flex-1 truncate">{folderName}</span>
+                    <span className="text-[10px] text-slate-400">{folderWorkflows.length}</span>
                   </div>
-                  {hasUpdate && (
-                    <div className="text-[10px] text-indigo-600 font-medium mt-0.5">
-                      v{update.currentVersion} → v{update.latestVersion}
+                  {!isCollapsed && (
+                    <div>
+                      {folderWorkflows.map(i => renderWorkflowItem(i, 1))}
+                      {folderWorkflows.length === 0 && (
+                        <div className="py-1 pl-10 text-[11px] text-slate-400 italic">Empty</div>
+                      )}
                     </div>
                   )}
                 </div>
+              );
+            })}
 
-                {/* Actions */}
-                <div className={`flex items-center gap-1 ${hasUpdate ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}>
-                  {hasUpdate && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onUpdate?.(i.id, update);
-                      }}
-                      className="p-1.5 rounded-lg text-indigo-600 hover:text-indigo-700 hover:bg-indigo-100 transition-all"
-                      title={`Update to v${update.latestVersion}`}
-                    >
-                      <ArrowUpCircle className="w-4 h-4" />
-                    </button>
-                  )}
-                  <button
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      if (!confirm(`Delete "${i.name || i.id}"?`)) return;
-                      await onDelete(i.id);
-                    }}
-                    className={`p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all ${selectedId === i.id && !hasUpdate ? 'opacity-0' : ''
-                      }`}
-                    title="Delete workflow"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+            {/* Root items */}
+            {rootItems.length > 0 && folders.length > 0 && (
+              <div
+                className={`px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-1 transition-all ${
+                  dragOverFolder === '__root__' ? 'bg-blue-50' : ''
+                }`}
+                onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverFolder('__root__'); }}
+                onDragLeave={() => setDragOverFolder(null)}
+                onDrop={(e) => handleFolderDrop(e, null)}
+              >
+                Unfiled
               </div>
-            );
-          })
+            )}
+            {rootItems.map(i => renderWorkflowItem(i, 0))}
+          </>
         )}
       </div>
 
-      {/* Footer Section */}
-      <div className="p-4 mt-auto border-t border-slate-100 bg-white space-y-3">
+      {/* Folder Context Menu */}
+      {folderMenu && (
+        <div className="fixed inset-0 z-[100]" onClick={() => setFolderMenu(null)}>
+          <div
+            className="absolute bg-white rounded-lg shadow-xl border border-slate-200 py-1 min-w-[150px]"
+            style={{ top: Math.min(folderMenu.y, window.innerHeight - 100), left: Math.min(folderMenu.x, window.innerWidth - 170) }}
+            onClick={e => e.stopPropagation()}
+          >
+            <button
+              onClick={() => {
+                const newName = prompt('Rename folder:', folderMenu.name);
+                if (newName && newName.trim() && newName.trim() !== folderMenu.name) onRenameFolder?.(folderMenu.name, newName.trim());
+                setFolderMenu(null);
+              }}
+              className="w-full text-left px-3 py-1.5 text-[12px] text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+            >
+              <Pencil className="w-3 h-3 text-slate-400" /> Rename
+            </button>
+            <div className="h-px bg-slate-100 my-0.5" />
+            <button
+              onClick={() => {
+                if (confirm(`Delete "${folderMenu.name}"? Items will move to root.`)) onDeleteFolder?.(folderMenu.name);
+                setFolderMenu(null);
+              }}
+              className="w-full text-left px-3 py-1.5 text-[12px] text-red-600 hover:bg-red-50 flex items-center gap-2"
+            >
+              <Trash2 className="w-3 h-3" /> Delete
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Footer */}
+      <div className="border-t border-slate-100 bg-white">
         {credits && (
-          <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-            <div className="flex items-center justify-between text-[10px] uppercase font-bold text-slate-400 mb-2">
-              <span>Credits</span>
-              <span className={credits.remaining < 10 ? "text-amber-500" : "text-slate-500"}>
-                {credits.remaining} / {credits.limit}
-              </span>
+          <div className="px-3 py-2">
+            <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
+              <span className="font-medium">Credits</span>
+              <span className={credits.remaining < 10 ? "text-amber-500 font-medium" : ""}>{credits.remaining}/{credits.limit}</span>
             </div>
-            <div className="w-full h-1.5 bg-slate-200/50 rounded-full overflow-hidden">
+            <div className="w-full h-1 bg-slate-100 rounded-full overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all duration-500 ${credits.remaining < 10 ? 'bg-amber-500' : 'bg-gradient-to-r from-indigo-500 to-violet-500'
-                  }`}
+                className={`h-full rounded-full transition-all ${credits.remaining < 10 ? 'bg-amber-500' : 'bg-blue-500'}`}
                 style={{ width: `${Math.min(100, (credits.remaining / Math.max(1, credits.limit)) * 100)}%` }}
               />
             </div>
           </div>
         )}
-
         <button
           onClick={onDashboard}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 text-slate-500 hover:bg-slate-50 hover:text-slate-900 rounded-xl text-xs font-semibold transition-colors"
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 text-slate-500 hover:bg-slate-50 hover:text-slate-700 text-[11px] font-medium transition-colors"
         >
-          <Home className="w-3.5 h-3.5" />
-          <span>Dashboard</span>
+          <Home className="w-3.5 h-3.5" /> Dashboard
         </button>
       </div>
     </aside>

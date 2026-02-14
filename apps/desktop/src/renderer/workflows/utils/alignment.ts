@@ -8,8 +8,8 @@ export const NODE_WIDTH = 256;
 export const NODE_HEIGHT = 80;
 export const GRID_SIZE = 24;
 export const SNAP_THRESHOLD = 12; // Pixels within which alignment guides appear
-export const HORIZONTAL_SPACING = 320; // Spacing between nodes horizontally
-export const VERTICAL_SPACING = 140; // Spacing between nodes vertically
+export const HORIZONTAL_SPACING = 350; // Spacing between nodes horizontally (extra room for back-edge arms)
+export const VERTICAL_SPACING = 160; // Spacing between nodes vertically (extra room for stream/loop wire routing)
 
 // Types
 export interface AlignmentGuide {
@@ -279,10 +279,20 @@ export interface AutoLayoutResult {
 export function calculateAutoLayout(
   triggers: Array<{ id: string; position: { x: number; y: number } }>,
   nodes: Array<{ id: string; position: { x: number; y: number } }>,
-  wires: Array<{ from: string; to: string }>
+  wires: Array<{ from: string; to: string; stream?: any }>
 ): AutoLayoutResult {
   const START_X = 80;
   const START_Y = 120;
+
+  // Identify nodes involved in stream wires (need extra vertical space for orthogonal arms)
+  const streamSources = new Set<string>();
+  const streamTargets = new Set<string>();
+  for (const w of wires) {
+    if ((w as any).stream) {
+      streamSources.add(w.from);
+      streamTargets.add(w.to);
+    }
+  }
 
   // Build adjacency maps
   const childrenMap = new Map<string, string[]>();
@@ -344,6 +354,13 @@ export function calculateAutoLayout(
 
   // Create a set of back edges for quick lookup
   const backEdgeSet = new Set(backEdges.map(e => `${e.from}|${e.to}`));
+
+  // Nodes involved in back edges (need extra spacing for loop wire routing arms)
+  const backEdgeNodes = new Set<string>();
+  for (const e of backEdges) {
+    backEdgeNodes.add(e.from);
+    backEdgeNodes.add(e.to);
+  }
 
   // Calculate levels (columns) using BFS from triggers/root nodes
   // Level 0 = leftmost column (triggers), Level 1 = next column, etc.
@@ -455,11 +472,18 @@ export function calculateAutoLayout(
     const maxTotalHeight = maxHeight * VERTICAL_SPACING;
     const offsetY = (maxTotalHeight - totalColumnHeight) / 2;
 
+    // Track cumulative Y with per-node extra spacing for stream/loop wires
+    let runningY = START_Y + offsetY;
     group.forEach((id, idx) => {
       positions.set(id, {
-        x: snapToGrid(START_X + level * HORIZONTAL_SPACING),  // Level determines X (left to right)
-        y: snapToGrid(START_Y + offsetY + idx * VERTICAL_SPACING),  // Row determines Y (top to bottom)
+        x: snapToGrid(START_X + level * HORIZONTAL_SPACING),
+        y: snapToGrid(runningY),
       });
+      // Add extra vertical gap after nodes that are stream sources/targets or back-edge nodes
+      // Stream wire arms extend 40px vertically, loop wires extend 60px above — add padding
+      const streamGap = (streamSources.has(id) || streamTargets.has(id)) ? 50 : 0;
+      const loopGap = backEdgeNodes.has(id) ? 70 : 0;
+      runningY += VERTICAL_SPACING + Math.max(streamGap, loopGap);
     });
   }
 

@@ -1,9 +1,17 @@
 // Content script to handle DOM interactions
 
+// Generation guard: when the script is re-injected (e.g. after extension update),
+// the new instance overwrites __stuardGen, causing old listeners to silently bail out.
+const __GEN = Date.now() + Math.random();
+(window as any).__stuardGen = __GEN;
+
 console.log('Stuard AI Extension Content Script Ready');
 
 chrome.runtime.onMessage.addListener((message: any, sender: chrome.runtime.MessageSender, sendResponse: (response?: any) => void) => {
-    if (message.target !== 'content') return;
+    const target = message?.target;
+    if (target !== 'content' && target !== 'content_v2') return;
+    // If a newer content script was injected, this listener is stale — don't respond
+    if ((window as any).__stuardGen !== __GEN) return;
 
     const { action, payload, requestId } = message;
     console.log(`[Stuard-Content] Action: ${action}`, payload);
@@ -54,6 +62,10 @@ async function handleAction(action: string, payload: any): Promise<any> {
             return getFormFields(payload);
         case 'fill_form':
             return fillForm(payload);
+        case 'upload_file':
+            return uploadFile(payload);
+        case 'set_toggle':
+            return setToggle(payload);
         default:
             throw new Error(`Unknown action: ${action}`);
     }
@@ -73,8 +85,12 @@ async function clickElement(payload: any) {
     let element: HTMLElement | null = null;
 
     if (selector) {
+        // Try standard DOM first, then deep (Shadow DOM) search
         const elements = document.querySelectorAll(selector);
         element = elements[index] as HTMLElement || null;
+        if (!element) {
+            element = deepQuerySelector(selector);
+        }
     } else if (text) {
         const matches = findElementsByText(text);
         element = matches[index] || null;
@@ -111,7 +127,8 @@ async function clickElement(payload: any) {
         clicked: true,
         tag: element.tagName,
         text: element.innerText?.substring(0, 100),
-        position: { x: centerX, y: centerY }
+        position: { x: centerX, y: centerY },
+        frame: window.location.href
     };
 }
 
@@ -120,11 +137,11 @@ async function typeIntoElement(payload: any) {
     let element: HTMLInputElement | HTMLTextAreaElement | HTMLElement | null = null;
 
     if (selector) {
-        element = document.querySelector(selector);
+        element = deepQuerySelector(selector);
     } else {
         element = document.activeElement as HTMLElement;
         if (!element || element === document.body) {
-            element = document.querySelector('input:not([type="hidden"]):not([disabled]), textarea:not([disabled])');
+            element = deepQuerySelector('input:not([type="hidden"]):not([disabled]), textarea:not([disabled])');
         }
     }
 
@@ -138,17 +155,26 @@ async function typeIntoElement(payload: any) {
         if (replace) {
             element.innerHTML = '';
         }
-        document.execCommand('insertText', false, text);
+        // Use execCommand + key events for rich text editors (Google Docs, etc.)
+        for (const char of text) {
+            const keyEvent = {
+                key: char,
+                code: `Key${char.toUpperCase()}`,
+                keyCode: char.charCodeAt(0),
+                bubbles: true,
+                cancelable: true
+            };
+            element.dispatchEvent(new KeyboardEvent('keydown', keyEvent));
+            element.dispatchEvent(new KeyboardEvent('keypress', keyEvent));
+            document.execCommand('insertText', false, char);
+            element.dispatchEvent(new KeyboardEvent('keyup', keyEvent));
+        }
         element.dispatchEvent(new Event('input', { bubbles: true }));
         element.dispatchEvent(new Event('change', { bubbles: true }));
     } else if ('value' in element) {
-        // Standard input/textarea
-        if (replace) {
-            (element as HTMLInputElement).value = '';
-        }
-        (element as HTMLInputElement).value += text;
-        element.dispatchEvent(new Event('input', { bubbles: true }));
-        element.dispatchEvent(new Event('change', { bubbles: true }));
+        // Standard input/textarea - use React-compatible setter
+        const newValue = replace ? text : ((element as HTMLInputElement).value + text);
+        setNativeValue(element as HTMLInputElement, newValue);
     }
 
     if (pressEnter) {
@@ -163,7 +189,7 @@ async function typeIntoElement(payload: any) {
         }
     }
 
-    return { typed: true, length: text.length };
+    return { typed: true, length: text.length, frame: window.location.href };
 }
 
 async function findTextOnPage(payload: any) {
@@ -744,20 +770,25 @@ async function fillForm(payload: any) {
             }
 
             if (element.tagName === 'SELECT') {
-                (element as HTMLSelectElement).value = String(value);
+                setNativeValue(element as HTMLSelectElement, String(value));
             } else if (element.tagName === 'INPUT') {
                 const input = element as HTMLInputElement;
                 if (input.type === 'checkbox' || input.type === 'radio') {
-                    input.checked = Boolean(value);
+                    const desired = Boolean(value);
+                    if (input.checked !== desired) {
+                        // Click to toggle - works with React/Angular/Vue
+                        input.click();
+                    }
                 } else {
-                    input.value = String(value);
+                    setNativeValue(input, String(value));
                 }
             } else if (element.tagName === 'TEXTAREA') {
-                (element as HTMLTextAreaElement).value = String(value);
+                setNativeValue(element as HTMLTextAreaElement, String(value));
+            } else {
+                // Might be a contenteditable or custom component
+                element.dispatchEvent(new Event('input', { bubbles: true }));
+                element.dispatchEvent(new Event('change', { bubbles: true }));
             }
-
-            element.dispatchEvent(new Event('input', { bubbles: true }));
-            element.dispatchEvent(new Event('change', { bubbles: true }));
             filled.push(key);
         } catch (e: any) {
             errors.push(`Error filling ${key}: ${e.message}`);
@@ -768,12 +799,210 @@ async function fillForm(payload: any) {
         form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     }
 
-    return { filled, errors, submitted: submit && !!form };
+    return { filled, errors, submitted: submit && !!form, frame: window.location.href };
+}
+
+/**
+ * Upload a file to an <input type="file"> element using the DataTransfer API.
+ * Accepts base64-encoded file data, or a plain text string.
+ */
+async function uploadFile(payload: any) {
+    const { selector, fileName, fileType = 'application/octet-stream', fileData, text } = payload;
+
+    // Find file input - search deeply including Shadow DOM
+    let input: HTMLInputElement | null = null;
+    if (selector) {
+        input = deepQuerySelector(selector) as HTMLInputElement | null;
+    }
+    if (!input) {
+        // Try to find any visible file input
+        input = deepQuerySelector('input[type="file"]') as HTMLInputElement | null;
+    }
+    if (!input || input.type !== 'file') {
+        throw new Error('File input not found. Provide a selector pointing to an <input type="file">');
+    }
+
+    // Build file content
+    let fileContent: Uint8Array;
+    if (fileData) {
+        // Base64-encoded binary data
+        const binaryStr = atob(fileData);
+        fileContent = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) {
+            fileContent[i] = binaryStr.charCodeAt(i);
+        }
+    } else if (text) {
+        // Plain text content
+        const encoder = new TextEncoder();
+        fileContent = encoder.encode(text);
+    } else {
+        throw new Error('Provide either fileData (base64) or text content');
+    }
+
+    const buf = new ArrayBuffer(fileContent.byteLength);
+    new Uint8Array(buf).set(fileContent);
+    const file = new File([buf], fileName, { type: fileType });
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+    input.files = dataTransfer.files;
+
+    // Dispatch events that frameworks listen to
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    return {
+        uploaded: true,
+        fileName,
+        fileType,
+        size: fileContent.length,
+        frame: window.location.href
+    };
+}
+
+/**
+ * Toggle a switch, checkbox, radio, or any element with role="switch".
+ * Handles native checkboxes, custom toggle components, and ARIA switches.
+ */
+async function setToggle(payload: any) {
+    const { selector, text, value, index = 0 } = payload;
+    let element: HTMLElement | null = null;
+
+    if (selector) {
+        const elements = document.querySelectorAll(selector);
+        element = elements[index] as HTMLElement || null;
+    } else if (text) {
+        const matches = findElementsByText(text);
+        element = matches[index] || null;
+    }
+
+    if (!element) throw new Error('Toggle element not found');
+
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await sleep(100);
+
+    const tag = element.tagName.toLowerCase();
+    const role = element.getAttribute('role');
+    const type = (element as HTMLInputElement).type;
+
+    // Case 1: Native checkbox or radio
+    if (tag === 'input' && (type === 'checkbox' || type === 'radio')) {
+        const input = element as HTMLInputElement;
+        const desired = value !== undefined ? Boolean(value) : !input.checked;
+        if (input.checked !== desired) {
+            input.click(); // Click triggers change events for all frameworks
+        }
+        return {
+            toggled: true,
+            checked: input.checked,
+            type: input.type,
+            frame: window.location.href
+        };
+    }
+
+    // Case 2: ARIA switch/checkbox/toggle (role="switch", role="checkbox", etc.)
+    if (role === 'switch' || role === 'checkbox' || role === 'toggle') {
+        const isChecked = element.getAttribute('aria-checked') === 'true';
+        const desired = value !== undefined ? Boolean(value) : !isChecked;
+        if (isChecked !== desired) {
+            // Simulate full click sequence for framework compatibility
+            const rect = element.getBoundingClientRect();
+            const cx = rect.left + rect.width / 2;
+            const cy = rect.top + rect.height / 2;
+            element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy }));
+            element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy }));
+            element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy }));
+        }
+        // Re-read after click
+        await sleep(50);
+        return {
+            toggled: true,
+            checked: element.getAttribute('aria-checked') === 'true',
+            role,
+            frame: window.location.href
+        };
+    }
+
+    // Case 3: Label wrapping a checkbox - find the inner input
+    if (tag === 'label') {
+        const inner = element.querySelector('input[type="checkbox"], input[type="radio"]') as HTMLInputElement | null;
+        if (inner) {
+            const desired = value !== undefined ? Boolean(value) : !inner.checked;
+            if (inner.checked !== desired) {
+                inner.click();
+            }
+            return {
+                toggled: true,
+                checked: inner.checked,
+                type: inner.type,
+                frame: window.location.href
+            };
+        }
+    }
+
+    // Case 4: Generic clickable element (custom toggle, button-like switch)
+    const rect = element.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy }));
+    element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy }));
+    element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy }));
+
+    return {
+        toggled: true,
+        method: 'click',
+        tag,
+        frame: window.location.href
+    };
 }
 
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
+
+/**
+ * React/Angular/Vue-compatible value setter.
+ * Uses the native prototype setter to bypass framework value interception,
+ * then dispatches input + change events so the framework picks up the change.
+ */
+function setNativeValue(element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
+    const prototype = Object.getPrototypeOf(element);
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+    if (descriptor?.set) {
+        descriptor.set.call(element, value);
+    } else {
+        element.value = value;
+    }
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+/**
+ * Deep querySelector that traverses Shadow DOM boundaries.
+ * Searches the document and all open shadow roots recursively.
+ */
+function deepQuerySelector(selector: string): HTMLElement | null {
+    // Try normal DOM first
+    const found = document.querySelector(selector) as HTMLElement | null;
+    if (found) return found;
+
+    // Recursively search Shadow DOMs
+    function searchShadow(root: Document | ShadowRoot | HTMLElement): HTMLElement | null {
+        const children = root.querySelectorAll('*');
+        for (const child of children) {
+            const el = child as HTMLElement;
+            if (el.shadowRoot) {
+                const inShadow = el.shadowRoot.querySelector(selector) as HTMLElement | null;
+                if (inShadow) return inShadow;
+                // Recurse deeper
+                const deeper = searchShadow(el.shadowRoot);
+                if (deeper) return deeper;
+            }
+        }
+        return null;
+    }
+
+    return searchShadow(document);
+}
 
 function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));

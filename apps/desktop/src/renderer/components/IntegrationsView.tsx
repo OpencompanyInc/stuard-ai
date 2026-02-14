@@ -1,5 +1,5 @@
 import React from "react";
-import { Search, Link2, RefreshCw, Play, Square, Box } from "lucide-react";
+import { Search, Link2, RefreshCw, Play, Square, Box, Globe } from "lucide-react";
 import { clsx } from 'clsx';
 
 interface IntegrationsViewProps {
@@ -30,9 +30,11 @@ interface IntegrationsViewProps {
   pyRunResult: any;
   refreshPythonStatus: () => Promise<void> | void;
   refreshFfmpegStatus: () => Promise<void> | void;
+  refreshBrowserStatus: () => Promise<void> | void;
   setupPython: () => Promise<void> | void;
   installPython: () => Promise<void> | void;
   runPython: () => Promise<void> | void;
+  browserStatus: { connected: boolean; clients: number };
 }
 
 export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
@@ -63,9 +65,11 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
   pyRunResult,
   refreshPythonStatus,
   refreshFfmpegStatus,
+  refreshBrowserStatus,
   setupPython,
   installPython,
   runPython,
+  browserStatus,
 }) => {
   return (
     <div className="pb-12 max-w-6xl mx-auto">
@@ -118,7 +122,10 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
           </div>
         ) : (
           filteredIntegrations.map((i: any) => {
-            const isConnected = !!connectedMap[i.slug];
+            const isBrowser = i.slug === 'browser';
+            const isConnected = isBrowser 
+              ? browserStatus.connected
+              : !!connectedMap[i.slug];
             const isPython = i.slug === 'python';
             const isFfmpeg = i.slug === 'ffmpeg';
             const ffAvailable = !!(ffStatus && (ffStatus as any).available);
@@ -128,8 +135,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-md bg-theme-hover border border-theme shadow-sm flex items-center justify-center text-[18px] font-bold text-theme-fg group-hover:scale-105 transition-transform duration-300">
-                        {/* Placeholder icon logic - ideally fetch actual logos */}
-                        {i.name[0]}
+                        {isBrowser ? <Globe className="w-5 h-5" /> : i.name[0]}
                     </div>
                     <div>
                       <h3 className="font-bold text-[14px] text-theme-fg tracking-tight">{i.name}</h3>
@@ -205,9 +211,55 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
                   </div>
                 )}
 
+                {isBrowser && (
+                  <div className="mb-5 p-3 bg-theme-bg rounded-theme-card border border-theme space-y-3">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-semibold text-theme-muted uppercase tracking-wide">Extension</span>
+                      <div className="flex items-center gap-2">
+                        <span className={clsx("font-mono", browserStatus.connected ? "text-emerald-400" : "text-theme-muted")}>
+                          {browserStatus.connected ? `Connected (${browserStatus.clients} tab${browserStatus.clients !== 1 ? 's' : ''})` : 'Not detected'}
+                        </span>
+                        <button
+                          onClick={() => refreshBrowserStatus()}
+                          className="p-1 rounded-theme-button text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all"
+                          title="Refresh status"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-semibold text-theme-muted uppercase tracking-wide">Server</span>
+                      <span className="font-mono text-theme-muted">ws://127.0.0.1:18081</span>
+                    </div>
+                    {!browserStatus.connected && (
+                      <div className="text-[10px] text-theme-muted leading-relaxed p-2.5 bg-theme-hover/50 rounded-theme-button border border-theme/50 space-y-1.5">
+                        <p><strong className="text-theme-fg">1.</strong> Install the Stuard Browser Extension</p>
+                        <p><strong className="text-theme-fg">2.</strong> Ensure Stuard Desktop is running</p>
+                        <p><strong className="text-theme-fg">3.</strong> Open any web page and check the extension icon</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="pt-4 border-t border-theme flex items-center gap-2 mt-auto">
                   {i.available ? (
-                    isConnected ? (
+                    isBrowser ? (
+                      <>
+                        <div className="flex-1 text-[11px] text-theme-muted font-medium">
+                          {browserStatus.connected 
+                            ? 'Extension is active and ready'
+                            : 'Install extension and ensure desktop app is running'}
+                        </div>
+                        <button 
+                          onClick={() => handleLearnMore(i.homepage)}
+                          className="px-3 py-2 rounded-theme-button text-theme-muted hover:text-theme-fg hover:bg-theme-hover border border-transparent hover:border-theme transition-all"
+                          title="Learn More"
+                        >
+                          <Link2 className="w-4 h-4" />
+                        </button>
+                      </>
+                    ) : isConnected ? (
                       isFfmpeg ? (
                         <>
                           <button

@@ -65,7 +65,8 @@ export async function execSetVariable(args: any, ctx: RouterContext): Promise<an
   const rawName = String(args?.name || '').trim();
   if (!rawName) return { ok: false, error: 'missing_variable_name' };
   const name = resolveVariableNameForSet(rawName);
-  const entry = setVariable(name, args?.value, args?.type, args?.flowId);
+  const silent = args?.notifyUi === false;
+  const entry = setVariable(name, args?.value, args?.type, args?.flowId, silent);
   ctx.logFn(`📝 Set ${name} = ${JSON.stringify(entry.value)} (${entry.type})`);
   console.log(`[VARS] SET ${name} = ${JSON.stringify(entry.value)}`);
   return { ok: true, name, ...entry };
@@ -107,7 +108,8 @@ export async function execToggleVariable(args: any, ctx: RouterContext): Promise
   // If not a boolean, treat falsy as false
   const asBool = typeof currentVal === 'boolean' ? currentVal : !!currentVal;
   const newVal = !asBool;
-  const entry = setVariable(name, newVal, 'boolean', args?.flowId);
+  const silent = args?.notifyUi === false;
+  const entry = setVariable(name, newVal, 'boolean', args?.flowId, silent);
   ctx.logFn(`🔄 Toggle ${name}: ${asBool} → ${newVal}`);
   console.log(`[VARS] TOGGLE ${name}: ${asBool} → ${newVal}`);
   return { ok: true, name, previousValue: currentVal, ...entry };
@@ -121,7 +123,8 @@ export async function execIncrementVariable(args: any, ctx: RouterContext): Prom
   const current = variableStore.get(name);
   const currentNum = typeof current?.value === 'number' ? current.value : 0;
   const newVal = currentNum + amount;
-  const entry = setVariable(name, newVal, 'number', args?.flowId);
+  const silent = args?.notifyUi === false;
+  const entry = setVariable(name, newVal, 'number', args?.flowId, silent);
   ctx.logFn(`➕ Increment ${name}: ${currentNum} → ${newVal}`);
   return { ok: true, name, previousValue: currentNum, ...entry };
 }
@@ -134,7 +137,8 @@ export async function execAppendToList(args: any, ctx: RouterContext): Promise<a
   const currentList = Array.isArray(current?.value) ? current.value : [];
   const item = args?.item ?? args?.value;
   const newList = [...currentList, item];
-  const entry = setVariable(name, newList, 'list', args?.flowId);
+  const silent = args?.notifyUi === false;
+  const entry = setVariable(name, newList, 'list', args?.flowId, silent);
   ctx.logFn(`📋 Append to ${name}: [${currentList.length} items] → [${newList.length} items]`);
   return { ok: true, name, previousLength: currentList.length, ...entry };
 }

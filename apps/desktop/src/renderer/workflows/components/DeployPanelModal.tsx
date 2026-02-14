@@ -75,7 +75,7 @@ export function DeployPanelModal({
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg shadow-violet-200">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-sky-600 flex items-center justify-center shadow-lg shadow-blue-200">
               <Rocket className="w-4.5 h-4.5 text-white" />
             </div>
             <div>
@@ -196,7 +196,7 @@ export function DeployPanelModal({
             ) : (
               <button 
                 onClick={onDeploy} 
-                className="group w-full flex items-center justify-center gap-2.5 px-4 py-3.5 text-sm font-medium text-white bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700 rounded-xl shadow-lg shadow-violet-200 transition-all hover:shadow-xl hover:shadow-violet-300 hover:-translate-y-0.5"
+                className="group w-full flex items-center justify-center gap-2.5 px-4 py-3.5 text-sm font-medium text-white bg-gradient-to-r from-blue-500 to-sky-600 hover:from-blue-600 hover:to-sky-700 rounded-xl shadow-lg shadow-blue-200 transition-all hover:shadow-xl hover:shadow-blue-300 hover:-translate-y-0.5"
               >
                 <Rocket className="w-4 h-4 group-hover:-translate-y-0.5 group-hover:translate-x-0.5 transition-transform" />
                 <span>Deploy Workflow</span>
@@ -217,7 +217,7 @@ export function DeployPanelModal({
             </button>
             <button 
               onClick={onPublish}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-violet-600 bg-white hover:bg-violet-50 border border-violet-200 rounded-xl transition-all hover:border-violet-300"
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-blue-600 bg-white hover:bg-blue-50 border border-blue-200 rounded-xl transition-all hover:border-blue-300"
             >
               <Upload className="w-4 h-4" />
               <span>Publish to Marketplace</span>

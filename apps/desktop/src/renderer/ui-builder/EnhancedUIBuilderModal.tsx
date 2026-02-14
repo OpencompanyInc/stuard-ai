@@ -27,6 +27,7 @@ import { UIBuilderCanvas, type UIBuilderCanvasRef, type SelectedElementInfo } fr
 import { WindowPropertiesPanel } from './components/WindowPropertiesPanel';
 import { PageFlowBuilder } from './components/PageFlowBuilder';
 import type { UIWindowConfig, UIPage, PageFlowDesign } from './types';
+import { generatePreactComponent } from './utils/codeGenerator';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -137,8 +138,10 @@ interface EnhancedUIBuilderModalProps {
   pages?: Record<string, any>;
   startPage?: string;
   mode?: 'create' | 'update';
+  outputMode?: 'html' | 'preact';
   windowConfig: UIWindowConfig;
   onSave: (args: { html: string; css: string; js: string; window: any; pages?: Record<string, any>; startPage?: string }) => void;
+  onSaveComponent?: (args: { component: string; css: string; window: any }) => void;
   onClose: () => void;
 }
 
@@ -147,11 +150,13 @@ interface EnhancedUIBuilderModalProps {
 function ElementPropertyEditor({
   element,
   onUpdateProperty,
+  onUpdateAttribute,
   onUpdateStyle,
   pages,
 }: {
   element: SelectedElementInfo;
   onUpdateProperty: (updates: { textContent?: string; className?: string; id?: string }) => void;
+  onUpdateAttribute: (name: string, value: string) => void;
   onUpdateStyle: (property: string, value: string) => void;
   pages?: Record<string, any>;
 }) {
@@ -167,12 +172,7 @@ function ElementPropertyEditor({
   const currentClass = element.className || '';
 
   const updateAttribute = (name: string, value: string) => {
-    // We update via className manipulation for data attributes
-    // The canvas updateElement supports className and style changes
-    // For data-* attributes, we need to work through the class/style system
-    // Actually, we can pass them through the style update mechanism
-    // For now, let's use a workaround: encode data attrs in a special way
-    onUpdateProperty({ className: currentClass }); // trigger refresh
+    onUpdateAttribute(name, value);
   };
 
   const sections = [
@@ -357,7 +357,7 @@ function ElementPropertyEditor({
               <input
                 type="text"
                 value={attrs['data-bind'] || ''}
-                readOnly
+                onChange={(e) => updateAttribute('data-bind', e.target.value)}
                 className="w-full px-3 py-2 text-sm font-mono bg-white border border-blue-200 rounded-lg text-blue-700"
                 placeholder="field_name"
               />
@@ -385,7 +385,7 @@ function ElementPropertyEditor({
               <input
                 type="text"
                 value={attrs['data-action'] || ''}
-                readOnly
+                onChange={(e) => updateAttribute('data-action', e.target.value)}
                 className="w-full px-3 py-2 text-sm font-mono bg-white border border-emerald-200 rounded-lg text-emerald-700"
                 placeholder="action_name"
               />
@@ -410,7 +410,7 @@ function ElementPropertyEditor({
               <input
                 type="text"
                 value={attrs['data-navigate'] || ''}
-                readOnly
+                onChange={(e) => updateAttribute('data-navigate', e.target.value)}
                 className="w-full px-3 py-2 text-sm font-mono bg-white border border-purple-200 rounded-lg text-purple-700"
                 placeholder="page_name"
               />
@@ -733,8 +733,10 @@ export function EnhancedUIBuilderModal({
   pages: initialPages,
   startPage: initialStartPage,
   mode = 'create',
+  outputMode = 'html',
   windowConfig: initialWindowConfig,
   onSave,
+  onSaveComponent,
   onClose,
 }: EnhancedUIBuilderModalProps) {
   const canvasRef = useRef<UIBuilderCanvasRef>(null);
@@ -925,6 +927,18 @@ export function EnhancedUIBuilderModal({
     }
   }, [selectedPath]);
 
+  const updateElementAttribute = useCallback((name: string, value: string) => {
+    if (selectedPath && canvasRef.current && name) {
+      canvasRef.current.updateElement(selectedPath, {
+        attributes: {
+          [name]: value,
+        },
+      });
+      needsSyncRef.current = true;
+      setTimeout(() => canvasRef.current?.requestHtml(), 100);
+    }
+  }, [selectedPath]);
+
   const updateElementStyle = useCallback((property: string, value: string) => {
     if (selectedPath && canvasRef.current) {
       const currentStyle = selectedElement?.attributes?.style || '';
@@ -1000,6 +1014,16 @@ export function EnhancedUIBuilderModal({
     if (componentId) addComponent(componentId, { clientX: e.clientX, clientY: e.clientY });
   }, [addComponent]);
 
+  // Save helper - dispatches to correct handler based on outputMode
+  const doSave = useCallback(() => {
+    if (outputMode === 'preact' && onSaveComponent) {
+      const component = generatePreactComponent(html, css, js);
+      onSaveComponent({ component, css, window: windowConfig });
+    } else {
+      onSave({ html, css, js, window: windowConfig, pages, startPage });
+    }
+  }, [outputMode, html, css, js, windowConfig, pages, startPage, onSave, onSaveComponent]);
+
   // Auto-save with debounce
   useEffect(() => {
     if (!hasMountedRef.current) {
@@ -1009,12 +1033,12 @@ export function EnhancedUIBuilderModal({
     if (!needsSyncRef.current) return;
 
     const timeout = setTimeout(() => {
-      onSave({ html, css, js, window: windowConfig, pages, startPage });
+      doSave();
       needsSyncRef.current = false;
     }, 300);
 
     return () => clearTimeout(timeout);
-  }, [html, css, js, pages, startPage, windowConfig, onSave]);
+  }, [html, css, js, pages, startPage, windowConfig, doSave]);
 
   // Track changes
   useEffect(() => {
@@ -1024,10 +1048,10 @@ export function EnhancedUIBuilderModal({
   // Handle close
   const handleClose = useCallback(() => {
     if (needsSyncRef.current) {
-      onSave({ html, css, js, window: windowConfig, pages, startPage });
+      doSave();
     }
     onClose();
-  }, [html, css, js, windowConfig, pages, startPage, onSave, onClose]);
+  }, [doSave, onClose]);
 
   // Zoom handlers
   const handleZoomIn = () => setZoom(z => Math.min(z + 0.25, 2));
@@ -1156,7 +1180,7 @@ export function EnhancedUIBuilderModal({
           <>
             {/* Left Panel - Component Palette */}
             {!previewMode && (
-              <div className="w-56 bg-white border-r border-slate-200 flex flex-col overflow-hidden">
+              <div className="w-56 shrink-0 bg-white border-r border-slate-200 flex flex-col overflow-hidden">
                 {/* Category Tabs */}
                 <div className="flex flex-wrap gap-1 p-2 border-b border-slate-200 bg-slate-50/50">
                   {PALETTE_CATEGORIES.map(cat => (
@@ -1212,7 +1236,7 @@ export function EnhancedUIBuilderModal({
             )}
 
             {/* Canvas Area */}
-            <div className={`flex-1 flex flex-col min-h-0 transition-all ${isDragOver ? 'ring-4 ring-indigo-300 ring-inset bg-indigo-50/30' : ''}`}>
+            <div className={`flex-1 min-w-0 flex flex-col min-h-0 transition-all ${isDragOver ? 'ring-4 ring-indigo-300 ring-inset bg-indigo-50/30' : ''}`}>
               {/* Page Tabs */}
               {!previewMode && (
                 <div className="flex items-center gap-1 px-3 py-1.5 bg-slate-50 border-b border-slate-200 overflow-x-auto shrink-0">
@@ -1308,7 +1332,10 @@ export function EnhancedUIBuilderModal({
                   js={getCurrentJs()}
                   canvasWidth={windowConfig.width}
                   canvasHeight={windowConfig.height}
-                  backgroundColor={windowConfig.backgroundType === 'color' ? (windowConfig.backgroundColor || '#1a1a2e') : '#1a1a2e'}
+                  windowPosition={windowConfig.position}
+                  customX={windowConfig.customX}
+                  customY={windowConfig.customY}
+                  backgroundColor="#ffffff"
                   zoom={zoom}
                   showGrid={showGrid}
                   gridSize={8}
@@ -1323,7 +1350,7 @@ export function EnhancedUIBuilderModal({
 
             {/* Right Panel - Properties / Code */}
             {!previewMode && (
-              <div className="w-80 bg-white border-l border-slate-200 flex flex-col overflow-hidden">
+              <div className="w-80 shrink-0 bg-white border-l border-slate-200 flex flex-col overflow-hidden">
                 {/* Right Panel Tabs */}
                 <div className="flex border-b border-slate-200 shrink-0">
                   <button
@@ -1356,6 +1383,7 @@ export function EnhancedUIBuilderModal({
                     <ElementPropertyEditor
                       element={selectedElement}
                       onUpdateProperty={updateElementProperty}
+                      onUpdateAttribute={updateElementAttribute}
                       onUpdateStyle={updateElementStyle}
                       pages={pages}
                     />
@@ -1379,33 +1407,71 @@ export function EnhancedUIBuilderModal({
                         Editing: {currentPage}
                       </div>
                     )}
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">HTML</label>
-                      <textarea
-                        value={getCurrentHtml()}
-                        onChange={(e) => updateCurrentHtml(e.target.value)}
-                        className="w-full h-40 px-2.5 py-2 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
-                        spellCheck={false}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">CSS</label>
-                      <textarea
-                        value={getCurrentCss()}
-                        onChange={(e) => updateCurrentCss(e.target.value)}
-                        className="w-full h-28 px-2.5 py-2 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
-                        spellCheck={false}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">JavaScript</label>
-                      <textarea
-                        value={getCurrentJs()}
-                        onChange={(e) => updateCurrentJs(e.target.value)}
-                        className="w-full h-28 px-2.5 py-2 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
-                        spellCheck={false}
-                      />
-                    </div>
+
+                    {outputMode === 'preact' ? (
+                      <>
+                        <div className="text-[10px] text-slate-400 bg-slate-50 px-2.5 py-1.5 rounded-lg">
+                          Generated Preact component preview. Edit elements on the canvas — code updates on save.
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">Preact Component</label>
+                          <textarea
+                            value={generatePreactComponent(getCurrentHtml(), getCurrentCss(), getCurrentJs())}
+                            readOnly
+                            className="w-full h-72 px-2.5 py-2 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none text-slate-700"
+                            spellCheck={false}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">HTML (editable)</label>
+                          <textarea
+                            value={getCurrentHtml()}
+                            onChange={(e) => updateCurrentHtml(e.target.value)}
+                            className="w-full h-32 px-2.5 py-2 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                            spellCheck={false}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">CSS</label>
+                          <textarea
+                            value={getCurrentCss()}
+                            onChange={(e) => updateCurrentCss(e.target.value)}
+                            className="w-full h-20 px-2.5 py-2 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                            spellCheck={false}
+                          />
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">HTML</label>
+                          <textarea
+                            value={getCurrentHtml()}
+                            onChange={(e) => updateCurrentHtml(e.target.value)}
+                            className="w-full h-40 px-2.5 py-2 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                            spellCheck={false}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">CSS</label>
+                          <textarea
+                            value={getCurrentCss()}
+                            onChange={(e) => updateCurrentCss(e.target.value)}
+                            className="w-full h-28 px-2.5 py-2 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                            spellCheck={false}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">JavaScript</label>
+                          <textarea
+                            value={getCurrentJs()}
+                            onChange={(e) => updateCurrentJs(e.target.value)}
+                            className="w-full h-28 px-2.5 py-2 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                            spellCheck={false}
+                          />
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>

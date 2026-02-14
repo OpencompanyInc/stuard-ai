@@ -45,6 +45,8 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'browser_scroll_to': { kind: 'electron' },
   'browser_get_page_info': { kind: 'electron' },
   'browser_execute_script': { kind: 'electron' },
+  'browser_upload_file': { kind: 'electron' },
+  'browser_set_toggle': { kind: 'electron' },
 
   // Variable management tools (electron-native)
   'set_variable': { kind: 'electron' },
@@ -100,6 +102,11 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'run_sequential': { kind: 'orchestration' },
   'run_parallel': { kind: 'orchestration' },
   'loop_executor': { kind: 'orchestration' },
+
+  // AI Agent workflow nodes (synchronous, cloud-side)
+  'agent_node': { kind: 'cloud', handler: '/tools/agent_node' },
+  'agent_decision': { kind: 'cloud', handler: '/tools/agent_decision' },
+  'agent_extract': { kind: 'cloud', handler: '/tools/agent_extract' },
 
   // Cloud AI tools
   'analyze_media': { kind: 'cloud', handler: '/inference/ai/analyze-media' },
@@ -158,6 +165,11 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'github_list_repos': { kind: 'cloud' },
   'github_list_issues': { kind: 'cloud' },
   'github_create_issue': { kind: 'cloud' },
+
+  // Embeddings (cloud-side, requires OpenAI API)
+  'embed_text': { kind: 'cloud' },
+  'vector_similarity': { kind: 'cloud' },
+  'embed_and_store': { kind: 'cloud' },
 
   // Everything else goes to local Python agent
   // (default if not in registry)

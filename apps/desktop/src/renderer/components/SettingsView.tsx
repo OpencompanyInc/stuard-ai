@@ -47,8 +47,6 @@ interface SettingsViewProps {
   setWakewordEnabled: (v: boolean) => void;
   terminalEnabled: boolean;
   setTerminalEnabled: (v: boolean) => void;
-  browserEnabled: boolean;
-  setBrowserEnabled: (v: boolean) => void;
   handleSaveTheme: () => void;
   tone: TonePreset;
   setTone: (t: TonePreset) => void;
@@ -298,7 +296,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   translucentMode, setTranslucentMode,
   wakewordEnabled, setWakewordEnabled,
   terminalEnabled, setTerminalEnabled,
-  browserEnabled, setBrowserEnabled,
   handleSaveTheme,
   tone, setTone,
   customTone, setCustomTone,
@@ -411,13 +408,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <span className="text-[13px] font-bold text-theme-fg">Terminal Access</span>
             </label>
             <p className="text-[11px] text-theme-muted mt-1 pl-7 font-bold">Interactive terminal and command execution.</p>
-          </div>
-          <div className="p-4 rounded-theme-button bg-theme-hover/50 border border-theme">
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input type="checkbox" checked={browserEnabled} onChange={(e) => setBrowserEnabled(e.target.checked)} className="w-4 h-4 rounded border-theme bg-theme-card text-primary focus:ring-primary" />
-              <span className="text-[13px] font-bold text-theme-fg">Browser Integration</span>
-            </label>
-            <p className="text-[11px] text-theme-muted mt-1 pl-7 font-bold">Browser extension and web automation tools.</p>
           </div>
         </div>
       </div>

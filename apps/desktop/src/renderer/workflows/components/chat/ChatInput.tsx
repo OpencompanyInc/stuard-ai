@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { Link2 } from "lucide-react";
+import { Link2, Square } from "lucide-react";
 
 // Check if any URL is present
 function extractAnyUrl(text: string): string | null {
@@ -11,9 +11,11 @@ function extractAnyUrl(text: string): string | null {
 export function ChatInput({
   onSend,
   busy,
+  onStop,
 }: {
   onSend: (text: string) => void;
   busy: boolean;
+  onStop?: () => void;
 }) {
   const [text, setText] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
@@ -132,14 +134,26 @@ export function ChatInput({
           }}
           disabled={busy}
         />
-        <button
-          type="button"
-          onClick={send}
-          disabled={busy || text.trim().length === 0}
-          className="px-3 py-2 rounded-lg text-[13px] font-semibold bg-indigo-600 text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-indigo-700 transition-colors"
-        >
-          Send
-        </button>
+        {busy && onStop ? (
+          <button
+            type="button"
+            onClick={onStop}
+            className="px-3 py-2 rounded-lg text-[13px] font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors flex items-center gap-1.5"
+            title="Stop generating"
+          >
+            <Square className="w-3 h-3 fill-current" />
+            Stop
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={send}
+            disabled={busy || text.trim().length === 0}
+            className="px-3 py-2 rounded-lg text-[13px] font-semibold bg-indigo-600 text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-indigo-700 transition-colors"
+          >
+            Send
+          </button>
+        )}
       </div>
     </div>
   );

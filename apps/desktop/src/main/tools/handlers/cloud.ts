@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { net } from 'electron';
+import WebSocket from 'ws';
 import { RouterContext } from '../types';
 import { TOOL_REGISTRY } from '../registry';
 
@@ -23,6 +24,13 @@ export async function execCloudTool(tool: string, args: any, ctx: RouterContext)
     }
     
     const url = `${ctx.cloudAiUrl}${endpoint}`;
+
+    // Agent tools use the bridged WS path so they can call local tools
+    const isAgentTool = tool === 'agent_node' || tool === 'agent_decision' || tool === 'agent_extract';
+    if (isAgentTool) {
+      return execAgentToolBridged(tool, args, ctx);
+    }
+
     ctx.logFn(`Cloud AI: ${tool}`);
 
     // Build headers with optional auth token
@@ -31,23 +39,178 @@ export async function execCloudTool(tool: string, args: any, ctx: RouterContext)
       headers['Authorization'] = `Bearer ${ctx.accessToken}`;
     }
 
-    const resp = await net.fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(args),
-    });
-    
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => '');
-      return { ok: false, error: `cloud_error_${resp.status}: ${errText}` };
+    const controller = new AbortController();
+    const timeoutMs = 120000; // 2 min default for cloud tools
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const resp = await net.fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(args),
+        signal: controller.signal as any,
+      });
+      
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        return { ok: false, error: `cloud_error_${resp.status}: ${errText}` };
+      }
+      
+      const result = await resp.json();
+
+      // Backward-compat for generic /tools route response shape: { ok: true, result: <toolResult> }
+      const nested = result?.result;
+      if (result?.ok === true && nested && typeof nested === 'object') {
+        if ((nested as any).ok === false) return nested;
+        if ((nested as any).validationErrors) {
+          return {
+            ok: false,
+            error: (nested as any).message || (nested as any).error || 'validation_failed',
+            validationErrors: (nested as any).validationErrors,
+          };
+        }
+        return nested;
+      }
+
+      return { ok: true, ...result };
+    } finally {
+      clearTimeout(timer);
     }
-    
-    const result = await resp.json();
-    return { ok: true, ...result };
   } catch (e: any) {
     ctx.logFn(`Cloud AI error: ${e?.message}`);
     return { ok: false, error: String(e?.message || 'cloud_failed') };
   }
+}
+
+/**
+ * Execute agent tools (agent_node, agent_decision, agent_extract) via a temporary
+ * WebSocket bridge to the cloud. This allows the cloud-side agent to relay
+ * tool_request messages back to the desktop for local tool execution.
+ */
+async function execAgentToolBridged(tool: string, args: any, ctx: RouterContext): Promise<any> {
+  const model = args?.model || 'balanced';
+  const mode = args?.outputMode || '';
+  ctx.logFn(`🤖 AI Agent: ${tool} (model=${model}${mode ? ', mode=' + mode : ''})`);
+
+  // Convert HTTP URL to WS URL
+  let wsUrl = ctx.cloudAiUrl.replace(/\/+$/, '');
+  if (wsUrl.startsWith('https://')) wsUrl = 'wss://' + wsUrl.slice('https://'.length);
+  else if (wsUrl.startsWith('http://')) wsUrl = 'ws://' + wsUrl.slice('http://'.length);
+  wsUrl += '/ws';
+
+  const reqId = `bridged-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const totalTimeoutMs = Math.max(Number(args?.timeoutMs || 0), 300000) + 60000; // tool timeout + 60s buffer
+
+  return new Promise<any>((resolve) => {
+    let done = false;
+    const finish = (result: any) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try { ws.close(); } catch {}
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => {
+      ctx.logFn(`✗ Agent timed out after ${totalTimeoutMs / 1000}s`);
+      finish({ ok: false, error: 'agent_timeout' });
+    }, totalTimeoutMs);
+
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch (e: any) {
+      clearTimeout(timer);
+      ctx.logFn(`✗ Agent WS connect failed: ${e?.message}`);
+      resolve({ ok: false, error: `ws_connect_failed: ${e?.message}` });
+      return;
+    }
+
+    const connectTimeout = setTimeout(() => {
+      if (!done) {
+        ctx.logFn(`✗ Agent WS connect timed out`);
+        finish({ ok: false, error: 'ws_connect_timeout' });
+      }
+    }, 15000);
+
+    ws.on('error', (e: Error) => {
+      clearTimeout(connectTimeout);
+      ctx.logFn(`✗ Agent WS error: ${e?.message}`);
+      finish({ ok: false, error: `ws_error: ${e?.message}` });
+    });
+
+    ws.on('close', () => {
+      clearTimeout(connectTimeout);
+      if (!done) {
+        finish({ ok: false, error: 'ws_closed_unexpectedly' });
+      }
+    });
+
+    ws.on('open', () => {
+      clearTimeout(connectTimeout);
+      // Send the bridged tool execution request
+      try {
+        ws.send(JSON.stringify({
+          type: 'exec_tool_bridged',
+          id: reqId,
+          tool,
+          args,
+          auth: ctx.accessToken ? { accessToken: ctx.accessToken } : undefined,
+        }));
+      } catch (e: any) {
+        finish({ ok: false, error: `ws_send_failed: ${e?.message}` });
+      }
+    });
+
+    ws.on('message', async (buf: WebSocket.RawData) => {
+      let msg: any;
+      try {
+        msg = JSON.parse(Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf));
+      } catch { return; }
+
+      const type = String(msg?.type || '').toLowerCase();
+
+      // Cloud agent wants to execute a local tool — relay it
+      if (type === 'tool_request') {
+        const toolReqId = String(msg?.id || '');
+        const reqTool = String(msg?.tool || '').trim();
+        const reqArgs = msg?.args || {};
+
+        if (!reqTool || !toolReqId) return;
+
+        ctx.logFn(`  ↳ Agent calling: ${reqTool}`);
+        try {
+          const { execTool } = await import('../index');
+          const result = await execTool(reqTool, reqArgs, ctx);
+          // Send result back to cloud
+          try {
+            ws.send(JSON.stringify({ type: 'tool_result', id: toolReqId, result }));
+          } catch {}
+        } catch (e: any) {
+          try {
+            ws.send(JSON.stringify({ type: 'tool_result', id: toolReqId, result: { ok: false, error: e?.message || 'local_exec_failed' } }));
+          } catch {}
+        }
+        return;
+      }
+
+      // Final result from the bridged tool execution
+      if (type === 'exec_tool_bridged_result' && String(msg?.id || '') === reqId) {
+        const result = msg?.result || { ok: false, error: 'empty_result' };
+        const dur = result?.durationMs ? `${(result.durationMs / 1000).toFixed(1)}s` : '';
+        const calls = result?.toolCalls ? `, ${result.toolCalls} tool calls` : '';
+        if (result?.ok !== false) {
+          ctx.logFn(`✓ Agent done${dur ? ' in ' + dur : ''}${calls}`);
+        } else {
+          ctx.logFn(`✗ Agent failed: ${result?.error || 'unknown'}`);
+        }
+        finish(result);
+        return;
+      }
+
+      // Ignore handshake and other messages
+    });
+  });
 }
 
 /**

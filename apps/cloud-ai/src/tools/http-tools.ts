@@ -54,6 +54,7 @@ export const http_request = createTool({
     save_to: z.string().optional().describe('If set, stream response body to this local file path'),
 
     forwardToStreamId: z.string().optional().describe('If set, stream response body chunks to this stream id and close it when complete'),
+    stream: z.boolean().optional().default(false).describe('When true, auto-creates a data stream and forwards the response body chunks to it. Returns a streamId for downstream stream wire consumption. Great for SSE/chunked APIs.'),
 
     retries: z.number().int().optional().default(0).describe('Retry count on transient errors / statuses'),
     retry_delay_ms: z.number().int().optional().default(500).describe('Delay between retries in ms'),
@@ -71,14 +72,39 @@ export const http_request = createTool({
     elapsed_ms: z.number().optional(),
     truncated: z.boolean().optional(),
     saved_to: z.string().optional(),
+    streamId: z.string().optional().describe('Stream ID when stream=true'),
     error: z.string().optional(),
   }),
   execute: async (inputData, { writer }) => {
     if (!hasClientBridge()) {
       return { ok: false, error: 'No desktop bridge available' };
     }
-    const timeoutMs = Number((inputData as any)?.timeoutMs);
+
+    const args = inputData as any;
+
+    // Stream mode: auto-create a stream and set forwardToStreamId
+    if (args?.stream && !args?.forwardToStreamId) {
+      const streamResult = await execLocalTool('stream_create', {
+        kind: 'text',
+        sourceStepId: 'http_request',
+        metadata: { url: args.url, method: args.method || 'GET' },
+      });
+
+      if (!streamResult?.ok || !streamResult?.streamId) {
+        return { ok: false, error: 'Failed to create stream for HTTP response' };
+      }
+
+      // Forward to the auto-created stream — the agent-side http_request
+      // already supports forwardToStreamId
+      args.forwardToStreamId = streamResult.streamId;
+      const timeoutMs = Number(args?.timeoutMs);
+      const t = Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs + 15000, 1800000) : 300000;
+      const result = await execLocalTool('http_request', args, writer as any, t);
+      return { ...result, streamId: streamResult.streamId };
+    }
+
+    const timeoutMs = Number(args?.timeoutMs);
     const t = Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs + 15000, 1800000) : 300000;
-    return await execLocalTool('http_request', inputData as any, writer as any, t);
+    return await execLocalTool('http_request', args, writer as any, t);
   },
 });

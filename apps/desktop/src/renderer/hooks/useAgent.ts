@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { supabase, getValidAccessToken, ensureFreshToken, setupAutoRefresh } from '../auth/authManager';
 
 const HIDDEN_TOOL_NAMES = new Set([
@@ -90,9 +90,90 @@ export interface PendingMemory {
 
 // Stream chunk types for interleaved display
 export type StreamChunk =
-  | { type: 'text'; content: string }
-  | { type: 'reasoning'; content: string }
-  | { type: 'tool'; tool: ToolCall };
+| { type: 'text'; content: string }
+| { type: 'reasoning'; content: string }
+| { type: 'tool'; tool: ToolCall };
+
+// Hidden state for AI context - tracks IDs and tool results that should be remembered
+// This is NOT rendered in the UI but sent to the AI for context continuity
+export interface HiddenState {
+  terminals: Map<string, { terminalId: string; command: string; status: 'running' | 'exited' | 'error'; exitCode?: number; createdAt: number; }>;
+  subagents: Map<string, { taskId: string; objective: string; status: 'running' | 'completed' | 'failed' | 'cancelled'; result?: any; createdAt: number; }>;
+  toolResults: Map<string, { toolCallId: string; tool: string; args: any; result: any; timestamp: number; }>;
+  lastUpdated: number;
+}
+
+export interface HiddenStateSummary {
+  terminals: Array<{ terminalId: string; command: string; status: string; exitCode?: number; }>;
+  subagents: Array<{ taskId: string; objective: string; status: string; resultPreview?: string; }>;
+  recentToolResults: Array<{ tool: string; resultPreview: string; timestamp: number; }>;
+}
+
+export function createEmptyHiddenState(): HiddenState {
+  return {
+    terminals: new Map(),
+    subagents: new Map(),
+    toolResults: new Map(),
+    lastUpdated: Date.now(),
+  };
+}
+
+export function summarizeHiddenState(state: HiddenState, maxResults: number = 20): HiddenStateSummary {
+  const terminals = Array.from(state.terminals.values()).map(t => ({
+    terminalId: t.terminalId,
+    command: t.command.slice(0, 100),
+    status: t.status,
+    exitCode: t.exitCode,
+  }));
+  const subagents = Array.from(state.subagents.values()).map(s => ({
+    taskId: s.taskId,
+    objective: s.objective.slice(0, 100),
+    status: s.status,
+    resultPreview: s.result ? JSON.stringify(s.result).slice(0, 200) : undefined,
+  }));
+  const toolResults = Array.from(state.toolResults.values())
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, maxResults)
+    .map(r => ({
+      tool: r.tool,
+      resultPreview: JSON.stringify(r.result).slice(0, 300),
+      timestamp: r.timestamp,
+    }));
+  return { terminals, subagents, recentToolResults: toolResults };
+}
+
+export function hiddenStateToContextString(state: HiddenState): string {
+  const summary = summarizeHiddenState(state);
+  const lines: string[] = ['[SESSION CONTEXT - IDs and recent tool results]'];
+  
+  if (summary.terminals.length > 0) {
+    lines.push('\nActive Terminals:');
+    for (const t of summary.terminals) {
+      lines.push(`  - ${t.terminalId}: "${t.command}" (${t.status}${t.exitCode !== undefined ? `, exit: ${t.exitCode}` : ''})`);
+    }
+  }
+  
+  if (summary.subagents.length > 0) {
+    lines.push('\nSubagent Tasks:');
+    for (const s of summary.subagents) {
+      lines.push(`  - ${s.taskId}: "${s.objective}" (${s.status}${s.resultPreview ? `, result: ${s.resultPreview}` : ''})`);
+    }
+  }
+  
+  if (summary.recentToolResults.length > 0) {
+    lines.push('\nRecent Tool Results (use these instead of re-running):');
+    for (const r of summary.recentToolResults.slice(0, 10)) {
+      lines.push(`  - ${r.tool}: ${r.resultPreview}`);
+    }
+  }
+  
+  if (lines.length === 1) {
+    return '';
+  }
+  
+  lines.push('\n[END SESSION CONTEXT]');
+  return lines.join('\n');
+}
 
 interface Message {
   id: string;
@@ -104,6 +185,10 @@ interface Message {
   streamChunks?: StreamChunk[]; // Interleaved chunks for display
   timestamp?: number;
   contextPaths?: ContextPath[]; // Files/folders attached via @ mention
+  modifiedFiles?: string[]; // Paths of files modified during this turn
+  checkpointId?: string; // Checkpoint ID for reverting file changes
+  reverted?: boolean; // Whether file changes have been reverted
+  aborted?: boolean; // Whether the message was stopped/aborted
 }
 
 interface ProgressEvent {
@@ -155,6 +240,7 @@ interface ConversationTab {
   aiState: AIStatus;
   agentState: AgentState;
   lastError: { code: string; data?: any } | null;
+  hiddenState: HiddenState; // Session context for AI (not rendered in UI)
 }
 
 interface UseAgentOptions {
@@ -180,7 +266,8 @@ export function useAgent(options?: string | UseAgentOptions) {
     currentStreamChunks: [],
     aiState: { phase: 'idle', statusText: 'Idle' },
     agentState: { connected: false, connecting: false, status: 'disconnected' },
-    lastError: null
+    lastError: null,
+    hiddenState: createEmptyHiddenState(),
   }]);
   const [activeTabId, setActiveTabId] = useState<string>('default');
   const activeTabIdRef = useRef<string>(activeTabId);
@@ -301,6 +388,15 @@ export function useAgent(options?: string | UseAgentOptions) {
   const outboundQueueRef = useRef<Array<{ id: string; text: string; timestamp: number; payload: any; tabId: string }>>([]);
   const runningTabsRef = useRef<Set<string>>(new Set());
   const reasoningStartTimeRef = useRef<number | null>(null); // Track when reasoning started
+  const modifiedFilesRef = useRef<Set<string>>(new Set()); // Track files modified in current turn
+  const turnCheckpointIdRef = useRef<string | null>(null); // Checkpoint ID for current turn
+
+  // File-modifying tool names
+  const FILE_MODIFYING_TOOLS = new Set([
+    'write_file', 'write_file_base64', 'delete_file', 'move_file', 'copy_file',
+    'create_directory', 'edit_and_apply', 'edit_file', 'file_edit', 'patch_file',
+    'run_command', 'run_system_command', 'run_python_script', 'run_node_script',
+  ]);
 
   // Tab Management
   const addTab = useCallback((tab: Partial<ConversationTab> = {}) => {
@@ -317,6 +413,7 @@ export function useAgent(options?: string | UseAgentOptions) {
       aiState: { phase: 'idle', statusText: 'Idle' },
       agentState: { connected: state.connected, connecting: state.connecting, status: state.status },
       lastError: null,
+      hiddenState: createEmptyHiddenState(),
       ...tab
     };
     setTabs(prev => [...prev, newTab]);
@@ -697,6 +794,53 @@ export function useAgent(options?: string | UseAgentOptions) {
                 }
               })();
             }
+          } else if (msg.type === 'request' && msg.event && String(msg.event).startsWith('unified_tasks_')) {
+            // Handle unified_tasks requests from agent (broadcasted to all connected clients)
+            const { id, event, data } = msg;
+            console.log('[agent] Received unified_tasks request:', event, 'id=', id);
+            (async () => {
+              let result: any = { ok: false, error: 'unknown_event' };
+              try {
+                const api = (window as any).desktopAPI;
+                if (event === 'unified_tasks_list') {
+                  result = await api?.unifiedTasksList?.();
+                } else if (event === 'unified_tasks_add') {
+                  result = await api?.unifiedTasksAdd?.(data);
+                } else if (event === 'unified_tasks_update') {
+                  result = await api?.unifiedTasksUpdate?.(data);
+                } else if (event === 'unified_tasks_delete') {
+                  result = await api?.unifiedTasksDelete?.(data?.id);
+                } else if (event === 'unified_tasks_get_task') {
+                  result = await api?.unifiedTasksGet?.(data?.taskId);
+                } else if (event === 'unified_tasks_get_pending') {
+                  result = await api?.unifiedTasksGetPendingAssignments?.();
+                } else if (event === 'unified_tasks_add_subtodo') {
+                  result = await api?.unifiedTasksAddSubtodo?.(data?.taskId, data?.subtodo);
+                } else if (event === 'unified_tasks_update_subtodo') {
+                  result = await api?.unifiedTasksUpdateSubtodo?.(data?.taskId, data?.subtodoId, data?.updates);
+                } else if (event === 'unified_tasks_toggle_subtodo') {
+                  result = await api?.unifiedTasksToggleSubtodo?.(data?.taskId, data?.subtodoId);
+                } else if (event === 'unified_tasks_delete_subtodo') {
+                  result = await api?.unifiedTasksDeleteSubtodo?.(data?.taskId, data?.subtodoId);
+                } else if (event === 'unified_tasks_add_agent_assignment') {
+                  result = await api?.unifiedTasksAddReminder?.(data?.taskId, data?.assignment);
+                } else if (event === 'unified_tasks_update_agent_assignment') {
+                  result = await api?.unifiedTasksUpdateAgentAssignment?.(data?.taskId, data?.assignmentId, data?.updates);
+                } else if (event === 'unified_tasks_delete_agent_assignment') {
+                  result = await api?.unifiedTasksDeleteReminder?.(data?.taskId, data?.assignmentId);
+                } else if (event === 'unified_tasks_mark_triggered') {
+                  result = { ok: true };
+                } else if (event === 'unified_tasks_mark_completed') {
+                  result = await api?.unifiedTasksUpdateAgentAssignment?.(data?.taskId, data?.assignmentId, { status: 'completed' });
+                }
+              } catch (e: any) {
+                result = { ok: false, error: String(e?.message || e) };
+              }
+              console.log('[agent] Sending response for', id, ':', result?.ok ? 'ok' : result?.error);
+              if (wsRef.current?.readyState === WebSocket.OPEN) {
+                wsRef.current.send(JSON.stringify({ type: 'response', id, data: result }));
+              }
+            })();
           } else if (msg.type === 'progress') {
             const evt = msg as { event: string; data: any };
 
@@ -716,6 +860,22 @@ export function useAgent(options?: string | UseAgentOptions) {
               }
             } else if (evt.event === 'start') {
               streamingConversationIdRef.current = conversationIdRef.current;
+              // Reset file tracking for new turn and create a checkpoint
+              modifiedFilesRef.current = new Set();
+              turnCheckpointIdRef.current = null;
+              // Create a checkpoint for this turn (async, non-blocking)
+              (async () => {
+                try {
+                  if ((window as any).desktopAPI?.execTool) {
+                    const cpResult = await (window as any).desktopAPI.execTool('checkpoint_create', { name: 'auto_turn' });
+                    if (cpResult?.ok && cpResult?.id) {
+                      turnCheckpointIdRef.current = cpResult.id;
+                    }
+                  }
+                } catch (e) {
+                  console.warn('[agent] Failed to create turn checkpoint:', e);
+                }
+              })();
               // Promote appropriate user message into chat when processing actually starts
               if (waitingQueuedStartRef.current && queueDepthRef.current > 0) {
                 const first = queuedMessagesRef.current[0];
@@ -815,6 +975,79 @@ export function useAgent(options?: string | UseAgentOptions) {
 
               const requestIdKey = String(msg.requestId || activeRequestIdRef.current || '');
 
+              const updateHiddenStateForTool = (toolName: string, args: any, result: any) => {
+                const now = Date.now();
+                updateStreamingTab(t => {
+                  const newHiddenState = { ...t.hiddenState, lastUpdated: now };
+                  if (toolName === 'start_terminal' || toolName === 'run_terminal_command') {
+                    const terminalId = result?.terminalId || result?.id || args?.terminalId;
+                    if (terminalId) {
+                      const termMap = new Map(t.hiddenState.terminals);
+                      termMap.set(terminalId, {
+                        terminalId,
+                        command: args?.command || '',
+                        status: 'running',
+                        createdAt: now,
+                      });
+                      newHiddenState.terminals = termMap;
+                    }
+                  }
+                  if (toolName === 'subagent_create' || toolName === 'run_subagent' || toolName === 'spawn_agent') {
+                    const taskId = result?.taskId || result?.id || args?.taskId;
+                    if (taskId) {
+                      const subagentMap = new Map(t.hiddenState.subagents);
+                      subagentMap.set(taskId, {
+                        taskId,
+                        objective: args?.objective || args?.prompt || '',
+                        status: 'running',
+                        createdAt: now,
+                      });
+                      newHiddenState.subagents = subagentMap;
+                    }
+                  }
+                  if (result?.terminalId && (result?.status === 'exited' || result?.done === true)) {
+                    const termMap = new Map(t.hiddenState.terminals);
+                    const existing = termMap.get(result.terminalId);
+                    if (existing) {
+                      termMap.set(result.terminalId, {
+                        ...existing,
+                        status: 'exited',
+                        exitCode: result?.exitCode,
+                      });
+                      newHiddenState.terminals = termMap;
+                    }
+                  }
+                  if (result?.taskId && (result?.status === 'completed' || result?.status === 'failed' || result?.status === 'cancelled')) {
+                    const subagentMap = new Map(t.hiddenState.subagents);
+                    const existing = subagentMap.get(result.taskId);
+                    if (existing) {
+                      subagentMap.set(result.taskId, {
+                        ...existing,
+                        status: result.status,
+                        result: result?.result,
+                      });
+                      newHiddenState.subagents = subagentMap;
+                    }
+                  }
+                  const resultMap = new Map(t.hiddenState.toolResults);
+                  resultMap.set(toolCallId, {
+                    toolCallId,
+                    tool: toolName,
+                    args,
+                    result,
+                    timestamp: now,
+                  });
+                  if (resultMap.size > 50) {
+                    const entries = Array.from(resultMap.entries());
+                    entries.sort((a, b) => b[1].timestamp - a[1].timestamp);
+                    resultMap.clear();
+                    entries.slice(0, 50).forEach(([k, v]) => resultMap.set(k, v));
+                  }
+                  newHiddenState.toolResults = resultMap;
+                  return { ...t, hiddenState: newHiddenState };
+                });
+              };
+
               const emitSyntheticTool = (toolName: string, syntheticId: string, status: ToolCall['status'], args?: any, result?: any, error?: any) => {
                 updateStreamingTab(t => {
                   const existingIdx = t.currentToolCalls.findIndex(tc => tc.id === syntheticId);
@@ -834,6 +1067,9 @@ export function useAgent(options?: string | UseAgentOptions) {
 
                   return { ...t, currentToolCalls: nextToolCalls, currentStreamChunks: nextChunks };
                 });
+                if (status === 'completed' && result) {
+                  updateHiddenStateForTool(toolName, args, result);
+                }
               };
 
               if (HIDDEN_WRAPPER_TOOL_NAMES.has(tool)) {
@@ -915,16 +1151,80 @@ export function useAgent(options?: string | UseAgentOptions) {
                   } else if (normalizedStatus === 'completed' || normalizedStatus === 'error' || normalizedStatus === 'failed') {
                     // Update existing tool call with result in both arrays
                     const newStatus = normalizedStatus === 'completed' ? 'completed' : 'error';
+                    const result = normalizedStatus === 'completed' ? d.result : undefined;
+                    const error = normalizedStatus === 'completed' ? undefined : (d.error || d.result?.error || 'failed');
+                    
                     updateStreamingTab(t => {
                       // Find the matching tool call - prefer exact id match, fallback to tool name with pending status
                       const findMatch = (tc: ToolCall) =>
                         tc.id === toolCallId || (tc.tool === tool && tc.status === 'called');
 
-                      const result = normalizedStatus === 'completed' ? d.result : undefined;
-                      const error = normalizedStatus === 'completed' ? undefined : (d.error || d.result?.error || 'failed');
+                      // Update hidden state for tool result tracking
+                      const newHiddenState = { ...t.hiddenState, lastUpdated: Date.now() };
+                      if (result) {
+                        const resultMap = new Map(t.hiddenState.toolResults);
+                        resultMap.set(toolCallId, {
+                          toolCallId,
+                          tool,
+                          args: t.currentToolCalls.find(findMatch)?.args,
+                          result,
+                          timestamp: Date.now(),
+                        });
+                        if (resultMap.size > 50) {
+                          const entries = Array.from(resultMap.entries());
+                          entries.sort((a, b) => b[1].timestamp - a[1].timestamp);
+                          resultMap.clear();
+                          entries.slice(0, 50).forEach(([k, v]) => resultMap.set(k, v));
+                        }
+                        newHiddenState.toolResults = resultMap;
+                        
+                        // Track terminal creation
+                        if ((tool === 'start_terminal' || tool === 'run_terminal_command') && result?.terminalId) {
+                          const termMap = new Map(t.hiddenState.terminals);
+                          const existingArgs = t.currentToolCalls.find(findMatch)?.args;
+                          termMap.set(result.terminalId, {
+                            terminalId: result.terminalId,
+                            command: existingArgs?.command || '',
+                            status: result?.done ? 'exited' : 'running',
+                            exitCode: result?.exitCode,
+                            createdAt: Date.now(),
+                          });
+                          newHiddenState.terminals = termMap;
+                        }
+                        // Track subagent creation
+                        if ((tool === 'subagent_create' || tool === 'run_subagent' || tool === 'spawn_agent') && result?.taskId) {
+                          const subagentMap = new Map(t.hiddenState.subagents);
+                          const existingArgs = t.currentToolCalls.find(findMatch)?.args;
+                          subagentMap.set(result.taskId, {
+                            taskId: result.taskId,
+                            objective: existingArgs?.objective || existingArgs?.prompt || '',
+                            status: result?.status || 'running',
+                            result: result?.result,
+                            createdAt: Date.now(),
+                          });
+                          newHiddenState.subagents = subagentMap;
+                        }
+
+                        // Track file modifications for revert support
+                        if (FILE_MODIFYING_TOOLS.has(tool) && normalizedStatus === 'completed') {
+                          const existingArgs = t.currentToolCalls.find(findMatch)?.args || d.args;
+                          const filePath =
+                            existingArgs?.path ||
+                            existingArgs?.dest ||
+                            existingArgs?.src ||
+                            existingArgs?.cwd ||
+                            ((tool === 'run_command' || tool === 'run_system_command')
+                              ? '[command_side_effects]'
+                              : undefined);
+                          if (filePath) {
+                            modifiedFilesRef.current.add(String(filePath));
+                          }
+                        }
+                      }
 
                       return {
                         ...t,
+                        hiddenState: newHiddenState,
                         currentToolCalls: t.currentToolCalls.map(tc =>
                           findMatch(tc) ? { ...tc, status: newStatus, result, error } : tc
                         ),
@@ -1049,6 +1349,14 @@ export function useAgent(options?: string | UseAgentOptions) {
               ? (text || '') // Server sends partial text
               : text;
 
+            // Capture modified files and checkpoint before committing
+            const turnModifiedFiles = modifiedFilesRef.current.size > 0
+              ? Array.from(modifiedFilesRef.current) : undefined;
+            const turnCheckpointId = turnCheckpointIdRef.current || undefined;
+            // Reset tracking for next turn
+            modifiedFilesRef.current = new Set();
+            turnCheckpointIdRef.current = null;
+
             // Always commit accumulated work into a message - even when text is empty
             // but tools were called or chunks streamed, so users see what happened.
             updateStreamingTab(t => {
@@ -1071,6 +1379,8 @@ export function useAgent(options?: string | UseAgentOptions) {
                   streamChunks: t.currentStreamChunks.length > 0 ? [...t.currentStreamChunks] : undefined,
                   timestamp: Date.now(),
                   aborted: isAborted,
+                  modifiedFiles: turnModifiedFiles,
+                  checkpointId: turnCheckpointId,
                 }] : t.messages,
                 currentResponse: '',
                 currentReasoning: '',
@@ -1340,6 +1650,18 @@ export function useAgent(options?: string | UseAgentOptions) {
         if (!payload.context || typeof payload.context !== 'object') payload.context = {};
         // Removed deviceId injection from memory system
       } catch { }
+      
+      // Include hidden state context for AI (terminals, subagents, recent tool results)
+      const hiddenState = currentTab?.hiddenState;
+      if (hiddenState) {
+        const hiddenContext = hiddenStateToContextString(hiddenState);
+        if (hiddenContext) {
+          payload.hiddenContext = hiddenContext;
+        }
+        // Also send serializable summary for server-side processing
+        payload.hiddenStateSummary = summarizeHiddenState(hiddenState);
+      }
+      
       if (hist.length > 0) {
         payload.messages = hist;
       }
@@ -1383,6 +1705,89 @@ export function useAgent(options?: string | UseAgentOptions) {
   const newChat = useCallback(() => {
     addTab();
   }, [addTab]);
+
+  // Edit a previously sent user message: truncate history at that point & resend with new text
+  const editMessage = useCallback(async (messageId: string, newText: string) => {
+    const tab = tabsRef.current.find(t => t.id === activeTabIdRef.current);
+    if (!tab) return;
+
+    // Find the message index
+    const msgIdx = tab.messages.findIndex(m => m.id === messageId);
+    if (msgIdx < 0) return;
+    const originalMsg = tab.messages[msgIdx];
+    if (originalMsg.role !== 'user') return;
+
+    // Automatically rollback all assistant-side filesystem changes after this point
+    // (newest -> oldest to keep rollback ordering correct across checkpoints).
+    const checkpointIdsToRestore = tab.messages
+      .slice(msgIdx + 1)
+      .filter(m => m.role === 'assistant' && !!m.checkpointId && !m.reverted)
+      .map(m => String(m.checkpointId))
+      .filter(Boolean)
+      .reverse();
+
+    if (checkpointIdsToRestore.length > 0) {
+      const api = (window as any).desktopAPI;
+      if (api?.execTool) {
+        for (const checkpointId of checkpointIdsToRestore) {
+          try {
+            const res = await api.execTool('checkpoint_restore', { id: checkpointId });
+            if (!res?.ok) {
+              console.warn('[agent] Auto-revert checkpoint restore failed:', checkpointId, res);
+            }
+          } catch (e) {
+            console.warn('[agent] Auto-revert checkpoint restore error:', checkpointId, e);
+          }
+        }
+      }
+    }
+
+    // Truncate messages: keep everything before this message
+    const truncated = tab.messages.slice(0, msgIdx);
+
+    // Update tab with truncated messages
+    setTabs(prev => prev.map(t =>
+      t.id === tab.id ? { ...t, messages: truncated } : t
+    ));
+
+    // Resend with the new text, preserving original context
+    await sendMessage({
+      text: newText,
+      contextPaths: originalMsg.contextPaths,
+    });
+  }, [sendMessage]);
+
+  // Revert file changes made during a specific assistant message turn
+  const revertFiles = useCallback(async (messageId: string): Promise<boolean> => {
+    const tab = tabsRef.current.find(t => t.id === activeTabIdRef.current);
+    if (!tab) return false;
+
+    const msg = tab.messages.find(m => m.id === messageId);
+    if (!msg || !msg.checkpointId) return false;
+
+    try {
+      if (!(window as any).desktopAPI?.execTool) return false;
+      const result = await (window as any).desktopAPI.execTool('checkpoint_restore', { id: msg.checkpointId });
+      if (result?.ok) {
+        // Mark the message as reverted
+        setTabs(prev => prev.map(t =>
+          t.id === tab.id
+            ? {
+              ...t,
+              messages: t.messages.map(m =>
+                m.id === messageId ? { ...m, reverted: true } : m
+              )
+            }
+            : t
+        ));
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error('[agent] Failed to revert files:', e);
+      return false;
+    }
+  }, []);
 
   const loadConversation = useCallback(async (id: string) => {
     console.log('[useAgent] loadConversation called with id:', id);
@@ -1547,8 +1952,14 @@ export function useAgent(options?: string | UseAgentOptions) {
     closeTab,
     switchTab,
     deleteConversation,
+    // Edit & Revert
+    editMessage,
+    revertFiles,
     // GenUI support
     activeGenUITools,
     respondToGenUI,
+    // Hidden state accessors
+    hiddenState: activeTab?.hiddenState || createEmptyHiddenState(),
+    getHiddenStateSummary: () => summarizeHiddenState(activeTab?.hiddenState || createEmptyHiddenState()),
   };
 }

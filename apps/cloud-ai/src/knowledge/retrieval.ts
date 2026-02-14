@@ -74,7 +74,7 @@ export async function detectEntities(message: string): Promise<string[]> {
   
   try {
     // Get list of known entities
-    const res = await execLocalTool('knowledge_list_entities', { limit: 100 }, undefined, 5000);
+    const res = await execLocalTool('knowledge_list_entities', { limit: 100 }, undefined, 10000);
     const entities: any[] = Array.isArray(res)
       ? res
       : Array.isArray((res as any)?.entities)
@@ -110,7 +110,7 @@ export async function getIdentityLens(): Promise<Fact[]> {
   if (!hasClientBridge()) return [];
   
   try {
-    const res = await execLocalTool('knowledge_get_identity', {}, undefined, 5000);
+    const res = await execLocalTool('knowledge_get_identity', {}, undefined, 10000);
     const facts: any[] = Array.isArray(res)
       ? res
       : Array.isArray((res as any)?.facts)
@@ -130,7 +130,7 @@ export async function getDirectiveLens(): Promise<Fact[]> {
   if (!hasClientBridge()) return [];
   
   try {
-    const res = await execLocalTool('knowledge_get_directives', {}, undefined, 5000);
+    const res = await execLocalTool('knowledge_get_directives', {}, undefined, 10000);
     const facts: any[] = Array.isArray(res)
       ? res
       : Array.isArray((res as any)?.facts)
@@ -150,7 +150,7 @@ export async function getEntityContext(entityName: string): Promise<{ entity: En
   if (!hasClientBridge()) return null;
   
   try {
-    const result = await execLocalTool('knowledge_get_entity_context', { name: entityName }, undefined, 5000);
+    const result = await execLocalTool('knowledge_get_entity_context', { name: entityName }, undefined, 10000);
     if (!result?.entity) return null;
     return {
       entity: result.entity,
@@ -169,7 +169,7 @@ export async function getBioLens(limit: number = 10): Promise<Fact[]> {
   if (!hasClientBridge()) return [];
 
   try {
-    const res = await execLocalTool('knowledge_get_bio', { limit }, undefined, 5000);
+    const res = await execLocalTool('knowledge_get_bio', { limit }, undefined, 10000);
     const facts: any[] = Array.isArray(res)
       ? res
       : Array.isArray((res as any)?.facts)
@@ -189,7 +189,7 @@ export async function getPendingMemoriesLens(limit: number = 10): Promise<Pendin
   if (!hasClientBridge()) return [];
 
   try {
-    const res = await execLocalTool('pending_memory_list', { limit }, undefined, 5000);
+    const res = await execLocalTool('pending_memory_list', { limit }, undefined, 10000);
     const pending: any[] = Array.isArray(res)
       ? res
       : Array.isArray((res as any)?.pending)

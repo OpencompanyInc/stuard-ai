@@ -195,7 +195,18 @@ export async function handleToolsRoutes(req: IncomingMessage, res: ServerRespons
         if (typeof tool.execute !== 'function') {
           throw new Error(`Tool '${toolName}' is not executable`);
         }
-        return await tool.execute({ context: body } as any, {} as any);
+        // Generic tool HTTP route expects raw tool args in request body.
+        // Backward-compat: if client sent { context: {...} } wrapper, unwrap it.
+        const toolArgs = (
+          body &&
+          typeof body === 'object' &&
+          !Array.isArray(body) &&
+          Object.keys(body).length === 1 &&
+          Object.prototype.hasOwnProperty.call(body, 'context')
+        )
+          ? (body as any).context
+          : body;
+        return await tool.execute(toolArgs as any, {} as any);
       });
 
       writeJson(res, 200, { ok: true, result }, corsOrigin);

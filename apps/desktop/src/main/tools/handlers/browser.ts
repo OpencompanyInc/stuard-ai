@@ -1,5 +1,17 @@
-import { sendRequestToBrowser } from '../../services/browser-server';
+import { sendRequestToBrowser, getBrowserExtensionStatus } from '../../services/browser-server';
 import { RouterContext } from '../types';
+
+export async function execBrowserStatus(args: any, ctx: RouterContext): Promise<any> {
+    try {
+        ctx.logFn('browser_status: Checking browser extension status...');
+        const status = getBrowserExtensionStatus();
+        ctx.logFn(`browser_status: ${status.connected ? 'Connected' : 'Disconnected'} (${status.clients} client(s))`);
+        return status;
+    } catch (e: any) {
+        ctx.logFn(`browser_status: Error - ${e.message}`);
+        return { ok: false, connected: false, clients: 0, error: e.message };
+    }
+}
 
 // Helper to normalize browser extension responses
 function handleBrowserResponse(res: any, ctx: RouterContext, actionName: string): any {
@@ -276,6 +288,99 @@ export async function execBrowserGetPageInfo(args: any, ctx: RouterContext): Pro
         return result;
     } catch (e: any) {
         ctx.logFn(`browser_get_page_info: Error - ${e.message}`);
+        return { ok: false, error: e.message };
+    }
+}
+
+// ============================================================================
+// FILE UPLOAD & TOGGLE
+// ============================================================================
+
+export async function execBrowserUploadFile(args: any, ctx: RouterContext): Promise<any> {
+    try {
+        const { selector, filePath, fileName, fileType, fileData } = args;
+        ctx.logFn(`browser_upload_file: Uploading file "${fileName || filePath}"...`);
+
+        let base64Data = fileData; // already base64 if provided directly
+
+        // If a filePath is given, read it from disk and base64 encode
+        if (filePath && !base64Data) {
+            const fs = await import('fs/promises');
+            const path = await import('path');
+            const resolvedPath = path.resolve(filePath);
+            const buffer = await fs.readFile(resolvedPath);
+            base64Data = buffer.toString('base64');
+
+            // Auto-detect fileName and fileType if not provided
+            const autoFileName = fileName || path.basename(resolvedPath);
+            const ext = path.extname(resolvedPath).toLowerCase();
+            const mimeMap: Record<string, string> = {
+                '.pdf': 'application/pdf',
+                '.doc': 'application/msword',
+                '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                '.png': 'image/png',
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.gif': 'image/gif',
+                '.webp': 'image/webp',
+                '.svg': 'image/svg+xml',
+                '.txt': 'text/plain',
+                '.csv': 'text/csv',
+                '.json': 'application/json',
+                '.xml': 'application/xml',
+                '.zip': 'application/zip',
+                '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            };
+            const autoFileType = fileType || mimeMap[ext] || 'application/octet-stream';
+
+            const res = await sendRequestToBrowser('upload_file', {
+                selector,
+                fileName: autoFileName,
+                fileType: autoFileType,
+                fileData: base64Data,
+            });
+            const result = handleBrowserResponse(res, ctx, 'browser_upload_file');
+            if (result.ok) {
+                ctx.logFn(`browser_upload_file: Uploaded "${autoFileName}" (${buffer.length} bytes)`);
+            }
+            return result;
+        }
+
+        // Direct base64 data (no file path)
+        if (!base64Data) {
+            return { ok: false, error: 'Provide either filePath (path to file on disk) or fileData (base64-encoded content)' };
+        }
+
+        const res = await sendRequestToBrowser('upload_file', {
+            selector,
+            fileName: fileName || 'file',
+            fileType: fileType || 'application/octet-stream',
+            fileData: base64Data,
+        });
+        const result = handleBrowserResponse(res, ctx, 'browser_upload_file');
+        if (result.ok) {
+            ctx.logFn(`browser_upload_file: Success`);
+        }
+        return result;
+    } catch (e: any) {
+        ctx.logFn(`browser_upload_file: Error - ${e.message}`);
+        return { ok: false, error: e.message };
+    }
+}
+
+export async function execBrowserSetToggle(args: any, ctx: RouterContext): Promise<any> {
+    try {
+        const { selector, text, value, index } = args;
+        ctx.logFn(`browser_set_toggle: Toggling "${selector || text}" to ${value}...`);
+        const res = await sendRequestToBrowser('set_toggle', { selector, text, value, index });
+        const result = handleBrowserResponse(res, ctx, 'browser_set_toggle');
+        if (result.ok) {
+            ctx.logFn(`browser_set_toggle: Set to ${result.newState ?? value}`);
+        }
+        return result;
+    } catch (e: any) {
+        ctx.logFn(`browser_set_toggle: Error - ${e.message}`);
         return { ok: false, error: e.message };
     }
 }

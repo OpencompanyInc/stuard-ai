@@ -253,7 +253,7 @@ app.whenReady().then(async () => {
     logger.error("Failed to start browser extension server:", e);
   }
 
-  try {
+try {
     logger.info("Running stuards autostart...");
     stuards_autostart();
     logger.info("Stuards autostart done");

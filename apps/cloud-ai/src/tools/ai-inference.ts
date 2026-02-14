@@ -1,8 +1,9 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { generateText } from 'ai';
+import { generateText, streamText } from 'ai';
 import { buildProviderModel } from '../utils/models';
-import { safeToolWrite } from './bridge';
+import { safeToolWrite, execLocalTool } from './bridge';
+import { writeLog } from '../utils/logger';
 
 /**
  * ai_inference - General purpose AI text/structured inference tool
@@ -95,12 +96,18 @@ export const aiInferenceTool = createTool({
       .string()
       .optional()
       .describe('Optional system prompt to set AI behavior/persona'),
+    stream: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe('When true, returns a streamId immediately and pushes tokens to the stream in real-time. Connect a stream wire to consume.'),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
     text: z.string().optional().describe('Plain text result (text mode)'),
     json: z.any().optional().describe('Structured JSON result (json mode)'),
     model: z.string().describe('Model used'),
+    streamId: z.string().optional().describe('Stream ID when stream=true'),
     error: z.string().optional(),
   }),
   execute: async (inputData: any, { writer }: any) => {
@@ -112,6 +119,7 @@ export const aiInferenceTool = createTool({
       model: modelId,
       temperature,
       systemPrompt,
+      stream: streamMode = false,
     } = (inputData || {}) as {
       prompt: string;
       input?: string;
@@ -120,6 +128,7 @@ export const aiInferenceTool = createTool({
       model: string;
       temperature: number;
       systemPrompt?: string;
+      stream?: boolean;
     };
 
     await safeToolWrite(writer, {
@@ -149,6 +158,44 @@ export const aiInferenceTool = createTool({
     messages.push({ role: 'user', content: fullPrompt });
 
     try {
+      // ── STREAM MODE: create stream, push tokens in background, return immediately ──
+      if (streamMode && mode === 'text') {
+        const streamResult = await execLocalTool('stream_create', {
+          kind: 'text',
+          sourceStepId: 'ai_inference',
+          metadata: { model: modelId, prompt: prompt.slice(0, 100) },
+        });
+
+        if (!streamResult?.ok || !streamResult?.streamId) {
+          return { ok: false, error: 'Failed to create stream', model: modelId };
+        }
+
+        const streamId = streamResult.streamId;
+
+        // Fire and forget — stream tokens in background
+        (async () => {
+          try {
+            const result = await streamText({
+              model: aiModel as any,
+              messages,
+              temperature,
+            });
+
+            for await (const chunk of result.textStream) {
+              if (chunk) {
+                await execLocalTool('stream_write', { streamId, chunk, chunkType: 'raw' }).catch(() => {});
+              }
+            }
+          } catch (err: any) {
+            writeLog('ai_inference_stream_error', { streamId, error: err?.message });
+          } finally {
+            await execLocalTool('stream_close', { streamId }).catch(() => {});
+          }
+        })();
+
+        return { ok: true, streamId, model: modelId };
+      }
+
       if (mode === 'json' && schema) {
         // Structured JSON output
         const zodSchema = buildZodSchema(schema);

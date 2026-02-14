@@ -1,10 +1,25 @@
 import { WebSocketServer, WebSocket } from 'ws';
+import { BrowserWindow } from 'electron';
 import { randomUUID } from 'crypto';
 import logger from '../utils/logger';
 
 let wss: WebSocketServer | null = null;
 const connectedClients = new Set<WebSocket>();
 const pendingRequests = new Map<string, { resolve: (val: any) => void, reject: (err: any) => void, timeout: NodeJS.Timeout }>();
+
+// Listeners for status changes (dashboard polling)
+type StatusListener = (status: { connected: boolean; clients: number }) => void;
+const statusListeners = new Set<StatusListener>();
+export function onBrowserStatusChange(fn: StatusListener) { statusListeners.add(fn); return () => statusListeners.delete(fn); }
+
+function notifyStatusChange() {
+    const status = getBrowserExtensionStatus();
+    for (const fn of statusListeners) { try { fn(status); } catch {} }
+    // Also notify all renderer windows
+    for (const win of BrowserWindow.getAllWindows()) {
+        try { win.webContents.send('browser-extension:status', status); } catch {}
+    }
+}
 
 export function startBrowserExtensionServer(port: number = 18081) {
     if (wss) {
@@ -22,6 +37,7 @@ export function startBrowserExtensionServer(port: number = 18081) {
         wss.on('connection', (ws) => {
             logger.info('[BrowserServer] New extension connection');
             connectedClients.add(ws);
+            notifyStatusChange();
 
             ws.on('message', (message) => {
                 try {
@@ -37,6 +53,18 @@ export function startBrowserExtensionServer(port: number = 18081) {
                             pendingRequests.delete(data.requestId);
                             pending.resolve(data.payload);
                         }
+                    } else if (data.type === 'chat_message' && data.text) {
+                        // Forward chat message from extension to overlay
+                        logger.info(`[BrowserServer] Chat from extension: ${data.text.substring(0, 80)}`);
+                        for (const win of BrowserWindow.getAllWindows()) {
+                            try {
+                                win.webContents.send('browser-extension:chat', {
+                                    text: data.text,
+                                    messageId: data.messageId || randomUUID(),
+                                    pageContext: data.pageContext,
+                                });
+                            } catch {}
+                        }
                     }
                 } catch (e) {
                     logger.error('[BrowserServer] Failed to handle message:', e);
@@ -46,10 +74,12 @@ export function startBrowserExtensionServer(port: number = 18081) {
             ws.on('close', () => {
                 logger.info('[BrowserServer] Client disconnected');
                 connectedClients.delete(ws);
+                notifyStatusChange();
             });
 
             ws.on('error', (e) => {
                 logger.error('[BrowserServer] Socket error:', e);
+                connectedClients.delete(ws);
             });
 
             ws.send(JSON.stringify({ type: 'status', message: 'Connected to Stuard Desktop' }));

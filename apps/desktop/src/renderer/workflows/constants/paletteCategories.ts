@@ -11,7 +11,9 @@ import {
   Monitor, Volume2, Search, Globe, Brain, Calculator, Sigma,
   Sparkles, BarChart3, Hash, Speaker, Download, Archive, CheckCircle,
   MessageSquare, ListChecks, GitPullRequest, Play, Inbox,
-  Send, User, Activity, Radio, type LucideIcon
+  Send, User, Activity, Radio, Bot,
+  Table2, HardDrive, Scan, Binary,
+  type LucideIcon
 } from "lucide-react";
 
 export interface PaletteCategoryItem {
@@ -199,9 +201,19 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
     icon: Layout,
     color: 'violet',
     items: [
-      { k: 'local.tool', t: 'custom_ui', label: 'Show UI', icon: AppWindow, args: { title: 'My UI', html: '<div class="overlay-container"><h2>Hello</h2></div>', window: { width: 300, height: 200, position: 'center', borderRadius: 12 } } },
+      { k: 'local.tool', t: 'custom_ui', label: 'Show UI', icon: AppWindow, args: { title: 'My UI', component: 'function App() {\n  return html`<div class="p-6 text-center">\n    <h2 class="text-2xl font-bold text-white">Hello</h2>\n    <button onClick=${() => stuard.submit({ ok: true })} class="btn-primary mt-4 px-6">OK</button>\n  </div>`;\n}', window: { width: 300, height: 200, position: 'center', borderRadius: 12 } } },
       { k: 'local.tool', t: 'update_custom_ui', label: 'Update UI', icon: AppWindow, args: { id: '', data: {}, html: '' } },
       { k: 'local.tool', t: 'close_custom_ui', label: 'Close UI', icon: X, args: { id: '' } },
+    ],
+  },
+  {
+    id: 'agent',
+    label: 'AI Agent',
+    icon: Bot,
+    color: 'purple',
+    items: [
+      { k: 'cloud.tool', t: 'agent_node', label: 'AI Agent', icon: Bot, args: { prompt: '', model: 'balanced', outputMode: 'text', maxSteps: 10 } },
+      { k: 'cloud.tool', t: 'ai_inference', label: 'AI Inference', icon: Brain, args: { prompt: 'Summarize this', input: '', mode: 'text' } },
     ],
   },
   {
@@ -214,7 +226,6 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'cloud.tool', t: 'analyze_image', label: 'Analyze Image', icon: Eye, args: { path: '' } },
       { k: 'cloud.tool', t: 'analyze_media', label: 'Transcribe Audio', icon: Mic, args: { sources: [{ path: '' }], task: 'transcribe' } },
       { k: 'cloud.tool', t: 'cloud_ai_vision', label: 'AI Vision (JSON)', icon: Eye, args: { prompt: '', imagePath: '' } },
-      { k: 'cloud.tool', t: 'ai_inference', label: 'AI Inference', icon: Brain, args: { prompt: 'Summarize this', input: '', mode: 'text' } },
     ],
   },
   {
@@ -372,24 +383,42 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
     ],
   },
   {
+    id: 'database',
+    label: 'Database',
+    icon: Database,
+    color: 'emerald',
+    items: [
+      { k: 'local.tool', t: 'db_store', label: 'Save Document', icon: HardDrive, args: { table: 'my_collection', data: {} } },
+      { k: 'local.tool', t: 'db_retrieve', label: 'Get Document', icon: Search, args: { table: 'my_collection', id: '' } },
+      { k: 'local.tool', t: 'db_search', label: 'Search Documents', icon: Search, args: { table: 'my_collection', filters: {}, limit: 100 } },
+      { k: 'local.tool', t: 'db_delete', label: 'Delete Document', icon: Trash2, args: { table: 'my_collection', id: '' } },
+      { k: 'local.tool', t: 'db_list_tables', label: 'List All Data', icon: List, args: {} },
+      { k: 'local.tool', t: 'db_query', label: 'Create Table', icon: PlusCircle, args: { query: 'CREATE TABLE IF NOT EXISTS my_table (\n  id TEXT PRIMARY KEY,\n  name TEXT,\n  value TEXT\n)' } },
+      { k: 'local.tool', t: 'db_query', label: 'Find Rows', icon: Search, args: { query: 'SELECT * FROM my_table LIMIT 100' } },
+      { k: 'local.tool', t: 'db_query', label: 'Add Row', icon: PlusCircle, args: { query: "INSERT INTO my_table (name, value) VALUES ('', '')" } },
+      { k: 'local.tool', t: 'db_query', label: 'Edit Rows', icon: PenLine, args: { query: "UPDATE my_table SET name = '' WHERE id = ''" } },
+      { k: 'local.tool', t: 'db_query', label: 'Remove Rows', icon: Trash2, args: { query: "DELETE FROM my_table WHERE id = ''" } },
+    ],
+  },
+  {
+    id: 'embeddings',
+    label: 'Embeddings',
+    icon: Binary,
+    color: 'violet',
+    items: [
+      { k: 'cloud.tool', t: 'embed_text', label: 'Embed Text', icon: Scan, args: { texts: ['Hello world'] } },
+      { k: 'cloud.tool', t: 'vector_similarity', label: 'Vector Similarity', icon: BarChart3, args: { query: [], candidates: [], topK: 10, threshold: 0.5 } },
+      { k: 'cloud.tool', t: 'embed_and_store', label: 'Embed & Prepare', icon: HardDrive, args: { text: '', metadata: {} } },
+    ],
+  },
+  {
     id: 'streaming',
-    label: 'Streaming',
+    label: 'Streams (Debug)',
     icon: Activity,
     color: 'cyan',
     items: [
-      { k: 'local.tool', t: 'stream_create', label: 'Create Stream', icon: Radio, args: { kind: 'bytes', bufferSize: 500 } },
-      { k: 'local.tool', t: 'stream_write', label: 'Write to Stream', icon: Send, args: { streamId: '', chunk: '' } },
-      { k: 'local.tool', t: 'stream_read', label: 'Read from Stream', icon: Download, args: { streamId: '', subscriberId: '', maxChunks: 50, waitMs: 100 } },
-      { k: 'local.tool', t: 'stream_close', label: 'Close Stream', icon: StopCircle, args: { streamId: '' } },
-      { k: 'local.tool', t: 'stream_subscribe', label: 'Subscribe', icon: Inbox, args: { streamId: '', fromStart: false } },
-      { k: 'local.tool', t: 'stream_unsubscribe', label: 'Unsubscribe', icon: X, args: { streamId: '', subscriberId: '' } },
-      { k: 'local.tool', t: 'stream_add_transform', label: 'Add Transform', icon: Wand2, args: { streamId: '', type: 'python', code: 'def transform(chunk, params):\n    return chunk', params: {} } },
-      { k: 'local.tool', t: 'stream_update_transform', label: 'Update Transform', icon: PenLine, args: { streamId: '', transformId: '', params: {} } },
-      { k: 'local.tool', t: 'stream_list', label: 'List Streams', icon: List, args: {} },
+      { k: 'local.tool', t: 'stream_list', label: 'List Active Streams', icon: List, args: {} },
       { k: 'local.tool', t: 'stream_get_status', label: 'Stream Status', icon: Activity, args: { streamId: '' } },
-      { k: 'local.tool', t: 'stream_from_script', label: 'Stream from Script', icon: FileCode, args: { code: 'import time\nfor i in range(10):\n    emit_chunk({"count": i})\n    time.sleep(0.5)', kind: 'json' } },
-      { k: 'local.tool', t: 'stream_from_api', label: 'Stream from API', icon: Globe, args: { url: '', method: 'sse', chunkType: 'json' } },
-      { k: 'local.tool', t: 'stream_from_llm', label: 'Stream from LLM', icon: Sparkles, args: { prompt: '', model: 'gpt-4o-mini' } },
     ],
   },
 ];

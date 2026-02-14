@@ -22,6 +22,8 @@ async def handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
     auth = msg.get("auth") or None
     messages = msg.get("messages") or None
     memory = msg.get("memory") or None
+    hidden_context = msg.get("hiddenContext") or None
+    hidden_state_summary = msg.get("hiddenStateSummary") or None
 
     try:
         # Increase max_size to avoid 1 MiB default limit (1009 errors) when receiving tool events
@@ -58,6 +60,10 @@ async def handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
                 payload["messages"] = messages
             if isinstance(memory, dict):
                 payload["memory"] = memory
+            if isinstance(hidden_context, str) and hidden_context.strip():
+                payload["hiddenContext"] = hidden_context
+            if isinstance(hidden_state_summary, dict):
+                payload["hiddenStateSummary"] = hidden_state_summary
 
             await cws.send(json.dumps(payload))
 

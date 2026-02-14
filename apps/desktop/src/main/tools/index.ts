@@ -29,6 +29,9 @@ import {
   execBrowserScrollTo,
   execBrowserGetPageInfo,
   execBrowserExecuteScript,
+  execBrowserUploadFile,
+  execBrowserSetToggle,
+  execBrowserStatus,
 } from './handlers/browser';
 
 export * from './registry';
@@ -100,6 +103,7 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'terminal_destroy') return execTerminalDestroy(args, ctx);
 
       // Browser tools
+      if (toolName === 'browser_status') return execBrowserStatus(args, ctx);
       if (toolName === 'browser_get_content') return execBrowserGetContent(args, ctx);
       if (toolName === 'browser_click_element') return execBrowserClickElement(args, ctx);
       if (toolName === 'browser_type_text') return execBrowserTypeText(args, ctx);
@@ -114,6 +118,8 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'browser_wait_for_element') return execBrowserWaitForElement(args, ctx);
       if (toolName === 'browser_scroll_to') return execBrowserScrollTo(args, ctx);
       if (toolName === 'browser_get_page_info') return execBrowserGetPageInfo(args, ctx);
+      if (toolName === 'browser_upload_file') return execBrowserUploadFile(args, ctx);
+      if (toolName === 'browser_set_toggle') return execBrowserSetToggle(args, ctx);
       if (toolName === 'browser_execute_script') return execBrowserExecuteScript(args, ctx);
 
       // GenUI interactive tools - route through custom_ui with component type

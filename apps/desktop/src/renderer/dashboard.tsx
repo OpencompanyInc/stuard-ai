@@ -205,6 +205,7 @@ function DashboardApp() {
     pyRunCode,
     setPyRunCode,
     pyRunResult,
+    browserStatus,
     intCategories,
     filteredIntegrations,
     connectedCount,
@@ -213,6 +214,7 @@ function DashboardApp() {
     handleLearnMore,
     refreshPythonStatus,
     refreshFfmpegStatus,
+    refreshBrowserStatus,
     setupPython,
     installPython,
     runPython,
@@ -1039,8 +1041,6 @@ function DashboardApp() {
                               setWakewordEnabled={setWakewordEnabled}
                               terminalEnabled={terminalEnabled}
                               setTerminalEnabled={setTerminalEnabled}
-                              browserEnabled={browserEnabled}
-                              setBrowserEnabled={setBrowserEnabled}
                               handleSaveTheme={handleSaveTheme}
                               tone={tone}
                               setTone={setTone}
@@ -1092,9 +1092,11 @@ function DashboardApp() {
                                 pyRunResult={pyRunResult}
                                 refreshPythonStatus={refreshPythonStatus}
                                 refreshFfmpegStatus={refreshFfmpegStatus}
+                                refreshBrowserStatus={refreshBrowserStatus}
                                 setupPython={setupPython}
                                 installPython={installPython}
                                 runPython={runPython}
+                                browserStatus={browserStatus}
                               />
                             </>
                           )}

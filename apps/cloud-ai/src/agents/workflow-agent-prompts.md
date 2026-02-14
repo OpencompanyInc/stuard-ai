@@ -336,6 +336,129 @@ Output: { ok: true, json: { sentiment: "positive", confidence: 0.95, keywords: [
 **Models**: e.g., "openai/gpt-4o" (default), "google/gemini-2.5-pro", "openai/gpt-5.2-codex", "openai/gpt-5.3-codex", "deepseek/deepseek-chat"
 
 ═══════════════════════════════════════════════════════════════════════════════
+AI AGENT NODES — INLINE AGENT STEPS FOR WORKFLOWS
+═══════════════════════════════════════════════════════════════════════════════
+
+Use these tools when the workflow needs AI reasoning, decision-making, or
+data extraction as a step. Unlike ai_inference (stateless text→text),
+agent nodes can USE TOOLS, reason over multiple steps, and return structured
+results.
+
+### agent_node — Full AI Agent Step
+Runs a headless AI agent synchronously. The agent can call tools, reason,
+and return text or JSON. Use for complex multi-step reasoning within a flow.
+
+**Text mode (default):**
+```json
+{
+  "id": "analyze",
+  "tool": "agent_node",
+  "args": {
+    "prompt": "Read the file at {{read_step.path}} and summarize the key findings",
+    "model": "balanced",
+    "outputMode": "text",
+    "maxSteps": 10
+  }
+}
+```
+Output: { ok, text, model, toolCalls, durationMs }
+
+**JSON mode (structured output):**
+```json
+{
+  "id": "extract",
+  "tool": "agent_node",
+  "args": {
+    "prompt": "Analyze the email and extract action items",
+    "context": "{{gmail_step.body}}",
+    "model": "balanced",
+    "outputMode": "json",
+    "outputSchema": {
+      "action_items": "string[]",
+      "priority": "string",
+      "deadline": "string"
+    }
+  }
+}
+```
+Output: { ok, text, json: { action_items, priority, deadline }, model, toolCalls }
+
+**No-tools mode (pure reasoning):**
+```json
+{
+  "id": "think",
+  "tool": "agent_node",
+  "args": {
+    "prompt": "Given this data, what's the best approach?",
+    "context": "{{prev_step.text}}",
+    "tools": [],
+    "model": "fast"
+  }
+}
+```
+
+**Parameters:**
+- prompt: The instruction (supports {{step.field}} templates)
+- context: Additional data to feed the agent
+- systemPrompt: Custom persona/behavior instructions
+- model: "fast" | "balanced" | "smart"
+- outputMode: "text" | "json"
+- outputSchema: For json mode — { field: "type" }
+- tools: Restrict tool access. [] = no tools (pure reasoning)
+- maxSteps: Max tool-use iterations (1-50, default 10)
+- timeoutMs: Timeout (default 5 min)
+
+### agent_decision — Lightweight AI Decision
+Fast, cheap decision node for conditional branching. Returns { decision, reason, confidence }.
+
+```json
+{
+  "id": "decide",
+  "tool": "agent_decision",
+  "args": {
+    "question": "Is this email spam or legitimate?",
+    "context": "{{email_step.body}}",
+    "options": ["spam", "legitimate", "unsure"],
+    "model": "fast"
+  }
+}
+```
+Output: { ok, decision: "spam", reason: "Contains suspicious links", confidence: 0.92 }
+
+**Use in guards for branching:**
+```json
+{ "from": "decide", "to": "block_sender", "guard": { "==": [{ "var": "decide.decision" }, "spam"] } }
+{ "from": "decide", "to": "reply",        "guard": { "==": [{ "var": "decide.decision" }, "legitimate"] } }
+```
+
+### agent_extract — Structured Data Extraction
+Pull structured fields from unstructured text. Cheaper than agent_node.
+
+```json
+{
+  "id": "parse",
+  "tool": "agent_extract",
+  "args": {
+    "text": "{{read_file.content}}",
+    "fields": {
+      "name": "person's full name",
+      "email": "email address",
+      "phone": "phone number",
+      "sentiment": "positive/negative/neutral"
+    },
+    "model": "fast"
+  }
+}
+```
+Output: { ok, data: { name: "John Doe", email: "john@example.com", phone: "+1...", sentiment: "positive" } }
+
+**When to use which:**
+- **ai_inference**: Simple text→text or text→JSON (no tools needed, cheapest)
+- **agent_node**: Complex tasks needing tools, multi-step reasoning, or structured output
+- **agent_decision**: Binary/categorical decisions for workflow branching
+- **agent_extract**: Pull structured data from text (simpler than agent_node JSON mode)
+
+═══════════════════════════════════════════════════════════════════════════════
 CUSTOM UI TOOL - ENHANCED WITH JAVASCRIPT SUPPORT
 ═══════════════════════════════════════════════════════════════════════════════
 

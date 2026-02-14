@@ -2,8 +2,14 @@
  * useWorkflowOperations - Hook for workflow CRUD and execution operations
  */
 import { useState, useCallback, useEffect } from "react";
-import type { DesignerModel } from "../types";
+import type { DesignerModel, WorkspaceFileEntry } from "../types";
 import { getValidAccessToken } from "../../auth/authManager";
+
+export interface WorkspaceInfo {
+  workspacePath: string;
+  subdirs: string[];
+  files: WorkspaceFileEntry[];
+}
 
 interface UseWorkflowOperationsProps {
   refresh: () => Promise<void>;
@@ -17,6 +23,20 @@ export function useWorkflowOperations({ refresh }: UseWorkflowOperationsProps) {
   const [runningIds, setRunningIds] = useState<Record<string, boolean>>({});
   const [showDeployPanel, setShowDeployPanel] = useState(false);
   const [deployStatus, setDeployStatus] = useState<{ deployed: boolean; running: boolean; triggers: string[] } | null>(null);
+  const [workspaceInfo, setWorkspaceInfo] = useState<WorkspaceInfo | null>(null);
+
+  const refreshWorkspace = useCallback(async (id?: string) => {
+    const fid = id || selectedId;
+    if (!fid) { setWorkspaceInfo(null); return; }
+    try {
+      const res = await (window as any).desktopAPI?.workflowsGetWorkspaceInfo?.(fid);
+      if (res?.ok) {
+        setWorkspaceInfo({ workspacePath: res.workspacePath, subdirs: res.subdirs, files: res.files });
+      } else {
+        setWorkspaceInfo(null);
+      }
+    } catch { setWorkspaceInfo(null); }
+  }, [selectedId]);
 
   const load = useCallback(async (id: string, onLoadSuccess?: () => void) => {
     if (!id) return;
@@ -26,6 +46,14 @@ export function useWorkflowOperations({ refresh }: UseWorkflowOperationsProps) {
       try { setModel(JSON.parse(res.content || '{}')); } catch { setModel(null); }
       setDirty(false);
       onLoadSuccess?.();
+      // Load workspace info if this is a workspace-based workflow
+      if (res.isWorkspace) {
+        const wsRes = await (window as any).desktopAPI?.workflowsGetWorkspaceInfo?.(res.id);
+        if (wsRes?.ok) setWorkspaceInfo({ workspacePath: wsRes.workspacePath, subdirs: wsRes.subdirs, files: wsRes.files });
+        else setWorkspaceInfo(null);
+      } else {
+        setWorkspaceInfo(null);
+      }
     }
   }, []);
 
@@ -43,17 +71,41 @@ export function useWorkflowOperations({ refresh }: UseWorkflowOperationsProps) {
       id: safe,
       name: "New Flow",
       version: "1",
-      triggers: [{ id: `trig_0`, type: 'manual', label: 'Manual Trigger', args: {}, position: { x: 50, y: 50 } }],
-      nodes: [{
-        id: `start`,
-        type: 'local.tool',
-        tool: 'log',
-        label: 'Log Message',
-        args: { message: 'Workflow started' },
-        fallbackTo: '',
-        position: { x: 50, y: 180 }
-      }],
-      wires: [{ from: 'trig_0', to: 'start' }],
+      triggers: [{ id: `trig_0`, type: 'manual', label: 'Manual Trigger', args: {}, position: { x: 60, y: 50 } }],
+      nodes: [
+        {
+          id: `step_notify`,
+          type: 'local.tool',
+          tool: 'send_notification',
+          label: 'Say Hello',
+          args: { title: 'Stuard AI', body: 'Your automation is running!', severity: 'info' },
+          fallbackTo: '',
+          position: { x: 60, y: 190 }
+        },
+        {
+          id: `step_screenshot`,
+          type: 'local.tool',
+          tool: 'take_screenshot',
+          label: 'Take Screenshot',
+          args: {},
+          fallbackTo: '',
+          position: { x: 60, y: 330 }
+        },
+        {
+          id: `step_done`,
+          type: 'local.tool',
+          tool: 'log',
+          label: 'Done',
+          args: { message: 'Screenshot saved to: {{step_screenshot.filePath}}' },
+          fallbackTo: '',
+          position: { x: 60, y: 470 }
+        }
+      ],
+      wires: [
+        { from: 'trig_0', to: 'step_notify' },
+        { from: 'step_notify', to: 'step_screenshot' },
+        { from: 'step_screenshot', to: 'step_done' }
+      ],
     };
     try {
       const res = await (window as any).desktopAPI?.workflowsSave?.(safe, JSON.stringify(skeleton, null, 2));
@@ -158,6 +210,7 @@ export function useWorkflowOperations({ refresh }: UseWorkflowOperationsProps) {
     runningIds, setRunningIds,
     showDeployPanel, setShowDeployPanel,
     deployStatus,
+    workspaceInfo, refreshWorkspace,
     load, save, create, del, run, stop, deploy, undeploy, exportWorkflow, updateModel
   };
 }

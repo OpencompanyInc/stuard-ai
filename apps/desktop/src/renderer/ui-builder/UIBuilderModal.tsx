@@ -623,7 +623,7 @@ export function UIBuilderModal({
       <div className="flex-1 flex overflow-hidden">
         {/* Left Panel - Component Palette */}
         {!previewMode && (
-          <div className="w-48 bg-white border-r border-slate-200 flex flex-col overflow-hidden">
+          <div className="w-48 shrink-0 bg-white border-r border-slate-200 flex flex-col overflow-hidden">
             <div className="p-3 border-b border-slate-200">
               <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Components</div>
             </div>
@@ -660,7 +660,7 @@ export function UIBuilderModal({
 
         {/* Canvas with drop zone */}
         <div
-          className={`flex-1 flex flex-col min-h-0 transition-all relative ${
+          className={`flex-1 min-w-0 flex flex-col min-h-0 transition-all relative ${
             isDragOver ? 'ring-4 ring-indigo-300 ring-inset bg-indigo-50/30' : ''
           }`}
         >
@@ -785,7 +785,7 @@ export function UIBuilderModal({
 
         {/* Right Panel - Properties or Code */}
         {!previewMode && (
-          <div className="w-72 bg-white border-l border-slate-200 flex flex-col overflow-hidden">
+          <div className="w-72 shrink-0 bg-white border-l border-slate-200 flex flex-col overflow-hidden">
             {showCodePanel ? (
               // Code Editor Panel
               <div className="flex-1 flex flex-col overflow-hidden">

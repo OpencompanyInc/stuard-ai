@@ -82,6 +82,10 @@ interface ChatViewProps {
   onSubmitToolOutput?: (id: string, result: any) => void;
   onGenUIResponse?: (component: string, result: any) => void;
 
+  // Edit & Revert
+  onEditMessage?: (messageId: string, newText: string) => void;
+  onRevertFiles?: (messageId: string) => void;
+
   // Pending memory approvals
   pendingMemories?: Array<{
     id: string;
@@ -151,6 +155,8 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   onAddTab,
   onSubmitToolOutput,
   onGenUIResponse,
+  onEditMessage,
+  onRevertFiles,
   pendingMemories = [],
   onConfirmPendingMemory,
   onRejectPendingMemory,
@@ -486,6 +492,8 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                     className="h-full px-4 py-3 scrollbar-hidden"
                     onSubmitToolOutput={onSubmitToolOutput}
                     onGenUIResponse={onGenUIResponse}
+                    onEditMessage={onEditMessage}
+                    onRevertFiles={onRevertFiles}
                   />
                 )}
               </div>
@@ -637,6 +645,8 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                     className="h-full px-5 py-4 scrollbar-hidden"
                     onSubmitToolOutput={onSubmitToolOutput}
                     onGenUIResponse={onGenUIResponse}
+                    onEditMessage={onEditMessage}
+                    onRevertFiles={onRevertFiles}
                   />
                 )}
               </div>

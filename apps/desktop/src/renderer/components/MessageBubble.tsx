@@ -7,7 +7,7 @@ import rehypeKatex from 'rehype-katex';
 import clsx from 'clsx';
 import { convertLatexDelims } from '../utils/text';
 import 'katex/dist/katex.min.css';
-import { ChevronRight, Folder, FileText, Play, ExternalLink, CheckCircle, XCircle, Loader2, Copy, Check, Terminal } from 'lucide-react';
+import { ChevronRight, Folder, FileText, Play, ExternalLink, CheckCircle, XCircle, Loader2, Copy, Check, Terminal, Pencil, Undo2, X, Send } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { ToolCall, StreamChunk } from '../hooks/useAgent';
 
@@ -229,6 +229,13 @@ interface MessageBubbleProps {
   onSubmitToolOutput?: (id: string, result: any) => void;
   onGenUIResponse?: (component: string, result: any) => void; // For syntax-based GenUI (```genui:...) responses
   compact?: boolean;
+  // Edit & Revert
+  messageId?: string;
+  onEditMessage?: (messageId: string, newText: string) => void;
+  modifiedFiles?: string[];
+  checkpointId?: string;
+  reverted?: boolean;
+  onRevertFiles?: (messageId: string) => void;
 }
 
 // Convert local file path to local-file:// URL for Electron (custom protocol)
@@ -783,11 +790,60 @@ function processCustomMarkdown(text: string): string {
   );
 }
 
-const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasoning, reasoningDuration, toolCalls, streamChunks, isStreaming, contextPaths, onSubmitToolOutput, onGenUIResponse, compact }) => {
+const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasoning, reasoningDuration, toolCalls, streamChunks, isStreaming, contextPaths, onSubmitToolOutput, onGenUIResponse, compact, messageId, onEditMessage, modifiedFiles, checkpointId, reverted, onRevertFiles }) => {
   const [reasoningExpanded, setReasoningExpanded] = useState(false);
   const reasoningRef = useRef<HTMLDivElement>(null);
   const [genUIResults, setGenUIResults] = useState<Record<string, any>>({});
   const [copied, setCopied] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState(text);
+  const [isReverting, setIsReverting] = useState(false);
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Focus textarea when entering edit mode
+  useEffect(() => {
+    if (isEditing && editTextareaRef.current) {
+      editTextareaRef.current.focus();
+      editTextareaRef.current.setSelectionRange(editText.length, editText.length);
+    }
+  }, [isEditing]);
+
+  // Keep draft synced with latest message text when not editing
+  useEffect(() => {
+    if (!isEditing) {
+      setEditText(text);
+    }
+  }, [text, isEditing]);
+
+  const handleEditSubmit = useCallback(() => {
+    if (!messageId || !onEditMessage || !editText.trim()) return;
+    onEditMessage(messageId, editText.trim());
+    setIsEditing(false);
+  }, [messageId, onEditMessage, editText]);
+
+  const handleEditCancel = useCallback(() => {
+    setEditText(text);
+    setIsEditing(false);
+  }, [text]);
+
+  const handleEditKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleEditSubmit();
+    } else if (e.key === 'Escape') {
+      handleEditCancel();
+    }
+  }, [handleEditSubmit, handleEditCancel]);
+
+  const handleRevert = useCallback(async () => {
+    if (!messageId || !onRevertFiles || isReverting) return;
+    setIsReverting(true);
+    try {
+      await onRevertFiles(messageId);
+    } finally {
+      setIsReverting(false);
+    }
+  }, [messageId, onRevertFiles, isReverting]);
 
   const handleCopy = useCallback(() => {
     try {
@@ -1151,7 +1207,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
 
   return (
     <div className={clsx(
-      "flex flex-col w-full mb-5"
+      "flex flex-col w-full mb-5 group/msg"
     )}>
       {/* Reasoning indicator - only shown when no streamChunks (reasoning shown inline in streamChunks) */}
       {role === 'assistant' && hasReasoning && !hasStreamChunks && (
@@ -1383,16 +1439,49 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
         ) : (
           // Fallback to single bubble for user messages or when no streamChunks
           <div className={clsx(
-            "text-[15px] relative group/bubble leading-relaxed transition-all",
+            "text-[15px] relative group/bubble leading-relaxed transition-colors",
             compact
               ? "w-full max-w-full bg-transparent px-4 py-3 text-theme-fg"
               : clsx(
                   "rounded-2xl px-5 py-3.5",
                   role === 'user'
-                    ? "bg-primary text-primary-fg border-primary shadow-primary/5 ml-auto w-fit max-w-[85%] min-w-[56px] font-semibold"
+                    ? (isEditing
+                      ? "bg-primary text-primary-fg border-primary shadow-primary/5 ml-auto w-full max-w-[85%] font-semibold"
+                      : "bg-primary text-primary-fg border-primary shadow-primary/5 ml-auto w-fit max-w-[85%] min-w-[56px] font-semibold")
                     : "bg-gray-100 text-gray-900 mr-auto w-fit max-w-[85%] font-medium"
                 )
           )}>
+            {/* Edit mode for user messages */}
+            {role === 'user' && isEditing ? (
+              <div className="flex flex-col gap-2 w-full min-w-0">
+                <textarea
+                  ref={editTextareaRef}
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  onKeyDown={handleEditKeyDown}
+                  className="w-full bg-white/20 text-primary-fg rounded-xl px-3 py-2.5 text-[14px] font-medium leading-relaxed outline-none border border-white/30 focus:border-white/50 focus:ring-2 focus:ring-white/20 placeholder:text-primary-fg/50 resize-none min-h-[112px] max-h-[260px] overflow-y-auto scrollbar-minimal"
+                  rows={4}
+                  placeholder="Edit your message..."
+                />
+                <div className="flex items-center gap-2 justify-end">
+                  <button
+                    onClick={handleEditCancel}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold text-primary-fg/70 hover:text-primary-fg hover:bg-white/10 transition-colors"
+                  >
+                    <X className="w-3 h-3" />
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleEditSubmit}
+                    disabled={!editText.trim() || editText.trim() === text.trim()}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-white/20 hover:bg-white/30 text-primary-fg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Send className="w-3 h-3" />
+                    Send
+                  </button>
+                </div>
+              </div>
+            ) : (
             <div
               className="select-text whitespace-pre-wrap break-words"
               aria-live={role === 'assistant' && isStreaming ? "polite" : "off"}
@@ -1480,6 +1569,8 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                 })
               )}
             </div>
+            )}
+            {/* Copy + Revert buttons for assistant messages */}
             {role === 'assistant' && !isStreaming && (
               <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/bubble:opacity-100 transition-opacity">
                 <button
@@ -1490,8 +1581,65 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                   {copied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
                   <span>{copied ? 'Copied' : 'Copy'}</span>
                 </button>
+                {modifiedFiles && modifiedFiles.length > 0 && checkpointId && onRevertFiles && messageId && !reverted && (
+                  <button
+                    onClick={handleRevert}
+                    disabled={isReverting}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-amber-50 hover:bg-amber-100 text-[10px] text-amber-700 hover:text-amber-800 transition-all font-bold uppercase tracking-widest border border-amber-200 disabled:opacity-50"
+                    title={`Revert ${modifiedFiles.length} file change(s)`}
+                  >
+                    {isReverting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Undo2 className="w-3 h-3" />}
+                    <span>{isReverting ? 'Reverting...' : `Revert ${modifiedFiles.length} file(s)`}</span>
+                  </button>
+                )}
+                {reverted && (
+                  <span className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-50 text-[10px] text-emerald-700 font-bold uppercase tracking-widest border border-emerald-200">
+                    <CheckCircle className="w-3 h-3" />
+                    <span>Reverted</span>
+                  </span>
+                )}
               </div>
             )}
+          </div>
+        )}
+        {/* Edit icon for user messages — outside bubble, in the gap */}
+        {role === 'user' && !isEditing && !isStreaming && messageId && onEditMessage && (
+          <div className="flex justify-end mt-1 opacity-0 group-hover/msg:opacity-100 transition-opacity duration-150">
+            <button
+              onClick={() => { setEditText(text); setIsEditing(true); }}
+              className="relative group/edit p-1 rounded-md text-theme-muted/50 hover:text-theme-fg hover:bg-theme-hover/50 transition-all active:scale-90"
+              aria-label="Edit message"
+            >
+              <Pencil className="w-3 h-3" />
+              {/* Tooltip */}
+              <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-0.5 rounded-md bg-gray-900 text-white text-[10px] font-bold whitespace-nowrap opacity-0 group-hover/edit:opacity-100 transition-opacity pointer-events-none shadow-lg">
+                Edit
+              </span>
+            </button>
+          </div>
+        )}
+        {/* Modified files indicator */}
+        {role === 'assistant' && modifiedFiles && modifiedFiles.length > 0 && !hasStreamChunks && (
+          <div className="flex flex-wrap gap-1.5 mt-1.5">
+            {modifiedFiles.map((f, i) => {
+              const fileName = f.split(/[/\\]/).pop() || f;
+              return (
+                <span
+                  key={i}
+                  className={clsx(
+                    "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] border",
+                    reverted
+                      ? "bg-emerald-50 border-emerald-200 text-emerald-600"
+                      : "bg-amber-50 border-amber-200 text-amber-700"
+                  )}
+                  title={f}
+                >
+                  <FileText className="w-3 h-3" />
+                  <span className="truncate max-w-[120px]">{fileName}</span>
+                  {reverted && <Undo2 className="w-2.5 h-2.5 ml-0.5" />}
+                </span>
+              );
+            })}
           </div>
         )}
         {role === 'assistant' && !hasStreamChunks && hasToolCalls && (
@@ -1524,7 +1672,9 @@ const MessageBubble = memo(MessageBubbleInner, (prevProps, nextProps) => {
     prevProps.reasoning === nextProps.reasoning &&
     prevProps.reasoningDuration === nextProps.reasoningDuration &&
     prevProps.toolCalls === nextProps.toolCalls &&
-    prevProps.streamChunks === nextProps.streamChunks
+    prevProps.streamChunks === nextProps.streamChunks &&
+    prevProps.reverted === nextProps.reverted &&
+    prevProps.messageId === nextProps.messageId
   );
 });
 

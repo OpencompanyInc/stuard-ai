@@ -218,7 +218,37 @@ export function safeFlowId(id: string): string {
   return String(id || '').replace(/[^a-zA-Z0-9_-]/g, '');
 }
 
+/** Default subdirectories created in every new workflow workspace */
+const WORKSPACE_SUBDIRS = ['data', 'scripts', 'assets'];
+
+/** Get the workspace directory for a workflow (if it uses workspace format) */
+export function getWorkspaceDir(id: string): string | null {
+  const safe = safeFlowId(id);
+  if (!safe) return null;
+  const base = path.join(app.getPath('userData'), 'workflows');
+  // Check root workspace dir
+  const rootWs = path.join(base, safe);
+  if (fs.existsSync(path.join(rootWs, 'main.stuard'))) return rootWs;
+  // Check inside group folders
+  try {
+    const entries = fs.readdirSync(base, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== safe) {
+        const subWs = path.join(base, entry.name, safe);
+        if (fs.existsSync(path.join(subWs, 'main.stuard'))) return subWs;
+      }
+    }
+  } catch { }
+  return null;
+}
+
 export function getWorkflowPathById(id: string) {
+  // Try workspace directory first (flowId/main.stuard)
+  const wsDir = getWorkspaceDir(id);
+  if (wsDir) return path.join(wsDir, 'main.stuard');
+  // Try subfolder-aware lookup (legacy flat .json), fall back to root
+  const found = findWorkflowPath(id);
+  if (found) return found;
   const dir = path.join(app.getPath('userData'), 'workflows');
   return path.join(dir, `${id}.json`);
 }
@@ -875,21 +905,34 @@ export function workflows_autostart() {
       console.log('[workflows] No workflows directory found, skipping autostart');
       return;
     }
-    const files = (fs.readdirSync(dir) || []).filter(f => f.endsWith('.json'));
-    console.log(`[workflows] Found ${files.length} workflow file(s), checking for autostart...`);
+
+    // Collect all workflow JSON files from root and subfolders
+    const allFiles: { path: string; name: string }[] = [];
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.endsWith('.json')) {
+        allFiles.push({ path: path.join(dir, entry.name), name: entry.name });
+      } else if (entry.isDirectory() && !entry.name.startsWith('.')) {
+        try {
+          const subFiles = fs.readdirSync(path.join(dir, entry.name)).filter(f => f.endsWith('.json'));
+          for (const sf of subFiles) {
+            allFiles.push({ path: path.join(dir, entry.name, sf), name: sf });
+          }
+        } catch { }
+      }
+    }
+
+    console.log(`[workflows] Found ${allFiles.length} workflow file(s), checking for autostart...`);
     let started = 0;
-    for (const f of files) {
+    for (const { path: filePath, name: fileName } of allFiles) {
       try {
-        const p = path.join(dir, f);
-        const raw = fs.readFileSync(p, 'utf-8');
+        const raw = fs.readFileSync(filePath, 'utf-8');
         const model = JSON.parse(raw || '{}');
         if (model && model.autostart) {
-          const id = f.replace(/\.json$/i, '');
+          const id = fileName.replace(/\.json$/i, '');
           const triggerTypes = (model.triggers || []).map((t: any) => t?.type || 'unknown').join(', ');
 
           // IMPORTANT: Clean up any legacy stuard runtime/file that might conflict
-          // The legacy stuards_autostart runs before this, so we need to unregister
-          // any hotkeys it registered and delete the stuard file
           try {
             stopStuardRuntime(id);
             const stuardPath = getStuardPathById(id);
@@ -906,7 +949,7 @@ export function workflows_autostart() {
           started++;
         }
       } catch (e) {
-        console.error(`[workflows] Failed to autostart workflow ${f}:`, e);
+        console.error(`[workflows] Failed to autostart workflow ${fileName}:`, e);
       }
     }
     if (started > 0) {
@@ -926,20 +969,24 @@ export function workflows_list() {
     console.log('[workflows_list] userData path:', userData);
     console.log('[workflows_list] workflows dir:', dir);
     try { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); } catch { }
-    const files = (fs.readdirSync(dir) || []).filter(f => f.endsWith('.json'));
-    console.log('[workflows_list] found files:', files);
-    const items = files.map(f => {
-      const id = f.replace(/\.json$/i, '');
-      const p = path.join(dir, f);
+
+    const items: any[] = [];
+    const folders: string[] = [];
+    const seenIds = new Set<string>();
+
+    // Helper to read workflow metadata from a file
+    const readItem = (filePath: string, id: string, folder?: string, isWorkspace?: boolean) => {
+      if (seenIds.has(id)) return null; // Deduplicate
+      seenIds.add(id);
       let name = id;
       let updatedAt = '';
       let version = '';
       let marketplaceSlug = '';
       let triggers: string[] = [];
       try {
-        const stat = fs.statSync(p);
+        const stat = fs.statSync(filePath);
         updatedAt = new Date(stat.mtimeMs).toISOString();
-        const raw = fs.readFileSync(p, 'utf-8');
+        const raw = fs.readFileSync(filePath, 'utf-8');
         const j = JSON.parse(raw || '{}');
         if (j && typeof j.name === 'string' && j.name.trim()) name = j.name.trim();
         if (j && typeof j.version === 'string') version = j.version;
@@ -950,25 +997,92 @@ export function workflows_list() {
       } catch { }
       const hasRuntime = flowRuntimes.has(id);
       const running = isStuardEngineRunning(id);
-      return { id, name, updatedAt, version, marketplaceSlug, hasRuntime, running, triggers };
-    });
-    return { ok: true, items };
+      return { id, name, updatedAt, version, marketplaceSlug, hasRuntime, running, triggers, folder: folder || undefined, isWorkspace: !!isWorkspace };
+    };
+
+    // Scan root-level entries
+    const rootEntries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of rootEntries) {
+      if (entry.isFile() && entry.name.endsWith('.json')) {
+        // Legacy flat .json file
+        const id = entry.name.replace(/\.json$/i, '');
+        const item = readItem(path.join(dir, entry.name), id);
+        if (item) items.push(item);
+      } else if (entry.isDirectory() && !entry.name.startsWith('.')) {
+        const subDir = path.join(dir, entry.name);
+        const mainStuard = path.join(subDir, 'main.stuard');
+        if (fs.existsSync(mainStuard)) {
+          // Workspace directory — the dir name IS the flow ID
+          const item = readItem(mainStuard, entry.name, undefined, true);
+          if (item) items.push(item);
+        } else {
+          // Group folder — contains workflows
+          folders.push(entry.name);
+          try {
+            const subEntries = fs.readdirSync(subDir, { withFileTypes: true });
+            for (const sub of subEntries) {
+              if (sub.isFile() && sub.name.endsWith('.json')) {
+                const id = sub.name.replace(/\.json$/i, '');
+                const item = readItem(path.join(subDir, sub.name), id, entry.name);
+                if (item) items.push(item);
+              } else if (sub.isDirectory() && !sub.name.startsWith('.')) {
+                // Could be a workspace dir inside a group folder
+                const nestedMain = path.join(subDir, sub.name, 'main.stuard');
+                if (fs.existsSync(nestedMain)) {
+                  const item = readItem(nestedMain, sub.name, entry.name, true);
+                  if (item) items.push(item);
+                }
+              }
+            }
+          } catch { }
+        }
+      }
+    }
+
+    console.log('[workflows_list] found', items.length, 'workflows in', folders.length + 1, 'locations');
+    return { ok: true, items, folders };
   } catch (e: any) {
     return { ok: false, error: String(e?.message || 'failed') };
   }
+}
+
+// Find the actual file path for a workflow ID (searches workspace dirs, root, and subfolders)
+function findWorkflowPath(id: string): string | null {
+  const dir = path.join(app.getPath('userData'), 'workflows');
+  // 1. Check workspace dir at root level (flowId/main.stuard)
+  const wsPath = path.join(dir, id, 'main.stuard');
+  if (fs.existsSync(wsPath)) return wsPath;
+  // 2. Check root flat file
+  const rootPath = path.join(dir, `${id}.json`);
+  if (fs.existsSync(rootPath)) return rootPath;
+  // 3. Search subfolders for both workspace dirs and flat files
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== id) {
+        // Workspace dir inside a group folder
+        const subWsPath = path.join(dir, entry.name, id, 'main.stuard');
+        if (fs.existsSync(subWsPath)) return subWsPath;
+        // Flat file inside a group folder
+        const subPath = path.join(dir, entry.name, `${id}.json`);
+        if (fs.existsSync(subPath)) return subPath;
+      }
+    }
+  } catch { }
+  return null;
 }
 
 export function workflows_read(id: string) {
   try {
     const safe = safeFlowId(String(id || ''));
     if (!safe) return { ok: false, error: 'invalid_id' };
-    const dir = path.join(app.getPath('userData'), 'workflows');
-    const p = path.join(dir, `${safe}.json`);
-    if (!fs.existsSync(p)) return { ok: false, error: 'not_found' };
+    const p = findWorkflowPath(safe);
+    if (!p) return { ok: false, error: 'not_found' };
     const rawContent = fs.readFileSync(p, 'utf-8');
     // Decrypt if encrypted (locked workflows)
     const content = prepareForLoad(rawContent);
-    return { ok: true, id: safe, content };
+    const wsDir = getWorkspaceDir(safe);
+    return { ok: true, id: safe, content, isWorkspace: !!wsDir, workspacePath: wsDir || undefined };
   } catch (e: any) {
     // If decryption fails, the workflow may be from a different machine
     if (String(e?.message || '').includes('Decryption failed')) {
@@ -978,7 +1092,7 @@ export function workflows_read(id: string) {
   }
 }
 
-export function workflows_save(payload: { id: string; content: string }) {
+export function workflows_save(payload: { id: string; content: string; folder?: string }) {
   try {
     const safe = safeFlowId(String(payload?.id || ''));
     const content = String(payload?.content || '');
@@ -986,11 +1100,46 @@ export function workflows_save(payload: { id: string; content: string }) {
     try { JSON.parse(content); } catch { return { ok: false, error: 'invalid_json' }; }
     const dir = path.join(app.getPath('userData'), 'workflows');
     try { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); } catch { }
-    const p = path.join(dir, `${safe}.json`);
-    // Encrypt if locked workflow
+
+    // Check if this workflow already exists (workspace or flat file)
+    const existing = findWorkflowPath(safe);
+
+    if (existing) {
+      // Save to existing location (workspace main.stuard or flat .json)
+      const contentToSave = prepareForSave(content);
+      fs.writeFileSync(existing, contentToSave, { encoding: 'utf-8' });
+      return { ok: true, isWorkspace: existing.endsWith('main.stuard') };
+    }
+
+    // New workflow — always create workspace directory
+    let baseDir = dir;
+    if (payload.folder) {
+      const safeFolder = String(payload.folder).replace(/[^a-zA-Z0-9_\- ]/g, '').trim();
+      if (safeFolder) {
+        baseDir = path.join(dir, safeFolder);
+        try { if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true }); } catch { }
+      }
+    }
+
+    const wsDir = path.join(baseDir, safe);
+    fs.mkdirSync(wsDir, { recursive: true });
+    // Create default subdirectories
+    for (const sub of WORKSPACE_SUBDIRS) {
+      const subPath = path.join(wsDir, sub);
+      try { if (!fs.existsSync(subPath)) fs.mkdirSync(subPath, { recursive: true }); } catch { }
+    }
+    // Seed default starter script
+    const helloPath = path.join(wsDir, 'scripts', 'hello.py');
+    try {
+      if (!fs.existsSync(helloPath)) {
+        fs.writeFileSync(helloPath, `# Workspace starter script\n# Edit this file or add more scripts to the scripts/ folder.\n# Reference in workflow nodes with: {{$workspace.scripts}}/hello.py\n\nimport json, os, sys\n\nprint("Hello from workspace!")\nprint(f"Python {sys.version}")\nprint(f"Working dir: {os.getcwd()}")\n`, 'utf-8');
+      }
+    } catch { }
+    const p = path.join(wsDir, 'main.stuard');
     const contentToSave = prepareForSave(content);
     fs.writeFileSync(p, contentToSave, { encoding: 'utf-8' });
-    return { ok: true };
+    console.log(`[workflows] Created workspace directory: ${wsDir}`);
+    return { ok: true, isWorkspace: true, workspacePath: wsDir };
   } catch (e: any) {
     return { ok: false, error: String(e?.message || 'failed') };
   }
@@ -1000,9 +1149,19 @@ export function workflows_delete(id: string) {
   try {
     const safe = safeFlowId(String(id || ''));
     if (!safe) return { ok: false, error: 'invalid_id' };
-    const dir = path.join(app.getPath('userData'), 'workflows');
-    const p = path.join(dir, `${safe}.json`);
-    if (fs.existsSync(p)) fs.unlinkSync(p);
+
+    // Check for workspace directory first
+    const wsDir = getWorkspaceDir(safe);
+    if (wsDir && fs.existsSync(wsDir)) {
+      // Remove entire workspace directory
+      fs.rmSync(wsDir, { recursive: true, force: true });
+      console.log(`[workflows] Deleted workspace directory: ${wsDir}`);
+      return { ok: true };
+    }
+
+    // Fallback: search for flat .json file
+    const p = findWorkflowPath(safe);
+    if (p && fs.existsSync(p)) fs.unlinkSync(p);
     return { ok: true };
   } catch (e: any) {
     return { ok: false, error: String(e?.message || 'failed') };
@@ -1024,9 +1183,8 @@ export function workflows_deploy(id: string) {
     // Enable autostart
     model.autostart = true;
 
-    // Save with autostart enabled
-    const dir = path.join(app.getPath('userData'), 'workflows');
-    const p = path.join(dir, `${safe}.json`);
+    // Save with autostart enabled (subfolder-aware)
+    const p = getWorkflowPathById(safe);
     fs.writeFileSync(p, JSON.stringify(model, null, 2), { encoding: 'utf-8' });
 
     // IMPORTANT: Stop and clean up any legacy stuard runtime with the same ID
@@ -1072,9 +1230,8 @@ export function workflows_undeploy(id: string) {
     // Disable autostart
     model.autostart = false;
 
-    // Save with autostart disabled
-    const dir = path.join(app.getPath('userData'), 'workflows');
-    const p = path.join(dir, `${safe}.json`);
+    // Save with autostart disabled (subfolder-aware)
+    const p = getWorkflowPathById(safe);
     fs.writeFileSync(p, JSON.stringify(model, null, 2), { encoding: 'utf-8' });
 
     // Stop the runtime
@@ -1237,6 +1394,15 @@ export function workflows_stop(id: string) {
     // Abort any active engine runs (does NOT affect deployed triggers/runtime)
     const stopRes = stopStuardEngineRuns(safe);
 
+    // Close any custom_ui windows associated with this workflow (resolves blocking promises)
+    try {
+      const { closeCustomUiByFlowId } = require('../custom-ui');
+      const closedWindows = closeCustomUiByFlowId(safe);
+      if (closedWindows > 0) {
+        logFlow(safe, `Closed ${closedWindows} custom UI window(s)`);
+      }
+    } catch { }
+
     // Emit flow execution ended + log (best-effort; engine will also emit when it observes abort)
     emitFlowExecutionState(safe, false);
     logFlow(safe, stopRes.ok ? 'Run stopped' : 'Stop requested (not running)');
@@ -1352,6 +1518,317 @@ export function workflows_runFromStep(id: string, options: { startStepId: string
     return { ok: true };
   } catch (e: any) {
     console.error('[Workflows] workflows_runFromStep error:', e);
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+// ─── Folder CRUD ───────────────────────────────────────────────────
+
+function safeFolderName(name: string): string {
+  return String(name || '').replace(/[^a-zA-Z0-9_\- ]/g, '').trim().slice(0, 64);
+}
+
+export function workflows_createFolder(name: string) {
+  try {
+    const safe = safeFolderName(name);
+    if (!safe) return { ok: false, error: 'invalid_folder_name' };
+    const dir = path.join(app.getPath('userData'), 'workflows', safe);
+    if (fs.existsSync(dir)) return { ok: false, error: 'folder_exists' };
+    fs.mkdirSync(dir, { recursive: true });
+    console.log('[workflows] Created folder:', safe);
+    return { ok: true, folder: safe };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+export function workflows_renameFolder(oldName: string, newName: string) {
+  try {
+    const safeOld = safeFolderName(oldName);
+    const safeNew = safeFolderName(newName);
+    if (!safeOld || !safeNew) return { ok: false, error: 'invalid_folder_name' };
+    const base = path.join(app.getPath('userData'), 'workflows');
+    const oldDir = path.join(base, safeOld);
+    const newDir = path.join(base, safeNew);
+    if (!fs.existsSync(oldDir)) return { ok: false, error: 'folder_not_found' };
+    if (fs.existsSync(newDir)) return { ok: false, error: 'target_folder_exists' };
+    fs.renameSync(oldDir, newDir);
+    console.log('[workflows] Renamed folder:', safeOld, '->', safeNew);
+    return { ok: true, folder: safeNew };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+export function workflows_deleteFolder(name: string, deleteContents?: boolean) {
+  try {
+    const safe = safeFolderName(name);
+    if (!safe) return { ok: false, error: 'invalid_folder_name' };
+    const dir = path.join(app.getPath('userData'), 'workflows', safe);
+    if (!fs.existsSync(dir)) return { ok: false, error: 'folder_not_found' };
+    // Check if folder has contents
+    const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+    if (files.length > 0 && !deleteContents) {
+      return { ok: false, error: 'folder_not_empty', count: files.length };
+    }
+    // Delete contents if requested
+    if (deleteContents) {
+      for (const f of files) {
+        try { fs.unlinkSync(path.join(dir, f)); } catch { }
+      }
+    }
+    fs.rmdirSync(dir);
+    console.log('[workflows] Deleted folder:', safe);
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+export function workflows_moveToFolder(id: string, targetFolder: string | null) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe) return { ok: false, error: 'invalid_id' };
+    const base = path.join(app.getPath('userData'), 'workflows');
+
+    let targetDir: string;
+    if (!targetFolder) {
+      targetDir = base;
+    } else {
+      const safeFolder = safeFolderName(targetFolder);
+      if (!safeFolder) return { ok: false, error: 'invalid_folder_name' };
+      targetDir = path.join(base, safeFolder);
+      try { if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true }); } catch { }
+    }
+
+    // Check if this is a workspace directory
+    const wsDir = getWorkspaceDir(safe);
+    if (wsDir) {
+      const newWsDir = path.join(targetDir, safe);
+      if (wsDir === newWsDir) return { ok: true };
+      fs.renameSync(wsDir, newWsDir);
+      console.log('[workflows] Moved workspace', safe, 'to', targetFolder || 'root');
+      return { ok: true };
+    }
+
+    // Fallback: flat .json file
+    const currentPath = findWorkflowPath(safe);
+    if (!currentPath) return { ok: false, error: 'workflow_not_found' };
+    const newPath = path.join(targetDir, `${safe}.json`);
+    if (currentPath === newPath) return { ok: true };
+    fs.renameSync(currentPath, newPath);
+    console.log('[workflows] Moved workflow', safe, 'to', targetFolder || 'root');
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+// ─── Workspace File Management ─────────────────────────────────────────────
+
+interface WorkspaceFileEntry {
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  size?: number;
+  updatedAt?: string;
+}
+
+/** Ensure a workspace directory exists for a workflow, creating if needed */
+export function workflows_ensureWorkspace(id: string) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe) return { ok: false, error: 'invalid_id' };
+
+    // Already a workspace?
+    const existing = getWorkspaceDir(safe);
+    if (existing) return { ok: true, workspacePath: existing, created: false };
+
+    // Find existing flat file to migrate
+    const flatPath = findWorkflowPath(safe);
+    if (!flatPath) return { ok: false, error: 'workflow_not_found' };
+
+    // Migrate: read flat file, create workspace, write main.stuard, delete flat file
+    const content = fs.readFileSync(flatPath, 'utf-8');
+    const base = path.dirname(flatPath);
+    const wsDir = path.join(base, safe);
+    fs.mkdirSync(wsDir, { recursive: true });
+    for (const sub of WORKSPACE_SUBDIRS) {
+      try { fs.mkdirSync(path.join(wsDir, sub), { recursive: true }); } catch { }
+    }
+    fs.writeFileSync(path.join(wsDir, 'main.stuard'), content, 'utf-8');
+    fs.unlinkSync(flatPath);
+    console.log(`[workflows] Migrated ${safe} to workspace format`);
+    return { ok: true, workspacePath: wsDir, created: true };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+/** Get workspace info: path, subdirs, file count */
+export function workflows_getWorkspaceInfo(id: string) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe) return { ok: false, error: 'invalid_id' };
+    const wsDir = getWorkspaceDir(safe);
+    if (!wsDir) return { ok: false, error: 'not_a_workspace' };
+
+    const files: WorkspaceFileEntry[] = [];
+    const walkDir = (dir: string, prefix: string) => {
+      try {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const e of entries) {
+          const fullPath = path.join(dir, e.name);
+          const relPath = prefix ? `${prefix}/${e.name}` : e.name;
+          if (e.isDirectory()) {
+            files.push({ name: e.name, path: relPath, type: 'directory' });
+            walkDir(fullPath, relPath);
+          } else {
+            const stat = fs.statSync(fullPath);
+            files.push({
+              name: e.name,
+              path: relPath,
+              type: 'file',
+              size: stat.size,
+              updatedAt: new Date(stat.mtimeMs).toISOString(),
+            });
+          }
+        }
+      } catch { }
+    };
+    walkDir(wsDir, '');
+
+    return {
+      ok: true,
+      workspacePath: wsDir,
+      subdirs: WORKSPACE_SUBDIRS,
+      files,
+    };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+/** List files in a workspace subpath */
+export function workflows_listWorkspaceFiles(id: string, subpath?: string) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe) return { ok: false, error: 'invalid_id' };
+    const wsDir = getWorkspaceDir(safe);
+    if (!wsDir) return { ok: false, error: 'not_a_workspace' };
+
+    const targetDir = subpath ? path.join(wsDir, ...subpath.split('/').filter(Boolean)) : wsDir;
+    // Safety: ensure target is within workspace
+    if (!targetDir.startsWith(wsDir)) return { ok: false, error: 'path_traversal' };
+    if (!fs.existsSync(targetDir)) return { ok: false, error: 'subpath_not_found' };
+
+    const entries = fs.readdirSync(targetDir, { withFileTypes: true });
+    const files: WorkspaceFileEntry[] = [];
+    for (const e of entries) {
+      const fullPath = path.join(targetDir, e.name);
+      if (e.isDirectory()) {
+        files.push({ name: e.name, path: subpath ? `${subpath}/${e.name}` : e.name, type: 'directory' });
+      } else {
+        const stat = fs.statSync(fullPath);
+        files.push({
+          name: e.name,
+          path: subpath ? `${subpath}/${e.name}` : e.name,
+          type: 'file',
+          size: stat.size,
+          updatedAt: new Date(stat.mtimeMs).toISOString(),
+        });
+      }
+    }
+    return { ok: true, files };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+/** Read a file from the workspace */
+export function workflows_readWorkspaceFile(id: string, filePath: string) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe || !filePath) return { ok: false, error: 'invalid_args' };
+    const wsDir = getWorkspaceDir(safe);
+    if (!wsDir) return { ok: false, error: 'not_a_workspace' };
+
+    const target = path.join(wsDir, ...filePath.split('/').filter(Boolean));
+    if (!target.startsWith(wsDir)) return { ok: false, error: 'path_traversal' };
+    if (!fs.existsSync(target)) return { ok: false, error: 'file_not_found' };
+
+    const stat = fs.statSync(target);
+    if (stat.isDirectory()) return { ok: false, error: 'is_directory' };
+    // Limit file size for reading (10MB)
+    if (stat.size > 10 * 1024 * 1024) return { ok: false, error: 'file_too_large' };
+
+    const content = fs.readFileSync(target, 'utf-8');
+    return { ok: true, content, size: stat.size, updatedAt: new Date(stat.mtimeMs).toISOString() };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+/** Write a file to the workspace */
+export function workflows_writeWorkspaceFile(id: string, filePath: string, content: string) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe || !filePath) return { ok: false, error: 'invalid_args' };
+    const wsDir = getWorkspaceDir(safe);
+    if (!wsDir) return { ok: false, error: 'not_a_workspace' };
+
+    const target = path.join(wsDir, ...filePath.split('/').filter(Boolean));
+    if (!target.startsWith(wsDir)) return { ok: false, error: 'path_traversal' };
+
+    // Ensure parent directory exists
+    const parentDir = path.dirname(target);
+    if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
+
+    fs.writeFileSync(target, content, 'utf-8');
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+/** Delete a file or empty directory from the workspace */
+export function workflows_deleteWorkspaceFile(id: string, filePath: string) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe || !filePath) return { ok: false, error: 'invalid_args' };
+    const wsDir = getWorkspaceDir(safe);
+    if (!wsDir) return { ok: false, error: 'not_a_workspace' };
+
+    const target = path.join(wsDir, ...filePath.split('/').filter(Boolean));
+    if (!target.startsWith(wsDir)) return { ok: false, error: 'path_traversal' };
+    if (!fs.existsSync(target)) return { ok: false, error: 'not_found' };
+
+    const stat = fs.statSync(target);
+    if (stat.isDirectory()) {
+      fs.rmSync(target, { recursive: true, force: true });
+    } else {
+      fs.unlinkSync(target);
+    }
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+/** Create a subdirectory in the workspace */
+export function workflows_createWorkspaceSubdir(id: string, subpath: string) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe || !subpath) return { ok: false, error: 'invalid_args' };
+    const wsDir = getWorkspaceDir(safe);
+    if (!wsDir) return { ok: false, error: 'not_a_workspace' };
+
+    const target = path.join(wsDir, ...subpath.split('/').filter(Boolean));
+    if (!target.startsWith(wsDir)) return { ok: false, error: 'path_traversal' };
+
+    fs.mkdirSync(target, { recursive: true });
+    return { ok: true };
+  } catch (e: any) {
     return { ok: false, error: String(e?.message || 'failed') };
   }
 }

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Callable, Awaitable
 
-from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http, streams
+from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http, streams, database, folder_limiter
 
 
 # Tool metadata for discovery (category and description)
@@ -290,6 +290,21 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "math_slice": ("math", "Slice a tensor"),
     "math_get_index": ("math", "Get element at index"),
     "math_set_index": ("math", "Set element at index"),
+
+    # Folder Permissions
+    "folder_permission_add": ("system", "Add a folder to the allowed access list with read/write/both permission"),
+    "folder_permission_remove": ("system", "Remove a folder from the allowed access list"),
+    "folder_permission_list": ("system", "List all folder permission rules"),
+    "folder_permission_set_enabled": ("system", "Enable or disable the folder limiter"),
+    "folder_permission_check": ("system", "Check if a path is allowed for a given operation"),
+
+    # Database Storage
+    "db_query": ("data", "Execute raw SQL against the local workflow database (SQLite)"),
+    "db_store": ("data", "Store/upsert a JSON document into a named collection"),
+    "db_retrieve": ("data", "Retrieve a document by ID from a collection"),
+    "db_search": ("data", "Search documents in a collection with key-value filters"),
+    "db_delete": ("data", "Delete a document by ID from a collection"),
+    "db_list_tables": ("data", "List all tables/collections in the workflow database"),
 
     # HTTP
     "http_request": ("integrations", "Make HTTP requests like curl or Postman (GET, POST, PUT, PATCH, DELETE, etc.)"),
@@ -600,6 +615,21 @@ _HANDLERS = {
     "math_slice": math_ops.math_slice,
     "math_get_index": math_ops.math_get_index,
     "math_set_index": math_ops.math_set_index,
+
+    # Folder Permissions
+    "folder_permission_add": folder_limiter.folder_permission_add,
+    "folder_permission_remove": folder_limiter.folder_permission_remove,
+    "folder_permission_list": folder_limiter.folder_permission_list,
+    "folder_permission_set_enabled": folder_limiter.folder_permission_set_enabled,
+    "folder_permission_check": folder_limiter.folder_permission_check,
+
+    # Database Storage
+    "db_query": database.db_query,
+    "db_store": database.db_store,
+    "db_retrieve": database.db_retrieve,
+    "db_search": database.db_search,
+    "db_delete": database.db_delete,
+    "db_list_tables": database.db_list_tables,
 
     # HTTP
     "http_request": http.http_request,

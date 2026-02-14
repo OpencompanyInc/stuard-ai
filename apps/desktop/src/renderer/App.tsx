@@ -173,7 +173,8 @@ export default function App() {
     sendMessage, stopGeneration, conversationId, newChat, loadConversation, deleteConversation,
     subscribeProgress, queueDepth, queuedMessages, respondToApproval, lastError, execLocalTool, submitToolOutput,
     tabs, activeTabId, addTab, closeTab, switchTab,
-    pendingMemories, confirmPendingMemory, rejectPendingMemory
+    pendingMemories, confirmPendingMemory, rejectPendingMemory,
+    editMessage, revertFiles
   } = useAgent({ onTitleUpdate: handleTitleUpdate }) as any;
 
   // Speech Hook
@@ -216,6 +217,23 @@ export default function App() {
       try { unsubOpen && unsubOpen(); } catch { }
     };
   }, []);
+
+  // Listen for chat messages from browser extension
+  useEffect(() => {
+    const unsub = (window as any).desktopAPI?.onBrowserExtensionChat?.((data: { text: string; messageId: string; pageContext?: any }) => {
+      if (data?.text) {
+        // Inject page context into the message
+        const contextNote = data.pageContext?.url
+          ? `\n\n[Browser context: ${data.pageContext.title || ''} — ${data.pageContext.url}]`
+          : '';
+        sendMessage({
+          text: data.text + contextNote,
+          context: data.pageContext ? { browserPage: data.pageContext } : {},
+        });
+      }
+    });
+    return () => { try { unsub?.(); } catch {} };
+  }, [sendMessage]);
 
   // Listen for resize events from main process
   useEffect(() => {
@@ -1303,6 +1321,8 @@ export default function App() {
                     translucentMode={translucentMode}
                     onSubmitToolOutput={submitToolOutput}
                     onGenUIResponse={handleGenUIResponse}
+                    onEditMessage={editMessage}
+                    onRevertFiles={revertFiles}
                     pendingMemories={pendingMemories}
                     onConfirmPendingMemory={confirmPendingMemory}
                     onRejectPendingMemory={rejectPendingMemory}

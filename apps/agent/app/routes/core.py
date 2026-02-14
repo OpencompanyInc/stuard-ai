@@ -154,6 +154,32 @@ async def http_reminders_cancel(payload: Dict[str, Any]) -> JSONResponse:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
+@router.post("/reminders/update")
+async def http_reminders_update(payload: Dict[str, Any]) -> JSONResponse:
+    try:
+        res = await tasks_tools.task_reminders({
+            "action": "update",
+            "id": payload.get("id"),
+            "taskId": payload.get("taskId"),
+            "when": payload.get("when"),
+            "scheduledAt": payload.get("scheduledAt"),
+            "message": payload.get("message"),
+            "recurrence": payload.get("recurrence"),
+        })
+        return JSONResponse(res)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@router.post("/reminders/delete")
+async def http_reminders_delete(payload: Dict[str, Any]) -> JSONResponse:
+    try:
+        res = await tasks_tools.task_reminders({"action": "delete", "id": payload.get("id"), "taskId": payload.get("taskId")})
+        return JSONResponse(res)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
 @router.get("/reminders/list")
 async def http_reminders_list() -> JSONResponse:
     try:
@@ -520,5 +546,55 @@ async def http_memory_space_items_list(space_id: str, type: str | None = None, l
             params["type"] = type
         res = await memory_tools.space_item_list(params)
         return JSONResponse({"ok": True, "items": res.get("items", [])})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+# ── Folder Permissions ─────────────────────────────────────────────────
+
+from ..tools import folder_limiter as _fl
+
+
+@router.get("/folder-permissions")
+async def http_folder_permissions_list() -> JSONResponse:
+    try:
+        res = await _fl.folder_permission_list({})
+        return JSONResponse(res)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@router.post("/folder-permissions/add")
+async def http_folder_permissions_add(payload: Dict[str, Any]) -> JSONResponse:
+    try:
+        res = await _fl.folder_permission_add(payload)
+        return JSONResponse(res)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@router.post("/folder-permissions/remove")
+async def http_folder_permissions_remove(payload: Dict[str, Any]) -> JSONResponse:
+    try:
+        res = await _fl.folder_permission_remove(payload)
+        return JSONResponse(res)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@router.post("/folder-permissions/set-enabled")
+async def http_folder_permissions_set_enabled(payload: Dict[str, Any]) -> JSONResponse:
+    try:
+        res = await _fl.folder_permission_set_enabled(payload)
+        return JSONResponse(res)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@router.post("/folder-permissions/check")
+async def http_folder_permissions_check(payload: Dict[str, Any]) -> JSONResponse:
+    try:
+        res = await _fl.folder_permission_check(payload)
+        return JSONResponse(res)
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)

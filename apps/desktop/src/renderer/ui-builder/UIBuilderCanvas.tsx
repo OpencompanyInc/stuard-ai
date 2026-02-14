@@ -3,11 +3,14 @@
  * Renders actual custom_ui output and allows selecting/editing any element
  */
 
-import React, { useRef, useState, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
+
+const PREVIEW_WINDOW_MARGIN = 16;
+const MIN_PREVIEW_SURFACE = 400;
 
 export interface UIBuilderCanvasRef {
   refresh: () => void;
-  updateElement: (path: string, updates: { textContent?: string; className?: string; style?: string; id?: string }) => void;
+  updateElement: (path: string, updates: { textContent?: string; className?: string; style?: string; id?: string; attributes?: Record<string, string | undefined> }) => void;
   deleteElement: (path: string) => void;
   requestHtml: () => void;
   appendHtml: (html: string) => void;
@@ -16,7 +19,7 @@ export interface UIBuilderCanvasRef {
 }
 
 export interface SelectedElementInfo {
-  path: string;           // Unique path to element (for re-selection)
+  path: string;
   tagName: string;
   id: string;
   className: string;
@@ -33,6 +36,9 @@ interface UIBuilderCanvasProps {
   js: string;
   canvasWidth: number;
   canvasHeight: number;
+  windowPosition?: 'center' | 'topleft' | 'topright' | 'bottomleft' | 'bottomright' | 'bottomcenter' | 'mouse' | 'cursor' | 'custom';
+  customX?: number;
+  customY?: number;
   backgroundColor: string;
   zoom: number;
   showGrid: boolean;
@@ -50,6 +56,9 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   js,
   canvasWidth,
   canvasHeight,
+  windowPosition = 'center',
+  customX,
+  customY,
   backgroundColor,
   zoom,
   showGrid,
@@ -64,12 +73,73 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [iframeReady, setIframeReady] = useState(false);
   const [hoveredPath, setHoveredPath] = useState<string | null>(null);
+  const [surfaceSize, setSurfaceSize] = useState({ width: 600, height: 450 });
 
-  // Track if HTML change is from iframe sync (don't refresh) vs external (need refresh)
   const isInternalHtmlChange = useRef(false);
   const lastHtmlRef = useRef(html);
 
-  // Generate the iframe content with selection support
+  const safeCanvasWidth = Number.isFinite(canvasWidth) && canvasWidth > 0 ? canvasWidth : 1;
+  const safeCanvasHeight = Number.isFinite(canvasHeight) && canvasHeight > 0 ? canvasHeight : 1;
+
+  const scaledCanvasWidth = safeCanvasWidth * zoom;
+  const scaledCanvasHeight = safeCanvasHeight * zoom;
+
+  useEffect(() => {
+    const updateSurfaceSize = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        const padding = 48;
+        setSurfaceSize({
+          width: Math.max(MIN_PREVIEW_SURFACE, rect.width - padding),
+          height: Math.max(MIN_PREVIEW_SURFACE, rect.height - padding),
+        });
+      }
+    };
+    updateSurfaceSize();
+    window.addEventListener('resize', updateSurfaceSize);
+    return () => window.removeEventListener('resize', updateSurfaceSize);
+  }, []);
+
+  const windowOffset = useMemo(() => {
+    const surfaceW = surfaceSize.width;
+    const surfaceH = surfaceSize.height;
+    const centeredX = (surfaceW - scaledCanvasWidth) / 2;
+    const centeredY = (surfaceH - scaledCanvasHeight) / 2;
+
+    switch (windowPosition) {
+      case 'topleft':
+        return { x: PREVIEW_WINDOW_MARGIN, y: PREVIEW_WINDOW_MARGIN };
+      case 'topright':
+        return { x: surfaceW - PREVIEW_WINDOW_MARGIN - scaledCanvasWidth, y: PREVIEW_WINDOW_MARGIN };
+      case 'bottomleft':
+        return { x: PREVIEW_WINDOW_MARGIN, y: surfaceH - PREVIEW_WINDOW_MARGIN - scaledCanvasHeight };
+      case 'bottomright':
+        return {
+          x: surfaceW - PREVIEW_WINDOW_MARGIN - scaledCanvasWidth,
+          y: surfaceH - PREVIEW_WINDOW_MARGIN - scaledCanvasHeight,
+        };
+      case 'bottomcenter':
+        return { x: centeredX, y: surfaceH - PREVIEW_WINDOW_MARGIN - scaledCanvasHeight };
+      case 'mouse':
+      case 'cursor':
+        return {
+          x: surfaceW * 0.65 - scaledCanvasWidth / 2,
+          y: surfaceH * 0.4 - scaledCanvasHeight / 2,
+        };
+      case 'custom': {
+        const xPct = (typeof customX === 'number' ? customX : 50) / 100;
+        const yPct = (typeof customY === 'number' ? customY : 50) / 100;
+        return {
+          x: surfaceW * xPct - scaledCanvasWidth / 2,
+          y: surfaceH * yPct - scaledCanvasHeight / 2,
+        };
+      }
+      case 'center':
+      default:
+        return { x: centeredX, y: centeredY };
+    }
+  }, [windowPosition, customX, customY, scaledCanvasWidth, scaledCanvasHeight, surfaceSize]);
+
   const generateIframeContent = useCallback(() => {
     return `
 <!DOCTYPE html>
@@ -78,7 +148,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   <meta charset="UTF-8">
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    /* Custom Scrollbars */
     ::-webkit-scrollbar {
       width: 8px;
       height: 8px;
@@ -98,7 +167,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     html, body {
       width: 100%;
       height: 100%;
-      overflow: auto;
+      overflow: hidden;
       margin: 0;
       padding: 0;
       background: ${backgroundColor || 'transparent'};
@@ -107,7 +176,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     }
 
-    /* Button variants */
     .btn { display: inline-flex; align-items: center; justify-content: center; font-weight: 500; transition: all 0.15s; }
     .btn-primary { background: #4f46e5; color: white; }
     .btn-primary:hover { background: #4338ca; }
@@ -116,18 +184,13 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     .btn-danger { background: #ef4444; color: white; }
     .btn-danger:hover { background: #dc2626; }
 
-    /* Window Drag Region */
     .drag { -webkit-app-region: drag; }
     .no-drag { -webkit-app-region: no-drag; }
 
-    /* User CSS */
     ${css || ''}
 
-    /* Design mode element highlighting */
     ${!previewMode ? `
-    /* Disable window dragging in design mode so we can edit the element */
     .drag { -webkit-app-region: no-drag !important; }
-
     [data-elements-path] {
       cursor: pointer !important;
     }
@@ -169,7 +232,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
 <body>
   ${html || ''}
   <script>
-    // Mock stuard API for preview
     window.stuard = {
       close: () => console.log('[Preview] stuard.close()'),
       pickFolder: async () => ({ canceled: true, filePaths: [] }),
@@ -180,22 +242,17 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       send: (data) => console.log('[Preview] stuard.send:', data),
     };
 
-    // Generate unique path for an element
     function getElementPath(el) {
       if (!el || el === document.body || el === document.documentElement) return null;
-
       const parts = [];
       let current = el;
-
       while (current && current !== document.body) {
         let selector = current.tagName.toLowerCase();
-
         if (current.id) {
           selector += '#' + current.id;
           parts.unshift(selector);
-          break; // ID is unique, no need to go further
+          break;
         } else {
-          // Add nth-child for uniqueness
           const parent = current.parentElement;
           if (parent) {
             const siblings = Array.from(parent.children);
@@ -204,36 +261,24 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
           }
           parts.unshift(selector);
         }
-
         current = current.parentElement;
       }
-
       return parts.join(' > ');
     }
 
-    // Get element info for parent
     function getElementInfo(el) {
       if (!el) return null;
-
       const rect = el.getBoundingClientRect();
       const computed = window.getComputedStyle(el);
-
-      // Get relevant computed styles
       const styles = {};
       const relevantProps = ['color', 'backgroundColor', 'fontSize', 'fontWeight', 'padding', 'margin', 'borderRadius', 'display', 'flexDirection', 'gap', 'alignItems', 'justifyContent'];
-      relevantProps.forEach(prop => {
-        styles[prop] = computed[prop];
-      });
-
-      // Get attributes
+      relevantProps.forEach(prop => { styles[prop] = computed[prop]; });
       const attributes = {};
       for (const attr of el.attributes) {
         if (!attr.name.startsWith('data-elements')) {
           attributes[attr.name] = attr.value;
         }
       }
-
-      // Handle className which could be SVGAnimatedString for SVG elements
       let className = '';
       if (typeof el.className === 'string') {
         className = el.className;
@@ -242,7 +287,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       } else if (el.getAttribute) {
         className = el.getAttribute('class') || '';
       }
-
       return {
         path: getElementPath(el),
         tagName: el.tagName.toLowerCase(),
@@ -256,7 +300,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       };
     }
 
-    // Add data-elements-path to all elements for selection
     function initializeElements() {
       const elements = document.body.querySelectorAll('*');
       elements.forEach(el => {
@@ -268,7 +311,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       window.parent.postMessage({ type: 'ready' }, '*');
     }
 
-    // Find element by path
     function findElementByPath(path) {
       if (!path) return null;
       try {
@@ -278,7 +320,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       }
     }
 
-    // Design mode event handlers
     ${!previewMode ? `
     let selectedPath = null;
     let hoveredPath = null;
@@ -289,19 +330,14 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     let elementStartX = 0;
     let elementStartY = 0;
 
-    // Handle mousedown for drag start
     document.body.addEventListener('mousedown', (e) => {
-      window.focus(); // Focus window to capture key events
-      
+      window.focus();
       const target = e.target.closest('[data-elements-path]');
       if (target && target.classList.contains('ui-selected')) {
-        // Start dragging the selected element
         isDragging = true;
         draggedElement = target;
         dragStartX = e.clientX;
         dragStartY = e.clientY;
-
-        // Get current transform or position
         const style = window.getComputedStyle(target);
         const transform = style.transform;
         if (transform && transform !== 'none') {
@@ -312,66 +348,54 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
           elementStartX = 0;
           elementStartY = 0;
         }
-
         target.classList.add('ui-dragging');
         e.preventDefault();
       }
     });
 
-    // Handle mousemove for dragging
     document.body.addEventListener('mousemove', (e) => {
       if (isDragging && draggedElement) {
         const deltaX = e.clientX - dragStartX;
         const deltaY = e.clientY - dragStartY;
         const newX = elementStartX + deltaX;
         const newY = elementStartY + deltaY;
-
-        // Snap to grid (8px)
         const gridSize = ${gridSize};
         const snappedX = Math.round(newX / gridSize) * gridSize;
         const snappedY = Math.round(newY / gridSize) * gridSize;
-
         draggedElement.style.transform = 'translate(' + snappedX + 'px, ' + snappedY + 'px)';
         return;
       }
-
-      // Hover handling
       const target = e.target.closest('[data-elements-path]');
       const path = target ? target.getAttribute('data-elements-path') : null;
-
       if (path !== hoveredPath) {
         hoveredPath = path;
         window.parent.postMessage({ type: 'hover', path }, '*');
       }
     });
 
-    // Handle mouseup for drag end
     document.body.addEventListener('mouseup', (e) => {
       if (isDragging && draggedElement) {
         draggedElement.classList.remove('ui-dragging');
-
-        // Notify parent about the change
         const info = getElementInfo(draggedElement);
         window.parent.postMessage({ type: 'elementUpdated', element: info }, '*');
         window.parent.postMessage({ type: 'positionChanged' }, '*');
-
         isDragging = false;
         draggedElement = null;
       }
     });
 
-    // Keyboard delete handler
     document.addEventListener('keydown', (e) => {
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedPath) {
-        const target = findElementByPath(selectedPath);
-        if (target && target.parentNode) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
+          return;
+        }
+        const el = findElementByPath(selectedPath);
+        if (el && el !== document.body) {
           e.preventDefault();
-          target.parentNode.removeChild(target);
+          el.remove();
           selectedPath = null;
           document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
           window.parent.postMessage({ type: 'select', element: null }, '*');
-          
-          // Sync HTML back
           const clone = document.body.cloneNode(true);
           clone.querySelectorAll('[data-elements-path]').forEach(el => {
             el.removeAttribute('data-elements-path');
@@ -382,28 +406,19 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       }
     });
 
-    // Handle click for selection
     document.body.addEventListener('click', (e) => {
-      window.focus(); // Ensure focus for keydown events
-      
-      // Don't process click if we just finished dragging
+      window.focus();
       if (isDragging) {
         isDragging = false;
         return;
       }
-
       e.preventDefault();
       e.stopPropagation();
-
       const target = e.target.closest('[data-elements-path]');
       if (target) {
-        // Clear previous selection
         document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
-
-        // Set new selection
         target.classList.add('ui-selected');
         selectedPath = target.getAttribute('data-elements-path');
-
         const info = getElementInfo(target);
         window.parent.postMessage({ type: 'select', element: info }, '*');
       } else {
@@ -413,36 +428,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       }
     }, true);
 
-    // Handle keydown for delete
-    document.addEventListener('keydown', (e) => {
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedPath) {
-        // Don't delete if editing text or input
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
-          return;
-        }
-        
-        const el = findElementByPath(selectedPath);
-        if (el && el !== document.body) {
-          e.preventDefault();
-          el.remove();
-          
-          // Clear selection
-          selectedPath = null;
-          document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
-          window.parent.postMessage({ type: 'select', element: null }, '*');
-          
-          // Sync HTML
-          const clone = document.body.cloneNode(true);
-          clone.querySelectorAll('[data-elements-path]').forEach(el => {
-            el.removeAttribute('data-elements-path');
-            el.classList.remove('ui-selected', 'ui-hovered', 'ui-dragging');
-          });
-          window.parent.postMessage({ type: 'html', html: clone.innerHTML }, '*');
-        }
-      }
-    });
-
-    // Listen for commands from parent
     window.addEventListener('message', (e) => {
       if (e.data.type === 'setSelected') {
         document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
@@ -461,8 +446,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
             selectedPath = null;
             document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
             window.parent.postMessage({ type: 'select', element: null }, '*');
-            
-            // Sync HTML
             const clone = document.body.cloneNode(true);
             clone.querySelectorAll('[data-elements-path]').forEach(el => {
               el.removeAttribute('data-elements-path');
@@ -486,14 +469,21 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
           if (e.data.updates.id !== undefined) {
             el.id = e.data.updates.id;
           }
-          // Re-init paths since DOM changed
+          if (e.data.updates.attributes && typeof e.data.updates.attributes === 'object') {
+            Object.entries(e.data.updates.attributes).forEach(([name, value]) => {
+              if (!name || name.startsWith('data-elements')) return;
+              if (value === undefined || value === null || value === '') {
+                el.removeAttribute(name);
+              } else {
+                el.setAttribute(name, String(value));
+              }
+            });
+          }
           initializeElements();
-          // Send back updated element info
           const info = getElementInfo(el);
           window.parent.postMessage({ type: 'elementUpdated', element: info }, '*');
         }
       } else if (e.data.type === 'getHtml') {
-        // Return the current HTML (without our data-elements-path attributes)
         const clone = document.body.cloneNode(true);
         clone.querySelectorAll('[data-elements-path]').forEach(el => {
           el.removeAttribute('data-elements-path');
@@ -501,7 +491,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         });
         window.parent.postMessage({ type: 'html', html: clone.innerHTML }, '*');
       } else if (e.data.type === 'updateStyles') {
-        // Update CSS without full reload
         let styleEl = document.getElementById('user-css');
         if (!styleEl) {
           styleEl = document.createElement('style');
@@ -510,7 +499,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         }
         styleEl.textContent = e.data.css || '';
       } else if (e.data.type === 'updateScript') {
-        // Scripts cannot be hot-reloaded safely, just log for now
         console.log('[Preview] Script updated - refresh for full effect');
       } else if (e.data.type === 'deleteElement') {
         const el = findElementByPath(e.data.path);
@@ -518,8 +506,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
           el.parentNode.removeChild(el);
           selectedPath = null;
           document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
-          
-          // Sync HTML back
           const clone = document.body.cloneNode(true);
           clone.querySelectorAll('[data-elements-path]').forEach(el => {
             el.removeAttribute('data-elements-path');
@@ -529,16 +515,13 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         }
       } else if (e.data.type === 'insertHtmlAtPoint') {
         const point = e.data.point || {};
-        if (typeof point.x !== 'number' || typeof point.y !== 'number') {
-          return;
-        }
+        if (typeof point.x !== 'number' || typeof point.y !== 'number') return;
         const temp = document.createElement('div');
         temp.innerHTML = e.data.html || '';
         const nodes = Array.from(temp.childNodes);
         const rawTarget = document.elementFromPoint(point.x, point.y);
         const target = rawTarget ? rawTarget.closest('[data-elements-path]') : null;
         const containerTags = ['DIV', 'SECTION', 'MAIN', 'FORM', 'UL', 'OL', 'NAV', 'ARTICLE', 'ASIDE', 'HEADER', 'FOOTER'];
-
         if (!target || target === document.body || target === document.documentElement) {
           nodes.forEach(node => document.body.appendChild(node));
         } else if (containerTags.includes(target.tagName)) {
@@ -559,15 +542,12 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         });
         window.parent.postMessage({ type: 'html', html: clone.innerHTML }, '*');
       } else if (e.data.type === 'appendHtml') {
-        // Append HTML to body without full refresh
         const temp = document.createElement('div');
         temp.innerHTML = e.data.html || '';
         while (temp.firstChild) {
           document.body.appendChild(temp.firstChild);
         }
-        // Re-init paths for new elements
         initializeElements();
-        // Request HTML sync back to parent
         const clone = document.body.cloneNode(true);
         clone.querySelectorAll('[data-elements-path]').forEach(el => {
           el.removeAttribute('data-elements-path');
@@ -578,11 +558,9 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     });
     ` : ''}
 
-    // Initialize on load
     window.addEventListener('load', initializeElements);
     setTimeout(initializeElements, 100);
 
-    // User JavaScript (run after setup)
     try {
       ${js || ''}
     } catch(e) {
@@ -593,7 +571,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
 </html>`;
   }, [html, css, js, backgroundColor, showGrid, gridSize, previewMode]);
 
-  // Refresh iframe content
   const refreshIframe = useCallback(() => {
     if (iframeRef.current) {
       setIframeReady(false);
@@ -601,10 +578,9 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     }
   }, [generateIframeContent]);
 
-  // Expose methods to parent
   useImperativeHandle(ref, () => ({
     refresh: refreshIframe,
-    updateElement: (path: string, updates: { textContent?: string; className?: string; style?: string; id?: string }) => {
+    updateElement: (path: string, updates: { textContent?: string; className?: string; style?: string; id?: string; attributes?: Record<string, string | undefined> }) => {
       if (iframeRef.current?.contentWindow) {
         iframeRef.current.contentWindow.postMessage({ type: 'updateElement', path, updates }, '*');
       }
@@ -639,37 +615,28 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     },
   }));
 
-  // Initial mount - load the iframe content
   useEffect(() => {
     refreshIframe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update iframe when content changes (but not for internal HTML syncs)
   useEffect(() => {
-    // Skip refresh if this HTML change came from iframe sync
     if (isInternalHtmlChange.current) {
       isInternalHtmlChange.current = false;
       lastHtmlRef.current = html;
       return;
     }
-
-    // Only refresh if html actually changed from external source
     if (html !== lastHtmlRef.current) {
       lastHtmlRef.current = html;
       refreshIframe();
     }
   }, [html, refreshIframe]);
 
-  // Only refresh for settings changes that require iframe reload, NOT for content updates
-  // CSS/JS content updates are handled via postMessage to avoid full reload
   const lastSettingsRef = useRef({ backgroundColor, showGrid, gridSize, previewMode });
 
   useEffect(() => {
     const settings = { backgroundColor, showGrid, gridSize, previewMode };
     const prev = lastSettingsRef.current;
-
-    // Only refresh if visual settings actually changed (not content)
     if (prev.backgroundColor !== backgroundColor ||
         prev.showGrid !== showGrid ||
         prev.gridSize !== gridSize ||
@@ -679,7 +646,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     }
   }, [backgroundColor, showGrid, gridSize, previewMode, refreshIframe]);
 
-  // Send CSS/JS updates via postMessage to avoid full refresh
   useEffect(() => {
     if (iframeRef.current?.contentWindow && iframeReady) {
       iframeRef.current.contentWindow.postMessage({ type: 'updateStyles', css }, '*');
@@ -692,12 +658,10 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     }
   }, [js, iframeReady]);
 
-  // Listen for messages from iframe
   useEffect(() => {
     const handleMessage = (e: MessageEvent) => {
       if (e.data.type === 'ready') {
         setIframeReady(true);
-        // Re-apply selection if any
         if (selectedPath && iframeRef.current?.contentWindow) {
           iframeRef.current.contentWindow.postMessage({ type: 'setSelected', path: selectedPath }, '*');
         }
@@ -707,26 +671,20 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         setHoveredPath(e.data.path);
         onHoverElement(e.data.path);
       } else if (e.data.type === 'elementUpdated') {
-        // Element was updated, notify parent
         onSelectElement(e.data.element);
       } else if (e.data.type === 'positionChanged') {
-        // Position was changed via drag, request HTML to sync
         if (iframeRef.current?.contentWindow) {
           iframeRef.current.contentWindow.postMessage({ type: 'getHtml' }, '*');
         }
       } else if (e.data.type === 'html') {
-        // HTML was requested, send to parent
-        // Mark as internal change so we don't refresh the iframe
         isInternalHtmlChange.current = true;
         onHtmlChange?.(e.data.html);
       }
     };
-
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, [selectedPath, onSelectElement, onHoverElement, onHtmlChange]);
 
-  // Update selection in iframe when selectedPath changes
   useEffect(() => {
     if (iframeRef.current?.contentWindow && iframeReady) {
       iframeRef.current.contentWindow.postMessage({ type: 'setSelected', path: selectedPath }, '*');
@@ -736,59 +694,86 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   return (
     <div
       ref={containerRef}
-      className="flex-1 overflow-auto relative bg-slate-100"
-      style={{ minHeight: '100%' }}
+      className="flex-1 min-w-0 min-h-0 overflow-auto relative bg-slate-100"
     >
       {/* Canvas Container - centers the preview */}
       <div
-        className="flex items-center justify-center p-8"
-        style={{ minHeight: '100%' }}
+        className="inline-flex items-center justify-center p-8"
+        style={{
+          minHeight: '100%',
+          minWidth: '100%',
+        }}
       >
-        {/* The rendered UI in iframe */}
         <div
-          className="relative bg-white rounded-lg shadow-2xl overflow-hidden"
+          className="relative bg-white rounded-xl border border-slate-300 shadow-inner overflow-hidden flex-shrink-0"
           style={{
-            width: canvasWidth * zoom,
-            height: canvasHeight * zoom,
+            width: PREVIEW_SURFACE_WIDTH,
+            height: PREVIEW_SURFACE_HEIGHT,
           }}
         >
-          <iframe
-            ref={iframeRef}
-            className="w-full h-full border-0"
+          <div
+            className="absolute inset-0 pointer-events-none"
             style={{
-              width: canvasWidth,
-              height: canvasHeight,
-              transform: `scale(${zoom})`,
-              transformOrigin: 'top left',
+              backgroundImage:
+                'linear-gradient(rgba(148, 163, 184, 0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(148, 163, 184, 0.1) 1px, transparent 1px)',
+              backgroundSize: '32px 32px',
             }}
-            sandbox="allow-scripts allow-same-origin"
-            title="UI Preview"
           />
 
-          {/* Loading overlay */}
-          {!iframeReady && (
-            <div className="absolute inset-0 bg-white flex items-center justify-center">
-              <div className="text-slate-400 text-sm">Loading preview...</div>
-            </div>
-          )}
+          <div className="absolute top-3 right-3 px-2 py-1 rounded-md bg-white/90 text-[10px] font-mono text-slate-500 border border-slate-200 z-10">
+            preview surface {PREVIEW_SURFACE_WIDTH}×{PREVIEW_SURFACE_HEIGHT}
+          </div>
+
+          {/* The rendered custom UI window */}
+          <div
+            className="absolute bg-white rounded-lg shadow-2xl overflow-hidden border border-slate-300"
+            style={{
+              left: windowOffset.x,
+              top: windowOffset.y,
+              width: scaledCanvasWidth,
+              height: scaledCanvasHeight,
+            }}
+          >
+            <iframe
+              ref={iframeRef}
+              className="border-0 block"
+              style={{
+                width: safeCanvasWidth,
+                height: safeCanvasHeight,
+                transform: `scale(${zoom})`,
+                transformOrigin: 'top left',
+              }}
+              sandbox="allow-scripts allow-same-origin"
+              title="UI Preview"
+            />
+
+            {!iframeReady && (
+              <div className="absolute inset-0 bg-white flex items-center justify-center">
+                <div className="text-slate-400 text-sm">Loading preview...</div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Canvas Size Indicator */}
-      <div className="absolute bottom-4 left-4 px-3 py-1.5 bg-white rounded-lg text-xs text-slate-600 border border-slate-200 shadow-sm">
-        {canvasWidth} x {canvasHeight} @ {Math.round(zoom * 100)}%
+      <div className="sticky bottom-4 left-4 inline-block ml-4 mb-4 px-3 py-1.5 bg-white rounded-lg text-xs text-slate-600 border border-slate-200 shadow-sm z-20">
+        <div>{safeCanvasWidth} × {safeCanvasHeight} @ {Math.round(zoom * 100)}%</div>
+        <div className="text-[10px] text-slate-500">
+          position: {windowPosition}{windowPosition === 'custom' ? ` (${customX ?? 50}%, ${customY ?? 50}%)` : ''}
+        </div>
       </div>
 
       {/* Preview Mode Indicator */}
       {previewMode && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-emerald-500 text-white text-xs font-semibold rounded-full shadow-lg z-50">
-          Preview Mode - Interactions Enabled
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-emerald-500 text-white text-xs font-semibold rounded-full shadow-lg z-50 pointer-events-none">
+          Preview Mode — Interactions Enabled
         </div>
       )}
 
       {/* Empty state */}
       {!html && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
           <div className="text-center text-slate-400 bg-white/80 px-6 py-4 rounded-xl">
             <div className="text-lg font-medium mb-1">Empty Canvas</div>
             <div className="text-sm">Click components on the left to add them</div>

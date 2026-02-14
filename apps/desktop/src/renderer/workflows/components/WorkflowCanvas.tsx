@@ -85,6 +85,7 @@ interface WorkflowCanvasProps {
   model: DesignerModel;
   selectedId: string;
   selectedNodeId: string;
+  selectedNodeIds: Set<string>;
   connectingFrom: string;
   reconnecting?: { wireIndex: number; end: 'from' | 'to' } | null;
   executionState: ExecutionState | null;
@@ -104,7 +105,7 @@ interface WorkflowCanvasProps {
   onMouseUp?: () => void;
   onMouseLeave?: () => void;
   onCanvasClick?: () => void;
-  onNodeSelect?: (id: string) => void;
+  onNodeSelect?: (id: string, e?: React.MouseEvent) => void;
   onNodeMouseDown?: (id: string, e: React.MouseEvent) => void;
   onNodeContextMenu?: (id: string, e: React.MouseEvent) => void;
   onNodeConnect?: (id: string) => void;
@@ -115,14 +116,18 @@ interface WorkflowCanvasProps {
   onCanvasContextMenu?: (e: React.MouseEvent) => void;
   connectingStreamFrom?: string;
   onNodeStreamConnect?: (id: string) => void;
+  // Marquee selection
+  selectionBox?: { startX: number; startY: number; endX: number; endY: number } | null;
+  onCanvasMouseDown?: (e: React.MouseEvent) => void;
 }
 
 export function WorkflowCanvas({
-  model, selectedId, selectedNodeId, connectingFrom, reconnecting, executionState, size,
+  model, selectedId, selectedNodeId, selectedNodeIds, connectingFrom, reconnecting, executionState, size,
   canvasRef, alignmentGuides = [], zoom = 1, selectedWireIndex, onWheel, onZoomIn, onZoomOut, onZoomReset, onAutoOrganize,
   onDragOver, onDrop, onMouseMove, onMouseUp, onMouseLeave, onCanvasClick,
   onNodeSelect, onNodeMouseDown, onNodeContextMenu, onNodeConnect, onWireSelect, onWireDelete, onWireContextMenu, onWireReconnect, onCanvasContextMenu,
-  connectingStreamFrom, onNodeStreamConnect
+  connectingStreamFrom, onNodeStreamConnect,
+  selectionBox, onCanvasMouseDown
 }: WorkflowCanvasProps) {
   const [hoveredWireIndex, setHoveredWireIndex] = useState<number | null>(null);
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
@@ -150,90 +155,60 @@ export function WorkflowCanvas({
   const gridSize = 24 * zoom;
 
   return (
-    <div
-      ref={canvasRef}
-      data-onboarding="workflow-canvas"
-      className="flex-1 overflow-auto scrollbar-minimal bg-slate-50/50 relative cursor-grab active:cursor-grabbing pb-32"
-      onDragOver={onDragOver}
-      onDrop={onDrop}
-      onMouseMove={(e) => {
-        setMousePos({ x: e.nativeEvent.offsetX / zoom, y: e.nativeEvent.offsetY / zoom });
-        onMouseMove?.(e);
-      }}
-      onMouseUp={onMouseUp}
-      onMouseLeave={onMouseLeave}
-      onClick={onCanvasClick}
-      onWheel={onWheel}
-      onContextMenu={onCanvasContextMenu}
-    >
-      {/* Dot Grid Background - scales with zoom */}
+    <div className="w-full h-full relative overflow-hidden" data-onboarding="workflow-canvas">
+      {/* Scrollable canvas area */}
       <div
-        className="absolute inset-0 pointer-events-none opacity-[0.4]"
-        style={{
-          width: Math.max(scaledSize.w, 3000),
-          height: Math.max(scaledSize.h, 3000),
-          backgroundImage: 'radial-gradient(#94a3b8 1.5px, transparent 1.5px)',
-          backgroundSize: `${gridSize}px ${gridSize}px`
+        ref={canvasRef}
+        className="absolute inset-0 overflow-auto scrollbar-minimal bg-slate-50/50 cursor-grab active:cursor-grabbing"
+        onDragOver={onDragOver}
+        onDrop={onDrop}
+        onMouseMove={(e) => {
+          const rect = canvasRef.current?.getBoundingClientRect();
+          if (rect) {
+            const cx = (e.clientX - rect.left + (canvasRef.current?.scrollLeft || 0)) / zoom;
+            const cy = (e.clientY - rect.top + (canvasRef.current?.scrollTop || 0)) / zoom;
+            setMousePos({ x: cx, y: cy });
+          }
+          onMouseMove?.(e);
         }}
-      />
-
-      {/* Zoom Controls */}
-      <div className="absolute bottom-6 left-6 z-50 flex items-center gap-1 bg-white/95 backdrop-blur-md rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.08)] border border-slate-100 p-1.5 transition-all hover:scale-105 hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
-        <button
-          onClick={onZoomOut}
-          className="p-2 rounded-xl hover:bg-slate-50 text-slate-400 hover:text-slate-900 transition-colors"
-          title="Zoom out (Ctrl + Scroll)"
-        >
-          <ZoomOut className="w-4 h-4" />
-        </button>
-        <button
-          onClick={onZoomReset}
-          className="px-2 py-1 rounded-xl hover:bg-slate-50 text-slate-500 hover:text-slate-900 transition-colors text-xs font-bold min-w-[3rem] tabular-nums"
-          title="Reset zoom to 100%"
-        >
-          {Math.round(zoom * 100)}%
-        </button>
-        <button
-          onClick={onZoomIn}
-          className="p-2 rounded-xl hover:bg-slate-50 text-slate-400 hover:text-slate-900 transition-colors"
-          title="Zoom in (Ctrl + Scroll)"
-        >
-          <ZoomIn className="w-4 h-4" />
-        </button>
-        <div className="w-px h-4 bg-slate-100 mx-0.5" />
-        <button
-          onClick={onZoomReset}
-          className="p-2 rounded-xl hover:bg-slate-50 text-slate-400 hover:text-slate-900 transition-colors"
-          title="Fit to screen"
-        >
-          <Maximize2 className="w-4 h-4" />
-        </button>
-        {onAutoOrganize && (
-          <>
-            <div className="w-px h-4 bg-slate-100 mx-0.5" />
-            <button
-              onClick={onAutoOrganize}
-              className="p-2 rounded-xl hover:bg-indigo-50 text-slate-400 hover:text-indigo-600 transition-colors"
-              title="Auto-organize layout"
-            >
-              <LayoutGrid className="w-4 h-4" />
-            </button>
-          </>
-        )}
-      </div>
-
-      {/* Scaled Content Container */}
-      <div
-        className="relative origin-top-left"
-        style={{
-          minWidth: scaledSize.w,
-          minHeight: scaledSize.h,
-          transform: `scale(${zoom})`,
-          transformOrigin: 'top left',
-          width: size.w,
-          height: size.h,
+        onMouseUp={onMouseUp}
+        onMouseLeave={onMouseLeave}
+        onClick={onCanvasClick}
+        onWheel={onWheel}
+        onContextMenu={onCanvasContextMenu}
+        onMouseDown={(e) => {
+          if (e.button === 0 && onCanvasMouseDown) {
+            onCanvasMouseDown(e);
+          }
         }}
       >
+        {/* Spacer div - establishes the correct scrollable area matching zoomed content */}
+        <div
+          style={{ width: scaledSize.w, height: scaledSize.h, pointerEvents: 'none' }}
+          aria-hidden
+        />
+
+        {/* Dot Grid Background - scales with zoom, covers full scrollable area */}
+        <div
+          className="absolute inset-0 pointer-events-none opacity-[0.4]"
+          style={{
+            width: scaledSize.w,
+            height: scaledSize.h,
+            backgroundImage: 'radial-gradient(#94a3b8 1.5px, transparent 1.5px)',
+            backgroundSize: `${gridSize}px ${gridSize}px`
+          }}
+        />
+
+        {/* Scaled Content Container - positioned absolutely over the spacer */}
+        <div
+          className="absolute top-0 left-0 origin-top-left"
+          style={{
+            transform: `scale(${zoom})`,
+            transformOrigin: 'top left',
+            width: size.w,
+            height: size.h,
+          }}
+        >
         <svg className="absolute inset-0 pointer-events-none overflow-visible" width={size.w} height={size.h}>
           {/* Wire animation defs */}
           <defs>
@@ -290,35 +265,74 @@ export function WorkflowCanvas({
             const t = all.find(n => n.id === w.to);
             if (!f || !t) return null;
 
-            // Calculate connection points.
-            // Normal wires: center-right of source → center-left of target.
-            // Stream wires: bottom-center of source → top-center of target.
             const isStreamWire = !!(w as any).stream;
 
-            const x1 = isStreamWire ? (f.position.x + 128) : (f.position.x + 256);
-            const y1 = isStreamWire ? (f.position.y + 80) : (f.position.y + 40);
-            const x2 = isStreamWire ? (t.position.x + 128) : (t.position.x);
-            const y2 = isStreamWire ? (t.position.y) : (t.position.y + 40);
-
             // Detect if this is a back edge based on chain index
-            // A back edge goes from a higher index to a lower index in the chain
             const isBackEdge = isBackEdgeByChain(chainIndices, w.from, w.to);
 
+            let x1: number, y1: number, x2: number, y2: number;
             let pathD: string;
             let midX: number;
             let midY: number;
 
-            if (isBackEdge) {
+            if (isStreamWire) {
+              // Stream wire: U-shape orthogonal routing
+              // Both source and target connect from the SAME side (bottom or top)
+              // with the turn point beyond both nodes — clean U or inverted-U shape
+              const nodeW = 256;
+              const nodeH = 80;
+              const fCx = f.position.x + nodeW / 2;
+              const fCy = f.position.y + nodeH / 2;
+              const tCx = t.position.x + nodeW / 2;
+              const tCy = t.position.y + nodeH / 2;
+              const targetBelow = tCy >= fCy;
+              const dirX = tCx >= fCx ? 1 : -1; // horizontal direction toward target
+
+              x1 = fCx;
+              x2 = tCx;
+
+              const cr = 12; // corner radius
+              const arm = 40; // how far the orthogonal arm extends beyond the outermost node
+
+              if (targetBelow) {
+                // U-shape below: both ports at bottom, turn below both
+                y1 = f.position.y + nodeH; // source bottom
+                y2 = t.position.y + nodeH; // target bottom
+                const turnY = Math.max(y1, y2) + arm;
+                pathD = `M ${x1} ${y1} ` +
+                  `L ${x1} ${turnY - cr} ` +
+                  `Q ${x1} ${turnY} ${x1 + dirX * cr} ${turnY} ` +
+                  `L ${x2 - dirX * cr} ${turnY} ` +
+                  `Q ${x2} ${turnY} ${x2} ${turnY - cr} ` +
+                  `L ${x2} ${y2}`;
+                midX = (x1 + x2) / 2;
+                midY = turnY;
+              } else {
+                // Inverted U-shape above: both ports at top, turn above both
+                y1 = f.position.y; // source top
+                y2 = t.position.y; // target top
+                const turnY = Math.min(y1, y2) - arm;
+                pathD = `M ${x1} ${y1} ` +
+                  `L ${x1} ${turnY + cr} ` +
+                  `Q ${x1} ${turnY} ${x1 + dirX * cr} ${turnY} ` +
+                  `L ${x2 - dirX * cr} ${turnY} ` +
+                  `Q ${x2} ${turnY} ${x2} ${turnY + cr} ` +
+                  `L ${x2} ${y2}`;
+                midX = (x1 + x2) / 2;
+                midY = turnY;
+              }
+            } else if (isBackEdge) {
+              // Normal wires: center-right → center-left
+              x1 = f.position.x + 256;
+              y1 = f.position.y + 40;
+              x2 = t.position.x;
+              y2 = t.position.y + 40;
+
               // Loop-back wire: goes right, up, left (over nodes), then down to target
-              const loopOffset = 60; // How far up the wire goes
-              const rightExtend = 40; // How far right before going up
-              const cornerRadius = 12; // Radius for rounded corners
-
-              // Calculate the top Y position (above both nodes)
+              const loopOffset = 60;
+              const rightExtend = 40;
+              const cornerRadius = 12;
               const topY = Math.min(f.position.y, t.position.y) - loopOffset;
-
-              // Path: right from source, up, left across, down to target
-              // Using line segments with rounded corners for a clean look
               const rightX = x1 + rightExtend;
               const leftX = x2 - rightExtend;
 
@@ -332,12 +346,15 @@ export function WorkflowCanvas({
                 `L ${leftX} ${y2 - cornerRadius} ` +
                 `Q ${leftX} ${y2} ${leftX + cornerRadius} ${y2} ` +
                 `L ${x2} ${y2}`;
-
-              // Midpoint for delete button - center of the top horizontal segment
               midX = (rightX + leftX) / 2;
               midY = topY;
             } else {
-              // Normal forward wire: Cubic Bezier curve
+              // Normal forward wire: center-right → center-left, Cubic Bezier
+              x1 = f.position.x + 256;
+              y1 = f.position.y + 40;
+              x2 = t.position.x;
+              y2 = t.position.y + 40;
+
               const dist = Math.abs(x2 - x1);
               const cp1x = x1 + Math.max(dist * 0.5, 50);
               const cp1y = y1;
@@ -346,7 +363,6 @@ export function WorkflowCanvas({
 
               pathD = `M ${x1} ${y1} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${x2} ${y2}`;
 
-              // Calculate midpoint for delete button using Bezier formula
               const midT = 0.5;
               midX = Math.pow(1-midT, 3) * x1 + 3 * Math.pow(1-midT, 2) * midT * cp1x + 3 * (1-midT) * Math.pow(midT, 2) * cp2x + Math.pow(midT, 3) * x2;
               midY = Math.pow(1-midT, 3) * y1 + 3 * Math.pow(1-midT, 2) * midT * cp1y + 3 * (1-midT) * Math.pow(midT, 2) * cp2y + Math.pow(midT, 3) * y2;
@@ -636,22 +652,34 @@ export function WorkflowCanvas({
             })()
           )}
 
-          {/* Stream connection preview */}
+          {/* Stream connection preview — U-shape orthogonal routing */}
           {connectingStreamFrom && mousePos && (
             (() => {
               const all = [...model.triggers, ...model.nodes];
               const source = all.find(n => n.id === connectingStreamFrom);
               if (!source) return null;
-              const sx = source.position.x + 128;
-              const sy = source.position.y + 80;
+              const nodeW = 256;
+              const nodeH = 80;
+              const sCx = source.position.x + nodeW / 2;
+              const sCy = source.position.y + nodeH / 2;
+              const mouseBelow = mousePos.y >= sCy;
+              const sx = sCx;
+              const sy = mouseBelow ? (source.position.y + nodeH) : source.position.y;
               const ex = mousePos.x;
-              const ey = mousePos.y;
-              const dist = Math.abs(ex - sx);
-              const cp1x = sx;
-              const cp1y = sy + Math.max(dist * 0.3, 40);
-              const cp2x = ex;
-              const cp2y = ey - Math.max(dist * 0.3, 40);
-              const d = `M ${sx} ${sy} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${ex} ${ey}`;
+              const cr = 12;
+              const arm = 40;
+              const dirX = ex >= sx ? 1 : -1;
+              // U-shape: turn beyond both source port and mouse Y
+              const turnY = mouseBelow
+                ? Math.max(sy, mousePos.y) + arm
+                : Math.min(sy, mousePos.y) - arm;
+              const vertDir = mouseBelow ? -1 : 1; // cr direction for first vertical
+              const d = `M ${sx} ${sy} ` +
+                `L ${sx} ${turnY + vertDir * cr} ` +
+                `Q ${sx} ${turnY} ${sx + dirX * cr} ${turnY} ` +
+                `L ${ex - dirX * cr} ${turnY} ` +
+                `Q ${ex} ${turnY} ${ex} ${turnY + vertDir * cr} ` +
+                `L ${ex} ${mousePos.y}`;
               return (
                 <path
                   d={d}
@@ -698,13 +726,14 @@ export function WorkflowCanvas({
               node={n}
               isTrigger
               selected={selectedNodeId === n.id}
+              multiSelected={selectedNodeIds.has(n.id)}
               connecting={connectingFrom === n.id}
               reconnectTarget={isReconnectTarget}
               executionStatus={executionState?.flowId === selectedId ? executionState.stepStates[n.id] : undefined}
               hasStreamOut={model.wires?.some(w => w.from === n.id && !!(w as any).stream)}
               hasStreamIn={model.wires?.some(w => w.to === n.id && !!(w as any).stream)}
               connectingStreamFrom={connectingStreamFrom}
-              onSelect={() => onNodeSelect?.(n.id)}
+              onSelect={(e) => onNodeSelect?.(n.id, e)}
               onMouseDown={e => onNodeMouseDown?.(n.id, e)}
               onContextMenu={e => onNodeContextMenu?.(n.id, e)}
               onConnect={() => onNodeConnect?.(n.id)}
@@ -727,13 +756,14 @@ export function WorkflowCanvas({
               key={n.id}
               node={n}
               selected={selectedNodeId === n.id}
+              multiSelected={selectedNodeIds.has(n.id)}
               connecting={connectingFrom === n.id}
               reconnectTarget={isReconnectTarget}
               executionStatus={executionState?.flowId === selectedId ? executionState.stepStates[n.id] : undefined}
               hasStreamOut={model.wires?.some(w => w.from === n.id && !!(w as any).stream)}
               hasStreamIn={model.wires?.some(w => w.to === n.id && !!(w as any).stream)}
               connectingStreamFrom={connectingStreamFrom}
-              onSelect={() => onNodeSelect?.(n.id)}
+              onSelect={(e) => onNodeSelect?.(n.id, e)}
               onMouseDown={e => onNodeMouseDown?.(n.id, e)}
               onContextMenu={e => onNodeContextMenu?.(n.id, e)}
               onConnect={() => onNodeConnect?.(n.id)}
@@ -741,6 +771,20 @@ export function WorkflowCanvas({
             />
           );
         })}
+
+        {/* Marquee Selection Rectangle */}
+        {selectionBox && (() => {
+          const x = Math.min(selectionBox.startX, selectionBox.endX);
+          const y = Math.min(selectionBox.startY, selectionBox.endY);
+          const w = Math.abs(selectionBox.endX - selectionBox.startX);
+          const h = Math.abs(selectionBox.endY - selectionBox.startY);
+          return (
+            <div
+              className="absolute pointer-events-none border-2 border-blue-400/60 bg-blue-400/10 rounded-sm z-50"
+              style={{ left: x, top: y, width: w, height: h }}
+            />
+          );
+        })()}
 
         {/* Empty State */}
         {model.triggers.length === 0 && model.nodes.length === 0 && (
@@ -756,10 +800,56 @@ export function WorkflowCanvas({
             </div>
           </div>
         )}
+        </div>
+      </div>
+
+      {/* Zoom Controls - non-scrolling overlay */}
+      <div className="absolute bottom-6 left-6 z-50 flex items-center gap-1 bg-white/95 backdrop-blur-md rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.08)] border border-slate-100 p-1.5 transition-all hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+        <button
+          onClick={onZoomOut}
+          className="p-2 rounded-xl hover:bg-slate-50 text-slate-400 hover:text-slate-900 transition-colors"
+          title="Zoom out (Ctrl + Scroll)"
+        >
+          <ZoomOut className="w-4 h-4" />
+        </button>
+        <button
+          onClick={onZoomReset}
+          className="px-2 py-1 rounded-xl hover:bg-slate-50 text-slate-500 hover:text-slate-900 transition-colors text-xs font-bold min-w-[3rem] tabular-nums"
+          title="Reset zoom to 100%"
+        >
+          {Math.round(zoom * 100)}%
+        </button>
+        <button
+          onClick={onZoomIn}
+          className="p-2 rounded-xl hover:bg-slate-50 text-slate-400 hover:text-slate-900 transition-colors"
+          title="Zoom in (Ctrl + Scroll)"
+        >
+          <ZoomIn className="w-4 h-4" />
+        </button>
+        <div className="w-px h-4 bg-slate-100 mx-0.5" />
+        <button
+          onClick={onZoomReset}
+          className="p-2 rounded-xl hover:bg-slate-50 text-slate-400 hover:text-slate-900 transition-colors"
+          title="Fit to screen"
+        >
+          <Maximize2 className="w-4 h-4" />
+        </button>
+        {onAutoOrganize && (
+          <>
+            <div className="w-px h-4 bg-slate-100 mx-0.5" />
+            <button
+              onClick={onAutoOrganize}
+              className="p-2 rounded-xl hover:bg-indigo-50 text-slate-400 hover:text-indigo-600 transition-colors"
+              title="Auto-organize layout"
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+          </>
+        )}
       </div>
 
       {connectingFrom && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg z-50 flex items-center gap-2 animate-in slide-in-from-bottom-centered">
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg z-50 flex items-center gap-2 pointer-events-none">
           <div className="w-2 h-2 bg-indigo-400 rounded-full animate-pulse" />
           Select a target node to connect
         </div>
@@ -767,7 +857,7 @@ export function WorkflowCanvas({
 
       {/* Reconnecting mode indicator */}
       {reconnecting && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-amber-600 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg z-50 flex items-center gap-2 animate-in slide-in-from-bottom-centered">
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-amber-600 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg z-50 flex items-center gap-2 pointer-events-none">
           <div className="w-2 h-2 bg-amber-300 rounded-full animate-pulse" />
           Click a node to reconnect the {reconnecting.end === 'from' ? 'source' : 'target'} • Press Esc to cancel
         </div>
@@ -775,7 +865,7 @@ export function WorkflowCanvas({
 
       {/* Execution overlay indicator */}
       {executionState?.flowId === selectedId && executionState.isRunning && (
-        <div className="absolute top-6 right-6 bg-white/90 backdrop-blur border border-emerald-100 text-emerald-700 text-xs font-medium px-4 py-2 rounded-full flex items-center gap-2 shadow-lg animate-in slide-in-from-top-2 z-50">
+        <div className="absolute top-6 right-6 bg-white/90 backdrop-blur border border-emerald-100 text-emerald-700 text-xs font-medium px-4 py-2 rounded-full flex items-center gap-2 shadow-lg z-50 pointer-events-none">
           <span className="relative flex h-2 w-2">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
             <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>

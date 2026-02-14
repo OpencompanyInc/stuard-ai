@@ -7,6 +7,7 @@ import QueuePanel from '../QueuePanel';
 import { CheckpointManager } from '../CheckpointManager';
 import { ModelSelector } from '../ModelSelector';
 import { FileNavRef } from '../FileNavigator';
+import { FolderPermissionsPopover } from './FolderPermissionsPopover';
 
 interface ChatInputAreaProps {
   query: string;
@@ -228,6 +229,8 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
           side="top"
           align="end"
         />
+
+        <FolderPermissionsPopover />
 
         {isStreaming ? (
           <button

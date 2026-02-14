@@ -52,6 +52,62 @@ def _calculate_next_occurrence(last_dt: datetime, recurrence: Dict[str, Any]) ->
     return None
 
 
+def _parse_when_to_datetime(when: Any) -> datetime:
+    target_dt: Optional[datetime] = None
+
+    if isinstance(when, (int, float)):
+        target_epoch = float(when) / 1000.0
+        target_dt = datetime.fromtimestamp(target_epoch, tz=timezone.utc)
+    elif isinstance(when, str):
+        s = when.strip()
+        try:
+            ss = s.replace('Z', '+00:00')
+            dt = datetime.fromisoformat(ss)
+            if dt.tzinfo is None:
+                local_tz = datetime.now().astimezone().tzinfo
+                dt = dt.replace(tzinfo=local_tz)
+            target_dt = dt
+        except Exception:
+            try:
+                delay_sec = 0.0
+                if s.endswith("s"):
+                    delay_sec = max(0.0, float(s[:-1]))
+                else:
+                    delay_sec = max(0.0, float(s))
+                target_dt = datetime.now().astimezone() + timedelta(seconds=delay_sec)
+            except Exception:
+                target_dt = datetime.now().astimezone()
+
+    if not target_dt:
+        target_dt = datetime.now().astimezone()
+
+    return target_dt
+
+
+async def _get_all_reminders() -> Dict[str, Any]:
+    resp = await manager.send_request("unified_tasks_list", {})
+    if not isinstance(resp, dict) or not resp.get("ok"):
+        return {"ok": False, "error": "failed_to_list_tasks"}
+
+    tasks = resp.get("tasks") or []
+    items: List[Dict[str, Any]] = []
+    for t in tasks:
+        task = t if isinstance(t, dict) else {}
+        task_id = task.get("id")
+        assignments = task.get("agentAssignments") if isinstance(task.get("agentAssignments"), list) else []
+        for a in assignments:
+            assignment = a if isinstance(a, dict) else {}
+            if assignment.get("type") != "reminder":
+                continue
+            items.append({
+                "task": task,
+                "assignment": assignment,
+                "taskId": task_id,
+            })
+
+    return {"ok": True, "items": items}
+
+
 async def calendar_crud(args: Dict[str, Any]) -> Dict[str, Any]:
     # Deprecated: Unified tasks system doesn't explicitly support multiple calendars via Agent yet
     return {"ok": True, "items": [{"id": "default", "name": "Default"}]}
@@ -71,7 +127,7 @@ async def task_crud(args: Dict[str, Any]) -> Dict[str, Any]:
             return resp
 
         if action == "read":
-            resp = await manager.send_request("unified_tasks_get", {"taskId": data.get("id")})
+            resp = await manager.send_request("unified_tasks_get_task", {"taskId": data.get("id")})
             return resp
 
         if action == "update":
@@ -82,6 +138,69 @@ async def task_crud(args: Dict[str, Any]) -> Dict[str, Any]:
             resp = await manager.send_request("unified_tasks_delete", {"id": data.get("id")})
             return resp
 
+        if action in ("add_subtask", "create_subtask"):
+            task_id = data.get("taskId")
+            subtodo = data.get("subtodo") if isinstance(data.get("subtodo"), dict) else {"content": data.get("content")}
+            return await manager.send_request("unified_tasks_add_subtodo", {"taskId": task_id, "subtodo": subtodo})
+
+        if action in ("update_subtask", "edit_subtask"):
+            task_id = data.get("taskId")
+            subtodo_id = data.get("subtaskId") or data.get("subtodoId")
+            updates = data.get("updates") if isinstance(data.get("updates"), dict) else {}
+            if data.get("content") is not None:
+                updates["content"] = data.get("content")
+            return await manager.send_request("unified_tasks_update_subtodo", {
+                "taskId": task_id,
+                "subtodoId": subtodo_id,
+                "updates": updates,
+            })
+
+        if action in ("toggle_subtask", "complete_subtask"):
+            task_id = data.get("taskId")
+            subtodo_id = data.get("subtaskId") or data.get("subtodoId")
+            return await manager.send_request("unified_tasks_toggle_subtodo", {"taskId": task_id, "subtodoId": subtodo_id})
+
+        if action in ("delete_subtask", "remove_subtask"):
+            task_id = data.get("taskId")
+            subtodo_id = data.get("subtaskId") or data.get("subtodoId")
+            return await manager.send_request("unified_tasks_delete_subtodo", {"taskId": task_id, "subtodoId": subtodo_id})
+
+        if action in ("add_reminder", "create_reminder"):
+            task_id = data.get("taskId")
+            assignment = {
+                "type": "reminder",
+                "scheduledAt": data.get("scheduledAt") or _parse_when_to_datetime(data.get("when")).astimezone().isoformat(),
+                "message": data.get("message") or "Reminder",
+                "recurring": data.get("recurrence"),
+            }
+            return await manager.send_request("unified_tasks_add_agent_assignment", {"taskId": task_id, "assignment": assignment})
+
+        if action in ("update_reminder", "edit_reminder"):
+            task_id = data.get("taskId")
+            reminder_id = data.get("reminderId") or data.get("assignmentId") or data.get("id")
+            updates = data.get("updates") if isinstance(data.get("updates"), dict) else {}
+            if data.get("scheduledAt") is not None:
+                updates["scheduledAt"] = data.get("scheduledAt")
+            elif data.get("when") is not None:
+                updates["scheduledAt"] = _parse_when_to_datetime(data.get("when")).astimezone().isoformat()
+            if data.get("message") is not None:
+                updates["message"] = data.get("message")
+            if data.get("recurrence") is not None:
+                updates["recurring"] = data.get("recurrence")
+            return await manager.send_request("unified_tasks_update_agent_assignment", {
+                "taskId": task_id,
+                "assignmentId": reminder_id,
+                "updates": updates,
+            })
+
+        if action in ("delete_reminder", "remove_reminder"):
+            task_id = data.get("taskId")
+            reminder_id = data.get("reminderId") or data.get("assignmentId") or data.get("id")
+            return await manager.send_request("unified_tasks_delete_agent_assignment", {
+                "taskId": task_id,
+                "assignmentId": reminder_id,
+            })
+
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -90,7 +209,7 @@ async def task_crud(args: Dict[str, Any]) -> Dict[str, Any]:
 
 async def task_reminders(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
     action = str(args.get("action") or "").lower()
-    if action not in ("schedule", "cancel", "list", "resume"):
+    if action not in ("schedule", "update", "cancel", "delete", "list", "resume"):
         return {"ok": False, "error": "unknown_action"}
 
     # Common firing logic
@@ -161,30 +280,28 @@ async def task_reminders(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
 
     try:
         if action == "list":
-            resp = await manager.send_request("unified_tasks_get_pending", {})
-            if resp.get("ok"):
-                items = []
-                for p in resp.get("pending", []):
-                    a = p.get("assignment", {})
-                    t = p.get("task", {})
-                    items.append({
-                        "id": a.get("id"),
-                        "taskId": t.get("id"),
-                        "message": a.get("message"),
-                        "whenIso": a.get("scheduledAt"),
-                        "recurrence": a.get("recurring") if isinstance(a.get("recurring"), dict) else None
-                    })
-                return {"ok": True, "items": items}
-            return resp
+            resp = await _get_all_reminders()
+            if not resp.get("ok"):
+                return resp
+
+            items = []
+            for p in resp.get("items", []):
+                a = p.get("assignment", {})
+                t = p.get("task", {})
+                if a.get("status") != "pending":
+                    continue
+                items.append({
+                    "id": a.get("id"),
+                    "taskId": t.get("id"),
+                    "message": a.get("message"),
+                    "whenIso": a.get("scheduledAt"),
+                    "recurrence": a.get("recurring") if isinstance(a.get("recurring"), dict) else None
+                })
+            return {"ok": True, "items": items}
 
         if action == "resume":
-            # Fetch pending assignments from Desktop
             try:
-                # Wait a bit for connection? task_reminders(resume) is called on startup.
-                # If no desktop connection yet, this might fail or timeout.
-                # But manager.send_request waits for response.
-                # We should probably catch timeout and ignore.
-                resp = await manager.send_request("unified_tasks_get_pending", {})
+                resp = await _get_all_reminders()
             except Exception:
                 return {"ok": False, "error": "connection_failed"}
                 
@@ -192,14 +309,13 @@ async def task_reminders(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
                 return resp
                 
             resumed_count = 0
-            for p in resp.get("pending", []):
+            for p in resp.get("items", []):
                 a = p.get("assignment", {})
                 rid = a.get("id")
                 if not rid or rid in _REMINDER_TASKS:
                     continue
                 
-                # Check type
-                if a.get("type") != "reminder":
+                if a.get("type") != "reminder" or a.get("status") != "pending":
                     continue
 
                 when_iso = a.get("scheduledAt")
@@ -213,7 +329,7 @@ async def task_reminders(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
                 recurrence = a.get("recurring")
                 if not isinstance(recurrence, dict): recurrence = None
                 
-                t = asyncio.create_task(_fire_logic(rid, p.get("task", {}).get("id"), a.get("message"), target_dt, recurrence))
+                t = asyncio.create_task(_fire_logic(rid, p.get("taskId"), a.get("message"), target_dt, recurrence))
                 _REMINDER_TASKS[rid] = t
                 resumed_count += 1
                 
@@ -225,34 +341,7 @@ async def task_reminders(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
             recurrence = args.get("recurrence")
             taskId = str(args.get("taskId") or "")
             
-            # Determine target datetime
-            target_dt: Optional[datetime] = None
-            
-            if isinstance(when, (int, float)):
-                target_epoch = float(when) / 1000.0
-                target_dt = datetime.fromtimestamp(target_epoch, tz=timezone.utc)
-            elif isinstance(when, str):
-                s = when.strip()
-                try:
-                    ss = s.replace('Z', '+00:00')
-                    dt = datetime.fromisoformat(ss)
-                    if dt.tzinfo is None:
-                        local_tz = datetime.now().astimezone().tzinfo
-                        dt = dt.replace(tzinfo=local_tz)
-                    target_dt = dt
-                except Exception:
-                    try:
-                        delay_sec = 0.0
-                        if s.endswith("s"):
-                            delay_sec = max(0.0, float(s[:-1]))
-                        else:
-                            delay_sec = max(0.0, float(s))
-                        target_dt = datetime.now().astimezone() + timedelta(seconds=delay_sec)
-                    except Exception:
-                        target_dt = datetime.now().astimezone()
-            
-            if not target_dt:
-                target_dt = datetime.now().astimezone()
+            target_dt = _parse_when_to_datetime(when)
 
             assignment = {
                 "type": "reminder",
@@ -284,7 +373,88 @@ async def task_reminders(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
                 
             return resp
 
-        if action == "cancel":
+        if action == "update":
+            rid = str(args.get("id") or "").strip()
+            task_id_hint = str(args.get("taskId") or "").strip()
+
+            all_resp = await _get_all_reminders()
+            if not all_resp.get("ok"):
+                return all_resp
+
+            found = None
+            for p in all_resp.get("items", []):
+                assignment = p.get("assignment", {})
+                this_task_id = str(p.get("taskId") or "")
+                if assignment.get("id") != rid:
+                    continue
+                if task_id_hint and this_task_id != task_id_hint:
+                    continue
+                found = p
+                break
+
+            if not found:
+                return {"ok": False, "error": "reminder_not_found"}
+
+            assignment = found.get("assignment", {})
+            task_id = str(found.get("taskId") or "")
+
+            updates: Dict[str, Any] = {}
+            target_dt: Optional[datetime] = None
+
+            if args.get("when") is not None:
+                target_dt = _parse_when_to_datetime(args.get("when"))
+                updates["scheduledAt"] = target_dt.astimezone().isoformat()
+            elif args.get("scheduledAt") is not None:
+                try:
+                    parsed = datetime.fromisoformat(str(args.get("scheduledAt")).replace('Z', '+00:00'))
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=datetime.now().astimezone().tzinfo)
+                    target_dt = parsed
+                except Exception:
+                    target_dt = None
+                updates["scheduledAt"] = str(args.get("scheduledAt"))
+
+            if args.get("message") is not None:
+                updates["message"] = str(args.get("message") or "")
+
+            if args.get("recurrence") is not None:
+                updates["recurring"] = args.get("recurrence")
+
+            if not updates:
+                return {"ok": False, "error": "no_updates"}
+
+            resp = await manager.send_request("unified_tasks_update_agent_assignment", {
+                "taskId": task_id,
+                "assignmentId": rid,
+                "updates": updates,
+            })
+
+            if resp.get("ok"):
+                t = _REMINDER_TASKS.pop(rid, None)
+                if t:
+                    t.cancel()
+
+                if target_dt is None:
+                    try:
+                        existing_iso = str(updates.get("scheduledAt") or assignment.get("scheduledAt") or "")
+                        if existing_iso:
+                            parsed = datetime.fromisoformat(existing_iso.replace('Z', '+00:00'))
+                            if parsed.tzinfo is None:
+                                parsed = parsed.replace(tzinfo=datetime.now().astimezone().tzinfo)
+                            target_dt = parsed
+                    except Exception:
+                        target_dt = None
+
+                if target_dt and str((assignment.get("status") or "pending")).lower() == "pending":
+                    message = str(updates.get("message") if updates.get("message") is not None else assignment.get("message") or "Reminder")
+                    recurrence = updates.get("recurring") if updates.get("recurring") is not None else assignment.get("recurring")
+                    if not isinstance(recurrence, dict):
+                        recurrence = None
+                    _REMINDER_TASKS[rid] = asyncio.create_task(_fire_logic(rid, task_id, message, target_dt, recurrence))
+
+            return resp
+
+        if action in ("cancel", "delete"):
             rid = str(args.get("id") or "").strip()
             
             # First stop local task
@@ -295,12 +465,12 @@ async def task_reminders(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
             # We need taskId. If we don't have it, we search.
             # If we just removed locally, that's fine for "cancel firing", but we should persist deletion.
             
-            pending_resp = await manager.send_request("unified_tasks_get_pending", {})
-            if pending_resp.get("ok"):
-                 for p in pending_resp.get("pending", []):
+            all_resp = await _get_all_reminders()
+            if all_resp.get("ok"):
+                 for p in all_resp.get("items", []):
                      a = p.get("assignment", {})
                      if a.get("id") == rid:
-                         t_id = p.get("task", {}).get("id")
+                         t_id = p.get("taskId")
                          return await manager.send_request("unified_tasks_delete_agent_assignment", {"taskId": t_id, "assignmentId": rid})
             
             return {"ok": True, "canceled": True, "note": "Removed from memory, could not find in DB to delete"}

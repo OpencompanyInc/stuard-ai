@@ -7,7 +7,9 @@
         "activeTab",
         "scripting",
         "storage",
-        "tabs"
+        "alarms",
+        "tabs",
+        "webNavigation"
     ],
     "host_permissions": [
         "<all_urls>"
@@ -23,7 +25,10 @@
             ],
             "js": [
                 "src/content/index.ts"
-            ]
+            ],
+            "all_frames": true,
+            "match_about_blank": true,
+            "run_at": "document_idle"
         }
     ],
     "action": {

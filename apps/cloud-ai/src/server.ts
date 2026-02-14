@@ -223,6 +223,58 @@ wss.on('connection', (ws: WebSocket, req: any) => {
       }
       return;
     }
+    // Bridged tool execution: run a cloud tool WITH this WS as bridge context
+    // so agent_node (and other agent tools) can relay tool_request messages back to the desktop
+    if (kind === 'exec_tool_bridged') {
+      (async () => {
+        const reqId = String(msg?.id || `btool-${Date.now()}`);
+        const toolName = String(msg?.tool || '').trim();
+        const toolArgs = msg?.args || {};
+        const accessToken = String(msg?.auth?.accessToken || '').trim();
+
+        if (!toolName) {
+          send(ws, { type: 'exec_tool_bridged_result', id: reqId, result: { ok: false, error: 'missing_tool_name' } });
+          return;
+        }
+
+        // Lazy import to avoid circular dependencies
+        const { getTool } = await import('./tools/tool-registry');
+        const { initToolRegistry } = await import('./tools/meta-tools');
+        // Ensure tools are registered
+        try { initToolRegistry(); } catch {}
+
+        const tool = getTool(toolName);
+        if (!tool || typeof (tool as any).execute !== 'function') {
+          send(ws, { type: 'exec_tool_bridged_result', id: reqId, result: { ok: false, error: `tool_not_found: ${toolName}` } });
+          return;
+        }
+
+        writeLog(`bridged_tool_exec_start: ${toolName}`);
+        try {
+          const secrets: Record<string, any> = {};
+          if (accessToken) {
+            try {
+              const authResult = await verifyAccessToken(accessToken);
+              if (authResult?.success && authResult.userId) {
+                secrets.userId = authResult.userId;
+              }
+            } catch {}
+          }
+
+          const result = await withClientBridge(ws, async () => {
+            return await (tool as any).execute(toolArgs, {} as any);
+          }, secrets);
+
+          writeLog(`bridged_tool_exec_done: ${toolName}`);
+          send(ws, { type: 'exec_tool_bridged_result', id: reqId, result });
+        } catch (e: any) {
+          writeLog(`bridged_tool_exec_error: ${toolName}: ${e?.message || e}`);
+          send(ws, { type: 'exec_tool_bridged_result', id: reqId, result: { ok: false, error: e?.message || 'execution_failed' } });
+        }
+      })();
+      return;
+    }
+
     if (kind !== 'chat') {
       send(ws, { type: 'error', message: `unknown type: ${kind}` });
       return;
@@ -670,6 +722,15 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             const contextMsg = `The user is referencing these files/folders:\n${pathLines}\n\nYou can use the read_file or list_directory tools to access their contents if needed.`;
             inputMessages = [{ role: 'system', content: contextMsg }, ...inputMessages];
             console.log('[cloud-ai] Context paths added:', paths.length, 'items');
+          }
+        } catch { }
+
+        // Inject hidden state context (terminals, subagents, recent tool results) - NOT rendered in UI
+        try {
+          const hiddenContext: string | undefined = (msg as any)?.hiddenContext;
+          if (hiddenContext && typeof hiddenContext === 'string' && hiddenContext.trim()) {
+            inputMessages = [{ role: 'system', content: hiddenContext }, ...inputMessages];
+            console.log('[cloud-ai] Hidden context injected:', hiddenContext.length, 'chars');
           }
         } catch { }
 

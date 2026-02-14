@@ -3,7 +3,7 @@ import { makeLocalTool } from './shared';
 
 export const set_variable = makeLocalTool(
   'set_variable',
-  'Set a workflow variable. For workflow-scoped variables (workflow.*), the variable must be defined in the workflow\'s variables array. Supports types: boolean, string, number, list.',
+  'Set a workflow variable. For workflow-scoped variables (workflow.*), the variable must be defined in the workflow\'s variables array. Supports types: boolean, string, number, list. Any open custom_ui windows with data-var bindings referencing this variable will auto-update.',
   z.object({
     name: z.string().describe('Variable name'),
     value: z.any().describe('Value to set'),
@@ -12,6 +12,7 @@ export const set_variable = makeLocalTool(
       .optional()
       .describe('Type (auto-detected if not specified)'),
     flowId: z.string().optional().describe('Optional: scope to a specific workflow'),
+    notifyUi: z.boolean().optional().default(true).describe('If true (default), any open custom_ui windows with data-var bindings referencing this variable will receive a live update'),
   }),
   z.object({
     ok: z.boolean(),
@@ -40,10 +41,11 @@ export const get_variable = makeLocalTool(
 
 export const toggle_variable = makeLocalTool(
   'toggle_variable',
-  'Toggle a boolean variable (true → false or false → true). Creates as false if not exists.',
+  'Toggle a boolean variable (true → false or false → true). Creates as false if not exists. Any open custom_ui windows with data-var bindings referencing this variable will auto-update.',
   z.object({
     name: z.string().describe('Variable name'),
     flowId: z.string().optional(),
+    notifyUi: z.boolean().optional().default(true).describe('If true (default), push live update to custom_ui windows with data-var bindings'),
   }),
   z.object({
     ok: z.boolean(),
@@ -56,11 +58,12 @@ export const toggle_variable = makeLocalTool(
 
 export const increment_variable = makeLocalTool(
   'increment_variable',
-  'Increment a number variable by a specified amount. Creates as 0 if not exists.',
+  'Increment a number variable by a specified amount. Creates as 0 if not exists. Any open custom_ui windows with data-var bindings referencing this variable will auto-update.',
   z.object({
     name: z.string().describe('Variable name'),
     amount: z.number().optional().default(1).describe('Amount to add (default: 1)'),
     flowId: z.string().optional(),
+    notifyUi: z.boolean().optional().default(true).describe('If true (default), push live update to custom_ui windows with data-var bindings'),
   }),
   z.object({
     ok: z.boolean(),
@@ -73,11 +76,12 @@ export const increment_variable = makeLocalTool(
 
 export const append_to_list = makeLocalTool(
   'append_to_list',
-  'Append an item to a list variable. Creates empty list if not exists.',
+  'Append an item to a list variable. Creates empty list if not exists. Any open custom_ui windows with data-var bindings referencing this variable will auto-update.',
   z.object({
     name: z.string().describe('Variable name'),
     item: z.any().describe('Item to append'),
     flowId: z.string().optional(),
+    notifyUi: z.boolean().optional().default(true).describe('If true (default), push live update to custom_ui windows with data-var bindings'),
   }),
   z.object({
     ok: z.boolean(),

@@ -114,6 +114,27 @@ export const unifiedTasksService = {
         return { ok: false, error: 'Task not found' };
     },
 
+    updateSubtodo: (taskId: string, subtodoId: string, updates: any) => {
+        const tasks = loadUnifiedTasks();
+        const idx = tasks.findIndex((t: any) => t.id === taskId);
+        if (idx >= 0) {
+            const subIdx = (tasks[idx].subTodos || []).findIndex((s: any) => s.id === subtodoId);
+            if (subIdx >= 0) {
+                const prevSub = tasks[idx].subTodos[subIdx] || {};
+                tasks[idx].subTodos[subIdx] = {
+                    ...prevSub,
+                    ...updates,
+                    content: typeof updates?.content === 'string' ? updates.content : prevSub.content,
+                };
+                tasks[idx].updatedAt = new Date().toISOString();
+                saveUnifiedTasks(tasks);
+                return { ok: true, task: tasks[idx], subtodo: tasks[idx].subTodos[subIdx] };
+            }
+            return { ok: false, error: 'Subtodo not found' };
+        }
+        return { ok: false, error: 'Task not found' };
+    },
+
     toggleSubtodo: (taskId: string, subtodoId: string) => {
         const tasks = loadUnifiedTasks();
         const idx = tasks.findIndex((t: any) => t.id === taskId);

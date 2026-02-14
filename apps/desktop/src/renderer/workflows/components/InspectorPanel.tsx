@@ -223,7 +223,7 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
         <div className="flex-1 overflow-y-auto scrollbar-minimal p-5 space-y-6">
           {/* Header */}
           <div className="flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center shadow-sm border bg-gradient-to-br from-indigo-500 to-violet-600 text-white">
+            <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center shadow-sm border bg-gradient-to-br from-blue-500 to-sky-600 text-white">
               <Zap className="w-6 h-6" />
             </div>
             <div className="flex-1 space-y-1">
@@ -423,9 +423,9 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
               if (incomingLoopWires.length === 0) return null;
 
               return (
-                <div className="border border-purple-200 rounded-lg overflow-hidden bg-purple-50/30">
+                <div className="border border-blue-200 rounded-lg overflow-hidden bg-blue-50/30">
                   <div className="px-3 py-2.5 flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-lg bg-purple-100 flex items-center justify-center text-purple-600">
+                    <div className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600">
                       <Repeat className="w-4 h-4" />
                     </div>
                     <div className="flex-1">
@@ -433,19 +433,19 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
                       <div className="text-[10px] text-slate-500">This step will run multiple times</div>
                     </div>
                   </div>
-                  <div className="px-3 py-2 border-t border-purple-100 bg-white/50 space-y-2">
+                  <div className="px-3 py-2 border-t border-blue-100 bg-white/50 space-y-2">
                     {incomingLoopWires.map((wire, i) => {
                       const loop = (wire as any).loop;
                       const sourceNode = [...model.triggers, ...model.nodes].find(n => n.id === wire.from);
                       return (
                         <div key={i} className="flex items-start gap-2 text-[10px]">
-                          <div className="w-4 h-4 rounded bg-purple-100 flex items-center justify-center text-purple-600 shrink-0 mt-0.5">
+                          <div className="w-4 h-4 rounded bg-blue-100 flex items-center justify-center text-blue-600 shrink-0 mt-0.5">
                             {loop.type === 'forEach' ? <List className="w-2.5 h-2.5" /> : 
                              loop.type === 'repeat' ? <Repeat className="w-2.5 h-2.5" /> : 
                              <RotateCw className="w-2.5 h-2.5" />}
                           </div>
                           <div className="flex-1">
-                            <span className="font-medium text-purple-700">
+                            <span className="font-medium text-blue-700">
                               {loop.type === 'forEach' ? 'For Each' : 
                                loop.type === 'repeat' ? `Repeat ${loop.count}x` : 
                                'While'}
@@ -454,7 +454,7 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
                             <span className="font-medium text-slate-600">{sourceNode?.label || wire.from}</span>
                             {loop.type === 'forEach' && loop.itemVar && (
                               <div className="text-slate-500 mt-0.5">
-                                Access item as <code className="bg-purple-100 px-1 rounded text-purple-700">{'{{loop.' + loop.itemVar + '}}'}</code>
+                                Access item as <code className="bg-blue-100 px-1 rounded text-blue-700">{'{{loop.' + loop.itemVar + '}}'}</code>
                               </div>
                             )}
                             {loop.maxIterations && (
@@ -652,16 +652,16 @@ function WireLoopEditor({
   const LoopIcon = loopTypeIcon;
 
   return (
-    <div className={`rounded-lg p-2.5 border transition-colors mb-3 ${hasLoop ? 'bg-purple-50/50 border-purple-200' : 'bg-slate-50 border-slate-100'}`}>
+    <div className={`rounded-lg p-2.5 border transition-colors mb-3 ${hasLoop ? 'bg-blue-50/50 border-blue-200' : 'bg-slate-50 border-slate-100'}`}>
       <div className="flex items-center justify-between mb-2">
-        <label className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${hasLoop ? 'text-purple-600' : 'text-slate-400'}`}>
+        <label className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${hasLoop ? 'text-blue-600' : 'text-slate-400'}`}>
           <LoopIcon className="w-3 h-3" />
           Loop
         </label>
         <select
           value={hasLoop ? loopType : 'none'}
           onChange={(e) => handleLoopTypeChange(e.target.value)}
-          className={`text-xs border-none bg-transparent font-medium focus:ring-0 cursor-pointer rounded px-1 -mr-1 transition-colors ${hasLoop ? 'text-purple-700 hover:bg-purple-100' : 'text-slate-500 hover:bg-slate-200'}`}
+          className={`text-xs border-none bg-transparent font-medium focus:ring-0 cursor-pointer rounded px-1 -mr-1 transition-colors ${hasLoop ? 'text-blue-700 hover:bg-blue-100' : 'text-slate-500 hover:bg-slate-200'}`}
         >
           <option value="none">No Loop</option>
           <option value="forEach">For Each Item</option>
@@ -699,7 +699,7 @@ function WireLoopEditor({
                     value={wire.loop?.itemVar || 'item'}
                     onChange={(e) => updateLoopField('itemVar', e.target.value)}
                     placeholder="item"
-                    className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300 font-mono"
+                    className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300 font-mono"
                   />
                 </div>
                 <div>
@@ -711,12 +711,12 @@ function WireLoopEditor({
                     value={wire.loop?.indexVar || 'index'}
                     onChange={(e) => updateLoopField('indexVar', e.target.value)}
                     placeholder="index"
-                    className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300 font-mono"
+                    className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300 font-mono"
                   />
                 </div>
               </div>
-              <div className="p-2 bg-purple-50 rounded-lg border border-purple-100">
-                <p className="text-[10px] text-purple-600">
+              <div className="p-2 bg-blue-50 rounded-lg border border-blue-100">
+                <p className="text-[10px] text-blue-600">
                   Access current item as <code className="bg-white px-1 rounded">{'{{loop.' + (wire.loop?.itemVar || 'item') + '}}'}</code> and index as <code className="bg-white px-1 rounded">{'{{loop.' + (wire.loop?.indexVar || 'index') + '}}'}</code>
                 </p>
               </div>
@@ -735,7 +735,7 @@ function WireLoopEditor({
                 onChange={(e) => updateLoopField('count', parseInt(e.target.value) || 1)}
                 min={1}
                 max={10000}
-                className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+                className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
               />
               <p className="text-[10px] text-slate-400 mt-1">
                 Access iteration number as <code className="bg-slate-100 px-1 rounded">{'{{loop.index}}'}</code>
@@ -774,7 +774,7 @@ function WireLoopEditor({
                   onChange={(e) => updateLoopField('maxIterations', parseInt(e.target.value) || 100)}
                   min={1}
                   max={10000}
-                  className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+                  className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
                 />
               </div>
               <div>
@@ -786,7 +786,7 @@ function WireLoopEditor({
                   value={wire.loop?.delayMs || 0}
                   onChange={(e) => updateLoopField('delayMs', parseInt(e.target.value) || 0)}
                   min={0}
-                  className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+                  className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
                 />
               </div>
             </div>
@@ -804,7 +804,7 @@ function WireLoopEditor({
           <select
             value={fanoutMode}
             onChange={(e) => onUpdate(index, { loopFanoutMode: e.target.value })}
-            className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+            className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
           >
             <option value="wait">Wait for loop to finish</option>
             <option value="parallel">Run in parallel with loop</option>

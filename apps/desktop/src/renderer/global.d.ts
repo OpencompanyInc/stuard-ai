@@ -69,7 +69,7 @@ declare global {
       // Board window lifecycle
       onBoardInit: (cb: (data: any) => void) => void | (() => void);
       onBoardUpdate: (cb: (data: any) => void) => void | (() => void);
-      workflowsList: () => Promise<{ ok: boolean; items?: Array<{ id: string; name?: string; updatedAt?: string }>; error?: string }>;
+      workflowsList: () => Promise<{ ok: boolean; items?: Array<{ id: string; name?: string; updatedAt?: string; folder?: string }>; folders?: string[]; error?: string }>;
       workflowsRead: (id: string) => Promise<{ ok: boolean; id?: string; content?: string; error?: string }>;
       workflowsSave: (id: string, content: string) => Promise<{ ok: boolean; error?: string }>;
       workflowsDelete: (id: string) => Promise<{ ok: boolean; error?: string }>;
@@ -80,6 +80,19 @@ declare global {
       workflowsValidate: (id: string) => Promise<{ ok: boolean; requirements?: string[]; error?: string }>;
       workflowsRunStep: (id: string, options: { step: { id: string; tool: string; args: any }; accessToken?: string }) => Promise<{ ok: boolean; result?: any; error?: string }>;
       workflowsRunFromStep: (id: string, options: { startStepId: string; accessToken?: string }) => Promise<{ ok: boolean; error?: string }>;
+      // Folder operations
+      workflowsCreateFolder: (name: string) => Promise<{ ok: boolean; folder?: string; error?: string }>;
+      workflowsRenameFolder: (oldName: string, newName: string) => Promise<{ ok: boolean; folder?: string; error?: string }>;
+      workflowsDeleteFolder: (name: string, deleteContents?: boolean) => Promise<{ ok: boolean; error?: string; count?: number }>;
+      workflowsMoveToFolder: (id: string, folder: string | null) => Promise<{ ok: boolean; error?: string }>;
+      // Workspace file management
+      workflowsEnsureWorkspace: (id: string) => Promise<{ ok: boolean; workspacePath?: string; created?: boolean; error?: string }>;
+      workflowsGetWorkspaceInfo: (id: string) => Promise<{ ok: boolean; workspacePath?: string; subdirs?: string[]; files?: Array<{ name: string; path: string; type: 'file' | 'directory'; size?: number; updatedAt?: string }>; error?: string }>;
+      workflowsListWorkspaceFiles: (id: string, subpath?: string) => Promise<{ ok: boolean; files?: Array<{ name: string; path: string; type: 'file' | 'directory'; size?: number; updatedAt?: string }>; error?: string }>;
+      workflowsReadWorkspaceFile: (id: string, filePath: string) => Promise<{ ok: boolean; content?: string; size?: number; updatedAt?: string; error?: string }>;
+      workflowsWriteWorkspaceFile: (id: string, filePath: string, content: string) => Promise<{ ok: boolean; error?: string }>;
+      workflowsDeleteWorkspaceFile: (id: string, filePath: string) => Promise<{ ok: boolean; error?: string }>;
+      workflowsCreateWorkspaceSubdir: (id: string, subpath: string) => Promise<{ ok: boolean; error?: string }>;
       onWorkflowsLog: (cb: (data: any) => void) => void | (() => void);
       onWorkflowsStep: (cb: (data: any) => void) => void | (() => void);
       onWorkflowsExecution: (cb: (data: any) => void) => void | (() => void);

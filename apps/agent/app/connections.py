@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Set
+from typing import Set, Dict, Any
 
 from fastapi import WebSocket
 
@@ -48,7 +48,7 @@ class ConnectionManager:
         await self.broadcast(json.dumps(payload))
         
         try:
-            return await asyncio.wait_for(future, timeout=10.0)
+            return await asyncio.wait_for(future, timeout=30.0)
         except asyncio.TimeoutError:
             self.pending_requests.pop(req_id, None)
             raise TimeoutError("Request timed out")

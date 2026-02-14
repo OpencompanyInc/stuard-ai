@@ -1,6 +1,29 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { Search, Replace, X, ChevronUp, ChevronDown, Copy, Check, Regex, CaseSensitive, Wand2, WrapText, Minimize2, Maximize2 } from "lucide-react";
 
+// VS Code Dark+ inspired color tokens
+const VSCODE = {
+  bg: '#1e1e1e',
+  gutterBg: '#1e1e1e',
+  gutterText: '#858585',
+  gutterActiveLine: '#c6c6c6',
+  gutterBorder: '#333333',
+  activeLine: '#2a2d2e',
+  selection: 'rgba(38,79,120,0.5)',
+  caret: '#aeafad',
+  toolbar: '#252526',
+  toolbarBorder: '#3c3c3c',
+  statusBar: '#007acc',
+  searchBg: '#252526',
+  searchBorder: '#3c3c3c',
+  searchInputBg: '#3c3c3c',
+  searchInputBorder: '#007acc',
+  findMatch: 'rgba(234,92,0,0.33)',
+  font: '"Cascadia Code", "Fira Code", "JetBrains Mono", "Consolas", "Menlo", monospace',
+  fontSize: '13px',
+  lineHeight: '20px',
+};
+
 interface RichCodeEditorProps {
   value: string;
   onChange: (value: string) => void;
@@ -81,14 +104,14 @@ export function RichCodeEditor({
     }
   }, [value, onChange, language]);
 
-  // Sync scroll between textarea and backdrop (for line numbers/highlighting)
+  // Sync scroll between textarea and backdrop
   const handleScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
     if (backdropRef.current) {
       backdropRef.current.scrollTop = e.currentTarget.scrollTop;
       backdropRef.current.scrollLeft = e.currentTarget.scrollLeft;
     }
     if (scrollRef.current) {
-        scrollRef.current.scrollTop = e.currentTarget.scrollTop;
+      scrollRef.current.scrollTop = e.currentTarget.scrollTop;
     }
   };
 
@@ -99,68 +122,34 @@ export function RichCodeEditor({
       setCurrentMatchIndex(-1);
       return;
     }
-
     try {
       const flags = matchCase ? "g" : "gi";
       const regex = useRegex ? new RegExp(searchTerm, flags) : new RegExp(searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags);
-      
       const newMatches: number[] = [];
       let match;
-      while ((match = regex.exec(value)) !== null) {
-        newMatches.push(match.index);
-      }
-      
+      while ((match = regex.exec(value)) !== null) newMatches.push(match.index);
       setMatches(newMatches);
-      if (newMatches.length > 0) {
-        setCurrentMatchIndex(0);
-        scrollToMatch(newMatches[0]);
-      } else {
-        setCurrentMatchIndex(-1);
-      }
-    } catch (e) {
-      // Invalid regex
-      setMatches([]);
-    }
+      if (newMatches.length > 0) { setCurrentMatchIndex(0); scrollToMatch(newMatches[0]); }
+      else setCurrentMatchIndex(-1);
+    } catch { setMatches([]); }
   }, [searchTerm, value, useRegex, matchCase]);
 
   const scrollToMatch = (index: number) => {
     if (textareaRef.current) {
-      // Simple scroll logic - creates a selection to focus
       textareaRef.current.setSelectionRange(index, index + searchTerm.length);
-      const lineHeight = 20; // Approx
-      const lines = value.substring(0, index).split('\n').length;
-      const top = (lines - 1) * lineHeight;
-      // textareaRef.current.scrollTop = Math.max(0, top - 100);
       textareaRef.current.blur();
       textareaRef.current.focus();
     }
   };
 
-  const nextMatch = () => {
-    if (matches.length === 0) return;
-    const next = (currentMatchIndex + 1) % matches.length;
-    setCurrentMatchIndex(next);
-    scrollToMatch(matches[next]);
-  };
-
-  const prevMatch = () => {
-    if (matches.length === 0) return;
-    const prev = (currentMatchIndex - 1 + matches.length) % matches.length;
-    setCurrentMatchIndex(prev);
-    scrollToMatch(matches[prev]);
-  };
+  const nextMatch = () => { if (matches.length === 0) return; const next = (currentMatchIndex + 1) % matches.length; setCurrentMatchIndex(next); scrollToMatch(matches[next]); };
+  const prevMatch = () => { if (matches.length === 0) return; const prev = (currentMatchIndex - 1 + matches.length) % matches.length; setCurrentMatchIndex(prev); scrollToMatch(matches[prev]); };
 
   const replaceCurrent = () => {
     if (currentMatchIndex === -1 || matches.length === 0) return;
-    
     const index = matches[currentMatchIndex];
-    // Re-verify match at index (in case user edited)
-    const currentText = value.substring(index, index + searchTerm.length);
-    // Basic check - nuanced regex replace might differ but this is usually sufficient for simple find/replace
-    
     const newValue = value.substring(0, index) + replaceTerm + value.substring(index + searchTerm.length);
     onChange(newValue);
-    // Effect will re-run and find next matches
   };
 
   const replaceAll = () => {
@@ -168,11 +157,8 @@ export function RichCodeEditor({
     try {
       const flags = matchCase ? "g" : "gi";
       const regex = useRegex ? new RegExp(searchTerm, flags) : new RegExp(searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags);
-      const newValue = value.replace(regex, replaceTerm);
-      onChange(newValue);
-    } catch (e) {
-        // ignore
-    }
+      onChange(value.replace(regex, replaceTerm));
+    } catch { }
   };
 
   const handleCopy = async () => {
@@ -181,340 +167,260 @@ export function RichCodeEditor({
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // Line count
+  const lineCount = useMemo(() => value.split('\n').length, [value]);
+  const gutterWidth = useMemo(() => Math.max(40, String(lineCount).length * 10 + 20), [lineCount]);
+
   // Generate line numbers
   const lineNumbers = useMemo(() => {
-    const lines = value.split('\n').length;
-    return Array.from({ length: lines }, (_, i) => i + 1).join('\n');
-  }, [value]);
+    return Array.from({ length: lineCount }, (_, i) => i + 1).join('\n');
+  }, [lineCount]);
 
-  // Syntax Highlighting - supports JSON, CSS, HTML
+  // VS Code Dark+ Syntax Highlighting
   const highlightedCode = useMemo(() => {
-    // Escape HTML entities first
-    const escapeHtml = (str: string) => str
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+    const esc = (str: string) => str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
     if (language === 'json') {
-      // JSON highlighter
-      return escapeHtml(value).replace(
+      return esc(value).replace(
         /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
         (match) => {
-          let cls = 'text-amber-400'; // number
           if (/^"/.test(match)) {
-            if (/:$/.test(match)) {
-              cls = 'text-sky-400 font-semibold'; // key
-            } else {
-              cls = 'text-emerald-400'; // string
-            }
-          } else if (/true|false/.test(match)) {
-            cls = 'text-rose-400 font-semibold'; // boolean
-          } else if (/null/.test(match)) {
-            cls = 'text-slate-500 italic'; // null
+            if (/:$/.test(match)) return `<span style="color:#9cdcfe">${match}</span>`; // key - light blue
+            return `<span style="color:#ce9178">${match}</span>`; // string - orange
           }
-          return `<span class="${cls}">${match}</span>`;
+          if (/true|false/.test(match)) return `<span style="color:#569cd6">${match}</span>`; // boolean - blue
+          if (/null/.test(match)) return `<span style="color:#569cd6;font-style:italic">${match}</span>`; // null
+          return `<span style="color:#b5cea8">${match}</span>`; // number - green
         }
       );
     }
 
     if (language === 'css') {
-      // CSS highlighter
-      let highlighted = escapeHtml(value);
-      // Comments
-      highlighted = highlighted.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="text-slate-500 italic">$1</span>');
-      // Selectors (before {)
-      highlighted = highlighted.replace(/([.#]?[\w-]+)(\s*\{)/g, '<span class="text-violet-400 font-semibold">$1</span>$2');
-      // Properties
-      highlighted = highlighted.replace(/([\w-]+)(\s*:)/g, '<span class="text-sky-400">$1</span>$2');
-      // Values with units
-      highlighted = highlighted.replace(/:\s*([^;{}]+)(;|$)/g, (m, val, end) => {
-        // Highlight colors
-        val = val.replace(/(#[0-9a-fA-F]{3,8})/g, '<span class="text-amber-400">$1</span>');
-        // Highlight numbers with units
-        val = val.replace(/(\d+(?:\.\d+)?)(px|em|rem|%|vh|vw|s|ms)?/g, '<span class="text-emerald-400">$1</span><span class="text-slate-400">$2</span>');
-        return `: <span class="text-rose-300">${val}</span>${end}`;
-      });
-      return highlighted;
+      let h = esc(value);
+      h = h.replace(/(\/\*[\s\S]*?\*\/)/g, '<span style="color:#6a9955;font-style:italic">$1</span>');
+      h = h.replace(/([.#]?[\w-]+)(\s*\{)/g, '<span style="color:#d7ba7d">$1</span>$2');
+      h = h.replace(/([\w-]+)(\s*:)/g, '<span style="color:#9cdcfe">$1</span>$2');
+      return h;
     }
 
     if (language === 'html') {
-      // HTML highlighter - use placeholders to avoid regex conflicts
-      let highlighted = escapeHtml(value);
-
-      // Process complete tags with their attributes
-      highlighted = highlighted.replace(
-        /(&lt;)(\/?)(\w+)((?:\s+[\w-]+(?:=(?:&quot;[^&]*&quot;|'[^']*'|[^\s&gt;]*))?)*)\s*(\/?)(&gt;)/g,
-        (match, lt, slash1, tagName, attrs, slash2, gt) => {
-          // Highlight tag name
-          let result = `${lt}${slash1}\u0001${tagName}\u0002`;
-
-          // Highlight attributes
-          if (attrs) {
-            attrs = attrs.replace(
-              /([\w-]+)(=)(&quot;[^&]*&quot;|'[^']*'|[^\s&gt;]*)/g,
-              '\u0003$1\u0004$2\u0005$3\u0006'
-            );
-            attrs = attrs.replace(/([\w-]+)(?!=)/g, '\u0003$1\u0004');
-            result += attrs;
-          }
-
-          result += `${slash2}${gt}`;
-          return result;
-        }
-      );
-
-      // Comments
-      highlighted = highlighted.replace(/(&lt;!--[\s\S]*?--&gt;)/g, '\u0007$1\u0008');
-
-      // Replace placeholders with actual spans
-      highlighted = highlighted
-        .replace(/\u0001/g, '<span class="text-rose-400 font-semibold">')
-        .replace(/\u0002/g, '</span>')
-        .replace(/\u0003/g, '<span class="text-amber-400">')
-        .replace(/\u0004/g, '</span>')
-        .replace(/\u0005/g, '<span class="text-emerald-400">')
-        .replace(/\u0006/g, '</span>')
-        .replace(/\u0007/g, '<span class="text-slate-500 italic">')
-        .replace(/\u0008/g, '</span>');
-
-      return highlighted;
+      let h = esc(value);
+      h = h.replace(/(&lt;)(\/?)(\w+)/g, '$1$2<span style="color:#569cd6">$3</span>');
+      h = h.replace(/([\w-]+)(=)/g, '<span style="color:#9cdcfe">$1</span><span style="color:#d4d4d4">$2</span>');
+      h = h.replace(/(&quot;[^&]*?&quot;)/g, '<span style="color:#ce9178">$1</span>');
+      h = h.replace(/(&lt;!--[\s\S]*?--&gt;)/g, '<span style="color:#6a9955;font-style:italic">$1</span>');
+      return h;
     }
 
-    // Default: just escape HTML
-    return escapeHtml(value);
+    if (language === 'python' || language === 'javascript' || language === 'typescript') {
+      let h = esc(value);
+      // Comments
+      h = h.replace(/(#.*)$/gm, '<span style="color:#6a9955">$1</span>');
+      h = h.replace(/(\/\/.*)$/gm, '<span style="color:#6a9955">$1</span>');
+      // Strings
+      h = h.replace(/(&quot;(?:[^&]|&(?!quot;))*?&quot;|'[^']*?'|`[^`]*?`)/g, '<span style="color:#ce9178">$1</span>');
+      // Keywords
+      const kw = language === 'python'
+        ? 'def|class|if|elif|else|for|while|return|import|from|as|try|except|finally|with|yield|lambda|pass|break|continue|raise|and|or|not|in|is|True|False|None|async|await'
+        : 'const|let|var|function|class|if|else|for|while|return|import|from|export|default|try|catch|finally|throw|new|typeof|instanceof|async|await|yield|true|false|null|undefined|void|this|super';
+      h = h.replace(new RegExp(`\\b(${kw})\\b`, 'g'), '<span style="color:#c586c0">$1</span>');
+      // Numbers
+      h = h.replace(/\b(\d+\.?\d*)\b/g, '<span style="color:#b5cea8">$1</span>');
+      return h;
+    }
+
+    return esc(value);
   }, [value, language]);
 
-  // Calculate dynamic height
-  const editorHeight = isExpanded ? '70vh' : undefined;
-  const editorMinHeight = isExpanded ? '70vh' : `${minHeight}px`;
-  const editorMaxHeight = isExpanded ? '70vh' : (maxHeight ? `${maxHeight}px` : undefined);
+  // Dynamic height
+  const editorHeight = isExpanded ? '80vh' : undefined;
+  const editorMinHeight = isExpanded ? '80vh' : `${minHeight}px`;
+  const editorMaxHeight = isExpanded ? '80vh' : (maxHeight ? `${maxHeight}px` : undefined);
+
+  // Language display name
+  const langLabel = useMemo(() => {
+    const map: Record<string, string> = { json: 'JSON', javascript: 'JavaScript', typescript: 'TypeScript', python: 'Python', css: 'CSS', html: 'HTML', text: 'Plain Text', markdown: 'Markdown', yaml: 'YAML', shell: 'Shell' };
+    return map[language] || language.toUpperCase();
+  }, [language]);
 
   return (
-    <div className={`flex flex-col border rounded-xl overflow-hidden shadow-sm transition-all ${jsonError ? 'border-red-400/50 bg-[#1e1e2e]' : 'border-slate-200 bg-[#1e1e2e]'} ${isExpanded ? 'fixed inset-4 z-50' : ''} ${className}`}>
-      {/* Toolbar */}
-      <div className="flex items-center justify-between px-3 py-2 bg-[#252538] border-b border-slate-700/50 text-slate-400">
-        <div className="flex items-center gap-1.5">
-            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${jsonError ? 'bg-red-900/50 border-red-700/50 text-red-400' : 'bg-slate-800/50 border-slate-700/50 text-slate-500'}`}>
-              {language}
-            </span>
-            <div className="h-4 w-px bg-slate-700/50 mx-0.5" />
-            <button 
-                onClick={() => { setShowSearch(!showSearch); if (!showSearch) setTimeout(() => document.getElementById('code-search')?.focus(), 50); }}
-                className={`p-1.5 rounded hover:bg-slate-700 transition-colors ${showSearch ? 'text-indigo-400 bg-slate-700' : ''}`}
-                title="Find (Ctrl+F)"
-            >
-                <Search className="w-3.5 h-3.5" />
-            </button>
-            {!readOnly && (
-                <button 
-                    onClick={() => { setShowReplace(!showReplace); setShowSearch(true); }}
-                    className={`p-1.5 rounded hover:bg-slate-700 transition-colors ${showReplace ? 'text-indigo-400 bg-slate-700' : ''}`}
-                    title="Replace (Ctrl+H)"
-                >
-                    <Replace className="w-3.5 h-3.5" />
-                </button>
-            )}
-            {!readOnly && language === 'json' && (
-              <>
-                <div className="h-4 w-px bg-slate-700/50 mx-0.5" />
-                <button 
-                    onClick={formatCode}
-                    className="p-1.5 rounded hover:bg-slate-700 transition-colors text-slate-400 hover:text-emerald-400"
-                    title="Format JSON (Pretty Print)"
-                    disabled={!!jsonError}
-                >
-                    <Wand2 className="w-3.5 h-3.5" />
-                </button>
-                <button 
-                    onClick={minifyCode}
-                    className="p-1.5 rounded hover:bg-slate-700 transition-colors text-slate-400 hover:text-amber-400"
-                    title="Minify JSON"
-                    disabled={!!jsonError}
-                >
-                    <Minimize2 className="w-3.5 h-3.5" />
-                </button>
-              </>
-            )}
-        </div>
-        <div className="flex items-center gap-1.5">
-             <div className="text-[10px] text-slate-500 font-mono hidden sm:block">
-                {value.length} chars • {value.split('\n').length} lines
-             </div>
-             <div className="h-4 w-px bg-slate-700/50 mx-0.5 hidden sm:block" />
-             <button 
-                onClick={() => setWordWrap(!wordWrap)} 
-                className={`p-1.5 rounded hover:bg-slate-700 transition-colors ${wordWrap ? 'text-indigo-400 bg-slate-700' : 'text-slate-400'}`} 
-                title={wordWrap ? "Disable Word Wrap" : "Enable Word Wrap"}
-             >
-                <WrapText className="w-3.5 h-3.5" />
-             </button>
-             <button onClick={handleCopy} className="p-1.5 hover:bg-slate-700 rounded text-slate-400 transition-colors" title="Copy Content">
-                {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-             </button>
-             <button 
-                onClick={() => setIsExpanded(!isExpanded)} 
-                className="p-1.5 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition-colors" 
-                title={isExpanded ? "Collapse" : "Expand"}
-             >
-                {isExpanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
-             </button>
-        </div>
-      </div>
-
-      {/* Search Bar */}
+    <div className={`flex flex-col overflow-hidden transition-all ${isExpanded ? 'fixed inset-3 z-50 rounded-lg shadow-2xl' : ''} ${className}`} style={{ background: VSCODE.bg }}>
+      {/* VS Code-style Search Widget (floating, top-right like VS Code) */}
       {showSearch && (
-        <div className="bg-[#2a2a3f] border-b border-slate-700/50 p-2 flex flex-col gap-2 animate-in slide-in-from-top-1">
-             <div className="flex items-center gap-2">
-                <div className="relative flex-1 group">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 group-focus-within:text-indigo-400" />
-                    <input 
-                        id="code-search"
-                        value={searchTerm}
-                        onChange={e => setSearchTerm(e.target.value)}
-                        placeholder="Find..."
-                        className="w-full bg-[#1e1e2e] border border-slate-700 rounded-md py-1 pl-8 pr-20 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 placeholder:text-slate-600"
-                        onKeyDown={e => {
-                            if (e.key === 'Enter') {
-                                if (e.shiftKey) prevMatch(); else nextMatch();
-                            } else if (e.key === 'Escape') {
-                                setShowSearch(false);
-                            }
-                        }}
-                    />
-                    <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
-                        <button onClick={() => setMatchCase(!matchCase)} className={`p-1 rounded hover:bg-slate-700 ${matchCase ? 'text-indigo-400 bg-slate-700' : 'text-slate-500'}`} title="Match Case">
-                            <CaseSensitive className="w-3 h-3" />
-                        </button>
-                        <button onClick={() => setUseRegex(!useRegex)} className={`p-1 rounded hover:bg-slate-700 ${useRegex ? 'text-indigo-400 bg-slate-700' : 'text-slate-500'}`} title="Regex">
-                            <Regex className="w-3 h-3" />
-                        </button>
-                    </div>
+        <div
+          className="absolute top-0 right-4 z-40 rounded-b-md shadow-xl"
+          style={{ background: VSCODE.searchBg, border: `1px solid ${VSCODE.searchBorder}`, borderTop: 'none', minWidth: 340 }}
+        >
+          <div className="p-2 flex flex-col gap-1.5">
+            <div className="flex items-center gap-1.5">
+              <div className="relative flex-1">
+                <input
+                  id="code-search"
+                  autoFocus
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  placeholder="Find"
+                  className="w-full py-1 pl-2 pr-16 text-[13px] rounded-sm focus:outline-none"
+                  style={{ background: VSCODE.searchInputBg, color: '#cccccc', border: `1px solid transparent`, fontFamily: VSCODE.font, fontSize: '12px' }}
+                  onFocus={e => (e.target.style.borderColor = VSCODE.searchInputBorder)}
+                  onBlur={e => (e.target.style.borderColor = 'transparent')}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') { if (e.shiftKey) prevMatch(); else nextMatch(); }
+                    else if (e.key === 'Escape') setShowSearch(false);
+                  }}
+                />
+                <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-px">
+                  <button onClick={() => setMatchCase(!matchCase)} className={`p-0.5 rounded-sm ${matchCase ? 'bg-[#007acc55] text-white' : 'text-[#969696] hover:text-[#cccccc]'}`} title="Match Case"><CaseSensitive className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => setUseRegex(!useRegex)} className={`p-0.5 rounded-sm ${useRegex ? 'bg-[#007acc55] text-white' : 'text-[#969696] hover:text-[#cccccc]'}`} title="Regex"><Regex className="w-3.5 h-3.5" /></button>
                 </div>
-                <div className="flex items-center gap-1">
-                    <button onClick={prevMatch} disabled={matches.length === 0} className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded disabled:opacity-50">
-                        <ChevronUp className="w-3.5 h-3.5" />
-                    </button>
-                    <button onClick={nextMatch} disabled={matches.length === 0} className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded disabled:opacity-50">
-                        <ChevronDown className="w-3.5 h-3.5" />
-                    </button>
-                    <button onClick={() => setShowSearch(false)} className="p-1.5 hover:bg-slate-700 text-slate-400 rounded">
-                        <X className="w-3.5 h-3.5" />
-                    </button>
-                </div>
-             </div>
-             {showReplace && !readOnly && (
-                 <div className="flex items-center gap-2">
-                    <div className="relative flex-1 group">
-                         <Replace className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 group-focus-within:text-indigo-400" />
-                        <input 
-                            value={replaceTerm}
-                            onChange={e => setReplaceTerm(e.target.value)}
-                            placeholder="Replace with..."
-                            className="w-full bg-[#1e1e2e] border border-slate-700 rounded-md py-1 pl-8 pr-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 placeholder:text-slate-600"
-                            onKeyDown={e => {
-                                if (e.key === 'Enter') replaceCurrent();
-                            }}
-                        />
-                    </div>
-                    <div className="flex items-center gap-1">
-                        <button onClick={replaceCurrent} disabled={matches.length === 0} className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-medium rounded border border-slate-700">
-                            Replace
-                        </button>
-                        <button onClick={replaceAll} disabled={matches.length === 0} className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-medium rounded border border-slate-700">
-                            All
-                        </button>
-                    </div>
-                 </div>
-             )}
-             {matches.length > 0 && (
-                <div className="text-[10px] text-slate-500 px-1">
-                    {currentMatchIndex + 1} of {matches.length} matches
-                </div>
-             )}
+              </div>
+              <span className="text-[11px] min-w-[60px] text-center" style={{ color: '#969696' }}>
+                {matches.length > 0 ? `${currentMatchIndex + 1}/${matches.length}` : 'No results'}
+              </span>
+              <button onClick={prevMatch} disabled={!matches.length} className="p-1 rounded-sm text-[#cccccc] hover:bg-[#ffffff15] disabled:opacity-30"><ChevronUp className="w-3.5 h-3.5" /></button>
+              <button onClick={nextMatch} disabled={!matches.length} className="p-1 rounded-sm text-[#cccccc] hover:bg-[#ffffff15] disabled:opacity-30"><ChevronDown className="w-3.5 h-3.5" /></button>
+              <button onClick={() => setShowSearch(false)} className="p-1 rounded-sm text-[#cccccc] hover:bg-[#ffffff15]"><X className="w-3.5 h-3.5" /></button>
+            </div>
+            {showReplace && !readOnly && (
+              <div className="flex items-center gap-1.5">
+                <input
+                  value={replaceTerm}
+                  onChange={e => setReplaceTerm(e.target.value)}
+                  placeholder="Replace"
+                  className="flex-1 py-1 px-2 text-[12px] rounded-sm focus:outline-none"
+                  style={{ background: VSCODE.searchInputBg, color: '#cccccc', border: '1px solid transparent', fontFamily: VSCODE.font }}
+                  onFocus={e => (e.target.style.borderColor = VSCODE.searchInputBorder)}
+                  onBlur={e => (e.target.style.borderColor = 'transparent')}
+                  onKeyDown={e => { if (e.key === 'Enter') replaceCurrent(); }}
+                />
+                <button onClick={replaceCurrent} disabled={!matches.length} className="px-1.5 py-1 text-[11px] rounded-sm text-[#cccccc] hover:bg-[#ffffff15] disabled:opacity-30" title="Replace">↻</button>
+                <button onClick={replaceAll} disabled={!matches.length} className="px-1.5 py-1 text-[11px] rounded-sm text-[#cccccc] hover:bg-[#ffffff15] disabled:opacity-30" title="Replace All">↻↻</button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
       {/* JSON Error Banner */}
       {jsonError && (
-        <div className="px-3 py-2 bg-red-900/30 border-b border-red-800/50 text-xs text-red-300 flex items-center gap-2">
-          <X className="w-3.5 h-3.5 text-red-400 shrink-0" />
-          <span className="truncate">{jsonError}</span>
+        <div className="px-3 py-1.5 flex items-center gap-2" style={{ background: '#5a1d1d', borderBottom: '1px solid #6e2a2a' }}>
+          <span className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] shrink-0" style={{ background: '#f14c4c', color: '#1e1e1e', fontWeight: 700 }}>!</span>
+          <span className="text-[12px] truncate" style={{ color: '#f48771' }}>{jsonError}</span>
         </div>
       )}
 
       {/* Editor Area */}
-      <div 
+      <div
         className="flex-1 relative flex overflow-hidden"
-        style={{ 
-          minHeight: editorMinHeight,
-          maxHeight: editorMaxHeight,
-          height: editorHeight
-        }}
+        style={{ minHeight: editorMinHeight, maxHeight: editorMaxHeight, height: editorHeight }}
       >
-        {/* Line Numbers */}
+        {/* Gutter (Line Numbers) */}
         <div
-            ref={scrollRef}
-            className="w-10 bg-[#1e1e2e] border-r border-slate-700/50 text-slate-600 text-[11px] font-mono py-3 text-right pr-2 select-none overflow-hidden"
-            style={{ 
-              fontFamily: '"Menlo", "Consolas", "Monaco", monospace', 
-              lineHeight: '1.6',
-              whiteSpace: wordWrap ? 'pre-wrap' : 'pre'
-            }}
+          ref={scrollRef}
+          className="select-none overflow-hidden shrink-0"
+          style={{
+            width: gutterWidth,
+            background: VSCODE.gutterBg,
+            borderRight: `1px solid ${VSCODE.gutterBorder}`,
+            color: VSCODE.gutterText,
+            fontFamily: VSCODE.font,
+            fontSize: VSCODE.fontSize,
+            lineHeight: VSCODE.lineHeight,
+            padding: '4px 0',
+            textAlign: 'right',
+          }}
         >
-            {lineNumbers}
+          <pre className="m-0 pr-2" style={{ fontFamily: VSCODE.font, fontSize: VSCODE.fontSize, lineHeight: VSCODE.lineHeight }}>{lineNumbers}</pre>
         </div>
 
-        {/* Text Area Container */}
-        <div className="flex-1 relative bg-[#1e1e2e] overflow-auto">
-            {/* Syntax Highlighting Backdrop */}
-            <div
-                ref={backdropRef}
-                className="absolute inset-0 pointer-events-none overflow-hidden"
-                aria-hidden="true"
-            >
-                <pre
-                    dangerouslySetInnerHTML={{ __html: highlightedCode }}
-                    className={`p-3 m-0 text-slate-300 ${wordWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`}
-                    style={{
-                        fontFamily: '"Menlo", "Consolas", "Monaco", monospace',
-                        fontSize: '11px',
-                        lineHeight: '1.6',
-                        background: 'transparent',
-                    }}
-                />
-            </div>
-
-            {/* Actual Textarea - transparent text, visible caret */}
-            <textarea
-                ref={textareaRef}
-                value={value}
-                onChange={e => onChange(e.target.value)}
-                onScroll={handleScroll}
-                className={`absolute inset-0 w-full h-full bg-transparent caret-white p-3 font-mono resize-none focus:outline-none selection:bg-indigo-500/30 ${readOnly ? 'cursor-default' : 'cursor-text'}`}
-                style={{
-                    fontFamily: '"Menlo", "Consolas", "Monaco", monospace',
-                    fontSize: '11px',
-                    lineHeight: '1.6',
-                    color: 'transparent',
-                    caretColor: 'white',
-                    whiteSpace: wordWrap ? 'pre-wrap' : 'pre',
-                    wordBreak: wordWrap ? 'break-word' : 'normal',
-                    overflowWrap: wordWrap ? 'break-word' : 'normal',
-                }}
-                spellCheck={false}
-                readOnly={readOnly}
-                placeholder={placeholder}
+        {/* Code Area */}
+        <div className="flex-1 relative overflow-auto" style={{ background: VSCODE.bg }}>
+          {/* Syntax Highlighting Backdrop */}
+          <div ref={backdropRef} className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
+            <pre
+              dangerouslySetInnerHTML={{ __html: highlightedCode }}
+              className={`m-0 ${wordWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`}
+              style={{
+                fontFamily: VSCODE.font,
+                fontSize: VSCODE.fontSize,
+                lineHeight: VSCODE.lineHeight,
+                padding: '4px 12px',
+                color: '#d4d4d4',
+                background: 'transparent',
+              }}
             />
+          </div>
+
+          {/* Textarea */}
+          <textarea
+            ref={textareaRef}
+            value={value}
+            onChange={e => onChange(e.target.value)}
+            onScroll={handleScroll}
+            className={`absolute inset-0 w-full h-full bg-transparent resize-none focus:outline-none ${readOnly ? 'cursor-default' : 'cursor-text'}`}
+            style={{
+              fontFamily: VSCODE.font,
+              fontSize: VSCODE.fontSize,
+              lineHeight: VSCODE.lineHeight,
+              padding: '4px 12px',
+              color: 'transparent',
+              caretColor: VSCODE.caret,
+              whiteSpace: wordWrap ? 'pre-wrap' : 'pre',
+              wordBreak: wordWrap ? 'break-word' : 'normal',
+              overflowWrap: wordWrap ? 'break-word' : 'normal',
+              WebkitTextFillColor: 'transparent',
+            }}
+            spellCheck={false}
+            readOnly={readOnly}
+            placeholder={placeholder}
+          />
         </div>
       </div>
-      
+
+      {/* VS Code-style Status Bar */}
+      <div className="flex items-center justify-between shrink-0" style={{ height: 22, background: VSCODE.statusBar, padding: '0 8px' }}>
+        <div className="flex items-center gap-3">
+          {!readOnly && language === 'json' && (
+            <>
+              <button onClick={formatCode} disabled={!!jsonError} className="text-[11px] hover:bg-[#ffffff20] px-1.5 rounded-sm disabled:opacity-40 transition-colors" style={{ color: '#ffffff' }} title="Format">Format</button>
+              <button onClick={minifyCode} disabled={!!jsonError} className="text-[11px] hover:bg-[#ffffff20] px-1.5 rounded-sm disabled:opacity-40 transition-colors" style={{ color: '#ffffff' }} title="Minify">Minify</button>
+            </>
+          )}
+          {jsonError && <span className="text-[11px]" style={{ color: '#f48771' }}>⚠ Error</span>}
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.7)' }}>Ln {lineCount}, Col 1</span>
+          <button
+            onClick={() => { setShowSearch(!showSearch); if (!showSearch) setTimeout(() => document.getElementById('code-search')?.focus(), 50); }}
+            className="text-[11px] hover:bg-[#ffffff20] px-1.5 rounded-sm transition-colors" style={{ color: 'rgba(255,255,255,0.8)' }}
+            title="Find (Ctrl+F)"
+          >
+            <Search className="w-3 h-3 inline-block" />
+          </button>
+          {!readOnly && (
+            <button
+              onClick={() => { setShowReplace(!showReplace); setShowSearch(true); }}
+              className="text-[11px] hover:bg-[#ffffff20] px-1.5 rounded-sm transition-colors" style={{ color: 'rgba(255,255,255,0.8)' }}
+              title="Replace (Ctrl+H)"
+            >
+              <Replace className="w-3 h-3 inline-block" />
+            </button>
+          )}
+          <button onClick={() => setWordWrap(!wordWrap)} className={`text-[11px] px-1.5 rounded-sm transition-colors ${wordWrap ? 'bg-[#ffffff20]' : 'hover:bg-[#ffffff20]'}`} style={{ color: 'rgba(255,255,255,0.8)' }} title="Word Wrap">
+            <WrapText className="w-3 h-3 inline-block" />
+          </button>
+          <button onClick={handleCopy} className="text-[11px] hover:bg-[#ffffff20] px-1.5 rounded-sm transition-colors" style={{ color: 'rgba(255,255,255,0.8)' }} title="Copy">
+            {copied ? <Check className="w-3 h-3 inline-block" /> : <Copy className="w-3 h-3 inline-block" />}
+          </button>
+          <button onClick={() => setIsExpanded(!isExpanded)} className="text-[11px] hover:bg-[#ffffff20] px-1.5 rounded-sm transition-colors" style={{ color: 'rgba(255,255,255,0.8)' }} title={isExpanded ? 'Restore' : 'Maximize'}>
+            {isExpanded ? <Minimize2 className="w-3 h-3 inline-block" /> : <Maximize2 className="w-3 h-3 inline-block" />}
+          </button>
+          <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.7)' }}>{langLabel}</span>
+        </div>
+      </div>
+
       {/* Expanded backdrop */}
-      {isExpanded && (
-        <div 
-          className="fixed inset-0 bg-black/50 -z-10" 
-          onClick={() => setIsExpanded(false)}
-        />
-      )}
+      {isExpanded && <div className="fixed inset-0 bg-black/60 -z-10" onClick={() => setIsExpanded(false)} />}
     </div>
   );
 }

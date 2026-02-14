@@ -15,6 +15,23 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
+from .folder_limiter import FolderLimiter
+
+
+def _check_folder_read(path: str) -> None:
+    """Raise ValueError if the folder limiter denies read access to *path*."""
+    limiter = FolderLimiter.get()
+    if not limiter.check_read(path):
+        raise ValueError(limiter.describe_denial(path, "read"))
+
+
+def _check_folder_write(path: str) -> None:
+    """Raise ValueError if the folder limiter denies write access to *path*."""
+    limiter = FolderLimiter.get()
+    if not limiter.check_write(path):
+        raise ValueError(limiter.describe_denial(path, "write"))
+
+
 def _is_safe_path(path: str) -> bool:
     """
     Check if a path is safe to access (not a system directory).
@@ -170,11 +187,14 @@ class CheckpointManager:
             backup_file = os.path.join(cp_path, backup_name)
             try:
                 if os.path.isdir(file_path):
-                    # We don't support full directory backups yet, just files
-                    pass 
+                    shutil.copytree(file_path, backup_file)
+                    entry["backup"] = backup_name
+                    entry["backup_type"] = "dir"
+                    entry["action"] = "modify"
                 else:
                     shutil.copy2(file_path, backup_file)
                     entry["backup"] = backup_name
+                    entry["backup_type"] = "file"
                     entry["action"] = "modify" 
             except Exception as e:
                 print(f"Failed to backup {file_path}: {e}")
@@ -214,12 +234,24 @@ class CheckpointManager:
                 elif action == "modify" and "backup" in info:
                     # It was modified/deleted, restore from backup
                     backup_path = os.path.join(cp_path, info["backup"])
+                    backup_type = info.get("backup_type") or "file"
                     if os.path.exists(backup_path):
-                        # Ensure dir exists
-                        d = os.path.dirname(path)
-                        if d and not os.path.exists(d):
-                            os.makedirs(d, exist_ok=True)
-                        shutil.copy2(backup_path, path)
+                        if backup_type == "dir":
+                            if os.path.exists(path):
+                                if os.path.isdir(path):
+                                    shutil.rmtree(path)
+                                else:
+                                    os.remove(path)
+                            parent = os.path.dirname(path)
+                            if parent and not os.path.exists(parent):
+                                os.makedirs(parent, exist_ok=True)
+                            shutil.copytree(backup_path, path)
+                        else:
+                            # Ensure dir exists
+                            d = os.path.dirname(path)
+                            if d and not os.path.exists(d):
+                                os.makedirs(d, exist_ok=True)
+                            shutil.copy2(backup_path, path)
                 restored.append(path)
             except Exception as e:
                 errors.append(f"{path}: {e}")
@@ -233,6 +265,7 @@ async def list_directory(args: Dict[str, Any]) -> Dict[str, Any]:
     p = os.path.expanduser(p)
     if not _is_safe_path(p):
         raise ValueError(f"Access denied to system path: {p}")
+    _check_folder_read(p)
     names = []
     try:
         for name in os.listdir(p):
@@ -262,6 +295,7 @@ async def read_file(args: Dict[str, Any]) -> Dict[str, Any]:
     p = os.path.expanduser(p)
     if not _is_safe_path(p):
         raise ValueError(f"Access denied to system path: {p}")
+    _check_folder_read(p)
     
     # Get optional line range (1-indexed)
     line_start = args.get("line_start") or args.get("lineStart")
@@ -344,6 +378,7 @@ async def glob_paths(args: Dict[str, Any]) -> Dict[str, Any]:
         root = os.path.expanduser(root)
         if not _is_safe_path(root):
             return {"ok": False, "error": f"Access denied to system path: {root}"}
+        _check_folder_read(root)
         pattern_path = os.path.join(root, pattern) if not os.path.isabs(pattern) else pattern
     else:
         pattern_path = pattern
@@ -387,6 +422,7 @@ async def grep(args: Dict[str, Any]) -> Dict[str, Any]:
     p = os.path.expanduser(p)
     if not _is_safe_path(p):
         return {"ok": False, "error": f"Access denied to system path: {p}"}
+    _check_folder_read(p)
 
     regex = args.get("regex")
     if regex is None:
@@ -486,6 +522,7 @@ async def write_file(args: Dict[str, Any]) -> Dict[str, Any]:
     p = os.path.expanduser(p)
     if not _is_safe_path(p):
         raise ValueError(f"Access denied to system path: {p}")
+    _check_folder_write(p)
     d = os.path.dirname(p)
     
     # Checkpoint
@@ -511,6 +548,7 @@ async def write_file_base64(args: Dict[str, Any]) -> Dict[str, Any]:
     p = os.path.expanduser(p)
     if not _is_safe_path(p):
         raise ValueError(f"Access denied to system path: {p}")
+    _check_folder_write(p)
         
     d = os.path.dirname(p)
     if d and not os.path.exists(d):
@@ -538,7 +576,12 @@ async def create_directory(args: Dict[str, Any]) -> Dict[str, Any]:
     p = os.path.expanduser(p)
     if not _is_safe_path(p):
         raise ValueError(f"Access denied to system path: {p}")
-    # Checkpoint: we don't strictly track empty directory creation yet
+    _check_folder_write(p)
+
+    # Checkpoint
+    if not os.path.exists(p):
+        CheckpointManager.record_change(p, "create")
+
     os.makedirs(p, exist_ok=True)
     return {"ok": True}
 
@@ -555,6 +598,8 @@ async def move_file(args: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError(f"Access denied to system path: {src}")
     if not _is_safe_path(dest):
         raise ValueError(f"Access denied to system path: {dest}")
+    _check_folder_read(src)
+    _check_folder_write(dest)
     
     # Checkpoint
     CheckpointManager.record_change(src, "modify") # Will become deleted at src
@@ -579,6 +624,8 @@ async def copy_file(args: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError(f"Access denied to system path: {src}")
     if not _is_safe_path(dest):
         raise ValueError(f"Access denied to system path: {dest}")
+    _check_folder_read(src)
+    _check_folder_write(dest)
     
     # Checkpoint
     op_dest = "create" if not os.path.exists(dest) else "modify"
@@ -598,6 +645,7 @@ async def delete_file(args: Dict[str, Any]) -> Dict[str, Any]:
     
     if not _is_safe_path(p):
         raise ValueError(f"Access denied to system path: {p}")
+    _check_folder_write(p)
     
     if os.path.exists(p):
         CheckpointManager.record_change(p, "modify") # Will be deleted
@@ -695,6 +743,7 @@ async def read_file_binary(args: Dict[str, Any]) -> Dict[str, Any]:
     p = os.path.normpath(p)
     if not _is_safe_path(p):
         raise ValueError(f"Access denied to system path: {p}")
+    _check_folder_read(p)
     if not os.path.isfile(p):
         raise ValueError(f"path not found: {p}")
     size = os.path.getsize(p)
@@ -728,6 +777,7 @@ async def file_read(args: Dict[str, Any]) -> Dict[str, Any]:
     p = os.path.expanduser(p)
     if not _is_safe_path(p):
         return {"ok": False, "error": f"Access denied to system path: {p}"}
+    _check_folder_read(p)
 
     if not os.path.exists(p):
         return {"ok": False, "error": f"File not found: {p}"}
@@ -845,6 +895,7 @@ async def file_edit(args: Dict[str, Any]) -> Dict[str, Any]:
     p = os.path.expanduser(p)
     if not _is_safe_path(p):
         return {"ok": False, "error": f"Access denied to system path: {p}"}
+    _check_folder_write(p)
 
     mode = str(args.get("mode") or "replace").lower()
     valid_modes = ("replace", "insert_before", "insert_after", "delete", "regex")

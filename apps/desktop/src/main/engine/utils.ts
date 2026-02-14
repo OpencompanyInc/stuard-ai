@@ -52,6 +52,24 @@ export function getAtPath(obj: any, pathStr: string, defaultVal?: any) {
       return varValue;
     }
 
+    // Special handling for $workspace — resolve workspace paths
+    if (parts[0] === '$workspace' && obj?.$workspace) {
+      const ws = obj.$workspace;
+      if (parts.length === 1) return ws;
+      const field = parts[1];
+      if (field === 'path') return ws.path;
+      if (field === 'data') return ws.data;
+      if (field === 'scripts') return ws.scripts;
+      if (field === 'assets') return ws.assets;
+      // $workspace.file.subpath.to.file → resolve file path within workspace
+      if (field === 'file' && parts.length >= 3) {
+        const fileParts = parts.slice(2).join('/');
+        return ws.path ? ws.path + '/' + fileParts : fileParts;
+      }
+      // Fall through to normal resolution for any other $workspace.X
+      return ws[field] !== undefined ? ws[field] : defaultVal;
+    }
+
     // Smart path resolution: Try to match step IDs that may contain dots
     // For paths like "local.tool_abc123.text", we need to find the step ID first
     // Step IDs in ctx are keys like "local.tool_abc123" or "step_1"

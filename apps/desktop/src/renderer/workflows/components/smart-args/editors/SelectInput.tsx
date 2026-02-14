@@ -22,7 +22,8 @@ export function SelectInput({ value, onChange, options, placeholder }: SelectInp
     String(o.value).toLowerCase().includes(search.toLowerCase())
   );
 
-  const selectedOption = options.find(o => o.value === value);
+  // Use loose equality so numeric options (e.g. 10) match string values ("10") from serialized args
+  const selectedOption = options.find(o => o.value == value);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -65,7 +66,7 @@ export function SelectInput({ value, onChange, options, placeholder }: SelectInp
               <button
                 key={String(opt.value)}
                 onClick={() => { onChange(opt.value); setOpen(false); setSearch(''); }}
-                className={`w-full px-3 py-2 text-left text-sm rounded-lg flex items-center justify-between gap-2 transition-colors mb-0.5 ${opt.value === value
+                className={`w-full px-3 py-2 text-left text-sm rounded-lg flex items-center justify-between gap-2 transition-colors mb-0.5 ${opt.value == value
                   ? 'bg-indigo-50 text-indigo-700 font-medium'
                   : 'text-slate-700 hover:bg-slate-50'
                   }`}
@@ -76,7 +77,7 @@ export function SelectInput({ value, onChange, options, placeholder }: SelectInp
                     <div className="text-xs text-slate-400 font-normal">{opt.description}</div>
                   )}
                 </div>
-                {opt.value === value && <Check className="w-4 h-4 text-indigo-600" />}
+                {opt.value == value && <Check className="w-4 h-4 text-indigo-600" />}
               </button>
             ))}
             {filteredOptions.length === 0 && (

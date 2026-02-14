@@ -68,12 +68,13 @@ export async function execLocalTool(tool: string, args: any, ctx: RouterContext,
     let timeoutId: NodeJS.Timeout | undefined;
     let lastMediaToolsPercent = -1;
     
-    const resetTimeout = (ms: number) => {
+const resetTimeout = (ms: number) => {
       if (done) return;
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
         if (done) return;
         done = true;
+        ws.off('message', onMessage);
         resolve({ ok: false, error: 'timeout' });
       }, ms);
     };

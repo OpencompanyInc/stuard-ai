@@ -121,12 +121,15 @@ export const LOCAL_TOOL_ITEMS: PaletteItem[] = [
   { k: 'local.tool', t: 'delete_variable', label: 'Delete Variable', args: { name: 'myVar' } },
 
   // Custom UI
-  { k: 'local.tool', t: 'custom_ui', label: 'Show Custom UI', args: { title: 'My UI', html: '<div>Hello</div>', window: { width: 300, height: 200 } } },
+  { k: 'local.tool', t: 'custom_ui', label: 'Show Custom UI', args: { title: 'My UI', component: 'function App() {\n  return html`<div class="p-6"><h2 class="text-white">Hello</h2></div>`;\n}', window: { width: 300, height: 200 } } },
   { k: 'local.tool', t: 'update_custom_ui', label: 'Update Custom UI', args: { id: '', data: {}, html: '' } },
   { k: 'local.tool', t: 'close_custom_ui', label: 'Close Custom UI', args: { id: '' } },
 ];
 
 export const CLOUD_TOOL_ITEMS: PaletteItem[] = [
+  // AI Agent node
+  { k: 'cloud.tool', t: 'agent_node', label: 'AI Agent', args: { prompt: '', model: 'balanced', outputMode: 'text', maxSteps: 10 } },
+
   { k: 'cloud.tool', t: 'run_sequential', label: 'Run Sequential', args: { steps: [] } },
   { k: 'cloud.tool', t: 'run_parallel', label: 'Run Parallel', args: { steps: [] } },
   { k: 'cloud.tool', t: 'analyze_image', label: 'Analyze Image', args: {} },
@@ -173,21 +176,10 @@ export const MATH_ITEMS: PaletteItem[] = [
   { k: 'local.tool', t: 'math_range', label: 'Range', args: { start: 1, stop: 10 } },
 ];
 
-// Streaming — Real-time data pipeline primitives
+// Streaming — Debug / inspection only (streaming is via `stream: true` toggle on AI/HTTP/Script tools)
 export const STREAM_ITEMS: PaletteItem[] = [
-  { k: 'local.tool', t: 'stream_create', label: 'Create Stream', args: { kind: 'bytes', bufferSize: 500 } },
-  { k: 'local.tool', t: 'stream_write', label: 'Write to Stream', args: { streamId: '', chunk: '' } },
-  { k: 'local.tool', t: 'stream_read', label: 'Read from Stream', args: { streamId: '', subscriberId: '', maxChunks: 50, waitMs: 100 } },
-  { k: 'local.tool', t: 'stream_close', label: 'Close Stream', args: { streamId: '' } },
-  { k: 'local.tool', t: 'stream_subscribe', label: 'Subscribe to Stream', args: { streamId: '', fromStart: false } },
-  { k: 'local.tool', t: 'stream_unsubscribe', label: 'Unsubscribe from Stream', args: { streamId: '', subscriberId: '' } },
-  { k: 'local.tool', t: 'stream_add_transform', label: 'Add Stream Transform', args: { streamId: '', type: 'python', code: 'def transform(chunk, params):\n    return chunk', params: {} } },
-  { k: 'local.tool', t: 'stream_update_transform', label: 'Update Transform Params', args: { streamId: '', transformId: '', params: {} } },
-  { k: 'local.tool', t: 'stream_list', label: 'List Streams', args: {} },
+  { k: 'local.tool', t: 'stream_list', label: 'List Active Streams', args: {} },
   { k: 'local.tool', t: 'stream_get_status', label: 'Stream Status', args: { streamId: '' } },
-  { k: 'local.tool', t: 'stream_from_script', label: 'Stream from Script', args: { code: 'import time\nfor i in range(10):\n    emit_chunk({"count": i})\n    time.sleep(0.5)', kind: 'json' } },
-  { k: 'local.tool', t: 'stream_from_api', label: 'Stream from API', args: { url: '', method: 'sse', chunkType: 'json' } },
-  { k: 'local.tool', t: 'stream_from_llm', label: 'Stream from LLM', args: { prompt: '', model: 'gpt-4o-mini' } },
 ];
 
 export const INTEGRATION_ITEMS: PaletteItem[] = [

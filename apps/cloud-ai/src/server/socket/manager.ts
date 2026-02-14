@@ -1,7 +1,8 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { IncomingMessage } from 'http';
 import { writeLog } from '../../utils/logger';
-import { handleClientToolMessage } from '../../tools/bridge';
+import { handleClientToolMessage, withClientBridge } from '../../tools/bridge';
+import { getTool } from '../../tools/tool-registry';
 import { normalizeMessages } from '../../utils/messages';
 import { verifyToken, checkAccess, incrementDailyRequestCounter, createConversation, addUserMessage, addAssistantMessage } from '../../supabase';
 import { runAgent, abortAgent } from '../streaming/agent-runner';
@@ -108,6 +109,13 @@ export class SocketManager {
     if (kind === 'stop' || kind === 'abort') {
       const aborted = abortAgent(ws);
       this.send(ws, { type: 'stopped', success: aborted });
+      return;
+    }
+
+    // Bridged tool execution: run a cloud tool WITH this WS as bridge context
+    // so the tool can relay tool_request messages back to the client
+    if (kind === 'exec_tool_bridged') {
+      this.handleBridgedToolExec(ws, msg);
       return;
     }
 
@@ -226,6 +234,59 @@ export class SocketManager {
 
     } catch (e: any) {
       this.send(ws, { type: 'error', message: e?.message || String(e) });
+    }
+  }
+
+  /**
+   * Handle bridged tool execution: run a cloud tool WITH this WS as bridge context.
+   * This allows agent_node (and other agent tools) to relay tool_request messages
+   * back to the desktop client for local tool execution (send_hotkey, run_command, etc.).
+   */
+  private async handleBridgedToolExec(ws: WebSocket, msg: any) {
+    const reqId = String(msg?.id || `btool-${Date.now()}`);
+    const toolName = String(msg?.tool || '').trim();
+    const toolArgs = msg?.args || {};
+    const accessToken = String(msg?.auth?.accessToken || '').trim();
+
+    if (!toolName) {
+      this.send(ws, { type: 'exec_tool_bridged_result', id: reqId, result: { ok: false, error: 'missing_tool_name' } });
+      return;
+    }
+
+    // Auth check
+    if (REQUIRE_AUTH && accessToken) {
+      try {
+        const authed = await verifyToken(accessToken);
+        if (!authed) {
+          this.send(ws, { type: 'exec_tool_bridged_result', id: reqId, result: { ok: false, error: 'unauthorized' } });
+          return;
+        }
+      } catch {
+        this.send(ws, { type: 'exec_tool_bridged_result', id: reqId, result: { ok: false, error: 'auth_failed' } });
+        return;
+      }
+    }
+
+    const tool = getTool(toolName);
+    if (!tool || typeof tool.execute !== 'function') {
+      this.send(ws, { type: 'exec_tool_bridged_result', id: reqId, result: { ok: false, error: `tool_not_found: ${toolName}` } });
+      return;
+    }
+
+    writeLog(`bridged_tool_exec_start: ${toolName}`);
+
+    try {
+      // Run the tool with the WS as bridge context so execLocalTool works
+      const secrets = accessToken ? { accessToken } : {};
+      const result = await withClientBridge(ws, async () => {
+        return await tool.execute!(toolArgs as any, {} as any);
+      }, secrets);
+
+      writeLog(`bridged_tool_exec_done: ${toolName}`);
+      this.send(ws, { type: 'exec_tool_bridged_result', id: reqId, result });
+    } catch (e: any) {
+      writeLog(`bridged_tool_exec_error: ${toolName}: ${e?.message || e}`);
+      this.send(ws, { type: 'exec_tool_bridged_result', id: reqId, result: { ok: false, error: e?.message || 'execution_failed' } });
     }
   }
 

@@ -9,12 +9,13 @@
  * run: pnpm sync-tool-defs (or manually update TOOL_DEFINITIONS below)
  */
 
-export type ArgType = 'string' | 'number' | 'boolean' | 'select' | 'array' | 'object' | 'code' | 'path' | 'hotkey' | 'json' | 'cron' | 'files';
+export type ArgType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect' | 'array' | 'object' | 'code' | 'path' | 'hotkey' | 'json' | 'cron' | 'files';
 
 export interface ArgOption {
   value: string | number | boolean;
   label: string;
   description?: string;
+  group?: string;
 }
 
 export interface ArgSchema {
@@ -78,8 +79,8 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'run_system_command', category: 'system', kind: 'local', description: 'Execute system commands with timeout (shell=true)', argsTemplate: { command: 'echo hello', timeoutMs: 30000, shell: true, background: false, terminalId: '' }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number', terminalId: 'string', pid: 'number', status: 'string', shell: 'string' } },
   { id: 'list_terminals', category: 'system', kind: 'local', description: 'List active and recent terminal sessions', argsTemplate: {}, outputSchema: { ok: 'boolean', terminals: 'any[]' } },
   { id: 'read_terminal', category: 'system', kind: 'local', description: 'Read incremental terminal output for a terminalId', argsTemplate: { terminalId: '', sinceSeq: 0, maxChars: 8000 }, outputSchema: { ok: 'boolean', terminalId: 'string', chunks: 'any[]', done: 'boolean', exitCode: 'number', seq: 'number' } },
-  { id: 'run_python_script', category: 'system', kind: 'local', description: 'Run Python code inline or from file with auto-install packages', argsTemplate: { code: "print('hello')", packages: [], envId: 'default', timeoutMs: 30000 }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number', installed: 'string[]' } },
-  { id: 'run_node_script', category: 'system', kind: 'local', description: 'Run Node.js code inline or from file', argsTemplate: { code: "console.log('hello')", timeoutMs: 30000 }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number' } },
+  { id: 'run_python_script', category: 'system', kind: 'local', description: 'Run Python code inline or from a workspace file. Use filePath to run a .py file from your workspace (e.g. {{$workspace.scripts}}/process.py), or code for inline. filePath takes priority over code.', argsTemplate: { filePath: '', code: "print('hello')", packages: [], envId: 'default', timeoutMs: 30000 }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number', installed: 'string[]' } },
+  { id: 'run_node_script', category: 'system', kind: 'local', description: 'Run Node.js code inline or from a workspace file. Use filePath to run a .js file from your workspace (e.g. {{$workspace.scripts}}/app.js), or code for inline. filePath takes priority over code.', argsTemplate: { filePath: '', code: "console.log('hello')", timeoutMs: 30000 }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number' } },
   { id: 'launch_application_or_uri', category: 'system', kind: 'local', description: 'Launch desktop applications or open URLs', argsTemplate: { target: 'https://example.com', args: [] }, outputSchema: { ok: 'boolean' } },
   { id: 'read_file', category: 'system', kind: 'local', description: 'Read text file contents', argsTemplate: { path: '', line_start: 1, line_end: 100 }, outputSchema: { ok: 'boolean', content: 'string', total_lines: 'number', line_start: 'number', line_end: 'number' } },
   { id: 'file_read', category: 'system', kind: 'local', description: 'Read file contents with line numbers', argsTemplate: { path: '', whole_file: true, line_start: 1, line_end: 100 }, outputSchema: { ok: 'boolean', content: 'string', total_lines: 'number', line_start: 'number', line_end: 'number', lines_returned: 'number', truncated: 'boolean', error: 'string' } },
@@ -141,7 +142,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'web_search', category: 'data', kind: 'cloud', description: 'Search the web using Perplexity AI', argsTemplate: { query: '', max_results: 5, max_tokens_per_page: 1024 }, outputSchema: { results: 'any[]', id: 'string' } },
 
   // --- UI ---
-  { id: 'custom_ui', category: 'ui', kind: 'local', description: 'Display custom interactive overlay UI with HTML + Tailwind CSS', argsTemplate: { id: 'my-panel', title: 'My Custom UI', window: { width: 400, height: 500, position: 'center', alwaysOnTop: true }, blocking: true, css: '', layout: {}, data: {} }, outputSchema: { ok: 'boolean', action: 'string', data: 'object' } },
+  { id: 'custom_ui', category: 'ui', kind: 'local', description: 'Display custom overlay UI using Preact+htm (React-like components)', argsTemplate: { id: 'my-panel', title: 'My Custom UI', component: '', css: '', data: {}, window: { width: 400, height: 500, position: 'center', alwaysOnTop: true }, blocking: true }, outputSchema: { ok: 'boolean', action: 'string', data: 'object' } },
   { id: 'update_custom_ui', category: 'ui', kind: 'local', description: 'Update existing custom_ui window with new content', argsTemplate: { id: 'my-panel', title: '', html: '', css: '', data: {}, window: {} }, outputSchema: { ok: 'boolean', action: 'string', data: 'object' } },
   { id: 'close_custom_ui', category: 'ui', kind: 'local', description: 'Close a UI window', argsTemplate: { id: '' }, outputSchema: { ok: 'boolean' } },
   { id: 'ask_confirmation', category: 'ui', kind: 'local', description: 'Show a confirmation dialog to the user', argsTemplate: { title: 'Confirm Action', message: '', confirmLabel: 'Confirm', cancelLabel: 'Cancel', variant: 'warning' }, outputSchema: { confirmed: 'boolean' } },
@@ -204,8 +205,49 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'increment_variable', category: 'data', kind: 'local', description: 'Increment a numeric workflow variable (must be defined in variables array)', argsTemplate: { name: '', amount: 1 }, outputSchema: { ok: 'boolean', value: 'number' } },
   { id: 'append_to_list', category: 'data', kind: 'local', description: 'Append an item to a list workflow variable (must be defined in variables array)', argsTemplate: { name: '', item: '' }, outputSchema: { ok: 'boolean', value: 'any[]' } },
 
+  // --- DATABASE ---
+  { id: 'db_store', category: 'data', kind: 'local', description: 'Save a document (JSON data) into a collection. Auto-creates the collection if needed.', argsTemplate: { table: 'my_collection', id: '', data: { name: '', value: '' } }, outputSchema: { ok: 'boolean', id: 'string', table: 'string', error: 'string' } },
+  { id: 'db_retrieve', category: 'data', kind: 'local', description: 'Get a single document by its ID from a collection.', argsTemplate: { table: 'my_collection', id: '' }, outputSchema: { ok: 'boolean', result: 'any', created_at: 'string', updated_at: 'string', error: 'string' } },
+  { id: 'db_search', category: 'data', kind: 'local', description: 'Search for documents in a collection. Optionally filter by field values.', argsTemplate: { table: 'my_collection', filters: {}, limit: 100 }, outputSchema: { ok: 'boolean', results: 'any[]', count: 'number', error: 'string' } },
+  { id: 'db_delete', category: 'data', kind: 'local', description: 'Delete a document by its ID from a collection.', argsTemplate: { table: 'my_collection', id: '' }, outputSchema: { ok: 'boolean', deleted: 'boolean', error: 'string' } },
+  { id: 'db_query', category: 'data', kind: 'local', description: 'Run a raw SQL query against the local workflow database. Use ? for parameter placeholders.', argsTemplate: { query: 'SELECT * FROM my_table LIMIT 10', params: [] }, outputSchema: { ok: 'boolean', results: 'any[]', count: 'number', affected_rows: 'number', error: 'string' } },
+  { id: 'db_list_tables', category: 'data', kind: 'local', description: 'List all tables and collections in the workflow database.', argsTemplate: {}, outputSchema: { ok: 'boolean', tables: 'string[]', count: 'number', error: 'string' } },
+
+  // --- EMBEDDINGS ---
+  { id: 'embed_text', category: 'data', kind: 'cloud', description: 'Turn text into a number vector for similarity search. Useful for finding related content.', argsTemplate: { texts: ['Hello world'] }, outputSchema: { ok: 'boolean', embeddings: 'any[]', dimensions: 'number', count: 'number', error: 'string' } },
+  { id: 'vector_similarity', category: 'data', kind: 'cloud', description: 'Find the most similar items by comparing vectors. Use after Embed Text.', argsTemplate: { query: [], candidates: [], topK: 10, threshold: 0.5 }, outputSchema: { ok: 'boolean', results: 'any[]', count: 'number', error: 'string' } },
+  { id: 'embed_and_store', category: 'data', kind: 'cloud', description: 'Embed text and prepare it for storage. The result can be saved with Save Document.', argsTemplate: { text: '', metadata: {} }, outputSchema: { ok: 'boolean', document: 'object', error: 'string' } },
+
   // --- MEMORY / KNOWLEDGE ---
   { id: 'memory_retrieval', category: 'data', kind: 'cloud', description: 'Retrieve stored memories and facts', argsTemplate: { query: '' }, outputSchema: { ok: 'boolean', memories: 'any[]', facts: 'any[]' } },
+
+  // --- HTTP ---
+  { id: 'http_request', category: 'data', kind: 'local', description: 'Make HTTP requests to APIs and web services', argsTemplate: { url: 'https://httpbin.org/anything', method: 'GET', headers: {}, query: {}, body: '', bearer_token: '', timeout: 30, follow_redirects: true, verify_ssl: true, retries: 0 }, outputSchema: { ok: 'boolean', status: 'number', statusText: 'string', headers: 'object', body: 'any', elapsed: 'number' } },
+
+  // --- MATH ---
+  { id: 'math_add', category: 'core', kind: 'local', description: 'Add two numbers (a + b)', argsTemplate: { a: 0, b: 0 }, outputSchema: { ok: 'boolean', result: 'number' } },
+  { id: 'math_subtract', category: 'core', kind: 'local', description: 'Subtract two numbers (a - b)', argsTemplate: { a: 0, b: 0 }, outputSchema: { ok: 'boolean', result: 'number' } },
+  { id: 'math_multiply', category: 'core', kind: 'local', description: 'Multiply two numbers (a × b)', argsTemplate: { a: 0, b: 0 }, outputSchema: { ok: 'boolean', result: 'number' } },
+  { id: 'math_divide', category: 'core', kind: 'local', description: 'Divide two numbers (a ÷ b)', argsTemplate: { a: 0, b: 1 }, outputSchema: { ok: 'boolean', result: 'number' } },
+  { id: 'math_power', category: 'core', kind: 'local', description: 'Raise a to the power of b', argsTemplate: { a: 2, b: 2 }, outputSchema: { ok: 'boolean', result: 'number' } },
+  { id: 'math_sqrt', category: 'core', kind: 'local', description: 'Square root of x', argsTemplate: { x: 4 }, outputSchema: { ok: 'boolean', result: 'number' } },
+  { id: 'math_abs', category: 'core', kind: 'local', description: 'Absolute value of x', argsTemplate: { x: -5 }, outputSchema: { ok: 'boolean', result: 'number' } },
+  { id: 'math_random', category: 'core', kind: 'local', description: 'Generate a random number between min and max', argsTemplate: { min: 1, max: 10 }, outputSchema: { ok: 'boolean', result: 'number' } },
+  { id: 'math_sum', category: 'core', kind: 'local', description: 'Sum all numbers in a list', argsTemplate: { x: [1, 2, 3] }, outputSchema: { ok: 'boolean', result: 'number' } },
+  { id: 'math_mean', category: 'core', kind: 'local', description: 'Average of numbers in a list', argsTemplate: { x: [1, 2, 3] }, outputSchema: { ok: 'boolean', result: 'number' } },
+  { id: 'math_max', category: 'core', kind: 'local', description: 'Maximum value in a list', argsTemplate: { x: [1, 5, 3] }, outputSchema: { ok: 'boolean', result: 'number' } },
+  { id: 'math_min', category: 'core', kind: 'local', description: 'Minimum value in a list', argsTemplate: { x: [1, 5, 3] }, outputSchema: { ok: 'boolean', result: 'number' } },
+  { id: 'math_compare', category: 'core', kind: 'local', description: 'Compare two numbers', argsTemplate: { a: 5, b: 3, op: 'gt' }, outputSchema: { ok: 'boolean', result: 'boolean' } },
+  { id: 'math_range', category: 'core', kind: 'local', description: 'Generate a range of numbers', argsTemplate: { start: 1, stop: 10 }, outputSchema: { ok: 'boolean', result: 'number[]' } },
+
+  // --- STREAMING (Advanced — most streaming via stream:true on AI/HTTP/Script tools) ---
+  { id: 'stream_create', category: 'data', kind: 'local', description: 'Create a new data stream for manual stream control', argsTemplate: { kind: 'bytes', bufferSize: 500 }, outputSchema: { ok: 'boolean', streamId: 'string' } },
+  { id: 'stream_close', category: 'data', kind: 'local', description: 'Close a stream and signal end-of-data', argsTemplate: { streamId: '' }, outputSchema: { ok: 'boolean' } },
+  { id: 'stream_list', category: 'data', kind: 'local', description: 'List all active streams', argsTemplate: {}, outputSchema: { ok: 'boolean', streams: 'any[]' } },
+  { id: 'stream_get_status', category: 'data', kind: 'local', description: 'Get stream status and stats', argsTemplate: { streamId: '' }, outputSchema: { ok: 'boolean', stream: 'object' } },
+
+  // --- VISION (cloud) ---
+  { id: 'cloud_ai_vision', category: 'vision', kind: 'cloud', description: 'Analyze an image with AI vision and return structured JSON', argsTemplate: { prompt: '', imagePath: '', schema: {} }, outputSchema: { ok: 'boolean', json: 'any', text: 'string' } },
 ];
 
 const TRIGGER_DEFINITIONS = [
@@ -315,6 +357,61 @@ const SCREEN_QUALITY_OPTIONS: ArgOption[] = [
   { value: 'high', label: 'High', description: 'Native resolution, high bitrate' },
 ];
 
+const SEVERITY_OPTIONS: ArgOption[] = [
+  { value: 'info', label: 'Info', description: 'Informational notification' },
+  { value: 'success', label: 'Success', description: 'Success notification' },
+  { value: 'warning', label: 'Warning', description: 'Warning notification' },
+  { value: 'error', label: 'Error', description: 'Error notification' },
+];
+
+const HTTP_METHOD_OPTIONS: ArgOption[] = [
+  { value: 'GET', label: 'GET', description: 'Retrieve data' },
+  { value: 'POST', label: 'POST', description: 'Send data' },
+  { value: 'PUT', label: 'PUT', description: 'Replace data' },
+  { value: 'PATCH', label: 'PATCH', description: 'Partial update' },
+  { value: 'DELETE', label: 'DELETE', description: 'Delete data' },
+  { value: 'HEAD', label: 'HEAD', description: 'Headers only' },
+];
+
+const COMPARE_OP_OPTIONS: ArgOption[] = [
+  { value: 'eq', label: '= Equal', description: 'a equals b' },
+  { value: 'ne', label: '≠ Not Equal', description: 'a not equal to b' },
+  { value: 'gt', label: '> Greater Than', description: 'a greater than b' },
+  { value: 'gte', label: '≥ Greater or Equal', description: 'a greater than or equal to b' },
+  { value: 'lt', label: '< Less Than', description: 'a less than b' },
+  { value: 'lte', label: '≤ Less or Equal', description: 'a less than or equal to b' },
+];
+
+const VARIABLE_SCOPE_OPTIONS: ArgOption[] = [
+  { value: 'workflow', label: 'Workflow', description: 'Scoped to this workflow run' },
+  { value: 'global', label: 'Global', description: 'Persistent across all runs' },
+];
+
+const STREAM_KIND_OPTIONS: ArgOption[] = [
+  { value: 'bytes', label: 'Bytes', description: 'Raw byte data' },
+  { value: 'json', label: 'JSON', description: 'Structured JSON chunks' },
+  { value: 'text', label: 'Text', description: 'Plain text chunks' },
+];
+
+// Note: STREAM_API_METHOD_OPTIONS and STREAM_TRANSFORM_TYPE_OPTIONS removed
+// — those tools are now engine-internal, not user-facing
+
+const TASK_ACTION_OPTIONS: ArgOption[] = [
+  { value: 'create', label: 'Create', description: 'Create a new task' },
+  { value: 'read', label: 'Read', description: 'Read a task' },
+  { value: 'update', label: 'Update', description: 'Update a task' },
+  { value: 'delete', label: 'Delete', description: 'Delete a task' },
+  { value: 'list', label: 'List', description: 'List all tasks' },
+];
+
+const VARIANT_OPTIONS: ArgOption[] = [
+  { value: 'info', label: 'Info' },
+  { value: 'warning', label: 'Warning' },
+  { value: 'success', label: 'Success' },
+  { value: 'error', label: 'Error' },
+  { value: 'default', label: 'Default' },
+];
+
 const KNOWN_SELECT_OPTIONS: Record<string, ArgOption[]> = {
   'button': MOUSE_BUTTON_OPTIONS,
   'shell': SHELL_OPTIONS,
@@ -324,6 +421,10 @@ const KNOWN_SELECT_OPTIONS: Record<string, ArgOption[]> = {
   'format': AUDIO_FORMAT_OPTIONS,
   'target': SCREEN_TARGET_OPTIONS,
   'quality': SCREEN_QUALITY_OPTIONS,
+  'severity': SEVERITY_OPTIONS,
+  'op': COMPARE_OP_OPTIONS,
+  'scope': VARIABLE_SCOPE_OPTIONS,
+  'variant': VARIANT_OPTIONS,
 };
 
 const ADVANCED_ARG_KEYS = new Set([
@@ -351,10 +452,10 @@ const HIDDEN_ARG_KEYS = new Set([
 
 function inferArgType(key: string, value: any): ArgType {
   if (key === 'code' || key === 'script') return 'code';
-  if (key === 'path' || key === 'filePath' || key === 'imagePath' || key === 'src' || key === 'dest' || key === 'cwd' || key === 'outputPath') return 'path';
+  if (key === 'path' || key === 'filePath' || key === 'imagePath' || key === 'src' || key === 'dest' || key === 'cwd' || key === 'outputPath' || key === 'inputPath' || key === 'outputPattern') return 'path';
   if (key === 'attachments') return 'files';
   if (key === 'keys' && Array.isArray(value)) return 'hotkey';
-  if (key === 'schema' || key === 'layout' || key === 'window' || key === 'region' || key === 'task') return 'json';
+  if (key === 'schema' || key === 'layout' || key === 'window' || key === 'region' || key === 'bounds' || key === 'headers' || key === 'params' || key === 'data') return 'json';
   if (typeof value === 'boolean') return 'boolean';
   if (typeof value === 'number') return 'number';
   if (Array.isArray(value)) return 'array';
@@ -603,47 +704,37 @@ if (TOOL_SCHEMAS['custom_ui']) {
       label: 'Window Options',
       description: 'Configure window size, position, and behavior (width, height, position, alwaysOnTop, frameless, transparent, etc.)',
     },
+    component: {
+      type: 'code',
+      label: 'Component (Preact)',
+      description: 'Preact component using htm templates (React-like). Define an App function. Hooks: useState, useEffect, useRef, useVar(name, default). Use html`` for templates.',
+      language: 'javascript' as any,
+      placeholder: 'function App() {\n  const [count, setCount] = useVar("counter", 0);\n  return html`<div class="p-6 text-center">\n    <h2 class="text-4xl font-bold text-white">${count}</h2>\n    <button onClick=${() => setCount(count + 1)} class="btn-primary px-4 mt-4">+</button>\n  </div>`;\n}',
+    },
     blocking: {
       type: 'boolean',
       label: 'Blocking',
-      description: 'If true, workflow waits for user interaction before continuing',
+      description: 'If true, workflow waits for user action. No timeout by default — stays open until user interacts or closes.',
       default: true,
+    },
+    timeoutMs: {
+      type: 'number',
+      label: 'Timeout (ms)',
+      description: 'Timeout for blocking mode in milliseconds. 0 = no timeout (default). E.g. 30000 for 30 seconds.',
+      default: 0,
+      placeholder: '0',
     },
     css: {
       type: 'code',
       label: 'Custom CSS',
-      description: 'Add custom CSS styles for the UI',
+      description: 'Additional CSS styles for the component',
       language: 'css' as any,
       placeholder: '.my-class { color: blue; }',
-    },
-    layout: {
-      type: 'json',
-      label: 'Layout (JSON)',
-      description: 'Define your UI using a declarative JSON layout. Supports rows, columns, text, buttons, inputs, and more.',
-      placeholder: '{ "type": "column", "children": [] }',
-    },
-    html: {
-      type: 'code',
-      label: 'HTML Content',
-      description: 'Raw HTML content (alternative to layout). Use Tailwind CSS classes for styling.',
-      language: 'html' as any,
     },
     data: {
       type: 'json',
       label: 'Initial Data',
-      description: 'Data object passed to the UI components. Use the key-value editor to add variables like {{stepId.field}}',
-    },
-    pages: {
-      type: 'json',
-      label: 'Pages (Multi-page SPA)',
-      description: 'Define multiple pages for a single-page app experience. Each page can have its own HTML/CSS/JS. Use data-navigate="pageName" in buttons to navigate.',
-      placeholder: '{ "home": { "html": "..." }, "settings": { "html": "..." } }',
-    },
-    startPage: {
-      type: 'string',
-      label: 'Start Page',
-      description: 'The initial page to show when using the pages system',
-      placeholder: 'home',
+      description: 'Data object accessible as initialData/formData inside the component',
     },
     // Window settings (shown in collapsible section)
     width: {
@@ -902,6 +993,708 @@ if (TOOL_SCHEMAS['file_edit']?.args?.mode) {
     type: 'select',
     options: FILE_EDIT_MODE_OPTIONS,
   };
+}
+
+// ============================================================================
+// HTTP REQUEST — Full schema with proper select/json types
+// ============================================================================
+
+if (TOOL_SCHEMAS['http_request']) {
+  TOOL_SCHEMAS['http_request'].args = {
+    url: {
+      type: 'string',
+      label: 'URL',
+      description: 'The URL to send the request to',
+      required: true,
+      placeholder: 'https://api.example.com/data',
+    },
+    method: {
+      type: 'select',
+      label: 'Method',
+      description: 'HTTP method to use',
+      options: HTTP_METHOD_OPTIONS,
+      default: 'GET',
+    },
+    headers: {
+      type: 'json',
+      label: 'Headers',
+      description: 'HTTP headers as key-value pairs. Example: {"Authorization": "Bearer ...", "Content-Type": "application/json"}',
+    },
+    query: {
+      type: 'json',
+      label: 'Query Parameters',
+      description: 'URL query parameters as key-value pairs. Example: {"page": 1, "limit": 10}',
+    },
+    body: {
+      type: 'string',
+      label: 'Request Body',
+      description: 'Request body content (for POST/PUT/PATCH). Use JSON string or {{variable}} references.',
+      placeholder: '{"key": "value"}',
+    },
+    bearer_token: {
+      type: 'string',
+      label: 'Bearer Token',
+      description: 'Shortcut: sets Authorization: Bearer <token> header',
+      placeholder: 'your-api-token',
+      advanced: true,
+    },
+    timeout: {
+      type: 'number',
+      label: 'Timeout (seconds)',
+      description: 'Maximum time to wait for a response',
+      default: 30,
+      advanced: true,
+    },
+    follow_redirects: {
+      type: 'boolean',
+      label: 'Follow Redirects',
+      default: true,
+      advanced: true,
+    },
+    verify_ssl: {
+      type: 'boolean',
+      label: 'Verify SSL',
+      default: true,
+      advanced: true,
+    },
+    retries: {
+      type: 'number',
+      label: 'Retries',
+      description: 'Number of retry attempts on failure',
+      default: 0,
+      advanced: true,
+    },
+  };
+}
+
+// ============================================================================
+// SEND NOTIFICATION — severity dropdown
+// ============================================================================
+
+if (TOOL_SCHEMAS['send_notification']) {
+  TOOL_SCHEMAS['send_notification'].args.severity = {
+    ...TOOL_SCHEMAS['send_notification'].args.severity,
+    type: 'select',
+    label: 'Severity',
+    description: 'Notification urgency level',
+    options: SEVERITY_OPTIONS,
+  };
+}
+
+// ============================================================================
+// SET WINDOW BOUNDS — bounds as JSON with clear description
+// ============================================================================
+
+if (TOOL_SCHEMAS['set_window_bounds']) {
+  TOOL_SCHEMAS['set_window_bounds'].args.bounds = {
+    type: 'json',
+    label: 'Window Bounds',
+    description: 'Position and size: { x, y, width, height } in pixels',
+    default: { x: 0, y: 0, width: 800, height: 600 },
+  };
+}
+
+// ============================================================================
+// TAKE SCREENSHOT — region as JSON
+// ============================================================================
+
+if (TOOL_SCHEMAS['take_screenshot']) {
+  TOOL_SCHEMAS['take_screenshot'].args.region = {
+    ...TOOL_SCHEMAS['take_screenshot'].args.region,
+    type: 'json',
+    label: 'Region',
+    description: 'Optional capture area: { x, y, width, height }. Leave empty for full screen.',
+  };
+}
+
+// ============================================================================
+// MATH COMPARE — op as dropdown
+// ============================================================================
+
+if (TOOL_SCHEMAS['math_compare']) {
+  TOOL_SCHEMAS['math_compare'].args.op = {
+    type: 'select',
+    label: 'Operator',
+    description: 'Comparison operator',
+    options: COMPARE_OP_OPTIONS,
+    required: true,
+    default: 'gt',
+  };
+}
+
+// ============================================================================
+// MATH LIST TOOLS — x as array of numbers
+// ============================================================================
+
+for (const toolId of ['math_sum', 'math_mean', 'math_max', 'math_min']) {
+  if (TOOL_SCHEMAS[toolId]?.args?.x) {
+    TOOL_SCHEMAS[toolId].args.x = {
+      type: 'array',
+      label: 'Numbers',
+      description: 'List of numbers to process. Use {{variable}} for dynamic values.',
+      itemType: 'number' as any,
+      default: [1, 2, 3],
+    };
+  }
+}
+
+// ============================================================================
+// STREAM TOOLS — only the 4 user-facing advanced tools
+// ============================================================================
+
+if (TOOL_SCHEMAS['stream_create']?.args?.kind) {
+  TOOL_SCHEMAS['stream_create'].args.kind = {
+    type: 'select',
+    label: 'Stream Kind',
+    description: 'Type of data the stream carries',
+    options: STREAM_KIND_OPTIONS,
+    default: 'bytes',
+  };
+}
+
+
+// ============================================================================
+// CLOUD AI VISION — schema as JSON editor
+// ============================================================================
+
+if (TOOL_SCHEMAS['cloud_ai_vision']) {
+  TOOL_SCHEMAS['cloud_ai_vision'].args = {
+    prompt: {
+      type: 'string',
+      label: 'Prompt',
+      description: 'What to analyze in the image',
+      required: true,
+      placeholder: 'Detect people and summarize the scene.',
+    },
+    imagePath: {
+      type: 'path',
+      label: 'Image Path',
+      description: 'Path to the image file to analyze',
+      placeholder: 'C:/path/to/image.png',
+    },
+    schema: {
+      type: 'json',
+      label: 'Output Schema',
+      description: 'Define expected JSON output structure. Example: {"person_present": {"type": "boolean"}, "summary": {"type": "string"}}',
+    },
+  };
+}
+
+// ============================================================================
+// TASK CRUD — action as dropdown
+// ============================================================================
+
+if (TOOL_SCHEMAS['task_crud']?.args?.action) {
+  TOOL_SCHEMAS['task_crud'].args.action = {
+    type: 'select',
+    label: 'Action',
+    description: 'What operation to perform on tasks',
+    options: TASK_ACTION_OPTIONS,
+    default: 'create',
+  };
+  TOOL_SCHEMAS['task_crud'].args.task = {
+    type: 'json',
+    label: 'Task Data',
+    description: 'Task object with title, description, status, etc.',
+  };
+}
+
+// ============================================================================
+// SET VARIABLE — scope as dropdown
+// ============================================================================
+
+if (TOOL_SCHEMAS['set_variable']?.args?.scope) {
+  TOOL_SCHEMAS['set_variable'].args.scope = {
+    type: 'select',
+    label: 'Scope',
+    description: 'Where to store the variable',
+    options: VARIABLE_SCOPE_OPTIONS,
+    default: 'workflow',
+  };
+}
+
+// ============================================================================
+// COMPUTER USE — action as dropdown
+// ============================================================================
+
+const COMPUTER_USE_ACTION_OPTIONS: ArgOption[] = [
+  { value: 'mouse_move', label: 'Move Mouse' },
+  { value: 'left_click', label: 'Left Click' },
+  { value: 'right_click', label: 'Right Click' },
+  { value: 'double_click', label: 'Double Click' },
+  { value: 'type', label: 'Type Text' },
+  { value: 'key', label: 'Press Key' },
+  { value: 'screenshot', label: 'Screenshot' },
+  { value: 'scroll_up', label: 'Scroll Up' },
+  { value: 'scroll_down', label: 'Scroll Down' },
+];
+
+if (TOOL_SCHEMAS['computer_use']?.args?.action) {
+  TOOL_SCHEMAS['computer_use'].args.action = {
+    type: 'select',
+    label: 'Action',
+    description: 'What GUI action to perform',
+    options: COMPUTER_USE_ACTION_OPTIONS,
+    default: 'mouse_move',
+  };
+}
+
+// ============================================================================
+// ANALYZE MEDIA — sources as array, task as string
+// ============================================================================
+
+if (TOOL_SCHEMAS['analyze_media']) {
+  TOOL_SCHEMAS['analyze_media'].args.task = {
+    type: 'string',
+    label: 'Task',
+    description: 'What to do with the media. Use "transcribe" for transcription, or describe what to analyze.',
+    placeholder: 'Summarize this media',
+  };
+  TOOL_SCHEMAS['analyze_media'].args.sources = {
+    type: 'json',
+    label: 'Media Sources',
+    description: 'Array of media files: [{"path": "C:/video.mp4"}, {"path": "C:/audio.wav"}]',
+  };
+}
+
+// ============================================================================
+// SHOW_CHOICES — choices as JSON
+// ============================================================================
+
+if (TOOL_SCHEMAS['show_choices']) {
+  TOOL_SCHEMAS['show_choices'].args.choices = {
+    type: 'json',
+    label: 'Choices',
+    description: 'Array of choice objects: [{"id": "opt1", "label": "Option 1"}, ...]',
+  };
+}
+
+// SHOW_TABLE — columns and data as JSON
+if (TOOL_SCHEMAS['show_table']) {
+  TOOL_SCHEMAS['show_table'].args.columns = {
+    type: 'json',
+    label: 'Columns',
+    description: 'Column definitions: [{"key": "name", "label": "Name"}, ...]',
+  };
+  TOOL_SCHEMAS['show_table'].args.data = {
+    type: 'json',
+    label: 'Data',
+    description: 'Array of row objects matching the column keys',
+  };
+}
+
+// SHOW_INFO — items as JSON
+if (TOOL_SCHEMAS['show_info']) {
+  TOOL_SCHEMAS['show_info'].args.items = {
+    type: 'json',
+    label: 'Items',
+    description: 'Array of key-value pairs: [{"label": "Name", "value": "John"}, ...]',
+  };
+}
+
+// SHOW_DETAILS — sections as JSON
+if (TOOL_SCHEMAS['show_details']) {
+  TOOL_SCHEMAS['show_details'].args.sections = {
+    type: 'json',
+    label: 'Sections',
+    description: 'Expandable sections: [{"title": "...", "content": "..."}, ...]',
+  };
+}
+
+// SHOW_FILES — nodes as JSON
+if (TOOL_SCHEMAS['show_files']) {
+  TOOL_SCHEMAS['show_files'].args.nodes = {
+    type: 'json',
+    label: 'File Tree',
+    description: 'Tree structure: [{"name": "src", "type": "folder", "children": [...]}, ...]',
+  };
+}
+
+// SHOW_COLORS — colors as array
+if (TOOL_SCHEMAS['show_colors']) {
+  TOOL_SCHEMAS['show_colors'].args.colors = {
+    type: 'array',
+    label: 'Colors',
+    description: 'List of color hex values',
+    itemType: 'string',
+  };
+}
+
+// ============================================================================
+// DATABASE TOOLS — Simplified, non-technical schemas
+// ============================================================================
+
+if (TOOL_SCHEMAS['db_store']) {
+  TOOL_SCHEMAS['db_store'].label = 'Save Document';
+  TOOL_SCHEMAS['db_store'].description = 'Save a document (any JSON data) into a collection. Collections are like folders — they group related documents together. The collection is created automatically if it doesn\'t exist yet. If a document with the same ID already exists, it gets updated.';
+  TOOL_SCHEMAS['db_store'].args = {
+    table: {
+      type: 'string',
+      label: 'Collection',
+      description: 'The name of the collection to save into. Think of it like a folder name — e.g. "contacts", "notes", "orders". Created automatically if new.',
+      required: true,
+      placeholder: 'my_collection',
+    },
+    id: {
+      type: 'string',
+      label: 'Document ID',
+      description: 'A unique identifier for this document. Leave empty to auto-generate one. If you provide an existing ID, the document will be updated.',
+      placeholder: 'Leave empty for auto-ID',
+    },
+    data: {
+      type: 'json',
+      label: 'Data',
+      description: 'The fields and values to save. Use the + button to add fields, or switch to JSON mode. You can store any kind of data — text, numbers, yes/no, or nested objects.',
+      required: true,
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['db_retrieve']) {
+  TOOL_SCHEMAS['db_retrieve'].label = 'Get Document';
+  TOOL_SCHEMAS['db_retrieve'].description = 'Fetch a single document from a collection by its ID. Returns the full document with all its fields, plus when it was created and last updated.';
+  TOOL_SCHEMAS['db_retrieve'].args = {
+    table: {
+      type: 'string',
+      label: 'Collection',
+      description: 'Which collection to look in.',
+      required: true,
+      placeholder: 'my_collection',
+    },
+    id: {
+      type: 'string',
+      label: 'Document ID',
+      description: 'The ID of the document to get. Tip: use {{step_id.id}} to reference an ID from a previous step.',
+      required: true,
+      placeholder: 'document-id-here',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['db_search']) {
+  TOOL_SCHEMAS['db_search'].label = 'Search Documents';
+  TOOL_SCHEMAS['db_search'].description = 'Find documents in a collection. Add filters to narrow results — e.g. find all contacts where city is "London". Leave filters empty to get all documents.';
+  TOOL_SCHEMAS['db_search'].args = {
+    table: {
+      type: 'string',
+      label: 'Collection',
+      description: 'Which collection to search in.',
+      required: true,
+      placeholder: 'my_collection',
+    },
+    filters: {
+      type: 'json',
+      label: 'Filters',
+      description: 'Match documents by field values. Add a field name and the value it should equal. Leave empty to return all documents.',
+    },
+    limit: {
+      type: 'number',
+      label: 'Max Results',
+      description: 'Maximum number of documents to return.',
+      default: 100,
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['db_delete']) {
+  TOOL_SCHEMAS['db_delete'].label = 'Delete Document';
+  TOOL_SCHEMAS['db_delete'].description = 'Permanently remove a document from a collection. This cannot be undone.';
+  TOOL_SCHEMAS['db_delete'].args = {
+    table: {
+      type: 'string',
+      label: 'Collection',
+      description: 'Which collection to delete from.',
+      required: true,
+      placeholder: 'my_collection',
+    },
+    id: {
+      type: 'string',
+      label: 'Document ID',
+      description: 'The ID of the document to remove. Tip: use {{step_id.id}} to reference an ID from a previous step.',
+      required: true,
+      placeholder: 'document-id-here',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['db_query']) {
+  TOOL_SCHEMAS['db_query'].label = 'Table Query';
+  TOOL_SCHEMAS['db_query'].description = 'Find, add, edit, or remove rows in a table. Use the visual builder to pick what you want to do — no coding needed. For flexible document storage, use Save/Get/Search Document instead.';
+  TOOL_SCHEMAS['db_query'].args = {
+    query: {
+      type: 'string',
+      label: 'Query',
+      description: 'Choose an action above and fill in the fields. The query is built automatically.',
+      required: true,
+    },
+    params: {
+      type: 'array',
+      label: 'Parameters',
+      description: 'Extra values for the query. Usually not needed — the builder handles this.',
+      itemType: 'string',
+      advanced: true,
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['db_list_tables']) {
+  TOOL_SCHEMAS['db_list_tables'].label = 'List All Data';
+  TOOL_SCHEMAS['db_list_tables'].description = 'See every collection and table in your workflow database. Collections hold documents (from Save Document), tables hold structured rows (from Create Table).';
+}
+
+// ============================================================================
+// EMBEDDINGS TOOLS — Simplified for non-technical users
+// ============================================================================
+
+if (TOOL_SCHEMAS['embed_text']) {
+  TOOL_SCHEMAS['embed_text'].label = 'Embed Text';
+  TOOL_SCHEMAS['embed_text'].description = 'Convert text into a numeric vector so you can search for similar content later. You can embed up to 100 texts at once.';
+  TOOL_SCHEMAS['embed_text'].args = {
+    texts: {
+      type: 'array',
+      label: 'Texts to Embed',
+      description: 'The text strings to convert into vectors. Each text gets its own vector.',
+      itemType: 'string',
+      required: true,
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['vector_similarity']) {
+  TOOL_SCHEMAS['vector_similarity'].label = 'Find Similar';
+  TOOL_SCHEMAS['vector_similarity'].description = 'Compare a query vector against a list of candidates and return the most similar ones, ranked by score.';
+  TOOL_SCHEMAS['vector_similarity'].args = {
+    query: {
+      type: 'json',
+      label: 'Query Vector',
+      description: 'The embedding vector to search with. Usually from a previous Embed Text step: {{embed_step.embeddings.0}}',
+      required: true,
+    },
+    candidates: {
+      type: 'json',
+      label: 'Candidates',
+      description: 'Array of items to compare against. Each needs: { "id": "...", "vector": [...] }. Optionally include "metadata" for extra info.',
+      required: true,
+    },
+    topK: {
+      type: 'number',
+      label: 'Max Results',
+      description: 'How many of the best matches to return.',
+      default: 10,
+    },
+    threshold: {
+      type: 'number',
+      label: 'Min Score',
+      description: 'Only return results with a similarity score above this value (0 to 1). 0 = return everything, 0.8 = very similar only.',
+      default: 0.5,
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['embed_and_store']) {
+  TOOL_SCHEMAS['embed_and_store'].label = 'Embed & Prepare';
+  TOOL_SCHEMAS['embed_and_store'].description = 'Embed a single text and package it for storage. The result includes the vector and can be saved with "Save Document".';
+  TOOL_SCHEMAS['embed_and_store'].args = {
+    text: {
+      type: 'string',
+      label: 'Text',
+      description: 'The text to embed and prepare for storage.',
+      required: true,
+      placeholder: 'Enter the text to embed...',
+    },
+    id: {
+      type: 'string',
+      label: 'Document ID',
+      description: 'Optional unique ID. Leave empty to auto-generate.',
+      placeholder: 'Leave empty for auto-ID',
+    },
+    metadata: {
+      type: 'json',
+      label: 'Extra Info',
+      description: 'Optional extra data to attach. Example: { "source": "email", "date": "2025-01-15" }',
+    },
+  };
+}
+
+// ============================================================================
+// AI AGENT NODES — Full smart-arg schemas
+// ============================================================================
+
+const AGENT_MODEL_TIER_OPTIONS: ArgOption[] = [
+  { value: 'fast', label: 'Fast', description: 'Quick & cheap — Gemini Flash' },
+  { value: 'balanced', label: 'Balanced', description: 'Good quality — default' },
+  { value: 'smart', label: 'Smart', description: 'Best reasoning — slower, more expensive' },
+];
+
+const AGENT_OUTPUT_MODE_OPTIONS: ArgOption[] = [
+  { value: 'text', label: 'Text', description: 'Free-form text response' },
+  { value: 'json', label: 'JSON', description: 'Structured JSON output (use with Output Schema)' },
+];
+
+const AGENT_MAX_STEPS_OPTIONS: ArgOption[] = [
+  { value: 1, label: '1 step', description: 'Single response, no tool use' },
+  { value: 5, label: '5 steps', description: 'Light tool use' },
+  { value: 10, label: '10 steps', description: 'Default — moderate reasoning' },
+  { value: 20, label: '20 steps', description: 'Complex tasks with multiple tool calls' },
+  { value: 50, label: '50 steps', description: 'Maximum — very complex multi-step tasks' },
+];
+
+// All tools available to agent_node, grouped by category for the multiselect dropdown
+const AGENT_AVAILABLE_TOOLS: ArgOption[] = [
+  // Keyboard & Mouse
+  { value: 'send_hotkey', label: 'Send Hotkey', description: 'Press keyboard shortcuts', group: 'Keyboard & Mouse' },
+  { value: 'type_text', label: 'Type Text', description: 'Type text at cursor', group: 'Keyboard & Mouse' },
+  { value: 'click_at_coordinates', label: 'Click', description: 'Click at screen coordinates', group: 'Keyboard & Mouse' },
+  { value: 'move_cursor', label: 'Move Cursor', description: 'Move mouse cursor', group: 'Keyboard & Mouse' },
+  { value: 'scroll', label: 'Scroll', description: 'Mouse wheel scrolling', group: 'Keyboard & Mouse' },
+
+  // Screen & Media
+  { value: 'capture_media', label: 'Capture Screen', description: 'Take a screenshot', group: 'Screen & Media' },
+  { value: 'analyze_media', label: 'Analyze Media', description: 'Describe image or screenshot with AI', group: 'Screen & Media' },
+  { value: 'describe_media_capture_capabilities', label: 'List Screens', description: 'List available screens/windows', group: 'Screen & Media' },
+
+  // Files & Folders
+  { value: 'list_directory', label: 'List Directory', description: 'List files in a folder', group: 'Files & Folders' },
+  { value: 'read_file', label: 'Read File', description: 'Read file contents', group: 'Files & Folders' },
+  { value: 'write_file', label: 'Write File', description: 'Write or create a file', group: 'Files & Folders' },
+  { value: 'create_directory', label: 'Create Folder', description: 'Create a new directory', group: 'Files & Folders' },
+  { value: 'move_file', label: 'Move / Rename', description: 'Move or rename a file', group: 'Files & Folders' },
+
+  // System
+  { value: 'run_command', label: 'Run Command', description: 'Execute a shell command', group: 'System' },
+  { value: 'run_system_command', label: 'System Command', description: 'Run system-level command', group: 'System' },
+  { value: 'wait', label: 'Wait', description: 'Pause for a duration', group: 'System' },
+
+  // Web & Search
+  { value: 'web_search', label: 'Web Search', description: 'Search the internet', group: 'Web & Search' },
+
+  // Canvas / Notes
+  { value: 'canvas_list', label: 'List Canvases', description: 'List all canvases', group: 'Canvas' },
+  { value: 'canvas_read', label: 'Read Canvas', description: 'Read canvas content', group: 'Canvas' },
+  { value: 'canvas_write', label: 'Write Canvas', description: 'Update canvas content', group: 'Canvas' },
+  { value: 'canvas_create', label: 'Create Canvas', description: 'Create a new canvas', group: 'Canvas' },
+  { value: 'canvas_delete', label: 'Delete Canvas', description: 'Delete a canvas', group: 'Canvas' },
+
+  // Calendar & Tasks
+  { value: 'calendar_crud', label: 'Calendar', description: 'Manage calendar events', group: 'Productivity' },
+  { value: 'task_crud', label: 'Tasks', description: 'Create, update, delete tasks', group: 'Productivity' },
+  { value: 'task_reminders', label: 'Reminders', description: 'Set task reminders', group: 'Productivity' },
+  { value: 'planner_list_items', label: 'Planner', description: 'List planner items', group: 'Productivity' },
+
+  // Memory & Knowledge
+  { value: 'search_past_conversations', label: 'Search Conversations', description: 'Search past chat history', group: 'Memory' },
+  { value: 'get_conversation_context', label: 'Get Conversation', description: 'Retrieve conversation context', group: 'Memory' },
+
+  // Workflows
+  { value: 'search_local_workflows', label: 'Search Workflows', description: 'Find local workflows', group: 'Workflows' },
+  { value: 'import_workflow', label: 'Import Workflow', description: 'Import a workflow', group: 'Workflows' },
+  { value: 'run_automation', label: 'Run Automation', description: 'Start a workflow run', group: 'Workflows' },
+  { value: 'stop_automation', label: 'Stop Automation', description: 'Stop a running workflow', group: 'Workflows' },
+  { value: 'run_sequential', label: 'Run Sequential', description: 'Run steps in sequence', group: 'Workflows' },
+  { value: 'run_parallel', label: 'Run Parallel', description: 'Run steps in parallel', group: 'Workflows' },
+
+  // AI Helpers
+  { value: 'agent_decision', label: 'AI Decision', description: 'Quick yes/no or choice decision', group: 'AI Helpers' },
+  { value: 'agent_extract', label: 'AI Extract', description: 'Extract structured data from text', group: 'AI Helpers' },
+
+  // Headless Agents
+  { value: 'deploy_headless_agent', label: 'Deploy Agent', description: 'Launch a background agent', group: 'Agents' },
+  { value: 'get_headless_agent_status', label: 'Agent Status', description: 'Check agent task status', group: 'Agents' },
+  { value: 'list_headless_agent_tasks', label: 'List Agent Tasks', description: 'List all agent tasks', group: 'Agents' },
+];
+
+// agent_node — Full AI Agent step
+TOOL_SCHEMAS['agent_node'] = {
+  name: 'agent_node',
+  label: 'AI Agent',
+  description: 'Run an AI agent as a workflow step. Can use tools, reason, and return text or JSON.',
+  category: 'agent',
+  args: {
+    prompt: {
+      type: 'string',
+      label: 'Prompt',
+      description: 'The instruction for the agent. Be specific. Use {{step_id.field}} to reference previous step outputs.',
+      required: true,
+      placeholder: 'Analyze the input and provide a summary...',
+    },
+    context: {
+      type: 'string',
+      label: 'Context',
+      description: 'Additional data to feed the agent (previous step output, file contents, etc.)',
+      placeholder: '{{previous_step.text}}',
+    },
+    model: {
+      type: 'select',
+      label: 'Model Tier',
+      description: 'Which AI model to use',
+      options: AGENT_MODEL_TIER_OPTIONS,
+      default: 'balanced',
+    },
+    outputMode: {
+      type: 'select',
+      label: 'Output Mode',
+      description: 'What format the agent should return',
+      options: AGENT_OUTPUT_MODE_OPTIONS,
+      default: 'text',
+    },
+    tools: {
+      type: 'multiselect',
+      label: 'Tools',
+      description: 'Pick which tools the agent can use. Leave empty = all default tools.',
+      options: AGENT_AVAILABLE_TOOLS,
+    },
+    maxSteps: {
+      type: 'select',
+      label: 'Max Steps',
+      description: 'Maximum tool-use iterations before forcing a final answer',
+      options: AGENT_MAX_STEPS_OPTIONS,
+      default: 10,
+    },
+    injectMemory: {
+      type: 'boolean',
+      label: 'Inject Memory',
+      description: 'When enabled, the agent knows who the user is (identity, preferences, custom instructions, relevant memories) — just like the main Stuard assistant.',
+      default: false,
+    },
+    outputSchema: {
+      type: 'json',
+      label: 'Output Schema',
+      description: 'For JSON mode: define expected fields. Keys = field names, values = types. Example: {"category": "string", "score": "number"}',
+      advanced: true,
+    },
+    systemPrompt: {
+      type: 'string',
+      label: 'System Prompt',
+      description: 'Custom persona or behavior instructions for the agent',
+      placeholder: 'You are a helpful data analyst...',
+      advanced: true,
+    },
+    timeoutMs: {
+      type: 'number',
+      label: 'Timeout (ms)',
+      description: 'Maximum time in milliseconds (default 5 min = 300000)',
+      default: 300000,
+      placeholder: '300000',
+      advanced: true,
+    },
+  },
+  outputs: ['ok', 'text', 'json', 'model', 'toolCalls', 'durationMs', 'error'],
+};
+
+// ============================================================================
+// STREAM TOGGLE — Add "Stream output" toggle to tools that support it
+// Must be AFTER all schema definitions (agent_node is defined last)
+// ============================================================================
+
+for (const toolId of ['agent_node', 'ai_inference', 'http_request', 'run_python_script']) {
+  if (TOOL_SCHEMAS[toolId]) {
+    TOOL_SCHEMAS[toolId].args.stream = {
+      type: 'boolean' as any,
+      label: 'Stream Output',
+      description: 'Stream output in real-time. Connect a stream wire to the next step — it will run once per chunk. Access chunks via {{stepId.text}} or stream_chunk in Python.',
+      default: false,
+    };
+  }
 }
 
 export { TOOL_SCHEMAS };

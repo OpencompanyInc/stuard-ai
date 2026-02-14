@@ -172,6 +172,33 @@ export const browser_get_page_info = makeLocalTool(
 );
 
 // ============================================================================
+// FILE UPLOAD & TOGGLE
+// ============================================================================
+
+export const browser_upload_file = makeLocalTool(
+    'browser_upload_file',
+    'Upload a file to a file input (<input type="file">) on the page. Can upload from a local file path (reads from disk) or from base64 data. Automatically detects MIME type from extension. Use this to upload resumes, documents, images, etc. to web forms.',
+    z.object({
+        selector: z.string().optional().describe('CSS selector of the file input element. If omitted, finds the first <input type="file"> on the page.'),
+        filePath: z.string().optional().describe('Absolute path to the file on disk (e.g. C:/Users/user/Documents/resume.pdf). The file will be read and uploaded.'),
+        fileName: z.string().optional().describe('Override the file name shown to the page (auto-detected from filePath if omitted)'),
+        fileType: z.string().optional().describe('MIME type (auto-detected from extension if omitted, e.g. application/pdf)'),
+        fileData: z.string().optional().describe('Base64-encoded file content (alternative to filePath)'),
+    }),
+);
+
+export const browser_set_toggle = makeLocalTool(
+    'browser_set_toggle',
+    'Toggle a switch, checkbox, or radio button on the page. Handles native checkboxes, custom toggle components, and ARIA switches.',
+    z.object({
+        selector: z.string().optional().describe('CSS selector of the toggle element'),
+        text: z.string().optional().describe('Label text near the toggle to find it'),
+        value: z.boolean().optional().describe('Desired state: true=on/checked, false=off/unchecked. Omit to toggle current state.'),
+        index: z.number().optional().describe('Index if multiple toggles match (default: 0)'),
+    }),
+);
+
+// ============================================================================
 // ADVANCED
 // ============================================================================
 

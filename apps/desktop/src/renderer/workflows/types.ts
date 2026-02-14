@@ -7,6 +7,19 @@ export interface WorkflowItem {
   marketplaceSlug?: string;
   /** When true, this workflow is locked - code hidden, AI cannot modify, edits disabled */
   locked?: boolean;
+  /** Folder this workflow belongs to (undefined = root) */
+  folder?: string;
+  /** Whether this workflow uses workspace directory format (flowId/main.stuard) */
+  isWorkspace?: boolean;
+}
+
+/** A file or directory entry within a workflow workspace */
+export interface WorkspaceFileEntry {
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  size?: number;
+  updatedAt?: string;
 }
 
 export interface DesignerNode {
@@ -78,8 +91,8 @@ export interface WireLoopConfig {
 export interface StreamWireConfig {
   /** Which field on the source step's output contains the streamId */
   sourceField?: string;
-  /** Consumer mode: 'reactive' processes each chunk, 'batch' collects then processes */
-  mode?: 'reactive' | 'batch';
+  /** Consumer mode — always reactive (runs consumer step once per chunk) */
+  mode?: 'reactive';
   /** Ring buffer size override for this wire's subscription */
   bufferSize?: number;
 }

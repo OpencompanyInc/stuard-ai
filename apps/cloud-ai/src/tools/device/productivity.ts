@@ -17,10 +17,11 @@ export const task_crud = makeLocalTool(
 
 export const task_reminders = makeLocalTool(
   'task_reminders',
-  'Schedule, cancel, list, and resume Stuard local reminders.',
+  'Schedule, update, cancel/delete, list, and resume Stuard local reminders.',
   z.object({
-    action: z.enum(['schedule', 'cancel', 'list', 'resume']),
+    action: z.enum(['schedule', 'update', 'cancel', 'delete', 'list', 'resume']),
     when: z.string().optional().describe('When to fire the reminder (ISO8601 or relative seconds, for schedule).'),
+    scheduledAt: z.string().optional().describe('Explicit reminder datetime (ISO8601), primarily for update.'),
     message: z.string().optional().describe('Reminder message (for schedule).'),
     taskId: z.string().optional().describe('Optional associated task ID (for schedule).'),
     id: z.string().optional().describe('Reminder ID (for cancel).'),

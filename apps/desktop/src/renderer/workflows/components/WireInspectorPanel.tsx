@@ -7,6 +7,7 @@ import { TextInputWithVariables, type UpstreamNode } from "./SmartArgEditor";
 import { getToolOutputs } from "../constants/tool-schemas";
 import type { DesignerModel, DesignerWire, WorkflowVariable } from "../types";
 import { parseGuard, guardToString } from "../builder/guards";
+import { STREAM_CAPABLE_TOOLS } from "./WorkflowNodeCard";
 
 /**
  * Compute chain indices for all nodes based on connection flow.
@@ -320,10 +321,11 @@ export function WireInspectorPanel({ model, wireIndex, onUpdate, onDelete, onClo
           model={model}
         />
 
-        {/* Stream Wire Configuration */}
+        {/* Stream Wire Configuration — only shown when source can stream */}
         <StreamWireSection
           wire={wire}
           onUpdate={updateWire}
+          model={model}
         />
 
         {/* Condition Configuration */}
@@ -444,14 +446,14 @@ function WireLoopSection({
         </div>
       )}
 
-      <div className={`rounded-xl p-4 border transition-colors ${hasLoop ? 'bg-purple-50/50 border-purple-200' : isBackEdge ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
+      <div className={`rounded-xl p-4 border transition-colors ${hasLoop ? 'bg-blue-50/50 border-blue-200' : isBackEdge ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${hasLoop ? 'bg-purple-100 text-purple-600' : 'bg-slate-100 text-slate-400'}`}>
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${hasLoop ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-400'}`}>
               <LoopIcon className="w-4 h-4" />
             </div>
             <div>
-              <div className={`text-sm font-medium ${hasLoop ? 'text-purple-700' : 'text-slate-600'}`}>
+              <div className={`text-sm font-medium ${hasLoop ? 'text-blue-700' : 'text-slate-600'}`}>
                 {hasLoop ? (loopType === 'forEach' ? 'For Each Item' : loopType === 'repeat' ? 'Repeat N Times' : 'While Condition') : 'No Loop'}
               </div>
               <div className="text-[10px] text-slate-400">
@@ -475,7 +477,7 @@ function WireLoopSection({
         </div>
 
         {hasLoop && (
-          <div className="space-y-3 pt-3 border-t border-purple-100/50">
+          <div className="space-y-3 pt-3 border-t border-blue-100/50">
             {/* For Each Loop */}
             {loopType === 'forEach' && (
               <>
@@ -502,7 +504,7 @@ function WireLoopSection({
                       value={(wire as any).loop?.itemVar || 'item'}
                       onChange={(e) => updateLoopField('itemVar', e.target.value)}
                       placeholder="item"
-                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300 font-mono"
+                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300 font-mono"
                     />
                   </div>
                   <div>
@@ -514,13 +516,13 @@ function WireLoopSection({
                       value={(wire as any).loop?.indexVar || 'index'}
                       onChange={(e) => updateLoopField('indexVar', e.target.value)}
                       placeholder="index"
-                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300 font-mono"
+                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300 font-mono"
                     />
                   </div>
                 </div>
-                <div className="p-2.5 bg-purple-100/50 rounded-lg">
-                  <p className="text-[11px] text-purple-700">
-                    Access current item as <code className="bg-white px-1.5 py-0.5 rounded font-mono text-purple-600">{'{{loop.' + ((wire as any).loop?.itemVar || 'item') + '}}'}</code>
+                <div className="p-2.5 bg-blue-100/50 rounded-lg">
+                  <p className="text-[11px] text-blue-700">
+                    Access current item as <code className="bg-white px-1.5 py-0.5 rounded font-mono text-blue-600">{'{{loop.' + ((wire as any).loop?.itemVar || 'item') + '}}'}</code>
                   </p>
                 </div>
               </>
@@ -538,7 +540,7 @@ function WireLoopSection({
                   onChange={(e) => updateLoopField('count', parseInt(e.target.value) || 1)}
                   min={1}
                   max={10000}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
                 />
                 <p className="text-[11px] text-slate-500 mt-1.5">
                   Access iteration as <code className="bg-slate-100 px-1.5 py-0.5 rounded font-mono text-slate-600">{'{{loop.index}}'}</code>
@@ -576,7 +578,7 @@ function WireLoopSection({
                   onChange={(e) => updateLoopField('maxIterations', parseInt(e.target.value) || 100)}
                   min={1}
                   max={10000}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
                 />
               </div>
               <div>
@@ -588,7 +590,7 @@ function WireLoopSection({
                   value={(wire as any).loop?.delayMs || 0}
                   onChange={(e) => updateLoopField('delayMs', parseInt(e.target.value) || 0)}
                   min={0}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
                 />
               </div>
             </div>
@@ -1061,14 +1063,25 @@ function LoopBreakSection({
 function StreamWireSection({
   wire,
   onUpdate,
+  model,
 }: {
   wire: DesignerWire;
   onUpdate: (updates: Partial<DesignerWire>) => void;
+  model: DesignerModel;
 }) {
+  // Find source node and check if it can actually produce a stream
+  const sourceNode = [...model.triggers, ...model.nodes].find(n => n.id === wire.from);
+  const sourceTool = sourceNode ? ('tool' in sourceNode ? (sourceNode as any).tool || '' : (sourceNode as any).type || '') : '';
+  const sourceArgs = sourceNode && 'args' in sourceNode ? (sourceNode as any).args || {} : {};
+  const isAlwaysStream = sourceTool === 'stream_create';
+  const isStreamEnabled = STREAM_CAPABLE_TOOLS.has(sourceTool) && sourceArgs.stream === true;
+  const canStream = isAlwaysStream || isStreamEnabled;
+
   const hasStream = !!(wire as any).stream;
-  const streamConfig = (wire as any).stream || {};
-  const mode = streamConfig.mode || 'reactive';
-  const sourceField = streamConfig.sourceField || 'streamId';
+  const sourceStepId = wire.from;
+
+  // Don't render stream wire section if source can't stream
+  if (!canStream && !hasStream) return null;
 
   return (
     <div className="space-y-3">
@@ -1113,53 +1126,29 @@ function StreamWireSection({
             <div className="flex items-start gap-2 text-[11px] text-cyan-700">
               <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
               <span>
-                Stream wires carry real-time data chunks. The target step runs <strong>reactively</strong> on each chunk, 
-                not just once after the source completes.
+                The target step runs <strong>once per chunk</strong> as data streams in real-time from the source.
               </span>
             </div>
 
-            {/* Source Field */}
+            {/* How to access chunks */}
             <div className="space-y-1.5">
-              <label className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">Source Field</label>
-              <input
-                type="text"
-                value={sourceField}
-                onChange={e => onUpdate({ stream: { ...streamConfig, sourceField: e.target.value } } as any)}
-                placeholder="streamId"
-                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400"
-              />
-              <p className="text-[10px] text-slate-400">Which field on the source step's output contains the streamId</p>
-            </div>
-
-            {/* Consumer Mode */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">Consumer Mode</label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => onUpdate({ stream: { ...streamConfig, mode: 'reactive' } } as any)}
-                  className={`px-3 py-2 text-xs font-medium rounded-lg border transition-all ${
-                    mode === 'reactive'
-                      ? 'bg-cyan-100 border-cyan-300 text-cyan-700'
-                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  Reactive
-                </button>
-                <button
-                  onClick={() => onUpdate({ stream: { ...streamConfig, mode: 'batch' } } as any)}
-                  className={`px-3 py-2 text-xs font-medium rounded-lg border transition-all ${
-                    mode === 'batch'
-                      ? 'bg-cyan-100 border-cyan-300 text-cyan-700'
-                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  Batch
-                </button>
+              <label className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">Access Chunk Data</label>
+              <div className="bg-white rounded-lg border border-slate-200 p-2.5 space-y-1.5">
+                <div className="flex items-center gap-2 text-[11px]">
+                  <code className="px-1.5 py-0.5 bg-cyan-50 text-cyan-700 rounded font-mono text-[10px]">{`{{${sourceStepId}.text}}`}</code>
+                  <span className="text-slate-400">Current chunk text</span>
+                </div>
+                <div className="flex items-center gap-2 text-[11px]">
+                  <code className="px-1.5 py-0.5 bg-cyan-50 text-cyan-700 rounded font-mono text-[10px]">{`{{${sourceStepId}.fullText}}`}</code>
+                  <span className="text-slate-400">All text so far</span>
+                </div>
+                <div className="flex items-center gap-2 text-[11px]">
+                  <code className="px-1.5 py-0.5 bg-cyan-50 text-cyan-700 rounded font-mono text-[10px]">{`{{${sourceStepId}.chunkIndex}}`}</code>
+                  <span className="text-slate-400">Chunk position (0, 1, 2...)</span>
+                </div>
               </div>
               <p className="text-[10px] text-slate-400">
-                {mode === 'reactive' 
-                  ? 'Process each chunk as it arrives' 
-                  : 'Collect all chunks, then process once'}
+                In Python scripts, use <code className="text-[10px] font-mono bg-slate-100 px-1 rounded">stream_chunk</code> and <code className="text-[10px] font-mono bg-slate-100 px-1 rounded">stream_chunk_index</code> variables.
               </p>
             </div>
           </div>

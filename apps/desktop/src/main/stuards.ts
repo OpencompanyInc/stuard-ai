@@ -109,6 +109,8 @@ function attachUnifiedTasksListener(ws: WebSocket) {
           result = unifiedTasksService.delete(data?.id);
         } else if (event === 'unified_tasks_add_subtodo') {
           result = unifiedTasksService.addSubtodo(data?.taskId, data?.subtodo);
+        } else if (event === 'unified_tasks_update_subtodo') {
+          result = unifiedTasksService.updateSubtodo(data?.taskId, data?.subtodoId, data?.updates);
         } else if (event === 'unified_tasks_toggle_subtodo') {
           result = unifiedTasksService.toggleSubtodo(data?.taskId, data?.subtodoId);
         } else if (event === 'unified_tasks_delete_subtodo') {
@@ -179,11 +181,6 @@ export async function execLocalTool(tool: string, args: any): Promise<any> {
   const payload = { type: 'tool_exec', id, tool, args } as any;
   return new Promise((resolve) => {
     let done = false;
-    const timeout = setTimeout(() => {
-      if (done) return;
-      done = true;
-      resolve({ ok: false, error: 'timeout' });
-    }, 60000);
     const onMessage = (raw: WebSocket.RawData) => {
       try {
         const s = raw.toString('utf8');
@@ -191,26 +188,41 @@ export async function execLocalTool(tool: string, args: any): Promise<any> {
         const t = String(msg?.type || '').toLowerCase();
         if (t === 'tool_event' && String(msg?.id || '') === id) {
           if (String(msg?.status || '') === 'approval_required') {
-            // Refuse to auto-approve; return an explicit error and stop.
-            clearTimeout(timeout);
-            ws.off('message', onMessage);
-            if (!done) { done = true; resolve({ ok: false, error: 'approval_required' }); }
+            if (!done) {
+              done = true;
+              ws.off('message', onMessage);
+              resolve({ ok: false, error: 'approval_required' });
+            }
           }
           return;
         }
         if (t === 'tool_result' && String(msg?.id || '') === id) {
-          clearTimeout(timeout);
-          ws.off('message', onMessage);
-          if (!done) { done = true; resolve(msg?.result ?? { ok: false, error: 'invalid_result' }); }
+          if (!done) {
+            done = true;
+            ws.off('message', onMessage);
+            resolve(msg?.result ?? { ok: false, error: 'invalid_result' });
+          }
           return;
         }
       } catch { }
     };
     ws.on('message', onMessage);
-    try { ws.send(JSON.stringify(payload)); } catch {
-      clearTimeout(timeout);
+    
+    const timeout = setTimeout(() => {
+      if (done) return;
+      done = true;
       ws.off('message', onMessage);
-      if (!done) { done = true; resolve({ ok: false, error: 'send_failed' }); }
+      resolve({ ok: false, error: 'timeout' });
+    }, 60000);
+    
+    try { 
+      ws.send(JSON.stringify(payload)); 
+    } catch {
+      if (!done) {
+        done = true;
+        ws.off('message', onMessage);
+        resolve({ ok: false, error: 'send_failed' });
+      }
     }
   });
 }
