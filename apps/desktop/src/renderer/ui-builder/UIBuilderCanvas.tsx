@@ -5,8 +5,9 @@
 
 import React, { useRef, useState, useEffect, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 
-const PREVIEW_WINDOW_MARGIN = 16;
-const MIN_PREVIEW_SURFACE = 400;
+const PREVIEW_SURFACE_WIDTH = 1280;
+const PREVIEW_SURFACE_HEIGHT = 800;
+const PREVIEW_WINDOW_MARGIN = 24;
 
 export interface UIBuilderCanvasRef {
   refresh: () => void;
@@ -73,7 +74,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [iframeReady, setIframeReady] = useState(false);
   const [hoveredPath, setHoveredPath] = useState<string | null>(null);
-  const [surfaceSize, setSurfaceSize] = useState({ width: 600, height: 450 });
 
   const isInternalHtmlChange = useRef(false);
   const lastHtmlRef = useRef(html);
@@ -84,61 +84,43 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   const scaledCanvasWidth = safeCanvasWidth * zoom;
   const scaledCanvasHeight = safeCanvasHeight * zoom;
 
-  useEffect(() => {
-    const updateSurfaceSize = () => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        const padding = 48;
-        setSurfaceSize({
-          width: Math.max(MIN_PREVIEW_SURFACE, rect.width - padding),
-          height: Math.max(MIN_PREVIEW_SURFACE, rect.height - padding),
-        });
-      }
-    };
-    updateSurfaceSize();
-    window.addEventListener('resize', updateSurfaceSize);
-    return () => window.removeEventListener('resize', updateSurfaceSize);
-  }, []);
-
   const windowOffset = useMemo(() => {
-    const surfaceW = surfaceSize.width;
-    const surfaceH = surfaceSize.height;
-    const centeredX = (surfaceW - scaledCanvasWidth) / 2;
-    const centeredY = (surfaceH - scaledCanvasHeight) / 2;
+    const centeredX = (PREVIEW_SURFACE_WIDTH - scaledCanvasWidth) / 2;
+    const centeredY = (PREVIEW_SURFACE_HEIGHT - scaledCanvasHeight) / 2;
 
     switch (windowPosition) {
       case 'topleft':
         return { x: PREVIEW_WINDOW_MARGIN, y: PREVIEW_WINDOW_MARGIN };
       case 'topright':
-        return { x: surfaceW - PREVIEW_WINDOW_MARGIN - scaledCanvasWidth, y: PREVIEW_WINDOW_MARGIN };
+        return { x: PREVIEW_SURFACE_WIDTH - PREVIEW_WINDOW_MARGIN - scaledCanvasWidth, y: PREVIEW_WINDOW_MARGIN };
       case 'bottomleft':
-        return { x: PREVIEW_WINDOW_MARGIN, y: surfaceH - PREVIEW_WINDOW_MARGIN - scaledCanvasHeight };
+        return { x: PREVIEW_WINDOW_MARGIN, y: PREVIEW_SURFACE_HEIGHT - PREVIEW_WINDOW_MARGIN - scaledCanvasHeight };
       case 'bottomright':
         return {
-          x: surfaceW - PREVIEW_WINDOW_MARGIN - scaledCanvasWidth,
-          y: surfaceH - PREVIEW_WINDOW_MARGIN - scaledCanvasHeight,
+          x: PREVIEW_SURFACE_WIDTH - PREVIEW_WINDOW_MARGIN - scaledCanvasWidth,
+          y: PREVIEW_SURFACE_HEIGHT - PREVIEW_WINDOW_MARGIN - scaledCanvasHeight,
         };
       case 'bottomcenter':
-        return { x: centeredX, y: surfaceH - PREVIEW_WINDOW_MARGIN - scaledCanvasHeight };
+        return { x: centeredX, y: PREVIEW_SURFACE_HEIGHT - PREVIEW_WINDOW_MARGIN - scaledCanvasHeight };
       case 'mouse':
       case 'cursor':
         return {
-          x: surfaceW * 0.65 - scaledCanvasWidth / 2,
-          y: surfaceH * 0.4 - scaledCanvasHeight / 2,
+          x: PREVIEW_SURFACE_WIDTH * 0.65 - scaledCanvasWidth / 2,
+          y: PREVIEW_SURFACE_HEIGHT * 0.4 - scaledCanvasHeight / 2,
         };
       case 'custom': {
         const xPct = (typeof customX === 'number' ? customX : 50) / 100;
         const yPct = (typeof customY === 'number' ? customY : 50) / 100;
         return {
-          x: surfaceW * xPct - scaledCanvasWidth / 2,
-          y: surfaceH * yPct - scaledCanvasHeight / 2,
+          x: PREVIEW_SURFACE_WIDTH * xPct - scaledCanvasWidth / 2,
+          y: PREVIEW_SURFACE_HEIGHT * yPct - scaledCanvasHeight / 2,
         };
       }
       case 'center':
       default:
         return { x: centeredX, y: centeredY };
     }
-  }, [windowPosition, customX, customY, scaledCanvasWidth, scaledCanvasHeight, surfaceSize]);
+  }, [windowPosition, customX, customY, scaledCanvasWidth, scaledCanvasHeight]);
 
   const generateIframeContent = useCallback(() => {
     return `
