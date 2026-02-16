@@ -422,6 +422,24 @@ export function useAgent(options?: string | UseAgentOptions) {
   }, [state.connected, state.connecting, state.status]);
 
   const closeTab = useCallback((id: string) => {
+    // Clean up request tracking for the closed tab
+    runningTabsRef.current.delete(id);
+    // Remove any requestId -> tabId mappings pointing to this tab
+    for (const [reqId, tabId] of requestIdToTabRef.current.entries()) {
+      if (tabId === id) {
+        requestIdToTabRef.current.delete(reqId);
+        // Tell the server to stop any active stream for this request
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          try { wsRef.current.send(JSON.stringify({ type: 'stop', requestId: reqId })); } catch { }
+        }
+      }
+    }
+    // Remove from pending response queue
+    pendingResponseTabsRef.current = pendingResponseTabsRef.current.filter(t => t !== id);
+    // Remove any outbound queue items for this tab
+    outboundQueueRef.current = outboundQueueRef.current.filter(item => item.tabId !== id);
+    pendingSendRef.current = pendingSendRef.current.filter(item => item.tabId !== id);
+
     setTabs(prev => {
       if (prev.length <= 1) return prev; // Prevent closing last tab
       const next = prev.filter(t => t.id !== id);
@@ -467,7 +485,15 @@ export function useAgent(options?: string | UseAgentOptions) {
   const stopGeneration = useCallback((): boolean => {
     try {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return false;
-      wsRef.current.send(JSON.stringify({ type: 'stop' }));
+      // Find the requestId for the active tab so the server aborts only THAT stream
+      const targetTabId = activeTabIdRef.current;
+      let targetRequestId: string | undefined;
+      for (const [reqId, tabId] of requestIdToTabRef.current.entries()) {
+        if (tabId === targetTabId) { targetRequestId = reqId; break; }
+      }
+      const stopPayload: any = { type: 'stop' };
+      if (targetRequestId) stopPayload.requestId = targetRequestId;
+      wsRef.current.send(JSON.stringify(stopPayload));
       // Clear streaming state and mark as stopped to ignore further chunks
       streamingRef.current = false;
       stoppedRef.current = true;
@@ -1550,9 +1576,23 @@ export function useAgent(options?: string | UseAgentOptions) {
         if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
         deltaBufferRef.current = '';
         streamingRef.current = false;
+        stoppedRef.current = false;
         runningTabsRef.current.clear();
         pendingResponseTabsRef.current = [];
         waitingQueuedStartRef.current = false;
+        // Clean up tracking maps to prevent memory leaks
+        requestIdToTabRef.current.clear();
+        activeRequestIdRef.current = null;
+        streamingTabIdRef.current = null;
+        streamingConversationIdRef.current = null;
+        // Reject all pending tool promises so they don't leak
+        for (const [id, resolve] of pendingToolsRef.current.entries()) {
+          try { resolve({ ok: false, error: 'disconnected' }); } catch { }
+        }
+        pendingToolsRef.current.clear();
+        // Clear wrapper tracking maps
+        wrapperSequentialQueueRef.current.clear();
+        wrapperSequentialCounterRef.current.clear();
         if (!reconnectTimerRef.current) {
           const attempt = (reconnectAttemptsRef.current || 0) + 1;
           reconnectAttemptsRef.current = attempt;

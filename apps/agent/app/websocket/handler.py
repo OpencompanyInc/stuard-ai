@@ -151,6 +151,21 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     t.cancel()
                 except Exception:
                     pass
+            # Cancel any pending approval/tool result futures to unblock awaiting coroutines
+            for fut in session.pending_approvals.values():
+                try:
+                    if not fut.done():
+                        fut.cancel()
+                except Exception:
+                    pass
+            session.pending_approvals.clear()
+            for fut in session.pending_client_tool_results.values():
+                try:
+                    if not fut.done():
+                        fut.cancel()
+                except Exception:
+                    pass
+            session.pending_client_tool_results.clear()
         except Exception:
             pass
         await manager.disconnect(ws)

@@ -161,6 +161,9 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('board:update', handler);
     return () => { try { ipcRenderer.off('board:update', handler); } catch { } };
   },
+  // Custom UI prebuilt assets (for UI builder preview — offline, no CDN)
+  customUiGetPrebuiltAssets: () => ipcRenderer.invoke('customUi:getPrebuiltAssets'),
+
   workflowsList: () => ipcRenderer.invoke('workflows:list'),
   workflowsRead: (id: string) => ipcRenderer.invoke('workflows:read', id),
   workflowsSave: (id: string, content: string) => ipcRenderer.invoke('workflows:save', { id, content }),

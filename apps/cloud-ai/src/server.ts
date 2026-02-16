@@ -166,8 +166,40 @@ const wsConversations = new WeakMap<WebSocket, string>();
 // Anonymous resource/thread IDs per connection for memory when not authenticated
 const anonResources = new WeakMap<WebSocket, string>();
 const anonThreads = new WeakMap<WebSocket, string>();
-// Store abort controllers per WebSocket for stop/cancel functionality
-const wsAbortControllers = new WeakMap<WebSocket, AbortController>();
+// Store abort controllers per WebSocket per-request for stop/cancel functionality
+// Key: WS -> Map<requestId, AbortController> so parallel requests each get their own controller
+const wsAbortControllers = new WeakMap<WebSocket, Map<string, AbortController>>();
+
+function getAbortMap(ws: WebSocket): Map<string, AbortController> {
+  let m = wsAbortControllers.get(ws);
+  if (!m) { m = new Map(); wsAbortControllers.set(ws, m); }
+  return m;
+}
+
+function setAbortController(ws: WebSocket, requestId: string | undefined, controller: AbortController) {
+  const key = requestId || '__default__';
+  getAbortMap(ws).set(key, controller);
+}
+
+function deleteAbortController(ws: WebSocket, requestId: string | undefined) {
+  const key = requestId || '__default__';
+  const m = wsAbortControllers.get(ws);
+  if (m) { m.delete(key); if (m.size === 0) wsAbortControllers.delete(ws); }
+}
+
+function abortAndCleanup(ws: WebSocket, requestId: string | undefined) {
+  const key = requestId || '__default__';
+  const m = wsAbortControllers.get(ws);
+  if (!m) return false;
+  const controller = m.get(key);
+  if (controller) {
+    controller.abort();
+    m.delete(key);
+    if (m.size === 0) wsAbortControllers.delete(ws);
+    return true;
+  }
+  return false;
+}
 
 // Note: Server-side queuing removed - client handles per-tab queuing via requestId routing
 
@@ -193,7 +225,23 @@ wss.on('connection', (ws: WebSocket, req: any) => {
   writeLog('ws_connected');
   try { wsAlive.set(ws, true); } catch { }
   try { ws.on('pong', () => { try { wsAlive.set(ws, true); } catch { } }); } catch { }
-  try { ws.on('close', () => { writeLog('ws_disconnected'); }); } catch { }
+  try { ws.on('close', () => {
+    writeLog('ws_disconnected');
+    // Clean up all abort controllers for this connection to prevent leaks
+    try {
+      const m = wsAbortControllers.get(ws);
+      if (m) {
+        for (const [, controller] of m) { try { controller.abort(); } catch { } }
+        m.clear();
+        wsAbortControllers.delete(ws);
+      }
+    } catch { }
+    // Clear conversation history reference
+    try { conversations.delete(ws); } catch { }
+    try { wsConversations.delete(ws); } catch { }
+    try { anonResources.delete(ws); } catch { }
+    try { anonThreads.delete(ws); } catch { }
+  }); } catch { }
 
   ws.on('message', async (buf: WebSocket.RawData) => {
     let msg: any;
@@ -212,14 +260,26 @@ wss.on('connection', (ws: WebSocket, req: any) => {
     }
     // Handle stop/abort request to cancel ongoing stream
     if (kind === 'stop' || kind === 'abort') {
-      const controller = wsAbortControllers.get(ws);
-      if (controller) {
-        console.log('[cloud-ai] Aborting stream by user request');
-        controller.abort();
-        wsAbortControllers.delete(ws);
-        send(ws, { type: 'stopped', success: true });
+      // Support per-request stop via requestId, or stop all if no requestId
+      const stopRequestId = typeof msg?.requestId === 'string' ? msg.requestId : undefined;
+      if (stopRequestId) {
+        const aborted = abortAndCleanup(ws, stopRequestId);
+        console.log(`[cloud-ai] Aborting stream for requestId=${stopRequestId}: ${aborted}`);
+        send(ws, { type: 'stopped', success: aborted, requestId: stopRequestId });
       } else {
-        send(ws, { type: 'stopped', success: false, message: 'no active stream' });
+        // No requestId — abort ALL active streams on this WS (backwards compat)
+        const m = wsAbortControllers.get(ws);
+        if (m && m.size > 0) {
+          console.log(`[cloud-ai] Aborting ALL ${m.size} stream(s) by user request`);
+          for (const [, controller] of m) {
+            try { controller.abort(); } catch { }
+          }
+          m.clear();
+          wsAbortControllers.delete(ws);
+          send(ws, { type: 'stopped', success: true });
+        } else {
+          send(ws, { type: 'stopped', success: false, message: 'no active stream' });
+        }
       }
       return;
     }
@@ -309,6 +369,12 @@ wss.on('connection', (ws: WebSocket, req: any) => {
       let routedTier: ModelChoice = 'balanced';
       let chosenModelId: string | undefined;
       let conversationId: string | null = null;
+      // Hoisted so the outer catch block can persist partial work on error
+      let authUser: { userId: string; email?: string } | null = null;
+      let requestedMode: TierChoice = 'balanced';
+      const toolCallsMap = new Map<string, any>();
+      type StreamChunk = { type: 'text'; content: string } | { type: 'reasoning'; content: string } | { type: 'tool'; tool: any };
+      const streamChunks: StreamChunk[] = [];
       try {
         const messages = normalizeMessages(msg);
         const providedMessages = Array.isArray((msg as any)?.messages) ? (msg as any).messages : undefined;
@@ -319,7 +385,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
 
         const accessToken = String(msg?.auth?.accessToken || '');
         const authResult = accessToken ? await verifyAccessToken(accessToken) : null;
-        const authUser = authResult?.success ? { userId: authResult.userId!, email: authResult.email } : null;
+        authUser = authResult?.success ? { userId: authResult.userId!, email: authResult.email } : null;
 
         // Update secretBag with userId if authenticated
         if (authUser?.userId) secretBag.userId = authUser.userId;
@@ -356,7 +422,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           } catch { }
         }
 
-        const requestedMode = normalizeTierChoice((msg as any)?.model);
+        requestedMode = normalizeTierChoice((msg as any)?.model);
         let routed: { model: ModelChoice; modelIndex: number; layerIndexes: number[] } = {
           model: 'balanced',
           modelIndex: 1,
@@ -396,10 +462,11 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         let mcpTools: Record<string, any> = {};
 
         if (authUser) {
+          const _au = authUser; // local const for TS narrowing (authUser is `let`)
           // Check integrations
           const providers = ['github', 'google', 'outlook'];
           try {
-            const checks = await Promise.all(providers.map(p => getExternalAccount(authUser.userId, p)));
+            const checks = await Promise.all(providers.map(p => getExternalAccount(_au.userId, p)));
             enabledIntegrations = providers.filter((_, i) => !!checks[i]);
           } catch (e) {
             // ignore
@@ -681,9 +748,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         // Track metadata for persistence (reasoning, tools, stream chunks)
         let aggregatedReasoning = '';
         let reasoningStartTime: number | null = null;
-        const toolCallsMap = new Map<string, any>(); // Track tool calls by ID
-        type StreamChunk = { type: 'text'; content: string } | { type: 'reasoning'; content: string } | { type: 'tool'; tool: any };
-        const streamChunks: StreamChunk[] = [];
+        // toolCallsMap and streamChunks are hoisted above the try block
 
         // Persist this user turn for ongoing conversations (first turn already stored on creation)
         if (authUser && conversationId && !conversationCreatedNow) {
@@ -932,7 +997,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
 
         // Create AbortController for this stream so it can be cancelled
         abortController = new AbortController();
-        wsAbortControllers.set(ws, abortController);
+        setAbortController(ws, requestId, abortController);
         const hardTimeoutMs = (() => {
           const raw = Number(process.env.CLOUD_CHAT_HARD_TIMEOUT_MS || process.env.CLOUD_STREAM_HARD_TIMEOUT_MS || '');
           if (!isNaN(raw) && raw > 0) return raw;
@@ -942,7 +1007,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           if (didSendFinal) return;
           didSendFinal = true;
           try { abortController?.abort(); } catch { }
-          try { wsAbortControllers.delete(ws); } catch { }
+          try { deleteAbortController(ws, requestId); } catch { }
           const timeoutText = (aggregatedText || '').trim() || 'Request timed out. Please retry.';
           send(
             ws,
@@ -979,6 +1044,8 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             }
             writeLog('stream_finish', { finishReason, usage, textLength: finalText.length, sawToolCall, sawAnyTextDelta });
             history.push({ role: 'assistant', content: finalText });
+            // Cap history to prevent unbounded memory growth per connection
+            if (history.length > 100) history.splice(0, history.length - 100);
             conversations.set(ws, history);
             if (authUser && conversationId) {
               // Build metadata for persistence
@@ -1291,7 +1358,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
         if (streamIterationError && !didSendFinal) {
           didSendFinal = true;
           try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
-          wsAbortControllers.delete(ws);
+          deleteAbortController(ws, requestId);
           const msgText = String(streamIterationError?.message || streamIterationError || 'Agent stream failed');
           const errorFinalText = aggregatedText ? aggregatedText.trim() : `Error: ${msgText}`;
 
@@ -1344,7 +1411,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
           console.log('[cloud-ai] Stream aborted by user (loop break)');
           didSendFinal = true;
           try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
-          wsAbortControllers.delete(ws);
+          deleteAbortController(ws, requestId);
           const partialText = aggregatedText ? aggregatedText.trim() : '';
 
           // Persist partial work even on abort so conversation history isn't lost
@@ -1415,11 +1482,11 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
 
         // Clean up abort controller after stream completes
         try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
-        wsAbortControllers.delete(ws);
+        deleteAbortController(ws, requestId);
       } catch (e: any) {
         try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
         // Clean up abort controller on error
-        wsAbortControllers.delete(ws);
+        deleteAbortController(ws, requestId);
 
         // Handle abort errors specifically
         if (e?.name === 'AbortError' || abortController?.signal.aborted) {

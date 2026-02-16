@@ -20,7 +20,27 @@ function getPending(ws: WebSocket) {
 }
 
 export function withClientBridge(ws: WebSocket, fn: () => Promise<any> | any, secrets?: Record<string, any>) {
+  // Ensure pending tool map is cleaned up when the WS closes
+  ensureBridgeCleanupListener(ws);
   return bridgeALS.run({ ws, secrets }, fn as any);
+}
+
+// Track which WS connections already have a cleanup listener to avoid duplicate listeners
+const _cleanupListeners = new WeakSet<WebSocket>();
+
+function ensureBridgeCleanupListener(ws: WebSocket) {
+  if (_cleanupListeners.has(ws)) return;
+  _cleanupListeners.add(ws);
+  ws.on('close', () => {
+    const pending = pendingByWs.get(ws);
+    if (!pending) return;
+    // Clear all timeouts and reject all pending promises
+    for (const [id, pend] of pending.entries()) {
+      try { if (pend.timeout) clearTimeout(pend.timeout); } catch { }
+      try { pend.resolve({ ok: false, error: 'bridge_closed' }); } catch { }
+    }
+    pending.clear();
+  });
 }
 
 export function runWithSecrets<T>(secrets: Record<string, any>, fn: () => T): T {
@@ -100,15 +120,6 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
   const store = bridgeALS.getStore();
   const forceDirect = !!(args && (args as any)._forceDirect);
   
-  // Debug logging for workflow tools
-  if (tool === 'list_local_workflows') {
-    console.log('[bridge] execLocalTool called for list_local_workflows');
-    console.log('[bridge] store exists:', !!store);
-    console.log('[bridge] store.ws exists:', !!store?.ws);
-    console.log('[bridge] ws readyState:', store?.ws?.readyState, '(OPEN=1)');
-    console.log('[bridge] noFallback:', noFallback);
-    console.log('[bridge] forceDirect:', forceDirect);
-  }
   // Avoid leaking internal control flags over the wire
   const sendArgs = (() => {
     try {
@@ -121,9 +132,6 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
   })();
   // In-band bridge if we are inside an active client WS context
   const useBridge = !forceDirect && store?.ws && store.ws.readyState === WebSocket.OPEN;
-  if (tool === 'list_local_workflows') {
-    console.log('[bridge] Will use bridge:', useBridge);
-  }
   if (useBridge) {
     const id = `tool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     return new Promise<any>((resolve, reject) => {
@@ -157,13 +165,15 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
   }
 
   return new Promise<any>((resolve, reject) => {
+    let settled = false;
+    const settle = (fn: () => void) => { if (!settled) { settled = true; fn(); } };
     try {
       const ws = new WebSocket(AGENT_WS, { maxPayload: AGENT_WS_MAX_PAYLOAD });
       const id = `tool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const timer = setTimeout(() => {
         try { ws.close(); } catch {}
         try { (async () => { try { await __queueWriterWrite(writer, { type: 'tool_event', tool, status: 'timeout', id }); } catch {} })(); } catch {}
-        resolve({ ok: false, error: 'timeout', timedOut: true });
+        settle(() => resolve({ ok: false, error: 'timeout', timedOut: true }));
       }, timeoutMs);
 
       ws.on('open', async () => {
@@ -181,7 +191,6 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
         const mtype = String(msg?.type || '').toLowerCase();
 
         if (mtype === 'tool_event' && msg.id === id) {
-          // Forward to tool stream as custom event, but sanitize large payloads (e.g., base64 data)
           try {
             const safeMsg: any = { ...msg };
             if (safeMsg?.result && typeof safeMsg.result === 'object') {
@@ -199,32 +208,28 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
         if (mtype === 'tool_result' && msg.id === id) {
           clearTimeout(timer);
           try { ws.close(); } catch {}
-          try {
-            const logResult: any = { ...(msg.result || {}) };
-            if (typeof logResult?.data === 'string') {
-              logResult.bytes = logResult.data.length;
-              delete logResult.data;
-            }
-          } catch {}
-          resolve(msg.result);
+          settle(() => resolve(msg.result));
         }
 
         if (mtype === 'error') {
           clearTimeout(timer);
           try { ws.close(); } catch {}
-          reject(new Error(msg.message || 'tool error'));
+          settle(() => reject(new Error(msg.message || 'tool error')));
         }
       });
 
       ws.on('error', (e) => {
         clearTimeout(timer);
-        reject(e);
+        try { ws.close(); } catch {}
+        settle(() => reject(e));
       });
       ws.on('close', () => {
-        // noop
+        // If the WS closes before we got a result, resolve with error instead of leaking
+        clearTimeout(timer);
+        settle(() => resolve({ ok: false, error: 'agent_connection_closed' }));
       });
     } catch (e) {
-      reject(e);
+      settle(() => reject(e));
     }
   });
 }

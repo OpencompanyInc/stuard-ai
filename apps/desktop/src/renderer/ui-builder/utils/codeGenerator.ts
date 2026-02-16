@@ -738,11 +738,11 @@ ${elementsHtml}
   const js = customJS ? `${baseJS}\n\n/* Custom Scripts */\n${customJS}` : baseJS;
 
   // Generate full HTML document — matches runtime structure exactly
+  // No CDN dependencies — works fully offline
   const fullHtml = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <script src="https://cdn.tailwindcss.com"><\/script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html {
@@ -835,12 +835,13 @@ export function generateCustomUIArgs(design: UIDesign): Record<string, any> {
   const code = generateCode(design);
   const wc = design.windowConfig;
 
-  // Auto-wrap visual editor HTML into a Preact component since legacy mode is removed.
-  // The runtime only supports Preact component mode now.
-  const escapedHtml = code.html.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+  // Auto-wrap visual editor HTML into a React component using dangerouslySetInnerHTML.
+  // The runtime uses React (offline, bundled) with JSX syntax (auto-transformed via Sucrase).
+  const escapedHtmlJson = JSON.stringify(code.html);
   const componentCode = `function App() {
-  const [formData, setFormData] = useState({ ...initialData });
-  return html\`<div dangerouslySetInnerHTML=\${{ __html: \`${escapedHtml}\` }} />\`;
+  var _formData = React.useState(Object.assign({}, initialData));
+  var formData = _formData[0];
+  return React.createElement('div', { dangerouslySetInnerHTML: { __html: ${escapedHtmlJson} } });
 }`;
 
   return {
@@ -1379,36 +1380,39 @@ function detectLayout(styles: Record<string, string>): 'flex-row' | 'flex-col' |
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PREACT COMPONENT GENERATOR
-// Converts visual builder HTML/CSS/JS into a Preact+htm component string
+// REACT COMPONENT GENERATOR (JSX)
+// Converts visual builder HTML/CSS/JS into a React JSX component string
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Convert HTML string to htm template literal content.
- * Transforms data-bind, data-action, onclick, etc. into Preact equivalents.
+ * Convert builder HTML (with data-bind, data-action, onclick) into JSX content.
+ * Transforms data attributes into React JSX event handlers and controlled inputs.
  */
-function htmlToHtm(html: string): string {
+function htmlToJsx(html: string): string {
   if (!html) return '';
 
   let result = html;
 
-  // Convert data-action="submit" buttons to onClick=${() => stuard.submit(formData)}
+  // Convert class= to className=
+  result = result.replace(/\bclass="/gi, 'className="');
+
+  // Convert data-action="submit" buttons to onClick={() => stuard.submit(formData)}
   result = result.replace(
     /<button([^>]*?)data-action="submit"([^>]*?)>([\s\S]*?)<\/button>/gi,
     (_, before, after, content) => {
       const cleanBefore = before.replace(/onclick="[^"]*"/gi, '');
       const cleanAfter = after.replace(/onclick="[^"]*"/gi, '');
-      return `<button${cleanBefore}${cleanAfter} onClick=\${() => stuard.submit(formData)}>${content}</button>`;
+      return `<button${cleanBefore}${cleanAfter} onClick={() => stuard.submit(formData)}>${content}</button>`;
     }
   );
 
-  // Convert data-action="cancel" buttons to onClick=${() => stuard.close()}
+  // Convert data-action="cancel" buttons to onClick={() => stuard.close()}
   result = result.replace(
     /<button([^>]*?)data-action="cancel"([^>]*?)>([\s\S]*?)<\/button>/gi,
     (_, before, after, content) => {
       const cleanBefore = before.replace(/onclick="[^"]*"/gi, '');
       const cleanAfter = after.replace(/onclick="[^"]*"/gi, '');
-      return `<button${cleanBefore}${cleanAfter} onClick=\${() => stuard.close()}>${content}</button>`;
+      return `<button${cleanBefore}${cleanAfter} onClick={() => stuard.close()}>${content}</button>`;
     }
   );
 
@@ -1418,26 +1422,25 @@ function htmlToHtm(html: string): string {
     (_, before, action, after, content) => {
       const cleanBefore = before.replace(/onclick="[^"]*"/gi, '');
       const cleanAfter = after.replace(/onclick="[^"]*"/gi, '');
-      return `<button${cleanBefore}${cleanAfter} onClick=\${() => stuard.submit({ action: '${action}', ...formData })}>${content}</button>`;
+      return `<button${cleanBefore}${cleanAfter} onClick={() => stuard.submit({ action: '${action}', ...formData })}>${content}</button>`;
     }
   );
 
   // Convert data-navigate="page" to onClick
   result = result.replace(
     /data-navigate="([^"]+)"/gi,
-    (_, page) => `onClick=\${() => setPage('${page}')}`
+    (_, page) => `onClick={() => setPage('${page}')}`
   );
 
-  // Convert data-bind inputs to controlled Preact inputs
-  // Input elements: value=${formData.field} onInput=${e => setFormData({...formData, field: e.target.value})}
+  // Convert data-bind inputs to controlled React inputs
   result = result.replace(
     /<input([^>]*?)data-bind="([^"]+)"([^>]*?)\/?>/gi,
     (_, before, field, after) => {
       const isCheckbox = /type="checkbox"/i.test(before + after);
       if (isCheckbox) {
-        return `<input${before}${after} checked=\${formData.${field} || false} onChange=\${e => setFormData({...formData, ${field}: e.target.checked})} />`;
+        return `<input${before}${after} checked={formData.${field} || false} onChange={e => setFormData({...formData, ${field}: e.target.checked})} />`;
       }
-      return `<input${before}${after} value=\${formData.${field} || ''} onInput=\${e => setFormData({...formData, ${field}: e.target.value})} />`;
+      return `<input${before}${after} value={formData.${field} || ''} onChange={e => setFormData({...formData, ${field}: e.target.value})} />`;
     }
   );
 
@@ -1445,7 +1448,7 @@ function htmlToHtm(html: string): string {
   result = result.replace(
     /<textarea([^>]*?)data-bind="([^"]+)"([^>]*?)>([\s\S]*?)<\/textarea>/gi,
     (_, before, field, after, _content) => {
-      return `<textarea${before}${after} value=\${formData.${field} || ''} onInput=\${e => setFormData({...formData, ${field}: e.target.value})}></textarea>`;
+      return `<textarea${before}${after} value={formData.${field} || ''} onChange={e => setFormData({...formData, ${field}: e.target.value})} />`;
     }
   );
 
@@ -1453,29 +1456,34 @@ function htmlToHtm(html: string): string {
   result = result.replace(
     /<select([^>]*?)data-bind="([^"]+)"([^>]*?)>/gi,
     (_, before, field, after) => {
-      return `<select${before}${after} value=\${formData.${field} || ''} onChange=\${e => setFormData({...formData, ${field}: e.target.value})}>`;
+      return `<select${before}${after} value={formData.${field} || ''} onChange={e => setFormData({...formData, ${field}: e.target.value})}>`;
     }
   );
 
-  // Convert data-bind on display elements to ${formData.field}
+  // Convert data-bind on display elements to {formData.field}
   result = result.replace(
     /<(span|div|p|h[1-6])([^>]*?)data-bind="([^"]+)"([^>]*?)>([\s\S]*?)<\/\1>/gi,
     (_, tag, before, field, after, _content) => {
-      return `<${tag}${before}${after}>\${formData.${field} || ''}</${tag}>`;
+      return `<${tag}${before}${after}>{formData.${field} || ''}</${tag}>`;
     }
   );
 
-  // Convert remaining onclick="..." to onClick=${() => { ... }}
+  // Convert remaining onclick="..." to onClick={() => { ... }}
   result = result.replace(
     /onclick="([^"]+)"/gi,
     (_, code) => {
-      // Handle stuard.callTool calls
       const decoded = code.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-      return `onClick=\${() => { ${decoded} }}`;
+      return `onClick={() => { ${decoded} }}`;
     }
   );
 
-  // Clean up leftover data-bind, data-action, data-html attributes
+  // Self-close void elements that aren't already self-closed (for JSX validity)
+  const voidTags = ['br', 'hr', 'img', 'input', 'meta', 'link', 'area', 'base', 'col', 'embed', 'source', 'track', 'wbr'];
+  for (const tag of voidTags) {
+    result = result.replace(new RegExp(`<${tag}([^>]*?)(?<!/)>`, 'gi'), `<${tag}$1 />`);
+  }
+
+  // Clean up leftover data attributes
   result = result.replace(/\s*data-bind="[^"]*"/gi, '');
   result = result.replace(/\s*data-action="[^"]*"/gi, '');
   result = result.replace(/\s*data-html(?:="[^"]*")?/gi, '');
@@ -1485,134 +1493,230 @@ function htmlToHtm(html: string): string {
 }
 
 /**
- * Extract HTML template and JS logic from a Preact component string.
- * Returns { html, js } where html is the content inside html`...` and
- * js is the component logic (state hooks, effects, etc.) outside the return.
- *
- * Also converts Preact-specific patterns back to HTML data attributes:
- *   onClick=${() => stuard.submit(formData)} → data-action="submit"
- *   onClick=${() => stuard.close()} → data-action="cancel"
- *   value=${formData.field} onInput=${...} → data-bind="field"
+ * Strip designer/preview scaffolding that may have leaked into saved HTML.
  */
-export function extractHtmlFromPreactComponent(component: string): { html: string; js: string } {
-  if (!component || !component.trim()) return { html: '', js: '' };
-
-  // Some saved specs contain double-escaped component text (literal "\\n", "\\t", "\\\"").
-  // Runtime already normalizes this before executing the component; do the same here so
-  // UI Builder preview/parsing behaves like runtime rendering.
-  let normalizedComponent = component;
-  const hasLiteralEscapes =
-    normalizedComponent.includes('\\n') ||
-    normalizedComponent.includes('\\t') ||
-    normalizedComponent.includes('\\"');
-
-  if (hasLiteralEscapes) {
-    const hasLiteralBackslashes = normalizedComponent.includes('\\\\');
-    if (hasLiteralBackslashes) {
-      normalizedComponent = normalizedComponent.replace(/\\\\/g, '\x00BACKSLASH\x00');
-    }
-    normalizedComponent = normalizedComponent
-      .replace(/\\n/g, '\n')
-      .replace(/\\t/g, '\t')
-      .replace(/\\"/g, '"')
-      .replace(/\\'/g, "'");
-    if (hasLiteralBackslashes) {
-      normalizedComponent = normalizedComponent.replace(/\x00BACKSLASH\x00/g, '\\');
-    }
+function sanitizeExtractedHtml(html: string): string {
+  if (!html) return '';
+  let result = html;
+  result = result.replace(/<script[\s\S]*?<\/script>/gi, '');
+  let prev = '';
+  while (prev !== result) {
+    prev = result;
+    result = result.replace(
+      /<div\s+class="stuard-root"\s*>((?:(?!<div\s+class="stuard-root").)*?)<\/div>/gis,
+      '$1'
+    );
   }
-
-  // Find the html`...` template literal
-  // Handle both:  return html`...`;  and  return html`...`
-  const templateMatch = normalizedComponent.match(/return\s+html\s*`([\s\S]*?)`\s*;?\s*\}?\s*$/m);
-  if (!templateMatch) {
-    // Try a broader match - find any html`...` in the component
-    const broaderMatch = normalizedComponent.match(/html\s*`([\s\S]*?)`/);
-    if (!broaderMatch) return { html: '', js: '' };
-    return { html: cleanHtmToHtml(broaderMatch[1].trim()), js: '' };
-  }
-
-  const rawTemplate = templateMatch[1].trim();
-
-  // Extract JS logic: everything between function App() { and the return statement
-  const jsMatch = normalizedComponent.match(/function\s+App\s*\(\)\s*\{([\s\S]*?)(?=\n\s*return\s+html)/);
-  const jsLogic = jsMatch ? jsMatch[1].trim() : '';
-
-  return { html: cleanHtmToHtml(rawTemplate), js: jsLogic };
+  result = result.replace(/\n{3,}/g, '\n\n').trim();
+  return result;
 }
 
 /**
- * Convert HTM template expressions back to editable HTML with data attributes.
- * Reverses the htmlToHtm() transformation.
+ * Convert JSX event handlers back to editable HTML data attributes.
+ * Reverses the htmlToJsx() transformation for the UI builder.
  */
-function cleanHtmToHtml(htm: string): string {
-  if (!htm) return '';
-  let result = htm;
+function cleanJsxToHtml(jsx: string): string {
+  if (!jsx) return '';
+  let result = jsx;
 
-  // Convert onClick=${() => stuard.submit(formData)} → data-action="submit"
-  result = result.replace(/onClick=\$\{[^}]*stuard\.submit\s*\(\s*formData\s*\)[^}]*\}/gi, 'data-action="submit"');
+  // Convert className= back to class=
+  result = result.replace(/\bclassName="/gi, 'class="');
 
-  // Convert onClick=${() => stuard.close()} → data-action="cancel"
-  result = result.replace(/onClick=\$\{[^}]*stuard\.close\s*\(\)[^}]*\}/gi, 'data-action="cancel"');
+  // onClick={() => stuard.submit(formData)} → data-action="submit"
+  result = result.replace(/onClick=\{[^}]*stuard\.submit\s*\(\s*formData\s*\)[^}]*\}/gi, 'data-action="submit"');
 
-  // Convert onClick=${() => stuard.submit({ action: 'name', ...formData })} → data-action="name"
-  result = result.replace(/onClick=\$\{[^}]*stuard\.submit\s*\(\s*\{\s*action:\s*'([^']+)'[^}]*\}\s*\)[^}]*\}/gi,
+  // onClick={() => stuard.close()} → data-action="cancel"
+  result = result.replace(/onClick=\{[^}]*stuard\.close\s*\(\)[^}]*\}/gi, 'data-action="cancel"');
+
+  // onClick={() => stuard.submit({ action: 'name', ...formData })} → data-action="name"
+  result = result.replace(/onClick=\{[^}]*stuard\.submit\s*\(\s*\{\s*action:\s*'([^']+)'[^}]*\}\s*\)[^}]*\}/gi,
     (_, action) => `data-action="${action}"`);
 
-  // Convert onClick=${() => setPage('name')} → data-navigate="name"
-  result = result.replace(/onClick=\$\{[^}]*setPage\s*\(\s*'([^']+)'\s*\)[^}]*\}/gi,
+  // onClick={() => setPage('name')} → data-navigate="name"
+  result = result.replace(/onClick=\{[^}]*setPage\s*\(\s*'([^']+)'\s*\)[^}]*\}/gi,
     (_, page) => `data-navigate="${page}"`);
 
-  // Convert controlled inputs back to data-bind:
-  // value=${formData.field} onInput=${e => setFormData({...formData, field: e.target.value})}
-  // → data-bind="field"
+  // Controlled inputs back to data-bind
   result = result.replace(
-    /value=\$\{formData\.(\w+)[^}]*\}\s*onInput=\$\{[^}]*\}/gi,
+    /value=\{formData\.(\w+)[^}]*\}\s*onChange=\{[^}]*\}/gi,
+    (_, field) => `data-bind="${field}"`
+  );
+  result = result.replace(
+    /checked=\{formData\.(\w+)[^}]*\}\s*onChange=\{[^}]*\}/gi,
     (_, field) => `data-bind="${field}"`
   );
 
-  // Convert checked=${formData.field} onChange=${...} → data-bind="field"
+  // {formData.field || ''} display bindings → data-bind text
   result = result.replace(
-    /checked=\$\{formData\.(\w+)[^}]*\}\s*onChange=\$\{[^}]*\}/gi,
-    (_, field) => `data-bind="${field}"`
+    /\{formData\.(\w+)\s*\|\|\s*''\}/gi,
+    (_, field) => `<span data-bind="${field}"></span>`
   );
 
-  // Convert ${formData.field || ''} display bindings → data-bind text
-  result = result.replace(
-    /\$\{formData\.(\w+)\s*\|\|\s*''\}/gi,
-    (_, field) => `<span data-bind="${field}">{{${field}}}</span>`
-  );
+  // Convert JSX style={{...}} to HTML style="..."
+  result = result.replace(/style=\{\{([\s\S]*?)\}\}/g, (_, inner) => {
+    // Parse camelCase JS style object into CSS string
+    const cssProps: string[] = [];
+    inner.replace(/(\w+)\s*:\s*(?:'([^']*)'|"([^"]*)"|([\d.]+(?:px|em|rem|%|vh|vw)?))/g,
+      (_m: string, prop: string, sq: string, dq: string, num: string) => {
+        const value = sq || dq || num || '';
+        // Convert camelCase to kebab-case
+        const cssProp = prop.replace(/([A-Z])/g, '-$1').toLowerCase();
+        cssProps.push(`${cssProp}: ${value}`);
+        return '';
+      });
+    return cssProps.length > 0 ? `style="${cssProps.join('; ')}"` : '';
+  });
 
-  // Convert onClick=${() => { ... }} → onclick="..."
+  // onClick={() => { ... }) → onclick="..."
   result = result.replace(
-    /onClick=\$\{\(\)\s*=>\s*\{\s*([\s\S]*?)\s*\}\s*\}/gi,
+    /onClick=\{(?:\(\)\s*=>|function\(\)\s*)\s*\{\s*([\s\S]*?)\s*\}\s*\}/gi,
     (_, code) => `onclick="${code.replace(/"/g, '&quot;')}"`
   );
 
-  // Clean up any remaining ${...} expressions by removing them (they can't be represented in static HTML)
-  result = result.replace(/\$\{[^}]*\}/g, '');
+  // Clean up remaining attr={...} expressions (brace-aware for nested braces)
+  // Use a forward-scanning loop since regex can't handle nested braces
+  {
+    const attrPattern = /\s+\w+=\{/g;
+    let attrMatch;
+    const removals: Array<[number, number]> = [];
+    while ((attrMatch = attrPattern.exec(result)) !== null) {
+      const start = attrMatch.index;
+      const bracePos = start + attrMatch[0].length - 1; // position of '{'
+      let depth = 1;
+      let i = bracePos + 1;
+      while (i < result.length && depth > 0) {
+        const ch = result[i];
+        if (ch === '{') depth++;
+        else if (ch === '}') depth--;
+        else if (ch === "'" || ch === '"' || ch === '`') {
+          const q = ch;
+          i++;
+          while (i < result.length && result[i] !== q) {
+            if (result[i] === '\\') i++;
+            i++;
+          }
+        }
+        i++;
+      }
+      removals.push([start, i]);
+    }
+    // Apply removals in reverse order to preserve indices
+    for (let r = removals.length - 1; r >= 0; r--) {
+      result = result.substring(0, removals[r][0]) + result.substring(removals[r][1]);
+    }
+  }
 
-  // Trim each line's leading whitespace (htm template is often indented)
-  result = result.split('\n').map(line => {
-    // Remove up to 4 leading spaces (typical template indentation)
-    return line.replace(/^    /, '');
-  }).join('\n').trim();
+  // Remove dangling bare {expr} text expressions (like {mission}, {fact})
+  // These are JSX expressions that can't be represented as HTML text
+  result = result.replace(/\{[a-zA-Z_]\w*\}/g, '');
+
+  // Remove dangling empty attributes
+  result = result.replace(/\s+\w+=(?=\s|>|\n|$)/g, '');
+
+  // Trim indentation
+  result = result.split('\n').map(line => line.replace(/^    /, '')).join('\n').trim();
 
   return result;
 }
 
 /**
- * Generate a Preact+htm component string from visual builder HTML/CSS/JS.
- * This is the main entry point for converting builder output to component mode.
+ * Extract HTML and JS from a React JSX component string.
+ * Used by the UI builder to parse an existing component back into
+ * editable HTML and JS for the visual editor.
  */
-export function generatePreactComponent(html: string, css: string, js: string): string {
-  const htmContent = htmlToHtm(html);
+export function extractHtmlFromComponent(component: string): { html: string; js: string } {
+  if (!component || !component.trim()) return { html: '', js: '' };
+
+  // Normalize double-escaped strings from LLM output
+  let src = component;
+  const hasLiteralEscapes =
+    src.includes('\\n') || src.includes('\\t') || src.includes('\\"');
+
+  if (hasLiteralEscapes) {
+    const hasBackslashes = src.includes('\\\\');
+    if (hasBackslashes) src = src.replace(/\\\\/g, '\x00BACKSLASH\x00');
+    src = src.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\'/g, "'");
+    if (hasBackslashes) src = src.replace(/\x00BACKSLASH\x00/g, '\\');
+  }
+
+  // Check for dangerouslySetInnerHTML pattern (raw HTML wrapper)
+  const dihMatch = src.match(/dangerouslySetInnerHTML:\s*\{\s*__html:\s*([\s\S]*?)\s*\}\s*\}/);
+  if (dihMatch) {
+    try {
+      const rawHtml = JSON.parse(dihMatch[1].trim());
+      if (typeof rawHtml === 'string') return { html: rawHtml, js: '' };
+    } catch { /* not a simple JSON string */ }
+  }
+
+  // Extract JSX from return (...) using bracket counting
+  // Regex is unreliable for nested parens like onClick={() => submit({ ... })}
+  const returnIdx = src.search(/return\s*\(/);
+  let rawJsx = '';
+  if (returnIdx >= 0) {
+    // Find the opening '(' after 'return'
+    const openParen = src.indexOf('(', returnIdx);
+    if (openParen >= 0) {
+      let depth = 1;
+      let i = openParen + 1;
+      while (i < src.length && depth > 0) {
+        const ch = src[i];
+        if (ch === '(') depth++;
+        else if (ch === ')') depth--;
+        // Skip string literals to avoid counting parens inside strings
+        else if (ch === "'" || ch === '"' || ch === '`') {
+          const quote = ch;
+          i++;
+          while (i < src.length && src[i] !== quote) {
+            if (src[i] === '\\') i++; // skip escaped char
+            i++;
+          }
+        }
+        if (depth > 0) i++;
+      }
+      if (depth === 0) {
+        rawJsx = src.substring(openParen + 1, i - 1).trim();
+      }
+    }
+  } else {
+    // Fallback: return <...> without parens
+    const returnLt = src.match(/return\s+(<[\s\S]+)/);
+    if (returnLt) rawJsx = returnLt[1].trim().replace(/;?\s*\}?\s*$/, '');
+  }
+
+  if (!rawJsx) return { html: '', js: '' };
+
+  const sanitized = sanitizeExtractedHtml(rawJsx);
+  const html = cleanJsxToHtml(sanitized);
+
+  // Extract JS logic before the return statement
+  const jsMatch = src.match(/function\s+App\s*\(\)\s*\{([\s\S]*?)(?=\n\s*return[\s(])/);
+  const jsLogic = jsMatch ? jsMatch[1].trim() : '';
+
+  return { html, js: jsLogic };
+}
+
+/**
+ * Generate a React JSX component from visual builder HTML/CSS/JS.
+ * Outputs JSX syntax (transformed to React.createElement by Sucrase at runtime).
+ *
+ * If pages are provided (Record<string, {html, css?, js?}>), generates a
+ * multi-page component using useState for page navigation.
+ */
+export function generateReactComponent(
+  html: string,
+  css: string,
+  js: string,
+  pages?: Record<string, { html?: string; css?: string; js?: string }>,
+  startPage?: string,
+): string {
+  const cleanedHtml = sanitizeExtractedHtml(html);
+  const jsxContent = htmlToJsx(cleanedHtml);
   const indent = '  ';
 
-  // Check if js already contains component logic (from extracted component round-trip)
+  // Check if js already has component logic from round-trip
   const jsHasFormData = js && /\bformData\b/.test(js) && /\bsetFormData\b/.test(js);
-  const jsHasSetPage = js && /\bsetPage\b/.test(js);
 
-  // Extract data-bind field names to generate initial formData state
+  // Extract data-bind field names
   const bindFields = new Set<string>();
   const bindRegex = /data-bind="([^"]+)"/gi;
   let match;
@@ -1620,18 +1724,29 @@ export function generatePreactComponent(html: string, css: string, js: string): 
     bindFields.add(match[1]);
   }
 
-  // Build the component
+  // Also scan pages for data-bind fields
+  const pageEntries = pages ? Object.entries(pages) : [];
+  for (const [, page] of pageEntries) {
+    if (page.html) {
+      const pageBindRegex = /data-bind="([^"]+)"/gi;
+      let m;
+      while ((m = pageBindRegex.exec(page.html)) !== null) {
+        bindFields.add(m[1]);
+      }
+    }
+  }
+
+  const hasPages = pageEntries.length > 0;
+
   const lines: string[] = [];
   lines.push('function App() {');
 
-  // If js already contains extracted component logic, use it directly
+  // State declarations
   if (jsHasFormData) {
-    // Preserved logic from existing component - include as-is
     for (const line of js.split('\n')) {
       if (line.trim()) lines.push(`${indent}${line}`);
     }
   } else {
-    // Generate fresh state for form data
     if (bindFields.size > 0) {
       const defaults = Array.from(bindFields).map(f => `${f}: initialData.${f} || ''`).join(', ');
       lines.push(`${indent}const [formData, setFormData] = useState({ ${defaults} });`);
@@ -1639,15 +1754,15 @@ export function generatePreactComponent(html: string, css: string, js: string): 
       lines.push(`${indent}const [formData, setFormData] = useState({ ...initialData });`);
     }
 
-    // Add page navigation state if we detect data-navigate
-    if (/data-navigate/i.test(html) && !jsHasSetPage) {
+    if (hasPages) {
+      lines.push(`${indent}const [page, setPage] = useState('${startPage || pageEntries[0]?.[0] || 'main'}');`);
+    } else if (/data-navigate/i.test(html)) {
       lines.push(`${indent}const [page, setPage] = useState('main');`);
     }
 
-    // Add any custom JS as useEffect or inline
-    if (js && js.trim()) {
+    // Custom JS
+    if (js && js.trim() && !jsHasFormData) {
       lines.push('');
-      lines.push(`${indent}// Custom logic`);
       if (/document\.|addEventListener|querySelector|setInterval|setTimeout/i.test(js)) {
         lines.push(`${indent}useEffect(() => {`);
         for (const line of js.split('\n')) {
@@ -1662,15 +1777,34 @@ export function generatePreactComponent(html: string, css: string, js: string): 
     }
   }
 
-  lines.push('');
-  lines.push(`${indent}return html\``);
-
-  // Indent the htm content
-  for (const line of htmContent.split('\n')) {
-    lines.push(`${indent}${indent}${line}`);
+  // Multi-page rendering
+  if (hasPages) {
+    lines.push('');
+    for (const [pageId, page] of pageEntries) {
+      const pageHtml = sanitizeExtractedHtml(page.html || '');
+      const pageJsx = htmlToJsx(pageHtml);
+      lines.push(`${indent}if (page === '${pageId}') return (`);
+      for (const line of pageJsx.split('\n')) {
+        lines.push(`${indent}${indent}${line}`);
+      }
+      lines.push(`${indent});`);
+      lines.push('');
+    }
+    // Fallback to main content
+    lines.push(`${indent}return (`);
+    for (const line of jsxContent.split('\n')) {
+      lines.push(`${indent}${indent}${line}`);
+    }
+    lines.push(`${indent});`);
+  } else {
+    lines.push('');
+    lines.push(`${indent}return (`);
+    for (const line of jsxContent.split('\n')) {
+      lines.push(`${indent}${indent}${line}`);
+    }
+    lines.push(`${indent});`);
   }
 
-  lines.push(`${indent}\`;`);
   lines.push('}');
 
   return lines.join('\n');

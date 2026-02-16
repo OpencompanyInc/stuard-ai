@@ -720,6 +720,25 @@ export function setupIpc() {
     }
   });
 
+  // Custom UI prebuilt assets (for UI builder preview — avoids CDN)
+  ipcMain.handle('customUi:getPrebuiltAssets', async () => {
+    try {
+      const { getReactUmd, getReactDomUmd } = require('../custom-ui/assets/react-runtime');
+      const { TAILWIND_PREBUILT_CSS } = require('../custom-ui/assets/tailwind-prebuilt');
+      const { EXTRA_CSS } = require('../custom-ui/assets/utility-css');
+      return {
+        ok: true,
+        reactUmd: getReactUmd(),
+        reactDomUmd: getReactDomUmd(),
+        tailwindCss: TAILWIND_PREBUILT_CSS,
+        extraCss: EXTRA_CSS,
+      };
+    } catch (e: any) {
+      logger.error('[customUi:getPrebuiltAssets] Failed:', e);
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
   // Open chat in overlay
   ipcMain.handle('overlay:openChat', (_e, conversationId: string) => {
     try {

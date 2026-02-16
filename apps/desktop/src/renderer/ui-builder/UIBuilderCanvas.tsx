@@ -76,6 +76,29 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   const [surfaceScale, setSurfaceScale] = useState(1);
   const [hoveredPath, setHoveredPath] = useState<string | null>(null);
 
+  // Prebuilt assets (React UMD + Tailwind CSS) loaded from main process — no CDN
+  const [prebuiltAssets, setPrebuiltAssets] = useState<{
+    reactUmd?: string; reactDomUmd?: string; tailwindCss?: string; extraCss?: string;
+  }>({});
+  const assetsLoadedRef = useRef(false);
+
+  useEffect(() => {
+    if (assetsLoadedRef.current) return;
+    assetsLoadedRef.current = true;
+    window.desktopAPI?.customUiGetPrebuiltAssets?.().then((res: any) => {
+      if (res?.ok) {
+        setPrebuiltAssets({
+          reactUmd: res.reactUmd,
+          reactDomUmd: res.reactDomUmd,
+          tailwindCss: res.tailwindCss,
+          extraCss: res.extraCss,
+        });
+      } else {
+        console.warn('[UIBuilderCanvas] Failed to load prebuilt assets, iframe will use fallback');
+      }
+    }).catch(() => {});
+  }, []);
+
   const isInternalHtmlChange = useRef(false);
   const lastHtmlRef = useRef(html);
 
@@ -121,8 +144,9 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
           y: PREVIEW_SURFACE_HEIGHT * 0.4 - scaledCanvasHeight / 2,
         };
       case 'custom': {
-        const xPct = (typeof customX === 'number' ? customX : 50) / 100;
-        const yPct = (typeof customY === 'number' ? customY : 50) / 100;
+        const clampPercent = (value: number) => Math.max(0, Math.min(100, value));
+        const xPct = clampPercent(typeof customX === 'number' ? customX : 50) / 100;
+        const yPct = clampPercent(typeof customY === 'number' ? customY : 50) / 100;
         return {
           x: PREVIEW_SURFACE_WIDTH * xPct - scaledCanvasWidth / 2,
           y: PREVIEW_SURFACE_HEIGHT * yPct - scaledCanvasHeight / 2,
@@ -140,7 +164,10 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
 <html>
 <head>
   <meta charset="UTF-8">
-  <script src="https://cdn.tailwindcss.com"></script>
+  ${prebuiltAssets.reactUmd ? `<script>${prebuiltAssets.reactUmd}</script>` : '<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>'}
+  ${prebuiltAssets.reactDomUmd ? `<script>${prebuiltAssets.reactDomUmd}</script>` : '<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>'}
+  ${prebuiltAssets.tailwindCss ? `<style>${prebuiltAssets.tailwindCss}</style>` : '<script src="https://cdn.tailwindcss.com"></script>'}
+  ${prebuiltAssets.extraCss ? `<style>${prebuiltAssets.extraCss}</style>` : ''}
   <style>
     ::-webkit-scrollbar {
       width: 8px;
@@ -331,34 +358,94 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       getVar: window.stuard.getVar,
     };
 
+    // ─── React Runtime (mirrors custom-ui runtime) ─────────────────────────
+    var __reactOk = (typeof React !== 'undefined' && typeof ReactDOM !== 'undefined');
+    var useState, useEffect, useRef, useMemo, useCallback, useReducer, useContext, useLayoutEffect, Fragment, createElement;
+    if (__reactOk) {
+      useState = React.useState; useEffect = React.useEffect;
+      useRef = React.useRef; useMemo = React.useMemo;
+      useCallback = React.useCallback; useReducer = React.useReducer;
+      useContext = React.useContext; useLayoutEffect = React.useLayoutEffect;
+      Fragment = React.Fragment; createElement = React.createElement;
+    }
+    var hasStuardApi = typeof window.stuard !== 'undefined';
+    window.__varListeners = {};
+
+    // useVar – preview stub (local state only, no real variable IPC)
+    function useVar(varName, defaultValue) {
+      if (!__reactOk) return [defaultValue, function(){}];
+      var pair = useState(defaultValue);
+      var setVar = function(v) {
+        pair[1](v);
+        console.log('[Preview] useVar set:', varName, '=', v);
+      };
+      return [pair[0], setVar];
+    }
+
+    // useStream – preview stub
+    function useStream(streamId) {
+      return { chunk: null, frame: null, text: null, fullText: '', index: -1, done: false };
+    }
+
+    function getDesignerRoot() {
+      return document.querySelector('.stuard-root');
+    }
+
     function getElementPath(el) {
-      if (!el || el === document.body || el === document.documentElement) return null;
+      const root = getDesignerRoot();
+      if (!el || !root || el === root || el === document.body || el === document.documentElement) return null;
       const parts = [];
       let current = el;
-      while (current && current !== document.body) {
+      while (current && current !== root) {
         let selector = current.tagName.toLowerCase();
         if (current.id) {
           selector += '#' + current.id;
           parts.unshift(selector);
           break;
-        } else {
-          const parent = current.parentElement;
-          if (parent) {
-            const siblings = Array.from(parent.children);
-            const index = siblings.indexOf(current) + 1;
-            selector += ':nth-child(' + index + ')';
-          }
-          parts.unshift(selector);
         }
-        current = current.parentElement;
+        const parent = current.parentElement;
+        if (parent) {
+          const siblings = Array.from(parent.children);
+          const index = siblings.indexOf(current) + 1;
+          selector += ':nth-child(' + index + ')';
+        }
+        parts.unshift(selector);
+        current = parent;
       }
       return parts.join(' > ');
+    }
+
+    function sanitizeClone(node) {
+      // Remove all <script> tags — these are designer/preview scaffolding, never user content
+      node.querySelectorAll('script').forEach(el => el.remove());
+      // Remove designer data attributes and classes
+      node.querySelectorAll('[data-elements-path]').forEach(el => {
+        el.removeAttribute('data-elements-path');
+        el.classList.remove('ui-selected', 'ui-hovered', 'ui-dragging');
+      });
+      // Unwrap nested .stuard-root divs (corruption artifact)
+      node.querySelectorAll('.stuard-root').forEach(el => {
+        while (el.firstChild) el.parentNode.insertBefore(el.firstChild, el);
+        el.remove();
+      });
+    }
+
+    function emitHtmlUpdate() {
+      const root = getDesignerRoot();
+      if (!root) {
+        window.parent.postMessage({ type: 'html', html: '' }, '*');
+        return;
+      }
+      const clone = root.cloneNode(true);
+      sanitizeClone(clone);
+      window.parent.postMessage({ type: 'html', html: clone.innerHTML }, '*');
     }
 
     function getElementInfo(el) {
       if (!el) return null;
       const rect = el.getBoundingClientRect();
       const computed = window.getComputedStyle(el);
+
       const styles = {};
       const relevantProps = ['color', 'backgroundColor', 'fontSize', 'fontWeight', 'padding', 'margin', 'borderRadius', 'display', 'flexDirection', 'gap', 'alignItems', 'justifyContent'];
       relevantProps.forEach(prop => { styles[prop] = computed[prop]; });
@@ -390,11 +477,18 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     }
 
     function initializeElements() {
-      const elements = document.body.querySelectorAll('*');
+      const root = getDesignerRoot();
+      if (!root) {
+        window.parent.postMessage({ type: 'ready' }, '*');
+        return;
+      }
+      const elements = root.querySelectorAll('*');
       elements.forEach(el => {
         const path = getElementPath(el);
         if (path) {
           el.setAttribute('data-elements-path', path);
+        } else {
+          el.removeAttribute('data-elements-path');
         }
       });
       window.parent.postMessage({ type: 'ready' }, '*');
@@ -402,8 +496,10 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
 
     function findElementByPath(path) {
       if (!path) return null;
+      const root = getDesignerRoot();
+      if (!root) return null;
       try {
-        return document.querySelector('[data-elements-path="' + path.replace(/"/g, '\\\\"') + '"]');
+        return root.querySelector('[data-elements-path="' + path.replace(/"/g, '\\"') + '"]');
       } catch(e) {
         return null;
       }
@@ -485,12 +581,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
           selectedPath = null;
           document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
           window.parent.postMessage({ type: 'select', element: null }, '*');
-          const clone = document.body.cloneNode(true);
-          clone.querySelectorAll('[data-elements-path]').forEach(el => {
-            el.removeAttribute('data-elements-path');
-            el.classList.remove('ui-selected', 'ui-hovered', 'ui-dragging');
-          });
-          window.parent.postMessage({ type: 'html', html: clone.innerHTML }, '*');
+          emitHtmlUpdate();
         }
       }
     });
@@ -535,12 +626,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
             selectedPath = null;
             document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
             window.parent.postMessage({ type: 'select', element: null }, '*');
-            const clone = document.body.cloneNode(true);
-            clone.querySelectorAll('[data-elements-path]').forEach(el => {
-              el.removeAttribute('data-elements-path');
-              el.classList.remove('ui-selected', 'ui-hovered', 'ui-dragging');
-            });
-            window.parent.postMessage({ type: 'html', html: clone.innerHTML }, '*');
+            emitHtmlUpdate();
           }
         }
       } else if (e.data.type === 'updateElement') {
@@ -573,12 +659,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
           window.parent.postMessage({ type: 'elementUpdated', element: info }, '*');
         }
       } else if (e.data.type === 'getHtml') {
-        const clone = document.body.cloneNode(true);
-        clone.querySelectorAll('[data-elements-path]').forEach(el => {
-          el.removeAttribute('data-elements-path');
-          el.classList.remove('ui-selected', 'ui-hovered', 'ui-dragging');
-        });
-        window.parent.postMessage({ type: 'html', html: clone.innerHTML }, '*');
+        emitHtmlUpdate();
       } else if (e.data.type === 'updateStyles') {
         let styleEl = document.getElementById('user-css');
         if (!styleEl) {
@@ -595,16 +676,13 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
           el.parentNode.removeChild(el);
           selectedPath = null;
           document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
-          const clone = document.body.cloneNode(true);
-          clone.querySelectorAll('[data-elements-path]').forEach(el => {
-            el.removeAttribute('data-elements-path');
-            el.classList.remove('ui-selected', 'ui-hovered', 'ui-dragging');
-          });
-          window.parent.postMessage({ type: 'html', html: clone.innerHTML }, '*');
+          emitHtmlUpdate();
         }
       } else if (e.data.type === 'insertHtmlAtPoint') {
         const point = e.data.point || {};
         if (typeof point.x !== 'number' || typeof point.y !== 'number') return;
+        const root = getDesignerRoot();
+        if (!root) return;
         const temp = document.createElement('div');
         temp.innerHTML = e.data.html || '';
         const nodes = Array.from(temp.childNodes);
@@ -612,37 +690,29 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         const target = rawTarget ? rawTarget.closest('[data-elements-path]') : null;
         const containerTags = ['DIV', 'SECTION', 'MAIN', 'FORM', 'UL', 'OL', 'NAV', 'ARTICLE', 'ASIDE', 'HEADER', 'FOOTER'];
         if (!target || target === document.body || target === document.documentElement) {
-          nodes.forEach(node => document.body.appendChild(node));
+          nodes.forEach(node => root.appendChild(node));
         } else if (containerTags.includes(target.tagName)) {
           nodes.forEach(node => target.appendChild(node));
         } else {
           const rect = target.getBoundingClientRect();
           const insertBefore = point.y < rect.top + rect.height / 2;
-          const parent = target.parentNode || document.body;
+          const parent = target.parentNode || root;
           nodes.forEach(node => {
             parent.insertBefore(node, insertBefore ? target : target.nextSibling);
           });
         }
         initializeElements();
-        const clone = document.body.cloneNode(true);
-        clone.querySelectorAll('[data-elements-path]').forEach(el => {
-          el.removeAttribute('data-elements-path');
-          el.classList.remove('ui-selected', 'ui-hovered', 'ui-dragging');
-        });
-        window.parent.postMessage({ type: 'html', html: clone.innerHTML }, '*');
+        emitHtmlUpdate();
       } else if (e.data.type === 'appendHtml') {
+        const root = getDesignerRoot();
+        if (!root) return;
         const temp = document.createElement('div');
         temp.innerHTML = e.data.html || '';
         while (temp.firstChild) {
-          document.body.appendChild(temp.firstChild);
+          root.appendChild(temp.firstChild);
         }
         initializeElements();
-        const clone = document.body.cloneNode(true);
-        clone.querySelectorAll('[data-elements-path]').forEach(el => {
-          el.removeAttribute('data-elements-path');
-          el.classList.remove('ui-selected', 'ui-hovered', 'ui-dragging');
-        });
-        window.parent.postMessage({ type: 'html', html: clone.innerHTML }, '*');
+        emitHtmlUpdate();
       }
     });
     ` : ''}
@@ -652,13 +722,28 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
 
     try {
       ${js || ''}
-    } catch(e) {
-      console.error('[Preview] Script error:', e);
+    } catch(__jsErr) {
+      console.error('[Preview] Script error:', __jsErr);
+    }
+
+    // If user JS defined a React App component, render it into .stuard-root
+    if (__reactOk && typeof App === 'function') {
+      try {
+        var __root = document.querySelector('.stuard-root');
+        if (__root) {
+          ReactDOM.render(React.createElement(App), __root);
+          setTimeout(initializeElements, 50);
+        }
+      } catch(__renderErr) {
+        console.error('[Preview] React render error:', __renderErr);
+        var __errRoot = document.querySelector('.stuard-root');
+        if (__errRoot) __errRoot.innerHTML = '<div style="padding:16px;color:#f87171;font-family:system-ui"><h3>Render Error</h3><pre style="font-size:12px;background:rgba(127,29,29,0.3);padding:12px;border-radius:8px;white-space:pre-wrap;max-height:200px;overflow:auto">' + String(__renderErr.message||__renderErr).replace(/</g,'&lt;') + '</pre></div>';
+      }
     }
   </script>
 </body>
 </html>`;
-  }, [html, css, js, backgroundColor, showGrid, gridSize, previewMode]);
+  }, [html, css, js, backgroundColor, showGrid, gridSize, previewMode, prebuiltAssets]);
 
   const refreshIframe = useCallback(() => {
     if (iframeRef.current) {
@@ -799,7 +884,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   return (
     <div
       ref={containerRef}
-      className="flex-1 min-w-0 min-h-0 overflow-hidden relative bg-slate-100"
+      className="w-full h-full flex-1 min-w-0 min-h-0 overflow-hidden relative bg-slate-100"
     >
       <div className="w-full h-full flex items-center justify-center p-3">
         <div

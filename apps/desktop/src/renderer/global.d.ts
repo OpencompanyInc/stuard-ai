@@ -69,6 +69,9 @@ declare global {
       // Board window lifecycle
       onBoardInit: (cb: (data: any) => void) => void | (() => void);
       onBoardUpdate: (cb: (data: any) => void) => void | (() => void);
+      // Custom UI prebuilt assets (for UI builder preview — offline, no CDN)
+      customUiGetPrebuiltAssets: () => Promise<{ ok: boolean; reactUmd?: string; reactDomUmd?: string; tailwindCss?: string; extraCss?: string; error?: string }>;
+
       workflowsList: () => Promise<{ ok: boolean; items?: Array<{ id: string; name?: string; updatedAt?: string; folder?: string }>; folders?: string[]; error?: string }>;
       workflowsRead: (id: string) => Promise<{ ok: boolean; id?: string; content?: string; error?: string }>;
       workflowsSave: (id: string, content: string) => Promise<{ ok: boolean; error?: string }>;

@@ -9,7 +9,7 @@ import { getToolSchema } from '../../constants/tool-schemas';
 import { SmartValueEditor } from '../SmartValueEditor';
 import { EnhancedUIBuilderModal } from '../../../ui-builder/EnhancedUIBuilderModal';
 import type { UIWindowConfig } from '../../../ui-builder/types';
-import { extractHtmlFromPreactComponent } from '../../../ui-builder/utils/codeGenerator';
+import { extractHtmlFromComponent } from '../../../ui-builder/utils/codeGenerator';
 import { HotkeyEditor } from './editors/HotkeyEditor';
 import { SelectInput } from './editors/SelectInput';
 import { MultiSelectInput } from './editors/MultiSelectInput';
@@ -372,7 +372,7 @@ export function ToolArgsEditor({
   const [showUIBuilder, setShowUIBuilder] = useState(false);
   const [showAdvancedArgs, setShowAdvancedArgs] = useState(false);
 
-  // Special case: custom_ui tool - show Preact component editor + visual builder + key args
+  // Special case: custom_ui tool - show React component editor + visual builder + key args
   if (toolName === 'custom_ui') {
     const hasComponent = typeof args.component === 'string' && args.component.trim().length > 0;
 
@@ -393,7 +393,7 @@ export function ToolArgsEditor({
       onUpdate(newArgs);
     };
 
-    const handlePreactBuilderSave = (result: { component: string; css: string; window: any }) => {
+    const handleReactBuilderSave = (result: { component: string; css: string; window: any }) => {
       onUpdate({
         ...args,
         component: result.component,
@@ -416,18 +416,18 @@ export function ToolArgsEditor({
 
     return (
       <div className="space-y-5">
-        {/* Preact Component Editor - Primary mode */}
+        {/* React Component Editor - Primary mode */}
         <details className="text-sm border border-slate-200 rounded-xl overflow-hidden" open>
           <summary className="cursor-pointer text-slate-600 hover:text-slate-800 font-medium p-3 flex items-center gap-2 bg-gradient-to-r from-blue-50 to-sky-50 hover:from-blue-100 hover:to-sky-100 transition-colors">
 <Code2 className="w-4 h-4 text-blue-600" />
-            <span className="text-blue-700">Component (Preact + htm)</span>
+            <span className="text-blue-700">Component (React)</span>
             {hasComponent && (
               <span className="ml-auto text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">active</span>
             )}
           </summary>
           <div className="p-4 space-y-3 bg-white">
             <p className="text-[11px] text-slate-400 leading-snug">
-              Define a function App() using htm templates. Hooks: useState, useEffect, useVar(name, default). API: stuard.submit(data), stuard.close(), stuard.callTool(name, args).
+              Define a function App() using JSX. Hooks: useState, useEffect, useVar(name, default). API: stuard.submit(data), stuard.close(), stuard.callTool(name, args). Use useState for multi-page navigation.
             </p>
             <button
               onClick={() => setShowUIBuilder(true)}
@@ -561,8 +561,8 @@ className="w-full py-3 border border-dashed border-slate-200 rounded-xl text-xs 
         )}
 
         {showUIBuilder && (() => {
-          // Extract HTML from existing Preact component so the canvas can render it
-          const extracted = args.component ? extractHtmlFromPreactComponent(args.component) : { html: '', js: '' };
+          // Extract HTML from existing React component so the canvas can render it
+          const extracted = args.component ? extractHtmlFromComponent(args.component) : { html: '', js: '' };
           const builderHtml = args.html || extracted.html || '';
           const builderJs = args.js || args.script || extracted.js || '';
           return (
@@ -573,7 +573,7 @@ className="w-full py-3 border border-dashed border-slate-200 rounded-xl text-xs 
               pages={args.pages}
               startPage={args.startPage}
               mode="create"
-              outputMode="preact"
+              outputMode="react"
               windowConfig={{
                 width: args.window?.width || args.width || 600,
                 height: args.window?.height || args.height || 450,
@@ -594,7 +594,7 @@ className="w-full py-3 border border-dashed border-slate-200 rounded-xl text-xs 
                 contentPadding: args.window?.contentPadding || 24,
               }}
               onSave={handleUIBuilderSave}
-              onSaveComponent={handlePreactBuilderSave}
+              onSaveComponent={handleReactBuilderSave}
               onClose={() => setShowUIBuilder(false)}
             />
           );

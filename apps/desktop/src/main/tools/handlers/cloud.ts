@@ -107,6 +107,8 @@ async function execAgentToolBridged(tool: string, args: any, ctx: RouterContext)
       if (done) return;
       done = true;
       clearTimeout(timer);
+      clearTimeout(connectTimeout);
+      try { ws.removeAllListeners(); } catch {}
       try { ws.close(); } catch {}
       resolve(result);
     };

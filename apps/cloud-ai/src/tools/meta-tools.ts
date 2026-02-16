@@ -121,26 +121,40 @@ registerTool(executeAgenticTask, 'Core');
 // Virtual tools for workflow authoring (not executable directly by agent, but valid in workflows)
 const customUiTool = createTool({
     id: 'custom_ui',
-    description: `Display a custom overlay UI window using Preact+htm components.
+    description: `Display a custom overlay UI window using React components (offline, no CDN).
 
-COMPONENT FIELD (primary):
-  Define a function App() that returns htm tagged templates.
-  - html\`<div>...\${expr}...</div>\`
-  - onClick=\${handler}, onInput=\${e => ...}
-  - class="tailwind-classes" (Tailwind CSS is loaded)
+COMPONENT FIELD:
+  Define a function App() using JSX syntax. JSX is auto-transformed to React.createElement at runtime via Sucrase.
+
+  - Standard React JSX: <div className="p-4">{expr}</div>
+  - onClick={handler}, onChange={e => ...}
+  - className="tailwind-classes" (full Tailwind CSS bundled offline)
   - Hooks: useState, useEffect, useRef, useMemo, useCallback
-  - useVar(name, default) — bridges Preact state to workflow variables
+  - useVar(name, default) — bridges React state to workflow variables. Auto-seeds from data args.
   - stuard.submit(data) — submit data and close (resolves blocking)
   - stuard.close() — close window
   - stuard.callTool(name, args) — call any workflow tool
 
-IMPORTANT: The component field is raw JavaScript, NOT a JSON string.
+CRITICAL RULES:
+  1. EVERY button MUST have onClick. Use onClick={() => stuard.submit(data)} for submit/done/action buttons.
+     A button without onClick does NOTHING and blocks the workflow forever.
+  2. useVar auto-seeds from data: if data has {"name": "{{step1.json.name}}"}, useVar('name', '') returns it.
+  3. Use JSX style objects: style={{color: 'red'}} NOT style="color: red".
+  4. Use standard Tailwind classes (bg-slate-950), not arbitrary values (bg-[#050510]).
+
+MULTI-PAGE:
+  Use useState for page navigation inside the component:
+  const [page, setPage] = useState('home');
+  if (page === 'settings') return (<div>...</div>);
+  return (<div>...<button onClick={() => setPage('settings')}>Settings</button></div>);
+
+IMPORTANT: The component field is raw JavaScript/JSX, NOT a JSON string.
   Write it with real newlines and unescaped quotes.
   Do NOT double-escape: use actual newlines, not literal \\n.`,
     inputSchema: z.object({
         id: z.string().optional().describe('Window ID. Same ID reuses existing window.'),
         title: z.string().optional().describe('Window title'),
-        component: z.string().describe('Preact function component. Must define function App(). Uses html`` tagged templates with ${} for expressions. All Preact hooks available plus useVar(name, default).'),
+        component: z.string().describe('React function component using JSX. Must define function App(). All React hooks available plus useVar(name, default). Use useState for multi-page navigation.'),
         css: z.string().optional().describe('Additional CSS styles'),
         data: z.record(z.string(), z.any()).optional().describe('Initial data accessible as initialData/formData'),
         blocking: z.boolean().optional().describe('If true (default), workflow waits for user action'),
@@ -154,7 +168,7 @@ IMPORTANT: The component field is raw JavaScript, NOT a JSON string.
                 z.object({ x: z.number(), y: z.number() })
             ]).optional().describe('Window position (default center)'),
             alwaysOnTop: z.boolean().optional().describe('Keep above other windows (default true)'),
-            frameless: z.boolean().optional().describe('Hide window frame/titlebar (default true)'),
+            frameless: z.boolean().optional().describe('Hide window frame/titlebar (default false)'),
             resizable: z.boolean().optional(),
             transparent: z.boolean().optional(),
             borderRadius: z.number().optional().describe('Corner radius in px'),
@@ -166,20 +180,12 @@ IMPORTANT: The component field is raw JavaScript, NOT a JSON string.
 
 const updateCustomUiTool = createTool({
     id: 'update_custom_ui',
-    description: 'Update an existing custom UI window with new data, HTML, or navigate to a page.',
+    description: 'Update an existing custom UI window with new data or component.',
     inputSchema: z.object({
         id: z.string().describe('The ID of the custom_ui window to update'),
-        data: z.record(z.string(), z.any()).optional().describe('Data to merge into formData'),
-        html: z.string().optional().describe('New HTML content (replaces current view)'),
+        data: z.record(z.string(), z.any()).optional().describe('Data to merge into formData/initialData'),
+        component: z.string().optional().describe('New React JSX component to replace current view'),
         css: z.string().optional().describe('New CSS to append'),
-        script: z.string().optional().describe('JavaScript to run'),
-        navigateTo: z.string().optional().describe('Page name to navigate to (if using pages system)'),
-        pages: z.record(z.string(), z.object({
-            html: z.string().optional(),
-            layout: z.any().optional(),
-            css: z.string().optional(),
-            script: z.string().optional(),
-        })).describe('Update or add page definitions').optional(),
     }),
     execute: async () => { throw new Error("This tool is for workflow definitions only, not direct execution."); }
 });

@@ -196,21 +196,49 @@ const resetTimeout = (ms: number) => {
  * Calculate appropriate timeout for a tool based on its arguments
  */
 export function calcToolTimeout(tool: string, args: any): number {
-  // capture_media: handle both fixed and until_stop modes
+  // capture_media: handle fixed, until_stop, and stream modes
   if (tool === 'capture_media') {
     const mode = String(args?.mode || 'fixed');
-    if (mode === 'until_stop') {
-      // until_stop mode returns immediately after starting recording (non-blocking)
+    const stream = Boolean(args?.stream);
+    if (mode === 'until_stop' || mode === 'stream' || stream) {
+      // until_stop/stream modes return immediately after starting recording (non-blocking)
       // The actual recording continues in background until stop_capture is called
       // So we only need a short timeout for the initial start
       return 60000; // 60s is plenty for setup
     }
+    
     // fixed mode blocks for the entire duration, so timeout must exceed durationMs
     const dur = Number(args?.durationMs || 0);
     const validDur = isNaN(dur) || dur <= 0 ? 0 : dur;
     // Use 2 minute cushion for long recordings to account for file save + network delays
     const cushion = validDur > 300000 ? 120000 : 60000; // 2 min cushion for recordings > 5 min
     return Math.max(validDur + cushion, 60000); // duration + cushion, min 60s
+  }
+
+  // capture_screen: handle fixed, until_stop, and stream modes
+  if (tool === 'capture_screen') {
+    const mode = String(args?.mode || 'fixed');
+    const stream = Boolean(args?.stream);
+    if (mode === 'until_stop' || mode === 'stream' || stream) {
+      return 60000; // setup only
+    }
+    const dur = Number(args?.durationMs || 0);
+    const validDur = isNaN(dur) || dur <= 0 ? 0 : dur;
+    const cushion = validDur > 300000 ? 120000 : 60000;
+    return Math.max(validDur + cushion, 60000);
+  }
+
+  // capture_system_audio: handle fixed, until_stop, and stream modes
+  if (tool === 'capture_system_audio') {
+    const mode = String(args?.mode || 'fixed');
+    const stream = Boolean(args?.stream);
+    if (mode === 'until_stop' || mode === 'stream' || stream) {
+      return 60000; // setup only
+    }
+    const dur = Number(args?.durationMs || 0);
+    const validDur = isNaN(dur) || dur <= 0 ? 0 : dur;
+    const cushion = validDur > 300000 ? 120000 : 60000;
+    return Math.max(validDur + cushion, 60000);
   }
   
   // stream_speech: durationMs + 60s

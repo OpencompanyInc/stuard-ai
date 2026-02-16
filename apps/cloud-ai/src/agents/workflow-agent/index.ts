@@ -455,50 +455,57 @@ BEST PRACTICES:
     in the workspace, then reference it with filePath in the script node
 
 ═══════════════════════════════════════════════════════════════════════════════
-CUSTOM UI - Preact Component Mode (Preferred)
+CUSTOM UI - React JSX (Offline)
 ═══════════════════════════════════════════════════════════════════════════════
 
-Use the 'component' field to write React-like UIs with Preact + htm.
-This replaces the old html/script/css split. css field still works for overrides.
+Use the 'component' field to write UIs with React JSX. Fully offline.
+JSX is auto-transformed to React.createElement at runtime. css field works for overrides.
 
-SYNTAX: htm tagged templates (like JSX but with backticks)
-  - html\`<div>...</div>\`  instead of  <div>...</div>
-  - \${expression}          instead of  {expression}
-  - onClick=\${handler}     instead of  onClick={handler}
-  - class="..."            (same as JSX className, both work)
+JSX SYNTAX:
+  - Standard React JSX: <div className="p-4">{expr}</div>
+  - onClick={handler}, onChange={e => ...}
+  - className="tailwind-classes" (Tailwind CSS bundled offline)
+  - Multi-page: use useState('home') + conditional returns for page navigation
 
 AVAILABLE HOOKS:
   - useState, useEffect, useRef, useMemo, useCallback, useReducer, useContext
-  - useVar(name, default)  — bridges Preact state to workflow variables
+  - useVar(name, default)  — bridges React state to workflow variables. Auto-seeds from data args.
 
 useVar HOOK:
   const [count, setCount] = useVar('counter', 0);
   // count is reactive — re-renders component on change
   // setCount(5) updates everywhere (other UIs, workflow context)
   // External set_variable calls also trigger re-render
+  // AUTO-SEEDS from data: if data has {"counter": "{{step1.json.count}}"}, useVar('counter', 0) returns it
 
 INTERACTION:
   stuard.submit(data)          // Submit and resolve blocking promise
   stuard.close()               // Close window
   stuard.callTool(name, args)  // Call a workflow tool
 
+CRITICAL RULES:
+  1. EVERY button MUST have onClick. Use onClick={() => stuard.submit(data)} for submit/done buttons.
+     A button without onClick does NOTHING — the UI cannot close and the workflow blocks forever.
+  2. useVar auto-seeds from data: match useVar names to your data keys.
+  3. Use JSX style objects: style={{color: 'red'}} NOT style="color: red".
+  4. Use standard Tailwind classes (bg-slate-950), not arbitrary values (bg-[#050510]).
+
 TIMEOUTS: No timeout by default. Set timeoutMs if needed.
 
 WINDOW CONFIG (optional):
   window: { width: 400, height: 300, position: "center", alwaysOnTop: true,
-            frameless: true, borderRadius: 12, backgroundColor: "#1a1a2e" }
+            frameless: false, borderRadius: 12, backgroundColor: "#1a1a2e" }
 
 JSON ESCAPING for component field:
   In JSON, the component is a string. Use \\n for newlines and \\" for quotes.
   Do NOT double-escape: write \\n not \\\\n, write \\" not \\\\".
-  Backticks do NOT need escaping in JSON strings.
 
-EXAMPLE - Counter:
+EXAMPLE - Counter (JSX):
   {
     id: "counter_ui", tool: "custom_ui",
     args: {
       title: "Counter",
-      component: "function App() {\\n  const [count, setCount] = useVar('counter', 0);\\n  return html\`<div class=\\"p-6 text-center\\">\\n    <h2 class=\\"text-4xl font-bold text-white\\">\${count}</h2>\\n    <div class=\\"flex gap-2 mt-4 justify-center\\">\\n      <button onClick=\${() => setCount(count - 1)} class=\\"btn-secondary px-4\\">-</button>\\n      <button onClick=\${() => setCount(count + 1)} class=\\"btn-primary px-4\\">+</button>\\n    </div>\\n  </div>\`;\\n}",
+      component: "function App() {\\n  const [count, setCount] = useVar('counter', 0);\\n  return (\\n    <div className=\\"p-6 text-center\\">\\n      <h2 className=\\"text-4xl font-bold text-white\\">{count}</h2>\\n      <div className=\\"flex gap-2 mt-4 justify-center\\">\\n        <button onClick={() => setCount(count - 1)} className=\\"btn-secondary px-4\\">-</button>\\n        <button onClick={() => setCount(count + 1)} className=\\"btn-primary px-4\\">+</button>\\n      </div>\\n    </div>\\n  );\\n}",
       window: { width: 250, height: 180 }
     }
   }
@@ -506,31 +513,33 @@ EXAMPLE - Counter:
 The above component when parsed from JSON becomes this JavaScript:
   function App() {
     const [count, setCount] = useVar('counter', 0);
-    return html\`<div class="p-6 text-center">
-      <h2 class="text-4xl font-bold text-white">\${count}</h2>
-      <div class="flex gap-2 mt-4 justify-center">
-        <button onClick=\${() => setCount(count - 1)} class="btn-secondary px-4">-</button>
-        <button onClick=\${() => setCount(count + 1)} class="btn-primary px-4">+</button>
+    return (
+      <div className="p-6 text-center">
+        <h2 className="text-4xl font-bold text-white">{count}</h2>
+        <div className="flex gap-2 mt-4 justify-center">
+          <button onClick={() => setCount(count - 1)} className="btn-secondary px-4">-</button>
+          <button onClick={() => setCount(count + 1)} className="btn-primary px-4">+</button>
+        </div>
       </div>
-    </div>\`;
+    );
   }
 
-EXAMPLE - Timer with useEffect:
+EXAMPLE - Timer with useEffect (JSX):
   {
     id: "timer_ui", tool: "custom_ui",
     args: {
       title: "Timer",
-      component: "function App() {\\n  const [seconds, setSeconds] = useVar('timer', 0);\\n  useEffect(() => {\\n    const id = setInterval(() => setSeconds(s => s + 1), 1000);\\n    return () => clearInterval(id);\\n  }, []);\\n  return html\`<div class=\\"p-6 text-center\\">\\n    <h1 class=\\"text-5xl font-mono text-white\\">\${String(Math.floor(seconds/60)).padStart(2,'0')}:\${String(seconds%60).padStart(2,'0')}</h1>\\n    <button onClick=\${() => stuard.submit({seconds})} class=\\"btn-primary mt-4\\">Done</button>\\n  </div>\`;\\n}",
+      component: "function App() {\\n  const [seconds, setSeconds] = useVar('timer', 0);\\n  useEffect(() => {\\n    const id = setInterval(() => setSeconds(s => s + 1), 1000);\\n    return () => clearInterval(id);\\n  }, []);\\n  return (\\n    <div className=\\"p-6 text-center\\">\\n      <h1 className=\\"text-5xl font-mono text-white\\">{String(Math.floor(seconds/60)).padStart(2,'0')}:{String(seconds%60).padStart(2,'0')}</h1>\\n      <button onClick={() => stuard.submit({seconds})} className=\\"btn-primary mt-4\\">Done</button>\\n    </div>\\n  );\\n}",
       window: { width: 280, height: 160 }
     }
   }
 
-EXAMPLE - Form with submit:
+EXAMPLE - Form with submit (JSX):
   {
     id: "form_ui", tool: "custom_ui",
     args: {
       title: "Quick Form",
-      component: "function App() {\\n  const [name, setName] = useState('');\\n  const [email, setEmail] = useState('');\\n  return html\`<div class=\\"p-6 space-y-4\\">\\n    <input value=\${name} onInput=\${e => setName(e.target.value)} placeholder=\\"Name\\" class=\\"w-full p-2 rounded bg-dark-700 text-white\\" />\\n    <input value=\${email} onInput=\${e => setEmail(e.target.value)} placeholder=\\"Email\\" class=\\"w-full p-2 rounded bg-dark-700 text-white\\" />\\n    <button onClick=\${() => stuard.submit({name, email})} class=\\"btn-primary w-full\\">Submit</button>\\n  </div>\`;\\n}",
+      component: "function App() {\\n  const [name, setName] = useState('');\\n  const [email, setEmail] = useState('');\\n  return (\\n    <div className=\\"p-6 space-y-4\\">\\n      <input value={name} onChange={e => setName(e.target.value)} placeholder=\\"Name\\" className=\\"w-full p-2 rounded bg-slate-800 text-white\\" />\\n      <input value={email} onChange={e => setEmail(e.target.value)} placeholder=\\"Email\\" className=\\"w-full p-2 rounded bg-slate-800 text-white\\" />\\n      <button onClick={() => stuard.submit({name, email})} className=\\"btn-primary w-full\\">Submit</button>\\n    </div>\\n  );\\n}",
       window: { width: 320, height: 250 }
     }
   }

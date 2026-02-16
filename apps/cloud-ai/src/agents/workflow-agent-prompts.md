@@ -459,190 +459,219 @@ Output: { ok, data: { name: "John Doe", email: "john@example.com", phone: "+1...
 - **agent_extract**: Pull structured data from text (simpler than agent_node JSON mode)
 
 ═══════════════════════════════════════════════════════════════════════════════
-CUSTOM UI TOOL - ENHANCED WITH JAVASCRIPT SUPPORT
+CUSTOM UI TOOL — REACT JSX (OFFLINE)
 ═══════════════════════════════════════════════════════════════════════════════
 
-Use **custom_ui** for ANY interactive UI needs. Now with FULL JavaScript support!
+Use **custom_ui** for ANY interactive UI. React + Tailwind CSS bundled offline.
+
+**COMPONENT FIELD:**
+Define a `function App()` using **JSX syntax**. JSX is auto-transformed to
+React.createElement calls at runtime via Sucrase. No build step needed.
 
 **CORE FEATURES:**
+- **React 18** with all hooks, JSX auto-transformed at runtime
+- **Fully offline**: React UMD + Tailwind CSS pre-built, no CDN/internet
 - **Window reuse**: Same ID = updates existing window (no flicker)
-- **Raw HTML**: Use "html" field OR "layout" object
-- **JavaScript**: Use "script" field to run code when window opens
-- **Button actions**: Add data-action="actionName" to buttons
-- **Data binding**: Use data-bind="fieldName" in inputs
-- **Auto-resize**: Window resizes if dimensions change
+- **Frameless/transparent**: Custom window chrome, rounded corners, shadows
+- **stuard API**: Call tools, file dialogs, clipboard, window controls, events
+- **Tailwind CSS**: Full utility classes available offline
 
 ═══════════════════════════════════════════════════════════════════════════════
-JAVASCRIPT IN CUSTOM UI - THE `stuard` API
+JSX COMPONENT SYNTAX
 ═══════════════════════════════════════════════════════════════════════════════
 
-When you add a "script" field, JavaScript runs in the window with access to `window.stuard` API:
+The `component` field must define a `function App()` returning JSX:
 
-**WORKFLOW TOOL CALLING:**
-```javascript
-// Call any workflow tool from within the UI
+```jsx
+function App() {
+  const [count, setCount] = useState(0);
+  return (
+    <div className="p-6 flex flex-col items-center gap-4">
+      <h2 className="text-xl font-bold text-slate-800">Counter: {count}</h2>
+      <div className="flex gap-3">
+        <button className="btn btn-primary" onClick={() => setCount(c => c + 1)}>+1</button>
+        <button className="btn btn-secondary" onClick={() => setCount(0)}>Reset</button>
+      </div>
+      <button className="btn btn-ghost" onClick={() => stuard.submit({ count })}>Done</button>
+    </div>
+  );
+}
+```
+
+**Hooks:** useState, useEffect, useRef, useMemo, useCallback, useReducer, useContext, useLayoutEffect
+**Custom hooks:**
+- `useVar(name, default)` — bind to workflow variable (reactive, two-way). Auto-seeds from `data` args.
+- `useStream(streamId)` — subscribe to streaming data
+
+**CRITICAL RULES:**
+1. **useVar auto-seeds from data**: If data has `{ "name": "{{step1.json.name}}" }`,
+   then `useVar('name', '')` returns the resolved value automatically. Always match
+   useVar names to your data keys.
+2. **EVERY button MUST have onClick**: Use `onClick={() => stuard.submit(data)}` for
+   submit/done buttons, `onClick={() => stuard.close()}` for cancel/close buttons.
+   A button without onClick does NOTHING — the UI cannot close and the workflow blocks forever.
+3. **Use JSX style objects, NOT strings**: Write `style={{color: 'red'}}` not `style="color: red"`.
+4. **Use standard Tailwind classes**: Arbitrary values like `bg-[#050510]` may not work offline.
+   Use standard classes like `bg-slate-950` or inline `style={{background: '#050510'}}`.
+
+═══════════════════════════════════════════════════════════════════════════════
+MULTI-PAGE NAVIGATION (useState pattern)
+═══════════════════════════════════════════════════════════════════════════════
+
+Pages are managed inside the component with useState. No special server-side
+config needed — just use conditional rendering:
+
+```jsx
+function App() {
+  const [page, setPage] = useState('home');
+  const [formData, setFormData] = useState({ ...initialData });
+
+  if (page === 'settings') return (
+    <div className="p-6 space-y-4">
+      <h2 className="text-lg font-bold">Settings</h2>
+      <label className="flex items-center gap-2">
+        <input type="checkbox" checked={formData.darkMode}
+          onChange={e => setFormData({...formData, darkMode: e.target.checked})} />
+        Dark mode
+      </label>
+      <button className="btn btn-secondary" onClick={() => setPage('home')}>Back</button>
+    </div>
+  );
+
+  if (page === 'confirm') return (
+    <div className="p-6 text-center space-y-4">
+      <h2 className="text-lg font-bold">Confirm?</h2>
+      <div className="flex gap-3 justify-center">
+        <button className="btn btn-primary" onClick={() => stuard.submit(formData)}>Yes</button>
+        <button className="btn btn-ghost" onClick={() => setPage('home')}>Back</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="p-6 space-y-4">
+      <h2 className="text-lg font-bold">Home</h2>
+      <input className="w-full" placeholder="Name" value={formData.name || ''}
+        onChange={e => setFormData({...formData, name: e.target.value})} />
+      <div className="flex gap-3">
+        <button className="btn btn-primary" onClick={() => setPage('confirm')}>Submit</button>
+        <button className="btn btn-ghost" onClick={() => setPage('settings')}>Settings</button>
+      </div>
+    </div>
+  );
+}
+```
+
+═══════════════════════════════════════════════════════════════════════════════
+THE `stuard` API (available in component code)
+═══════════════════════════════════════════════════════════════════════════════
+
+**TOOL CALLING:**
+```jsx
 const result = await stuard.callTool('get_clipboard_content');
 const search = await stuard.callTool('web_search', { query: 'hello' });
-const aiResult = await stuard.callTool('ai_inference', {
-  prompt: 'Summarize this',
-  input: text
-});
+const aiResult = await stuard.callTool('ai_inference', { prompt: 'Summarize', input: text });
 ```
 
 **FILE DIALOGS:**
-```javascript
-// Pick file
-const file = await stuard.pickFile({
-  title: 'Select File',
-  multiple: false,
-  filters: [{ name: 'Images', extensions: ['jpg', 'png'] }]
-});
-// Returns: { canceled: false, filePaths: ['C:/path/file.jpg'] }
-
-// Pick folder
+```jsx
+const file = await stuard.pickFile({ title: 'Select', filters: [{ name: 'Images', extensions: ['jpg', 'png'] }] });
 const folder = await stuard.pickFolder({ title: 'Select Folder' });
-
-// Save dialog
-const savePath = await stuard.pickSavePath({
-  title: 'Save As',
-  defaultPath: 'output.txt',
-  filters: [{ name: 'Text', extensions: ['txt'] }]
-});
+const savePath = await stuard.pickSavePath({ title: 'Save As', defaultPath: 'out.txt' });
 ```
 
-**FILE I/O:**
-```javascript
-// Read file
-const content = await stuard.readFile('/path/to/file.txt');
-
-// Write file
-await stuard.writeFile('/path/to/file.txt', 'content');
-```
-
-**CLIPBOARD:**
-```javascript
-// Copy to clipboard
-await stuard.copyToClipboard('Hello World!');
-
-// Read clipboard
-const text = await stuard.readClipboard();
-```
-
-**NOTIFICATIONS:**
-```javascript
-stuard.notify('Title', 'Message body');
-```
+**FILE I/O:** `await stuard.readFile(path)` / `await stuard.writeFile(path, content)`
+**CLIPBOARD:** `await stuard.copyToClipboard(text)` / `await stuard.readClipboard()`
+**NOTIFICATIONS:** `stuard.notify('Title', 'Body')`
 
 **WINDOW ACTIONS:**
-```javascript
-// Submit form data and close
-stuard.submit(formData);
-
-// Close with custom data
-stuard.close({ action: 'cancelled', reason: 'user clicked X' });
-
-// Custom action (doesn't close)
-stuard.action('custom-action', { data: 'value' });
-
-// Stop the current workflow
-stuard.stopWorkflow();
+```jsx
+stuard.submit(data);           // Submit data and close (resolves blocking)
+stuard.close(data);            // Close with optional data
+stuard.action('name', data);   // Named action (doesn't close)
+stuard.stopWorkflow();         // Stop the workflow
 ```
 
 **WINDOW CONTROLS:**
-```javascript
-// Resize window
-stuard.resize(800, 600);
-
-// Move window
-stuard.moveTo(100, 100);
-
-// Center window
-stuard.center();
-
-// Always on top
-stuard.setAlwaysOnTop(true);
-
-// Minimize
-stuard.minimize();
+```jsx
+stuard.resize(800, 600);      // Resize
+stuard.moveTo(100, 100);      // Move
+stuard.center();               // Center on screen
+stuard.setAlwaysOnTop(true);   // Pin on top
+stuard.minimize();             // Minimize
 ```
 
-**EVENTS (Bidirectional):**
-```javascript
-// Listen for events from workflow
-stuard.on('update-progress', (data) => {
-  console.log('Progress:', data.percent);
-});
-
-// Emit events to workflow
-stuard.emit('user-clicked', { button: 'save' });
-
-// Listen for data updates
-stuard.onDataUpdate((newData) => {
-  console.log('Data changed:', newData);
-});
+**EVENTS:**
+```jsx
+stuard.on('event-name', (data) => { ... });    // Listen for workflow events
+stuard.emit('event-name', data);                // Emit events to workflow
+stuard.onDataUpdate((newData) => { ... });      // Data updates from update_custom_ui
 ```
 
-**SYSTEM INFO:**
-```javascript
-const info = await stuard.getScreenInfo();
-// Returns: { width: 1920, height: 1080, workArea: { x, y, width, height } }
-```
+**SYSTEM INFO:** `const info = await stuard.getScreenInfo();`
 
 ═══════════════════════════════════════════════════════════════════════════════
-CUSTOM UI EXAMPLES - REAL-WORLD USE CASES
+WINDOW CONFIGURATION
 ═══════════════════════════════════════════════════════════════════════════════
 
-**1. CLIPBOARD MANAGER (with localStorage persistence):**
+```json
+"window": {
+  "width": 400, "height": 500,
+  "position": "center",
+  "alwaysOnTop": true,
+  "frameless": true,
+  "transparent": true,
+  "borderRadius": 16,
+  "resizable": false,
+  "backgroundColor": "transparent",
+  "shadow": { "enabled": true, "blur": 20, "color": "#00000040" },
+  "animation": { "open": "fade", "duration": 300 }
+}
+```
+
+**Position:** center, top-left, top-right, bottom-left, bottom-right, bottom-center, mouse, custom
+**Frameless windows:** Add `className="drag"` to title bar area for window dragging.
+
+═══════════════════════════════════════════════════════════════════════════════
+EXAMPLES
+═══════════════════════════════════════════════════════════════════════════════
+
+**1. CLIPBOARD MANAGER:**
 ```json
 {
   "tool": "custom_ui",
   "args": {
     "id": "clipboard_mgr",
     "title": "Clipboard Manager",
-    "html": "<div id=\"history\"></div>",
-    "script": "const history = JSON.parse(localStorage.getItem('clips') || '[]');\nconst result = await stuard.callTool('get_clipboard_content');\nif (result.ok && result.text) {\n  history.unshift({text: result.text, time: Date.now()});\n  localStorage.setItem('clips', JSON.stringify(history.slice(0, 50)));\n}\ndocument.getElementById('history').innerHTML = history.map(h => \n  `<div class=\"clip\" onclick=\"stuard.copyToClipboard('${h.text}'); stuard.close();\">${h.text.slice(0,50)}</div>`\n).join('');",
-    "window": { "width": 400, "height": 500 }
+    "component": "function App() {\n  const [clips, setClips] = useState([]);\n  useEffect(() => {\n    const saved = JSON.parse(localStorage.getItem('clips') || '[]');\n    stuard.callTool('get_clipboard_content').then(r => {\n      if (r.ok && r.text) {\n        const updated = [{text: r.text, time: Date.now()}, ...saved].slice(0, 50);\n        setClips(updated);\n        localStorage.setItem('clips', JSON.stringify(updated));\n      } else setClips(saved);\n    });\n  }, []);\n  return (\n    <div className=\"p-4 space-y-2\">\n      <h2 className=\"text-lg font-bold\">Clipboard History</h2>\n      {clips.map((c, i) => (\n        <button key={i} className=\"w-full text-left p-3 bg-slate-50 hover:bg-blue-50 rounded-lg text-sm truncate\" onClick={() => { stuard.copyToClipboard(c.text); stuard.close(); }}>{c.text.slice(0, 80)}</button>\n      ))}\n    </div>\n  );\n}",
+    "window": { "width": 400, "height": 500, "frameless": true, "borderRadius": 12 }
   }
 }
 ```
 
-**2. QUICK TEXT TOOLS (AI-powered):**
+**2. MULTI-PAGE SETTINGS APP:**
 ```json
 {
   "tool": "custom_ui",
   "args": {
-    "id": "text_tools",
-    "title": "Text Tools",
-    "selectedText": "{{get_clipboard.text}}",
-    "html": "<textarea id=\"input\"></textarea><button id=\"rewrite\">AI Rewrite</button><textarea id=\"output\"></textarea>",
-    "script": "document.getElementById('input').value = formData.selectedText || '';\ndocument.getElementById('rewrite').addEventListener('click', async () => {\n  const text = document.getElementById('input').value;\n  const result = await stuard.callTool('ai_inference', {\n    prompt: 'Rewrite this professionally',\n    input: text\n  });\n  if (result.ok) document.getElementById('output').value = result.text;\n});",
-    "window": { "width": 500, "height": 400 }
+    "id": "settings_app",
+    "title": "Settings",
+    "data": { "theme": "light", "fontSize": 14, "notifications": true },
+    "component": "function App() {\n  const [page, setPage] = useState('general');\n  const [settings, setSettings] = useState({...initialData});\n  const update = (key, val) => setSettings(s => ({...s, [key]: val}));\n\n  if (page === 'appearance') return (\n    <div className=\"p-6 space-y-4\">\n      <h2 className=\"text-lg font-bold\">Appearance</h2>\n      <select className=\"w-full\" value={settings.theme} onChange={e => update('theme', e.target.value)}>\n        <option value=\"light\">Light</option>\n        <option value=\"dark\">Dark</option>\n      </select>\n      <label className=\"text-sm\">Font Size: {settings.fontSize}px</label>\n      <input type=\"range\" min=\"10\" max=\"24\" value={settings.fontSize} onChange={e => update('fontSize', +e.target.value)} />\n      <button className=\"btn btn-secondary\" onClick={() => setPage('general')}>Back</button>\n    </div>\n  );\n\n  return (\n    <div className=\"p-6 space-y-4\">\n      <h2 className=\"text-lg font-bold\">General</h2>\n      <label className=\"flex items-center gap-2\">\n        <input type=\"checkbox\" checked={settings.notifications} onChange={e => update('notifications', e.target.checked)} />\n        Notifications\n      </label>\n      <div className=\"flex gap-3\">\n        <button className=\"btn btn-ghost\" onClick={() => setPage('appearance')}>Appearance</button>\n        <button className=\"btn btn-primary\" onClick={() => stuard.submit(settings)}>Save</button>\n      </div>\n    </div>\n  );\n}",
+    "window": { "width": 400, "height": 350, "frameless": true, "borderRadius": 12 }
   }
 }
 ```
 
-**3. IMAGE GALLERY (with folder picker):**
-```json
-{
-  "tool": "custom_ui",
-  "args": {
-    "id": "gallery",
-    "title": "Image Gallery",
-    "html": "<button id=\"pick\">Open Folder</button><div id=\"images\"></div>",
-    "script": "document.getElementById('pick').addEventListener('click', async () => {\n  const folder = await stuard.pickFolder();\n  if (!folder.canceled) {\n    const files = await stuard.callTool('list_directory', { path: folder.filePaths[0] });\n    const imgs = files.entries.filter(e => e.name.match(/\\.(jpg|png|gif)$/i));\n    document.getElementById('images').innerHTML = imgs.map(img => \n      `<img src=\"local-file://${img.path}\" style=\"width:100px;height:100px;object-fit:cover;\" />`\n    ).join('');\n  }\n});",
-    "window": { "width": 800, "height": 600 }
-  }
-}
-```
-
-**4. DYNAMIC FORM WITH VALIDATION:**
+**3. FORM WITH VALIDATION:**
 ```json
 {
   "tool": "custom_ui",
   "args": {
     "id": "form",
-    "html": "<input id=\"email\" data-bind=\"email\" placeholder=\"Email\" /><button id=\"validate\">Validate</button><div id=\"error\"></div><button data-action=\"submit\">Submit</button>",
-    "script": "document.getElementById('validate').addEventListener('click', async () => {\n  const email = document.getElementById('email').value;\n  const valid = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email);\n  document.getElementById('error').textContent = valid ? '✓ Valid' : '✗ Invalid email';\n  document.getElementById('error').style.color = valid ? 'green' : 'red';\n});"
+    "title": "Contact Form",
+    "component": "function App() {\n  const [email, setEmail] = useState('');\n  const [name, setName] = useState('');\n  const [error, setError] = useState('');\n  const validate = () => {\n    if (!name.trim()) { setError('Name required'); return false; }\n    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) { setError('Invalid email'); return false; }\n    setError(''); return true;\n  };\n  return (\n    <div className=\"p-6 space-y-4\">\n      <h2 className=\"text-xl font-bold\">Contact Info</h2>\n      <input className=\"w-full p-3 border rounded-lg\" placeholder=\"Name\" value={name} onChange={e => setName(e.target.value)} />\n      <input className=\"w-full p-3 border rounded-lg\" placeholder=\"Email\" value={email} onChange={e => setEmail(e.target.value)} />\n      {error && <div className=\"text-red-500 text-sm\">{error}</div>}\n      <button className=\"btn btn-primary w-full\" onClick={() => validate() && stuard.submit({ name, email })}>Submit</button>\n    </div>\n  );\n}",
+    "window": { "width": 400, "height": 350 }
   }
 }
 ```
@@ -651,80 +680,36 @@ CUSTOM UI EXAMPLES - REAL-WORLD USE CASES
 WORKFLOW TOOLS FOR UI INTERACTION
 ═══════════════════════════════════════════════════════════════════════════════
 
-**update_custom_ui** - Update UI without closing:
+**update_custom_ui** - Update data or component in existing window:
 ```json
-{
-  "tool": "update_custom_ui",
-  "args": {
-    "id": "my_window",
-    "data": { "progress": 50, "status": "Processing..." },
-    "html": "<div>New HTML content</div>",
-    "script": "console.log('Updated!');"
-  }
-}
+{ "tool": "update_custom_ui", "args": { "id": "my_window", "data": { "progress": 50 } } }
 ```
 
-**send_ui_event** - Send event to UI window:
+**close_custom_ui** - Close a window:
 ```json
-{
-  "tool": "send_ui_event",
-  "args": {
-    "id": "my_window",
-    "event": "progress-update",
-    "data": { "percent": 75 }
-  }
-}
-```
-
-**run_ui_script** - Execute JavaScript in UI:
-```json
-{
-  "tool": "run_ui_script",
-  "args": {
-    "id": "my_window",
-    "script": "document.getElementById('status').textContent = 'Complete!';",
-    "context": { "result": "success" }
-  }
-}
+{ "tool": "close_custom_ui", "args": { "id": "my_window" } }
 ```
 
 **list_custom_ui_windows** - Get open windows:
 ```json
-{
-  "tool": "list_custom_ui_windows",
-  "args": {}
-}
-```
-
-**close_custom_ui** - Close window:
-```json
-{
-  "tool": "close_custom_ui",
-  "args": { "id": "my_window" }
-}
+{ "tool": "list_custom_ui_windows", "args": {} }
 ```
 
 ═══════════════════════════════════════════════════════════════════════════════
-CUSTOM UI BEST PRACTICES
+BEST PRACTICES
 ═══════════════════════════════════════════════════════════════════════════════
 
-1. **Use keepOpen: true** for persistent dashboards/monitors
-2. **Use same ID** to update existing window (smooth transitions)
-3. **Store state in localStorage** for persistence across opens
-4. **Call workflow tools** for heavy operations (AI, file ops, etc.)
-5. **Use formData object** to collect form inputs automatically
-6. **Add Escape key handler** for better UX: `document.addEventListener('keydown', e => e.key === 'Escape' && stuard.close())`
-7. **Use data-bind** for automatic two-way binding with form fields
-8. **Use TailwindCSS classes** (available by default) for styling
-9. **Access initial data** via `formData.yourFieldName` in script
-10. **Return data on close** with `stuard.close({ myData: value })`
-
-Example multi-screen wizard flow:
-1. custom_ui with id="wizard", html="Step 1: Login...", script="..."
-2. update_custom_ui with id="wizard", html="Step 2: Settings..." (smooth transition)
-3. update_custom_ui with id="wizard", html="Step 3: Confirm..."
-4. User clicks submit → stuard.submit() → close window
-5. Next workflow step receives all collected data via {{wizard.data}}
+1. **Always use JSX** in the component field with `function App()`
+2. **Multi-page**: Use `const [page, setPage] = useState('home')` + conditional returns
+3. **Use keepOpen: true** for persistent dashboards/monitors
+4. **Reuse window IDs** for smooth updates (no window flash)
+5. **Tailwind CSS** for all styling (full utility classes offline)
+6. **useVar(name, default)** for reactive workflow variable binding
+7. **stuard.callTool()** for heavy operations (AI, file ops, search)
+8. **Escape handler:** `useEffect(() => { const h = e => e.key === 'Escape' && stuard.close(); document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, []);`
+9. **Frameless drag:** `className="drag"` on title bar div
+10. **Return data:** `stuard.submit({ myData: value })` on close
+11. **Initial data:** Access via `initialData.fieldName`
 
 ═══════════════════════════════════════════════════════════════════════════════
 RESPONSE GUIDELINES

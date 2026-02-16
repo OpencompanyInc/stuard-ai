@@ -39,6 +39,9 @@ latest-*.yml
 build/agent/
 build/.env
 
+# Auto-generated custom UI CSS
+src/main/custom-ui/assets/tailwind-prebuilt.ts
+
 # Development
 .vite/
 .turbo/

@@ -20,6 +20,16 @@ class ConnectionManager:
     async def disconnect(self, ws: WebSocket) -> None:
         async with self._lock:
             self.active.discard(ws)
+            # If no active connections remain, cancel all pending request futures
+            # to prevent leaked coroutines waiting for responses that will never come
+            if not self.active and self.pending_requests:
+                for req_id, fut in list(self.pending_requests.items()):
+                    try:
+                        if not fut.done():
+                            fut.cancel()
+                    except Exception:
+                        pass
+                self.pending_requests.clear()
 
     async def broadcast(self, message: str) -> None:
         async with self._lock:
