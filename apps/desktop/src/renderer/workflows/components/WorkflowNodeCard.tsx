@@ -12,6 +12,8 @@ export type StepExecutionStatus = 'pending' | 'running' | 'completed' | 'error';
 export const STREAM_CAPABLE_TOOLS = new Set([
   'agent_node', 'ai_inference', 'http_request', 'run_python_script',
   'capture_media',
+  'capture_screen',
+  'capture_system_audio',
 ]);
 
 /** Tools that always produce a streamId (no toggle needed) */
@@ -67,9 +69,8 @@ export function WorkflowNode({
   const colorKey = getToolColor(tool, isTrigger);
   const styles = CATEGORY_COLORS[colorKey] || CATEGORY_COLORS.slate;
 
-  // A node is a stream producer if it always streams OR if it has stream:true toggled on
   const nodeArgs = ('args' in node ? (node as any).args : undefined) || {};
-  const isStreamProducer = STREAM_ALWAYS_TOOLS.has(tool) || (STREAM_CAPABLE_TOOLS.has(tool) && nodeArgs.stream === true);
+  const isStreamProducer = STREAM_ALWAYS_TOOLS.has(tool) || (STREAM_CAPABLE_TOOLS.has(tool) && (nodeArgs.stream === true || nodeArgs.mode === 'stream'));
   
   const getStatusClasses = () => {
     if (executionStatus === 'running') return 'border-emerald-500 ring-4 ring-emerald-100/50 shadow-[0_8px_30px_rgb(16,185,129,0.2)] scale-[1.02] z-10';

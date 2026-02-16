@@ -42,10 +42,11 @@ export function useSpeechToText(cloudUrl?: string) {
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null); // Fallback or primary
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
-  const serverReadyRef = useRef<boolean>(false); // Track if server is ready to receive audio
+  const serverReadyRef = useRef<boolean>(false);
+  const accumulatedTranscriptRef = useRef<string>('');
 
   // Build WebSocket URL for speech endpoint from cloud HTTP URL
   // Convert https://api.stuard.ai -> wss://api.stuard.ai/speech
@@ -61,10 +62,11 @@ export function useSpeechToText(cloudUrl?: string) {
   };
   const TARGET_URL = buildSpeechUrl();
 
-  // Clear transcript state (useful after sending a message)
+// Clear transcript state (useful after sending a message)
   const clearTranscript = useCallback(() => {
     setTranscript('');
     setInterimTranscript('');
+    accumulatedTranscriptRef.current = '';
   }, []);
 
   const stopRecording = useCallback(() => {
@@ -133,22 +135,23 @@ export function useSpeechToText(cloudUrl?: string) {
         ws.send(JSON.stringify({ type: 'auth', accessToken: token }));
       };
 
-      ws.onmessage = (event) => {
+ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
           if (msg.type === 'ready') {
-            // Server is ready for audio - now we can start sending PCM data
             console.log('[useSpeechToText] Server ready');
             serverReadyRef.current = true;
+            accumulatedTranscriptRef.current = '';
           } else if (msg.type === 'transcript') {
             if (msg.is_final) {
-              setTranscript(prev => {
-                  const spacer = (prev && /[a-z0-9]$/i.test(prev) && /^[a-z0-9]/i.test(msg.text)) ? " " : (prev ? " " : "");
-                  return prev + spacer + msg.text;
-              });
+              const text = msg.text || '';
+              const prev = accumulatedTranscriptRef.current;
+              const spacer = (prev && /[a-z0-9]$/i.test(prev) && /^[a-z0-9]/i.test(text)) ? ' ' : (prev ? ' ' : '');
+              accumulatedTranscriptRef.current = prev + spacer + text;
+              setTranscript(accumulatedTranscriptRef.current);
               setInterimTranscript('');
             } else {
-              setInterimTranscript(msg.text);
+              setInterimTranscript(msg.text || '');
             }
           } else if (msg.type === 'error') {
             console.error('[useSpeechToText] Server error:', msg.message);

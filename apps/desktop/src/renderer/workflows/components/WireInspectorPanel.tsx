@@ -1074,7 +1074,7 @@ function StreamWireSection({
   const sourceTool = sourceNode ? ('tool' in sourceNode ? (sourceNode as any).tool || '' : (sourceNode as any).type || '') : '';
   const sourceArgs = sourceNode && 'args' in sourceNode ? (sourceNode as any).args || {} : {};
   const isAlwaysStream = sourceTool === 'stream_create';
-  const isStreamEnabled = STREAM_CAPABLE_TOOLS.has(sourceTool) && sourceArgs.stream === true;
+  const isStreamEnabled = STREAM_CAPABLE_TOOLS.has(sourceTool) && (sourceArgs.stream === true || sourceArgs.mode === 'stream');
   const canStream = isAlwaysStream || isStreamEnabled;
 
   const hasStream = !!(wire as any).stream;

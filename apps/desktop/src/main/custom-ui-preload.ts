@@ -320,6 +320,49 @@ contextBridge.exposeInMainWorld('stuard', {
   },
 
   /**
+   * Subscribe to a workflow stream and receive chunks in real-time.
+   * Use this to stream video frames, text tokens, or any chunked data into the UI.
+   * @param streamId - The stream ID to subscribe to
+   * @param callback - Called with each chunk { data, index, streamId }
+   * @returns Promise resolving to { ok, subscriberId } — call unsubscribeStream(subscriberId) to stop
+   */
+  subscribeStream: (streamId: string, callback: (chunk: { data: any; index: number; streamId: string }) => void): Promise<{ ok: boolean; subscriberId?: string }> => {
+    if (!eventListeners.has('__stream_chunk__')) {
+      eventListeners.set('__stream_chunk__', new Set());
+    }
+    eventListeners.get('__stream_chunk__')!.add(callback);
+    return ipcRenderer.invoke('stuard:subscribeStream', { streamId });
+  },
+
+  /**
+   * Unsubscribe from a workflow stream
+   * @param streamId - The stream ID
+   * @param subscriberId - The subscriber ID returned from subscribeStream
+   */
+  unsubscribeStream: (streamId: string, subscriberId: string): Promise<void> => {
+    return ipcRenderer.invoke('stuard:unsubscribeStream', { streamId, subscriberId });
+  },
+
+  /**
+   * Listen for stream chunk events (low-level)
+   * @param callback - Called with { data, index, streamId }
+   * @returns Unsubscribe function
+   */
+  onStreamChunk: (callback: (chunk: { data: any; index: number; streamId: string }) => void): (() => void) => {
+    if (!eventListeners.has('__stream_chunk__')) {
+      eventListeners.set('__stream_chunk__', new Set());
+    }
+    eventListeners.get('__stream_chunk__')!.add(callback);
+
+    return () => {
+      const listeners = eventListeners.get('__stream_chunk__');
+      if (listeners) {
+        listeners.delete(callback);
+      }
+    };
+  },
+
+  /**
    * Stop the current workflow
    */
   stopWorkflow: (): void => {
@@ -401,6 +444,20 @@ ipcRenderer.on('stuard:var-update', (_event, data) => {
   }
 });
 
+// Handle stream chunk events from main process
+ipcRenderer.on('stuard:stream-chunk', (_event, chunk) => {
+  const listeners = eventListeners.get('__stream_chunk__');
+  if (listeners) {
+    listeners.forEach(cb => {
+      try {
+        cb(chunk);
+      } catch (e) {
+        console.error('[stuard] Error in stream chunk listener:', e);
+      }
+    });
+  }
+});
+
 // Handle page navigation events from main process
 ipcRenderer.on('stuard:page-change', (_event, info) => {
   const listeners = eventListeners.get('__page_change__');
@@ -425,4 +482,6 @@ contextBridge.exposeInMainWorld('$stuard', {
   nav: (page: string, data?: any) => ipcRenderer.send('stuard:navigate', { page, data }),
   setVar: (name: string, value: any, type?: string) => ipcRenderer.invoke('stuard:setVar', { name, value, type }),
   getVar: (name: string) => ipcRenderer.invoke('stuard:getVar', name),
+  stream: (streamId: string) => ipcRenderer.invoke('stuard:subscribeStream', { streamId }),
+  unstream: (streamId: string, subscriberId: string) => ipcRenderer.invoke('stuard:unsubscribeStream', { streamId, subscriberId }),
 });

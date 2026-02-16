@@ -136,9 +136,10 @@ export const CLOUD_TOOL_ITEMS: PaletteItem[] = [
   { k: 'cloud.tool', t: 'analyze_current_screen', label: 'Analyze Screen', args: {} },
 
   // Text-to-Speech
-  { k: 'cloud.tool', t: 'text_to_speech', label: 'Text to Speech', args: { text: 'Hello!', voice: 'alloy', speed: 1.0, format: 'mp3', save: true, play: false } },
-  { k: 'cloud.tool', t: 'text_to_speech', label: 'Speak Text (Play)', args: { text: 'Hello!', voice: 'alloy', speed: 1.0, format: 'mp3', save: false, play: true } },
+  { k: 'cloud.tool', t: 'text_to_speech', label: 'Text to Speech', args: { text: 'Hello!', voice_id: 'JBFqnCBsd6RMkjVDRZzb', model_id: 'eleven_multilingual_v2', language_code: '', speed: 1.0, format: 'mp3', save: true, play: false } },
+  { k: 'cloud.tool', t: 'text_to_speech', label: 'Speak Text (Play)', args: { text: 'Hello!', voice_id: 'JBFqnCBsd6RMkjVDRZzb', model_id: 'eleven_multilingual_v2', language_code: '', speed: 1.0, format: 'mp3', save: false, play: true } },
   { k: 'cloud.tool', t: 'list_tts_voices', label: 'List TTS Voices', args: {} },
+  { k: 'cloud.tool', t: 'get_tts_models', label: 'Get TTS Models', args: {} },
   {
     k: 'cloud.tool',
     t: 'cloud_ai_vision',

@@ -5,7 +5,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { clsx } from 'clsx';
-import { convertLatexDelims } from '../utils/text';
+import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
 import { Search, Clock, Trash2 } from "lucide-react";
 
 function normalizeMarkdownSpacing(input: string): string {
@@ -160,8 +160,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                           }}
                         >
                           {typeof m.content === 'string'
-                            ? normalizeMarkdownSpacing(convertLatexDelims(m.content))
-                            : normalizeMarkdownSpacing(convertLatexDelims(JSON.stringify(m.content)))}
+                            ? normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(m.content)))
+                            : normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(JSON.stringify(m.content))))}
                         </ReactMarkdown>
                       </div>
                     </div>

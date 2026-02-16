@@ -204,7 +204,21 @@ export function interpolateForTool(input: any, ctx: any, toolName: string): any 
   };
 
   const walk = (v: any, p: string): any => {
-    if (typeof v === 'string') return templ(v, p);
+    if (typeof v === 'string') {
+      // Check if the entire string is a single template expression like {{step.data.region}}
+      // In this case, return the resolved value directly (preserving object/array types)
+      const singleTemplateMatch = v.match(/^\{\{([^{}]+)\}\}$/);
+      if (singleTemplateMatch) {
+        const expr = singleTemplateMatch[1].trim();
+        const resolved = getAtPath(ctx, expr, undefined);
+        if (resolved != null) {
+          // Return the resolved value directly - preserves objects/arrays instead of stringifying
+          return resolved;
+        }
+        return v; // Keep original if not resolved
+      }
+      return templ(v, p);
+    }
     if (Array.isArray(v)) return v.map((x, i) => walk(x, `${p}[${i}]`));
     if (v && typeof v === 'object') {
       const o: any = {};

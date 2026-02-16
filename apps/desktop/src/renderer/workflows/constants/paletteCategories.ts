@@ -148,13 +148,14 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
   },
   {
     id: 'tts',
-    label: 'Text to Speech',
+label: 'Text to Speech',
     icon: Speaker,
     color: 'purple',
     items: [
-      { k: 'cloud.tool', t: 'text_to_speech', label: 'Text to Speech (Save)', icon: Speaker, args: { text: 'Hello!', voice: 'alloy', speed: 1.0, format: 'mp3', save: true, play: false } },
-      { k: 'cloud.tool', t: 'text_to_speech', label: 'Speak Text (Play)', icon: Play, args: { text: 'Hello!', voice: 'alloy', speed: 1.0, format: 'mp3', save: false, play: true } },
+      { k: 'cloud.tool', t: 'text_to_speech', label: 'Text to Speech (Save)', icon: Speaker, args: { text: 'Hello!', voice_id: 'JBFqnCBsd6RMkjVDRZzb', model_id: 'eleven_multilingual_v2', language_code: '', speed: 1.0, format: 'mp3', save: true, play: false } },
+      { k: 'cloud.tool', t: 'text_to_speech', label: 'Speak Text (Play)', icon: Play, args: { text: 'Hello!', voice_id: 'JBFqnCBsd6RMkjVDRZzb', model_id: 'eleven_multilingual_v2', language_code: '', speed: 1.0, format: 'mp3', save: false, play: true } },
       { k: 'cloud.tool', t: 'list_tts_voices', label: 'List TTS Voices', icon: List, args: {} },
+      { k: 'cloud.tool', t: 'get_tts_models', label: 'Get TTS Models', icon: List, args: {} },
     ],
   },
   {

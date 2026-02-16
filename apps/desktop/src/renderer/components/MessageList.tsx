@@ -9,7 +9,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
-import { convertLatexDelims } from '../utils/text';
+import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
 import type { ToolCall, StreamChunk } from '../hooks/useAgent';
 
 // Performance constants
@@ -161,7 +161,7 @@ const ThinkingIndicator: React.FC<{
                   remarkPlugins={[remarkMath, remarkGfm]}
                   rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
                 >
-                  {normalizeMarkdownSpacing(convertLatexDelims(reasoning || ''))}
+                  {normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(reasoning || '')))}
                 </ReactMarkdown>
                 <span className="inline-block w-[3px] h-3 bg-primary/30 ml-1 animate-[blink_1s_step-end_infinite] align-middle rounded-full" />
               </div>

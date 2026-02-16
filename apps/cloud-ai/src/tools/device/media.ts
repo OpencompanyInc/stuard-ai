@@ -3,7 +3,7 @@ import { makeLocalTool } from './shared';
 
 export const capture_media = makeLocalTool(
   'capture_media',
-  'Capture photos, videos, audio, or combined audiovideo from webcam/microphone. Use mode="until_stop" to capture indefinitely until stop_capture is called. Audio/video/audiovideo captures automatically share the same device between workflows. Use mode="silence" to stop recording when silence is detected for a specified duration.',
+  'Capture photos, videos, audio, or combined audiovideo from webcam/microphone. Use mode="until_stop" to capture indefinitely until stop_capture is called. Audio/video/audiovideo captures automatically share the same device between workflows. Use mode="silence" to stop recording when silence is detected for a specified duration. Enable stream=true (or mode="stream") to emit live chunks via a streamId.',
   z.object({
     kind: z.enum(['photo', 'video', 'audio', 'audiovideo']),
     durationMs: z
@@ -15,9 +15,14 @@ export const capture_media = makeLocalTool(
     audioDevice: z.string().optional().describe('Audio device ID/index for audiovideo mode (optional)'),
     filePath: z.string().optional().describe('Output file path (auto-generated if not provided)'),
     mode: z
-      .enum(['fixed', 'until_stop', 'silence'])
+      .enum(['fixed', 'until_stop', 'silence', 'stream'])
       .default('fixed')
-      .describe('fixed: capture for durationMs. until_stop: capture until stop_capture is called. silence: capture until silence detected for silenceDurationMs'),
+      .describe('fixed: capture for durationMs. until_stop: capture until stop_capture is called. silence: capture until silence detected for silenceDurationMs. stream: emit live chunks until stop_capture is called'),
+    stream: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe('When true, enables streaming mode and returns streamId (equivalent to mode="stream").'),
     sessionId: z
       .string()
       .optional()
@@ -59,8 +64,9 @@ export const capture_media = makeLocalTool(
   }),
   (ctx) => {
     const mode = String((ctx as any)?.mode || 'fixed');
+    const stream = Boolean((ctx as any)?.stream);
     const kind = String((ctx as any)?.kind || 'photo');
-    if (mode === 'until_stop' || kind === 'audiovideo') {
+    if (mode === 'until_stop' || mode === 'stream' || stream || kind === 'audiovideo') {
       // until_stop mode and audiovideo return immediately after starting (non-blocking)
       return 60000; // 60s for setup
     }

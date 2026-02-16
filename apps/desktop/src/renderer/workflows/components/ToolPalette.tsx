@@ -1,18 +1,25 @@
 /**
  * Tool Palette Sidebar Component for the workflow builder
  */
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, forwardRef, useImperativeHandle, useRef } from "react";
 import { Search, X, ChevronRight, GripVertical, Box, Lock } from "lucide-react";
 import { PALETTE_CATEGORIES, CATEGORY_COLORS } from "../constants/paletteCategories";
 
-interface ToolPaletteProps {
-  onDragStart: (e: React.DragEvent, item: any) => void;
-  disabled?: boolean;
+export interface ToolPaletteRef {
+  focusSearch: () => void;
 }
 
-export function ToolPalette({ onDragStart, disabled }: ToolPaletteProps) {
+export const ToolPalette = forwardRef<ToolPaletteRef, {
+  onDragStart: (e: React.DragEvent, item: any) => void;
+  disabled?: boolean;
+}>(({ onDragStart, disabled }, ref) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['triggers', 'flow']));
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    focusSearch: () => searchInputRef.current?.focus(),
+  }), []);
 
   const [ffmpegConnected, setFfmpegConnected] = useState<boolean>(() => {
     try {
@@ -99,7 +106,8 @@ export function ToolPalette({ onDragStart, disabled }: ToolPaletteProps) {
 
       {/* Search */}
       <div className="relative group px-4 py-3">
-        <input
+<input
+          ref={searchInputRef}
           type="text"
           placeholder="Search tools..."
           value={searchQuery}
@@ -218,7 +226,7 @@ export function ToolPalette({ onDragStart, disabled }: ToolPaletteProps) {
             <p className="text-[10px] text-slate-400 mt-1">Try searching for something else</p>
           </div>
         )}
-      </div>
+</div>
     </div>
   );
-}
+});

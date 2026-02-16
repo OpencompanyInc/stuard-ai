@@ -13,6 +13,7 @@ Both tools support:
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import platform
 import tempfile
@@ -126,6 +127,8 @@ async def capture_screen(
         silenceDurationMs: Duration of silence before stopping (ms, default 2000)
     """
     mode = str(args.get("mode") or "fixed").strip().lower()
+    if bool(args.get("stream", False)):
+        mode = "stream"
     duration_ms = int(args.get("durationMs") or 5000)
     target = str(args.get("target") or "fullscreen").strip().lower()
     monitor_id = args.get("monitorId")
@@ -141,8 +144,8 @@ async def capture_screen(
     silence_duration_ms = int(args.get("silenceDurationMs") or 2000)
 
     # Validate
-    if mode not in ("fixed", "until_stop"):
-        raise ValueError("mode must be 'fixed' or 'until_stop'")
+    if mode not in ("fixed", "until_stop", "stream"):
+        raise ValueError("mode must be 'fixed', 'until_stop', or 'stream'")
     if target not in ("fullscreen", "monitor", "window", "region"):
         raise ValueError("target must be 'fullscreen', 'monitor', 'window', or 'region'")
     if fps < 1 or fps > 60:
@@ -150,8 +153,8 @@ async def capture_screen(
     if mode == "fixed" and duration_ms <= 0:
         raise ValueError("durationMs must be > 0 for fixed mode")
 
-    # For until_stop mode, use max_duration_ms as the limit
-    if mode == "until_stop":
+    # For until_stop/stream mode, use max_duration_ms as the limit
+    if mode in ("until_stop", "stream"):
         duration_ms = max_duration_ms
 
     # Create stop event
@@ -188,10 +191,37 @@ async def capture_screen(
         "started_at": time.time(),
         "completed": False,
         "error": None,
+        "streamId": None,
     }
 
     with _sessions_lock:
         _active_screen_recordings[session_id] = recording_info
+
+    stream_id: Optional[str] = None
+    if mode == "stream":
+        try:
+            from . import streams as _streams_mod
+
+            stream_result = await _streams_mod.stream_create({
+                "kind": "video_frames",
+                "flowId": session_id,
+                "sourceStepId": session_id,
+                "metadata": {
+                    "captureKind": "screen",
+                    "target": target,
+                    "fps": fps,
+                    "includeSystemAudio": include_audio,
+                },
+            })
+            stream_id = str(stream_result.get("streamId") or "")
+            if not stream_id:
+                raise RuntimeError("failed_to_create_stream")
+            recording_info["streamId"] = stream_id
+        except Exception as e:
+            with _sessions_lock:
+                _active_screen_sessions.pop(session_id, None)
+                _active_screen_recordings.pop(session_id, None)
+            raise RuntimeError(f"Failed to initialize screen stream: {e}")
 
     def _background_screen_work():
         """Background thread for screen recording."""
@@ -243,6 +273,15 @@ async def capture_screen(
             return None
 
         print(f"[screen_capture] Starting session '{session_id}', target={target}, fps={fps}")
+
+        stream_mod = None
+        if stream_id:
+            try:
+                from . import streams as _streams_mod
+
+                stream_mod = _streams_mod
+            except Exception:
+                stream_mod = None
 
         # Determine capture region
         with mss.mss() as sct:
@@ -307,7 +346,7 @@ async def capture_screen(
             recording_info["audioFilePath"] = audio_path
             audio_thread = threading.Thread(
                 target=_capture_system_audio_worker,
-                args=(audio_path, duration_ms, audio_stop_event, session_id + "_audio", emit, loop, None, silence_threshold, silence_duration_ms),
+                args=(audio_path, duration_ms, audio_stop_event, session_id + "_audio", emit, loop, None, silence_threshold, silence_duration_ms, stream_id),
                 daemon=True
             )
             audio_thread.start()
@@ -335,6 +374,22 @@ async def capture_screen(
                         if scale != 1.0:
                             frame = cv2.resize(frame, (out_width, out_height))
                         last_frame = frame
+
+                        if stream_mod and stream_id:
+                            try:
+                                ok_jpg, jpg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                                if ok_jpg:
+                                    stream_mod.push_to_stream(stream_id, {
+                                        "type": "video_frame",
+                                        "encoding": "base64",
+                                        "format": "jpeg",
+                                        "width": int(frame.shape[1]),
+                                        "height": int(frame.shape[0]),
+                                        "timestampMs": int((time.monotonic() - start) * 1000),
+                                        "data": base64.b64encode(jpg.tobytes()).decode("ascii"),
+                                    })
+                            except Exception:
+                                pass
                     except Exception as e:
                         print(f"[screen_capture] Frame capture error: {e}")
                         time.sleep(0.001)
@@ -419,12 +474,18 @@ async def capture_screen(
         recording_info["completed"] = True
         print(f"[screen_capture] Saved to {recording_info['path']}")
 
+        if stream_id and stream_mod:
+            try:
+                stream_mod.close_stream_sync(stream_id)
+            except Exception:
+                pass
+
         # Clean up session
         with _sessions_lock:
             _active_screen_sessions.pop(session_id, None)
 
-    # For until_stop mode, start in background and return immediately
-    if mode == "until_stop":
+    # For until_stop/stream mode, start in background and return immediately
+    if mode in ("until_stop", "stream"):
         thread = threading.Thread(target=_background_screen_work, daemon=True)
         thread.start()
 
@@ -446,6 +507,7 @@ async def capture_screen(
                 "sessionId": session_id,
                 "mode": mode,
                 "filePath": resolved_path,
+                "streamId": stream_id,
             })
 
         return {
@@ -453,10 +515,11 @@ async def capture_screen(
             "sessionId": session_id,
             "filePath": resolved_path,
             "mode": mode,
-            "status": "recording",
+            "status": "streaming" if mode == "stream" else "recording",
             "mimeType": mime,
             "hasAudio": include_audio,
             "audioFilePath": recording_info.get("audioFilePath"),
+            "streamId": stream_id,
         }
 
     # For fixed mode, run synchronously
@@ -515,10 +578,19 @@ async def stop_screen_capture(
     if recording_info:
         file_path = recording_info.get("path")
         audio_file_path = recording_info.get("audioFilePath")
+        stream_id = recording_info.get("streamId")
         for _ in range(40):  # Wait up to 2 seconds
             if recording_info.get("completed") or recording_info.get("error"):
                 break
             await asyncio.sleep(0.05)
+
+        if stream_id:
+            try:
+                from . import streams as _streams_mod
+
+                _streams_mod.close_stream_sync(str(stream_id))
+            except Exception:
+                pass
 
         with _sessions_lock:
             _active_screen_recordings.pop(session_id, None)
@@ -633,6 +705,8 @@ async def capture_system_audio(
         format: 'wav' | 'mp3'
     """
     mode = str(args.get("mode") or "fixed").strip().lower()
+    if bool(args.get("stream", False)):
+        mode = "stream"
     duration_ms = int(args.get("durationMs") or 5000)
     device = args.get("device")
     explicit_path = str(args.get("filePath") or "").strip()
@@ -640,12 +714,12 @@ async def capture_system_audio(
     max_duration_ms = int(args.get("maxDurationMs") or 7200000)
     output_format = str(args.get("format") or "wav").strip().lower()
 
-    if mode not in ("fixed", "until_stop"):
-        raise ValueError("mode must be 'fixed' or 'until_stop'")
+    if mode not in ("fixed", "until_stop", "stream"):
+        raise ValueError("mode must be 'fixed', 'until_stop', or 'stream'")
     if mode == "fixed" and duration_ms <= 0:
         raise ValueError("durationMs must be > 0 for fixed mode")
 
-    if mode == "until_stop":
+    if mode in ("until_stop", "stream"):
         duration_ms = max_duration_ms
 
     # Create stop event
@@ -677,16 +751,41 @@ async def capture_system_audio(
         "started_at": time.time(),
         "completed": False,
         "error": None,
+        "streamId": None,
     }
 
     with _sessions_lock:
         _active_audio_recordings[session_id] = recording_info
 
-    def _background_audio_work():
-        _capture_system_audio_worker(path, duration_ms, stop_event, session_id, emit, loop, recording_info)
+    stream_id: Optional[str] = None
+    if mode == "stream":
+        try:
+            from . import streams as _streams_mod
 
-    # For until_stop mode, start in background and return immediately
-    if mode == "until_stop":
+            stream_result = await _streams_mod.stream_create({
+                "kind": "audio_chunks",
+                "flowId": session_id,
+                "sourceStepId": session_id,
+                "metadata": {
+                    "captureKind": "system_audio",
+                    "format": output_format,
+                },
+            })
+            stream_id = str(stream_result.get("streamId") or "")
+            if not stream_id:
+                raise RuntimeError("failed_to_create_stream")
+            recording_info["streamId"] = stream_id
+        except Exception as e:
+            with _sessions_lock:
+                _active_audio_sessions.pop(session_id, None)
+                _active_audio_recordings.pop(session_id, None)
+            raise RuntimeError(f"Failed to initialize system audio stream: {e}")
+
+    def _background_audio_work():
+        _capture_system_audio_worker(path, duration_ms, stop_event, session_id, emit, loop, recording_info, stream_id=stream_id)
+
+    # For until_stop/stream mode, start in background and return immediately
+    if mode in ("until_stop", "stream"):
         thread = threading.Thread(target=_background_audio_work, daemon=True)
         thread.start()
 
@@ -695,6 +794,7 @@ async def capture_system_audio(
                 "sessionId": session_id,
                 "mode": mode,
                 "filePath": path,
+                "streamId": stream_id,
             })
 
         return {
@@ -702,8 +802,9 @@ async def capture_system_audio(
             "sessionId": session_id,
             "filePath": path,
             "mode": mode,
-            "status": "recording",
+            "status": "streaming" if mode == "stream" else "recording",
             "mimeType": "audio/wav" if output_format == "wav" else "audio/mpeg",
+            "streamId": stream_id,
         }
 
     # For fixed mode, run synchronously
@@ -757,10 +858,19 @@ async def stop_system_audio(
     file_path = None
     if recording_info:
         file_path = recording_info.get("path")
+        stream_id = recording_info.get("streamId")
         for _ in range(40):  # Wait up to 2 seconds
             if recording_info.get("completed") or recording_info.get("error"):
                 break
             await asyncio.sleep(0.05)
+
+        if stream_id:
+            try:
+                from . import streams as _streams_mod
+
+                _streams_mod.close_stream_sync(str(stream_id))
+            except Exception:
+                pass
 
         with _sessions_lock:
             _active_audio_recordings.pop(session_id, None)
@@ -916,15 +1026,16 @@ def _capture_system_audio_worker(
     recording_info: Optional[Dict[str, Any]] = None,
     silence_threshold: float = 0.01,
     silence_duration_ms: int = 2000,
+    stream_id: Optional[str] = None,
 ) -> None:
     """Worker function for capturing system audio."""
     plat = platform.system()
 
     if plat == "Windows":
-        _capture_wasapi_loopback(path, duration_ms, stop_event, session_id, emit, loop, recording_info, silence_threshold, silence_duration_ms)
+        _capture_wasapi_loopback(path, duration_ms, stop_event, session_id, emit, loop, recording_info, silence_threshold, silence_duration_ms, stream_id)
     else:
         # For macOS/Linux, try to use sounddevice with a virtual device
-        _capture_generic_loopback(path, duration_ms, stop_event, session_id, emit, loop, recording_info, silence_threshold, silence_duration_ms)
+        _capture_generic_loopback(path, duration_ms, stop_event, session_id, emit, loop, recording_info, silence_threshold, silence_duration_ms, stream_id)
 
 
 def _capture_wasapi_loopback(
@@ -937,6 +1048,7 @@ def _capture_wasapi_loopback(
     recording_info: Optional[Dict[str, Any]] = None,
     silence_threshold: float = 0.01,
     silence_duration_ms: int = 2000,
+    stream_id: Optional[str] = None,
 ) -> None:
     """Capture system audio using WASAPI loopback on Windows."""
     try:
@@ -951,6 +1063,15 @@ def _capture_wasapi_loopback(
     print(f"[system_audio] Starting WASAPI loopback capture for session '{session_id}'")
 
     p = pyaudio.PyAudio()
+    stream_mod = None
+    if stream_id:
+        try:
+            from . import streams as _streams_mod
+
+            stream_mod = _streams_mod
+        except Exception:
+            stream_mod = None
+
     try:
         # Find loopback device
         wasapi_info = p.get_host_api_info_by_type(pyaudio.paWASAPI)
@@ -1003,6 +1124,20 @@ def _capture_wasapi_loopback(
                 try:
                     data = stream.read(1024, exception_on_overflow=False)
                     frames.append(data)
+
+                    if stream_mod and stream_id:
+                        try:
+                            stream_mod.push_to_stream(stream_id, {
+                                "type": "audio_chunk",
+                                "encoding": "base64",
+                                "format": "pcm_s16le",
+                                "sampleRate": sample_rate,
+                                "channels": channels,
+                                "timestampMs": int((time.monotonic() - start) * 1000),
+                                "data": base64.b64encode(data).decode("ascii"),
+                            })
+                        except Exception:
+                            pass
                     
                     # Silence detection
                     if silence_threshold > 0 and silence_duration_s > 0:
@@ -1074,6 +1209,12 @@ def _capture_wasapi_loopback(
         else:
             if recording_info:
                 recording_info["error"] = "No audio data captured"
+
+        if stream_mod and stream_id:
+            try:
+                stream_mod.close_stream_sync(stream_id)
+            except Exception:
+                pass
 
     except Exception as e:
         print(f"[system_audio] Error: {e}")
@@ -1160,6 +1301,7 @@ def _capture_generic_loopback(
     recording_info: Optional[Dict[str, Any]] = None,
     silence_threshold: float = 0.01,
     silence_duration_ms: int = 2000,
+    stream_id: Optional[str] = None,
 ) -> None:
     """Generic loopback capture for macOS/Linux using sounddevice."""
     try:
@@ -1217,6 +1359,15 @@ def _capture_generic_loopback(
         samplerate = int(device_info.get("default_samplerate", 44100))
         channels = min(int(device_info.get("max_input_channels", 2)), 2)
 
+        stream_mod = None
+        if stream_id:
+            try:
+                from . import streams as _streams_mod
+
+                stream_mod = _streams_mod
+            except Exception:
+                stream_mod = None
+
         frames = []
         start = time.monotonic()
         next_emit_time = start
@@ -1227,7 +1378,22 @@ def _capture_generic_loopback(
         silence_duration_s = silence_duration_ms / 1000.0
 
         def callback(indata, frame_count, time_info, status):
-            frames.append(indata.copy())
+            frame = indata.copy()
+            frames.append(frame)
+            if stream_mod and stream_id:
+                try:
+                    pcm16 = (np.clip(frame, -1.0, 1.0) * 32767.0).astype(np.int16)
+                    stream_mod.push_to_stream(stream_id, {
+                        "type": "audio_chunk",
+                        "encoding": "base64",
+                        "format": "pcm_s16le",
+                        "sampleRate": samplerate,
+                        "channels": channels,
+                        "timestampMs": int((time.monotonic() - start) * 1000),
+                        "data": base64.b64encode(pcm16.tobytes()).decode("ascii"),
+                    })
+                except Exception:
+                    pass
 
         with sd.InputStream(
             device=loopback_device,
@@ -1298,6 +1464,12 @@ def _capture_generic_loopback(
         else:
             if recording_info:
                 recording_info["error"] = "No audio data captured"
+
+        if stream_mod and stream_id:
+            try:
+                stream_mod.close_stream_sync(stream_id)
+            except Exception:
+                pass
     except Exception as e:
         print(f"[system_audio] Error: {e}")
         if recording_info:

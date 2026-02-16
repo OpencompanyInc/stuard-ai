@@ -1,8 +1,8 @@
 import React from "react";
 import type { ValidationError } from "../builder/compiler";
 import { ChatHistory } from "../components/chat/ChatHistory";
-import { ChatInput } from "../components/chat/ChatInput";
-import { ToolPalette } from "../components/ToolPalette";
+import { ChatInput, ChatInputRef } from "../components/chat/ChatInput";
+import { ToolPalette, ToolPaletteRef } from "../components/ToolPalette";
 import type { DesignerModel } from "../types";
 import type { ExecutionState, OpenFileTab, RightPanel, WorkspaceInfo } from "./types";
 import { WorkflowCanvasAndPanels } from "./WorkflowCanvasAndPanels";
@@ -83,6 +83,8 @@ interface WorkflowMainContentProps {
   onRefreshWorkspace: () => void;
   onCloseWorkspace: () => void;
   onOpenFile: (filePath: string, fileName: string) => void;
+  chatInputRef?: React.RefObject<ChatInputRef>;
+  toolPaletteRef?: React.RefObject<ToolPaletteRef>;
 }
 
 export function WorkflowMainContent({
@@ -152,6 +154,8 @@ export function WorkflowMainContent({
   onRefreshWorkspace,
   onCloseWorkspace,
   onOpenFile,
+  chatInputRef,
+  toolPaletteRef,
 }: WorkflowMainContentProps) {
   return (
     <div className="flex-1 flex flex-col min-w-0 bg-slate-50/50 relative z-0">
@@ -204,6 +208,7 @@ export function WorkflowMainContent({
                   <div className="absolute bottom-6 left-0 right-0 z-30 px-6 flex justify-center pointer-events-none">
                     <div className="w-full max-w-2xl pointer-events-auto">
                       <ChatInput
+                        ref={chatInputRef}
                         onSend={chat.sendMessage}
                         busy={chat.busy}
                         onStop={chat.stopGeneration}
@@ -260,6 +265,7 @@ export function WorkflowMainContent({
             <>
               <div className="w-64 bg-white border-r border-slate-200 flex flex-col shrink-0 z-10 min-h-0 overflow-hidden shadow-[4px_0_24px_-12px_rgba(0,0,0,0.1)]">
                 <ToolPalette
+                  ref={toolPaletteRef}
                   onDragStart={(e, item) => {
                     e.dataTransfer.setData("text/plain", JSON.stringify(item));
                     e.dataTransfer.effectAllowed = "copy";

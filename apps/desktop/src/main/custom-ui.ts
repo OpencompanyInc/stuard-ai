@@ -435,6 +435,96 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
     }
   });
 
+  // Stream subscription — allows custom UI to receive real-time stream chunks (video frames, text tokens, etc.)
+  const streamPollers = new Map<string, NodeJS.Timeout>();
+
+  ipcMain.handle('stuard:subscribeStream', async (event, { streamId }) => {
+    try {
+      const ctx = getRouterContext();
+      const subResult = await execTool('_stream_subscribe', {
+        streamId,
+        label: `custom_ui_${Date.now()}`,
+        fromStart: false,
+      }, ctx);
+
+      if (!subResult?.ok || !subResult?.subscriberId) {
+        return { ok: false, error: 'subscribe_failed' };
+      }
+
+      const subscriberId = subResult.subscriberId;
+      const win = BrowserWindow.fromWebContents(event.sender);
+      let chunkIndex = 0;
+
+      // Poll for chunks and push to the window
+      const poll = async () => {
+        if (!win || win.isDestroyed()) {
+          clearInterval(pollInterval);
+          streamPollers.delete(subscriberId);
+          await execTool('_stream_unsubscribe', { streamId, subscriberId }, ctx).catch(() => {});
+          return;
+        }
+        try {
+          const readResult = await execTool('_stream_read', {
+            streamId,
+            subscriberId,
+            maxChunks: 50,
+            waitMs: 100,
+          }, ctx);
+
+          if (readResult?.ok && readResult.chunks?.length > 0) {
+            for (const chunk of readResult.chunks) {
+              const chunkData = chunk?.data !== undefined ? chunk.data : chunk;
+              if (!win.isDestroyed()) {
+                win.webContents.send('stuard:stream-chunk', {
+                  data: chunkData,
+                  index: chunkIndex++,
+                  streamId,
+                });
+              }
+            }
+          }
+
+          if (readResult?.closed) {
+            clearInterval(pollInterval);
+            streamPollers.delete(subscriberId);
+            if (!win.isDestroyed()) {
+              win.webContents.send('stuard:stream-chunk', {
+                data: null,
+                index: -1,
+                streamId,
+                closed: true,
+              });
+            }
+          }
+        } catch (e) {
+          // Ignore read errors, keep polling
+        }
+      };
+
+      const pollInterval = setInterval(poll, 50);
+      streamPollers.set(subscriberId, pollInterval);
+
+      return { ok: true, subscriberId };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'subscribe_failed') };
+    }
+  });
+
+  ipcMain.handle('stuard:unsubscribeStream', async (_event, { streamId, subscriberId }) => {
+    try {
+      const interval = streamPollers.get(subscriberId);
+      if (interval) {
+        clearInterval(interval);
+        streamPollers.delete(subscriberId);
+      }
+      const ctx = getRouterContext();
+      await execTool('_stream_unsubscribe', { streamId, subscriberId }, ctx);
+      return { ok: true };
+    } catch {
+      return { ok: false };
+    }
+  });
+
   // File picker - SECURITY: Approves selected paths for this window
   ipcMain.handle('stuard:pickFile', async (event, options) => {
     const win = BrowserWindow.fromWebContents(event.sender);
@@ -785,13 +875,13 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
 
   // === ENHANCED WINDOW PROPERTIES ===
   const backgroundType = windowCfg.backgroundType || 'color';
-  const backgroundColor = windowCfg.backgroundColor || '#1a1a2e';
+  const backgroundColor = windowCfg.backgroundColor || 'transparent';
   const gradient = windowCfg.gradient;
   const backgroundImage = windowCfg.backgroundImage;
   const shadow = windowCfg.shadow || { enabled: false };
   const border = windowCfg.border || { enabled: false };
   const animation = windowCfg.animation;
-  const contentPadding = windowCfg.contentPadding || 24;
+  const contentPadding = windowCfg.contentPadding || 0;
 
   const transparentBg =
     windowCfg.noBackground === true ||
@@ -1267,707 +1357,6 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-function generateCustomUiHtml(
-  id: string,
-  title: string,
-  css: string,
-  layout: any,
-  data: any,
-  rawHtml?: string,
-  borderRadius: number = 0,
-  flowId: string = '',
-  transparentBg: boolean = false,
-  initScript?: string,
-  pages?: Record<string, any>,
-  startPage?: string
-): string {
-  const radiusStyle = borderRadius > 0 ? `border-radius: ${borderRadius}px;` : '';
-  const shadowStyle = borderRadius > 0 && !transparentBg ? `box-shadow: 0 8px 32px rgba(0,0,0,0.4);` : '';
-  const clipStyle = borderRadius > 0 ? `overflow: hidden;` : '';
-
-  const defaultCss = `
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html {
-      background: ${transparentBg ? 'transparent' : '#0f0f1a'};
-      -webkit-font-smoothing: antialiased;
-      height: 100%;
-    }
-    body {
-      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-      background: ${transparentBg ? 'transparent' : '#0f0f1a'};
-      color: #e2e8f0;
-      min-height: 100vh;
-      font-size: 14px;
-      line-height: 1.5;
-      ${borderRadius > 0 ? `${radiusStyle} ${clipStyle}` : ''}
-    }
-
-    .overlay-container, .root, .stuard-root {
-      background: ${transparentBg ? 'transparent' : '#0f0f1a'};
-      ${radiusStyle}
-      ${shadowStyle}
-      ${clipStyle}
-      min-height: 100vh;
-    }
-
-    ${transparentBg ? `
-      html, body, .overlay-container, .root, .stuard-root, body > div, body > div > div {
-        background: transparent !important;
-      }
-    ` : ''}
-
-    body { -webkit-app-region: drag; }
-    input, textarea, button, a, select, [data-action], [data-bind], .no-drag {
-      -webkit-app-region: no-drag;
-      font-family: inherit;
-    }
-
-    button {
-      cursor: pointer;
-      user-select: none;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 8px 16px;
-      border: 1px solid rgba(255,255,255,0.1);
-      background: #334155;
-      color: white;
-      border-radius: 8px;
-      font-weight: 500;
-      font-size: 13px;
-      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-      gap: 8px;
-    }
-    button:hover { background: #475569; }
-    button:active { transform: scale(0.98); }
-
-    .btn { /* specialized classes override default button */ }
-
-    .btn-primary {
-      background: #6366f1;
-      color: white;
-      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-      border: 1px solid rgba(255,255,255,0.1);
-    }
-    .btn-primary:hover {
-      background: #4f46e5;
-      box-shadow: 0 6px 16px rgba(99, 102, 241, 0.4);
-    }
-
-    .btn-danger {
-      background: #ef4444;
-      color: white;
-      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
-    }
-    .btn-danger:hover { background: #dc2626; }
-
-    .btn-secondary {
-      background: #334155;
-      color: white;
-      border: 1px solid rgba(255,255,255,0.05);
-    }
-    .btn-secondary:hover { background: #475569; }
-
-    .btn-ghost {
-      background: transparent;
-      color: #94a3b8;
-      border: 1px solid transparent;
-      box-shadow: none;
-    }
-    .btn-ghost:hover {
-      background: rgba(255,255,255,0.05);
-      color: #f8fafc;
-    }
-
-    input[type="text"], input[type="password"], textarea {
-      background: rgba(15, 23, 42, 0.6);
-      border: 1px solid rgba(148, 163, 184, 0.1);
-      color: #f1f5f9;
-      border-radius: 8px;
-      padding: 8px 12px;
-      width: 100%;
-      outline: none;
-      transition: all 0.2s;
-    }
-    input:focus, textarea:focus {
-      border-color: #6366f1;
-      background: rgba(15, 23, 42, 0.8);
-      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
-    }
-
-    .glass {
-      background: rgba(15, 23, 42, 0.7) !important;
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      border: 1px solid rgba(255,255,255,0.08);
-    }
-
-    .card {
-      background: rgba(30, 41, 59, 0.5);
-      border: 1px solid rgba(255,255,255,0.05);
-      border-radius: 12px;
-      padding: 16px;
-    }
-
-    h1, h2, h3, h4, h5, h6 { color: #f8fafc; font-weight: 600; margin-bottom: 0.5em; }
-    p { margin-bottom: 1em; color: #cbd5e1; }
-
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb {
-      background: rgba(148, 163, 184, 0.2);
-      border-radius: 3px;
-    }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.4); }
-
-    .fade-in { animation: fadeIn 0.3s ease-out; }
-    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-
-    .slide-up { animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
-    @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-  `;
-
-  // Interpolate template variables in raw HTML
-  // Triple braces {{{var}}} = raw HTML (unescaped)
-  // Double braces {{var}} = escaped text
-  const interpolateHtmlStr = (html: string, d: any): string => {
-    return html
-      .replace(/\{\{\{\s*([\w\.]+)\s*\}\}\}/g, (match: string, k: string) => {
-        const val = k.split('.').reduce((o, key) => (o || {})[key], d);
-        return val !== undefined ? String(val) : match;
-      })
-      .replace(/\{\{\s*([\w\.]+)\s*\}\}/g, (match: string, k: string) => {
-        const val = k.split('.').reduce((o, key) => (o || {})[key], d);
-        return val !== undefined ? escapeHtml(String(val)) : match;
-      });
-  };
-
-  const interpolatedHtml = rawHtml ? interpolateHtmlStr(rawHtml, data) : null;
-  const layoutHtml = interpolatedHtml || renderLayout(layout, data);
-
-  // Pre-render pages into a JS-embeddable object if pages system is active
-  let pagesObj: Record<string, { html: string; css?: string; script?: string }> | null = null;
-  if (pages && typeof pages === 'object' && Object.keys(pages).length > 0) {
-    pagesObj = {};
-    for (const [pageName, pageDef] of Object.entries(pages)) {
-      const def = typeof pageDef === 'string' ? { html: pageDef } : (pageDef || {});
-      let pageHtml: string;
-      if (def.html) {
-        pageHtml = interpolateHtmlStr(def.html, data);
-      } else if (def.layout || def.content) {
-        pageHtml = renderLayout(def.layout || def.content, data);
-      } else {
-        pageHtml = '';
-      }
-      pagesObj[pageName] = {
-        html: pageHtml,
-        css: def.css || undefined,
-        script: def.script || undefined,
-      };
-    }
-  }
-
-  const hasPages = !!pagesObj;
-  const initialPageHtml = hasPages && startPage && pagesObj![startPage]
-    ? pagesObj![startPage].html
-    : layoutHtml;
-
-  // Build per-page CSS aggregation
-  let allPageCss = css;
-  if (pagesObj) {
-    for (const [, pg] of Object.entries(pagesObj)) {
-      if (pg.css) allPageCss += '\n' + pg.css;
-    }
-  }
-
-  // Transparent background override - must come AFTER Tailwind to override its defaults
-  const transparentOverride = transparentBg ? `
-    html, body, .dark, .stuard-root, .root, .overlay-container, body > div, body > div > div {
-      background: transparent !important;
-      background-color: transparent !important;
-    }
-  ` : '';
-
-  return `<!DOCTYPE html>
-<html${transparentBg ? ' style="background:transparent!important"' : ''}>
-<head>
-  <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https:; img-src * data: blob: local-file: file:; media-src * data: blob: local-file: file:; font-src * data:;">
-  <title>${escapeHtml(title)}</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            dark: { 900: '#0f0f1a', 800: '#1a1a2e', 700: '#2d2d44' }
-          }
-        }
-      }
-    }
-  </script>
-  <style>${defaultCss}\n${allPageCss}\n${transparentOverride}</style>
-</head>
-<body class="dark"${transparentBg ? ' style="background:transparent!important"' : ''}>
-  <div class="stuard-root">${initialPageHtml}</div>
-  <script>
-    const CUSTOM_UI_ID = ${JSON.stringify(id)};
-    const FLOW_ID = ${JSON.stringify(flowId)};
-    const initialData = ${JSON.stringify(data)};
-    const formData = { ...initialData, flowId: FLOW_ID };
-
-    // Check if stuard API is available (preload loaded successfully)
-    const hasStuardApi = typeof window.stuard !== 'undefined';
-
-    // ─── Pages System (SPA Router) ───────────────────────────────────────
-    ${hasPages ? `
-    const __pages = ${JSON.stringify(pagesObj)};
-    let __currentPage = ${JSON.stringify(startPage || '')};
-    const __pageHistory = [__currentPage];
-
-    function __initBindings() {
-      const root = document.querySelector('.stuard-root');
-      if (!root) return;
-
-      // Data bindings
-      root.querySelectorAll('[data-bind]').forEach(el => {
-        const key = el.getAttribute('data-bind');
-        const val = formData[key];
-        const useHtml = el.hasAttribute('data-html') || el.hasAttribute('data-render-html');
-
-        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
-          if (el.type === 'checkbox') {
-            el.checked = !!val;
-            el.addEventListener('change', (e) => { formData[key] = e.target.checked; });
-          } else {
-            if (val !== undefined && val !== '') {
-              el.value = val;
-            } else {
-              formData[key] = el.value || '';
-            }
-            el.addEventListener('input', (e) => { formData[key] = e.target.value; });
-          }
-        } else {
-          if (val !== undefined) {
-            if (useHtml) {
-              el.innerHTML = val;
-            } else {
-              el.textContent = val;
-            }
-          }
-        }
-      });
-
-      // Action handlers
-      root.querySelectorAll('[data-action]').forEach(el => {
-        const actionName = el.getAttribute('data-action');
-        el.addEventListener('click', async () => { __handleAction(actionName, el); });
-      });
-
-      // Navigate handlers (data-navigate="pageName")
-      root.querySelectorAll('[data-navigate]').forEach(el => {
-        const target = el.getAttribute('data-navigate');
-        el.addEventListener('click', (e) => {
-          e.preventDefault();
-          const navDataStr = el.getAttribute('data-navigate-data');
-          let navData;
-          if (navDataStr) {
-            try { navData = JSON.parse(navDataStr); } catch {}
-          }
-          navigateTo(target, navData);
-        });
-      });
-
-      // Enter key submits
-      root.querySelectorAll('input[data-bind]').forEach(el => {
-        el.addEventListener('keypress', (e) => {
-          if (e.key === 'Enter') {
-            if (hasStuardApi) {
-              window.stuard.submit(formData);
-            } else {
-              document.title = 'ACTION:submit:' + JSON.stringify(formData);
-            }
-          }
-        });
-      });
-    }
-
-    function navigateTo(pageName, pageData) {
-      if (!__pages[pageName]) {
-        console.warn('[stuard] Page not found:', pageName);
-        return;
-      }
-
-      // Merge navigation data into formData
-      if (pageData && typeof pageData === 'object') {
-        Object.assign(formData, pageData);
-      }
-
-      __currentPage = pageName;
-      __pageHistory.push(pageName);
-
-      const root = document.querySelector('.stuard-root');
-      if (!root) return;
-
-      // Interpolate page HTML with current formData
-      let html = __pages[pageName].html;
-      html = html.replace(/\\{\\{\\{\\s*([\\w\\.]+)\\s*\\}\\}\\}/g, (match, k) => {
-        const val = k.split('.').reduce((o, key) => (o || {})[key], formData);
-        return val !== undefined ? String(val) : match;
-      });
-      html = html.replace(/\\{\\{\\s*([\\w\\.]+)\\s*\\}\\}/g, (match, k) => {
-        const val = k.split('.').reduce((o, key) => (o || {})[key], formData);
-        return val !== undefined ? String(val).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : match;
-      });
-
-      root.innerHTML = html;
-
-      // Re-initialize bindings for the new page
-      __initBindings();
-
-      // Update page-specific CSS
-      const pageCss = __pages[pageName].css;
-      if (pageCss) {
-        let pageStyleEl = document.getElementById('stuard-page-css');
-        if (!pageStyleEl) {
-          pageStyleEl = document.createElement('style');
-          pageStyleEl.id = 'stuard-page-css';
-          document.head.appendChild(pageStyleEl);
-        }
-        pageStyleEl.textContent = pageCss;
-      }
-
-      // Run page-specific script
-      const pageScript = __pages[pageName].script;
-      if (pageScript) {
-        (async () => {
-          try {
-            await (new Function('formData', 'navigateTo', 'goBack', 'stuard', '$stuard', pageScript))
-              (formData, navigateTo, goBack, window.stuard, window.$stuard);
-          } catch (e) {
-            console.error('[stuard] Page script error (' + pageName + '):', e);
-          }
-        })();
-      }
-
-      // Dispatch DOM event for custom listeners
-      window.dispatchEvent(new CustomEvent('stuard:page-change', { detail: { page: pageName, data: pageData } }));
-    }
-
-    function goBack() {
-      if (__pageHistory.length > 1) {
-        __pageHistory.pop(); // remove current
-        const prev = __pageHistory[__pageHistory.length - 1];
-        // Don't push to history again
-        __currentPage = prev;
-        const root = document.querySelector('.stuard-root');
-        if (root && __pages[prev]) {
-          let html = __pages[prev].html;
-          html = html.replace(/\\{\\{\\s*([\\w\\.]+)\\s*\\}\\}/g, (match, k) => {
-            const val = k.split('.').reduce((o, key) => (o || {})[key], formData);
-            return val !== undefined ? String(val).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : match;
-          });
-          root.innerHTML = html;
-          __initBindings();
-        }
-      }
-    }
-
-    // Listen for navigation from preload API (IPC bounce-back)
-    if (hasStuardApi) {
-      window.stuard.onPageChange(({ page, data }) => {
-        // Only navigate if it's a different page (avoid infinite loop from our own navigate call)
-        if (page !== __currentPage) {
-          navigateTo(page, data);
-        }
-      });
-    }
-
-    // Expose to global scope for inline scripts / onclick handlers
-    window.navigateTo = navigateTo;
-    window.goBack = goBack;
-    window.__currentPage = () => __currentPage;
-    ` : ''}
-
-    // ─── Common Action Handler ───────────────────────────────────────────
-    async function __handleAction(actionName, el) {
-      if (hasStuardApi) {
-        if (actionName === 'submit') {
-          window.stuard.submit(formData);
-        } else if (actionName === 'close' || actionName === 'cancel') {
-          window.stuard.close(formData);
-        } else if (actionName === 'stop_workflow') {
-          window.stuard.stopWorkflow();
-        } else if (actionName.startsWith('pick_')) {
-          const targetField = el.getAttribute('data-target') || el.getAttribute('data-bind');
-          let result;
-
-          if (actionName === 'pick_file') {
-            result = await window.stuard.pickFile({
-              title: el.getAttribute('data-title') || 'Select File',
-              multiple: false
-            });
-          } else if (actionName === 'pick_files') {
-            result = await window.stuard.pickFile({
-              title: el.getAttribute('data-title') || 'Select Files',
-              multiple: true
-            });
-          } else if (actionName === 'pick_folder') {
-            result = await window.stuard.pickFolder({
-              title: el.getAttribute('data-title') || 'Select Folder'
-            });
-          } else if (actionName === 'pick_save_path') {
-            result = await window.stuard.pickSavePath({
-              title: el.getAttribute('data-title') || 'Save File'
-            });
-          }
-
-          if (result && !result.canceled && targetField) {
-            const path = result.filePath || result.filePaths?.[0] || '';
-            formData[targetField] = path;
-            const input = document.querySelector('[data-bind="' + targetField + '"]');
-            if (input) {
-              input.value = path;
-              input.dispatchEvent(new Event('input', { bubbles: true }));
-            }
-          }
-        } else {
-          window.stuard.action(actionName, formData);
-        }
-      } else {
-        document.title = 'ACTION:' + actionName + ':' + JSON.stringify(formData);
-      }
-    }
-
-    // ─── Initialize Bindings ─────────────────────────────────────────────
-    ${hasPages ? `
-    // Pages mode: use shared init function
-    __initBindings();
-    ` : `
-    // Single-page mode: inline bindings (original behavior)
-    document.querySelectorAll('[data-bind]').forEach(el => {
-      const key = el.getAttribute('data-bind');
-      const val = formData[key];
-      const useHtml = el.hasAttribute('data-html') || el.hasAttribute('data-render-html');
-
-      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
-        if (el.type === 'checkbox') {
-          el.checked = !!val;
-          el.addEventListener('change', (e) => { formData[key] = e.target.checked; });
-        } else {
-          if (val !== undefined && val !== '') {
-            el.value = val;
-          } else {
-            formData[key] = el.value || '';
-          }
-          el.addEventListener('input', (e) => { formData[key] = e.target.value; });
-        }
-      } else {
-        if (val !== undefined) {
-          if (useHtml) {
-            el.innerHTML = val;
-          } else {
-            el.textContent = val;
-          }
-        }
-      }
-    });
-
-    document.querySelectorAll('[data-action]').forEach(el => {
-      const actionName = el.getAttribute('data-action');
-      el.addEventListener('click', async () => { __handleAction(actionName, el); });
-    });
-
-    document.querySelectorAll('input[data-bind]').forEach(el => {
-      el.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-          if (hasStuardApi) {
-            window.stuard.submit(formData);
-          } else {
-            document.title = 'ACTION:submit:' + JSON.stringify(formData);
-          }
-        }
-      });
-    });
-    `}
-
-    // ─── Data Update Listener ────────────────────────────────────────────
-    if (hasStuardApi) {
-      window.stuard.onDataUpdate((newData) => {
-        Object.assign(formData, newData);
-        for (const [key, value] of Object.entries(newData)) {
-          const bindEl = document.querySelector('[data-bind="' + key + '"]');
-          if (bindEl) {
-            if (bindEl.tagName === 'INPUT' || bindEl.tagName === 'TEXTAREA') {
-              bindEl.value = value;
-            } else if (bindEl.hasAttribute('data-html') || bindEl.hasAttribute('data-render-html')) {
-              bindEl.innerHTML = value;
-            } else {
-              bindEl.textContent = value;
-            }
-          }
-        }
-      });
-    }
-
-    // ─── Workflow Variable Binding (data-var) ─────────────────────────────
-    // Elements with data-var="varName" will auto-update when the variable changes.
-    // Supports: text content, input values, data-var-format for templates.
-    // Example: <span data-var="counter">0</span>
-    //          <span data-var="counter" data-var-format="Count: {value}">Count: 0</span>
-    //          <input data-var="username" />
-    //          <div data-var="status" data-html>...</div>
-    (function __initVarBindings() {
-      if (!hasStuardApi) return;
-
-      function __updateVarElement(el, value) {
-        const fmt = el.getAttribute('data-var-format');
-        const displayVal = fmt ? fmt.replace(/\{value\}/g, value ?? '') : (value ?? '');
-
-        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
-          if (el.type === 'checkbox') {
-            el.checked = !!value;
-          } else {
-            el.value = displayVal;
-          }
-        } else if (el.hasAttribute('data-html') || el.hasAttribute('data-render-html')) {
-          el.innerHTML = displayVal;
-        } else {
-          el.textContent = displayVal;
-        }
-      }
-
-      // Scan for all data-var elements and collect unique variable names
-      const varEls = document.querySelectorAll('[data-var]');
-      const varNames = new Set();
-      varEls.forEach(el => {
-        const v = el.getAttribute('data-var');
-        if (v) varNames.add(v);
-      });
-
-      const varNameArr = Array.from(varNames);
-      if (varNameArr.length > 0) {
-        console.log('[stuard] data-var bindings found:', varNameArr);
-      }
-
-      // Always subscribe to '*' so useState() works for any variable
-      window.stuard.subscribeVars(['*']);
-
-      // Fetch initial values and populate data-var elements
-      if (varNameArr.length > 0) {
-        Promise.all(varNameArr.map(v => window.stuard.getVar(v))).then(results => {
-          for (const res of results) {
-            if (res.ok) {
-              document.querySelectorAll('[data-var="' + res.name + '"]').forEach(el => {
-                __updateVarElement(el, res.value);
-              });
-            }
-          }
-        });
-      }
-
-      // Listen for live variable updates (data-var elements + useState listeners)
-      window.stuard.onVarUpdate(({ name, shortName, value }) => {
-        // Update data-var elements
-        const matchNames = [name, shortName];
-        for (const mn of matchNames) {
-          document.querySelectorAll('[data-var="' + mn + '"]').forEach(el => {
-            __updateVarElement(el, value);
-          });
-        }
-
-        // Notify useState listeners
-        const listeners = window.__varListeners || {};
-        for (const mn of matchNames) {
-          if (listeners[mn]) {
-            listeners[mn].forEach(cb => { try { cb(value); } catch(e) { console.error('[useState] listener error:', e); } });
-          }
-        }
-
-        // Dispatch a DOM event for custom script listeners
-        window.dispatchEvent(new CustomEvent('stuard:var-changed', {
-          detail: { name, shortName, value }
-        }));
-      });
-    })();
-
-    // ─── useState API ─────────────────────────────────────────────────────
-    // React-like reactive variable hook for custom UI scripts.
-    // Usage: const [value, setValue] = useState('counter', 0);
-    //   - value is the current value (updates in-place via .value proxy or re-call)
-    //   - setValue(newVal) sets the variable and triggers reactive updates everywhere
-    //
-    // With callback: useState('counter', 0, (newVal) => { /* re-render */ });
-    //   - callback fires whenever the variable changes from any source
-    window.__varListeners = window.__varListeners || {};
-    window.__varCache = window.__varCache || {};
-
-    window.useState = function useState(varName, defaultValue, onChange) {
-      if (!hasStuardApi) {
-        // Fallback: local-only state
-        let _val = defaultValue;
-        return [
-          { get value() { return _val; }, toString() { return String(_val); }, valueOf() { return _val; } },
-          function(v) { _val = v; if (onChange) onChange(v); }
-        ];
-      }
-
-      // Initialize cache
-      if (!(varName in window.__varCache)) {
-        window.__varCache[varName] = defaultValue;
-        // Set default in store if not already set
-        window.stuard.getVar(varName).then(res => {
-          if (res.ok && res.value !== undefined && res.value !== null) {
-            window.__varCache[varName] = res.value;
-            if (onChange) onChange(res.value);
-          } else if (defaultValue !== undefined) {
-            window.stuard.setVar(varName, defaultValue);
-          }
-        });
-      }
-
-      // Register change listener
-      if (onChange) {
-        if (!window.__varListeners[varName]) window.__varListeners[varName] = [];
-        window.__varListeners[varName].push(onChange);
-      }
-
-      // Create reactive getter
-      const state = {
-        get value() { return window.__varCache[varName]; },
-        toString() { return String(window.__varCache[varName]); },
-        valueOf() { return window.__varCache[varName]; }
-      };
-
-      // Setter
-      function setValue(newVal) {
-        window.__varCache[varName] = newVal;
-        window.stuard.setVar(varName, newVal);
-      }
-
-      // Keep cache in sync from external updates
-      if (!window.__varListeners[varName]) window.__varListeners[varName] = [];
-      window.__varListeners[varName].push(v => { window.__varCache[varName] = v; });
-
-      return [state, setValue];
-    };
-
-    // Run initialization script if provided
-    ${initScript ? `
-    (async () => {
-      try {
-        ${initScript}
-      } catch (e) {
-        console.error('[stuard] Init script error:', e);
-      }
-    })();
-    ` : ''}
-  </script>
-</body>
-</html>`;
-}
-
 function generateEnhancedCustomUiHtml(options: {
   id: string;
   title: string;
@@ -2006,13 +1395,13 @@ function generateEnhancedCustomUiHtml(options: {
     pages,
     startPage,
     backgroundType = 'color',
-    backgroundColor = '#1a1a2e',
+    backgroundColor = 'transparent',
     gradient,
     backgroundImage,
     shadow,
     border,
     animation,
-    contentPadding = 24,
+    contentPadding = 0,
   } = options;
 
   const radiusStyle = borderRadius > 0 ? `border-radius: ${borderRadius}px;` : '';
@@ -2102,8 +1491,8 @@ function generateEnhancedCustomUiHtml(options: {
     body {
       font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
       background: ${transparentBg ? 'transparent' : (backgroundType === 'color' ? backgroundColor : 'transparent')};
-      color: #e2e8f0;
-      min-height: 100vh;
+      color: #1e293b;
+      height: 100%;
       font-size: 14px;
       line-height: 1.5;
       ${borderRadius > 0 ? `${radiusStyle} ${clipStyle}` : ''}
@@ -2116,7 +1505,7 @@ function generateEnhancedCustomUiHtml(options: {
       ${shadowCss}
       ${borderCss}
       ${clipStyle}
-      min-height: 100vh;
+      height: 100%;
       ${contentPadding ? `padding: ${contentPadding}px;` : ''}
     }
 
@@ -2137,99 +1526,144 @@ function generateEnhancedCustomUiHtml(options: {
 
     ${animationKeyframes}
 
-    body { -webkit-app-region: drag; }
-    input, textarea, button, a, select, [data-action], [data-bind], .no-drag {
+    /* Window dragging: add .drag class to make an area draggable (e.g., title bar) */
+    .drag { -webkit-app-region: drag; }
+    .drag input, .drag textarea, .drag button, .drag a, .drag select {
       -webkit-app-region: no-drag;
-      font-family: inherit;
     }
 
-    button {
+    button, .btn {
       cursor: pointer;
       user-select: none;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       padding: 8px 16px;
-      border: 1px solid rgba(255,255,255,0.1);
-      background: #334155;
-      color: white;
+      border: none;
+      background: #f1f5f9;
+      color: #475569;
       border-radius: 8px;
       font-weight: 500;
       font-size: 13px;
-      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      transition: all 0.15s ease;
       gap: 8px;
     }
-    button:hover { background: #475569; }
+    button:hover { background: #e2e8f0; }
     button:active { transform: scale(0.98); }
 
     .btn-primary {
-      background: #6366f1;
+      background: #4f46e5;
       color: white;
-      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-      border: 1px solid rgba(255,255,255,0.1);
     }
     .btn-primary:hover {
-      background: #4f46e5;
-      box-shadow: 0 6px 16px rgba(99, 102, 241, 0.4);
+      background: #4338ca;
     }
 
     .btn-danger {
       background: #ef4444;
       color: white;
-      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
     }
     .btn-danger:hover { background: #dc2626; }
 
     .btn-secondary {
-      background: #334155;
-      color: white;
-      border: 1px solid rgba(255,255,255,0.05);
+      background: #f1f5f9;
+      color: #475569;
     }
-    .btn-secondary:hover { background: #475569; }
+    .btn-secondary:hover { background: #e2e8f0; }
 
     .btn-ghost {
       background: transparent;
-      color: #94a3b8;
-      border: 1px solid transparent;
+      color: #475569;
+      border: none;
       box-shadow: none;
     }
     .btn-ghost:hover {
-      background: rgba(255,255,255,0.05);
-      color: #f8fafc;
+      background: #f1f5f9;
+      color: #1e293b;
     }
 
-    input[type="text"], input[type="password"], textarea {
-      background: rgba(15, 23, 42, 0.6);
-      border: 1px solid rgba(148, 163, 184, 0.1);
-      color: #f1f5f9;
+    .btn-outline {
+      background: transparent;
+      color: #4f46e5;
+      border: 1px solid #4f46e5;
+    }
+    .btn-outline:hover { background: #eef2ff; }
+
+    button:disabled, .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    input[type="text"], input[type="email"], input[type="password"], input[type="number"], input[type="url"], input[type="tel"], textarea, select {
+      background: white;
+      border: 1px solid #e2e8f0;
+      color: #1e293b;
       border-radius: 8px;
       padding: 8px 12px;
       width: 100%;
       outline: none;
-      transition: all 0.2s;
+      font-size: 14px;
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
-    input:focus, textarea:focus {
+    input:focus, textarea:focus, select:focus {
       border-color: #6366f1;
-      background: rgba(15, 23, 42, 0.8);
-      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
     }
+    input::placeholder, textarea::placeholder { color: #94a3b8; }
 
     .glass {
-      background: rgba(15, 23, 42, 0.7) !important;
+      background: rgba(255, 255, 255, 0.7) !important;
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
-      border: 1px solid rgba(255,255,255,0.08);
+      border: 1px solid rgba(0,0,0,0.08);
     }
 
     .card {
-      background: rgba(30, 41, 59, 0.5);
-      border: 1px solid rgba(255,255,255,0.05);
+      background: white;
+      border: 1px solid #e2e8f0;
       border-radius: 12px;
       padding: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
 
-    h1, h2, h3, h4, h5, h6 { color: #f8fafc; font-weight: 600; margin-bottom: 0.5em; }
-    p { margin-bottom: 1em; color: #cbd5e1; }
+    h1, h2, h3, h4, h5, h6 { color: #0f172a; font-weight: 600; margin-bottom: 0.5em; }
+    p { margin-bottom: 1em; color: #475569; }
+
+    label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+    }
+
+    input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+    }
+
+    /* Dark mode support - add class="dark" to body */
+    body.dark {
+      background: #0f172a;
+      color: #e2e8f0;
+    }
+    body.dark .card {
+      background: rgba(30, 41, 59, 0.5);
+      border-color: rgba(255,255,255,0.05);
+    }
+    body.dark input, body.dark textarea, body.dark select {
+      background: rgba(15, 23, 42, 0.6);
+      border-color: rgba(148, 163, 184, 0.1);
+      color: #f1f5f9;
+    }
+    body.dark h1, body.dark h2, body.dark h3, body.dark h4, body.dark h5, body.dark h6 { color: #f8fafc; }
+    body.dark p { color: #cbd5e1; }
+    body.dark button { background: #334155; color: white; }
+    body.dark button:hover { background: #475569; }
+    body.dark .btn-secondary { background: #334155; color: white; }
+    body.dark .btn-ghost { color: #94a3b8; }
+    body.dark .btn-ghost:hover { background: rgba(255,255,255,0.05); color: #f8fafc; }
+    body.dark .glass { background: rgba(15, 23, 42, 0.7) !important; border-color: rgba(255,255,255,0.08); }
 
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -2246,57 +1680,6 @@ function generateEnhancedCustomUiHtml(options: {
     @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
   `;
 
-  // Interpolate template variables
-  const interpolateHtmlStr = (html: string, d: any): string => {
-    return html
-      .replace(/\{\{\{\s*([\w\.]+)\s*\}\}\}/g, (match: string, k: string) => {
-        const val = k.split('.').reduce((o, key) => (o || {})[key], d);
-        return val !== undefined ? String(val) : match;
-      })
-      .replace(/\{\{\s*([\w\.]+)\s*\}\}/g, (match: string, k: string) => {
-        const val = k.split('.').reduce((o, key) => (o || {})[key], d);
-        return val !== undefined ? escapeHtml(String(val)) : match;
-      });
-  };
-
-  const interpolatedHtml = rawHtml ? interpolateHtmlStr(rawHtml, data) : null;
-  const layoutHtml = interpolatedHtml || renderLayout(layout, data);
-
-  // Pre-render pages
-  let pagesObj: Record<string, { html: string; css?: string; script?: string }> | null = null;
-  if (pages && typeof pages === 'object' && Object.keys(pages).length > 0) {
-    pagesObj = {};
-    for (const [pageName, pageDef] of Object.entries(pages)) {
-      const def = typeof pageDef === 'string' ? { html: pageDef } : (pageDef || {});
-      let pageHtml: string;
-      if (def.html) {
-        pageHtml = interpolateHtmlStr(def.html, data);
-      } else if (def.layout || def.content) {
-        pageHtml = renderLayout(def.layout || def.content, data);
-      } else {
-        pageHtml = '';
-      }
-      pagesObj[pageName] = {
-        html: pageHtml,
-        css: def.css || undefined,
-        script: def.script || undefined,
-      };
-    }
-  }
-
-  const hasPages = !!pagesObj;
-  const initialPageHtml = hasPages && startPage && pagesObj![startPage]
-    ? pagesObj![startPage].html
-    : layoutHtml;
-
-  // Build per-page CSS
-  let allPageCss = css;
-  if (pagesObj) {
-    for (const [, pg] of Object.entries(pagesObj)) {
-      if (pg.css) allPageCss += '\n' + pg.css;
-    }
-  }
-
   const transparentOverride = transparentBg ? `
     html, body, .dark, .stuard-root, .root, .overlay-container, body > div, body > div > div {
       background: transparent !important;
@@ -2305,13 +1688,29 @@ function generateEnhancedCustomUiHtml(options: {
   ` : '';
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // PREACT COMPONENT MODE — React-like single-field rendering
+  // PREACT COMPONENT MODE — the only rendering mode
   // ═══════════════════════════════════════════════════════════════════════════
+
+  // Build the component string. If a raw `component` field is provided, use it.
+  // Otherwise, auto-wrap raw HTML into a simple Preact App component.
+  let componentCode: string;
   if (component) {
-    // Sanitize component string: fix double-escaping from LLM JSON output.
-    // Models often produce \\n (literal backslash+n) instead of actual newlines,
-    // and \\" instead of plain quotes, when generating JSON component strings.
-    let sanitizedComponent = component;
+    componentCode = component;
+  } else if (rawHtml) {
+    // Auto-wrap raw HTML in a Preact component
+    const escapedHtml = JSON.stringify(rawHtml);
+    componentCode = `function App() {
+      const [formData, setFormData] = useState({ ...initialData });
+      return html\`<div dangerouslySetInnerHTML=\${{ __html: ${escapedHtml} }} />\`;
+    }`;
+  } else {
+    componentCode = `function App() {
+      return html\`<div class="flex items-center justify-center h-full text-slate-400 text-sm">No component defined</div>\`;
+    }`;
+  }
+
+  // Sanitize component string: fix double-escaping from LLM JSON output
+  let sanitizedComponent = componentCode;
 
     // Detect double-escaping: if the string has literal \n but no real newlines,
     // or has \\" sequences, it's double-escaped
@@ -2359,14 +1758,15 @@ function generateEnhancedCustomUiHtml(options: {
   <script src="https://unpkg.com/htm@3/dist/htm.umd.js" crossorigin><\/script>
   <style>${defaultCss}\n${css}\n${transparentOverride}\n${animationKeyframes}</style>
 </head>
-<body class="dark"${transparentBg ? ' style="background:transparent!important"' : ''}>
+<body${transparentBg ? ' style="background:transparent!important"' : ''}>
   ${bgOverlay}
   <div class="stuard-root"></div>
   <script>
     // ─── Constants ──────────────────────────────────────────────────────
     const CUSTOM_UI_ID = ${JSON.stringify(id)};
     const FLOW_ID = ${JSON.stringify(flowId)};
-    const initialData = ${JSON.stringify(data)};
+    window.initialData = ${JSON.stringify(data)};
+    const initialData = window.initialData;
     const formData = { ...initialData, flowId: FLOW_ID };
     const hasStuardApi = typeof window.stuard !== 'undefined';
 
@@ -2443,6 +1843,52 @@ function generateEnhancedCustomUiHtml(options: {
       return [value, setVar];
     }
 
+    // ─── useStream Hook ──────────────────────────────────────────────────
+    // Subscribe to a workflow stream and get chunks reactively.
+    // For video: const { frame, index, done } = useStream(streamId);
+    //            return html\`<img src=\${frame} />\`;
+    // For text:  const { text, fullText, done } = useStream(streamId);
+    function useStream(streamId) {
+      const [chunk, setChunk] = useState(null);
+      const [index, setIndex] = useState(-1);
+      const [done, setDone] = useState(false);
+      const [fullText, setFullText] = useState('');
+      const subRef = useRef(null);
+
+      useEffect(() => {
+        if (!hasStuardApi || !streamId) return;
+
+        window.stuard.subscribeStream(streamId, (evt) => {
+          if (evt.closed || evt.index === -1) {
+            setDone(true);
+            return;
+          }
+          setChunk(evt.data);
+          setIndex(evt.index);
+          if (typeof evt.data === 'string') {
+            setFullText(prev => prev + evt.data);
+          }
+        }).then(res => {
+          if (res.ok) subRef.current = res.subscriberId;
+        });
+
+        return () => {
+          if (subRef.current) {
+            window.stuard.unsubscribeStream(streamId, subRef.current);
+          }
+        };
+      }, [streamId]);
+
+      return {
+        chunk,       // latest raw chunk data (could be base64 image, text, JSON)
+        frame: chunk, // alias for video/image use — use as <img src={frame} />
+        text: typeof chunk === 'string' ? chunk : null,
+        fullText,    // accumulated text for text streams
+        index,       // chunk index (0-based)
+        done,        // true when stream closes
+      };
+    }
+
     // ─── User Component ─────────────────────────────────────────────────
     try {
       ${sanitizedComponent}
@@ -2471,502 +1917,6 @@ function generateEnhancedCustomUiHtml(options: {
   <\/script>
 </body>
 </html>`;
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // LEGACY MODE — html/script/layout/pages
-  // ═══════════════════════════════════════════════════════════════════════════
-  return `<!DOCTYPE html>
-<html${transparentBg ? ' style="background:transparent!important"' : ''}>
-<head>
-  <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https:; img-src * data: blob: local-file: file:; media-src * data: blob: local-file: file:; font-src * data:;">
-  <title>${escapeHtml(title)}</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            dark: { 900: '#0f0f1a', 800: '#1a1a2e', 700: '#2d2d44' }
-          }
-        }
-      }
-    }
-  </script>
-  <style>${defaultCss}\n${allPageCss}\n${transparentOverride}</style>
-</head>
-<body class="dark"${transparentBg ? ' style="background:transparent!important"' : ''}>
-  ${backgroundType !== 'color' && !transparentBg ? '<div class="stuard-background"></div>' : ''}
-  <div class="stuard-root">${initialPageHtml}</div>
-  <script>
-    const CUSTOM_UI_ID = ${JSON.stringify(id)};
-    const FLOW_ID = ${JSON.stringify(flowId)};
-    const initialData = ${JSON.stringify(data)};
-    const formData = { ...initialData, flowId: FLOW_ID };
-    const hasStuardApi = typeof window.stuard !== 'undefined';
-
-    ${hasPages ? `
-    const __pages = ${JSON.stringify(pagesObj)};
-    let __currentPage = ${JSON.stringify(startPage || '')};
-    const __pageHistory = [__currentPage];
-
-    function __initBindings() {
-      const root = document.querySelector('.stuard-root');
-      if (!root) return;
-
-      root.querySelectorAll('[data-bind]').forEach(el => {
-        const key = el.getAttribute('data-bind');
-        const val = formData[key];
-        const useHtml = el.hasAttribute('data-html') || el.hasAttribute('data-render-html');
-
-        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
-          if (el.type === 'checkbox') {
-            el.checked = !!val;
-            el.addEventListener('change', (e) => { formData[key] = e.target.checked; });
-          } else {
-            if (val !== undefined && val !== '') {
-              el.value = val;
-            } else {
-              formData[key] = el.value || '';
-            }
-            el.addEventListener('input', (e) => { formData[key] = e.target.value; });
-          }
-        } else {
-          if (val !== undefined) {
-            if (useHtml) {
-              el.innerHTML = val;
-            } else {
-              el.textContent = val;
-            }
-          }
-        }
-      });
-
-      root.querySelectorAll('[data-action]').forEach(el => {
-        const actionName = el.getAttribute('data-action');
-        el.addEventListener('click', async () => { __handleAction(actionName, el); });
-      });
-
-      root.querySelectorAll('[data-navigate]').forEach(el => {
-        const target = el.getAttribute('data-navigate');
-        el.addEventListener('click', (e) => {
-          e.preventDefault();
-          const navDataStr = el.getAttribute('data-navigate-data');
-          let navData;
-          if (navDataStr) {
-            try { navData = JSON.parse(navDataStr); } catch {}
-          }
-          navigateTo(target, navData);
-        });
-      });
-
-      root.querySelectorAll('input[data-bind]').forEach(el => {
-        el.addEventListener('keypress', (e) => {
-          if (e.key === 'Enter') {
-            if (hasStuardApi) {
-              window.stuard.submit(formData);
-            } else {
-              document.title = 'ACTION:submit:' + JSON.stringify(formData);
-            }
-          }
-        });
-      });
-    }
-
-    function navigateTo(pageName, pageData) {
-      if (!__pages[pageName]) {
-        console.warn('[stuard] Page not found:', pageName);
-        return;
-      }
-
-      if (pageData && typeof pageData === 'object') {
-        Object.assign(formData, pageData);
-      }
-
-      __currentPage = pageName;
-      __pageHistory.push(pageName);
-
-      const root = document.querySelector('.stuard-root');
-      if (!root) return;
-
-      let html = __pages[pageName].html;
-      html = html.replace(/\\{\\{\\{\\s*([\\w\\.]+)\\s*\\}\\}\\}/g, (match, k) => {
-        const val = k.split('.').reduce((o, key) => (o || {})[key], formData);
-        return val !== undefined ? String(val) : match;
-      });
-      html = html.replace(/\\{\\{\\s*([\\w\\.]+)\\s*\\}\\}/g, (match, k) => {
-        const val = k.split('.').reduce((o, key) => (o || {})[key], formData);
-        return val !== undefined ? String(val).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : match;
-      });
-
-      root.innerHTML = html;
-      __initBindings();
-
-      const pageCss = __pages[pageName].css;
-      if (pageCss) {
-        let pageStyleEl = document.getElementById('stuard-page-css');
-        if (!pageStyleEl) {
-          pageStyleEl = document.createElement('style');
-          pageStyleEl.id = 'stuard-page-css';
-          document.head.appendChild(pageStyleEl);
-        }
-        pageStyleEl.textContent = pageCss;
-      }
-
-      const pageScript = __pages[pageName].script;
-      if (pageScript) {
-        (async () => {
-          try {
-            await (new Function('formData', 'navigateTo', 'goBack', 'stuard', '$stuard', pageScript))
-              (formData, navigateTo, goBack, window.stuard, window.$stuard);
-          } catch (e) {
-            console.error('[stuard] Page script error (' + pageName + '):', e);
-          }
-        })();
-      }
-
-      window.dispatchEvent(new CustomEvent('stuard:page-change', { detail: { page: pageName, data: pageData } }));
-    }
-
-    function goBack() {
-      if (__pageHistory.length > 1) {
-        __pageHistory.pop();
-        const prev = __pageHistory[__pageHistory.length - 1];
-        __currentPage = prev;
-        const root = document.querySelector('.stuard-root');
-        if (root && __pages[prev]) {
-          let html = __pages[prev].html;
-          html = html.replace(/\\{\\{\\s*([\\w\\.]+)\\s*\\}\\}/g, (match, k) => {
-            const val = k.split('.').reduce((o, key) => (o || {})[key], formData);
-            return val !== undefined ? String(val).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : match;
-          });
-          root.innerHTML = html;
-          __initBindings();
-        }
-      }
-    }
-
-    if (hasStuardApi) {
-      window.stuard.onPageChange(({ page, data }) => {
-        if (page !== __currentPage) {
-          navigateTo(page, data);
-        }
-      });
-    }
-
-    window.navigateTo = navigateTo;
-    window.goBack = goBack;
-    window.__currentPage = () => __currentPage;
-    ` : ''}
-
-    async function __handleAction(actionName, el) {
-      if (hasStuardApi) {
-        if (actionName === 'submit') {
-          window.stuard.submit(formData);
-        } else if (actionName === 'close' || actionName === 'cancel') {
-          window.stuard.close(formData);
-        } else if (actionName === 'stop_workflow') {
-          window.stuard.stopWorkflow();
-        } else if (actionName.startsWith('pick_')) {
-          const targetField = el.getAttribute('data-target') || el.getAttribute('data-bind');
-          let result;
-
-          if (actionName === 'pick_file') {
-            result = await window.stuard.pickFile({ title: el.getAttribute('data-title') || 'Select File', multiple: false });
-          } else if (actionName === 'pick_files') {
-            result = await window.stuard.pickFile({ title: el.getAttribute('data-title') || 'Select Files', multiple: true });
-          } else if (actionName === 'pick_folder') {
-            result = await window.stuard.pickFolder({ title: el.getAttribute('data-title') || 'Select Folder' });
-          } else if (actionName === 'pick_save_path') {
-            result = await window.stuard.pickSavePath({ title: el.getAttribute('data-title') || 'Save File' });
-          }
-
-          if (result && !result.canceled && targetField) {
-            const path = result.filePath || result.filePaths?.[0] || '';
-            formData[targetField] = path;
-            const input = document.querySelector('[data-bind="' + targetField + '"]');
-            if (input) {
-              input.value = path;
-              input.dispatchEvent(new Event('input', { bubbles: true }));
-            }
-          }
-        } else {
-          window.stuard.action(actionName, formData);
-        }
-      } else {
-        document.title = 'ACTION:' + actionName + ':' + JSON.stringify(formData);
-      }
-    }
-
-    ${hasPages ? `__initBindings();` : `
-    document.querySelectorAll('[data-bind]').forEach(el => {
-      const key = el.getAttribute('data-bind');
-      const val = formData[key];
-      const useHtml = el.hasAttribute('data-html') || el.hasAttribute('data-render-html');
-
-      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
-        if (el.type === 'checkbox') {
-          el.checked = !!val;
-          el.addEventListener('change', (e) => { formData[key] = e.target.checked; });
-        } else {
-          if (val !== undefined && val !== '') {
-            el.value = val;
-          } else {
-            formData[key] = el.value || '';
-          }
-          el.addEventListener('input', (e) => { formData[key] = e.target.value; });
-        }
-      } else {
-        if (val !== undefined) {
-          if (useHtml) {
-            el.innerHTML = val;
-          } else {
-            el.textContent = val;
-          }
-        }
-      }
-    });
-
-    document.querySelectorAll('[data-action]').forEach(el => {
-      const actionName = el.getAttribute('data-action');
-      el.addEventListener('click', async () => { __handleAction(actionName, el); });
-    });
-
-    document.querySelectorAll('input[data-bind]').forEach(el => {
-      el.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-          if (hasStuardApi) {
-            window.stuard.submit(formData);
-          } else {
-            document.title = 'ACTION:submit:' + JSON.stringify(formData);
-          }
-        }
-      });
-    });
-    `}
-
-    if (hasStuardApi) {
-      window.stuard.onDataUpdate((newData) => {
-        Object.assign(formData, newData);
-        for (const [key, value] of Object.entries(newData)) {
-          const bindEl = document.querySelector('[data-bind="' + key + '"]');
-          if (bindEl) {
-            if (bindEl.tagName === 'INPUT' || bindEl.tagName === 'TEXTAREA') {
-              bindEl.value = value;
-            } else if (bindEl.hasAttribute('data-html') || bindEl.hasAttribute('data-render-html')) {
-              bindEl.innerHTML = value;
-            } else {
-              bindEl.textContent = value;
-            }
-          }
-        }
-      });
-    }
-
-    // ─── Workflow Variable Binding (data-var) ─────────────────────────────
-    (function __initVarBindings() {
-      if (!hasStuardApi) return;
-
-      function __updateVarElement(el, value) {
-        const fmt = el.getAttribute('data-var-format');
-        const displayVal = fmt ? fmt.replace(/\{value\}/g, value ?? '') : (value ?? '');
-
-        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
-          if (el.type === 'checkbox') {
-            el.checked = !!value;
-          } else {
-            el.value = displayVal;
-          }
-        } else if (el.hasAttribute('data-html') || el.hasAttribute('data-render-html')) {
-          el.innerHTML = displayVal;
-        } else {
-          el.textContent = displayVal;
-        }
-      }
-
-      const varEls = document.querySelectorAll('[data-var]');
-      const varNames = new Set();
-      varEls.forEach(el => {
-        const v = el.getAttribute('data-var');
-        if (v) varNames.add(v);
-      });
-
-      const varNameArr = Array.from(varNames);
-      if (varNameArr.length > 0) {
-        console.log('[stuard] data-var bindings found:', varNameArr);
-      }
-
-      // Always subscribe to '*' so useState() works for any variable
-      window.stuard.subscribeVars(['*']);
-
-      if (varNameArr.length > 0) {
-        Promise.all(varNameArr.map(v => window.stuard.getVar(v))).then(results => {
-          for (const res of results) {
-            if (res.ok) {
-              document.querySelectorAll('[data-var="' + res.name + '"]').forEach(el => {
-                __updateVarElement(el, res.value);
-              });
-            }
-          }
-        });
-      }
-
-      window.stuard.onVarUpdate(({ name, shortName, value }) => {
-        const matchNames = [name, shortName];
-        for (const mn of matchNames) {
-          document.querySelectorAll('[data-var="' + mn + '"]').forEach(el => {
-            __updateVarElement(el, value);
-          });
-        }
-
-        // Notify useState listeners
-        const listeners = window.__varListeners || {};
-        for (const mn of matchNames) {
-          if (listeners[mn]) {
-            listeners[mn].forEach(cb => { try { cb(value); } catch(e) { console.error('[useState] listener error:', e); } });
-          }
-        }
-
-        window.dispatchEvent(new CustomEvent('stuard:var-changed', {
-          detail: { name, shortName, value }
-        }));
-      });
-    })();
-
-    // ─── useState API ─────────────────────────────────────────────────────
-    window.__varListeners = window.__varListeners || {};
-    window.__varCache = window.__varCache || {};
-
-    window.useState = function useState(varName, defaultValue, onChange) {
-      if (!hasStuardApi) {
-        let _val = defaultValue;
-        return [
-          { get value() { return _val; }, toString() { return String(_val); }, valueOf() { return _val; } },
-          function(v) { _val = v; if (onChange) onChange(v); }
-        ];
-      }
-
-      if (!(varName in window.__varCache)) {
-        window.__varCache[varName] = defaultValue;
-        window.stuard.getVar(varName).then(res => {
-          if (res.ok && res.value !== undefined && res.value !== null) {
-            window.__varCache[varName] = res.value;
-            if (onChange) onChange(res.value);
-          } else if (defaultValue !== undefined) {
-            window.stuard.setVar(varName, defaultValue);
-          }
-        });
-      }
-
-      if (onChange) {
-        if (!window.__varListeners[varName]) window.__varListeners[varName] = [];
-        window.__varListeners[varName].push(onChange);
-      }
-
-      const state = {
-        get value() { return window.__varCache[varName]; },
-        toString() { return String(window.__varCache[varName]); },
-        valueOf() { return window.__varCache[varName]; }
-      };
-
-      function setValue(newVal) {
-        window.__varCache[varName] = newVal;
-        window.stuard.setVar(varName, newVal);
-      }
-
-      if (!window.__varListeners[varName]) window.__varListeners[varName] = [];
-      window.__varListeners[varName].push(v => { window.__varCache[varName] = v; });
-
-      return [state, setValue];
-    };
-
-    ${initScript ? `
-    (async () => {
-      try {
-        ${initScript}
-      } catch (e) {
-        console.error('[stuard] Init script error:', e);
-      }
-    })();
-    ` : ''}
-  </script>
-</body>
-</html>`;
 }
-
-function renderLayout(node: any, data: any): string {
-  if (!node) return '';
-  if (typeof node === 'string') return escapeHtml(node);
-  if (Array.isArray(node)) return node.map((n) => renderLayout(n, data)).join('');
-
-  const type = String(node.type || 'div');
-  const className = node.className ? ` class="${escapeHtml(node.className)}"` : '';
-  const style = node.style
-    ? ` style="${Object.entries(node.style)
-      .map(([k, v]) => `${k}:${v}`)
-      .join(';')}"`
-    : '';
-  const bind = node.bind ? ` data-bind="${escapeHtml(node.bind)}"` : '';
-  const varBind = node.var ? ` data-var="${escapeHtml(node.var)}"` : '';
-  const varFormat = node.varFormat ? ` data-var-format="${escapeHtml(node.varFormat)}"` : '';
-  const placeholder = node.placeholder ? ` placeholder="${escapeHtml(node.placeholder)}"` : '';
-
-  let action = '';
-  let actionName = '';
-  if (node.on) {
-    const parts = String(node.on).split(':');
-    if (parts.length >= 2) {
-      actionName = parts[1];
-    }
-  }
-  if (node.action) {
-    actionName = String(node.action);
-  }
-  if (actionName) {
-    action = ` data-action="${escapeHtml(actionName)}"`;
-  }
-
-  let children = '';
-  if (node.children) {
-    if (typeof node.children === 'string') {
-      children = node.children.replace(/\{\{([\w\.]+)\}\}/g, (_: any, k: string) => {
-        const val = k.split('.').reduce((o, key) => (o || {})[key], data);
-        return escapeHtml(String(val !== undefined ? val : ''));
-      });
-    } else if (Array.isArray(node.children)) {
-      children = node.children.map((c: any) => renderLayout(c, data)).join('');
-    } else {
-      children = renderLayout(node.children, data);
-    }
-  }
-
-  if (type === 'input') {
-    let value = '';
-    if (node.bind) {
-      const val = node.bind.split('.').reduce((o: any, key: string) => (o || {})[key], data);
-      if (val !== undefined) value = ` value="${escapeHtml(String(val))}"`;
-    }
-    return `<input type="text"${className}${style}${bind}${varBind}${varFormat}${placeholder}${value}${action}>`;
-  }
-
-  if (type === 'button') {
-    const label = node.text || node.label || node.children || 'Button';
-    return `<button${className}${style}${action}>${typeof label === 'string' ? escapeHtml(label) : renderLayout(label, data)}</button>`;
-  }
-
-  if (type === 'text') {
-    const content = node.text || node.content || node.value || node.children || '';
-    const text =
-      typeof content === 'string'
-        ? content.replace(/\{\{([\w\.]+)\}\}/g, (_: any, k: string) => {
-          const val = k.split('.').reduce((o, key) => (o || {})[key], data);
-          return escapeHtml(String(val !== undefined ? val : ''));
-        })
-        : renderLayout(content, data);
-    return `<span${className}${style}${varBind}${varFormat}>${text}</span>`;
-  }
-
-  return `<${type}${className}${style}${bind}${varBind}${varFormat}${action}>${children}</${type}>`;
-}
+// Legacy mode removed — Preact is the only rendering path
+// END OF FILE MARKER

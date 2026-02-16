@@ -37,6 +37,10 @@ function convertLatexDelims(md: string): string {
   return out;
 }
 
+function escapeCurrencyDollars(text: string): string {
+  return text.replace(/\$(\d[\d,]*\.?\d*)/g, '\\$$1');
+}
+
 function BoardApp() {
   const [data, setData] = useState<any>({ template: 'notes', title: 'Board', position: { x: 80, y: 80 }, size: { width: 360, height: 240 } });
   const [content, setContent] = useState<string>('');
@@ -163,7 +167,7 @@ function BoardApp() {
                   ),
                 }}
               >
-                {convertLatexDelims(String(content || ''))}
+                {convertLatexDelims(escapeCurrencyDollars(String(content || '')))}
               </ReactMarkdown>
             </div>
           )}

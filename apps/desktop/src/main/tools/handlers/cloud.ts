@@ -294,8 +294,13 @@ async function execTextToSpeech(args: any, ctx: RouterContext): Promise<any> {
 
   try {
     const text = String(args?.text || '').trim();
-    const voice = args?.voice || 'alloy';
-    const speed = Number(args?.speed || 1.0);
+    const voiceId = args?.voice_id || args?.voice || 'JBFqnCBsd6RMkjVDRZzb';
+    const modelId = args?.model_id || 'eleven_multilingual_v2';
+    const languageCode = args?.language_code || '';
+    const speed = args?.speed;
+    const stability = args?.stability;
+    const similarityBoost = args?.similarity_boost;
+    const style = args?.style;
     const format = args?.format || 'mp3';
     const save = args?.save !== false;
     const play = args?.play === true;
@@ -305,7 +310,7 @@ async function execTextToSpeech(args: any, ctx: RouterContext): Promise<any> {
       return { ok: false, error: 'text_required' };
     }
     
-    ctx.logFn(`TTS: "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}" (voice=${voice})`);
+    ctx.logFn(`TTS: "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}" (voice_id=${voiceId}, model=${modelId}${languageCode ? ', lang=' + languageCode : ''})`);
     
     // Call cloud to generate audio
     const url = `${ctx.cloudAiUrl}/tools/text_to_speech`;
@@ -313,10 +318,18 @@ async function execTextToSpeech(args: any, ctx: RouterContext): Promise<any> {
     if (ctx.accessToken) {
       ttsHeaders['Authorization'] = `Bearer ${ctx.accessToken}`;
     }
+    
+    const requestBody: any = { text, voice_id: voiceId, model_id: modelId, format };
+    if (languageCode) requestBody.language_code = languageCode;
+    if (speed !== undefined) requestBody.speed = speed;
+    if (stability !== undefined) requestBody.stability = stability;
+    if (similarityBoost !== undefined) requestBody.similarity_boost = similarityBoost;
+    if (style !== undefined) requestBody.style = style;
+    
     const resp = await net.fetch(url, {
       method: 'POST',
       headers: ttsHeaders,
-      body: JSON.stringify({ text, voice, speed, format }),
+      body: JSON.stringify(requestBody),
     });
     
     if (!resp.ok) {
@@ -360,14 +373,13 @@ async function execTextToSpeech(args: any, ctx: RouterContext): Promise<any> {
     if (play && filePath) {
       try {
         ctx.logFn(`TTS: Playing audio...`);
-        const playResult = await execTool('play_audio', {
-          path: filePath,
-          block: true,
+        const playResult = await execTool('launch_application_or_uri', {
+          target: filePath,
         }, ctx);
         
         if (playResult?.ok) {
           played = true;
-          ctx.logFn(`TTS: Playback complete (${playResult.method || 'unknown'})`);
+          ctx.logFn(`TTS: Playback started`);
         } else {
           ctx.logFn(`TTS: Play failed: ${playResult?.error || 'unknown'}`);
         }
@@ -380,7 +392,8 @@ async function execTextToSpeech(args: any, ctx: RouterContext): Promise<any> {
       ok: true,
       filePath: save ? filePath : undefined,
       format,
-      voice,
+      voice_id: voiceId,
+      model_id: modelId,
       textLength: text.length,
       played,
     };

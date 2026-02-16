@@ -1,25 +1,29 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useState, forwardRef, useImperativeHandle, useRef } from "react";
 import { Link2, Square } from "lucide-react";
 
-// Check if any URL is present
 function extractAnyUrl(text: string): string | null {
   if (!text) return null;
   const match = text.match(/https?:\/\/[^\s<>"{}|\\^`[\]]+/);
   return match ? match[0] : null;
 }
 
-export function ChatInput({
-  onSend,
-  busy,
-  onStop,
-}: {
+export interface ChatInputRef {
+  focus: () => void;
+}
+
+export const ChatInput = forwardRef<ChatInputRef, {
   onSend: (text: string) => void;
   busy: boolean;
   onStop?: () => void;
-}) {
+}>(({ onSend, busy, onStop }, ref) => {
   const [text, setText] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   const [hasDragUrl, setHasDragUrl] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    focus: () => textareaRef.current?.focus(),
+  }), []);
 
   const send = useCallback(() => {
     const t = text.trim();
@@ -121,7 +125,8 @@ export function ChatInput({
       )}
 
       <div className="flex items-end gap-2 p-2.5">
-        <textarea
+<textarea
+          ref={textareaRef}
           className="flex-1 resize-none outline-none text-[13px] text-slate-800 placeholder:text-slate-400 bg-transparent min-h-[44px] max-h-[140px] py-2.5 px-2 scrollbar-minimal"
           placeholder={busy ? "Working..." : "Describe what to change..."}
           value={text}
@@ -154,7 +159,7 @@ export function ChatInput({
             Send
           </button>
         )}
-      </div>
+</div>
     </div>
   );
-}
+});

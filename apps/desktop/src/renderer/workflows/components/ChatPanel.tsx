@@ -49,8 +49,11 @@ function toMediaSrc(src: string): string {
 function preprocessMessageContent(content: string): string {
   if (!content) return '';
   
+  // 0. Escape dollar signs used for currency to prevent LaTeX parsing
+  let processed = content.replace(/\$(\d[\d,]*\.?\d*)/g, '\\$$1');
+  
   // 1. Replace <<path>> with ![attachment](path)
-  let processed = content.replace(/<<([^<>]+)>>/g, '![attachment](<$1>)');
+  processed = processed.replace(/<<([^<>]+)>>/g, '![attachment](<$1>)');
   
   // 2. Replace raw audio paths with ![audio](path)
   // Look for standalone paths at start of line or preceded by whitespace

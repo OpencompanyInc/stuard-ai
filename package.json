@@ -9,7 +9,7 @@
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "clean": "turbo run clean --parallel",
-    "dev:stack": "concurrently -k -n CLOUD,AGENT,DESKTOP,OPS,WEB \"pnpm -F @stuardai/cloud-ai dev\" \"powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts\\run-agent.ps1\" \"npm --prefix apps/desktop run dev\" \"pnpm -F ops-console dev\" \"pnpm -F stuard-ai-website dev\""
+    "dev:stack": "concurrently -k -n CLOUD,AGENT,DESKTOP,OPS,WEB \"pnpm -F @stuardai/cloud-ai dev\" \"node scripts/run-agent.js\" \"npm --prefix apps/desktop run dev\" \"pnpm -F ops-console dev\" \"pnpm -F stuard-ai-website dev\""
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

@@ -114,6 +114,8 @@ async def capture_media(
     kind = str(args.get("kind") or "").strip().lower()
     device = args.get("device")
     mode = str(args.get("mode") or "fixed").strip().lower()
+    if bool(args.get("stream", False)):
+        mode = "stream"
     session_id = str(args.get("sessionId") or "").strip() or str(uuid.uuid4())[:8]
     max_duration_ms = int(args.get("maxDurationMs") or 7200000)  # 2 hour default safety limit
     duration_ms = int(args.get("durationMs") or (5000 if kind in ("audio", "video", "audiovideo") else 0))

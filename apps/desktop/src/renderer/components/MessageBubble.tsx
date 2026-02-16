@@ -5,7 +5,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import clsx from 'clsx';
-import { convertLatexDelims } from '../utils/text';
+import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
 import 'katex/dist/katex.min.css';
 import { ChevronRight, Folder, FileText, Play, ExternalLink, CheckCircle, XCircle, Loader2, Copy, Check, Terminal, Pencil, Undo2, X, Send } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -518,7 +518,7 @@ function extractContentSegments(inputText: string): ContentSegment[] {
     let t = chunk
       .replace(/==([\s\S]*?)==/g, '[$1](#highlight)')
       .replace(/\+\+([\s\S]*?)\+\+/g, '[$1](#underline)');
-    t = normalizeMarkdownSpacing(convertLatexDelims(t));
+    t = normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(t)));
     result.push({ kind: 'text', value: t });
   };
 
@@ -784,9 +784,11 @@ function normalizeMarkdownSpacing(input: string): string {
 // Process text for custom markdown extensions (==highlight==, ++underline++)
 function processCustomMarkdown(text: string): string {
   return convertLatexDelims(
-    normalizeMarkdownSpacing(text)
-      .replace(/==([\s\S]*?)==/g, '[$1](#highlight)')
-      .replace(/\+\+([\s\S]*?)\+\+/g, '[$1](#underline)')
+    escapeCurrencyDollars(
+      normalizeMarkdownSpacing(text)
+        .replace(/==([\s\S]*?)==/g, '[$1](#highlight)')
+        .replace(/\+\+([\s\S]*?)\+\+/g, '[$1](#underline)')
+    )
   );
 }
 
@@ -1072,7 +1074,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
       let t = chunk
         .replace(/==([\s\S]*?)==/g, '[$1](#highlight)')
         .replace(/\+\+([\s\S]*?)\+\+/g, '[$1](#underline)');
-      t = normalizeMarkdownSpacing(convertLatexDelims(t));
+      t = normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(t)));
       result.push({ kind: 'text', value: t });
     };
 
@@ -1249,7 +1251,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                   remarkPlugins={[remarkMath, remarkGfm]}
                   rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
                 >
-                  {normalizeMarkdownSpacing(convertLatexDelims(reasoning || ''))}
+                  {normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(reasoning || '')))}
                 </ReactMarkdown>
               </div>
             </div>
@@ -1291,7 +1293,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                       remarkPlugins={[remarkMath, remarkGfm]}
                       rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
                     >
-                      {normalizeMarkdownSpacing(convertLatexDelims(chunk.content))}
+                      {normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(chunk.content)))}
                     </ReactMarkdown>
                   </div>
                 );
@@ -1493,7 +1495,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                   urlTransform={(url) => url}
                   components={markdownComponents}
                 >
-                  {normalizeMarkdownSpacing(convertLatexDelims(text))}
+                  {normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(text)))}
                 </ReactMarkdown>
               ) : (
                 segments.map((seg, idx) => {

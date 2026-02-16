@@ -30,10 +30,11 @@ import { WorkflowOverlays } from "./workflows/layout/WorkflowOverlays";
 import { PanelErrorBoundary } from "./workflows/layout/PanelErrorBoundary";
 import { WorkflowHeader } from "./workflows/layout/WorkflowHeader";
 import type { OpenFileTab, RightPanel, WorkflowContextMenu, WorkspaceInfo } from "./workflows/layout/types";
+import type { ChatInputRef } from "./workflows/components/chat/ChatInput";
+import type { ToolPaletteRef } from "./workflows/components/ToolPalette";
 
 const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
 
-// Main App
 function WorkflowsApp() {
   const { items, folders, loading, refresh, updates } = useWorkflows();
   const { logs, setLogs, executionState, runningIds, setRunningIds } = useWorkflowRuntime();
@@ -41,13 +42,15 @@ function WorkflowsApp() {
   const [model, setModel] = useState<DesignerModel | null>(null);
   const [dirty, setDirty] = useState(false);
 
-  // Undo/Redo history
   const [history, setHistory] = useState<DesignerModel[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
-  const isUndoingRef = useRef(false); // Flag to prevent adding to history during undo/redo
+  const isUndoingRef = useRef(false);
 
   const [viewMode, setViewMode] = useState<'ai' | 'manual'>('ai');
   const [rightPanel, setRightPanel] = useState<RightPanel>('none');
+  
+  const chatInputRef = useRef<ChatInputRef>(null);
+  const toolPaletteRef = useRef<ToolPaletteRef>(null);
   const {
     sidebarCollapsed,
     setSidebarCollapsed,
@@ -676,6 +679,21 @@ function WorkflowsApp() {
     setRightPanel('inspector');
   }, []);
 
+  const handleNodeSelectWithPanel = useCallback((id: string, e?: React.MouseEvent) => {
+    handleNodeSelect(id, e);
+    setSelectedWireIndex(null);
+    setRightPanel('inspector');
+  }, [handleNodeSelect]);
+
+  const handleConnectWithFocus = useCallback((id: string) => {
+    handleConnect(id);
+    if (viewMode === 'ai') {
+      chatInputRef.current?.focus();
+    } else {
+      toolPaletteRef.current?.focusSearch();
+    }
+  }, [handleConnect, viewMode]);
+
   const handleWireDelete = useCallback((i: number) => {
     if (model) updateModel({ ...model, wires: model.wires.filter((_, j) => j !== i) });
     setSelectedWireIndex(null);
@@ -875,10 +893,10 @@ function WorkflowsApp() {
           onMouseUp={handleCanvasMouseUp}
           onMouseLeave={handleCanvasMouseLeave}
           onCanvasClick={clearCanvasSelection}
-          onNodeSelect={handleNodeSelect}
+          onNodeSelect={handleNodeSelectWithPanel}
           onNodeMouseDown={handleNodeMD}
           onNodeContextMenu={handleNodeContextMenu}
-          onNodeConnect={handleConnect}
+          onNodeConnect={handleConnectWithFocus}
           onWireSelect={handleWireSelect}
           onWireDelete={handleWireDelete}
           onWireContextMenu={handleWireContextMenu}
@@ -891,6 +909,8 @@ function WorkflowsApp() {
           onRefreshWorkspace={() => refreshWorkspace()}
           onCloseWorkspace={() => setShowWorkspace(false)}
           onOpenFile={openFileTab}
+          chatInputRef={chatInputRef}
+          toolPaletteRef={toolPaletteRef}
         />
       </div>
 

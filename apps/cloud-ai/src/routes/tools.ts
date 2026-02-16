@@ -1,14 +1,11 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { OpenAIVoice } from '@mastra/voice-openai';
+import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
 import { initToolRegistry } from '../tools/meta-tools';
 import { getToolRegistry } from '../tools/tool-registry';
 import { runWithSecrets } from '../tools/bridge';
 import { verifyToken } from '../supabase';
 import { CORS_ALLOWED_ORIGINS, PUBLIC_TOOLS_ALLOWLIST, REQUIRE_TOOL_AUTH, IS_DEVELOPMENT } from '../utils/config';
 
-/**
- * Gets CORS origin header based on request and configuration.
- */
 function getCorsOrigin(req: IncomingMessage): string {
   const origin = req.headers.origin || '';
   if (CORS_ALLOWED_ORIGINS === '*') return '*';
@@ -48,31 +45,45 @@ function writeJson(res: ServerResponse, status: number, obj: any, corsOrigin: st
   }
 }
 
-// Singleton voice instance
-let _voiceInstance: OpenAIVoice | null = null;
-function getVoiceInstance(): OpenAIVoice {
-  if (!_voiceInstance) {
-    _voiceInstance = new OpenAIVoice({
-      speechModel: { name: 'tts-1' },
-      speaker: 'alloy',
-    });
+let _elevenLabsClient: ElevenLabsClient | null = null;
+function getElevenLabsClient(): ElevenLabsClient {
+  if (!_elevenLabsClient) {
+    _elevenLabsClient = new ElevenLabsClient();
   }
-  return _voiceInstance;
+  return _elevenLabsClient;
 }
 
-async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+async function streamToBuffer(stream: ReadableStream<Uint8Array>): Promise<Buffer> {
+  const chunks: Uint8Array[] = [];
+  const reader = stream.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
   }
-  return Buffer.concat(chunks);
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return Buffer.from(result);
 }
+
+const DEFAULT_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb';
+const FORMAT_MAP: Record<string, string> = {
+  mp3: 'mp3_44100_128',
+  opus: 'opus_48000_128',
+  wav: 'wav_44100',
+  aac: 'mp3_44100_128',
+  flac: 'wav_44100',
+};
 
 export async function handleToolsRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   const path = String(parsedUrl.pathname || '');
   const corsOrigin = getCorsOrigin(req);
 
-  // CORS preflight
   if (req.method === 'OPTIONS' && path.startsWith('/tools/')) {
     const headers: Record<string, string> = {
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -88,34 +99,53 @@ export async function handleToolsRoutes(req: IncomingMessage, res: ServerRespons
     return true;
   }
 
-  // Text-to-speech - returns audio as base64 for client to save/play
   if (req.method === 'POST' && path === '/tools/text_to_speech') {
     try {
       const body = await readJsonBody(req);
-      const text = String(body?.text || '').slice(0, 4096);
-      const voice = body?.voice || 'alloy';
-      const speed = Number(body?.speed || 1.0);
+      const text = String(body?.text || '').slice(0, 5000);
+      const voiceId = body?.voice_id || body?.voice || DEFAULT_VOICE_ID;
+      const modelId = body?.model_id || 'eleven_multilingual_v2';
+      const languageCode = body?.language_code;
+      const speed = body?.speed != null ? Number(body.speed) : undefined;
+      const stability = body?.stability;
+      const similarityBoost = body?.similarity_boost;
+      const style = body?.style;
       const format = body?.format || 'mp3';
-      
+      const outputFormat = FORMAT_MAP[format] || 'mp3_44100_128';
+
       if (!text) {
         writeJson(res, 400, { ok: false, error: 'text_required' }, corsOrigin);
         return true;
       }
-      
-      const voiceInstance = getVoiceInstance();
-      const audioStream = await voiceInstance.speak(text, {
-        speaker: voice as any,
-        speed,
-      });
-      
+
+      const client = getElevenLabsClient();
+
+      const voiceSettings: Record<string, any> = {};
+      if (speed !== undefined && speed !== 1.0) voiceSettings.speed = speed;
+      if (stability !== undefined) voiceSettings.stability = stability;
+      if (similarityBoost !== undefined) voiceSettings.similarity_boost = similarityBoost;
+      if (style !== undefined) voiceSettings.style = style;
+
+      const requestParams: Record<string, any> = {
+        text,
+        modelId,
+        outputFormat,
+      };
+      if (languageCode) requestParams.languageCode = languageCode;
+      if (Object.keys(voiceSettings).length > 0) {
+        requestParams.voiceSettings = voiceSettings;
+      }
+
+      const audioStream = await client.textToSpeech.convert(voiceId, requestParams as any);
       const audioBuffer = await streamToBuffer(audioStream);
       const audioBase64 = audioBuffer.toString('base64');
-      
+
       writeJson(res, 200, {
         ok: true,
         audioData: audioBase64,
         format,
-        voice,
+        voice_id: voiceId,
+        model_id: modelId,
         textLength: text.length,
         mimeType: format === 'mp3' ? 'audio/mpeg' : `audio/${format}`,
       }, corsOrigin);
@@ -127,33 +157,59 @@ export async function handleToolsRoutes(req: IncomingMessage, res: ServerRespons
     }
   }
 
-  // List TTS voices (public endpoint)
   if ((req.method === 'POST' || req.method === 'GET') && path === '/tools/list_tts_voices') {
-    const voices = [
-      { id: 'alloy', name: 'Alloy', description: 'Neutral, balanced voice - good for general use' },
-      { id: 'echo', name: 'Echo', description: 'Warm, confident male voice' },
-      { id: 'fable', name: 'Fable', description: 'Expressive, British-accented voice - good for storytelling' },
-      { id: 'onyx', name: 'Onyx', description: 'Deep, authoritative male voice' },
-      { id: 'nova', name: 'Nova', description: 'Friendly, upbeat female voice' },
-      { id: 'shimmer', name: 'Shimmer', description: 'Clear, pleasant female voice' },
-    ];
-    writeJson(res, 200, { ok: true, voices }, corsOrigin);
+    try {
+      const client = getElevenLabsClient();
+      const voicesResponse = await client.voices.search();
+      const voices = (voicesResponse.voices || []).map((v: any) => ({
+        id: v.voice_id,
+        name: v.name,
+        description: v.description || `Voice: ${v.name}`,
+        labels: v.labels,
+      }));
+      writeJson(res, 200, { ok: true, voices }, corsOrigin);
+    } catch (e: any) {
+      console.error('[tools] list_tts_voices error:', e);
+      const fallbackVoices = [
+        { id: DEFAULT_VOICE_ID, name: 'Default Voice', description: 'Default ElevenLabs voice' },
+      ];
+      writeJson(res, 200, { ok: true, voices: fallbackVoices }, corsOrigin);
+    }
     return true;
   }
 
-  // Generic tool execution endpoint - /tools/:toolName
-  // This allows workflows to execute any registered tool directly
+  if ((req.method === 'POST' || req.method === 'GET') && path === '/tools/get_tts_models') {
+    try {
+      const client = getElevenLabsClient();
+      const modelsResponse = await client.models.list();
+      const models = (modelsResponse || [])
+        .filter((m: any) => m.can_do_text_to_speech)
+        .map((m: any) => ({
+          id: m.model_id,
+          name: m.name,
+          description: m.description || `Model: ${m.name}`,
+        }));
+      writeJson(res, 200, { ok: true, models }, corsOrigin);
+    } catch (e: any) {
+      const fallbackModels = [
+        { id: 'eleven_multilingual_v2', name: 'Multilingual v2', description: 'Best for multiple languages' },
+        { id: 'eleven_turbo_v2_5', name: 'Turbo v2.5', description: 'Fast, good quality' },
+        { id: 'eleven_monolingual_v1', name: 'Monolingual v1', description: 'High quality English' },
+      ];
+      writeJson(res, 200, { ok: true, models: fallbackModels }, corsOrigin);
+    }
+    return true;
+  }
+
   const toolMatch = path.match(/^\/tools\/([a-zA-Z0-9_-]+)$/);
   if (req.method === 'POST' && toolMatch) {
     const toolName = toolMatch[1];
 
-    // Skip tools that have dedicated handlers
-    if (toolName === 'text_to_speech' || toolName === 'list_tts_voices') {
+    if (toolName === 'text_to_speech' || toolName === 'list_tts_voices' || toolName === 'get_tts_models') {
       return false;
     }
 
     try {
-      // Initialize tool registry if needed
       initToolRegistry();
 
       const registry = getToolRegistry();
@@ -166,7 +222,6 @@ export async function handleToolsRoutes(req: IncomingMessage, res: ServerRespons
 
       const body = await readJsonBody(req);
 
-      // Extract user context from auth header if present
       const auth = req.headers.authorization || '';
       const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
       let userId: string | null = null;
@@ -178,25 +233,19 @@ export async function handleToolsRoutes(req: IncomingMessage, res: ServerRespons
         } catch {}
       }
 
-      // Security: Require auth for non-public tools in production
       const isPublicTool = PUBLIC_TOOLS_ALLOWLIST.has(toolName);
       if (REQUIRE_TOOL_AUTH && !isPublicTool && !userId) {
         writeJson(res, 401, { ok: false, error: 'unauthorized', message: 'Authentication required for this tool' }, corsOrigin);
         return true;
       }
 
-      // Execute the tool with user context (secrets)
       const secrets = userId ? { userId } : {};
-      
-      // Security: Only log tool name and arg size, not full content
       console.log(`[tools] Executing ${toolName} (args: ${JSON.stringify(body).length} bytes, userId: ${userId || 'anonymous'})`);
 
       const result = await runWithSecrets(secrets, async () => {
         if (typeof tool.execute !== 'function') {
           throw new Error(`Tool '${toolName}' is not executable`);
         }
-        // Generic tool HTTP route expects raw tool args in request body.
-        // Backward-compat: if client sent { context: {...} } wrapper, unwrap it.
         const toolArgs = (
           body &&
           typeof body === 'object' &&

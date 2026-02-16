@@ -39,6 +39,9 @@ importers:
       '@ai-sdk/xai':
         specifier: ^3.0.48
         version: 3.0.48(zod@4.3.6)
+      '@elevenlabs/elevenlabs-js':
+        specifier: ^2.35.0
+        version: 2.35.0
       '@google-cloud/storage':
         specifier: ^7.13.0
         version: 7.17.3
@@ -54,9 +57,6 @@ importers:
       '@mastra/memory':
         specifier: ^0.15.11
         version: 0.15.11(@mastra/core@1.1.0)(react@19.2.0)(zod@4.3.6)
-      '@mastra/voice-openai':
-        specifier: ^0.11.12
-        version: 0.11.12(@mastra/core@1.1.0)(ws@8.18.3)(zod@4.3.6)
       '@openrouter/ai-sdk-provider':
         specifier: ^1.4.1
         version: 1.4.1(ai@6.0.64)(zod@4.3.6)
@@ -1602,6 +1602,19 @@ packages:
       - supports-color
     dev: true
 
+  /@elevenlabs/elevenlabs-js@2.35.0:
+    resolution: {integrity: sha512-iQO8Q7nxBnMpP494ziRD4e0dtMQcqI2IVFacBbH2huOrqetg0DG+BPFLC4IHa/KLT6u6UXYq5Hc7HnxZsqmQ9w==}
+    engines: {node: '>=18.0.0'}
+    dependencies:
+      command-exists: 1.2.9
+      node-fetch: 2.7.0
+      ws: 8.18.3
+    transitivePeerDependencies:
+      - bufferutil
+      - encoding
+      - utf-8-validate
+    dev: false
+
   /@emnapi/core@1.7.1:
     resolution: {integrity: sha512-o1uhUASyo921r2XtHYOHy7gdkGLge8ghBEQHMWmyJFoXlpU58kIrhhN3w26lpQb6dspetweapMn2CSNwQ8I4wg==}
     requiresBuild: true
@@ -3006,19 +3019,6 @@ packages:
       zod-from-json-schema: 0.5.0
       zod-from-json-schema-v3: /zod-from-json-schema@0.0.5
       zod-to-json-schema: 3.25.0(zod@4.3.6)
-    dev: false
-
-  /@mastra/voice-openai@0.11.12(@mastra/core@1.1.0)(ws@8.18.3)(zod@4.3.6):
-    resolution: {integrity: sha512-LiZNXrNY0Td0jxIkwsCgIQ8WSrGOK9FWD2/L/IJkj+YEgRYHvfVG5143Cl6+TlV5ckdOYJeA8pluwImvjz4RNg==}
-    peerDependencies:
-      '@mastra/core': '>=0.18.1-0 <0.25.0-0'
-      zod: ^3.25.0 || ^4.0.0
-    dependencies:
-      '@mastra/core': 1.1.0(@standard-community/standard-json@0.3.5)(@standard-community/standard-openapi@0.2.9)(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@4.3.6)
-      openai: 5.23.2(ws@8.18.3)(zod@4.3.6)
-      zod: 4.3.6
-    transitivePeerDependencies:
-      - ws
     dev: false
 
   /@modelcontextprotocol/sdk@1.25.1(hono@4.11.7)(zod@4.3.6):
@@ -7924,6 +7924,10 @@ packages:
     resolution: {integrity: sha512-Fu4hJdvzeylCfQPp9SGWidpzrMs7tTrlu6Vb8XGaRGck8QSNZJJp538Wrb60Lax4fPwR64ViY468OIUTbRlGZg==}
     dev: false
 
+  /command-exists@1.2.9:
+    resolution: {integrity: sha512-LTQ/SGc+s0Xc0Fu5WaKnR0YiygZkm9eKFvyS+fRsU7/ZWFF8ykFM6Pc9aCVf1+xasOOZpO3BAVgVrKvsqKHV7w==}
+    dev: false
+
   /commander@4.1.1:
     resolution: {integrity: sha512-NOKm8xhkzAjzFx8B2v5OAHT+u5pRQc2UCa2Vq9jYL/31o2wi9mxBA7LIFs3sV5VSC49z6pEhfbMULvShKj26WA==}
     engines: {node: '>= 6'}
@@ -12578,22 +12582,6 @@ packages:
       zod: 4.3.6
     transitivePeerDependencies:
       - encoding
-    dev: false
-
-  /openai@5.23.2(ws@8.18.3)(zod@4.3.6):
-    resolution: {integrity: sha512-MQBzmTulj+MM5O8SKEk/gL8a7s5mktS9zUtAkU257WjvobGc9nKcBuVwjyEEcb9SI8a8Y2G/mzn3vm9n1Jlleg==}
-    hasBin: true
-    peerDependencies:
-      ws: ^8.18.0
-      zod: ^3.23.8
-    peerDependenciesMeta:
-      ws:
-        optional: true
-      zod:
-        optional: true
-    dependencies:
-      ws: 8.18.3
-      zod: 4.3.6
     dev: false
 
   /openapi-types@12.1.3:

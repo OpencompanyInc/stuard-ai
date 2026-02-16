@@ -5,9 +5,9 @@
 
 import React, { useRef, useState, useEffect, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 
-const PREVIEW_SURFACE_WIDTH = 1280;
-const PREVIEW_SURFACE_HEIGHT = 800;
-const PREVIEW_WINDOW_MARGIN = 24;
+const PREVIEW_SURFACE_WIDTH = 1920;
+const PREVIEW_SURFACE_HEIGHT = 1040;
+const PREVIEW_WINDOW_MARGIN = 20;
 
 export interface UIBuilderCanvasRef {
   refresh: () => void;
@@ -73,6 +73,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [iframeReady, setIframeReady] = useState(false);
+  const [surfaceScale, setSurfaceScale] = useState(1);
   const [hoveredPath, setHoveredPath] = useState<string | null>(null);
 
   const isInternalHtmlChange = useRef(false);
@@ -87,21 +88,32 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   const windowOffset = useMemo(() => {
     const centeredX = (PREVIEW_SURFACE_WIDTH - scaledCanvasWidth) / 2;
     const centeredY = (PREVIEW_SURFACE_HEIGHT - scaledCanvasHeight) / 2;
+    const pos = String(windowPosition || 'center').toLowerCase().replace(/[_-]/g, '');
 
-    switch (windowPosition) {
+    switch (pos) {
       case 'topleft':
         return { x: PREVIEW_WINDOW_MARGIN, y: PREVIEW_WINDOW_MARGIN };
+      case 'top':
+      case 'topcenter':
+        return { x: centeredX, y: PREVIEW_WINDOW_MARGIN };
       case 'topright':
         return { x: PREVIEW_SURFACE_WIDTH - PREVIEW_WINDOW_MARGIN - scaledCanvasWidth, y: PREVIEW_WINDOW_MARGIN };
+      case 'left':
+      case 'centerleft':
+        return { x: PREVIEW_WINDOW_MARGIN, y: centeredY };
+      case 'right':
+      case 'centerright':
+        return { x: PREVIEW_SURFACE_WIDTH - PREVIEW_WINDOW_MARGIN - scaledCanvasWidth, y: centeredY };
       case 'bottomleft':
         return { x: PREVIEW_WINDOW_MARGIN, y: PREVIEW_SURFACE_HEIGHT - PREVIEW_WINDOW_MARGIN - scaledCanvasHeight };
+      case 'bottom':
+      case 'bottomcenter':
+        return { x: centeredX, y: PREVIEW_SURFACE_HEIGHT - PREVIEW_WINDOW_MARGIN - scaledCanvasHeight };
       case 'bottomright':
         return {
           x: PREVIEW_SURFACE_WIDTH - PREVIEW_WINDOW_MARGIN - scaledCanvasWidth,
           y: PREVIEW_SURFACE_HEIGHT - PREVIEW_WINDOW_MARGIN - scaledCanvasHeight,
         };
-      case 'bottomcenter':
-        return { x: centeredX, y: PREVIEW_SURFACE_HEIGHT - PREVIEW_WINDOW_MARGIN - scaledCanvasHeight };
       case 'mouse':
       case 'cursor':
         return {
@@ -145,26 +157,78 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       background: #94a3b8;
     }
 
-    * { box-sizing: border-box; }
-    html, body {
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html {
       width: 100%;
       height: 100%;
       overflow: hidden;
-      margin: 0;
-      padding: 0;
       background: ${backgroundColor || 'transparent'};
+      -webkit-font-smoothing: antialiased;
     }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: ${backgroundColor || 'transparent'};
+      color: #1e293b;
+      height: 100%;
+      font-size: 14px;
+      line-height: 1.5;
+      overflow: hidden;
+    }
+    .stuard-root {
+      height: 100%;
     }
 
-    .btn { display: inline-flex; align-items: center; justify-content: center; font-weight: 500; transition: all 0.15s; }
+    /* Base button — matches runtime default */
+    button, .btn {
+      cursor: pointer; user-select: none;
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 8px 16px; border: none; border-radius: 8px;
+      background: #f1f5f9; color: #475569;
+      font-weight: 500; font-size: 13px; gap: 8px;
+      transition: all 0.15s ease;
+    }
+    button:hover { background: #e2e8f0; }
+    button:active { transform: scale(0.98); }
+    button:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
     .btn-primary { background: #4f46e5; color: white; }
     .btn-primary:hover { background: #4338ca; }
     .btn-secondary { background: #f1f5f9; color: #475569; }
     .btn-secondary:hover { background: #e2e8f0; }
     .btn-danger { background: #ef4444; color: white; }
     .btn-danger:hover { background: #dc2626; }
+    .btn-ghost { background: transparent; color: #475569; }
+    .btn-ghost:hover { background: #f1f5f9; color: #1e293b; }
+    .btn-outline { background: transparent; color: #4f46e5; border: 1px solid #4f46e5; }
+    .btn-outline:hover { background: #eef2ff; }
+
+    /* Input — matches runtime */
+    input[type="text"], input[type="email"], input[type="password"],
+    input[type="number"], input[type="url"], input[type="tel"],
+    textarea, select {
+      width: 100%; padding: 8px 12px; font-size: 14px;
+      border: 1px solid #e2e8f0; border-radius: 8px;
+      background: white; color: #1e293b;
+      outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    input:focus, textarea:focus, select:focus {
+      border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+    }
+    input::placeholder, textarea::placeholder { color: #94a3b8; }
+
+    label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
+
+    /* Card — matches runtime */
+    .card {
+      background: white; border: 1px solid #e2e8f0;
+      border-radius: 12px; padding: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    h1, h2, h3, h4, h5, h6 { color: #0f172a; font-weight: 600; margin-bottom: 0.5em; }
+    p { margin-bottom: 1em; color: #475569; }
+    hr { border: none; height: 1px; background: #e2e8f0; margin: 16px 0; }
 
     .drag { -webkit-app-region: drag; }
     .no-drag { -webkit-app-region: no-drag; }
@@ -212,16 +276,59 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   </style>
 </head>
 <body>
-  ${html || ''}
+  <div class="stuard-root">${html || ''}</div>
   <script>
+    window.initialData = {};
     window.stuard = {
-      close: () => console.log('[Preview] stuard.close()'),
-      pickFolder: async () => ({ canceled: true, filePaths: [] }),
+      close: (data) => console.log('[Preview] stuard.close()', data),
+      submit: (data, keepOpen) => console.log('[Preview] stuard.submit()', data, keepOpen),
+      action: (name, data) => console.log('[Preview] stuard.action()', name, data),
+      emit: (event, data) => console.log('[Preview] stuard.emit()', event, data),
+      on: (event, cb) => { console.log('[Preview] stuard.on()', event); return () => {}; },
+      onDataUpdate: (cb) => { return () => {}; },
+      onVarUpdate: (cb) => { return () => {}; },
+      onPageChange: (cb) => { return () => {}; },
+      onStreamChunk: (cb) => { return () => {}; },
+      getData: async () => ({}),
+      getWindowId: async () => 'preview',
+      getFlowId: async () => null,
+      updateData: async (data) => {},
       callTool: async (name, args) => {
         console.log('[Preview] stuard.callTool:', name, args);
         return { ok: false, error: 'Preview mode - tools disabled' };
       },
-      send: (data) => console.log('[Preview] stuard.send:', data),
+      pickFile: async (opts) => ({ canceled: true, filePaths: [] }),
+      pickFolder: async (opts) => ({ canceled: true, filePaths: [] }),
+      pickSavePath: async (opts) => ({ canceled: true }),
+      readFile: async () => '',
+      writeFile: async () => {},
+      notify: (title, body) => console.log('[Preview] notify:', title, body),
+      copyToClipboard: async (text) => {},
+      readClipboard: async () => '',
+      subscribeVars: async (names) => {},
+      getVar: async (name) => ({ ok: false, name, value: undefined }),
+      setVar: async (name, value) => ({ ok: true, name, value, type: typeof value }),
+      subscribeStream: async (id, cb) => ({ ok: false }),
+      unsubscribeStream: async () => {},
+      navigate: (page, data) => console.log('[Preview] navigate:', page, data),
+      getCurrentPage: async () => null,
+      stopWorkflow: () => {},
+      log: (msg) => console.log('[Preview]', msg),
+      setAlwaysOnTop: (flag) => {},
+      resize: (w, h) => {},
+      moveTo: (x, y) => {},
+      center: () => {},
+      minimize: () => {},
+      getScreenInfo: async () => ({ width: 1920, height: 1080, workArea: { x: 0, y: 0, width: 1920, height: 1040 } }),
+    };
+    window.$stuard = {
+      tool: window.stuard.callTool,
+      emit: window.stuard.emit,
+      close: window.stuard.close,
+      submit: window.stuard.submit,
+      nav: window.stuard.navigate,
+      setVar: window.stuard.setVar,
+      getVar: window.stuard.getVar,
     };
 
     function getElementPath(el) {
@@ -585,8 +692,9 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     insertHtmlAtPoint: (html: string, point: { clientX: number; clientY: number }) => {
       if (iframeRef.current?.contentWindow) {
         const rect = iframeRef.current.getBoundingClientRect();
-        const x = (point.clientX - rect.left) / zoom;
-        const y = (point.clientY - rect.top) / zoom;
+        const effectiveScale = Math.max(zoom * surfaceScale, 0.0001);
+        const x = (point.clientX - rect.left) / effectiveScale;
+        const y = (point.clientY - rect.top) / effectiveScale;
         iframeRef.current.contentWindow.postMessage({ type: 'insertHtmlAtPoint', html, point: { x, y } }, '*');
       }
     },
@@ -673,73 +781,91 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     }
   }, [selectedPath, iframeReady]);
 
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const observer = new ResizeObserver(([entry]) => {
+      const cw = Math.max(entry.contentRect.width - 24, 1);
+      const ch = Math.max(entry.contentRect.height - 24, 1);
+      const nextScale = Math.min(cw / PREVIEW_SURFACE_WIDTH, ch / PREVIEW_SURFACE_HEIGHT, 1);
+      setSurfaceScale(nextScale);
+    });
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <div
       ref={containerRef}
-      className="flex-1 min-w-0 min-h-0 overflow-auto relative bg-slate-100"
+      className="flex-1 min-w-0 min-h-0 overflow-hidden relative bg-slate-100"
     >
-      {/* Canvas Container - centers the preview */}
-      <div
-        className="inline-flex items-center justify-center p-8"
-        style={{
-          minHeight: '100%',
-          minWidth: '100%',
-        }}
-      >
+      <div className="w-full h-full flex items-center justify-center p-3">
         <div
-          className="relative bg-white rounded-xl border border-slate-300 shadow-inner overflow-hidden flex-shrink-0"
+          className="relative flex-shrink-0"
           style={{
-            width: PREVIEW_SURFACE_WIDTH,
-            height: PREVIEW_SURFACE_HEIGHT,
+            width: PREVIEW_SURFACE_WIDTH * surfaceScale,
+            height: PREVIEW_SURFACE_HEIGHT * surfaceScale,
           }}
         >
           <div
-            className="absolute inset-0 pointer-events-none"
+            className="relative bg-white rounded-xl border border-slate-300 shadow-inner overflow-hidden"
             style={{
-              backgroundImage:
-                'linear-gradient(rgba(148, 163, 184, 0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(148, 163, 184, 0.1) 1px, transparent 1px)',
-              backgroundSize: '32px 32px',
-            }}
-          />
-
-          <div className="absolute top-3 right-3 px-2 py-1 rounded-md bg-white/90 text-[10px] font-mono text-slate-500 border border-slate-200 z-10">
-            preview surface {PREVIEW_SURFACE_WIDTH}×{PREVIEW_SURFACE_HEIGHT}
-          </div>
-
-          {/* The rendered custom UI window */}
-          <div
-            className="absolute bg-white rounded-lg shadow-2xl overflow-hidden border border-slate-300"
-            style={{
-              left: windowOffset.x,
-              top: windowOffset.y,
-              width: scaledCanvasWidth,
-              height: scaledCanvasHeight,
+              width: PREVIEW_SURFACE_WIDTH,
+              height: PREVIEW_SURFACE_HEIGHT,
+              transform: `scale(${surfaceScale})`,
+              transformOrigin: 'top left',
             }}
           >
-            <iframe
-              ref={iframeRef}
-              className="border-0 block"
+            <div
+              className="absolute inset-0 pointer-events-none"
               style={{
-                width: safeCanvasWidth,
-                height: safeCanvasHeight,
-                transform: `scale(${zoom})`,
-                transformOrigin: 'top left',
+                backgroundImage:
+                  'linear-gradient(rgba(148, 163, 184, 0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(148, 163, 184, 0.1) 1px, transparent 1px)',
+                backgroundSize: '32px 32px',
               }}
-              sandbox="allow-scripts allow-same-origin"
-              title="UI Preview"
             />
 
-            {!iframeReady && (
-              <div className="absolute inset-0 bg-white flex items-center justify-center">
-                <div className="text-slate-400 text-sm">Loading preview...</div>
-              </div>
-            )}
+            <div className="absolute top-3 right-3 px-2 py-1 rounded-md bg-white/90 text-[10px] font-mono text-slate-500 border border-slate-200 z-10">
+              preview surface {PREVIEW_SURFACE_WIDTH}×{PREVIEW_SURFACE_HEIGHT}
+            </div>
+
+            {/* The rendered custom UI window */}
+            <div
+              className="absolute bg-white rounded-lg shadow-2xl overflow-hidden border border-slate-300"
+              style={{
+                left: windowOffset.x,
+                top: windowOffset.y,
+                width: scaledCanvasWidth,
+                height: scaledCanvasHeight,
+              }}
+            >
+              <iframe
+                ref={iframeRef}
+                className="border-0 block"
+                style={{
+                  width: safeCanvasWidth,
+                  height: safeCanvasHeight,
+                  transform: `scale(${zoom})`,
+                  transformOrigin: 'top left',
+                }}
+                sandbox="allow-scripts allow-same-origin"
+                title="UI Preview"
+              />
+
+              {!iframeReady && (
+                <div className="absolute inset-0 bg-white flex items-center justify-center">
+                  <div className="text-slate-400 text-sm">Loading preview...</div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
       {/* Canvas Size Indicator */}
-      <div className="sticky bottom-4 left-4 inline-block ml-4 mb-4 px-3 py-1.5 bg-white rounded-lg text-xs text-slate-600 border border-slate-200 shadow-sm z-20">
+      <div className="absolute bottom-4 left-4 px-3 py-1.5 bg-white rounded-lg text-xs text-slate-600 border border-slate-200 shadow-sm z-20">
         <div>{safeCanvasWidth} × {safeCanvasHeight} @ {Math.round(zoom * 100)}%</div>
         <div className="text-[10px] text-slate-500">
           position: {windowPosition}{windowPosition === 'custom' ? ` (${customX ?? 50}%, ${customY ?? 50}%)` : ''}

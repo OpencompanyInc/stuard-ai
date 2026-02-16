@@ -111,13 +111,13 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
 
   // --- VISION / MEDIA ---
   { id: 'take_screenshot', category: 'vision', kind: 'local', description: 'Capture screenshot and return a local file path', argsTemplate: { region: { x: 0, y: 0, width: 800, height: 600 }, hideUI: false }, outputSchema: { ok: 'boolean', filePath: 'string' } },
-  { id: 'capture_media', category: 'vision', kind: 'local', description: 'Capture photos, videos, or audio', argsTemplate: { kind: 'audio', mode: 'fixed', durationMs: 5000, device: '', filePath: '', sessionId: '', maxDurationMs: 600000 }, outputSchema: { ok: 'boolean', filePath: 'string', mimeType: 'string', sessionId: 'string', stoppedBy: 'string', mode: 'string', status: 'string', durationMs: 'number' } },
+  { id: 'capture_media', category: 'vision', kind: 'local', description: 'Capture photos, videos, or audio', argsTemplate: { kind: 'audio', mode: 'fixed', stream: false, durationMs: 5000, device: '', filePath: '', sessionId: '', maxDurationMs: 600000 }, outputSchema: { ok: 'boolean', filePath: 'string', mimeType: 'string', sessionId: 'string', streamId: 'string', stoppedBy: 'string', mode: 'string', status: 'string', durationMs: 'number' } },
   { id: 'stop_capture', category: 'vision', kind: 'local', description: 'Stop an active capture session', argsTemplate: { sessionId: '' }, outputSchema: { ok: 'boolean', sessionId: 'string', wasActive: 'boolean' } },
   { id: 'list_active_captures', category: 'vision', kind: 'local', description: 'List all currently active capture sessions', argsTemplate: {}, outputSchema: { ok: 'boolean', sessions: 'string[]' } },
-  { id: 'capture_screen', category: 'vision', kind: 'local', description: 'Record the screen (full screen, monitor, window, or region) with optional system audio', argsTemplate: { mode: 'fixed', durationMs: 5000, target: 'fullscreen', monitorId: 0, windowTitle: '', region: { x: 0, y: 0, width: 1920, height: 1080 }, includeSystemAudio: false, fps: 30, quality: 'medium', filePath: '', sessionId: '', maxDurationMs: 7200000 }, outputSchema: { ok: 'boolean', filePath: 'string', mimeType: 'string', sessionId: 'string', stoppedBy: 'string', hasAudio: 'boolean', audioFilePath: 'string' } },
+  { id: 'capture_screen', category: 'vision', kind: 'local', description: 'Record the screen (full screen, monitor, window, or region) with optional system audio', argsTemplate: { mode: 'fixed', stream: false, durationMs: 5000, target: 'fullscreen', monitorId: 0, windowTitle: '', region: { x: 0, y: 0, width: 1920, height: 1080 }, includeSystemAudio: false, fps: 30, quality: 'medium', filePath: '', sessionId: '', maxDurationMs: 7200000 }, outputSchema: { ok: 'boolean', filePath: 'string', mimeType: 'string', sessionId: 'string', streamId: 'string', stoppedBy: 'string', mode: 'string', status: 'string', hasAudio: 'boolean', audioFilePath: 'string' } },
   { id: 'stop_screen_capture', category: 'vision', kind: 'local', description: 'Stop an active screen capture session', argsTemplate: { sessionId: '' }, outputSchema: { ok: 'boolean', sessionId: 'string', wasActive: 'boolean', filePath: 'string', audioFilePath: 'string' } },
   { id: 'describe_screen_capture_capabilities', category: 'vision', kind: 'local', description: 'List available monitors and windows for screen capture', argsTemplate: {}, outputSchema: { monitors: 'any[]', windows: 'any[]' } },
-  { id: 'capture_system_audio', category: 'vision', kind: 'local', description: 'Record system audio output (what you hear from speakers). Uses WASAPI loopback on Windows.', argsTemplate: { mode: 'fixed', durationMs: 5000, device: '', filePath: '', sessionId: '', maxDurationMs: 7200000, format: 'wav' }, outputSchema: { ok: 'boolean', filePath: 'string', mimeType: 'string', sessionId: 'string', stoppedBy: 'string', durationMs: 'number' } },
+  { id: 'capture_system_audio', category: 'vision', kind: 'local', description: 'Record system audio output (what you hear from speakers). Uses WASAPI loopback on Windows.', argsTemplate: { mode: 'fixed', stream: false, durationMs: 5000, device: '', filePath: '', sessionId: '', maxDurationMs: 7200000, format: 'wav' }, outputSchema: { ok: 'boolean', filePath: 'string', mimeType: 'string', sessionId: 'string', streamId: 'string', stoppedBy: 'string', mode: 'string', status: 'string', durationMs: 'number' } },
   { id: 'stop_system_audio', category: 'vision', kind: 'local', description: 'Stop an active system audio capture session', argsTemplate: { sessionId: '' }, outputSchema: { ok: 'boolean', sessionId: 'string', wasActive: 'boolean', filePath: 'string' } },
   { id: 'describe_system_audio_capabilities', category: 'vision', kind: 'local', description: 'List available loopback devices and check platform support', argsTemplate: {}, outputSchema: { supported: 'boolean', platform: 'string', devices: 'any[]', note: 'string' } },
   { id: 'analyze_image', category: 'vision', kind: 'cloud', description: 'Analyze an image file with AI vision', argsTemplate: { imagePath: '', prompt: '' }, outputSchema: { text: 'string' } },
@@ -134,8 +134,9 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'ffmpeg_trim_media', category: 'vision', kind: 'local', description: 'Trim a media file to a time range (fast copy mode).', argsTemplate: { inputPath: 'C:/input.mp4', outputPath: 'C:/clip.mp4', startSeconds: 0, durationSeconds: 10, overwrite: true, timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string' } },
   { id: 'ffmpeg_probe_media', category: 'vision', kind: 'local', description: 'Inspect a media file using ffprobe and return JSON metadata.', argsTemplate: { inputPath: 'C:/input.mp4', timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', data: 'any', stdout: 'string', stderr: 'string', ffprobePath: 'string' } },
   { id: 'ffmpeg_extract_frames', category: 'vision', kind: 'local', description: 'Extract image frames from a video to a numbered file pattern.', argsTemplate: { inputPath: 'C:/input.mp4', outputPattern: 'C:/frames/%04d.jpg', overwrite: true, fps: 1, startSeconds: 0, durationSeconds: 5, timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string' } },
-  { id: 'text_to_speech', category: 'vision', kind: 'cloud', description: 'Convert text to speech audio', argsTemplate: { text: '', voice: 'alloy', speed: 1.0, format: 'mp3', save: true, play: false, outputPath: '' }, outputSchema: { ok: 'boolean', filePath: 'string', format: 'string', voice: 'string', textLength: 'number', played: 'boolean', error: 'string' } },
-  { id: 'list_tts_voices', category: 'vision', kind: 'cloud', description: 'List all available text-to-speech voices', argsTemplate: {}, outputSchema: { ok: 'boolean', voices: 'any[]' } },
+  { id: 'text_to_speech', category: 'vision', kind: 'cloud', description: 'Convert text to speech audio using ElevenLabs TTS with language support', argsTemplate: { text: '', voice_id: 'JBFqnCBsd6RMkjVDRZzb', model_id: 'eleven_multilingual_v2', language_code: '', speed: 1.0, format: 'mp3', save: true, play: false, outputPath: '' }, outputSchema: { ok: 'boolean', filePath: 'string', format: 'string', voice_id: 'string', textLength: 'number', played: 'boolean', error: 'string' } },
+  { id: 'list_tts_voices', category: 'vision', kind: 'cloud', description: 'List all available ElevenLabs text-to-speech voices', argsTemplate: {}, outputSchema: { ok: 'boolean', voices: 'any[]' } },
+  { id: 'get_tts_models', category: 'vision', kind: 'cloud', description: 'List available ElevenLabs TTS models', argsTemplate: {}, outputSchema: { ok: 'boolean', models: 'any[]' } },
 
   // --- DATA / AI ---
   { id: 'ai_inference', category: 'data', kind: 'cloud', description: 'Run AI inference on text. Returns plain text or structured JSON.', argsTemplate: { prompt: '', input: '', mode: 'json', schema: {}, model: 'openai/gpt-4.1-mini', temperature: 0.3 }, outputSchema: { ok: 'boolean', text: 'string', json: 'any', model: 'string' } },
@@ -291,6 +292,7 @@ const TTS_VOICE_OPTIONS: ArgOption[] = [
 const CAPTURE_MODE_OPTIONS: ArgOption[] = [
   { value: 'fixed', label: 'Fixed Duration', description: 'Record for a set time' },
   { value: 'until_stop', label: 'Until Stop', description: 'Record until stop_capture is called' },
+  { value: 'stream', label: 'Stream', description: 'Emit live chunks via stream wire' },
 ];
 
 const MEDIA_KIND_OPTIONS: ArgOption[] = [
@@ -655,176 +657,6 @@ if (TOOL_SCHEMAS['write_file']) {
   };
 }
 
-// Gmail send - use FilesEditor for attachments, hide rarely-used fields
-if (TOOL_SCHEMAS['gmail_send_message']) {
-  TOOL_SCHEMAS['gmail_send_message'].args = {
-    ...TOOL_SCHEMAS['gmail_send_message'].args,
-    attachments: {
-      type: 'files',
-      label: 'Attachments',
-      description: 'Files to attach to the email',
-      advanced: false,
-    },
-    contentType: {
-      ...(TOOL_SCHEMAS['gmail_send_message'].args.contentType || {
-        type: 'select',
-        label: 'Content Type',
-      }),
-      advanced: true,
-    },
-    cc: {
-      ...(TOOL_SCHEMAS['gmail_send_message'].args.cc || { type: 'array', label: 'CC' }),
-      advanced: true,
-    },
-    bcc: {
-      ...(TOOL_SCHEMAS['gmail_send_message'].args.bcc || { type: 'array', label: 'BCC' }),
-      advanced: true,
-    },
-  };
-}
-
-// Custom UI - code-style editors for layout, CSS, and data
-if (TOOL_SCHEMAS['custom_ui']) {
-  TOOL_SCHEMAS['custom_ui'].args = {
-    id: {
-      type: 'string',
-      label: 'Panel ID',
-      description: 'Unique identifier for this UI panel (used to update/close it later)',
-      required: true,
-      placeholder: 'my-panel',
-    },
-    title: {
-      type: 'string',
-      label: 'Window Title',
-      description: 'Title displayed in the window header',
-      placeholder: 'My Custom UI',
-    },
-    window: {
-      type: 'json',
-      label: 'Window Options',
-      description: 'Configure window size, position, and behavior (width, height, position, alwaysOnTop, frameless, transparent, etc.)',
-    },
-    component: {
-      type: 'code',
-      label: 'Component (Preact)',
-      description: 'Preact component using htm templates (React-like). Define an App function. Hooks: useState, useEffect, useRef, useVar(name, default). Use html`` for templates.',
-      language: 'javascript' as any,
-      placeholder: 'function App() {\n  const [count, setCount] = useVar("counter", 0);\n  return html`<div class="p-6 text-center">\n    <h2 class="text-4xl font-bold text-white">${count}</h2>\n    <button onClick=${() => setCount(count + 1)} class="btn-primary px-4 mt-4">+</button>\n  </div>`;\n}',
-    },
-    blocking: {
-      type: 'boolean',
-      label: 'Blocking',
-      description: 'If true, workflow waits for user action. No timeout by default — stays open until user interacts or closes.',
-      default: true,
-    },
-    timeoutMs: {
-      type: 'number',
-      label: 'Timeout (ms)',
-      description: 'Timeout for blocking mode in milliseconds. 0 = no timeout (default). E.g. 30000 for 30 seconds.',
-      default: 0,
-      placeholder: '0',
-    },
-    css: {
-      type: 'code',
-      label: 'Custom CSS',
-      description: 'Additional CSS styles for the component',
-      language: 'css' as any,
-      placeholder: '.my-class { color: blue; }',
-    },
-    data: {
-      type: 'json',
-      label: 'Initial Data',
-      description: 'Data object accessible as initialData/formData inside the component',
-    },
-    // Window settings (shown in collapsible section)
-    width: {
-      type: 'number',
-      label: 'Width',
-      description: 'Window width in pixels',
-      default: 400,
-      placeholder: '400',
-    },
-    height: {
-      type: 'number',
-      label: 'Height',
-      description: 'Window height in pixels',
-      default: 500,
-      placeholder: '500',
-    },
-    position: {
-      type: 'select',
-      label: 'Position',
-      description: 'Where the window appears on screen',
-      default: 'center',
-      options: [
-        { value: 'center', label: 'Center', description: 'Center of the screen' },
-        { value: 'top-left', label: 'Top Left' },
-        { value: 'top-right', label: 'Top Right' },
-        { value: 'bottom-left', label: 'Bottom Left' },
-        { value: 'bottom-right', label: 'Bottom Right' },
-        { value: 'cursor', label: 'Near Cursor', description: 'Appears near mouse pointer' },
-      ],
-    },
-    alwaysOnTop: {
-      type: 'boolean',
-      label: 'Always on Top',
-      description: 'Keep the window above other windows',
-      default: true,
-    },
-    frameless: {
-      type: 'boolean',
-      label: 'Frameless',
-      description: 'Hide the window title bar and borders',
-      default: false,
-    },
-    _uiDesign: {
-      type: 'json',
-      label: 'UI Design Data',
-      description: 'Internal: Stores the visual UI Builder design for editing. Do not modify directly.',
-    },
-  };
-}
-
-// Update Custom UI - similar improvements
-if (TOOL_SCHEMAS['update_custom_ui']) {
-  TOOL_SCHEMAS['update_custom_ui'].args = {
-    ...TOOL_SCHEMAS['update_custom_ui'].args,
-    id: {
-      type: 'string',
-      label: 'Panel ID',
-      description: 'ID of the panel to update',
-      required: true,
-    },
-    html: {
-      type: 'code',
-      label: 'HTML Content',
-      description: 'Raw HTML content to inject (alternative to layout)',
-      language: 'html' as any,
-    },
-    css: {
-      type: 'code',
-      label: 'Custom CSS',
-      language: 'css' as any,
-    },
-    data: {
-      type: 'json',
-      label: 'Updated Data',
-    },
-    pages: {
-      type: 'json',
-      label: 'Pages (Multi-page SPA)',
-      description: 'Update or add pages to the existing UI. Each page can have its own HTML/CSS/JS.',
-      placeholder: '{ "home": { "html": "..." }, "settings": { "html": "..." } }',
-    },
-    navigateTo: {
-      type: 'string',
-      label: 'Navigate To Page',
-      description: 'Navigate to a specific page when updating (requires pages to be defined)',
-      placeholder: 'home',
-    },
-  };
-}
-
 // Schedule Cron Trigger - user-friendly cron editor
 if (TOOL_SCHEMAS['schedule.cron']) {
   TOOL_SCHEMAS['schedule.cron'].args = {
@@ -1151,7 +983,6 @@ if (TOOL_SCHEMAS['stream_create']?.args?.kind) {
     default: 'bytes',
   };
 }
-
 
 // ============================================================================
 // CLOUD AI VISION — schema as JSON editor
@@ -1686,7 +1517,7 @@ TOOL_SCHEMAS['agent_node'] = {
 // Must be AFTER all schema definitions (agent_node is defined last)
 // ============================================================================
 
-for (const toolId of ['agent_node', 'ai_inference', 'http_request', 'run_python_script']) {
+for (const toolId of ['agent_node', 'ai_inference', 'http_request', 'run_python_script', 'capture_media', 'capture_screen', 'capture_system_audio']) {
   if (TOOL_SCHEMAS[toolId]) {
     TOOL_SCHEMAS[toolId].args.stream = {
       type: 'boolean' as any,

@@ -10,12 +10,17 @@ const regionSchema = z.object({
 
 export const capture_screen = makeLocalTool(
   'capture_screen',
-  'Record the screen (full screen, specific monitor, window, or region). Supports fixed duration or until_stop mode. Can optionally include system audio with silence detection to auto-stop when audio is silent.',
+  'Record the screen (full screen, specific monitor, window, or region). Supports fixed duration, until_stop, or stream mode. Can optionally include system audio with silence detection to auto-stop when audio is silent.',
   z.object({
     mode: z
-      .enum(['fixed', 'until_stop'])
+      .enum(['fixed', 'until_stop', 'stream'])
       .default('fixed')
-      .describe('fixed: capture for durationMs. until_stop: capture until stop_screen_capture is called'),
+      .describe('fixed: capture for durationMs. until_stop: capture until stop_screen_capture is called. stream: emit live frame/audio chunks until stop_screen_capture is called'),
+    stream: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe('When true, enables streaming mode and returns streamId (equivalent to mode="stream").'),
     durationMs: z
       .number()
       .int()
@@ -91,10 +96,12 @@ export const capture_screen = makeLocalTool(
     mode: z.string().optional(),
     status: z.string().optional(),
     hasAudio: z.boolean().optional().describe('Whether the recording includes system audio'),
+    streamId: z.string().optional().describe('Stream ID when stream mode is enabled'),
   }),
   (ctx) => {
     const mode = String((ctx as any)?.mode || 'fixed');
-    if (mode === 'until_stop') {
+    const stream = Boolean((ctx as any)?.stream);
+    if (mode === 'until_stop' || mode === 'stream' || stream) {
       // until_stop mode returns immediately after starting (non-blocking)
       return 60000; // 60s for setup
     }
@@ -153,9 +160,14 @@ export const capture_system_audio = makeLocalTool(
   'Capture system audio output (what you hear from speakers/headphones). Uses loopback recording. On Windows, uses WASAPI loopback. On macOS, requires a virtual audio device like BlackHole.',
   z.object({
     mode: z
-      .enum(['fixed', 'until_stop'])
+      .enum(['fixed', 'until_stop', 'stream'])
       .default('fixed')
-      .describe('fixed: capture for durationMs. until_stop: capture until stop_system_audio is called'),
+      .describe('fixed: capture for durationMs. until_stop: capture until stop_system_audio is called. stream: emit live audio chunks until stop_system_audio is called'),
+    stream: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe('When true, enables streaming mode and returns streamId (equivalent to mode="stream").'),
     durationMs: z
       .number()
       .int()
@@ -196,10 +208,12 @@ export const capture_system_audio = makeLocalTool(
     mode: z.string().optional(),
     status: z.string().optional(),
     durationMs: z.number().optional().describe('Duration of the recording in ms'),
+    streamId: z.string().optional().describe('Stream ID when stream mode is enabled'),
   }),
   (ctx) => {
     const mode = String((ctx as any)?.mode || 'fixed');
-    if (mode === 'until_stop') {
+    const stream = Boolean((ctx as any)?.stream);
+    if (mode === 'until_stop' || mode === 'stream' || stream) {
       return 60000; // 60s for setup (non-blocking)
     }
     const dur = Number((ctx as any)?.durationMs || 0);

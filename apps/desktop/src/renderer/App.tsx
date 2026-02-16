@@ -770,9 +770,10 @@ export default function App() {
   useEffect(() => {
     if (isRecording) {
       const base = baseQueryRef.current;
-      const spacer = (base && /[a-z0-9]$/i.test(base) && /^[a-z0-9]/i.test(transcript || interimTranscript)) ? " " : (base ? " " : "");
-      const t = transcript + interimTranscript;
-      const full = base + spacer + t;
+      const tSpacer = (transcript && /[a-z0-9]$/i.test(transcript) && /^[a-z0-9]/i.test(interimTranscript)) ? ' ' : '';
+      const fullText = transcript + tSpacer + interimTranscript;
+      const spacer = (base && /[a-z0-9]$/i.test(base) && /^[a-z0-9]/i.test(fullText)) ? ' ' : (base ? ' ' : '');
+      const full = base + spacer + fullText;
       setQuery(full);
 
       // Auto-send check

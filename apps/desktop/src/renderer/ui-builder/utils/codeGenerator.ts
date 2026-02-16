@@ -587,26 +587,14 @@ hr {
  */
 function generateBaseJS(): string {
   return `
-// Custom UI Runtime
+// Custom UI Runtime — uses stuard API when available (runtime), falls back to console (preview)
 (function() {
-  // Handle data-action buttons
-  document.querySelectorAll('[data-action]').forEach(btn => {
-    btn.addEventListener('click', async function() {
-      const action = this.getAttribute('data-action');
-      const data = collectFormData();
-
-      // Send action to parent
-      if (window.customUIBridge) {
-        window.customUIBridge.sendAction(action, data);
-      } else {
-        console.log('Action:', action, 'Data:', data);
-      }
-    });
-  });
+  const hasStuardApi = typeof window.stuard !== 'undefined';
+  const formData = window.initialData ? { ...window.initialData } : {};
 
   // Collect form data from data-bind elements
   function collectFormData() {
-    const data = {};
+    const data = { ...formData };
     document.querySelectorAll('[data-bind]').forEach(el => {
       const key = el.getAttribute('data-bind');
       if (el.tagName === 'INPUT') {
@@ -620,6 +608,81 @@ function generateBaseJS(): string {
       }
     });
     return data;
+  }
+
+  // Initialize data bindings
+  document.querySelectorAll('[data-bind]').forEach(el => {
+    const key = el.getAttribute('data-bind');
+    const val = formData[key];
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
+      if (el.type === 'checkbox') {
+        el.checked = !!val;
+        el.addEventListener('change', (e) => { formData[key] = e.target.checked; });
+      } else {
+        if (val !== undefined && val !== '') el.value = val;
+        el.addEventListener('input', (e) => { formData[key] = e.target.value; });
+      }
+    } else if (val !== undefined) {
+      if (el.hasAttribute('data-html')) {
+        el.innerHTML = val;
+      } else {
+        el.textContent = val;
+      }
+    }
+  });
+
+  // Handle data-action buttons
+  document.querySelectorAll('[data-action]').forEach(btn => {
+    btn.addEventListener('click', async function() {
+      const action = this.getAttribute('data-action');
+      const data = collectFormData();
+
+      if (hasStuardApi) {
+        if (action === 'submit') {
+          window.stuard.submit(data);
+        } else if (action === 'close' || action === 'cancel') {
+          window.stuard.close(data);
+        } else {
+          window.stuard.action(action, data);
+        }
+      } else {
+        console.log('[Preview] Action:', action, 'Data:', data);
+      }
+    });
+  });
+
+  // Enter key in inputs triggers submit
+  document.querySelectorAll('input[data-bind]').forEach(el => {
+    el.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        const data = collectFormData();
+        if (hasStuardApi) {
+          window.stuard.submit(data);
+        }
+      }
+    });
+  });
+
+  // Listen for data updates from workflow
+  if (hasStuardApi) {
+    window.stuard.onDataUpdate((newData) => {
+      Object.assign(formData, newData);
+      Object.entries(newData).forEach(([key, value]) => {
+        document.querySelectorAll('[data-bind="' + key + '"]').forEach(el => {
+          if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
+            if (el.type === 'checkbox') {
+              el.checked = Boolean(value);
+            } else {
+              el.value = value;
+            }
+          } else if (el.hasAttribute('data-html')) {
+            el.innerHTML = value;
+          } else {
+            el.textContent = value;
+          }
+        });
+      });
+    });
   }
 
   // Expose for external data binding
@@ -674,22 +737,86 @@ ${elementsHtml}
   const customJS = design.customScript || '';
   const js = customJS ? `${baseJS}\n\n/* Custom Scripts */\n${customJS}` : baseJS;
 
-  // Generate full HTML document
+  // Generate full HTML document — matches runtime structure exactly
   const fullHtml = `<!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(design.name)}</title>
+  <script src="https://cdn.tailwindcss.com"><\/script>
   <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html {
+      background: ${design.canvas.backgroundColor || 'transparent'};
+      -webkit-font-smoothing: antialiased;
+      height: 100%;
+    }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: ${design.canvas.backgroundColor || 'transparent'};
+      color: #1e293b;
+      height: 100%;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .stuard-root {
+      height: 100%;
+    }
+    button, .btn {
+      cursor: pointer; user-select: none;
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 8px 16px; border: none; border-radius: 8px;
+      background: #f1f5f9; color: #475569;
+      font-weight: 500; font-size: 13px; gap: 8px;
+      transition: all 0.15s ease;
+    }
+    button:hover { background: #e2e8f0; }
+    button:active { transform: scale(0.98); }
+    .btn-primary { background: #4f46e5; color: white; }
+    .btn-primary:hover { background: #4338ca; }
+    .btn-secondary { background: #f1f5f9; color: #475569; }
+    .btn-secondary:hover { background: #e2e8f0; }
+    .btn-danger { background: #ef4444; color: white; }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-ghost { background: transparent; color: #475569; }
+    .btn-ghost:hover { background: #f1f5f9; color: #1e293b; }
+    input[type="text"], input[type="email"], input[type="password"],
+    input[type="number"], input[type="url"], input[type="tel"],
+    textarea, select {
+      width: 100%; padding: 8px 12px; font-size: 14px;
+      border: 1px solid #e2e8f0; border-radius: 8px;
+      background: white; color: #1e293b;
+      outline: none;
+    }
+    input:focus, textarea:focus, select:focus {
+      border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+    }
+    .card {
+      background: white; border: 1px solid #e2e8f0;
+      border-radius: 12px; padding: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    h1, h2, h3, h4, h5, h6 { color: #0f172a; font-weight: 600; margin-bottom: 0.5em; }
+    p { margin-bottom: 1em; color: #475569; }
+    .drag { -webkit-app-region: drag; }
+    .no-drag { -webkit-app-region: no-drag; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.2); border-radius: 3px; }
 ${css}
   </style>
 </head>
 <body>
-${html}
+  <div class="stuard-root">${html}</div>
 <script>
+  window.initialData = {};
+  window.stuard = {
+    close: () => {}, submit: () => {}, action: () => {},
+    emit: () => {}, on: () => () => {}, onDataUpdate: () => () => {},
+    callTool: async () => ({ ok: false }), getData: async () => ({}),
+    getWindowId: async () => 'preview', getFlowId: async () => null,
+  };
 ${js}
-</script>
+<\/script>
 </body>
 </html>`;
 
@@ -706,20 +833,41 @@ ${js}
  */
 export function generateCustomUIArgs(design: UIDesign): Record<string, any> {
   const code = generateCode(design);
+  const wc = design.windowConfig;
+
+  // Auto-wrap visual editor HTML into a Preact component since legacy mode is removed.
+  // The runtime only supports Preact component mode now.
+  const escapedHtml = code.html.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+  const componentCode = `function App() {
+  const [formData, setFormData] = useState({ ...initialData });
+  return html\`<div dangerouslySetInnerHTML=\${{ __html: \`${escapedHtml}\` }} />\`;
+}`;
 
   return {
-    html: code.html,
+    component: componentCode,
     css: code.css,
-    js: code.js,
-    width: design.windowConfig.width,
-    height: design.windowConfig.height,
-    position: design.windowConfig.position,
-    alwaysOnTop: design.windowConfig.alwaysOnTop,
-    frameless: design.windowConfig.frameless,
-    transparent: design.windowConfig.transparent,
-    borderRadius: design.windowConfig.borderRadius,
-    title: design.windowConfig.title || design.name,
-    // Store the design for editing later
+    title: wc.title || design.name,
+    window: {
+      width: wc.width,
+      height: wc.height,
+      position: wc.position,
+      customX: wc.customX,
+      customY: wc.customY,
+      alwaysOnTop: wc.alwaysOnTop,
+      frameless: wc.frameless !== false,
+      transparent: wc.transparent,
+      borderRadius: wc.borderRadius,
+      resizable: wc.resizable,
+      draggable: wc.draggable,
+      backgroundColor: wc.backgroundColor || 'transparent',
+      backgroundType: wc.backgroundType || 'color',
+      gradient: wc.gradient,
+      backgroundImage: wc.backgroundImage,
+      shadow: wc.shadow,
+      border: wc.border,
+      animation: wc.animation,
+      contentPadding: wc.contentPadding,
+    },
     _uiDesign: design,
   };
 }
