@@ -163,6 +163,8 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   },
   // Custom UI prebuilt assets (for UI builder preview — offline, no CDN)
   customUiGetPrebuiltAssets: () => ipcRenderer.invoke('customUi:getPrebuiltAssets'),
+  // Transform JSX component code (for UI builder preview)
+  customUiTransformJsx: (code: string) => ipcRenderer.invoke('customUi:transformJsx', code),
 
   workflowsList: () => ipcRenderer.invoke('workflows:list'),
   workflowsRead: (id: string) => ipcRenderer.invoke('workflows:read', id),

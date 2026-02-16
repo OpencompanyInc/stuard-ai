@@ -201,6 +201,8 @@ function DashboardApp() {
     setPyReqTxt,
     pyInstalling,
     ffInstalling,
+    mpStatus,
+    mpInstalling,
     pyRunning,
     pyRunCode,
     setPyRunCode,
@@ -214,6 +216,7 @@ function DashboardApp() {
     handleLearnMore,
     refreshPythonStatus,
     refreshFfmpegStatus,
+    refreshMediapipeStatus,
     refreshBrowserStatus,
     setupPython,
     installPython,
@@ -1088,10 +1091,13 @@ function DashboardApp() {
                                 setPyRunCode={setPyRunCode}
                                 pyInstalling={pyInstalling}
                                 ffInstalling={ffInstalling}
+                                mpStatus={mpStatus}
+                                mpInstalling={mpInstalling}
                                 pyRunning={pyRunning}
                                 pyRunResult={pyRunResult}
                                 refreshPythonStatus={refreshPythonStatus}
                                 refreshFfmpegStatus={refreshFfmpegStatus}
+                                refreshMediapipeStatus={refreshMediapipeStatus}
                                 refreshBrowserStatus={refreshBrowserStatus}
                                 setupPython={setupPython}
                                 installPython={installPython}

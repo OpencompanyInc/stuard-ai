@@ -272,6 +272,9 @@ export interface UIWindowConfig {
     easing: 'ease' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'linear';
   };
 
+  // Content overflow / scrollbar behavior
+  overflow?: 'auto' | 'hidden' | 'scroll' | 'visible';
+
   // Content padding
   contentPadding?: number;
 

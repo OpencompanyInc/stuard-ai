@@ -28,6 +28,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import importlib
+import os
+import tempfile
 import threading
 import time
 import traceback
@@ -353,6 +355,67 @@ async def stream_read(
     }
 
 
+_FRAME_TMP_DIR: Optional[str] = None
+
+
+def _get_frame_tmp_dir() -> str:
+    """Return (and lazily create) a temp directory for stream video frames."""
+    global _FRAME_TMP_DIR
+    if _FRAME_TMP_DIR is None or not os.path.isdir(_FRAME_TMP_DIR):
+        _FRAME_TMP_DIR = os.path.join(tempfile.gettempdir(), "stuard_stream_frames")
+        os.makedirs(_FRAME_TMP_DIR, exist_ok=True)
+    return _FRAME_TMP_DIR
+
+
+def _is_video_frame(data: Any) -> bool:
+    """Check if data looks like a numpy video frame (H x W x C array)."""
+    return (
+        hasattr(data, "shape")
+        and hasattr(data, "dtype")
+        and len(getattr(data, "shape", ())) == 3
+    )
+
+
+def _encode_frame_base64(data: Any, quality: int = 80) -> str:
+    """Encode a numpy video frame as a base64 JPEG data URL (no disk I/O)."""
+    import cv2  # type: ignore
+
+    ok, buf = cv2.imencode('.jpg', data, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    if not ok:
+        raise RuntimeError("Failed to encode frame as JPEG")
+    b64 = base64.b64encode(buf.tobytes()).decode('ascii')
+    return f"data:image/jpeg;base64,{b64}"
+
+
+def _save_frame_to_file(data: Any, stream_id: str, idx: int) -> str:
+    """Save a numpy video frame to a temp JPEG file and return the path."""
+    import cv2  # type: ignore
+
+    tmp_dir = _get_frame_tmp_dir()
+    path = os.path.join(tmp_dir, f"frame_{stream_id}_{idx}.jpg")
+    cv2.imwrite(path, data, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return path
+
+
+def _cleanup_stream_frames(stream_id: str) -> None:
+    """Remove temp frame files for a given stream."""
+    try:
+        tmp_dir = _get_frame_tmp_dir()
+        prefix = f"frame_{stream_id}_"
+        removed = 0
+        for fname in os.listdir(tmp_dir):
+            if fname.startswith(prefix):
+                try:
+                    os.remove(os.path.join(tmp_dir, fname))
+                    removed += 1
+                except OSError:
+                    pass
+        if removed:
+            print(f"[streams] Cleaned up {removed} temp frame file(s) for stream '{stream_id}'")
+    except Exception:
+        pass
+
+
 def _read_chunks_from_buffer(
     stream: Stream, cursor: int, max_chunks: int, as_base64: bool
 ) -> List[Dict[str, Any]]:
@@ -370,7 +433,17 @@ def _read_chunks_from_buffer(
                 break
 
             chunk_data: Any = data
-            if as_base64:
+
+            # Video frames (numpy H×W×C arrays) — encode as base64 data URL
+            # in-memory for zero-disk-I/O streaming.  The chunk data is a dict
+            # so the engine can auto-inject imageData for mediapipe tools.
+            if _is_video_frame(data):
+                try:
+                    data_url = _encode_frame_base64(data)
+                    chunk_data = data_url
+                except Exception as exc:
+                    chunk_data = f"__frame_encode_error:{exc}"
+            elif as_base64:
                 if isinstance(data, (bytes, bytearray)):
                     chunk_data = base64.b64encode(data).decode("utf-8")
                 elif hasattr(data, 'tobytes'):
@@ -415,6 +488,9 @@ async def stream_close(
 
     with stream.subscribers_lock:
         sub_count = len(stream.subscribers)
+
+    # Clean up temp frame files for this stream
+    _cleanup_stream_frames(stream_id)
 
     print(f"[streams] Closed stream '{stream_id}' (total_chunks={stream.total_chunks}, subscribers={sub_count})")
 
@@ -1197,3 +1273,42 @@ def cleanup_flow_streams(flow_id: str) -> int:
         print(f"[streams] Cleaned up {len(to_remove)} streams for flow '{flow_id}'")
 
     return len(to_remove)
+
+
+async def close_all_streams(
+    args: Dict[str, Any],
+    emit: Optional[Callable[[str, Dict[str, Any] | None], Awaitable[None]]] = None,
+) -> Dict[str, Any]:
+    """
+    Close ALL active streams. Called when a workflow is stopped/aborted.
+    Optionally filter by flowId.
+
+    Args:
+        flowId: Optional - only close streams for this workflow
+
+    Returns:
+        { ok, closed: int }
+    """
+    flow_id = str(args.get("flowId") or "").strip()
+
+    with _streams_lock:
+        if flow_id:
+            to_close = [sid for sid, s in _streams.items() if s.flow_id == flow_id]
+        else:
+            to_close = list(_streams.keys())
+
+    closed = 0
+    for sid in to_close:
+        stream = _get_stream(sid)
+        if stream and not stream.closed:
+            stream.closed = True
+            stream.closed_at = time.time()
+            stream.close_event.set()
+            closed += 1
+        _remove_stream(sid)
+
+    if closed:
+        scope = f"flow '{flow_id}'" if flow_id else "all"
+        print(f"[streams] Closed {closed} stream(s) ({scope})")
+
+    return {"ok": True, "closed": closed}

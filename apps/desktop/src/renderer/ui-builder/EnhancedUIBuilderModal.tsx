@@ -140,6 +140,8 @@ interface EnhancedUIBuilderModalProps {
   mode?: 'create' | 'update';
   outputMode?: 'html' | 'react';
   windowConfig: UIWindowConfig;
+  /** Original component source — preserved on save when user makes no visual edits */
+  originalComponent?: string;
   onSave: (args: { html: string; css: string; js: string; window: any; pages?: Record<string, any>; startPage?: string }) => void;
   onSaveComponent?: (args: { component: string; css: string; window: any }) => void;
   onClose: () => void;
@@ -735,6 +737,7 @@ export function EnhancedUIBuilderModal({
   mode = 'create',
   outputMode = 'html',
   windowConfig: initialWindowConfig,
+  originalComponent,
   onSave,
   onSaveComponent,
   onClose,
@@ -808,12 +811,46 @@ export function EnhancedUIBuilderModal({
   // Track changes
   const needsSyncRef = useRef(false);
   const hasMountedRef = useRef(false);
+  // Track whether the user actually made visual edits (drop, property edit, code edit)
+  // When false and originalComponent is set, doSave preserves the original component code
+  const userMadeVisualEditsRef = useRef(false);
 
   // Filtered components by category
   const filteredComponents = useMemo(
     () => COMPONENT_TEMPLATES.filter(c => c.category === paletteCategory),
     [paletteCategory]
   );
+
+  // Compute effective background CSS from windowConfig (color/gradient/image/transparent)
+  const getEffectiveBackground = useCallback((): string => {
+    switch (windowConfig.backgroundType) {
+      case 'gradient':
+        if (windowConfig.gradient?.stops?.length) {
+          const sorted = [...windowConfig.gradient.stops].sort((a, b) => a.position - b.position);
+          const stops = sorted.map(s => `${s.color} ${s.position}%`).join(', ');
+          if (windowConfig.gradient.type === 'linear') {
+            return `linear-gradient(${windowConfig.gradient.angle || 135}deg, ${stops})`;
+          } else if (windowConfig.gradient.type === 'radial') {
+            return `radial-gradient(circle at ${windowConfig.gradient.centerX || 50}% ${windowConfig.gradient.centerY || 50}%, ${stops})`;
+          } else if (windowConfig.gradient.type === 'conic') {
+            return `conic-gradient(from 0deg at ${windowConfig.gradient.centerX || 50}% ${windowConfig.gradient.centerY || 50}%, ${stops})`;
+          }
+        }
+        return windowConfig.backgroundColor || '#1a1a2e';
+      case 'image':
+        if (windowConfig.backgroundImage?.url) {
+          const fit = windowConfig.backgroundImage.fit || 'cover';
+          const pos = windowConfig.backgroundImage.position || 'center';
+          return `url(${windowConfig.backgroundImage.url}) ${pos}/${fit} no-repeat`;
+        }
+        return windowConfig.backgroundColor || '#1a1a2e';
+      case 'transparent':
+        return 'transparent';
+      case 'color':
+      default:
+        return windowConfig.backgroundColor || '#1a1a2e';
+    }
+  }, [windowConfig.backgroundType, windowConfig.backgroundColor, windowConfig.gradient, windowConfig.backgroundImage]);
 
   // Get current page content
   const getCurrentHtml = useCallback(() => {
@@ -836,6 +873,58 @@ export function EnhancedUIBuilderModal({
     }
     return js;
   }, [currentPage, pages, js]);
+
+  // Transform JSX for the canvas preview (async, via main process Sucrase)
+  const [transformedJs, setTransformedJs] = useState('');
+  const transformPendingRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const raw = getCurrentJs();
+    if (!raw) {
+      setTransformedJs('');
+      return;
+    }
+    // Debounce: only transform if raw JS hasn't changed for 300ms
+    transformPendingRef.current = raw;
+    const timer = setTimeout(async () => {
+      if (transformPendingRef.current !== raw) return;
+      try {
+        const res = await window.desktopAPI?.customUiTransformJsx?.(raw);
+        if (res?.ok && transformPendingRef.current === raw) {
+          setTransformedJs(res.code);
+        } else if (transformPendingRef.current === raw) {
+          setTransformedJs(raw); // fallback to raw if transform fails
+        }
+      } catch {
+        if (transformPendingRef.current === raw) setTransformedJs(raw);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [getCurrentJs]);
+
+  // Transform the original component code for live preview rendering.
+  // The iframe already detects `typeof App === 'function'` and calls
+  // ReactDOM.render(React.createElement(App), root), so passing the
+  // transformed component as JS gives us a true runtime preview with
+  // .map(), style objects, animations, etc. all working.
+  const [transformedComponentJs, setTransformedComponentJs] = useState('');
+
+  useEffect(() => {
+    if (!originalComponent) {
+      setTransformedComponentJs('');
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await window.desktopAPI?.customUiTransformJsx?.(originalComponent);
+        if (!cancelled && res?.ok) {
+          setTransformedComponentJs(res.code);
+        }
+      } catch { /* ignore */ }
+    }, 150);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [originalComponent]);
 
   // Update content
   const updateCurrentHtml = useCallback((newHtml: string) => {
@@ -922,6 +1011,7 @@ export function EnhancedUIBuilderModal({
   const updateElementProperty = useCallback((updates: { textContent?: string; className?: string; id?: string }) => {
     if (selectedPath && canvasRef.current) {
       canvasRef.current.updateElement(selectedPath, updates);
+      userMadeVisualEditsRef.current = true;
       needsSyncRef.current = true;
       setTimeout(() => canvasRef.current?.requestHtml(), 100);
     }
@@ -934,6 +1024,7 @@ export function EnhancedUIBuilderModal({
           [name]: value,
         },
       });
+      userMadeVisualEditsRef.current = true;
       needsSyncRef.current = true;
       setTimeout(() => canvasRef.current?.requestHtml(), 100);
     }
@@ -950,6 +1041,7 @@ export function EnhancedUIBuilderModal({
       styleObj[camelToKebab(property)] = value;
       const newStyle = Object.entries(styleObj).map(([k, v]) => `${k}: ${v}`).join('; ');
       canvasRef.current.updateElement(selectedPath, { style: newStyle });
+      userMadeVisualEditsRef.current = true;
       needsSyncRef.current = true;
       setTimeout(() => canvasRef.current?.requestHtml(), 100);
     }
@@ -969,6 +1061,7 @@ export function EnhancedUIBuilderModal({
   const addComponent = useCallback((componentId: string, dropPoint?: { clientX: number; clientY: number }) => {
     const template = COMPONENT_TEMPLATES.find(c => c.id === componentId);
     if (template) {
+      userMadeVisualEditsRef.current = true;
       needsSyncRef.current = true;
       if (canvasRef.current) {
         if (dropPoint) {
@@ -1017,12 +1110,18 @@ export function EnhancedUIBuilderModal({
   // Save helper - dispatches to correct handler based on outputMode
   const doSave = useCallback(() => {
     if (outputMode === 'react' && onSaveComponent) {
-      const component = generateReactComponent(html, css, js);
-      onSaveComponent({ component, css, window: windowConfig });
+      // If the user hasn't made visual edits and we have the original component,
+      // preserve it to avoid destructive JSX→HTML→JSX round-trip corruption
+      if (originalComponent && !userMadeVisualEditsRef.current) {
+        onSaveComponent({ component: originalComponent, css, window: windowConfig });
+      } else {
+        const component = generateReactComponent(html, css, js);
+        onSaveComponent({ component, css, window: windowConfig });
+      }
     } else {
       onSave({ html, css, js, window: windowConfig, pages, startPage });
     }
-  }, [outputMode, html, css, js, windowConfig, pages, startPage, onSave, onSaveComponent]);
+  }, [outputMode, html, css, js, windowConfig, pages, startPage, onSave, onSaveComponent, originalComponent]);
 
   // Auto-save with debounce
   useEffect(() => {
@@ -1332,13 +1431,14 @@ export function EnhancedUIBuilderModal({
                   ref={canvasRef}
                   html={getCurrentHtml()}
                   css={getCurrentCss()}
-                  js={getCurrentJs()}
+                  js={transformedComponentJs || transformedJs}
                   canvasWidth={windowConfig.width}
                   canvasHeight={windowConfig.height}
                   windowPosition={windowConfig.position}
                   customX={windowConfig.customX}
                   customY={windowConfig.customY}
-                  backgroundColor={windowConfig.backgroundColor || 'transparent'}
+                  backgroundColor={getEffectiveBackground()}
+                  borderRadius={windowConfig.borderRadius}
                   zoom={zoom}
                   showGrid={showGrid}
                   gridSize={8}
@@ -1429,7 +1529,7 @@ export function EnhancedUIBuilderModal({
                           <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">HTML (editable)</label>
                           <textarea
                             value={getCurrentHtml()}
-                            onChange={(e) => updateCurrentHtml(e.target.value)}
+                            onChange={(e) => { userMadeVisualEditsRef.current = true; updateCurrentHtml(e.target.value); }}
                             className="w-full h-32 px-2.5 py-2 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
                             spellCheck={false}
                           />
@@ -1505,13 +1605,14 @@ export function EnhancedUIBuilderModal({
                 ref={canvasRef}
                 html={getCurrentHtml()}
                 css={getCurrentCss()}
-                js={getCurrentJs()}
+                js={transformedComponentJs || transformedJs}
                 canvasWidth={windowConfig.width}
                 canvasHeight={windowConfig.height}
                 windowPosition={windowConfig.position}
                 customX={windowConfig.customX}
                 customY={windowConfig.customY}
-                backgroundColor={windowConfig.backgroundColor || 'transparent'}
+                backgroundColor={getEffectiveBackground()}
+                borderRadius={windowConfig.borderRadius}
                 zoom={zoom}
                 showGrid={false}
                 gridSize={8}

@@ -819,14 +819,24 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                 <label className="text-xs text-slate-500 mb-1 block">
                   Corner Radius: {config.borderRadius || 0}px
                 </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="50"
-                  value={config.borderRadius || 0}
-                  onChange={(e) => updateConfig('borderRadius', parseInt(e.target.value))}
-                  className="w-full"
-                />
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={config.borderRadius || 0}
+                    onChange={(e) => updateConfig('borderRadius', parseInt(e.target.value))}
+                    className="flex-1"
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    max="200"
+                    value={config.borderRadius || 0}
+                    onChange={(e) => updateConfig('borderRadius', parseInt(e.target.value) || 0)}
+                    className="w-16 px-2 py-1 text-xs border border-slate-200 rounded text-center"
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -837,6 +847,22 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
           <SectionHeader section="appearance" icon={Type} title="Content & Typography" />
           {expandedSections.has('appearance') && (
             <div className="px-4 pb-4 space-y-4">
+              {/* Overflow / Scrollbar */}
+              <div>
+                <label className="text-xs text-slate-500 mb-1 block">Content Overflow</label>
+                <select
+                  value={config.overflow || 'auto'}
+                  onChange={(e) => updateConfig('overflow', e.target.value as any)}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                >
+                  <option value="auto">Auto (scrollbar when needed)</option>
+                  <option value="hidden">Hidden (no scrollbar, clip content)</option>
+                  <option value="scroll">Scroll (always show scrollbar)</option>
+                  <option value="visible">Visible (content can overflow)</option>
+                </select>
+                <p className="text-[10px] text-slate-400 mt-1">Controls how content behaves when it exceeds the window size</p>
+              </div>
+
               {/* Content Padding */}
               <div>
                 <label className="text-xs text-slate-500 mb-1 block">

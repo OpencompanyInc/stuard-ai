@@ -1,5 +1,5 @@
 // Notification System - Custom UI notifications for Stuard AI
-// Matches the Stuard overlay UI theme with glassmorphism effects
+// Solid card design with colored accent stripes
 
 export * from './types';
 export * from './NotificationProvider';

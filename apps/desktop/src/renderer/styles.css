@@ -441,6 +441,16 @@ body {
   }
 }
 
+@keyframes streamFlow {
+  0% {
+    stroke-dashoffset: 20;
+  }
+
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
 @keyframes glowPulse {
 
   0%,

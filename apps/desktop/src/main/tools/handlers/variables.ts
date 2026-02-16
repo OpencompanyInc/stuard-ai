@@ -61,14 +61,21 @@ function resolveVariableNameForSet(name: string): string {
   return name;
 }
 
+function _truncateForLog(value: any, maxLen = 120): string {
+  const str = JSON.stringify(value);
+  if (str.length <= maxLen) return str;
+  return str.slice(0, maxLen) + `… (${str.length} chars)`;
+}
+
 export async function execSetVariable(args: any, ctx: RouterContext): Promise<any> {
   const rawName = String(args?.name || '').trim();
   if (!rawName) return { ok: false, error: 'missing_variable_name' };
   const name = resolveVariableNameForSet(rawName);
   const silent = args?.notifyUi === false;
   const entry = setVariable(name, args?.value, args?.type, args?.flowId, silent);
-  ctx.logFn(`📝 Set ${name} = ${JSON.stringify(entry.value)} (${entry.type})`);
-  console.log(`[VARS] SET ${name} = ${JSON.stringify(entry.value)}`);
+  const logVal = _truncateForLog(entry.value);
+  ctx.logFn(`📝 Set ${name} = ${logVal} (${entry.type})`);
+  console.log(`[VARS] SET ${name} = ${logVal}`);
   return { ok: true, name, ...entry };
 }
 

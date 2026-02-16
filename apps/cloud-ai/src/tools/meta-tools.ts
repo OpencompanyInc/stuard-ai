@@ -238,6 +238,8 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'Media');
     } else if (['ffmpeg_status', 'ffmpeg_setup', 'ffmpeg_run', 'ffmpeg_convert_media', 'ffmpeg_extract_audio', 'ffmpeg_trim_media', 'ffmpeg_probe_media', 'ffmpeg_extract_frames'].includes(name)) {
         registerTool(t, 'Media');
+    } else if (['mediapipe_status', 'mediapipe_setup', 'mediapipe_pose', 'mediapipe_hands', 'mediapipe_face_detection', 'mediapipe_face_mesh', 'mediapipe_segmentation', 'mediapipe_holistic', 'mediapipe_process_video'].includes(name)) {
+        registerTool(t, 'MediaPipe');
     } else if (['stream_create', 'stream_close', 'stream_list', 'stream_get_status'].includes(name)) {
         registerTool(t, 'Streaming');
     } else if (name.startsWith('_stream_') || name.startsWith('stream_')) {

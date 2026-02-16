@@ -29,7 +29,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
     // Handle dismiss with exit animation
     const handleDismiss = useCallback(() => {
         setIsExiting(true);
-        setTimeout(onDismiss, 200);
+        setTimeout(onDismiss, 250);
     }, [onDismiss]);
 
     // Handle input submit
@@ -83,7 +83,6 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                 progressRef.current.style.transition = 'none';
                 progressRef.current.style.width = computed.width;
             } else if (notification.duration > 0) {
-                // Calculate remaining time based on current progress
                 const currentWidth = parseFloat(progressRef.current.style.width) || 100;
                 const remainingTime = (currentWidth / 100) * notification.duration;
                 progressRef.current.style.transition = `width ${remainingTime}ms linear`;
@@ -92,42 +91,47 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
         }
     }, [isHovered, notification.duration]);
 
-    // Variant styles
+    // Variant config — solid backgrounds, colored accents
     const variantConfig = {
         info: {
             icon: Info,
-            bgClass: 'bg-blue-500/10',
-            borderClass: 'border-blue-500/30',
-            iconClass: 'text-blue-500',
-            progressClass: 'bg-blue-500',
+            accentColor: '#3b82f6',
+            iconBg: 'bg-blue-50',
+            iconText: 'text-blue-600',
+            progressBg: 'bg-blue-500',
+            label: 'Information',
         },
         success: {
             icon: CheckCircle,
-            bgClass: 'bg-emerald-500/10',
-            borderClass: 'border-emerald-500/30',
-            iconClass: 'text-emerald-500',
-            progressClass: 'bg-emerald-500',
+            accentColor: '#10b981',
+            iconBg: 'bg-emerald-50',
+            iconText: 'text-emerald-600',
+            progressBg: 'bg-emerald-500',
+            label: 'Success',
         },
         warning: {
             icon: AlertTriangle,
-            bgClass: 'bg-amber-500/10',
-            borderClass: 'border-amber-500/30',
-            iconClass: 'text-amber-500',
-            progressClass: 'bg-amber-500',
+            accentColor: '#f59e0b',
+            iconBg: 'bg-amber-50',
+            iconText: 'text-amber-600',
+            progressBg: 'bg-amber-500',
+            label: 'Warning',
         },
         error: {
             icon: AlertOctagon,
-            bgClass: 'bg-red-500/10',
-            borderClass: 'border-red-500/30',
-            iconClass: 'text-red-500',
-            progressClass: 'bg-red-500',
+            accentColor: '#ef4444',
+            iconBg: 'bg-red-50',
+            iconText: 'text-red-600',
+            progressBg: 'bg-red-500',
+            label: 'Error',
         },
         neutral: {
             icon: Bell,
-            bgClass: 'bg-theme-card',
-            borderClass: 'border-theme',
-            iconClass: 'text-theme-muted',
-            progressClass: 'bg-theme-muted',
+            accentColor: '#6b7280',
+            iconBg: 'bg-gray-100',
+            iconText: 'text-gray-600',
+            progressBg: 'bg-gray-400',
+            label: 'Notification',
         },
     };
 
@@ -136,14 +140,15 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
 
     // Button variant styles
     const getButtonStyles = (variant: NotificationAction['variant'] = 'secondary') => {
-        const base = 'px-3 py-1.5 text-xs font-medium rounded-lg transition-all active:scale-95';
+        const base = 'px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-150 active:scale-[0.97]';
         switch (variant) {
             case 'primary':
-                return clsx(base, 'bg-primary text-primary-fg hover:opacity-90');
+                return clsx(base, 'text-white shadow-sm hover:opacity-90')
+                    + ` bg-[${config.accentColor}]`;
             case 'danger':
-                return clsx(base, 'bg-red-500 text-white hover:bg-red-600');
+                return clsx(base, 'bg-red-500 text-white hover:bg-red-600 shadow-sm');
             default:
-                return clsx(base, 'bg-theme-hover text-theme-fg hover:bg-theme-active');
+                return clsx(base, 'bg-gray-100 text-gray-700 hover:bg-gray-200');
         }
     };
 
@@ -151,41 +156,39 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
         <div
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
+            style={{
+                borderLeftColor: config.accentColor,
+                transform: isExiting ? 'translateX(110%)' : 'translateX(0)',
+                opacity: isExiting ? 0 : 1,
+                transition: 'transform 250ms cubic-bezier(0.4, 0, 0.2, 1), opacity 200ms ease',
+            }}
             className={clsx(
-                // Base styles - Stuard overlay theme matching
-                'relative w-full min-w-[320px] max-w-[400px]',
-                'rounded-xl border backdrop-blur-xl',
-                'shadow-lg shadow-black/20',
+                'relative w-full min-w-[340px] max-w-[400px]',
+                'bg-white rounded-lg',
+                'border border-gray-200 border-l-[4px]',
+                'shadow-[0_4px_24px_rgba(0,0,0,0.12),0_1px_4px_rgba(0,0,0,0.08)]',
                 'pointer-events-auto',
-                'transition-all duration-200',
-                // Animation
-                isExiting
-                    ? 'animate-out fade-out-0 slide-out-to-left-5'
-                    : 'animate-in fade-in-0 slide-in-from-left-5',
-                // Variant styles
-                config.bgClass,
-                config.borderClass,
+                'overflow-hidden',
                 notification.className
             )}
-
         >
-            {/* Progress bar for auto-dismiss */}
+            {/* Auto-dismiss progress bar */}
             {notification.duration > 0 && (
-                <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-xl overflow-hidden">
+                <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-gray-100">
                     <div
                         ref={progressRef}
-                        className={clsx('h-full w-full', config.progressClass)}
-                        style={{ opacity: 0.6 }}
+                        className={clsx('h-full w-full rounded-full', config.progressBg)}
+                        style={{ opacity: 0.7 }}
                     />
                 </div>
             )}
 
             {/* Main content */}
-            <div className="p-4">
+            <div className="px-4 py-3">
                 <div className="flex items-start gap-3">
                     {/* Icon or Image */}
                     {notification.image ? (
-                        <div className="shrink-0 w-12 h-12 rounded-lg overflow-hidden border border-theme/10">
+                        <div className="shrink-0 w-10 h-10 rounded-lg overflow-hidden ring-1 ring-gray-200">
                             <img
                                 src={notification.image}
                                 alt=""
@@ -198,31 +201,31 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                     ) : (
                         <div
                             className={clsx(
-                                'shrink-0 p-2 rounded-lg',
-                                'bg-theme-card border border-theme/10',
-                                config.iconClass
+                                'shrink-0 w-9 h-9 rounded-lg flex items-center justify-center',
+                                config.iconBg,
+                                config.iconText
                             )}
                         >
-                            {notification.icon || <Icon className="w-5 h-5" />}
+                            {notification.icon || <Icon className="w-[18px] h-[18px]" strokeWidth={2} />}
                         </div>
                     )}
 
                     {/* Text content */}
-                    <div className="flex-1 min-w-0 pt-0.5">
-                        <h4 className="font-semibold text-sm text-theme-fg leading-tight">
+                    <div className="flex-1 min-w-0">
+                        <h4 className="font-semibold text-[13px] text-gray-900 leading-tight truncate">
                             {notification.title}
                         </h4>
                         {notification.message && (
-                            <p className="mt-1 text-sm text-theme-muted leading-relaxed">
+                            <p className="mt-0.5 text-[12.5px] text-gray-500 leading-snug line-clamp-3">
                                 {notification.message}
                             </p>
                         )}
 
                         {/* Custom progress bar (for progress notifications) */}
                         {typeof notification.progress === 'number' && (
-                            <div className="mt-3 h-1.5 bg-theme-hover rounded-full overflow-hidden">
+                            <div className="mt-2.5 h-1.5 bg-gray-100 rounded-full overflow-hidden">
                                 <div
-                                    className={clsx('h-full transition-all duration-300', config.progressClass)}
+                                    className={clsx('h-full rounded-full transition-all duration-300', config.progressBg)}
                                     style={{ width: `${Math.min(100, Math.max(0, notification.progress))}%` }}
                                 />
                             </div>
@@ -230,7 +233,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
 
                         {/* Input field */}
                         {notification.input && (
-                            <div className="mt-3">
+                            <div className="mt-2.5">
                                 <div className="flex items-center gap-2">
                                     <input
                                         ref={inputRef}
@@ -240,27 +243,26 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                                         onKeyDown={handleKeyDown}
                                         placeholder={notification.input.placeholder || 'Type here...'}
                                         className={clsx(
-                                            'flex-1 px-3 py-2 text-sm rounded-lg',
-                                            'bg-theme-input border border-theme',
-                                            'text-theme-fg placeholder:text-theme-muted',
-                                            'focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20',
+                                            'flex-1 px-2.5 py-1.5 text-xs rounded-md',
+                                            'bg-gray-50 border border-gray-200',
+                                            'text-gray-900 placeholder:text-gray-400',
+                                            'focus:outline-none focus:ring-2 focus:ring-offset-0',
                                             'transition-all'
                                         )}
+                                        style={{ '--tw-ring-color': config.accentColor + '40' } as React.CSSProperties}
                                     />
                                     <button
                                         onClick={handleInputSubmit}
-                                        className={clsx(
-                                            'p-2 rounded-lg bg-primary text-primary-fg',
-                                            'hover:opacity-90 active:scale-95 transition-all'
-                                        )}
+                                        className="p-1.5 rounded-md text-white hover:opacity-90 active:scale-95 transition-all"
+                                        style={{ backgroundColor: config.accentColor }}
                                     >
-                                        <Send className="w-4 h-4" />
+                                        <Send className="w-3.5 h-3.5" />
                                     </button>
                                 </div>
                                 {(notification.input.cancelText) && (
                                     <button
                                         onClick={handleInputCancel}
-                                        className="mt-2 text-xs text-theme-muted hover:text-theme-fg transition-colors"
+                                        className="mt-1.5 text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
                                     >
                                         {notification.input.cancelText || 'Cancel'}
                                     </button>
@@ -270,7 +272,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
 
                         {/* Action buttons */}
                         {notification.actions && notification.actions.length > 0 && (
-                            <div className="mt-3 flex items-center gap-2 flex-wrap">
+                            <div className="mt-2.5 flex items-center gap-2 flex-wrap">
                                 {notification.actions.map((action, index) => (
                                     <button
                                         key={index}
@@ -292,13 +294,13 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                         <button
                             onClick={handleDismiss}
                             className={clsx(
-                                'shrink-0 p-1.5 rounded-lg',
-                                'text-theme-muted hover:text-theme-fg',
-                                'hover:bg-theme-hover active:bg-theme-active',
-                                'transition-all'
+                                'shrink-0 p-1 rounded-md',
+                                'text-gray-400 hover:text-gray-600',
+                                'hover:bg-gray-100 active:bg-gray-200',
+                                'transition-all duration-150'
                             )}
                         >
-                            <X className="w-4 h-4" />
+                            <X className="w-3.5 h-3.5" />
                         </button>
                     )}
                 </div>

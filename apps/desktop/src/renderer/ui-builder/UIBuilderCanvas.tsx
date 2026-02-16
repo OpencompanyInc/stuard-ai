@@ -41,6 +41,7 @@ interface UIBuilderCanvasProps {
   customX?: number;
   customY?: number;
   backgroundColor: string;
+  borderRadius?: number;
   zoom: number;
   showGrid: boolean;
   gridSize: number;
@@ -61,6 +62,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   customX,
   customY,
   backgroundColor,
+  borderRadius: borderRadiusProp = 0,
   zoom,
   showGrid,
   gridSize,
@@ -719,7 +721,9 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
 
     window.addEventListener('load', initializeElements);
     setTimeout(initializeElements, 100);
-
+  </script>
+  <script>
+    // === User JS (separate script so parse errors don't block setup) ===
     try {
       ${js || ''}
     } catch(__jsErr) {
@@ -727,12 +731,14 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     }
 
     // If user JS defined a React App component, render it into .stuard-root
-    if (__reactOk && typeof App === 'function') {
+    if (typeof React !== 'undefined' && typeof ReactDOM !== 'undefined' && typeof App === 'function') {
       try {
         var __root = document.querySelector('.stuard-root');
         if (__root) {
           ReactDOM.render(React.createElement(App), __root);
-          setTimeout(initializeElements, 50);
+          setTimeout(function() {
+            if (typeof initializeElements === 'function') initializeElements();
+          }, 50);
         }
       } catch(__renderErr) {
         console.error('[Preview] React render error:', __renderErr);
@@ -827,11 +833,14 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     }
   }, [css, iframeReady]);
 
+  const lastJsRef = useRef(js);
   useEffect(() => {
-    if (iframeRef.current?.contentWindow && iframeReady) {
-      iframeRef.current.contentWindow.postMessage({ type: 'updateScript', js }, '*');
+    // JS changes require a full iframe refresh (scripts can't be hot-swapped)
+    if (js !== lastJsRef.current) {
+      lastJsRef.current = js;
+      refreshIframe();
     }
-  }, [js, iframeReady]);
+  }, [js, refreshIframe]);
 
   useEffect(() => {
     const handleMessage = (e: MessageEvent) => {
@@ -918,12 +927,14 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
 
             {/* The rendered custom UI window */}
             <div
-              className="absolute bg-white rounded-lg shadow-2xl overflow-hidden border border-slate-300"
+              className="absolute rounded-lg shadow-2xl overflow-hidden border border-slate-300"
               style={{
                 left: windowOffset.x,
                 top: windowOffset.y,
                 width: scaledCanvasWidth,
                 height: scaledCanvasHeight,
+                background: backgroundColor || '#fff',
+                borderRadius: borderRadiusProp > 0 ? borderRadiusProp * zoom : undefined,
               }}
             >
               <iframe

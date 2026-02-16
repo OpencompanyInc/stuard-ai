@@ -44,6 +44,11 @@ export const capture_media = makeLocalTool(
       .optional()
       .default(2000)
       .describe('Duration in ms of silence required to stop recording in silence mode. Default: 2000ms'),
+    mirror: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe('Horizontally flip (mirror) video frames. Useful for selfie-cam / webcam display.'),
   }),
   z.object({
     ok: z.boolean().optional(),

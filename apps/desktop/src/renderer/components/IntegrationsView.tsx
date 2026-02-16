@@ -26,10 +26,13 @@ interface IntegrationsViewProps {
   setPyRunCode: (v: string) => void;
   pyInstalling: boolean;
   ffInstalling: boolean;
+  mpStatus: any;
+  mpInstalling: boolean;
   pyRunning: boolean;
   pyRunResult: any;
   refreshPythonStatus: () => Promise<void> | void;
   refreshFfmpegStatus: () => Promise<void> | void;
+  refreshMediapipeStatus: () => Promise<void> | void;
   refreshBrowserStatus: () => Promise<void> | void;
   setupPython: () => Promise<void> | void;
   installPython: () => Promise<void> | void;
@@ -61,10 +64,13 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
   setPyRunCode,
   pyInstalling,
   ffInstalling,
+  mpStatus,
+  mpInstalling,
   pyRunning,
   pyRunResult,
   refreshPythonStatus,
   refreshFfmpegStatus,
+  refreshMediapipeStatus,
   refreshBrowserStatus,
   setupPython,
   installPython,
@@ -128,7 +134,9 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
               : !!connectedMap[i.slug];
             const isPython = i.slug === 'python';
             const isFfmpeg = i.slug === 'ffmpeg';
+            const isMediapipe = i.slug === 'mediapipe';
             const ffAvailable = !!(ffStatus && (ffStatus as any).available);
+            const mpAvailable = !!(mpStatus && (mpStatus as any).available);
             
             return (
               <div key={i.slug} className="group relative flex flex-col bg-theme-card rounded-theme-card border border-theme p-5 shadow-sm hover:border-theme hover:shadow-md transition-all duration-300">
@@ -211,6 +219,37 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
                   </div>
                 )}
 
+                {isMediapipe && (
+                  <div className="mb-5 p-3 bg-theme-bg rounded-theme-card border border-theme space-y-3">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-semibold text-theme-muted uppercase tracking-wide">Status</span>
+                      <span className={clsx("font-mono", mpAvailable ? "text-emerald-400" : "text-theme-muted")}>
+                        {mpInstalling ? 'Installing…' : mpAvailable ? 'Ready' : 'Not installed'}
+                      </span>
+                    </div>
+                    {mpAvailable && (mpStatus as any)?.version && (
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-semibold text-theme-muted uppercase tracking-wide">Version</span>
+                        <span className="font-mono text-theme-muted">{String((mpStatus as any).version)}</span>
+                      </div>
+                    )}
+                    <div className="text-[10px] text-theme-muted leading-relaxed">
+                      Installs <code className="text-theme-fg">mediapipe</code>, <code className="text-theme-fg">opencv-python</code>, and <code className="text-theme-fg">numpy</code> into a managed Python environment.
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={refreshMediapipeStatus}
+                        disabled={mpInstalling}
+                        className="px-3 py-1.5 rounded-theme-button border border-theme bg-transparent text-[11px] font-bold text-theme-muted hover:bg-theme-hover hover:text-theme-fg transition-all shadow-sm disabled:opacity-50"
+                        title="Refresh"
+                      >
+                        <RefreshCw className={clsx("w-4 h-4", mpInstalling && "animate-spin")} />
+                      </button>
+                      <div className="flex-1" />
+                    </div>
+                  </div>
+                )}
+
                 {isBrowser && (
                   <div className="mb-5 p-3 bg-theme-bg rounded-theme-card border border-theme space-y-3">
                     <div className="flex items-center justify-between text-[11px]">
@@ -269,6 +308,16 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
                           >
                             {ffInstalling ? 'Installing…' : 'Repair'}
                           </button>
+                        </>
+                      ) : isMediapipe && isConnected ? (
+                        <>
+                          <button
+                            onClick={() => handleConnect(i.slug)}
+                            disabled={mpInstalling}
+                            className="flex-1 px-3 py-2 rounded-theme-button bg-primary text-primary-fg text-[11px] font-bold hover:opacity-90 shadow-sm transition-all active:scale-95 disabled:opacity-50"
+                          >
+                            {mpInstalling ? 'Installing…' : 'Reinstall'}
+                          </button>
                           <button
                             onClick={() => handleLearnMore(i.homepage)}
                             className="px-3 py-2 rounded-theme-button text-theme-muted hover:text-theme-fg hover:bg-theme-hover border border-transparent hover:border-theme transition-all"
@@ -298,10 +347,10 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
                       <>
                         <button 
                           onClick={() => handleConnect(i.slug)}
-                          disabled={isFfmpeg && ffInstalling}
+                          disabled={(isFfmpeg && ffInstalling) || (isMediapipe && mpInstalling)}
                           className="flex-1 px-3 py-2 rounded-theme-button bg-primary text-primary-fg text-[11px] font-bold hover:opacity-90 shadow-sm transition-all active:scale-95 disabled:opacity-50"
                         >
-                          {isFfmpeg ? (ffInstalling ? 'Installing…' : 'Setup') : 'Connect'}
+                          {isFfmpeg ? (ffInstalling ? 'Installing…' : 'Setup') : isMediapipe ? (mpInstalling ? 'Installing…' : 'Install') : 'Connect'}
                         </button>
                         <button 
                           onClick={() => handleLearnMore(i.homepage)}

@@ -203,6 +203,21 @@ export {
   ffmpeg_extract_frames,
 } from './device/ffmpeg';
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// MEDIAPIPE — Computer Vision (Pose, Hands, Face, Segmentation)
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  mediapipe_status,
+  mediapipe_setup,
+  mediapipe_pose,
+  mediapipe_hands,
+  mediapipe_face_detection,
+  mediapipe_face_mesh,
+  mediapipe_segmentation,
+  mediapipe_holistic,
+  mediapipe_process_video,
+} from './device/mediapipe';
+
 // Canvas Document Tools (AI can read/write user's canvas notes)
 export {
   canvas_list,

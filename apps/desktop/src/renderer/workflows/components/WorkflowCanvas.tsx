@@ -258,6 +258,32 @@ export function WorkflowCanvas({
           {(() => {
             // Compute chain indices once for all nodes based on connection flow
             const chainIndices = computeChainIndices(model.triggers, model.nodes, safeWires);
+
+            // Compute which nodes are part of an active streaming pipeline.
+            // Walk forward from stream consumer nodes through flow wires so
+            // downstream wires (e.g. mediapipe → custom_ui) also get the
+            // stream animation when data is flowing.
+            const streamingPipelineNodes = new Set<string>();
+            if (executionState?.activeStreams?.size) {
+              // Seed with consumer nodes of active streams
+              for (const key of executionState.activeStreams) {
+                const arrow = key.indexOf('->');
+                if (arrow > 0) {
+                  streamingPipelineNodes.add(key.slice(arrow + 2));
+                }
+              }
+              // BFS forward through flow wires
+              const queue = [...streamingPipelineNodes];
+              while (queue.length > 0) {
+                const nodeId = queue.shift()!;
+                for (const wire of safeWires) {
+                  if (wire.from === nodeId && !(wire as any).stream && !streamingPipelineNodes.has(wire.to)) {
+                    streamingPipelineNodes.add(wire.to);
+                    queue.push(wire.to);
+                  }
+                }
+              }
+            }
             
             return safeWires.map((w, i) => {
             const all = [...model.triggers, ...model.nodes];
@@ -389,6 +415,10 @@ export function WorkflowCanvas({
             // Check if this stream wire is currently active (flowing data)
             const isStreamActive = isStreamWire && executionState?.flowId === selectedId &&
               executionState?.activeStreams?.has(`${w.from}->${w.to}`);
+
+            // Check if this flow wire is part of an active streaming pipeline
+            // (downstream of a stream consumer that is currently receiving chunks)
+            const isInStreamPipeline = !isStreamWire && streamingPipelineNodes.has(w.from) && streamingPipelineNodes.has(w.to);
             
             // Check if source node is inside a loop (for "continue in loop" styling)
             const isInsideLoop = (() => {
@@ -415,6 +445,7 @@ export function WorkflowCanvas({
               : isCompletedWire ? '#10b981'
               : isHovered ? '#94a3b8'
               : isStreamWire ? '#06b6d4' // Cyan for stream wires
+              : isInStreamPipeline ? '#06b6d4' // Cyan for downstream pipeline wires
               : isInsideLoop ? '#f97316' // Orange for wires that continue in loop
               : hasLoop ? '#a855f7' // Purple for configured loops (entry)
               : isBackEdge ? '#f59e0b' // Amber for back edges
@@ -425,6 +456,7 @@ export function WorkflowCanvas({
               : isActiveWire ? 'url(#ah-active)'
               : isCompletedWire ? 'url(#ah-completed)'
               : isStreamWire ? 'url(#ah-stream)' // Cyan marker for stream wires
+              : isInStreamPipeline ? 'url(#ah-stream)' // Cyan marker for pipeline wires
               : isInsideLoop ? 'url(#ah-loop-break)' // Reuse orange marker
               : hasLoop ? 'url(#ah-loop-config)'
               : isBackEdge ? 'url(#ah-loop)'
@@ -456,13 +488,13 @@ export function WorkflowCanvas({
                 {/* Main wire path */}
                 <path
                   d={pathD}
-                  stroke={isStreamWire && !isSelected ? '#06b6d4' : wireColor}
-                  strokeWidth={isReconnecting ? 3 : isSelected ? 3 : isActiveWire ? 3 : isStreamActive ? 3 : isStreamWire ? 2.5 : isHovered ? 2.5 : 2}
-                  strokeDasharray={isReconnecting ? '8 4' : isStreamWire ? '6 4' : undefined}
+                  stroke={(isStreamWire || isInStreamPipeline) && !isSelected ? '#06b6d4' : wireColor}
+                  strokeWidth={isReconnecting ? 3 : isSelected ? 3 : isActiveWire ? 3 : isStreamActive ? 3 : isInStreamPipeline ? 2.5 : isStreamWire ? 2.5 : isHovered ? 2.5 : 2}
+                  strokeDasharray={isReconnecting ? '8 4' : (isStreamWire || isInStreamPipeline) ? '6 4' : undefined}
                   fill="none"
                   markerEnd={markerEnd}
-                  className={`transition-all duration-200 ${isActiveWire ? 'drop-shadow-md' : ''} ${isSelected ? 'drop-shadow-md' : ''} ${isReconnecting ? 'drop-shadow-md animate-pulse' : ''} ${isStreamActive ? 'drop-shadow-md stream-wire-active' : isStreamWire ? 'drop-shadow-sm' : ''} ${isBackEdge ? 'stroke-dasharray-none' : ''}`}
-                  style={{ pointerEvents: 'none', ...(isStreamActive ? { animation: 'streamFlow 1.5s linear infinite', filter: 'drop-shadow(0 0 4px rgba(6,182,212,0.6))' } : {}) }}
+                  className={`transition-all duration-200 ${isActiveWire ? 'drop-shadow-md' : ''} ${isSelected ? 'drop-shadow-md' : ''} ${isReconnecting ? 'drop-shadow-md animate-pulse' : ''} ${(isStreamActive || isInStreamPipeline) ? 'drop-shadow-md stream-wire-active' : isStreamWire ? 'drop-shadow-sm' : ''} ${isBackEdge ? 'stroke-dasharray-none' : ''}`}
+                  style={{ pointerEvents: 'none', ...((isStreamActive || isInStreamPipeline) ? { animation: 'streamFlow 1.5s linear infinite', filter: 'drop-shadow(0 0 4px rgba(6,182,212,0.6))' } : {}) }}
                 />
 
                 {/* Loop indicator icon for configured loops */}

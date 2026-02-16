@@ -402,24 +402,26 @@ label: 'Text to Speech',
     ],
   },
   {
+    id: 'mediapipe',
+    label: 'MediaPipe (CV)',
+    icon: Scan,
+    color: 'lime',
+    items: [
+      { k: 'local.tool', t: 'mediapipe_pose', label: 'Pose Estimation', icon: Activity, args: { imagePath: '', drawLandmarks: true, modelComplexity: 1, minDetectionConfidence: 0.5 } },
+      { k: 'local.tool', t: 'mediapipe_hands', label: 'Hand Tracking', icon: Scan, args: { imagePath: '', drawLandmarks: true, maxNumHands: 2, minDetectionConfidence: 0.5 } },
+      { k: 'local.tool', t: 'mediapipe_face_detection', label: 'Face Detection', icon: User, args: { imagePath: '', drawDetections: true, modelSelection: 0, minDetectionConfidence: 0.5 } },
+      { k: 'local.tool', t: 'mediapipe_face_mesh', label: 'Face Mesh (468pt)', icon: Scan, args: { imagePath: '', drawLandmarks: true, maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5 } },
+      { k: 'local.tool', t: 'mediapipe_segmentation', label: 'Background Removal', icon: User, args: { imagePath: '', threshold: 0.5, blurBackground: false } },
+      { k: 'local.tool', t: 'mediapipe_holistic', label: 'Holistic (All-in-One)', icon: Activity, args: { imagePath: '', drawLandmarks: true, modelComplexity: 1, minDetectionConfidence: 0.5 } },
+      { k: 'local.tool', t: 'mediapipe_process_video', label: 'Process Video', icon: Video, args: { videoPath: '', task: 'pose', drawLandmarks: true, maxFrames: 0, sampleEveryN: 1 } },
+    ],
+  },
+  {
     id: 'embeddings',
     label: 'Embeddings',
     icon: Binary,
     color: 'violet',
     items: [
-      { k: 'cloud.tool', t: 'embed_text', label: 'Embed Text', icon: Scan, args: { texts: ['Hello world'] } },
-      { k: 'cloud.tool', t: 'vector_similarity', label: 'Vector Similarity', icon: BarChart3, args: { query: [], candidates: [], topK: 10, threshold: 0.5 } },
-      { k: 'cloud.tool', t: 'embed_and_store', label: 'Embed & Prepare', icon: HardDrive, args: { text: '', metadata: {} } },
-    ],
-  },
-  {
-    id: 'streaming',
-    label: 'Streams (Debug)',
-    icon: Activity,
-    color: 'cyan',
-    items: [
-      { k: 'local.tool', t: 'stream_list', label: 'List Active Streams', icon: List, args: {} },
-      { k: 'local.tool', t: 'stream_get_status', label: 'Stream Status', icon: Activity, args: { streamId: '' } },
     ],
   },
 ];
@@ -442,6 +444,7 @@ export const CATEGORY_COLORS: Record<string, { bg: string; border: string; hover
   sky: { bg: 'bg-sky-50', border: 'border-sky-200', hover: 'hover:bg-sky-100', text: 'text-sky-800', icon: 'text-sky-600' },
   rose: { bg: 'bg-rose-50', border: 'border-rose-200', hover: 'hover:bg-rose-100', text: 'text-rose-800', icon: 'text-rose-600' },
   red: { bg: 'bg-red-50', border: 'border-red-200', hover: 'hover:bg-red-100', text: 'text-red-800', icon: 'text-red-600' },
+  lime: { bg: 'bg-lime-50', border: 'border-lime-200', hover: 'hover:bg-lime-100', text: 'text-lime-800', icon: 'text-lime-600' },
 };
 
 /** Helper to find icon for a tool/trigger type */

@@ -65,7 +65,23 @@ export function loadVariables(): void {
   }
 }
 
+let _saveTimer: ReturnType<typeof setTimeout> | null = null;
+const SAVE_DEBOUNCE_MS = 500;
+
 export function saveVariables(): void {
+  // Debounce disk writes — critical for streaming scenarios where
+  // set_variable is called at 15-30fps with large base64 values.
+  if (_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(_flushSaveVariables, SAVE_DEBOUNCE_MS);
+}
+
+export function saveVariablesSync(): void {
+  if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
+  _flushSaveVariables();
+}
+
+function _flushSaveVariables(): void {
+  _saveTimer = null;
   try {
     const data: Record<string, VariableEntry> = {};
     for (const [key, entry] of variableStore.entries()) {
@@ -129,11 +145,12 @@ export function setVariable(name: string, value: VariableValue, type?: VariableT
     flowId,
   };
   variableStore.set(name, entry);
-  saveVariables();
-  // Notify listeners (used by custom_ui to push live updates to data-var bindings)
+  // Notify listeners FIRST so custom_ui gets updates instantly,
+  // then debounce the disk write (which is slow for large values like base64 frames).
   if (!silent) {
     notifyListeners(name, entry, previousValue);
   }
+  saveVariables();
   return entry;
 }
 

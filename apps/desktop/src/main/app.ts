@@ -356,6 +356,8 @@ app.on("will-quit", () => {
   globalShortcut.unregisterAll();
   disposeUpdates();
   stopAllAgents();
+  // Flush any debounced variable saves before exit
+  try { require('./workflow-variables').saveVariablesSync(); } catch {}
   logger.info("Cleanup complete");
 });
 

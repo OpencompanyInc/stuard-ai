@@ -574,6 +574,7 @@ className="w-full py-3 border border-dashed border-slate-200 rounded-xl text-xs 
               startPage={args.startPage}
               mode="create"
               outputMode="react"
+              originalComponent={args.component || ''}
               windowConfig={{
                 width: args.window?.width || args.width || 600,
                 height: args.window?.height || args.height || 450,
@@ -750,6 +751,167 @@ className="w-full py-3 border border-dashed border-slate-200 rounded-xl text-xs 
             onClose={() => setShowUIBuilder(false)}
           />
         )}
+      </div>
+    );
+  }
+
+  // Special case: MediaPipe image tools — structured input/output UX
+  const MEDIAPIPE_IMAGE_TOOLS = [
+    'mediapipe_pose', 'mediapipe_hands', 'mediapipe_face_detection',
+    'mediapipe_face_mesh', 'mediapipe_segmentation', 'mediapipe_holistic',
+  ];
+
+  if (MEDIAPIPE_IMAGE_TOOLS.includes(toolName)) {
+    const inputMode: 'file' | 'base64' = ('imageData' in args && !('imagePath' in args)) ? 'base64' : 'file';
+    const setInputMode = (mode: 'file' | 'base64') => {
+      if (mode === inputMode) return;
+      const newArgs = { ...args };
+      if (mode === 'file') {
+        delete newArgs.imageData;
+        newArgs.imagePath = args.imagePath || '';
+      } else {
+        delete newArgs.imagePath;
+        newArgs.imageData = args.imageData || '';
+      }
+      onUpdate(newArgs);
+    };
+
+    // Tool-specific keys that appear between I/O sections
+    const toolSpecificKeys: string[] = [];
+    if (toolName === 'mediapipe_pose' || toolName === 'mediapipe_holistic') {
+      toolSpecificKeys.push('drawLandmarks');
+    } else if (toolName === 'mediapipe_hands') {
+      toolSpecificKeys.push('drawLandmarks', 'maxNumHands');
+    } else if (toolName === 'mediapipe_face_detection') {
+      toolSpecificKeys.push('drawDetections');
+    } else if (toolName === 'mediapipe_face_mesh') {
+      toolSpecificKeys.push('drawLandmarks', 'maxNumFaces', 'refineLandmarks');
+    } else if (toolName === 'mediapipe_segmentation') {
+      toolSpecificKeys.push('backgroundColor', 'blurBackground');
+    }
+
+    return (
+      <div className="space-y-5">
+        {/* Input Source */}
+        <div className="border border-slate-200 rounded-xl overflow-hidden">
+          <div className="flex items-center gap-1 p-1.5 bg-slate-50">
+            <button
+              type="button"
+              onClick={() => setInputMode('file')}
+              className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                inputMode === 'file'
+                  ? 'bg-white text-lime-700 shadow-sm border border-lime-200'
+                  : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              📁 Image File
+            </button>
+            <button
+              type="button"
+              onClick={() => setInputMode('base64')}
+              className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                inputMode === 'base64'
+                  ? 'bg-white text-lime-700 shadow-sm border border-lime-200'
+                  : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              🔗 Base64 / Data URL
+            </button>
+          </div>
+          <div className="p-3 bg-white">
+            {inputMode === 'file' ? (
+              <SmartArgEditor
+                toolName={toolName}
+                argKey="imagePath"
+                value={args.imagePath || ''}
+                onChange={v => onUpdate({ ...args, imagePath: v })}
+                upstreamNodes={upstreamNodes}
+                workflowVariables={workflowVariables}
+              />
+            ) : (
+              <SmartArgEditor
+                toolName={toolName}
+                argKey="imageData"
+                value={args.imageData || ''}
+                onChange={v => onUpdate({ ...args, imageData: v })}
+                upstreamNodes={upstreamNodes}
+                workflowVariables={workflowVariables}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Output Format */}
+        <SmartArgEditor
+          toolName={toolName}
+          argKey="outputFormat"
+          value={args.outputFormat || 'base64'}
+          onChange={v => onUpdate({ ...args, outputFormat: v })}
+          upstreamNodes={upstreamNodes}
+          workflowVariables={workflowVariables}
+        />
+
+        {/* Output path — show only when outputFormat=file */}
+        {args.outputFormat === 'file' && (
+          <SmartArgEditor
+            toolName={toolName}
+            argKey="outputPath"
+            value={args.outputPath || ''}
+            onChange={v => onUpdate({ ...args, outputPath: v })}
+            upstreamNodes={upstreamNodes}
+            workflowVariables={workflowVariables}
+          />
+        )}
+
+        {/* Tool-specific settings */}
+        {toolSpecificKeys.length > 0 && (
+          <div className="space-y-4">
+            {toolSpecificKeys.map(key => (
+              <SmartArgEditor
+                key={key}
+                toolName={toolName}
+                argKey={key}
+                value={args[key]}
+                onChange={v => onUpdate({ ...args, [key]: v })}
+                upstreamNodes={upstreamNodes}
+                workflowVariables={workflowVariables}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Advanced Settings */}
+        {schema && (() => {
+          const advKeys = Object.keys(schema.args).filter(k => schema.args[k]?.advanced && !['outputPath'].includes(k));
+          if (advKeys.length === 0) return null;
+          return (
+            <div className="border border-slate-200 rounded-xl overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowAdvancedArgs(v => !v)}
+                className="w-full flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-slate-100 transition-colors text-xs font-semibold text-slate-600"
+              >
+                <span>Advanced Settings</span>
+                <span className="text-[10px] text-slate-400">{advKeys.length} option(s)</span>
+              </button>
+              {showAdvancedArgs && (
+                <div className="p-4 space-y-4 bg-white border-t border-slate-200">
+                  {advKeys.map(key => (
+                    <SmartArgEditor
+                      key={key}
+                      toolName={toolName}
+                      argKey={key}
+                      value={args[key]}
+                      onChange={v => onUpdate({ ...args, [key]: v })}
+                      upstreamNodes={upstreamNodes}
+                      workflowVariables={workflowVariables}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
     );
   }

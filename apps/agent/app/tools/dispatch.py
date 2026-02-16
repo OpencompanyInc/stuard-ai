@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Callable, Awaitable
 
-from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http, streams, database, folder_limiter
+from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http, streams, database, folder_limiter, mediapipe_tools
 
 
 # Tool metadata for discovery (category and description)
@@ -146,6 +146,7 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     # Media capture
     "capture_media": ("vision", "Capture photos, videos, or audio"),
     "stop_capture": ("vision", "Stop an active capture session"),
+    "stop_captures_by_flow": ("vision", "Stop capture sessions belonging to a specific workflow (by flowId)"),
     "list_active_captures": ("vision", "List active capture sessions"),
     "describe_media_capture_capabilities": ("vision", "Describe media capture capabilities"),
     "upload_file_to_url": ("data", "Upload a file to a URL"),
@@ -166,6 +167,17 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "capture_system_audio": ("vision", "Capture system audio"),
     "stop_system_audio": ("vision", "Stop system audio capture"),
     "describe_system_audio_capabilities": ("vision", "Describe system audio capabilities"),
+
+    # MediaPipe
+    "mediapipe_status": ("vision", "Check if MediaPipe is installed and available"),
+    "mediapipe_setup": ("vision", "Install MediaPipe + opencv-python + numpy"),
+    "mediapipe_pose": ("vision", "Detect body pose landmarks in an image using MediaPipe"),
+    "mediapipe_hands": ("vision", "Detect hand landmarks in an image using MediaPipe"),
+    "mediapipe_face_detection": ("vision", "Detect faces with bounding boxes and keypoints using MediaPipe"),
+    "mediapipe_face_mesh": ("vision", "Detect 468 face mesh landmarks using MediaPipe"),
+    "mediapipe_segmentation": ("vision", "Segment person from background (selfie segmentation) using MediaPipe"),
+    "mediapipe_holistic": ("vision", "Detect pose + hands + face in one pass using MediaPipe Holistic"),
+    "mediapipe_process_video": ("vision", "Process video frames with MediaPipe (pose/hands/face/holistic)"),
 
     # FFmpeg
     "ffmpeg_status": ("vision", "Check FFmpeg availability"),
@@ -320,6 +332,7 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "stream_remove_transform": ("streaming", "Remove a transform from the stream pipeline"),
     "stream_update_transform": ("streaming", "Update transform parameters live"),
     "stream_list": ("streaming", "List active streams for a workflow"),
+    "close_all_streams": ("streaming", "Close ALL active streams, optionally filtered by flowId"),
     "stream_get_status": ("streaming", "Get detailed stream stats and subscriber info"),
     "stream_from_script": ("streaming", "Run a Python script that emits chunks into a real-time stream"),
     "stream_from_api": ("streaming", "Subscribe to a streaming API (SSE/chunked HTTP) and push events into a stream"),
@@ -469,6 +482,7 @@ _HANDLERS = {
     # Media capture
     "capture_media": media.capture_media,
     "stop_capture": media.stop_capture,
+    "stop_captures_by_flow": media.stop_captures_by_flow,
     "list_active_captures": media.list_active_captures,
     "describe_media_capture_capabilities": media.describe_media_capture_capabilities,
     "upload_file_to_url": media.upload_file_to_url,
@@ -489,6 +503,17 @@ _HANDLERS = {
     "capture_system_audio": screen_capture.capture_system_audio,
     "stop_system_audio": screen_capture.stop_system_audio,
     "describe_system_audio_capabilities": screen_capture.describe_system_audio_capabilities,
+
+    # MediaPipe (Computer Vision)
+    "mediapipe_status": mediapipe_tools.mediapipe_status,
+    "mediapipe_setup": mediapipe_tools.mediapipe_setup,
+    "mediapipe_pose": mediapipe_tools.mediapipe_pose,
+    "mediapipe_hands": mediapipe_tools.mediapipe_hands,
+    "mediapipe_face_detection": mediapipe_tools.mediapipe_face_detection,
+    "mediapipe_face_mesh": mediapipe_tools.mediapipe_face_mesh,
+    "mediapipe_segmentation": mediapipe_tools.mediapipe_segmentation,
+    "mediapipe_holistic": mediapipe_tools.mediapipe_holistic,
+    "mediapipe_process_video": mediapipe_tools.mediapipe_process_video,
 
     # FFmpeg (Media tools)
     "ffmpeg_status": ffmpeg.ffmpeg_status,
@@ -645,6 +670,7 @@ _HANDLERS = {
     "stream_remove_transform": streams.stream_remove_transform,
     "stream_update_transform": streams.stream_update_transform,
     "stream_list": streams.stream_list,
+    "close_all_streams": streams.close_all_streams,
     "stream_get_status": streams.stream_get_status,
     "stream_from_script": streams.stream_from_script,
     "stream_from_api": streams.stream_from_api,
@@ -723,6 +749,17 @@ async def execute(tool: str, args: Dict[str, Any], emit: Callable[[str, Dict[str
 
         # Workflow tools
         "show_json_workflow_code",
+
+        # MediaPipe tools
+        "mediapipe_status",
+        "mediapipe_setup",
+        "mediapipe_pose",
+        "mediapipe_hands",
+        "mediapipe_face_detection",
+        "mediapipe_face_mesh",
+        "mediapipe_segmentation",
+        "mediapipe_holistic",
+        "mediapipe_process_video",
 
         # FFmpeg tools
         "ffmpeg_setup",

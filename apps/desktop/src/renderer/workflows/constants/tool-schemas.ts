@@ -111,7 +111,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
 
   // --- VISION / MEDIA ---
   { id: 'take_screenshot', category: 'vision', kind: 'local', description: 'Capture screenshot and return a local file path', argsTemplate: { region: { x: 0, y: 0, width: 800, height: 600 }, hideUI: false }, outputSchema: { ok: 'boolean', filePath: 'string' } },
-  { id: 'capture_media', category: 'vision', kind: 'local', description: 'Capture photos, videos, or audio', argsTemplate: { kind: 'audio', mode: 'fixed', stream: false, durationMs: 5000, device: '', filePath: '', sessionId: '', maxDurationMs: 600000 }, outputSchema: { ok: 'boolean', filePath: 'string', mimeType: 'string', sessionId: 'string', streamId: 'string', stoppedBy: 'string', mode: 'string', status: 'string', durationMs: 'number' } },
+  { id: 'capture_media', category: 'vision', kind: 'local', description: 'Capture photos, videos, or audio', argsTemplate: { kind: 'audio', mode: 'fixed', stream: false, mirror: false, durationMs: 5000, device: '', filePath: '', sessionId: '', maxDurationMs: 600000 }, outputSchema: { ok: 'boolean', filePath: 'string', mimeType: 'string', sessionId: 'string', streamId: 'string', stoppedBy: 'string', mode: 'string', status: 'string', durationMs: 'number' } },
   { id: 'stop_capture', category: 'vision', kind: 'local', description: 'Stop an active capture session', argsTemplate: { sessionId: '' }, outputSchema: { ok: 'boolean', sessionId: 'string', wasActive: 'boolean' } },
   { id: 'list_active_captures', category: 'vision', kind: 'local', description: 'List all currently active capture sessions', argsTemplate: {}, outputSchema: { ok: 'boolean', sessions: 'string[]' } },
   { id: 'capture_screen', category: 'vision', kind: 'local', description: 'Record the screen (full screen, monitor, window, or region) with optional system audio', argsTemplate: { mode: 'fixed', stream: false, durationMs: 5000, target: 'fullscreen', monitorId: 0, windowTitle: '', region: { x: 0, y: 0, width: 1920, height: 1080 }, includeSystemAudio: false, fps: 30, quality: 'medium', filePath: '', sessionId: '', maxDurationMs: 7200000 }, outputSchema: { ok: 'boolean', filePath: 'string', mimeType: 'string', sessionId: 'string', streamId: 'string', stoppedBy: 'string', mode: 'string', status: 'string', hasAudio: 'boolean', audioFilePath: 'string' } },
@@ -134,6 +134,16 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'ffmpeg_trim_media', category: 'vision', kind: 'local', description: 'Trim a media file to a time range (fast copy mode).', argsTemplate: { inputPath: 'C:/input.mp4', outputPath: 'C:/clip.mp4', startSeconds: 0, durationSeconds: 10, overwrite: true, timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string' } },
   { id: 'ffmpeg_probe_media', category: 'vision', kind: 'local', description: 'Inspect a media file using ffprobe and return JSON metadata.', argsTemplate: { inputPath: 'C:/input.mp4', timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', data: 'any', stdout: 'string', stderr: 'string', ffprobePath: 'string' } },
   { id: 'ffmpeg_extract_frames', category: 'vision', kind: 'local', description: 'Extract image frames from a video to a numbered file pattern.', argsTemplate: { inputPath: 'C:/input.mp4', outputPattern: 'C:/frames/%04d.jpg', overwrite: true, fps: 1, startSeconds: 0, durationSeconds: 5, timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string' } },
+
+  // --- MEDIAPIPE (Computer Vision) ---
+  { id: 'mediapipe_pose', category: 'vision', kind: 'local', description: 'Detect body pose landmarks (33 points) in an image using MediaPipe. Accepts file path or base64 data URL.', argsTemplate: { imagePath: '', imageData: '', outputFormat: 'base64', outputPath: '', drawLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 }, outputSchema: { ok: 'boolean', poseDetected: 'boolean', landmarks: 'any[]', landmarkCount: 'number', outputPath: 'string', outputDataUrl: 'string' } },
+  { id: 'mediapipe_hands', category: 'vision', kind: 'local', description: 'Detect hand landmarks (21 points per hand) in an image using MediaPipe. Accepts file path or base64 data URL.', argsTemplate: { imagePath: '', imageData: '', outputFormat: 'base64', outputPath: '', drawLandmarks: true, maxNumHands: 2, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 }, outputSchema: { ok: 'boolean', hands: 'any[]', handCount: 'number', outputPath: 'string', outputDataUrl: 'string' } },
+  { id: 'mediapipe_face_detection', category: 'vision', kind: 'local', description: 'Detect faces with bounding boxes and keypoints using MediaPipe. Accepts file path or base64 data URL.', argsTemplate: { imagePath: '', imageData: '', outputFormat: 'base64', outputPath: '', drawDetections: true, minDetectionConfidence: 0.5 }, outputSchema: { ok: 'boolean', faces: 'any[]', faceCount: 'number', outputPath: 'string', outputDataUrl: 'string' } },
+  { id: 'mediapipe_face_mesh', category: 'vision', kind: 'local', description: 'Detect 478 face mesh landmarks using MediaPipe. Accepts file path or base64 data URL.', argsTemplate: { imagePath: '', imageData: '', outputFormat: 'base64', outputPath: '', drawLandmarks: true, maxNumFaces: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 }, outputSchema: { ok: 'boolean', faces: 'any[]', faceCount: 'number', outputPath: 'string', outputDataUrl: 'string' } },
+  { id: 'mediapipe_segmentation', category: 'vision', kind: 'local', description: 'Segment person from background (selfie segmentation) using MediaPipe. Accepts file path or base64 data URL.', argsTemplate: { imagePath: '', imageData: '', outputFormat: 'base64', outputPath: '', threshold: 0.5, backgroundColor: '', blurBackground: false, blurStrength: 21 }, outputSchema: { ok: 'boolean', outputPath: 'string', maskPath: 'string', outputDataUrl: 'string' } },
+  { id: 'mediapipe_holistic', category: 'vision', kind: 'local', description: 'Detect pose + hands + face in one pass using MediaPipe Holistic. Accepts file path or base64 data URL.', argsTemplate: { imagePath: '', imageData: '', outputFormat: 'base64', outputPath: '', drawLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 }, outputSchema: { ok: 'boolean', pose: 'any', leftHand: 'any', rightHand: 'any', face: 'any', outputPath: 'string', outputDataUrl: 'string' } },
+  { id: 'mediapipe_process_video', category: 'vision', kind: 'local', description: 'Process video frames with MediaPipe (pose/hands/face/holistic)', argsTemplate: { videoPath: '', outputPath: '', task: 'pose', drawLandmarks: true, maxFrames: 0, sampleEveryN: 1, minDetectionConfidence: 0.5 }, outputSchema: { ok: 'boolean', frameCount: 'number', processedFrames: 'number', framesWithDetection: 'number', outputPath: 'string', frameLandmarks: 'any[]' } },
+
   { id: 'text_to_speech', category: 'vision', kind: 'cloud', description: 'Convert text to speech audio using ElevenLabs TTS with language support', argsTemplate: { text: '', voice_id: 'JBFqnCBsd6RMkjVDRZzb', model_id: 'eleven_multilingual_v2', language_code: '', speed: 1.0, format: 'mp3', save: true, play: false, outputPath: '' }, outputSchema: { ok: 'boolean', filePath: 'string', format: 'string', voice_id: 'string', textLength: 'number', played: 'boolean', error: 'string' } },
   { id: 'list_tts_voices', category: 'vision', kind: 'cloud', description: 'List all available ElevenLabs text-to-speech voices', argsTemplate: {}, outputSchema: { ok: 'boolean', voices: 'any[]' } },
   { id: 'get_tts_models', category: 'vision', kind: 'cloud', description: 'List available ElevenLabs TTS models', argsTemplate: {}, outputSchema: { ok: 'boolean', models: 'any[]' } },
@@ -199,12 +209,12 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'agent_todo', category: 'data', kind: 'local', description: 'Agent internal todo list for tracking long-running tasks (session-scoped)', argsTemplate: { action: 'list', sessionId: '', data: {} }, outputSchema: { ok: 'boolean', items: 'any[]', todo: 'object', progress: 'object', count: 'number' } },
 
   // --- VARIABLES ---
-  { id: 'set_variable', category: 'data', kind: 'local', description: 'Set a workflow variable. For workflow.* variables, they must be defined in the workflow variables array first.', argsTemplate: { name: '', value: '', scope: 'workflow' }, outputSchema: { ok: 'boolean' } },
+  { id: 'set_variable', category: 'data', kind: 'local', description: 'Set a workflow variable. For workflow.* variables, they must be defined in the workflow variables array first.', argsTemplate: { name: '', value: '', scope: 'workflow', notifyUi: true }, outputSchema: { ok: 'boolean' } },
   { id: 'get_variable', category: 'data', kind: 'local', description: 'Get a workflow variable value. For workflow.* variables, they must be defined in the workflow variables array.', argsTemplate: { name: '', default: '' }, outputSchema: { ok: 'boolean', value: 'any' } },
   { id: 'delete_variable', category: 'data', kind: 'local', description: 'Delete a stored variable', argsTemplate: { name: '' }, outputSchema: { ok: 'boolean' } },
-  { id: 'toggle_variable', category: 'data', kind: 'local', description: 'Toggle a boolean workflow variable (must be defined in variables array)', argsTemplate: { name: '' }, outputSchema: { ok: 'boolean', value: 'boolean' } },
-  { id: 'increment_variable', category: 'data', kind: 'local', description: 'Increment a numeric workflow variable (must be defined in variables array)', argsTemplate: { name: '', amount: 1 }, outputSchema: { ok: 'boolean', value: 'number' } },
-  { id: 'append_to_list', category: 'data', kind: 'local', description: 'Append an item to a list workflow variable (must be defined in variables array)', argsTemplate: { name: '', item: '' }, outputSchema: { ok: 'boolean', value: 'any[]' } },
+  { id: 'toggle_variable', category: 'data', kind: 'local', description: 'Toggle a boolean workflow variable (must be defined in variables array)', argsTemplate: { name: '', notifyUi: true }, outputSchema: { ok: 'boolean', value: 'boolean' } },
+  { id: 'increment_variable', category: 'data', kind: 'local', description: 'Increment a numeric workflow variable (must be defined in variables array)', argsTemplate: { name: '', amount: 1, notifyUi: true }, outputSchema: { ok: 'boolean', value: 'number' } },
+  { id: 'append_to_list', category: 'data', kind: 'local', description: 'Append an item to a list workflow variable (must be defined in variables array)', argsTemplate: { name: '', item: '', notifyUi: true }, outputSchema: { ok: 'boolean', value: 'any[]' } },
 
   // --- DATABASE ---
   { id: 'db_store', category: 'data', kind: 'local', description: 'Save a document (JSON data) into a collection. Auto-creates the collection if needed.', argsTemplate: { table: 'my_collection', id: '', data: { name: '', value: '' } }, outputSchema: { ok: 'boolean', id: 'string', table: 'string', error: 'string' } },
@@ -782,6 +792,16 @@ for (const toolId of ['capture_media', 'capture_screen', 'capture_system_audio']
   }
 }
 
+// capture_media: mirror toggle for selfie-cam
+if (TOOL_SCHEMAS['capture_media']) {
+  TOOL_SCHEMAS['capture_media'].args.mirror = {
+    type: 'boolean' as any,
+    label: 'Mirror (Flip Horizontal)',
+    description: 'Flip the video horizontally for a selfie-cam / webcam mirror effect. Only applies to video captures.',
+    default: false,
+  };
+}
+
 // Analyze current screen: text / json / boolean
 if (TOOL_SCHEMAS['analyze_current_screen']?.args?.mode) {
   TOOL_SCHEMAS['analyze_current_screen'].args.mode = {
@@ -1034,14 +1054,45 @@ if (TOOL_SCHEMAS['task_crud']?.args?.action) {
 // SET VARIABLE — scope as dropdown
 // ============================================================================
 
-if (TOOL_SCHEMAS['set_variable']?.args?.scope) {
-  TOOL_SCHEMAS['set_variable'].args.scope = {
-    type: 'select',
-    label: 'Scope',
-    description: 'Where to store the variable',
-    options: VARIABLE_SCOPE_OPTIONS,
-    default: 'workflow',
+if (TOOL_SCHEMAS['set_variable']) {
+  if (TOOL_SCHEMAS['set_variable'].args.scope) {
+    TOOL_SCHEMAS['set_variable'].args.scope = {
+      type: 'select',
+      label: 'Scope',
+      description: 'Where to store the variable',
+      options: VARIABLE_SCOPE_OPTIONS,
+      default: 'workflow',
+    };
+  }
+  TOOL_SCHEMAS['set_variable'].args.name = {
+    type: 'string',
+    label: 'Variable Name',
+    description: 'Name of the variable to set. Must match a defined workflow variable for useVar() to work in custom_ui.',
+    placeholder: 'streamed_frame',
   };
+  TOOL_SCHEMAS['set_variable'].args.value = {
+    type: 'string',
+    label: 'Value',
+    description: 'The value to store. Use template variables like {{stepId.field}} to reference other step outputs. For stream wiring: {{stepId.chunk}} gives the current frame/chunk.',
+    placeholder: '{{capture.chunk}} or {{pose.outputDataUrl}}',
+  };
+}
+
+// ============================================================================
+// VARIABLE TOOLS — notifyUi toggle (live-push to open custom_ui windows)
+// ============================================================================
+
+const NOTIFY_UI_SCHEMA = {
+  type: 'boolean' as const,
+  label: 'Live Update Custom UI',
+  description: 'When enabled, any open custom_ui window using useVar() for this variable will re-render automatically when the value changes.',
+  default: true,
+};
+
+for (const toolId of ['set_variable', 'toggle_variable', 'increment_variable', 'append_to_list']) {
+  if (TOOL_SCHEMAS[toolId]) {
+    TOOL_SCHEMAS[toolId].args.notifyUi = { ...NOTIFY_UI_SCHEMA };
+  }
 }
 
 // ============================================================================
@@ -1513,6 +1564,142 @@ TOOL_SCHEMAS['agent_node'] = {
 };
 
 // ============================================================================
+// MEDIAPIPE TOOLS — Input source, output format, and advanced grouping
+// ============================================================================
+
+const MEDIAPIPE_OUTPUT_FORMAT_OPTIONS: ArgOption[] = [
+  { value: 'base64', label: 'Base64 (Data URL)', description: 'Return annotated image as a base64 data URL — fast, no disk I/O' },
+  { value: 'file', label: 'File (Save to Disk)', description: 'Save annotated image to a file path on disk' },
+];
+
+const MEDIAPIPE_VIDEO_TASK_OPTIONS: ArgOption[] = [
+  { value: 'pose', label: 'Pose', description: 'Body pose landmarks (33 points)' },
+  { value: 'hands', label: 'Hands', description: 'Hand landmarks (21 points per hand)' },
+  { value: 'face_detection', label: 'Face Detection', description: 'Face bounding boxes + keypoints' },
+  { value: 'face_mesh', label: 'Face Mesh', description: '468 face mesh landmarks' },
+];
+
+const MEDIAPIPE_IMAGE_TOOLS = [
+  'mediapipe_pose', 'mediapipe_hands', 'mediapipe_face_detection',
+  'mediapipe_face_mesh', 'mediapipe_segmentation', 'mediapipe_holistic',
+];
+
+for (const toolId of MEDIAPIPE_IMAGE_TOOLS) {
+  if (!TOOL_SCHEMAS[toolId]) continue;
+  const s = TOOL_SCHEMAS[toolId];
+
+  // Input: imagePath as path picker, imageData as string for base64
+  s.args.imagePath = {
+    type: 'path',
+    label: 'Image File',
+    description: 'Path to an image file on disk. Use this OR Base64 Input below.',
+    placeholder: 'C:/path/to/image.png',
+  };
+  s.args.imageData = {
+    type: 'string',
+    label: 'Base64 Input',
+    description: 'Base64 data URL or template variable. For stream wiring: use {{stepId.chunk}} to receive frames from a capture_media stream. For previous step output: use {{stepId.outputDataUrl}}.',
+    placeholder: '{{capture.chunk}} or {{step.outputDataUrl}}',
+  };
+
+  // Output format toggle
+  s.args.outputFormat = {
+    type: 'select',
+    label: 'Output Format',
+    description: 'How to return the annotated image. Base64 is faster (no disk), File saves to disk.',
+    options: MEDIAPIPE_OUTPUT_FORMAT_OPTIONS,
+    default: 'base64',
+  };
+
+  // Output path — only relevant when outputFormat=file
+  s.args.outputPath = {
+    type: 'path',
+    label: 'Output File Path',
+    description: 'Where to save the annotated image (only used when Output Format = File). Leave empty for auto-generated path.',
+    placeholder: 'C:/output/annotated.png',
+    advanced: true,
+  };
+
+  // Mark confidence/tracking as advanced
+  if (s.args.minDetectionConfidence) {
+    s.args.minDetectionConfidence = { ...s.args.minDetectionConfidence, type: 'number', label: 'Min Detection Confidence', description: 'Minimum confidence threshold for initial detection (0.0 - 1.0)', advanced: true };
+  }
+  if (s.args.minTrackingConfidence) {
+    s.args.minTrackingConfidence = { ...s.args.minTrackingConfidence, type: 'number', label: 'Min Tracking Confidence', description: 'Minimum confidence threshold for landmark tracking (0.0 - 1.0)', advanced: true };
+  }
+  if (s.args.modelComplexity) {
+    s.args.modelComplexity = {
+      type: 'select', label: 'Model Complexity',
+      description: 'Higher = more accurate but slower',
+      options: [
+        { value: 0, label: 'Lite', description: 'Fastest, least accurate' },
+        { value: 1, label: 'Full', description: 'Balanced (default)' },
+        { value: 2, label: 'Heavy', description: 'Most accurate, slowest' },
+      ],
+      default: 1, advanced: true,
+    };
+  }
+  if (s.args.modelSelection) {
+    s.args.modelSelection = {
+      type: 'select', label: 'Model',
+      options: toolId === 'mediapipe_segmentation'
+        ? [{ value: 0, label: 'General', description: 'General selfie model' }, { value: 1, label: 'Landscape', description: 'Landscape-optimized' }]
+        : [{ value: 0, label: 'Short Range', description: 'Within 2 meters' }, { value: 1, label: 'Full Range', description: 'Up to 5 meters' }],
+      default: 0, advanced: true,
+    };
+  }
+}
+
+// Segmentation-specific overrides
+if (TOOL_SCHEMAS['mediapipe_segmentation']) {
+  TOOL_SCHEMAS['mediapipe_segmentation'].args.blurStrength = {
+    ...TOOL_SCHEMAS['mediapipe_segmentation'].args.blurStrength,
+    type: 'number', label: 'Blur Strength', description: 'Blur intensity (odd number, higher = more blur)', advanced: true,
+  };
+  TOOL_SCHEMAS['mediapipe_segmentation'].args.threshold = {
+    ...TOOL_SCHEMAS['mediapipe_segmentation'].args.threshold,
+    type: 'number', label: 'Segmentation Threshold', description: 'Confidence threshold for person/background split (0.0 - 1.0)', advanced: true,
+  };
+}
+
+// Video tool — task as select, no imageData/outputFormat (video only)
+if (TOOL_SCHEMAS['mediapipe_process_video']) {
+  TOOL_SCHEMAS['mediapipe_process_video'].args.task = {
+    type: 'select', label: 'Detection Task',
+    description: 'Which MediaPipe detection to run on each frame',
+    options: MEDIAPIPE_VIDEO_TASK_OPTIONS,
+    default: 'pose',
+  };
+  TOOL_SCHEMAS['mediapipe_process_video'].args.videoPath = {
+    type: 'path', label: 'Video File',
+    description: 'Path to the input video file',
+    required: true, placeholder: 'C:/path/to/video.mp4',
+  };
+  TOOL_SCHEMAS['mediapipe_process_video'].args.outputPath = {
+    type: 'path', label: 'Output Video Path',
+    description: 'Where to save the annotated output video. Leave empty for auto-generated path.',
+    placeholder: 'C:/output/annotated.mp4',
+  };
+  TOOL_SCHEMAS['mediapipe_process_video'].args.maxFrames = {
+    type: 'number', label: 'Max Frames',
+    description: 'Maximum frames to process (0 = all frames)',
+    default: 0, advanced: true,
+  };
+  TOOL_SCHEMAS['mediapipe_process_video'].args.sampleEveryN = {
+    type: 'number', label: 'Sample Every N',
+    description: 'Process every Nth frame (1 = every frame, 2 = skip half, etc.)',
+    default: 1, advanced: true,
+  };
+  if (TOOL_SCHEMAS['mediapipe_process_video'].args.minDetectionConfidence) {
+    TOOL_SCHEMAS['mediapipe_process_video'].args.minDetectionConfidence = {
+      type: 'number', label: 'Min Detection Confidence',
+      description: 'Minimum detection confidence (0.0 - 1.0)',
+      advanced: true,
+    };
+  }
+}
+
+// ============================================================================
 // STREAM TOGGLE — Add "Stream output" toggle to tools that support it
 // Must be AFTER all schema definitions (agent_node is defined last)
 // ============================================================================
@@ -1522,8 +1709,18 @@ for (const toolId of ['agent_node', 'ai_inference', 'http_request', 'run_python_
     TOOL_SCHEMAS[toolId].args.stream = {
       type: 'boolean' as any,
       label: 'Stream Output',
-      description: 'Stream output in real-time. Connect a stream wire to the next step — it will run once per chunk. Access chunks via {{stepId.text}} or stream_chunk in Python.',
+      description: 'Stream output in real-time. Connect a stream wire (dashed) to the next step — it runs once per chunk.',
       default: false,
+    };
+  }
+}
+
+// Override stream description for capture tools with video-specific guidance
+for (const toolId of ['capture_media', 'capture_screen']) {
+  if (TOOL_SCHEMAS[toolId]?.args?.stream) {
+    TOOL_SCHEMAS[toolId].args.stream = {
+      ...TOOL_SCHEMAS[toolId].args.stream,
+      description: 'Stream video frames as base64 data URLs. Connect a stream wire to the next step. Access each frame via {{stepId.chunk}} or {{stepId.text}}. Example: set imageData to {{capture.chunk}} in mediapipe, or set value to {{capture.chunk}} in set_variable.',
     };
   }
 }

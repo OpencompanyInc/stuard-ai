@@ -428,7 +428,7 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
       const readResult = await execLocalTool('stream_read', {
         streamId,
         subscriberId,
-        maxChunks: 50,
+        maxChunks: 10,
         waitMs: serverWaitMs,
       }, engineCtx);
       
@@ -447,7 +447,26 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
       if (chunks.length > 0) {
         lastDataTime = Date.now();
         
-        for (const chunk of chunks) {
+        // ── Real-time optimization: skip to latest frame for video streams ──
+        // When multiple chunks are buffered (producer faster than consumer),
+        // only process the LAST chunk to stay close to real-time.
+        // Without this, a 30fps camera + 3fps consumer = ever-growing lag.
+        let chunksToProcess = chunks;
+        if (chunks.length > 1) {
+          const lastChunk = chunks[chunks.length - 1];
+          const lastData = lastChunk?.data !== undefined ? lastChunk.data : lastChunk;
+          const isVideoFrame = typeof lastData === 'string' && lastData.startsWith('data:image/');
+          if (isVideoFrame) {
+            const skipped = chunks.length - 1;
+            if (skipped > 0) {
+              engineCtx.logFn(`[${consumerStep.id}] 📡 Dropping ${skipped} stale frame(s), processing latest`);
+            }
+            chunksToProcess = [lastChunk];
+            chunkIndex += skipped; // Keep index accurate
+          }
+        }
+        
+        for (const chunk of chunksToProcess) {
           if (controller.signal.aborted) break;
           
           const chunkData = chunk?.data !== undefined ? chunk.data : chunk;
@@ -469,7 +488,7 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
           baseCtx.stream_chunk = chunkStr;
           baseCtx.stream_chunk_index = chunkIndex;
           baseCtx.stream_full_text = accumulatedText;
-          
+
           emitStepEvent(safe, consumerStep.id, 'running', { 
             wireFromId: sourceStepId,
           } as any);
@@ -482,6 +501,23 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
             emitStepEvent(safe, consumerStep.id, 'completed', { 
               result: out.ctx?.[consumerStep.id],
             } as any);
+            
+            // ── Continuous flow: follow consumer step's flow edges per-chunk ──
+            // This lets downstream steps (e.g. custom_ui) run for every frame
+            // in a pipeline like: capture_media →(stream)→ mediapipe →(flow)→ custom_ui
+            const downstreamFlowEdges = (out.edges || []).filter(e => !e.stream);
+            if (downstreamFlowEdges.length > 0) {
+              for (const edge of downstreamFlowEdges) {
+                const nextStep = map.get(edge.to);
+                if (nextStep) {
+                  try {
+                    await runBranch(nextStep, baseCtx, consumerStep.id);
+                  } catch (err) {
+                    engineCtx.logFn(`[${consumerStep.id}] ⚠️ Downstream error on chunk ${chunkIndex}: ${err}`);
+                  }
+                }
+              }
+            }
           }
           
           chunkIndex++;

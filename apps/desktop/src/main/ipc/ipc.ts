@@ -739,6 +739,18 @@ export function setupIpc() {
     }
   });
 
+  // Transform JSX component code (for UI builder preview)
+  ipcMain.handle('customUi:transformJsx', async (_e, code: string) => {
+    try {
+      const { prepareComponentCode } = require('../custom-ui/jsx-transform');
+      const result = prepareComponentCode(code);
+      return { ok: true, code: result.code, syntax: result.syntax };
+    } catch (e: any) {
+      logger.error('[customUi:transformJsx] Failed:', e);
+      return { ok: false, error: String(e?.message || e), code };
+    }
+  });
+
   // Open chat in overlay
   ipcMain.handle('overlay:openChat', (_e, conversationId: string) => {
     try {

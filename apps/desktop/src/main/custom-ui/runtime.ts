@@ -1,10 +1,32 @@
 import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 import { BrowserWindow } from 'electron';
 import type { RouterContext } from '../tool-router';
 import { customUiWindows, windowData } from './state';
 import { calculatePosition } from './position';
 import { getPreloadPath } from './preload';
 import { generateEnhancedCustomUiHtml } from './html';
+import { setVariable, type VariableValue } from '../workflow-variables';
+
+// Temp directory for custom UI HTML files (allows file:// loading so local images work)
+const CUSTOM_UI_TMP_DIR = path.join(os.tmpdir(), 'stuard_custom_ui');
+fs.mkdirSync(CUSTOM_UI_TMP_DIR, { recursive: true });
+
+function writeTempHtml(id: string, html: string): string {
+  const safeName = id.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const filePath = path.join(CUSTOM_UI_TMP_DIR, `${safeName}.html`);
+  fs.writeFileSync(filePath, html, 'utf-8');
+  return filePath;
+}
+
+function cleanupTempHtml(id: string): void {
+  try {
+    const safeName = id.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filePath = path.join(CUSTOM_UI_TMP_DIR, `${safeName}.html`);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch {}
+}
 
 // Main custom UI execution
 export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> {
@@ -41,6 +63,7 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
   const border = windowCfg.border || { enabled: false };
   const animation = windowCfg.animation;
   const contentPadding = windowCfg.contentPadding || 0;
+  const overflow = windowCfg.overflow || '';
 
   const transparentBg =
     windowCfg.noBackground === true ||
@@ -107,59 +130,37 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
 
   const { x, y } = calculatePosition(windowCfg.position, width, height, windowCfg.x, windowCfg.y, margin);
 
-  // Handle existing window
+  // Handle existing window — push data via variable system (no page reload)
   if (existing && !existing.isDestroyed() && !forceNew) {
-    // Update window properties
+    // Update window geometry only if changed
     const [currentWidth, currentHeight] = existing.getSize();
     if (currentWidth !== width || currentHeight !== height) {
       existing.setSize(width, height);
     }
-    existing.setPosition(x, y);
     existing.setTitle(title);
 
-    // Generate enhanced HTML with new window properties
-    const htmlContent = generateEnhancedCustomUiHtml({
-      id,
-      title,
-      css,
-      layout,
-      data: safeData,
-      rawHtml,
-      borderRadius,
-      flowId,
-      transparentBg,
-      initScript,
-      component,
-      pages,
-      startPage,
-      backgroundType,
-      backgroundColor,
-      gradient,
-      backgroundImage,
-      shadow,
-      border,
-      animation,
-      contentPadding,
-    });
-
-    await existing.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
-
-    // Apply window shadow if enabled
-    if (shadow.enabled) {
-      existing.setHasShadow(true);
+    // Push each data key as a workflow variable so useVar hooks update reactively.
+    // This avoids regenerating HTML and reloading the page — React just re-renders.
+    if (safeData && typeof safeData === 'object') {
+      for (const [key, value] of Object.entries(safeData)) {
+        setVariable(key, value as VariableValue);
+      }
     }
 
-    existing.show();
-    existing.focus();
-    ctx.logFn(`custom_ui: Updated "${title}" with enhanced properties (reusing window)`);
+    // Also send a data-update IPC as fallback for onDataUpdate listeners
+    if (!existing.isDestroyed()) {
+      existing.webContents.send('stuard:data-update', safeData);
+    }
+
+    if (!existing.isVisible()) {
+      existing.show();
+    }
 
     // Update stored data
     const existingData = windowData.get(id);
     if (existingData) {
       existingData.data = safeData;
       existingData.flowId = flowId;
-      existingData.pages = pages;
-      existingData.currentPage = startPage;
     }
 
     if (!blocking) {
@@ -258,9 +259,11 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     border,
     animation,
     contentPadding,
+    overflow,
   });
 
-  await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
+  const tmpHtmlPath = writeTempHtml(id, htmlContent);
+  await win.loadURL(`file://${tmpHtmlPath.replace(/\\/g, '/')}`);
   win.show();
 
   // Legacy fallback: listen for title-based submit/close signals from runtime script
@@ -334,6 +337,7 @@ function waitForUiAction(
       }
       customUiWindows.delete(id);
       windowData.delete(id);
+      cleanupTempHtml(id);
     });
 
     // Timeout
@@ -380,6 +384,7 @@ export function closeCustomUiByFlowId(flowId: string): number {
       }
       customUiWindows.delete(id);
       windowData.delete(id);
+      cleanupTempHtml(id);
       closed++;
     }
   }
@@ -396,6 +401,7 @@ export function execCloseCustomUi(args: any): { ok: boolean } {
   }
   customUiWindows.delete(id);
   windowData.delete(id);
+  cleanupTempHtml(id);
   return { ok: true };
 }
 

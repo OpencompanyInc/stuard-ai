@@ -52,6 +52,8 @@ class BusSubscriber:
     silence_stop_event: Optional[threading.Event] = field(default_factory=threading.Event)
     # Stream bridge: when set, frames are also pushed to the Stream registry
     stream_id: Optional[str] = None
+    # Mirror (horizontal flip) for selfie-cam style display
+    mirror: bool = False
 
 
 @dataclass  
@@ -460,7 +462,8 @@ def _video_bus_worker(bus: MediaBus) -> None:
                     if sub.stream_id:
                         try:
                             from . import streams as _streams_mod
-                            _streams_mod.push_to_stream(sub.stream_id, frame)
+                            push_frame = cv2.flip(frame, 1) if sub.mirror else frame
+                            _streams_mod.push_to_stream(sub.stream_id, push_frame)
                         except Exception:
                             pass
             
@@ -781,6 +784,7 @@ async def subscribe_media_bus(
     file_path = str(args.get("filePath") or "").strip()
     silence_threshold = args.get("silenceThreshold")
     silence_duration_ms = args.get("silenceDurationMs")
+    mirror = bool(args.get("mirror", False))
     
     # Get or create bus
     bus = _get_or_create_bus(kind, device_idx)
@@ -792,6 +796,7 @@ async def subscribe_media_bus(
         cursor=bus.buffer_index,  # Start from current position
         silence_threshold=float(silence_threshold) if silence_threshold is not None else None,
         silence_duration_ms=int(silence_duration_ms) if silence_duration_ms is not None else None,
+        mirror=mirror,
     )
     
     # Setup recording if requested

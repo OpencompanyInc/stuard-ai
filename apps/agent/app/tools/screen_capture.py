@@ -377,17 +377,10 @@ async def capture_screen(
 
                         if stream_mod and stream_id:
                             try:
-                                ok_jpg, jpg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-                                if ok_jpg:
-                                    stream_mod.push_to_stream(stream_id, {
-                                        "type": "video_frame",
-                                        "encoding": "base64",
-                                        "format": "jpeg",
-                                        "width": int(frame.shape[1]),
-                                        "height": int(frame.shape[0]),
-                                        "timestampMs": int((time.monotonic() - start) * 1000),
-                                        "data": base64.b64encode(jpg.tobytes()).decode("ascii"),
-                                    })
+                                # Push raw numpy frame — the stream reader auto-encodes
+                                # numpy arrays to data:image/jpeg;base64,... data URLs,
+                                # which is what mediapipe and other consumers expect.
+                                stream_mod.push_to_stream(stream_id, frame)
                             except Exception:
                                 pass
                     except Exception as e:

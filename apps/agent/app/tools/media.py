@@ -123,6 +123,8 @@ async def capture_media(
     silence_threshold = float(args.get("silenceThreshold") or 0.01)
     silence_duration_ms = int(args.get("silenceDurationMs") or 2000)
     audio_device = args.get("audioDevice")  # For audiovideo mode
+    flow_id = str(args.get("flowId") or "").strip()  # Track which workflow started this
+    mirror = bool(args.get("mirror", False))  # Horizontal flip for selfie-cam
 
     if kind not in ("photo", "video", "audio", "audiovideo"):
         raise ValueError("kind must be one of 'photo' | 'video' | 'audio' | 'audiovideo'")
@@ -143,6 +145,8 @@ async def capture_media(
             silence_duration_ms,
             max_duration_ms,
             audio_device,
+            flow_id,
+            mirror,
         )
 
     # Validate mode
@@ -220,6 +224,8 @@ async def _capture_via_bus(
     silence_duration_ms: int = 2000,
     max_duration_ms: int = 7200000,
     audio_device: Any = None,
+    flow_id: str = "",
+    mirror: bool = False,
 ) -> Dict[str, Any]:
     """
     Capture media using the shared media bus system.
@@ -273,6 +279,7 @@ async def _capture_via_bus(
             "audioDevice": audio_device_idx,
             "subscriberId": session_id,
             "startRecording": False,
+            "mirror": mirror,
         }, emit)
         
         if not subscribe_result.get("ok"):
@@ -302,6 +309,7 @@ async def _capture_via_bus(
                 "completed": False,
                 "error": None,
                 "mode": "stream",
+                "flow_id": flow_id,
             }
             _active_sessions[session_id] = threading.Event()
         
@@ -336,6 +344,7 @@ async def _capture_via_bus(
         "filePath": explicit_path,
         "silenceThreshold": silence_threshold if mode == "silence" else None,
         "silenceDurationMs": silence_duration_ms if mode == "silence" else None,
+        "mirror": mirror,
     }, emit)
     
     if not subscribe_result.get("ok"):
@@ -358,6 +367,7 @@ async def _capture_via_bus(
             "duration_ms": duration_ms,
             "silence_threshold": silence_threshold if mode == "silence" else None,
             "silence_duration_ms": silence_duration_ms if mode == "silence" else None,
+            "flow_id": flow_id,
         }
         # Also create a dummy stop event for compatibility
         _active_sessions[session_id] = threading.Event()
@@ -1087,6 +1097,47 @@ async def stop_capture(
         "filePath": file_path,
         "stoppedBy": "stop_signal" if was_active else None,
     }
+
+
+async def stop_captures_by_flow(
+    args: Dict[str, Any],
+    emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None,
+) -> Dict[str, Any]:
+    """
+    Stop all active capture sessions that belong to a specific workflow (by flowId).
+    Called when a workflow is stopped/aborted to clean up its captures only.
+    
+    Args:
+        flowId: The workflow ID whose captures should be stopped
+    
+    Returns:
+        { ok, stopped: int, sessions: string[] }
+    """
+    flow_id = str(args.get("flowId") or "").strip()
+    if not flow_id:
+        return {"ok": False, "error": "missing_flowId"}
+    
+    # Find sessions belonging to this workflow
+    with _sessions_lock:
+        matching_sids = [
+            sid for sid, info in _active_recordings.items()
+            if isinstance(info, dict) and info.get("flow_id") == flow_id
+        ]
+    
+    if not matching_sids:
+        return {"ok": True, "stopped": 0, "sessions": []}
+    
+    stopped = []
+    for sid in matching_sids:
+        try:
+            result = await stop_capture({"sessionId": sid}, emit)
+            if result.get("ok"):
+                stopped.append(sid)
+        except Exception as e:
+            print(f"[stop_captures_by_flow] Error stopping session '{sid}': {e}")
+    
+    print(f"[stop_captures_by_flow] Stopped {len(stopped)}/{len(matching_sids)} sessions for flow '{flow_id}'")
+    return {"ok": True, "stopped": len(stopped), "sessions": stopped}
 
 
 async def list_active_captures(

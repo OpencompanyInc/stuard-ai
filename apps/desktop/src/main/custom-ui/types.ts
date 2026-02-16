@@ -43,4 +43,5 @@ export type CustomUiHtmlOptions = {
   border?: CustomUiBorder;
   animation?: CustomUiAnimation;
   contentPadding?: number;
+  overflow?: string;
 };

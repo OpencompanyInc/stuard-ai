@@ -1403,6 +1403,18 @@ export function workflows_stop(id: string) {
       }
     } catch { }
 
+    // Stop any media capture sessions started by this workflow (fire-and-forget)
+    try {
+      const { execLocalTool } = require('../tools/handlers/local');
+      const ctx = { agentWsUrl: '', cloudAiUrl: '', logFn: (m: string) => logFlow(safe, m) };
+      execLocalTool('stop_captures_by_flow', { flowId: safe }, ctx, 15000)
+        .then((r: any) => { if (r?.stopped > 0) logFlow(safe, `Stopped ${r.stopped} capture session(s)`); })
+        .catch(() => {});
+      execLocalTool('close_all_streams', { flowId: safe }, ctx, 15000)
+        .then((r: any) => { if (r?.closed > 0) logFlow(safe, `Closed ${r.closed} stream(s)`); })
+        .catch(() => {});
+    } catch { }
+
     // Emit flow execution ended + log (best-effort; engine will also emit when it observes abort)
     emitFlowExecutionState(safe, false);
     logFlow(safe, stopRes.ok ? 'Run stopped' : 'Stop requested (not running)');

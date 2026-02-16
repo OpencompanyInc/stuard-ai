@@ -85,6 +85,16 @@ export function transformJsx(code: string): string {
 export function prepareComponentCode(code: string): { code: string; syntax: 'jsx' | 'plain' } {
   let processed = code;
 
+  // Step 0: Decode HTML entities (common when component code passes through HTML pipelines)
+  if (processed.includes('&gt;') || processed.includes('&lt;') || processed.includes('&amp;') || processed.includes('&quot;') || processed.includes('&#039;') || processed.includes('&#39;')) {
+    processed = processed
+      .replace(/&gt;/g, '>')
+      .replace(/&lt;/g, '<')
+      .replace(/&quot;/g, '"')
+      .replace(/&#0?39;/g, "'")
+      .replace(/&amp;/g, '&');
+  }
+
   // Step 1: Sanitize double-escaped strings from LLM JSON output
   const hasLiteralBackslashN = processed.includes('\\n');
   const hasLiteralBackslashQuote = processed.includes('\\"');

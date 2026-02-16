@@ -96,6 +96,7 @@ function buildThemeCss(options: {
   backgroundColor: string;
   borderRadius: number;
   contentPadding: number;
+  overflow: string;
   shadowCss: string;
   borderCss: string;
   backgroundCss: string;
@@ -104,12 +105,12 @@ function buildThemeCss(options: {
 }): string {
   const {
     transparentBg, backgroundType, backgroundColor,
-    borderRadius, contentPadding,
+    borderRadius, contentPadding, overflow,
     shadowCss, borderCss, backgroundCss, backgroundOverlayCss, animationCss,
   } = options;
 
   const radiusStyle = borderRadius > 0 ? `border-radius: ${borderRadius}px;` : '';
-  const clipStyle = borderRadius > 0 ? 'overflow: hidden;' : '';
+  const overflowStyle = overflow ? `overflow: ${overflow};` : (borderRadius > 0 ? 'overflow: hidden;' : '');
   const bgValue = transparentBg ? 'transparent' : (backgroundType === 'color' ? backgroundColor : 'transparent');
 
   return `
@@ -118,11 +119,11 @@ function buildThemeCss(options: {
       font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
       background: ${bgValue}; color: #1e293b; height: 100%;
       font-size: 14px; line-height: 1.5;
-      ${borderRadius > 0 ? `${radiusStyle} ${clipStyle}` : ''}
+      ${borderRadius > 0 ? `${radiusStyle} ${overflowStyle}` : ''}
       ${animationCss}
     }
     .overlay-container, .root, .stuard-root {
-      background: ${bgValue}; ${radiusStyle} ${shadowCss} ${borderCss} ${clipStyle}
+      background: ${bgValue}; ${radiusStyle} ${shadowCss} ${borderCss} ${overflowStyle}
       height: 100%; ${contentPadding ? `padding: ${contentPadding}px;` : ''}
     }
     ${backgroundType !== 'color' && !transparentBg ? `
@@ -218,9 +219,10 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
     : '';
   const { animationCss, animationKeyframes } = buildAnimationCss(animation);
 
+  const overflow = options.overflow || '';
   const themeCss = buildThemeCss({
     transparentBg, backgroundType, backgroundColor,
-    borderRadius, contentPadding,
+    borderRadius, contentPadding, overflow,
     shadowCss, borderCss, backgroundCss, backgroundOverlayCss, animationCss,
   });
 
@@ -299,7 +301,34 @@ function buildRuntimeScript(options: {
 
       var CUSTOM_UI_ID = ${JSON.stringify(id)};
       var FLOW_ID = ${JSON.stringify(flowId)};
-      window.initialData = ${JSON.stringify(data)};
+
+      // Convert raw filesystem paths to file:// URLs so <img src> etc. can load them
+      // Uses String.fromCharCode(92) for backslash to avoid template-literal escaping issues
+      function toFileUrl(val) {
+        if (typeof val !== 'string') return val;
+        var bs = String.fromCharCode(92); // backslash
+        // Windows absolute path: C:\ or C:/
+        if (val.length > 2 && /^[A-Za-z]$/.test(val[0]) && val[1] === ':' && (val[2] === bs || val[2] === '/')) {
+          return 'file:///' + val.split(bs).join('/');
+        }
+        // Unix absolute path with file extension
+        if (val[0] === '/' && val[1] !== '/' && val.lastIndexOf('.') > val.lastIndexOf('/')) {
+          return 'file://' + val;
+        }
+        return val;
+      }
+      function convertDataPaths(obj) {
+        if (!obj || typeof obj !== 'object') return obj;
+        var out = {};
+        for (var k in obj) {
+          if (Object.prototype.hasOwnProperty.call(obj, k)) {
+            out[k] = toFileUrl(obj[k]);
+          }
+        }
+        return out;
+      }
+
+      window.initialData = convertDataPaths(${JSON.stringify(data)});
       var initialData = window.initialData;
       var formData = Object.assign({}, initialData, { flowId: FLOW_ID });
       var hasStuardApi = typeof window.stuard !== 'undefined';

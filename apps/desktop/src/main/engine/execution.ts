@@ -66,10 +66,9 @@ export async function executeStep(
       result = { ok: true };
     } else {
       // Route to unified tool executor
-      // Pass flowId to custom_ui so stop button can work
-      const toolArgs = toolName === 'custom_ui'
-        ? { ...mergedArgs, flowId: spec.id }
-        : mergedArgs;
+      // Pass flowId so tools can track which workflow started them
+      // (used by custom_ui for stop button, capture_media/streams for cleanup on stop)
+      const toolArgs = { ...mergedArgs, flowId: spec.id };
       result = await execTool(toolName, toolArgs, engineCtx);
     }
 
