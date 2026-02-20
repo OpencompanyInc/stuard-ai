@@ -4,6 +4,21 @@ const LS_PREFIX = "stuard.pref.";
 
 export type ChatMode = 'auto' | string;
 
+/** Per-request reasoning effort level for models that support it. */
+export type ReasoningLevel = 'none' | 'low' | 'medium' | 'high';
+
+/**
+ * Providers that support per-request reasoning/thinking level configuration.
+ * xAI and DeepSeek control reasoning at the model-variant level, so they're excluded.
+ */
+const CONFIGURABLE_REASONING_PROVIDERS = new Set(['openai', 'google', 'anthropic']);
+
+/** Returns true if the given model supports per-request reasoning level configuration. */
+export function supportsReasoningConfig(modelId: string): boolean {
+  const provider = modelId.split('/')[0];
+  return CONFIGURABLE_REASONING_PROVIDERS.has(provider) && REASONING_MODEL_IDS.has(modelId);
+}
+
 export interface ChatModeModelConfig {
   allowed: string[];
   default: string;
@@ -42,6 +57,7 @@ export const ALL_CHAT_MODEL_IDS: string[] = [
   'google/gemini-2.5-flash',
   'google/gemini-2.5-flash-lite',
   'google/gemini-2.5-pro',
+  'google/gemini-3.1-pro-preview',
   'google/gemini-3-pro-preview',
   'openai/gpt-4.1',
   'openai/gpt-4.1-mini',
@@ -62,6 +78,11 @@ export const ALL_CHAT_MODEL_IDS: string[] = [
   'openai/gpt-5.3-codex',
   'deepseek/deepseek-chat',
   'deepseek/deepseek-reasoner',
+  'anthropic/claude-3-5-haiku-latest',
+  'anthropic/claude-haiku-4-5',
+  'anthropic/claude-3-7-sonnet-latest',
+  'anthropic/claude-sonnet-4-5',
+  'anthropic/claude-opus-4-5',
   // Research models
   'perplexity/sonar',
   'perplexity/sonar-pro',
@@ -75,7 +96,12 @@ export const ALL_CHAT_MODEL_IDS: string[] = [
 const REASONING_MODEL_IDS = new Set<string>([
   'deepseek/deepseek-reasoner',
   'openai/gpt-5-pro',
+  'openai/gpt-5.1',
+  'openai/gpt-5.1-chat-latest',
+  'google/gemini-3.1-pro-preview',
   'google/gemini-3-pro-preview',
+  'google/gemini-2.5-pro',
+  'google/gemini-2.5-flash',
   'xai/grok-4',
   'xai/grok-4-1-fast',
   'xai/grok-4-fast',
@@ -85,9 +111,13 @@ const REASONING_MODEL_IDS = new Set<string>([
   'xai/grok-3-latest',
   'xai/grok-3-mini',
   'xai/grok-3-mini-fast',
+  'anthropic/claude-3-7-sonnet-latest',
+  'anthropic/claude-sonnet-4-5',
+  'anthropic/claude-opus-4-5',
 ]);
 
 const CONTEXT_WINDOWS: Record<string, number> = {
+  'google/gemini-3.1-pro-preview': 2000000,
   'google/gemini-3-pro-preview': 2000000,
   'google/gemini-3-flash-preview': 1000000,
   'google/gemini-2.5-pro': 2000000,
@@ -106,6 +136,11 @@ const CONTEXT_WINDOWS: Record<string, number> = {
   'xai/grok-3': 128000,
   'deepseek/deepseek-chat': 128000,
   'deepseek/deepseek-reasoner': 128000,
+  'anthropic/claude-3-5-haiku-latest': 200000,
+  'anthropic/claude-haiku-4-5': 200000,
+  'anthropic/claude-3-7-sonnet-latest': 200000,
+  'anthropic/claude-sonnet-4-5': 200000,
+  'anthropic/claude-opus-4-5': 200000,
   // Research models
   'perplexity/sonar': 128000,
   'perplexity/sonar-pro': 200000,
@@ -132,6 +167,7 @@ const MODEL_CATEGORIES: Record<string, 'fast' | 'balanced' | 'smart' | 'research
   'google/gemini-2.5-flash': 'fast',
   'google/gemini-2.5-flash-lite': 'fast',
   'google/gemini-2.5-pro': 'smart',
+  'google/gemini-3.1-pro-preview': 'smart',
   'google/gemini-3-pro-preview': 'smart',
   'openai/gpt-4.1': 'smart',
   'openai/gpt-4.1-mini': 'balanced',
@@ -152,6 +188,11 @@ const MODEL_CATEGORIES: Record<string, 'fast' | 'balanced' | 'smart' | 'research
   'openai/gpt-5.3-codex': 'smart',
   'deepseek/deepseek-chat': 'fast',
   'deepseek/deepseek-reasoner': 'smart',
+  'anthropic/claude-3-5-haiku-latest': 'fast',
+  'anthropic/claude-haiku-4-5': 'fast',
+  'anthropic/claude-3-7-sonnet-latest': 'balanced',
+  'anthropic/claude-sonnet-4-5': 'smart',
+  'anthropic/claude-opus-4-5': 'smart',
   // Research models
   'perplexity/sonar': 'research',
   'perplexity/sonar-pro': 'research',
@@ -168,6 +209,7 @@ function humanizeProvider(p: string): string {
   if (s === 'openai') return 'OpenAI';
   if (s === 'google') return 'Google';
   if (s === 'deepseek') return 'DeepSeek';
+  if (s === 'anthropic') return 'Anthropic';
   if (s === 'perplexity') return 'Perplexity';
   return p;
 }
@@ -209,7 +251,7 @@ const DEFAULT_CHAT_MODE: ChatMode = 'auto';
 const DEFAULT_CHAT_MODELS: ChatModelsConfig = {
   fast: { allowed: [], default: 'deepseek/deepseek-chat' },
   balanced: { allowed: [], default: 'xai/grok-4-1-fast' },
-  smart: { allowed: [], default: 'google/gemini-3-pro-preview' },
+  smart: { allowed: [], default: 'google/gemini-3.1-pro-preview' },
 };
 
 function normalizeChatMode(v: any, chatModels: ChatModelsConfig): ChatMode {
@@ -269,6 +311,7 @@ export function usePreferences() {
   const [wakewordEnabled, setWakewordEnabledState] = useState<boolean>(() => getLS<boolean>("wakeword_enabled", false));
   const [terminalEnabled, setTerminalEnabledState] = useState<boolean>(() => getLS<boolean>("terminal_enabled", false));
   const [browserEnabled, setBrowserEnabledState] = useState<boolean>(() => getLS<boolean>("browser_enabled", false));
+  const [screenCaptureInvisible, setScreenCaptureInvisibleState] = useState<boolean>(() => getLS<boolean>("screen_capture_invisible", false));
   const [chatModels, setChatModelsState] = useState<ChatModelsConfig>(() => getLS<ChatModelsConfig>('chat_models', DEFAULT_CHAT_MODELS));
   const [chatMode, setChatModeState] = useState<ChatMode>(() => normalizeChatMode(getLS<any>('chat_mode', DEFAULT_CHAT_MODE), getLS<ChatModelsConfig>('chat_models', DEFAULT_CHAT_MODELS)));
 
@@ -285,6 +328,7 @@ export function usePreferences() {
   useEffect(() => { setLS("wakeword_enabled", wakewordEnabled); }, [wakewordEnabled]);
   useEffect(() => { setLS("terminal_enabled", terminalEnabled); }, [terminalEnabled]);
   useEffect(() => { setLS("browser_enabled", browserEnabled); }, [browserEnabled]);
+  useEffect(() => { setLS("screen_capture_invisible", screenCaptureInvisible); }, [screenCaptureInvisible]);
   useEffect(() => { setLS('chat_mode', chatMode); }, [chatMode]);
   useEffect(() => { setLS('chat_models', chatModels); }, [chatModels]);
 
@@ -330,6 +374,7 @@ export function usePreferences() {
           if (key === 'wakeword_enabled') setWakewordEnabledState(val ?? false);
           if (key === 'terminal_enabled') setTerminalEnabledState(val ?? false);
           if (key === 'browser_enabled') setBrowserEnabledState(val ?? false);
+          if (key === 'screen_capture_invisible') setScreenCaptureInvisibleState(val ?? false);
           if (key === 'chat_models') setChatModelsState(val ?? DEFAULT_CHAT_MODELS);
           if (key === 'chat_mode') setChatModeState(normalizeChatMode(val ?? DEFAULT_CHAT_MODE, getLS<ChatModelsConfig>('chat_models', DEFAULT_CHAT_MODELS)));
         } catch { }
@@ -352,6 +397,7 @@ export function usePreferences() {
   const setWakewordEnabled = useCallback((v: boolean) => { setWakewordEnabledState(v); }, []);
   const setTerminalEnabled = useCallback((v: boolean) => { setTerminalEnabledState(v); }, []);
   const setBrowserEnabled = useCallback((v: boolean) => { setBrowserEnabledState(v); }, []);
+  const setScreenCaptureInvisible = useCallback((v: boolean) => { setScreenCaptureInvisibleState(v); }, []);
   const setChatMode = useCallback((v: ChatMode) => { setChatModeState(v); }, []);
   const setChatModels = useCallback((v: ChatModelsConfig) => { setChatModelsState(v); }, []);
 
@@ -382,6 +428,8 @@ export function usePreferences() {
     setTerminalEnabled,
     browserEnabled,
     setBrowserEnabled,
+    screenCaptureInvisible,
+    setScreenCaptureInvisible,
     chatMode,
     setChatMode,
     chatModels,

@@ -49,6 +49,10 @@ function buildBackgroundCss(
         }
       }
       break;
+    case 'translucent':
+      // Translucent is handled via translucentCss in buildThemeCss
+      backgroundCss = '';
+      break;
     case 'color':
     default:
       backgroundCss = `background-color: ${backgroundColor};`;
@@ -102,33 +106,45 @@ function buildThemeCss(options: {
   backgroundCss: string;
   backgroundOverlayCss: string;
   animationCss: string;
+  translucentCss: string;
 }): string {
   const {
     transparentBg, backgroundType, backgroundColor,
     borderRadius, contentPadding, overflow,
     shadowCss, borderCss, backgroundCss, backgroundOverlayCss, animationCss,
+    translucentCss,
   } = options;
 
   const radiusStyle = borderRadius > 0 ? `border-radius: ${borderRadius}px;` : '';
   const overflowStyle = overflow ? `overflow: ${overflow};` : (borderRadius > 0 ? 'overflow: hidden;' : '');
   const bgValue = transparentBg ? 'transparent' : (backgroundType === 'color' ? backgroundColor : 'transparent');
 
+  // When borderRadius > 0 the Electron window is transparent so rounded corners
+  // are visible. html must stay transparent; only the inner containers (which have
+  // border-radius + overflow:hidden) should carry the background color.
+  const htmlBg = borderRadius > 0 ? 'transparent' : bgValue;
+  const bodyBg = borderRadius > 0 ? 'transparent' : bgValue;
+  const containerBg = bgValue; // inner container always gets the real background
+
   return `
-    html { background: ${bgValue}; -webkit-font-smoothing: antialiased; height: 100%; }
+    html { background: ${htmlBg}; -webkit-font-smoothing: antialiased; height: 100%; }
     body {
       font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-      background: ${bgValue}; color: #1e293b; height: 100%;
+      background: ${bodyBg}; color: #1e293b; height: 100%;
       font-size: 14px; line-height: 1.5;
       ${borderRadius > 0 ? `${radiusStyle} ${overflowStyle}` : ''}
       ${animationCss}
     }
     .overlay-container, .root, .stuard-root {
-      background: ${bgValue}; ${radiusStyle} ${shadowCss} ${borderCss} ${overflowStyle}
+      background: ${containerBg}; ${radiusStyle} ${shadowCss} ${borderCss} ${overflowStyle}
       height: 100%; ${contentPadding ? `padding: ${contentPadding}px;` : ''}
     }
     ${backgroundType !== 'color' && !transparentBg ? `
     .stuard-background { position: fixed; inset: 0; ${backgroundCss} ${backgroundOverlayCss} z-index: -1; }` : ''}
-    ${transparentBg ? `
+    ${backgroundType === 'translucent' ? `
+    html, body { background: transparent !important; }
+    .stuard-root, .root, .overlay-container { ${translucentCss} }` : ''}
+    ${transparentBg && backgroundType !== 'translucent' ? `
     html, body, .dark, .stuard-root, .root, .overlay-container, body > div, body > div > div {
       background: transparent !important; background-color: transparent !important;
     }` : ''}
@@ -203,14 +219,32 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
     backgroundColor = 'transparent',
     gradient,
     backgroundImage,
+    translucent,
     shadow,
     border,
     animation,
     contentPadding = 0,
+    draggable = true,
   } = options;
 
   // Build sub-CSS pieces
   const { backgroundCss, backgroundOverlayCss } = buildBackgroundCss(backgroundType, backgroundColor, gradient, backgroundImage);
+
+  // Build translucent CSS
+  let translucentCss = '';
+  if (backgroundType === 'translucent') {
+    const tColor = translucent?.color || '#1a1a2e';
+    const tOpacity = Math.max(0, Math.min(1, translucent?.opacity ?? 0.7));
+    const tBlur = translucent?.blur ?? 12;
+    // Convert hex to rgba
+    const r = parseInt(tColor.slice(1, 3), 16) || 0;
+    const g = parseInt(tColor.slice(3, 5), 16) || 0;
+    const b = parseInt(tColor.slice(5, 7), 16) || 0;
+    translucentCss = `background-color: rgba(${r}, ${g}, ${b}, ${tOpacity}) !important;`;
+    if (tBlur > 0) {
+      translucentCss += ` backdrop-filter: blur(${tBlur}px); -webkit-backdrop-filter: blur(${tBlur}px);`;
+    }
+  }
   const shadowCss = shadow?.enabled
     ? `box-shadow: ${shadow.x || 0}px ${shadow.y || 4}px ${shadow.blur || 12}px ${shadow.spread || 0}px ${shadow.color || '#00000040'};`
     : '';
@@ -224,6 +258,7 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
     transparentBg, backgroundType, backgroundColor,
     borderRadius, contentPadding, overflow,
     shadowCss, borderCss, backgroundCss, backgroundOverlayCss, animationCss,
+    translucentCss,
   });
 
   // === Prepare component code ===
@@ -264,7 +299,7 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
   });
 
   return `<!DOCTYPE html>
-<html${transparentBg ? ' style="background:transparent!important"' : ''}>
+<html${(transparentBg || borderRadius > 0) ? ' style="background:transparent!important"' : ''}>
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: file:; img-src * data: blob: local-file: file:; media-src * data: blob: local-file: file:; font-src * data:;">
@@ -274,9 +309,9 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
   <style>${themeCss}\n${css || ''}\n${animationKeyframes}</style>
   <script>${reactRuntime}<\/script>
 </head>
-<body${transparentBg ? ' style="background:transparent!important"' : ''}>
+<body${(transparentBg || borderRadius > 0) ? ' style="background:transparent!important"' : ''}>
   ${bgOverlay}
-  <div class="stuard-root" id="stuard-root"></div>
+  <div class="stuard-root${draggable ? ' drag' : ''}" id="stuard-root"></div>
   <script>${runtimeScript}<\/script>
 </body>
 </html>`;

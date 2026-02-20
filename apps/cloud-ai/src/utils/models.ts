@@ -2,6 +2,7 @@ import { xai } from '@ai-sdk/xai';
 import { google } from '@ai-sdk/google';
 import { deepseek } from '@ai-sdk/deepseek';
 import { openai } from '@ai-sdk/openai';
+import { anthropic } from '@ai-sdk/anthropic';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 
 /**
@@ -21,6 +22,7 @@ export const buildProviderModel = (id: string): any | null => {
     if (provider === 'google') return google(mid);
     if (provider === 'deepseek') return deepseek(mid);
     if (provider === 'openai' || provider === 'penai') return openai(mid);
+    if (provider === 'anthropic') return anthropic(mid);
     if (provider === 'openrouter') {
       const apiKey = process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY;
       if (!apiKey) return null;

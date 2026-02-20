@@ -21,6 +21,13 @@ export type CustomUiAnimation = {
   easing?: string;
 };
 
+export type CustomUiTranslucent = {
+  color?: string;
+  opacity?: number;
+  blur?: number;
+  vibrancy?: boolean;
+};
+
 export type CustomUiHtmlOptions = {
   id: string;
   title: string;
@@ -39,9 +46,12 @@ export type CustomUiHtmlOptions = {
   backgroundColor?: string;
   gradient?: any;
   backgroundImage?: any;
+  translucent?: CustomUiTranslucent;
   shadow?: CustomUiShadow;
   border?: CustomUiBorder;
   animation?: CustomUiAnimation;
   contentPadding?: number;
   overflow?: string;
+  invisible?: boolean;
+  draggable?: boolean;
 };

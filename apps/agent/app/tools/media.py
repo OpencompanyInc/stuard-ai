@@ -28,6 +28,38 @@ def _tmp_dir() -> str:
     return base
 
 
+def _normalize_silence_threshold(value: float) -> float:
+    """Convert silence threshold to RMS (0.0-1.0).
+    
+    Accepts either:
+    - Volume percentage (1-100): e.g. 5 means 5% volume → RMS 0.05
+    - Legacy RMS value (0.0-1.0): e.g. 0.01 → used directly
+    
+    Heuristic: values > 1.0 are treated as percentages, values <= 1.0 as raw RMS.
+    """
+    if value > 1.0:
+        return min(value, 100.0) / 100.0
+    return max(0.0, min(value, 1.0))
+
+
+def _duration_param(args: dict, sec_key: str, ms_key: str, default_ms: int) -> int:
+    """Read a duration parameter that may be in seconds (new) or ms (legacy).
+    
+    Checks sec_key first (value in seconds → converted to ms).
+    Falls back to ms_key (value already in ms).
+    Returns int milliseconds.
+    """
+    if args.get(sec_key) is not None:
+        val = float(args[sec_key])
+        if val > 0:
+            return int(val * 1000)
+    if args.get(ms_key) is not None:
+        val = args[ms_key]
+        if val is not None:
+            return int(val)
+    return default_ms
+
+
 async def describe_media_capture_capabilities(args: Dict[str, Any]) -> Dict[str, Any]:
     devices: List[Dict[str, Any]] = []
 
@@ -117,11 +149,12 @@ async def capture_media(
     if bool(args.get("stream", False)):
         mode = "stream"
     session_id = str(args.get("sessionId") or "").strip() or str(uuid.uuid4())[:8]
-    max_duration_ms = int(args.get("maxDurationMs") or 7200000)  # 2 hour default safety limit
-    duration_ms = int(args.get("durationMs") or (5000 if kind in ("audio", "video", "audiovideo") else 0))
+    max_duration_ms = _duration_param(args, "maxDuration", "maxDurationMs", 7200000)
+    duration_ms = _duration_param(args, "duration", "durationMs", 5000 if kind in ("audio", "video", "audiovideo") else 0)
     explicit_path = str(args.get("filePath") or "").strip()
-    silence_threshold = float(args.get("silenceThreshold") or 0.01)
-    silence_duration_ms = int(args.get("silenceDurationMs") or 2000)
+    silence_threshold_raw = float(args.get("silenceThreshold") or 5)
+    silence_threshold = _normalize_silence_threshold(silence_threshold_raw)
+    silence_duration_ms = _duration_param(args, "silenceDuration", "silenceDurationMs", 2000)
     audio_device = args.get("audioDevice")  # For audiovideo mode
     flow_id = str(args.get("flowId") or "").strip()  # Track which workflow started this
     mirror = bool(args.get("mirror", False))  # Horizontal flip for selfie-cam
@@ -606,14 +639,18 @@ async def _start_background_recording(
         
         print(f"[background_audio] Starting session '{session_id}' with InputStream, mode={mode}")
         
+        import collections as _collections
+        
         audio_queue: queue.Queue = queue.Queue()
         all_chunks: List[Any] = []
         start = time.monotonic()
         max_duration_s = max_duration_ms / 1000.0
+        current_volume_pct = 0.0  # Track current volume for progress events
         
-        # Silence detection state
+        # Silence detection state — smoothed RMS over sliding window
         silence_start_time = None
         silence_duration_s = silence_duration_ms / 1000.0 if mode == "silence" else None
+        rms_window: _collections.deque = _collections.deque(maxlen=5)  # ~500ms at 100ms blocks
         
         def audio_callback(indata, frames, time_info, status):
             """Callback to collect audio data from the stream."""
@@ -655,29 +692,37 @@ async def _start_background_recording(
                     except queue.Empty:
                         pass
                     
-                    # Silence detection for silence mode
-                    if mode == "silence" and all_chunks:
-                        # Get the most recent chunk for silence detection
-                        recent_chunk = all_chunks[-1]
+                    # Compute RMS for volume tracking
+                    if all_chunks:
                         try:
-                            # Calculate RMS (root mean square) to determine audio level
-                            rms = float(np.sqrt(np.mean(np.square(recent_chunk))))
-                            is_silent = rms < silence_threshold
+                            recent_chunk = all_chunks[-1]
+                            block_rms = float(np.sqrt(np.mean(np.square(recent_chunk))))
+                            rms_window.append(block_rms)
+                            current_volume_pct = round((sum(rms_window) / len(rms_window)) * 100, 2)
+                        except Exception:
+                            pass
+                    
+                    # Silence detection for silence mode (using smoothed RMS)
+                    if mode == "silence" and all_chunks:
+                        try:
+                            avg_rms = current_volume_pct / 100.0
+                            is_silent = avg_rms < silence_threshold
                             
                             if is_silent:
                                 if silence_start_time is None:
                                     silence_start_time = time.monotonic()
-                                    print(f"[background_audio] Silence detected at {elapsed:.1f}s")
+                                    print(f"[background_audio] Silence detected at {elapsed:.1f}s (avg volume: {avg_rms*100:.2f}%)")
                             else:
                                 if silence_start_time is not None:
-                                    print(f"[background_audio] Sound detected, resetting silence timer at {elapsed:.1f}s")
+                                    sil_elapsed = time.monotonic() - silence_start_time
+                                    print(f"[background_audio] Sound detected after {sil_elapsed:.1f}s silence (avg volume: {avg_rms*100:.2f}%)")
                                     silence_start_time = None
                             
                             # Check if silence duration exceeded
                             if silence_start_time is not None:
                                 silence_elapsed = time.monotonic() - silence_start_time
                                 if silence_elapsed >= silence_duration_s:
-                                    print(f"[background_audio] Silence duration ({silence_elapsed:.1f}s) exceeded threshold, stopping")
+                                    print(f"[background_audio] Silence for {silence_elapsed:.1f}s >= {silence_duration_s:.1f}s, stopping")
                                     recording_info["stopped_by"] = "silence"
                                     break
                         except Exception as e:
@@ -696,6 +741,7 @@ async def _start_background_recording(
                                     "sessionId": session_id,
                                     "mode": mode,
                                     "chunks": len(all_chunks),
+                                    "volumePercent": current_volume_pct,
                                 })
                             )
                         except Exception:

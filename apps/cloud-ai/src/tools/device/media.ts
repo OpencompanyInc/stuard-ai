@@ -6,18 +6,17 @@ export const capture_media = makeLocalTool(
   'Capture photos, videos, audio, or combined audiovideo from webcam/microphone. Use mode="until_stop" to capture indefinitely until stop_capture is called. Audio/video/audiovideo captures automatically share the same device between workflows. Use mode="silence" to stop recording when silence is detected for a specified duration. Enable stream=true (or mode="stream") to emit live chunks via a streamId.',
   z.object({
     kind: z.enum(['photo', 'video', 'audio', 'audiovideo']),
-    durationMs: z
+    duration: z
       .number()
-      .int()
       .optional()
-      .describe('Duration in ms for fixed mode (required for video/audio/audiovideo in fixed mode)'),
+      .describe('Duration in seconds for fixed mode (e.g. 5 = 5s). Required for video/audio/audiovideo in fixed mode.'),
     device: z.string().optional().describe('Device ID/index for video (optional)'),
     audioDevice: z.string().optional().describe('Audio device ID/index for audiovideo mode (optional)'),
     filePath: z.string().optional().describe('Output file path (auto-generated if not provided)'),
     mode: z
       .enum(['fixed', 'until_stop', 'silence', 'stream'])
       .default('fixed')
-      .describe('fixed: capture for durationMs. until_stop: capture until stop_capture is called. silence: capture until silence detected for silenceDurationMs. stream: emit live chunks until stop_capture is called'),
+      .describe('fixed: capture for duration seconds. until_stop: capture until stop_capture is called. silence: capture until silence detected. stream: emit live chunks until stop_capture is called'),
     stream: z
       .boolean()
       .optional()
@@ -27,23 +26,21 @@ export const capture_media = makeLocalTool(
       .string()
       .optional()
       .describe('Session ID for until_stop/silence mode (auto-generated if not provided). Use this ID with stop_capture.'),
-    maxDurationMs: z
+    maxDuration: z
       .number()
-      .int()
       .optional()
-      .default(7200000)
-      .describe('Safety limit for until_stop/silence mode (default: 2 hours). Increase for longer recordings.'),
+      .default(7200)
+      .describe('Safety time limit in seconds (default: 7200 = 2 hours). Increase for longer recordings.'),
     silenceThreshold: z
       .number()
       .optional()
-      .default(0.01)
-      .describe('Silence detection threshold (0.0 to 1.0). Audio levels below this are considered silent. Default: 0.01'),
-    silenceDurationMs: z
+      .default(5)
+      .describe('Volume percentage threshold for silence detection (0-100, default 5). Audio below this % is considered silence.'),
+    silenceDuration: z
       .number()
-      .int()
       .optional()
-      .default(2000)
-      .describe('Duration in ms of silence required to stop recording in silence mode. Default: 2000ms'),
+      .default(2)
+      .describe('Seconds of silence required to stop recording in silence mode. Default: 2'),
     mirror: z
       .boolean()
       .optional()
@@ -66,6 +63,7 @@ export const capture_media = makeLocalTool(
     videoHeight: z.number().optional().describe('Video height for audiovideo mode'),
     videoFps: z.number().optional().describe('Video FPS for audiovideo mode'),
     audioSamplerate: z.number().optional().describe('Audio sample rate for audiovideo mode'),
+    volumePercent: z.number().optional().describe('Current audio volume level (0-100%). Included in progress events.'),
   }),
   (ctx) => {
     const mode = String((ctx as any)?.mode || 'fixed');
@@ -76,11 +74,10 @@ export const capture_media = makeLocalTool(
       return 60000; // 60s for setup
     }
     // fixed mode blocks for the entire duration
-    const dur = Number((ctx as any)?.durationMs || 0);
-    const validDur = isNaN(dur) || dur <= 0 ? 0 : dur;
-    // 2 min cushion for long recordings (>5 min), 60s for shorter
-    const cushion = validDur > 300000 ? 120000 : 60000;
-    return Math.max(validDur + cushion, 60000);
+    const durSec = Number((ctx as any)?.duration || 0);
+    const durMs = durSec > 0 ? durSec * 1000 : 0;
+    const cushion = durMs > 300000 ? 120000 : 60000;
+    return Math.max(durMs + cushion, 60000);
   },
 );
 
@@ -157,7 +154,7 @@ export const subscribe_media_bus = makeLocalTool(
     subscriberId: z.string().optional().describe('Unique subscriber ID (auto-generated if not provided)'),
     startRecording: z.boolean().optional().default(false).describe('Start recording to file immediately'),
     filePath: z.string().optional().describe('Output file path for recording'),
-    silenceThreshold: z.number().optional().describe('Silence detection threshold for audio/audiovideo mode'),
+    silenceThreshold: z.number().optional().describe('Volume percentage threshold for silence detection (0-100). Audio below this % is considered silence.'),
     silenceDurationMs: z.number().optional().describe('Silence duration in ms for audio/audiovideo mode'),
   }),
   z.object({

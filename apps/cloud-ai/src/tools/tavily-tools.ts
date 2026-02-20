@@ -2,46 +2,30 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { TAVILY_API_KEY } from '../utils/config';
 
+/** Max chars of extracted content per URL to return to LLM */
+const MAX_CONTENT_CHARS = 4000;
+
 export const scrape_url = createTool({
   id: 'scrape_url',
-  description: 'Extract/scrape raw page content from one or more URLs using Tavily Extract.',
+  description: 'Extract page content from a URL. Returns truncated text. For full content, use multiple calls with different sections.',
   inputSchema: z.object({
     urls: z
       .union([
-        z.string().min(1).transform(s => [s]), // Single URL string -> array
-        z.array(z.string().min(1)).min(1).max(20), // Array of URLs
+        z.string().min(1).transform(s => [s]),
+        z.array(z.string().min(1)).min(1).max(5),
       ])
-      .describe('URL or list of URLs to extract content from (max 20).'),
-    includeImages: z.boolean().optional().default(false).describe('If true, include images in the response.'),
+      .describe('URL or list of URLs (max 5)'),
     extractDepth: z
       .enum(['basic', 'advanced'])
       .optional()
-      .default('advanced')
-      .describe('Extraction depth. advanced is slower but higher quality.'),
-    format: z
-      .enum(['text', 'markdown'])
-      .optional()
-      .default('markdown')
-      .describe('Response format for the extracted content.'),
-    timeout: z
-      .number()
-      .int()
-      .min(1)
-      .max(120000)
-      .optional()
-      .describe('Request timeout (ms).'),
-    includeFavicon: z.boolean().optional().default(false).describe('If true, include favicon in the response.'),
+      .default('basic')
+      .describe('basic is faster; advanced is higher quality'),
   }),
-  outputSchema: z
-    .object({
-      results: z.array(z.any()),
-      failedResults: z.array(z.any()).optional(),
-      responseTime: z.number().optional(),
-      requestId: z.string().optional(),
-      usage: z.any().optional(),
-    }),
+  outputSchema: z.object({
+    results: z.array(z.any()),
+  }),
   execute: async (inputData, context) => {
-    const { urls, includeImages, extractDepth, format, timeout, includeFavicon } = inputData;
+    const { urls, extractDepth } = inputData;
 
     if (!TAVILY_API_KEY) {
       throw new Error('Missing TAVILY_API_KEY configuration');
@@ -51,19 +35,23 @@ export const scrape_url = createTool({
     const client = mod.tavily({ apiKey: TAVILY_API_KEY });
 
     const options: any = {
-      includeImages,
-      extractDepth,
-      format,
-      timeout,
-      includeFavicon,
-      includeUsage: true,
+      extractDepth: extractDepth || 'basic',
+      format: 'text',
     };
 
-    Object.keys(options).forEach((k) => options[k] === undefined && delete options[k]);
+    const response = await client.extract(urls, options);
 
-    const response = Object.keys(options).length > 0
-      ? await client.extract(urls, options)
-      : await client.extract(urls);
-    return response;
+    // Trim results: only keep url + truncated content
+    const trimmed = ((response as any)?.results || []).map((r: any) => {
+      const content = String(r.rawContent || r.content || r.text || '').slice(0, MAX_CONTENT_CHARS);
+      const result: any = { url: r.url };
+      if (content) {
+        result.content = content;
+        if (content.length >= MAX_CONTENT_CHARS) result.truncated = true;
+      }
+      return result;
+    });
+
+    return { results: trimmed };
   },
 });

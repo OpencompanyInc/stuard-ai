@@ -212,23 +212,40 @@ async def handle_tool_exec(msg: Dict[str, Any], session: WebSocketSession) -> No
 
         payload = {"type": "tool_event", "id": req_id, "tool": tool, "status": status, "toolOriginal": raw_tool}
         if extra:
+            # Avoid overwriting critical envelope keys
+            for k in ("type", "id", "tool", "status", "toolOriginal"):
+                extra.pop(k, None)
             payload.update(extra)
         await session.send_json(payload)
 
-    await emit("started", {"args": args, "startedAtMsMono": int(asyncio.get_event_loop().time() * 1000)})
-
+    result: Dict[str, Any] = {"ok": False, "error": "tool_exec_never_completed"}
     try:
-        async with session.tool_semaphore:
-            result = await dispatch_execute(tool, args, emit)
-    except Exception as e:
-        logger.exception("tool_exec_error id=%s tool=%s", req_id, tool)
-        result = {"ok": False, "error": str(e)}
+        await emit("started", {"args": args, "startedAtMsMono": int(asyncio.get_event_loop().time() * 1000)})
 
-    safe_result = sanitize_result(result)
-    
-    logger.info("tool_exec_complete id=%s tool=%s ok=%s", req_id, tool, isinstance(result, dict) and bool(result.get("ok")))
-    await emit("completed", {"result": safe_result})
-    await session.send_json({"type": "tool_result", "id": req_id, "tool": tool, "result": result})
+        try:
+            if tool.startswith("stream_"):
+                # Stream tools (especially stream_read) can block waiting for data.
+                # Bypassing the semaphore prevents them from starving other tools.
+                result = await dispatch_execute(tool, args, emit)
+            else:
+                async with session.tool_semaphore:
+                    result = await dispatch_execute(tool, args, emit)
+        except Exception as e:
+            logger.exception("tool_exec_error id=%s tool=%s", req_id, tool)
+            result = {"ok": False, "error": str(e)}
+
+        safe_result = sanitize_result(result)
+        logger.info("tool_exec_complete id=%s tool=%s ok=%s", req_id, tool, isinstance(result, dict) and bool(result.get("ok")))
+        try:
+            await emit("completed", {"result": safe_result})
+        except Exception:
+            logger.exception("tool_exec_emit_completed_failed id=%s tool=%s", req_id, tool)
+    finally:
+        # ALWAYS send tool_result so the desktop side never hangs waiting
+        try:
+            await session.send_json({"type": "tool_result", "id": req_id, "tool": tool, "result": result})
+        except Exception:
+            logger.exception("tool_exec_send_result_failed id=%s tool=%s", req_id, tool)
 
 def sanitize_result(result: Any) -> Any:
     safe_result = result

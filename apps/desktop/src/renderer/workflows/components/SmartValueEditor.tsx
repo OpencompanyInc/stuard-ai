@@ -342,9 +342,19 @@ export function SmartValueEditor({ value, onChange, keyName, availableVariables 
   if (isNumber) {
     return (
       <input
-        type="number"
+        type="text"
+        inputMode="decimal"
         value={value}
-        onChange={e => onChange(Number(e.target.value))}
+        onChange={e => {
+          const v = e.target.value;
+          if (v === '' || v === '-' || v === '.' || v === '-.') onChange(v);
+          else if (!isNaN(Number(v))) onChange(Number(v));
+          else onChange(v);
+        }}
+        onBlur={e => {
+          const v = e.target.value;
+          if (v !== '' && !isNaN(Number(v))) onChange(Number(v));
+        }}
         className="w-full px-4 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 transition-all shadow-sm"
       />
     );

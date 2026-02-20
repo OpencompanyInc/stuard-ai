@@ -210,6 +210,7 @@ export class SocketManager {
         model: modelName,
         modelId: chosenModelId,
         modelConfig: (msg?.modelConfig && typeof msg.modelConfig === 'object') ? msg.modelConfig : undefined,
+        reasoningLevel: typeof msg?.reasoningLevel === 'string' ? msg.reasoningLevel : undefined,
         integrations: msg.integrations,
         history: messages.slice(0, -1),
         userId,

@@ -198,7 +198,7 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
   }
 
   return (
-    <div className={clsx("flex flex-col h-full bg-theme-bg", compact ? "p-3" : "p-6")}>
+    <div className={clsx("flex flex-col h-full bg-theme-bg", compact ? "p-3" : "pb-16 max-w-6xl mx-auto w-full")}>
       {/* Header with Sub-tabs */}
       <div className={clsx("flex items-center justify-between shrink-0", compact ? "mb-3" : "mb-6")}>
         {!compact && <h1 className="text-xl font-black text-theme-fg tracking-tight font-stuard">Tasks</h1>}

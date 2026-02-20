@@ -10,6 +10,13 @@ const GOOGLE_CLIENT_ID = CFG_GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = CFG_GOOGLE_CLIENT_SECRET || '';
 const PUBLIC_BASE = CFG_PUBLIC_BASE_URL || 'http://localhost:8082';
 
+// Optional profile field shared across all Google tools.
+// When omitted (default), the default profile is used.
+// Users can specify an alternative like "work" or "personal".
+const profileField = z.string().optional().describe(
+  'OAuth profile label to use (e.g. "work", "personal"). Omit to use the default profile.'
+);
+
 async function requireUserId(): Promise<string> {
   const secrets = getBridgeSecrets();
   const userId = String((secrets as any)?.userId || '');
@@ -17,8 +24,22 @@ async function requireUserId(): Promise<string> {
   return userId;
 }
 
-async function getGoogleAccountOrThrow(userId: string) {
-  const acc = await getExternalAccount(userId, 'google');
+/**
+ * Resolve which OAuth profile to use. Priority:
+ * 1. Explicit profileLabel argument (from tool input)
+ * 2. Profile set in bridge secrets context (from user instruction)
+ * 3. undefined → getExternalAccount will use the default
+ */
+function resolveProfile(explicit?: string): string | undefined {
+  if (explicit) return explicit;
+  try {
+    const secrets = getBridgeSecrets();
+    return (secrets as any)?.googleProfile || (secrets as any)?.profile || undefined;
+  } catch { return undefined; }
+}
+
+async function getGoogleAccountOrThrow(userId: string, profileLabel?: string) {
+  const acc = await getExternalAccount(userId, 'google', profileLabel);
   if (!acc) throw new Error('google_not_connected');
   return acc;
 }
@@ -48,11 +69,12 @@ const SCOPE_HIERARCHY: Record<string, string[]> = {
   'https://www.googleapis.com/auth/gmail.modify': ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send'],
 };
 
-async function ensureConnectedAndScopes(required: string[]) {
+async function ensureConnectedAndScopes(required: string[], profileLabel?: string) {
   const secrets = getBridgeSecrets();
   const userId = String((secrets as any)?.userId || '');
   if (!userId) return { ok: false, error: 'missing_user_context' } as const;
-  const acc = await getExternalAccount(userId, 'google');
+  const profile = resolveProfile(profileLabel);
+  const acc = await getExternalAccount(userId, 'google', profile);
   if (!acc) {
     const connectPath = buildConnectPath(required);
     return { ok: false, error: 'google_not_connected', connectPath, url: `${PUBLIC_BASE}${connectPath}` } as const;
@@ -75,10 +97,11 @@ async function ensureConnectedAndScopes(required: string[]) {
   return { ok: true, userId, acc } as const;
 }
 
-async function googleAuthorizedFetch(url: string, init?: RequestInit) {
+async function googleAuthorizedFetch(url: string, init?: RequestInit, profileLabel?: string) {
   const userId = await requireUserId();
-  let acc = await getGoogleAccountOrThrow(userId);
-  let accessToken = await refreshGoogleTokenIfNeeded(userId, acc);
+  const profile = resolveProfile(profileLabel);
+  let acc = await getGoogleAccountOrThrow(userId, profile);
+  let accessToken = await refreshGoogleTokenIfNeeded(userId, acc, acc.profile_label);
 
   async function doFetch(token: string) {
     const headers: Record<string, string> = {
@@ -121,6 +144,8 @@ async function googleAuthorizedFetch(url: string, init?: RequestInit) {
             refresh_token: refresh_token || null,
             expires_at,
             meta: { token_type: tBody.token_type || (acc.meta?.token_type || 'Bearer') },
+            profileLabel: acc.profile_label || 'default',
+            accountEmail: acc.account_email || null,
           });
         } catch {}
         acc = { ...acc, access_token: newAccess, expires_at, refresh_token };
@@ -161,9 +186,11 @@ export const gmail_send_message = createTool({
       path: z.string().describe('Local file path to attach'),
       filename: z.string().optional().describe('Override filename in email'),
     })).optional().describe('Files to attach to the email'),
+    profile: profileField,
   }),
   execute: async (inputData, context) => {
-    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.send']);
+    const { profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.send'], profile);
     if ((gate as any).ok !== true) return gate;
     const { to, subject, body, contentType, cc, bcc, attachments  } = inputData as any;
     
@@ -318,9 +345,11 @@ export const gmail_list_messages = createTool({
     labelIds: z.array(z.string()).optional(),
     maxResults: z.number().int().min(1).max(100).default(10),
     includeSpamTrash: z.boolean().optional(),
+    profile: profileField,
   }),
   execute: async (inputData, context) => {
-    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.readonly']);
+    const { profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.readonly'], profile);
     if ((gate as any).ok !== true) return gate;
     const { q, labelIds, maxResults, includeSpamTrash  } = inputData as any;
     const params = new URLSearchParams();
@@ -344,9 +373,11 @@ export const calendar_list_events = createTool({
     maxResults: z.number().int().min(1).max(2500).default(10),
     singleEvents: z.boolean().default(true),
     orderBy: z.enum(['startTime', 'updated']).default('startTime'),
+    profile: profileField,
   }),
   execute: async (inputData, context) => {
-    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/calendar.events']);
+    const { profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/calendar.events'], profile);
     if ((gate as any).ok !== true) return gate;
     const { calendarId, timeMin, timeMax, maxResults, singleEvents, orderBy  } = inputData as any;
     const params = new URLSearchParams();
@@ -510,9 +541,11 @@ export const drive_list_files = createTool({
     pageSize: z.number().int().min(1).max(1000).default(20),
     orderBy: z.string().optional(),
     fields: z.string().optional(),
+    profile: profileField,
   }),
   execute: async (inputData, context) => {
-    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive.readonly']);
+    const { profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive.readonly'], profile);
     if ((gate as any).ok !== true) return gate;
     const { query, pageSize, orderBy, fields  } = inputData as any;
     const params = new URLSearchParams();
@@ -533,9 +566,11 @@ export const sheets_read_range = createTool({
     spreadsheetId: z.string(),
     range: z.string(),
     majorDimension: z.enum(['ROWS', 'COLUMNS']).optional(),
+    profile: profileField,
   }),
   execute: async (inputData, context) => {
-    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/spreadsheets.readonly']);
+    const { profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/spreadsheets.readonly'], profile);
     if ((gate as any).ok !== true) return gate;
     const { spreadsheetId, range, majorDimension  } = inputData as any;
     const params = new URLSearchParams();

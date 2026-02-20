@@ -48,6 +48,13 @@ interface WorkflowMainContentProps {
     busy: boolean;
     sendMessage: (text: string) => void;
     stopGeneration: () => void;
+    // Session management
+    pastSessions: any[];
+    showSessionHistory: boolean;
+    setShowSessionHistory: (show: boolean) => void;
+    newSession: () => void;
+    loadSession: (sessionId: string) => void;
+    deleteSession: (sessionId: string) => void;
   };
   onApplyModel: (model: any) => void;
   onSetWorkflowChatModelId: (id: string | "auto") => void;
@@ -83,8 +90,15 @@ interface WorkflowMainContentProps {
   onRefreshWorkspace: () => void;
   onCloseWorkspace: () => void;
   onOpenFile: (filePath: string, fileName: string) => void;
+  onOpenStuard?: (subPath: string) => void;
   chatInputRef?: React.RefObject<ChatInputRef>;
   toolPaletteRef?: React.RefObject<ToolPaletteRef>;
+  /** Breadcrumbs for sub-workflow navigation */
+  breadcrumbs?: Array<{ label: string; path: string | null }>;
+  /** Current sub-workflow path (null = main) */
+  currentSubPath?: string | null;
+  /** Navigate back to parent workflow */
+  onNavigateBack?: () => void;
 }
 
 export function WorkflowMainContent({
@@ -154,8 +168,12 @@ export function WorkflowMainContent({
   onRefreshWorkspace,
   onCloseWorkspace,
   onOpenFile,
+  onOpenStuard,
   chatInputRef,
   toolPaletteRef,
+  breadcrumbs,
+  currentSubPath,
+  onNavigateBack,
 }: WorkflowMainContentProps) {
   return (
     <div className="flex-1 flex flex-col min-w-0 bg-slate-50/50 relative z-0">
@@ -177,6 +195,12 @@ export function WorkflowMainContent({
                   onUndo={onApplyModel}
                   selectedModelId={workflowChatModelId}
                   onSelectModel={onSetWorkflowChatModelId}
+                  pastSessions={chat.pastSessions}
+                  showSessionHistory={chat.showSessionHistory}
+                  setShowSessionHistory={chat.setShowSessionHistory}
+                  onNewSession={chat.newSession}
+                  onLoadSession={chat.loadSession}
+                  onDeleteSession={chat.deleteSession}
                 />
               </div>
 
@@ -257,6 +281,10 @@ export function WorkflowMainContent({
                 onRefreshWorkspace={onRefreshWorkspace}
                 onCloseWorkspace={onCloseWorkspace}
                 onOpenFile={onOpenFile}
+                onOpenStuard={onOpenStuard}
+                breadcrumbs={breadcrumbs}
+                currentSubPath={currentSubPath}
+                onNavigateBack={onNavigateBack}
               />
             </>
           )}
@@ -336,6 +364,10 @@ export function WorkflowMainContent({
                 onRefreshWorkspace={onRefreshWorkspace}
                 onCloseWorkspace={onCloseWorkspace}
                 onOpenFile={onOpenFile}
+                onOpenStuard={onOpenStuard}
+                breadcrumbs={breadcrumbs}
+                currentSubPath={currentSubPath}
+                onNavigateBack={onNavigateBack}
               />
             </>
           )}

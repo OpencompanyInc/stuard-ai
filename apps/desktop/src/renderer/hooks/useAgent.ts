@@ -1,5 +1,31 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { supabase, getValidAccessToken, ensureFreshToken, setupAutoRefresh } from '../auth/authManager';
+import type { ChatMode, ChatModelsConfig } from './usePreferences';
+
+const DEFAULT_TAB_CHAT_MODE: ChatMode = 'auto';
+const DEFAULT_TAB_CHAT_MODELS: ChatModelsConfig = {
+  fast: { allowed: [], default: 'deepseek/deepseek-chat' },
+  balanced: { allowed: [], default: 'xai/grok-4-1-fast' },
+  smart: { allowed: [], default: 'google/gemini-3.1-pro-preview' },
+};
+
+function cloneChatModelsConfig(cfg?: ChatModelsConfig | null): ChatModelsConfig {
+  const source = cfg || DEFAULT_TAB_CHAT_MODELS;
+  return {
+    fast: {
+      allowed: Array.isArray(source.fast?.allowed) ? [...source.fast.allowed] : [],
+      default: typeof source.fast?.default === 'string' ? source.fast.default : DEFAULT_TAB_CHAT_MODELS.fast.default,
+    },
+    balanced: {
+      allowed: Array.isArray(source.balanced?.allowed) ? [...source.balanced.allowed] : [],
+      default: typeof source.balanced?.default === 'string' ? source.balanced.default : DEFAULT_TAB_CHAT_MODELS.balanced.default,
+    },
+    smart: {
+      allowed: Array.isArray(source.smart?.allowed) ? [...source.smart.allowed] : [],
+      default: typeof source.smart?.default === 'string' ? source.smart.default : DEFAULT_TAB_CHAT_MODELS.smart.default,
+    },
+  };
+}
 
 const HIDDEN_TOOL_NAMES = new Set([
   'knowledge_get_identity',
@@ -225,6 +251,7 @@ interface SendMessageOptions {
   mode?: string;
   modelId?: string;
   modelConfig?: any;
+  reasoningLevel?: 'none' | 'low' | 'medium' | 'high';
   silent?: boolean;
 }
 
@@ -232,6 +259,8 @@ interface ConversationTab {
   id: string; // Unique client-side ID for the tab
   serverId: string | null; // The actual conversation ID from server (null if new/unsaved)
   title: string;
+  chatMode: ChatMode;
+  chatModels: ChatModelsConfig;
   messages: Message[];
   currentResponse: string;
   currentReasoning: string;
@@ -246,11 +275,17 @@ interface ConversationTab {
 interface UseAgentOptions {
   customAgentUrl?: string;
   onTitleUpdate?: (conversationId: string, title: string) => void;
+  initialChatMode?: ChatMode;
+  initialChatModels?: ChatModelsConfig;
 }
 
 export function useAgent(options?: string | UseAgentOptions) {
   // Parse options (support legacy string format)
   const customAgentUrl = typeof options === 'string' ? options : options?.customAgentUrl;
+  const initialChatMode = (typeof options === 'object' && typeof options?.initialChatMode === 'string' && options.initialChatMode.trim())
+    ? options.initialChatMode.trim()
+    : DEFAULT_TAB_CHAT_MODE;
+  const initialChatModels = cloneChatModelsConfig((typeof options === 'object' ? options?.initialChatModels : undefined) || DEFAULT_TAB_CHAT_MODELS);
   const onTitleUpdateRef = useRef<((cid: string, title: string) => void) | undefined>();
   onTitleUpdateRef.current = typeof options === 'object' ? options?.onTitleUpdate : undefined;
 
@@ -259,6 +294,8 @@ export function useAgent(options?: string | UseAgentOptions) {
     id: 'default',
     serverId: null,
     title: 'New Chat',
+    chatMode: initialChatMode,
+    chatModels: cloneChatModelsConfig(initialChatModels),
     messages: [],
     currentResponse: '',
     currentReasoning: '',
@@ -295,6 +332,8 @@ export function useAgent(options?: string | UseAgentOptions) {
   const state = activeTab?.agentState || { connected: false, connecting: false, status: 'disconnected' };
   const conversationId = activeTab?.serverId || null;
   const lastError = activeTab?.lastError || null;
+  const chatMode = activeTab?.chatMode || initialChatMode;
+  const chatModels = activeTab?.chatModels || initialChatModels;
 
   // Legacy setters (update active tab)
   const setMessages = (fn: Message[] | ((prev: Message[]) => Message[])) => {
@@ -348,12 +387,18 @@ export function useAgent(options?: string | UseAgentOptions) {
       return t;
     }));
   };
-  const setLastError = (err: { code: string; data?: any } | null) => {
-    setTabs(prev => prev.map(t => {
-      if (t.id === activeTabId) return { ...t, lastError: err };
-      return t;
-    }));
+  const setTabLastError = (tabId: string, err: { code: string; data?: any } | null) => {
+    setTabs(prev => prev.map(t => t.id === tabId ? { ...t, lastError: err } : t));
   };
+  const setChatMode = useCallback((mode: ChatMode) => {
+    const targetTabId = activeTabIdRef.current;
+    const nextMode = (typeof mode === 'string' && mode.trim()) ? mode.trim() : DEFAULT_TAB_CHAT_MODE;
+    setTabs(prev => prev.map(t => t.id === targetTabId ? { ...t, chatMode: nextMode } : t));
+  }, []);
+  const setChatModels = useCallback((cfg: ChatModelsConfig) => {
+    const targetTabId = activeTabIdRef.current;
+    setTabs(prev => prev.map(t => t.id === targetTabId ? { ...t, chatModels: cloneChatModelsConfig(cfg || DEFAULT_TAB_CHAT_MODELS) } : t));
+  }, []);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -401,10 +446,13 @@ export function useAgent(options?: string | UseAgentOptions) {
   // Tab Management
   const addTab = useCallback((tab: Partial<ConversationTab> = {}) => {
     const id = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const sourceTab = tabsRef.current.find(t => t.id === activeTabIdRef.current) || tabsRef.current[0];
     const newTab: ConversationTab = {
       id,
       serverId: null,
       title: 'New Chat',
+      chatMode: sourceTab?.chatMode || initialChatMode,
+      chatModels: cloneChatModelsConfig(sourceTab?.chatModels || initialChatModels),
       messages: [],
       currentResponse: '',
       currentReasoning: '',
@@ -419,7 +467,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     setTabs(prev => [...prev, newTab]);
     setActiveTabId(id);
     return id;
-  }, [state.connected, state.connecting, state.status]);
+  }, [state.connected, state.connecting, state.status, initialChatMode, initialChatModels]);
 
   const closeTab = useCallback((id: string) => {
     // Clean up request tracking for the closed tab
@@ -928,7 +976,14 @@ export function useAgent(options?: string | UseAgentOptions) {
                   }
                 }
               }
-              setLastError(null);
+              setTabLastError(getTargetTabId(), null);
+            } else if (evt.event === 'ack') {
+              // Server acknowledged receipt - show immediate feedback
+              setStreamingAI((prev) => {
+                if (prev.phase === 'tool') return prev;
+                return { ...prev, phase: 'responding', statusText: 'Processing…' };
+              });
+              setState((s) => ({ ...s, status: 'processing' }));
             } else if (evt.event === 'reasoning_start') {
               // Reasoning started - track timing
               console.log('[agent] Reasoning started');
@@ -1430,7 +1485,7 @@ export function useAgent(options?: string | UseAgentOptions) {
             if (fifoIdx !== -1) pendingResponseTabsRef.current.splice(fifoIdx, 1);
             runningTabsRef.current.delete(completedTabId);
             tryDequeueAndSend();
-            setLastError(null);
+            setTabLastError(completedTabId, null);
           } else if (msg.type === 'stopped') {
             // Server acknowledged the stop request
             console.log('[agent] Stream stopped by server:', msg.success);
@@ -1472,6 +1527,7 @@ export function useAgent(options?: string | UseAgentOptions) {
             }
           } else if (msg.type === 'error') {
             console.error('[agent] Error:', msg.message, 'code:', msg.code);
+            const errorTabId = getTargetTabId();
 
             // Check for auth errors that require re-authentication
             const errorCode = msg.code || msg.message || '';
@@ -1486,20 +1542,20 @@ export function useAgent(options?: string | UseAgentOptions) {
               ensureFreshToken().then((session) => {
                 if (session) {
                   console.log('[agent] Token refreshed, user should retry');
-                  setStreamingAI({ phase: 'idle', statusText: 'Session refreshed - please retry' });
-                  setLastError({ code: 'session_refreshed', data: { message: 'Your session was refreshed. Please try again.' } });
+                  setTabs(prev => prev.map(t => t.id === errorTabId ? { ...t, aiState: { phase: 'idle', statusText: 'Session refreshed - please retry' } } : t));
+                  setTabLastError(errorTabId, { code: 'session_refreshed', data: { message: 'Your session was refreshed. Please try again.' } });
                 } else {
                   console.log('[agent] Token refresh failed, user needs to sign in');
-                  setStreamingAI({ phase: 'error', message: 'Session expired', statusText: 'Please sign in again' });
-                  setLastError({ code: 'session_expired', data: { requiresSignIn: true, message: 'Your session has expired. Please sign in again.' } });
+                  setTabs(prev => prev.map(t => t.id === errorTabId ? { ...t, aiState: { phase: 'error', message: 'Session expired', statusText: 'Please sign in again' } } : t));
+                  setTabLastError(errorTabId, { code: 'session_expired', data: { requiresSignIn: true, message: 'Your session has expired. Please sign in again.' } });
                 }
               }).catch(() => {
-                setStreamingAI({ phase: 'error', message: 'Session expired', statusText: 'Please sign in again' });
-                setLastError({ code: 'session_expired', data: { requiresSignIn: true, message: 'Your session has expired. Please sign in again.' } });
+                setTabs(prev => prev.map(t => t.id === errorTabId ? { ...t, aiState: { phase: 'error', message: 'Session expired', statusText: 'Please sign in again' } } : t));
+                setTabLastError(errorTabId, { code: 'session_expired', data: { requiresSignIn: true, message: 'Your session has expired. Please sign in again.' } });
               });
             } else {
               setStreamingAI({ phase: 'error', message: msg.message, statusText: `Error: ${msg.message}` });
-              setLastError({ code: String(msg.message || ''), data: msg.data });
+              setTabLastError(errorTabId, { code: String(msg.message || ''), data: msg.data });
             }
 
             // Preserve any accumulated tool calls, stream chunks, and partial text
@@ -1685,6 +1741,9 @@ export function useAgent(options?: string | UseAgentOptions) {
       }
       if (options.modelConfig && typeof options.modelConfig === 'object') {
         payload.modelConfig = options.modelConfig;
+      }
+      if (options.reasoningLevel && typeof options.reasoningLevel === 'string') {
+        payload.reasoningLevel = options.reasoningLevel;
       }
       try {
         if (!payload.context || typeof payload.context !== 'object') payload.context = {};
@@ -1986,6 +2045,10 @@ export function useAgent(options?: string | UseAgentOptions) {
     queuedMessages,
     respondToApproval,
     lastError,
+    chatMode,
+    setChatMode,
+    chatModels,
+    setChatModels,
     tabs,
     activeTabId,
     addTab,

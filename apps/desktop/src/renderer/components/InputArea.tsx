@@ -1507,7 +1507,7 @@ Search {activeEngine.name}
                   statusIcon === 'calendar' ? <Calendar className="w-3 h-3 text-white" /> :
                     statusIcon === 'bell' ? <Bell className="w-3 h-3 text-white" /> :
                       statusIcon === 'task' ? <ListTodo className="w-3 h-3 text-white" /> :
-                        <Video className="w-3 h-3 text-white" />
+                        <CheckCircle className="w-3 h-3 text-white" />
                 )}
               </div>
               <div className={clsx(

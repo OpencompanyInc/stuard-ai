@@ -46,6 +46,11 @@ export const run_python_script = makeLocalTool(
     autoInstall: z.boolean().optional().default(true).describe('Auto-install missing packages (default: true)'),
     timeoutMs: z.number().int().min(100).max(600000).default(30000).describe('Script execution timeout'),
     cwd: z.string().optional().describe('Working directory'),
+    checkpoint: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe('When true, create a filesystem checkpoint before execution for potential rollback.'),
     stream: z.boolean().optional().default(false).describe('Enable streaming output. Your script can call emit_chunk(data) to push chunks in real-time. Returns a streamId — connect a stream wire to consume. When this script is a stream consumer, use {{stream_chunk}} in code to access each incoming chunk.'),
   }),
   z.object({
@@ -82,6 +87,11 @@ export const run_node_script = makeLocalTool(
     args: z.array(z.string()).optional().describe('Command-line arguments'),
     timeoutMs: z.number().int().min(100).max(600000).default(30000),
     cwd: z.string().optional().describe('Working directory'),
+    checkpoint: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe('When true, create a filesystem checkpoint before execution for potential rollback.'),
   }),
   z.object({ ok: z.boolean().optional(), stdout: z.string().optional(), stderr: z.string().optional(), exitCode: z.number().int().optional() }),
   (ctx) => {

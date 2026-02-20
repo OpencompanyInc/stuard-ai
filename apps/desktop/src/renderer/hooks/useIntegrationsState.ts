@@ -1,10 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 
 interface UseIntegrationsStateArgs {
   session: Session | null;
   AGENT_HTTP: string;
   CLOUD_AI_HTTP: string;
+}
+
+/** Shape returned by the profiles API */
+interface IntegrationProfile {
+  provider: string;
+  profile_label: string;
+  is_default: boolean;
+  account_email?: string | null;
+  scopes_csv?: string | null;
 }
 
 export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: UseIntegrationsStateArgs) {
@@ -24,6 +33,10 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   const [pyRunCode, setPyRunCode] = useState<string>("print(\"hello from python\")");
   const [pyRunResult, setPyRunResult] = useState<any | null>(null);
   const [browserStatus, setBrowserStatus] = useState<{ connected: boolean; clients: number }>({ connected: false, clients: 0 });
+
+  // ── Profile state ──
+  const [profiles, setProfiles] = useState<IntegrationProfile[]>([]);
+  const [profilesLoading, setProfilesLoading] = useState(false);
 
   const emitConnectedChanged = () => {
     try {
@@ -289,12 +302,26 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     }
   };
 
-  const handleDisconnect = (slug: string) => {
+  const handleDisconnect = async (slug: string, profileLabel?: string) => {
     if (slug === "browser") {
       try {
         localStorage.setItem("stuard.pref.browser_enabled", "false");
         window.dispatchEvent(new StorageEvent('storage', { key: 'stuard.pref.browser_enabled', newValue: 'false' }));
       } catch {}
+    }
+    // If a profile label is given, delete that specific profile via the API
+    const token = session?.access_token;
+    if (token && profileLabel) {
+      const provider = slugToProvider(slug);
+      if (provider) {
+        try {
+          await fetch(
+            `${CLOUD_AI_HTTP}/integrations/profiles?provider=${encodeURIComponent(provider)}&profile=${encodeURIComponent(profileLabel)}`,
+            { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+          );
+        } catch {}
+        await refreshProfiles();
+      }
     }
     setConnectedMap((prev) => {
       const next = { ...prev };
@@ -307,6 +334,60 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     });
   };
 
+  // ── Profile helpers ──
+
+  /** Map UI slug → provider string used by the backend */
+  const slugToProvider = (slug: string): string | null => {
+    if (slug === "github") return "github";
+    if (slug === "outlook") return "outlook";
+    if (slug.startsWith("google-") || slug === "gmail") return "google";
+    return null;
+  };
+
+  /** Fetch all profiles for an optional provider */
+  const refreshProfiles = useCallback(async (provider?: string) => {
+    const token = session?.access_token;
+    if (!token) return;
+    setProfilesLoading(true);
+    try {
+      const qs = provider ? `?provider=${encodeURIComponent(provider)}` : '';
+      const resp = await fetch(`${CLOUD_AI_HTTP}/integrations/profiles${qs}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const j = await resp.json().catch(() => null);
+      if (j && Array.isArray(j.profiles)) setProfiles(j.profiles);
+    } catch {} finally {
+      setProfilesLoading(false);
+    }
+  }, [session?.access_token, CLOUD_AI_HTTP]);
+
+  /** Set a given profile as the default for its provider */
+  const setDefaultProfile = useCallback(async (provider: string, profileLabel: string) => {
+    const token = session?.access_token;
+    if (!token) return;
+    try {
+      await fetch(`${CLOUD_AI_HTTP}/integrations/profiles/default`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, profile: profileLabel }),
+      });
+    } catch {}
+    await refreshProfiles(provider);
+  }, [session?.access_token, CLOUD_AI_HTTP, refreshProfiles]);
+
+  /** Delete a specific profile */
+  const deleteProfile = useCallback(async (provider: string, profileLabel: string) => {
+    const token = session?.access_token;
+    if (!token) return;
+    try {
+      await fetch(
+        `${CLOUD_AI_HTTP}/integrations/profiles?provider=${encodeURIComponent(provider)}&profile=${encodeURIComponent(profileLabel)}`,
+        { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+      );
+    } catch {}
+    await refreshProfiles(provider);
+  }, [session?.access_token, CLOUD_AI_HTTP, refreshProfiles]);
+
   const handleLearnMore = (url: string) => {
     if (typeof url === "string" && url.startsWith("http")) {
       try {
@@ -315,7 +396,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     }
   };
 
-  const handleConnect = async (slug: string) => {
+  const handleConnect = async (slug: string, profileLabel?: string) => {
     if (slug === "python") {
       try {
         await setupPython();
@@ -400,16 +481,20 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     };
 
     if (slug === "outlook") {
-      const url = `${CLOUD_AI_HTTP}/integrations/outlook/connect?token=${encodeURIComponent(token)}`;
+      const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
+      const url = `${CLOUD_AI_HTTP}/integrations/outlook/connect?token=${encodeURIComponent(token)}${profileParam}`;
       openExternal(url);
       await pollStatus(`${CLOUD_AI_HTTP}/integrations/outlook/status`, "outlook");
+      await refreshProfiles('outlook');
       return;
     }
 
     if (slug === "github") {
-      const url = `${CLOUD_AI_HTTP}/integrations/github/connect?token=${encodeURIComponent(token)}`;
+      const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
+      const url = `${CLOUD_AI_HTTP}/integrations/github/connect?token=${encodeURIComponent(token)}${profileParam}`;
       openExternal(url);
       await pollStatus(`${CLOUD_AI_HTTP}/integrations/github/status`, "github");
+      await refreshProfiles('github');
       return;
     }
 
@@ -419,9 +504,11 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
         : slug === "gmail" ? "gmail"
         : slug === "google-sheets" ? "sheets"
         : "docs";
-      const url = `${CLOUD_AI_HTTP}/integrations/google/connect?token=${encodeURIComponent(token)}&target=${encodeURIComponent(target)}`;
+      const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
+      const url = `${CLOUD_AI_HTTP}/integrations/google/connect?token=${encodeURIComponent(token)}&target=${encodeURIComponent(target)}${profileParam}`;
       openExternal(url);
       await pollStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=${encodeURIComponent(target)}`, slug);
+      await refreshProfiles('google');
       return;
     }
 
@@ -459,6 +546,9 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     setPyRunCode,
     pyRunResult,
     browserStatus,
+    // profiles
+    profiles,
+    profilesLoading,
     // derived
     intCategories,
     filteredIntegrations,
@@ -476,5 +566,9 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     setupMediapipe,
     installPython,
     runPython,
+    // profile actions
+    refreshProfiles,
+    setDefaultProfile,
+    deleteProfile,
   };
 }

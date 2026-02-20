@@ -212,8 +212,16 @@ export interface UIWindowConfig {
   title?: string;
 
   // === ENHANCED WINDOW APPEARANCE ===
-  // Background type: solid color, gradient, or image
-  backgroundType?: 'color' | 'gradient' | 'image' | 'transparent';
+  // Background type: solid color, gradient, image, translucent (semi-transparent), or fully transparent
+  backgroundType?: 'color' | 'gradient' | 'image' | 'translucent' | 'transparent';
+
+  // Translucent background configuration
+  translucent?: {
+    color: string;       // Base color (hex)
+    opacity: number;     // 0-1 (e.g. 0.7 = 70% opaque)
+    blur?: number;       // Backdrop blur in px (frosted glass effect)
+    vibrancy?: boolean;  // Enable vibrancy/mica effect on supported platforms
+  };
 
   // Solid color background (hex, rgb, rgba)
   backgroundColor?: string;

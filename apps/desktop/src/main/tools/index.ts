@@ -6,6 +6,8 @@ import { execCustomUi, execCloseCustomUi, execPlayAudio, execLog, execWait, exec
 import { execSetVariable, execGetVariable, execToggleVariable, execIncrementVariable, execAppendToList, execListVariables, execDeleteVariable } from './handlers/variables';
 import { execTerminalCreate, execTerminalList, execTerminalGet, execTerminalSendInput, execTerminalSendRaw, execTerminalSendKeys, execTerminalRead, execTerminalWaitFor, execTerminalDestroy } from './handlers/terminal';
 import { execCallWorkflow, execInvokeWorkflow, execTestRunSteps, execListLocalWorkflows, execListLocalStuards } from './handlers/workflow';
+import { execCallWorkspaceFunction, execListWorkspaceFunctions } from './handlers/workspace-functions';
+import { execWorkspaceReadFile, execWorkspaceWriteFile, execWorkspaceDeleteFile, execWorkspaceListFiles, execWorkspaceCreateFolder, execWorkspaceGetInfo } from './handlers/workspace-files';
 import {
   execCanvasList,
   execCanvasRead,
@@ -63,6 +65,14 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'return_value') return execReturnValue(args, ctx);
       if (toolName === 'invoke_workflow') return execInvokeWorkflow(args, ctx);
       if (toolName === 'call_workflow') return execCallWorkflow(args, ctx);
+      if (toolName === 'call_workspace_function') return execCallWorkspaceFunction(args, ctx);
+      if (toolName === 'list_workspace_functions') return execListWorkspaceFunctions(args, ctx);
+      if (toolName === 'workspace_read_file') return execWorkspaceReadFile(args, ctx);
+      if (toolName === 'workspace_write_file') return execWorkspaceWriteFile(args, ctx);
+      if (toolName === 'workspace_delete_file') return execWorkspaceDeleteFile(args, ctx);
+      if (toolName === 'workspace_list_files') return execWorkspaceListFiles(args, ctx);
+      if (toolName === 'workspace_create_folder') return execWorkspaceCreateFolder(args, ctx);
+      if (toolName === 'workspace_get_info') return execWorkspaceGetInfo(args, ctx);
       if (toolName === 'test_run_steps') return execTestRunSteps(args, ctx);
       if (toolName === 'list_local_workflows') return execListLocalWorkflows(args, ctx);
       if (toolName === 'list_local_stuards') return execListLocalStuards(args, ctx);

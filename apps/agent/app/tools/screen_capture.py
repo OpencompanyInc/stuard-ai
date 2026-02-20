@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import collections
 import os
 import platform
 import tempfile
@@ -28,6 +29,38 @@ _active_screen_recordings: Dict[str, Dict[str, Any]] = {}
 _active_audio_sessions: Dict[str, threading.Event] = {}
 _active_audio_recordings: Dict[str, Dict[str, Any]] = {}
 _sessions_lock = threading.Lock()
+
+
+def _normalize_silence_threshold(value: float) -> float:
+    """Convert silence threshold to RMS (0.0-1.0).
+    
+    Accepts either:
+    - Volume percentage (1-100): e.g. 5 means 5% volume → RMS 0.05
+    - Legacy RMS value (0.0-1.0): e.g. 0.01 → used directly
+    
+    Heuristic: values > 1.0 are treated as percentages, values <= 1.0 as raw RMS.
+    """
+    if value > 1.0:
+        return min(value, 100.0) / 100.0
+    return max(0.0, min(value, 1.0))
+
+
+def _duration_param(args: dict, sec_key: str, ms_key: str, default_ms: int) -> int:
+    """Read a duration parameter that may be in seconds (new) or ms (legacy).
+    
+    Checks sec_key first (value in seconds → converted to ms).
+    Falls back to ms_key (value already in ms).
+    Returns int milliseconds.
+    """
+    if args.get(sec_key) is not None:
+        val = float(args[sec_key])
+        if val > 0:
+            return int(val * 1000)
+    if args.get(ms_key) is not None:
+        val = args[ms_key]
+        if val is not None:
+            return int(val)
+    return default_ms
 
 
 def _tmp_dir() -> str:
@@ -129,7 +162,7 @@ async def capture_screen(
     mode = str(args.get("mode") or "fixed").strip().lower()
     if bool(args.get("stream", False)):
         mode = "stream"
-    duration_ms = int(args.get("durationMs") or 5000)
+    duration_ms = _duration_param(args, "duration", "durationMs", 5000)
     target = str(args.get("target") or "fullscreen").strip().lower()
     monitor_id = args.get("monitorId")
     window_title = str(args.get("windowTitle") or "").strip()
@@ -139,9 +172,10 @@ async def capture_screen(
     quality = str(args.get("quality") or "medium").strip().lower()
     explicit_path = str(args.get("filePath") or "").strip()
     session_id = str(args.get("sessionId") or "").strip() or str(uuid.uuid4())[:8]
-    max_duration_ms = int(args.get("maxDurationMs") or 7200000)
-    silence_threshold = float(args.get("silenceThreshold") or 0.01)
-    silence_duration_ms = int(args.get("silenceDurationMs") or 2000)
+    max_duration_ms = _duration_param(args, "maxDuration", "maxDurationMs", 7200000)
+    silence_threshold_raw = float(args.get("silenceThreshold") or 5)
+    silence_threshold = _normalize_silence_threshold(silence_threshold_raw)
+    silence_duration_ms = _duration_param(args, "silenceDuration", "silenceDurationMs", 2000)
 
     # Validate
     if mode not in ("fixed", "until_stop", "stream"):
@@ -700,19 +734,22 @@ async def capture_system_audio(
     mode = str(args.get("mode") or "fixed").strip().lower()
     if bool(args.get("stream", False)):
         mode = "stream"
-    duration_ms = int(args.get("durationMs") or 5000)
+    duration_ms = _duration_param(args, "duration", "durationMs", 5000)
     device = args.get("device")
     explicit_path = str(args.get("filePath") or "").strip()
     session_id = str(args.get("sessionId") or "").strip() or str(uuid.uuid4())[:8]
-    max_duration_ms = int(args.get("maxDurationMs") or 7200000)
+    max_duration_ms = _duration_param(args, "maxDuration", "maxDurationMs", 7200000)
     output_format = str(args.get("format") or "wav").strip().lower()
+    silence_threshold_raw = float(args.get("silenceThreshold") or 5)
+    silence_threshold = _normalize_silence_threshold(silence_threshold_raw)
+    silence_duration_ms = _duration_param(args, "silenceDuration", "silenceDurationMs", 2000)
 
-    if mode not in ("fixed", "until_stop", "stream"):
-        raise ValueError("mode must be 'fixed', 'until_stop', or 'stream'")
+    if mode not in ("fixed", "until_stop", "silence", "stream"):
+        raise ValueError("mode must be 'fixed', 'until_stop', 'silence', or 'stream'")
     if mode == "fixed" and duration_ms <= 0:
         raise ValueError("durationMs must be > 0 for fixed mode")
 
-    if mode in ("until_stop", "stream"):
+    if mode in ("until_stop", "silence", "stream"):
         duration_ms = max_duration_ms
 
     # Create stop event
@@ -775,9 +812,11 @@ async def capture_system_audio(
             raise RuntimeError(f"Failed to initialize system audio stream: {e}")
 
     def _background_audio_work():
-        _capture_system_audio_worker(path, duration_ms, stop_event, session_id, emit, loop, recording_info, stream_id=stream_id)
+        _capture_system_audio_worker(path, duration_ms, stop_event, session_id, emit, loop, recording_info, silence_threshold, silence_duration_ms, stream_id=stream_id)
 
     # For until_stop/stream mode, start in background and return immediately
+    # NOTE: silence mode is NOT included here — it must block until silence is detected
+    # so the next workflow step gets a complete audio file.
     if mode in ("until_stop", "stream"):
         thread = threading.Thread(target=_background_audio_work, daemon=True)
         thread.start()
@@ -1085,9 +1124,18 @@ def _capture_wasapi_loopback(
                 recording_info["error"] = "No loopback device found"
             return
 
-        # Open stream
+        # Open stream using CALLBACK mode so the main loop never blocks.
+        # Blocking stream.read() hangs when no audio is playing on the system.
+        import queue as _queue
+
         channels = int(loopback_device.get("maxInputChannels", 2))
         sample_rate = int(loopback_device.get("defaultSampleRate", 44100))
+
+        audio_queue: _queue.Queue = _queue.Queue()
+
+        def _wasapi_callback(in_data, frame_count, time_info, status_flags):
+            audio_queue.put(in_data)
+            return (None, pyaudio.paContinue)
 
         stream = p.open(
             format=pyaudio.paInt16,
@@ -1096,17 +1144,24 @@ def _capture_wasapi_loopback(
             input=True,
             input_device_index=loopback_device["index"],
             frames_per_buffer=1024,
+            stream_callback=_wasapi_callback,
         )
+        stream.start_stream()
 
         # Record
         frames = []
         start = time.monotonic()
         next_emit_time = start
         duration_s = duration_ms / 1000.0
-        
-        # Silence detection state
+        current_volume_pct = 0.0
+
+        # Silence detection state — smoothed RMS over sliding window
         silence_start_time = None
         silence_duration_s = silence_duration_ms / 1000.0
+        rms_window: collections.deque = collections.deque(maxlen=10)
+        last_rms_log_time = 0.0
+
+        print(f"[system_audio] WASAPI callback mode | threshold={silence_threshold:.4f} ({silence_threshold*100:.1f}%), silence_dur={silence_duration_ms}ms, max_dur={duration_ms}ms")
 
         try:
             while (time.monotonic() - start) < duration_s:
@@ -1114,57 +1169,78 @@ def _capture_wasapi_loopback(
                     print(f"[system_audio] Stop signal detected!")
                     break
 
+                # Drain all available audio from the callback queue (non-blocking)
+                got_data = False
                 try:
-                    data = stream.read(1024, exception_on_overflow=False)
-                    frames.append(data)
+                    while True:
+                        data = audio_queue.get_nowait()
+                        frames.append(data)
+                        got_data = True
 
-                    if stream_mod and stream_id:
+                        if stream_mod and stream_id:
+                            try:
+                                stream_mod.push_to_stream(stream_id, {
+                                    "type": "audio_chunk",
+                                    "encoding": "base64",
+                                    "format": "pcm_s16le",
+                                    "sampleRate": sample_rate,
+                                    "channels": channels,
+                                    "timestampMs": int((time.monotonic() - start) * 1000),
+                                    "data": base64.b64encode(data).decode("ascii"),
+                                })
+                            except Exception:
+                                pass
+
+                        # Compute per-block RMS
                         try:
-                            stream_mod.push_to_stream(stream_id, {
-                                "type": "audio_chunk",
-                                "encoding": "base64",
-                                "format": "pcm_s16le",
-                                "sampleRate": sample_rate,
-                                "channels": channels,
-                                "timestampMs": int((time.monotonic() - start) * 1000),
-                                "data": base64.b64encode(data).decode("ascii"),
-                            })
+                            audio_array = np.frombuffer(data, dtype=np.int16)
+                            audio_float = audio_array.astype(np.float32) / 32768.0
+                            block_rms = float(np.sqrt(np.mean(np.square(audio_float))))
+                            rms_window.append(block_rms)
                         except Exception:
                             pass
-                    
-                    # Silence detection
-                    if silence_threshold > 0 and silence_duration_s > 0:
-                        try:
-                            # Convert bytes to numpy array for RMS calculation
-                            audio_array = np.frombuffer(data, dtype=np.int16)
-                            # Normalize to [-1, 1] range
-                            audio_float = audio_array.astype(np.float32) / 32768.0
-                            # Calculate RMS
-                            rms = float(np.sqrt(np.mean(np.square(audio_float))))
-                            
-                            is_silent = rms < silence_threshold
-                            
-                            if is_silent:
-                                if silence_start_time is None:
-                                    silence_start_time = time.monotonic()
-                                    print(f"[system_audio] Silence detected at {(time.monotonic() - start):.1f}s")
-                            else:
-                                if silence_start_time is not None:
-                                    print(f"[system_audio] Sound detected, resetting silence timer at {(time.monotonic() - start):.1f}s")
-                                    silence_start_time = None
-                            
-                            # Check if silence duration exceeded
-                            if silence_start_time is not None:
-                                silence_elapsed = time.monotonic() - silence_start_time
-                                if silence_elapsed >= silence_duration_s:
-                                    print(f"[system_audio] Silence duration ({silence_elapsed:.1f}s) exceeded threshold, stopping")
-                                    if recording_info:
-                                        recording_info["stopped_by"] = "silence"
-                                    break
-                        except Exception as e:
-                            print(f"[system_audio] Error in silence detection: {e}")
-                except Exception:
+                except _queue.Empty:
                     pass
+
+                # When nothing is playing, WASAPI produces no frames at all.
+                # Append 0.0 so silence detection still progresses.
+                if not got_data:
+                    rms_window.append(0.0)
+
+                # Update smoothed volume
+                if rms_window:
+                    current_volume_pct = round((sum(rms_window) / len(rms_window)) * 100, 2)
+
+                # Silence detection (always runs, even when no data arrives)
+                if silence_threshold > 0 and silence_duration_s > 0:
+                    try:
+                        avg_rms = current_volume_pct / 100.0
+                        is_silent = avg_rms < silence_threshold
+
+                        now = time.monotonic()
+                        if now - last_rms_log_time >= 2.0:
+                            last_rms_log_time = now
+                            print(f"[system_audio] Volume: {current_volume_pct:.2f}% (threshold: {silence_threshold*100:.1f}%) {'[SILENT]' if is_silent else '[SOUND]'}")
+
+                        if is_silent:
+                            if silence_start_time is None:
+                                silence_start_time = time.monotonic()
+                                print(f"[system_audio] Silence detected at {(time.monotonic() - start):.1f}s (vol: {current_volume_pct:.2f}%)")
+                        else:
+                            if silence_start_time is not None:
+                                elapsed = time.monotonic() - silence_start_time
+                                print(f"[system_audio] Sound after {elapsed:.1f}s silence (vol: {current_volume_pct:.2f}%)")
+                                silence_start_time = None
+
+                        if silence_start_time is not None:
+                            silence_elapsed = time.monotonic() - silence_start_time
+                            if silence_elapsed >= silence_duration_s:
+                                print(f"[system_audio] Silence for {silence_elapsed:.1f}s >= {silence_duration_s:.1f}s, stopping")
+                                if recording_info:
+                                    recording_info["stopped_by"] = "silence"
+                                break
+                    except Exception as e:
+                        print(f"[system_audio] Silence detection error: {e}")
 
                 # Emit progress
                 now = time.monotonic()
@@ -1178,10 +1254,13 @@ def _capture_wasapi_loopback(
                                 "sessionId": session_id,
                                 "elapsedMs": elapsed_ms,
                                 "mode": "capture",
+                                "volumePercent": current_volume_pct,
                             })
                         )
                     except Exception:
                         pass
+
+                time.sleep(0.05)  # prevent busy-loop
         finally:
             stream.stop_stream()
             stream.close()
@@ -1365,10 +1444,16 @@ def _capture_generic_loopback(
         start = time.monotonic()
         next_emit_time = start
         duration_s = duration_ms / 1000.0
+        current_volume_pct = 0.0  # Track current volume for progress events
         
-        # Silence detection state
+        # Silence detection state — smoothed RMS over sliding window
         silence_start_time = None
         silence_duration_s = silence_duration_ms / 1000.0
+        # ~500ms window at 100ms blocks = 5 entries
+        rms_window: collections.deque = collections.deque(maxlen=5)
+        last_rms_log_time = 0.0
+
+        print(f"[system_audio] Silence detection: threshold={silence_threshold:.4f} RMS ({silence_threshold*100:.1f}%), duration={silence_duration_ms}ms")
 
         def callback(indata, frame_count, time_info, status):
             frame = indata.copy()
@@ -1400,30 +1485,44 @@ def _capture_generic_loopback(
                 if stop_event.is_set():
                     break
 
-                # Silence detection for recent frames
+                # Compute RMS for volume tracking and silence detection
+                if frames:
+                    try:
+                        recent_frame = frames[-1]
+                        block_rms = float(np.sqrt(np.mean(np.square(recent_frame))))
+                        rms_window.append(block_rms)
+                        current_volume_pct = round((sum(rms_window) / len(rms_window)) * 100, 2)
+                    except Exception:
+                        pass
+
+                # Silence detection using smoothed RMS
                 if silence_threshold > 0 and silence_duration_s > 0 and frames:
                     try:
-                        # Get the most recent frame for silence detection
-                        recent_frame = frames[-1]
-                        # Calculate RMS
-                        rms = float(np.sqrt(np.mean(np.square(recent_frame))))
+                        avg_rms = current_volume_pct / 100.0
+                        is_silent = avg_rms < silence_threshold
                         
-                        is_silent = rms < silence_threshold
+                        # Log RMS every 2 seconds for debugging
+                        now_t = time.monotonic()
+                        if now_t - last_rms_log_time >= 2.0:
+                            last_rms_log_time = now_t
+                            vol_pct = avg_rms * 100
+                            print(f"[system_audio] Volume: {vol_pct:.2f}% (threshold: {silence_threshold*100:.1f}%) {'[SILENT]' if is_silent else '[SOUND]'}")
                         
                         if is_silent:
                             if silence_start_time is None:
                                 silence_start_time = time.monotonic()
-                                print(f"[system_audio] Silence detected at {(time.monotonic() - start):.1f}s")
+                                print(f"[system_audio] Silence detected at {(time.monotonic() - start):.1f}s (avg volume: {avg_rms*100:.2f}%)")
                         else:
                             if silence_start_time is not None:
-                                print(f"[system_audio] Sound detected, resetting silence timer at {(time.monotonic() - start):.1f}s")
+                                elapsed = time.monotonic() - silence_start_time
+                                print(f"[system_audio] Sound detected after {elapsed:.1f}s silence, resetting timer (avg volume: {avg_rms*100:.2f}%)")
                                 silence_start_time = None
                         
                         # Check if silence duration exceeded
                         if silence_start_time is not None:
                             silence_elapsed = time.monotonic() - silence_start_time
                             if silence_elapsed >= silence_duration_s:
-                                print(f"[system_audio] Silence duration ({silence_elapsed:.1f}s) exceeded threshold, stopping")
+                                print(f"[system_audio] Silence for {silence_elapsed:.1f}s >= {silence_duration_s:.1f}s threshold, stopping capture")
                                 if recording_info:
                                     recording_info["stopped_by"] = "silence"
                                 break
@@ -1439,6 +1538,7 @@ def _capture_generic_loopback(
                             emit("recording_progress", {
                                 "sessionId": session_id,
                                 "elapsedMs": int((now - start) * 1000),
+                                "volumePercent": current_volume_pct,
                             })
                         )
                     except Exception:

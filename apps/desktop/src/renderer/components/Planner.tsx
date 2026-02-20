@@ -51,7 +51,7 @@ export function PlannerPanel({ AGENT_HTTP }: { AGENT_HTTP: string }) {
   };
 
   const loadTasks = async () => {
-    const j = await firstOkJson([`${AGENT_HTTP}/v1/tasks/list`, `${AGENT_HTTP}/tasks/list`]);
+    const j = await firstOkJson([`${AGENT_HTTP}/v1/tasks/list`]);
     if (j?.ok) {
       const items = Array.isArray(j.items) ? j.items : [];
       setTasks(items);
@@ -59,7 +59,7 @@ export function PlannerPanel({ AGENT_HTTP }: { AGENT_HTTP: string }) {
   };
 
   const loadReminders = async () => {
-    const j = await firstOkJson([`${AGENT_HTTP}/v1/reminders/list`, `${AGENT_HTTP}/reminders/list`]);
+    const j = await firstOkJson([`${AGENT_HTTP}/v1/reminders/list`]);
     if (j?.ok) {
       const items = Array.isArray(j.items) ? j.items : [];
       setReminders(items);

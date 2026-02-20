@@ -11,6 +11,7 @@ import { EnhancedUIBuilderModal } from '../../../ui-builder/EnhancedUIBuilderMod
 import type { UIWindowConfig } from '../../../ui-builder/types';
 import { extractHtmlFromComponent } from '../../../ui-builder/utils/codeGenerator';
 import { HotkeyEditor } from './editors/HotkeyEditor';
+import { AcceleratorEditor } from './editors/AcceleratorEditor';
 import { SelectInput } from './editors/SelectInput';
 import { MultiSelectInput } from './editors/MultiSelectInput';
 import { TextInputWithVariables, type UpstreamNode } from './editors/TextInputWithVariables';
@@ -184,12 +185,15 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
             value={String(numValue)}
             onChange={(v: string) => {
               // If it looks like a template or variable reference, keep as string
-              if (v.includes('{{') || v.includes('$vars') || v.includes('{{')) {
+              if (v.includes('{{') || v.includes('$vars')) {
                 onChange(v);
               } else if (v === '') {
                 onChange(undefined);
+              } else if (v === '.' || v === '-' || v === '-.' || v.endsWith('.')) {
+                // Intermediate decimal input — keep as string so user can keep typing
+                onChange(v);
               } else if (!isNaN(Number(v))) {
-                // Pure number - convert to number type
+                // Complete number — convert to number type
                 onChange(Number(v));
               } else {
                 // Keep as string for partial input
@@ -224,6 +228,9 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
 
       case 'hotkey':
         return <HotkeyEditor value={Array.isArray(value) ? value : []} onChange={onChange} />;
+
+      case 'accelerator':
+        return <AcceleratorEditor value={String(value || '')} onChange={onChange} />;
 
       case 'cron':
         return <CronEditor value={String(value || '')} onChange={onChange} />;
@@ -935,7 +942,20 @@ className="w-full py-3 border border-dashed border-slate-200 rounded-xl text-xs 
 
   const schemaKeys = schema ? Object.keys(schema.args) : [];
   const extraKeys = Object.keys(args).filter(k => !schemaKeys.includes(k));
-  const visibleSchemaKeys = schemaKeys.filter((k) => !schema?.args?.[k]?.hidden);
+  
+  // Check if arg should be visible based on showWhen condition
+  const checkShowWhen = (argSchema: any): boolean => {
+    if (!argSchema?.showWhen) return true;
+    const { field, value, values } = argSchema.showWhen;
+    if (!field) return true;
+    const currentValue = args[field];
+    if (values && Array.isArray(values)) {
+      return values.includes(currentValue);
+    }
+    return currentValue === value;
+  };
+  
+  const visibleSchemaKeys = schemaKeys.filter((k) => !schema?.args?.[k]?.hidden && checkShowWhen(schema?.args?.[k]));
   const baseSchemaKeys = visibleSchemaKeys.filter((k) => !schema?.args?.[k]?.advanced);
   const advancedSchemaKeys = visibleSchemaKeys.filter((k) => !!schema?.args?.[k]?.advanced);
   const allBaseKeys = [...baseSchemaKeys, ...extraKeys];

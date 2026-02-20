@@ -1,8 +1,8 @@
 
 import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut } from "electron";
 import { selectFiles, selectImages, listDirectory, selectFolder } from "../utils/files";
-import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, getInternalSidebarState, getNotificationWindow } from "../windows";
-import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_writeWorkspaceFile, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir } from "../workflows";
+import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, getInternalSidebarState, getNotificationWindow, setScreenCaptureInvisible } from "../windows";
+import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_readWorkspaceFileBinary, workflows_writeWorkspaceFile, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir, workflows_renameWorkspaceFile, workflows_moveWorkspaceFile, workflows_createWorkspaceStuard, workflows_readWorkspaceStuard, workflows_saveWorkspaceStuard, workflows_listWorkspaceFunctions } from "../workflows";
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
 import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } from "../integrations/outlook";
@@ -555,6 +555,16 @@ export function setupIpc() {
     }
   });
 
+  // Screen capture invisibility
+  ipcMain.handle('prefs:setScreenCaptureInvisible', (_e, enabled: boolean) => {
+    try {
+      setScreenCaptureInvisible(!!enabled);
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+
   // Outlook
   ipcMain.handle("outlook:getToken", async () => {
     const r = await getOutlookAccessTokenLocal();
@@ -616,9 +626,17 @@ export function setupIpc() {
   ipcMain.handle('workflows:getWorkspaceInfo', (_e, id: string) => workflows_getWorkspaceInfo(id));
   ipcMain.handle('workflows:listWorkspaceFiles', (_e, id: string, subpath?: string) => workflows_listWorkspaceFiles(id, subpath));
   ipcMain.handle('workflows:readWorkspaceFile', (_e, id: string, filePath: string) => workflows_readWorkspaceFile(id, filePath));
+  ipcMain.handle('workflows:readWorkspaceFileBinary', (_e, id: string, filePath: string) => workflows_readWorkspaceFileBinary(id, filePath));
   ipcMain.handle('workflows:writeWorkspaceFile', (_e, id: string, filePath: string, content: string) => workflows_writeWorkspaceFile(id, filePath, content));
   ipcMain.handle('workflows:deleteWorkspaceFile', (_e, id: string, filePath: string) => workflows_deleteWorkspaceFile(id, filePath));
   ipcMain.handle('workflows:createWorkspaceSubdir', (_e, id: string, subpath: string) => workflows_createWorkspaceSubdir(id, subpath));
+  ipcMain.handle('workflows:renameWorkspaceFile', (_e, id: string, oldPath: string, newName: string) => workflows_renameWorkspaceFile(id, oldPath, newName));
+  ipcMain.handle('workflows:moveWorkspaceFile', (_e, id: string, sourcePath: string, destFolder: string) => workflows_moveWorkspaceFile(id, sourcePath, destFolder));
+  // Sub-workflow (.stuard) management
+  ipcMain.handle('workflows:createWorkspaceStuard', (_e, id: string, subPath: string, name?: string) => workflows_createWorkspaceStuard(id, subPath, name));
+  ipcMain.handle('workflows:readWorkspaceStuard', (_e, id: string, subPath: string) => workflows_readWorkspaceStuard(id, subPath));
+  ipcMain.handle('workflows:saveWorkspaceStuard', (_e, id: string, subPath: string, content: string) => workflows_saveWorkspaceStuard(id, subPath, content));
+  ipcMain.handle('workflows:listWorkspaceFunctions', (_e, id: string) => workflows_listWorkspaceFunctions(id));
 
   // Python Environment Management
   ipcMain.handle('python:status', async () => {

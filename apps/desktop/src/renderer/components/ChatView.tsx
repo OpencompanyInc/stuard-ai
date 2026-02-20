@@ -3,7 +3,7 @@ import { clsx } from 'clsx';
 import { X, Sparkles } from 'lucide-react';
 import MessageList from './MessageList';
 import { ContextItem, FileNavRef } from './FileNavigator';
-import type { ChatMode, ChatModelsConfig } from '../hooks/usePreferences';
+import type { ChatMode, ChatModelsConfig, ReasoningLevel } from '../hooks/usePreferences';
 import { useModelRegistry } from '../hooks/useModelRegistry';
 import { ChatTabs } from './chat-view/ChatTabs';
 import { ChatHeaderActions } from './chat-view/ChatHeaderActions';
@@ -67,6 +67,8 @@ interface ChatViewProps {
   onChatModeChange?: (mode: ChatMode) => void;
   chatModels?: ChatModelsConfig;
   onChatModelsChange?: (cfg: ChatModelsConfig) => void;
+  reasoningLevel?: ReasoningLevel;
+  onReasoningLevelChange?: (level: ReasoningLevel) => void;
 
   // Layout mode for responsive styling
   overlayMode?: 'compact' | 'sidebar' | 'window';
@@ -147,6 +149,8 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   onChatModeChange,
   chatModels,
   onChatModelsChange,
+  reasoningLevel,
+  onReasoningLevelChange,
   overlayMode = 'compact',
   tabs = [],
   activeTabId,
@@ -523,6 +527,8 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               textareaRef={textareaRef}
               selectedModelId={selectedModelId}
               onChatModeChange={onChatModeChange}
+              reasoningLevel={reasoningLevel}
+              onReasoningLevelChange={onReasoningLevelChange}
               fileNavRef={fileNavRef}
             />
           </div>
@@ -676,6 +682,8 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               textareaRef={textareaRef}
               selectedModelId={selectedModelId}
               onChatModeChange={onChatModeChange}
+              reasoningLevel={reasoningLevel}
+              onReasoningLevelChange={onReasoningLevelChange}
               fileNavRef={fileNavRef}
             />
           </>

@@ -16,6 +16,16 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'invoke_workflow': { kind: 'electron' },  // Invoke workflow with args
   'call_workflow': { kind: 'electron' },  // Call external workflow as function (waits for result)
   'call_function': { kind: 'electron' },  // Call function trigger within same workflow
+  'call_workspace_function': { kind: 'electron' },  // Call a .stuard sub-workflow from within workspace
+  'list_workspace_functions': { kind: 'electron' },  // Discover callable .stuard files in workspace
+
+  // Workspace file management tools (read/write/list files in workflow workspace)
+  'workspace_read_file': { kind: 'electron' },
+  'workspace_write_file': { kind: 'electron' },
+  'workspace_delete_file': { kind: 'electron' },
+  'workspace_list_files': { kind: 'electron' },
+  'workspace_create_folder': { kind: 'electron' },
+  'workspace_get_info': { kind: 'electron' },
   'test_run_steps': { kind: 'electron' },  // Test run workflow steps
   'list_local_workflows': { kind: 'electron' },  // List saved workflows
   'list_local_stuards': { kind: 'electron' },  // List saved stuards

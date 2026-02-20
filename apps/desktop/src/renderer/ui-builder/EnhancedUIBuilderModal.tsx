@@ -1429,7 +1429,7 @@ export function EnhancedUIBuilderModal({
                 )}
                 <UIBuilderCanvas
                   ref={canvasRef}
-                  html={getCurrentHtml()}
+                  html={transformedComponentJs ? '' : getCurrentHtml()}
                   css={getCurrentCss()}
                   js={transformedComponentJs || transformedJs}
                   canvasWidth={windowConfig.width}
@@ -1603,7 +1603,7 @@ export function EnhancedUIBuilderModal({
             <div className="flex-1 relative bg-slate-100">
               <UIBuilderCanvas
                 ref={canvasRef}
-                html={getCurrentHtml()}
+                html={transformedComponentJs ? '' : getCurrentHtml()}
                 css={getCurrentCss()}
                 js={transformedComponentJs || transformedJs}
                 canvasWidth={windowConfig.width}

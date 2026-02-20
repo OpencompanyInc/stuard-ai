@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronLeft, Code, FolderOpen, Layout, Lock, Play, Redo2, Rocket, Save, Settings, Sparkles, Square, Undo2, Zap } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronLeft, Code, FolderOpen, Layout, Lock, Play, Redo2, Rocket, Save, Settings, Sparkles, Square, Undo2, Zap } from "lucide-react";
 import type { DesignerModel, DesignerTrigger } from "../types";
 
 interface DeployStatus {
@@ -19,10 +19,11 @@ interface WorkflowHeaderProps {
   setShowRunMenu: (open: boolean) => void;
   deployStatus: DeployStatus | null;
   viewMode: "ai" | "manual";
-  rightPanel: "none" | "inspector" | "code" | "ai";
+  rightPanel: "none" | "inspector" | "code" | "ai" | "docs";
   showWorkspace: boolean;
   onSetViewMode: (mode: "ai" | "manual") => void;
   onToggleInspector: () => void;
+  onToggleDocs: () => void;
   onToggleCode: () => void;
   onSave: () => void;
   onUndo: () => void;
@@ -50,6 +51,7 @@ export function WorkflowHeader({
   showWorkspace,
   onSetViewMode,
   onToggleInspector,
+  onToggleDocs,
   onToggleCode,
   onSave,
   onUndo,
@@ -204,6 +206,13 @@ export function WorkflowHeader({
                 title="Workspace"
               >
                 <FolderOpen className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={onToggleDocs}
+                className={`p-1.5 rounded-md transition-colors ${rightPanel === "docs" ? "bg-indigo-50 text-indigo-600" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50"}`}
+                title="Docs"
+              >
+                <BookOpen className="w-3.5 h-3.5" />
               </button>
               {viewMode === "manual" && (
                 <>

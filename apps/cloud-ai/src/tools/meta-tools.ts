@@ -171,8 +171,15 @@ IMPORTANT: The component field is raw JavaScript/JSX, NOT a JSON string.
             frameless: z.boolean().optional().describe('Hide window frame/titlebar (default false)'),
             resizable: z.boolean().optional(),
             transparent: z.boolean().optional(),
+            backgroundType: z.enum(['color', 'gradient', 'image', 'translucent', 'transparent']).optional().describe('Background style. translucent = semi-transparent with blur, transparent = fully transparent'),
             borderRadius: z.number().optional().describe('Corner radius in px'),
             backgroundColor: z.string().optional().describe('Background color hex (default #1a1a2e)'),
+            translucent: z.object({
+                color: z.string().optional().describe('Base tint color hex (default #1a1a2e)'),
+                opacity: z.number().optional().describe('0-1 opacity (default 0.7). 0=invisible, 1=solid'),
+                blur: z.number().optional().describe('Backdrop blur in px (default 12). Frosted glass effect'),
+            }).optional().describe('Translucent window config. Requires backgroundType="translucent" and frameless=true'),
+            invisible: z.boolean().optional().describe('Hide this window from screenshots and screen recordings (content protection)'),
         }).optional().describe('Window appearance configuration'),
     }),
     execute: async () => { throw new Error("This tool is for workflow definitions only, not direct execution."); }
@@ -232,6 +239,8 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'FileSearch');
     } else if (['run_command', 'run_system_command', 'list_terminals', 'read_terminal', 'launch_application_or_uri', 'list_open_windows', 'bring_window_to_foreground', 'get_window_info', 'smart_bring_window_to_foreground', 'set_window_bounds', 'python_status', 'python_setup', 'python_install', 'run_python_script', 'run_node_script'].includes(name)) {
         registerTool(t, 'System');
+    } else if (['get_datetime', 'math_eval', 'generate_uuid', 'random_number', 'random_choice', 'get_env_var', 'get_system_info', 'hash_string', 'base64_encode', 'base64_decode', 'json_parse', 'json_stringify', 'sleep', 'regex_match', 'regex_replace'].includes(name)) {
+        registerTool(t, 'Utils');
     } else if (['computer_use', 'computer_use_agent', 'click_at_coordinates', 'double_click_at_coordinates', 'type_text', 'send_hotkey', 'scroll', 'drag_and_drop', 'take_screenshot', 'capture_screen_to_file', 'find_and_click_text', 'get_screen_text', 'read_image_optimized', 'find_text_on_screen', 'move_cursor', 'get_mouse_position'].includes(name)) {
         registerTool(t, 'GUI');
     } else if (['capture_media', 'stop_capture', 'list_active_captures', 'describe_media_capture_capabilities', 'stream_speech', 'stop_stream_speech'].includes(name)) {
@@ -256,6 +265,8 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'Productivity');
     } else if (['canvas_list', 'canvas_read', 'canvas_write', 'canvas_create', 'canvas_delete'].includes(name)) {
         registerTool(t, 'Canvas');
+    } else if (['workspace_read_file', 'workspace_write_file', 'workspace_delete_file', 'workspace_list_files', 'workspace_create_folder', 'workspace_get_info'].includes(name)) {
+        registerTool(t, 'Workspace');
     } else if (['set_variable', 'get_variable', 'toggle_variable', 'increment_variable', 'append_to_list', 'list_variables', 'delete_variable'].includes(name)) {
         registerTool(t, 'Variables');
     } else if (['db_query', 'db_store', 'db_retrieve', 'db_search', 'db_delete', 'db_list_tables'].includes(name)) {

@@ -8,6 +8,7 @@ import { CheckpointManager } from '../CheckpointManager';
 import { ModelSelector } from '../ModelSelector';
 import { FileNavRef } from '../FileNavigator';
 import { FolderPermissionsPopover } from './FolderPermissionsPopover';
+import type { ReasoningLevel } from '../../hooks/usePreferences';
 
 interface ChatInputAreaProps {
   query: string;
@@ -32,6 +33,8 @@ interface ChatInputAreaProps {
   textareaRef: React.RefObject<HTMLTextAreaElement>;
   selectedModelId: string;
   onChatModeChange?: (mode: any) => void;
+  reasoningLevel?: ReasoningLevel;
+  onReasoningLevelChange?: (level: ReasoningLevel) => void;
   fileNavRef?: React.RefObject<FileNavRef>;
 }
 
@@ -58,6 +61,8 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   textareaRef,
   selectedModelId,
   onChatModeChange,
+  reasoningLevel,
+  onReasoningLevelChange,
   fileNavRef,
 }) => {
   return (
@@ -226,6 +231,8 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
           onSelectModel={(id) => {
             try { onChatModeChange?.(id as any); } catch { }
           }}
+          reasoningLevel={reasoningLevel}
+          onReasoningLevelChange={onReasoningLevelChange}
           side="top"
           align="end"
         />

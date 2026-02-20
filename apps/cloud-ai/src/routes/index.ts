@@ -5,6 +5,7 @@ import { handleCredits } from './credits';
 import { handleGithubRoutes } from './integrations/github';
 import { handleGoogleRoutes } from './integrations/google';
 import { handleOutlookRoutes } from './integrations/outlook';
+import { handleProfileRoutes } from './integrations/profiles';
 import { handleCalendarRoutes } from './calendar';
 import { handleInferenceRoutes } from './inference';
 import { handleBetaRoutes } from './beta';
@@ -28,6 +29,7 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleGithubRoutes(req, res, parsedUrl)) return true;
   if (await handleGoogleRoutes(req, res, parsedUrl)) return true;
   if (await handleOutlookRoutes(req, res, parsedUrl)) return true;
+  if (await handleProfileRoutes(req, res, parsedUrl)) return true;
   if (await handleCalendarRoutes(req, res, parsedUrl)) return true;
   if (await handleInferenceRoutes(req, res, parsedUrl)) return true;
   if (await handleMarketplaceRoutes(req, res, parsedUrl)) return true;

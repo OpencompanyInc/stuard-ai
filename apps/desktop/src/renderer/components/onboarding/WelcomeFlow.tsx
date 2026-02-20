@@ -66,122 +66,98 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
   };
 
   return (
-    <div className="text-center">
-      {/* Animated Logo */}
-      <motion.div
-        initial={{ scale: 0, rotate: -180 }}
-        animate={{ scale: 1, rotate: 0 }}
-        transition={{ type: "spring", stiffness: 200, damping: 20, delay: 0.1 }}
-        className="mx-auto mb-6 w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center shadow-lg"
-      >
-        <Sparkles className="w-8 h-8 text-white/90" />
-      </motion.div>
-
+    <div className="text-center pt-8">
       <motion.h1
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
-        className="text-2xl font-bold text-white mb-2"
+        className="text-2xl font-semibold text-white mb-2 tracking-tight"
       >
         Meet Stuard
       </motion.h1>
 
       <motion.p
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.3 }}
-        className="text-white/60 text-sm leading-relaxed mb-6"
+        transition={{ delay: 0.1 }}
+        className="text-white/60 text-sm mb-8 leading-relaxed"
       >
         Your intelligent desktop assistant.
         <br />
-        <span className="opacity-80">Private, powerful, and ready to help.</span>
+        Private, Fast, and ready to act.
       </motion.p>
 
-      {/* Feature Preview Cards */}
+      {/* Feature Grid */}
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.4 }}
-        className="grid grid-cols-2 gap-2 mb-6"
+        transition={{ delay: 0.2 }}
+        className="grid grid-cols-2 gap-3 mb-8"
       >
         {[
           { icon: Brain, label: 'Local Intelligence' },
-          { icon: Workflow, label: 'Automations' },
+          { icon: Workflow, label: 'Automation' },
           { icon: LayoutGrid, label: 'Unified Planner' },
           { icon: MessageSquare, label: 'Smart Context' },
-        ].map((item, i) => (
-          <motion.div
+        ].map((item) => (
+          <div
             key={item.label}
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.5 + i * 0.08 }}
-            className="flex items-center gap-2.5 p-3 rounded-lg border border-white/5 bg-white/5"
+            className="flex items-center gap-3 p-3 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-left"
           >
             <item.icon className="w-4 h-4 text-white/70" />
-            <span className="text-xs text-white/80 font-medium">{item.label}</span>
-          </motion.div>
+            <span className="text-xs text-white/90 font-medium">{item.label}</span>
+          </div>
         ))}
       </motion.div>
 
-      {/* Auth Section */}
+      {/* Auth & Continue */}
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.6 }}
+        transition={{ delay: 0.3 }}
         className="space-y-3"
       >
         {signedIn ? (
-          <div className="bg-white/5 border border-white/10 rounded-xl p-3 flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-white">
-              <Check size={16} />
-            </div>
-            <div className="text-left flex-1 min-w-0">
-              <div className="text-white font-medium text-sm">Signed In</div>
-              <div className="text-white/50 text-xs truncate">{userEmail}</div>
-            </div>
+          <div className="w-full py-3 rounded-xl bg-white/10 border border-white/10 flex items-center px-4 gap-3 mb-3">
+             <div className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center">
+               <Check size={12} className="text-white" />
+             </div>
+             <div className="text-left overflow-hidden">
+               <div className="text-white font-medium text-xs">Signed In</div>
+               <div className="text-white/50 text-[10px] truncate">{userEmail}</div>
+             </div>
           </div>
         ) : (
           <button
             onClick={handleSignIn}
             disabled={signingIn}
-            className="w-full py-2.5 rounded-lg bg-white text-black font-medium text-sm 
-                     hover:bg-white/90 transition-all active:scale-[0.98] 
-                     disabled:opacity-50 disabled:cursor-wait flex items-center justify-center gap-2"
+            className="w-full py-3 rounded-xl bg-white text-black font-semibold text-sm 
+                     hover:bg-gray-100 transition-transform active:scale-[0.98] 
+                     flex items-center justify-center shadow-lg shadow-white/5"
           >
-            {signingIn ? (
-              <>
-                <div className="w-3.5 h-3.5 border-2 border-black/20 border-t-black rounded-full animate-spin" />
-                Signing in...
-              </>
-            ) : (
-              <>
-                <Globe size={16} />
-                Sign in to sync your data
-              </>
-            )}
+            {signingIn ? "Syncing..." : "Sync your account"}
           </button>
         )}
 
         <button
           onClick={onNext}
-          className="w-full py-2.5 rounded-lg border border-white/10 text-white/60 font-medium 
-                   text-sm hover:text-white hover:bg-white/5 transition-all flex items-center justify-center gap-2
-                   group"
+          className="w-full py-3 rounded-xl border border-white/10 text-white/80 font-medium 
+                   text-sm hover:bg-white/5 hover:text-white transition-all 
+                   flex items-center justify-center gap-2 group"
         >
-          {signedIn ? "Continue" : "Continue without signing in"}
-          <ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
+          Continue
+          <ArrowRight size={14} className="opacity-50 group-hover:translate-x-0.5 transition-transform" />
         </button>
       </motion.div>
     </div>
   );
 }
 
-function PrivacyStep({ onNext }: { onNext: () => void }) {
+function PrivacyStep({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
   const points = [
     {
       icon: Lock,
       title: 'Local-First Processing',
-      desc: 'Your data stays on your machine unless you explicitly opt into cloud sync.'
+      desc: 'Your data stays on your device unless you explicitly opt into cloud.'
     },
     {
       icon: Eye,
@@ -196,61 +172,67 @@ function PrivacyStep({ onNext }: { onNext: () => void }) {
     {
       icon: FileText,
       title: 'Editable Memory',
-      desc: 'You control what Stuard remembers. Delete or edit anytime.'
+      desc: 'You control what Stuard remembers. Delete or Edit anytime.'
     }
   ];
 
   return (
-    <div>
+    <div className="pt-4">
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="text-center mb-6"
+        className="text-center mb-8"
       >
-        <div className="mx-auto mb-4 w-14 h-14 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center">
-          <Shield className="text-white/90" size={24} />
-        </div>
-        <h2 className="text-2xl font-bold text-white mb-2">Trustworthy by Design</h2>
-        <p className="text-white/50 text-sm">Built to be a safe, private teammate.</p>
+        <h2 className="text-2xl font-semibold text-white mb-2">Trustworthy by Design</h2>
+        <p className="text-white/60 text-sm">Built to be a safe, private teammate.</p>
       </motion.div>
 
-      <div className="grid gap-2 mb-6">
+      <div className="grid gap-3 mb-8">
         {points.map((p, i) => (
           <motion.div
             key={p.title}
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.1 + i * 0.08 }}
-            className="flex gap-3 p-3 rounded-lg border border-white/5 bg-white/5"
+            className="flex gap-4 p-4 rounded-xl border border-white/10 bg-white/5"
           >
             <div className="shrink-0 mt-0.5">
-              <p.icon className="w-4 h-4 text-white/70" />
+              <p.icon className="w-4 h-4 text-white/90" />
             </div>
             <div>
-              <h3 className="font-medium text-white text-sm mb-0.5">{p.title}</h3>
+              <h3 className="font-medium text-white text-sm mb-1">{p.title}</h3>
               <p className="text-xs text-white/50 leading-relaxed">{p.desc}</p>
             </div>
           </motion.div>
         ))}
       </div>
 
-      <motion.button
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.5 }}
-        onClick={onNext}
-        className="w-full py-2.5 rounded-lg bg-white text-black font-medium text-sm 
-                 hover:bg-white/90 transition-all active:scale-[0.98] 
-                 flex items-center justify-center gap-2"
-      >
-        Sounds Good
-        <ArrowRight size={14} />
-      </motion.button>
+      <div className="flex gap-3">
+        <button
+          onClick={onBack}
+          className="flex-1 py-3 rounded-xl bg-white/5 border border-white/10 text-white font-medium text-sm 
+                   hover:bg-white/10 transition-all active:scale-[0.98]"
+        >
+          Go Back
+        </button>
+        <motion.button
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.5 }}
+          onClick={onNext}
+          className="flex-1 py-3 rounded-xl bg-white text-black font-semibold text-sm 
+                   hover:bg-gray-100 transition-all active:scale-[0.98] 
+                   flex items-center justify-center gap-2"
+        >
+          Sounds Good
+          <ArrowRight size={14} />
+        </motion.button>
+      </div>
     </div>
   );
 }
 
-function PersonaStep({ onNext }: { onNext: () => void }) {
+function PersonaStep({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
   const { tone, setTone, customTone, setCustomTone } = usePreferences();
 
   const personas = [
@@ -261,24 +243,21 @@ function PersonaStep({ onNext }: { onNext: () => void }) {
   ];
 
   return (
-    <div>
+    <div className="pt-4">
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="text-center mb-6"
+        className="text-center mb-8"
       >
-        <div className="mx-auto mb-4 w-14 h-14 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center">
-          <User className="text-white/90" size={24} />
-        </div>
-        <h2 className="text-2xl font-bold text-white mb-2">How should I speak?</h2>
-        <p className="text-white/50 text-sm">Choose a communication style</p>
+        <h2 className="text-2xl font-semibold text-white mb-2">How should I speak?</h2>
+        <p className="text-white/60 text-sm">Choose a communication style</p>
       </motion.div>
 
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
-        className="space-y-2 mb-6"
+        className="space-y-3 mb-8"
       >
         {personas.map((p, i) => (
           <motion.button
@@ -288,24 +267,25 @@ function PersonaStep({ onNext }: { onNext: () => void }) {
             transition={{ delay: 0.15 + i * 0.05 }}
             onClick={() => setTone(p.id)}
             className={clsx(
-              "w-full flex items-center gap-3 p-3 rounded-lg border transition-all duration-200 text-left",
+              "w-full flex items-center gap-4 p-4 rounded-xl border transition-all duration-200 text-left",
               tone === p.id
-                ? 'border-white bg-white text-black'
-                : 'border-white/5 bg-white/5 hover:bg-white/10 text-white'
+                ? 'border-blue-500/50 bg-blue-500/10 shadow-[0_0_20px_rgba(59,130,246,0.15)] ring-1 ring-blue-500/50'
+                : 'border-white/10 bg-white/5 hover:bg-white/10 text-white'
             )}
           >
             <div className={clsx(
-              "w-8 h-8 rounded-md flex items-center justify-center transition-colors",
-              tone === p.id ? "bg-black/5 text-black" : "bg-white/5 text-white/50"
+              "w-10 h-10 rounded-lg flex items-center justify-center transition-colors shrink-0",
+              tone === p.id ? "bg-blue-500 text-white" : "bg-white/10 text-white/50"
             )}>
-              <p.icon size={16} />
+              <p.icon size={20} />
             </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2">
-                <span className="font-medium text-sm">{p.label}</span>
-                {tone === p.id && <Check size={12} className="text-black" />}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between mb-0.5">
+                <span className={clsx("font-medium text-sm", tone === p.id ? "text-blue-400" : "text-white")}>
+                  {p.label}
+                </span>
               </div>
-              <p className={clsx("text-xs", tone === p.id ? "text-black/60" : "text-white/40")}>{p.desc}</p>
+              <p className="text-xs text-white/50 truncate">{p.desc}</p>
             </div>
           </motion.button>
         ))}
@@ -315,14 +295,14 @@ function PersonaStep({ onNext }: { onNext: () => void }) {
         <motion.div
           initial={{ opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: 'auto' }}
-          className="mb-6"
+          className="mb-8"
         >
           <textarea
             value={customTone}
             onChange={(e) => setCustomTone(e.target.value)}
             autoFocus
             placeholder="e.g., Talk like a helpful colleague, explain like I'm 5..."
-            className="w-full bg-white/5 rounded-lg px-4 py-3 text-sm outline-none 
+            className="w-full bg-white/5 rounded-xl px-4 py-3 text-sm outline-none 
                      placeholder:text-white/30 border border-white/10 focus:border-white/30 
                      transition-all text-white resize-none"
             rows={3}
@@ -330,18 +310,27 @@ function PersonaStep({ onNext }: { onNext: () => void }) {
         </motion.div>
       )}
 
-      <motion.button
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.4 }}
-        onClick={onNext}
-        className="w-full py-2.5 rounded-lg bg-white text-black font-medium text-sm 
-                 hover:bg-white/90 transition-all active:scale-[0.98] 
-                 flex items-center justify-center gap-2"
-      >
-        Continue
-        <ChevronRight size={14} />
-      </motion.button>
+      <div className="flex gap-3">
+        <button
+          onClick={onBack}
+          className="flex-1 py-3 rounded-xl bg-white/5 border border-white/10 text-white font-medium text-sm 
+                   hover:bg-white/10 transition-all active:scale-[0.98]"
+        >
+          Go Back
+        </button>
+        <motion.button
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.4 }}
+          onClick={onNext}
+          className="flex-1 py-3 rounded-xl bg-white text-black font-semibold text-sm 
+                   hover:bg-gray-100 transition-all active:scale-[0.98] 
+                   flex items-center justify-center gap-2"
+        >
+          Continue
+          <ArrowRight size={14} />
+        </motion.button>
+      </div>
     </div>
   );
 }
@@ -373,8 +362,10 @@ function ShortcutStep({ onNext }: { onNext: () => void }) {
       if (e.shiftKey) keys.push('Shift');
       if (e.metaKey) keys.push('Command');
 
+      // Handle normal keys
       const key = e.key === ' ' ? 'Space' : e.key.length === 1 ? e.key.toUpperCase() : e.key;
       
+      // Only add non-modifier keys if they are valid
       if (key && !['Control', 'Alt', 'Shift', 'Meta', 'Command'].includes(key)) {
         if (validKeys.includes(key)) {
           keys.push(key);
@@ -393,7 +384,6 @@ function ShortcutStep({ onNext }: { onNext: () => void }) {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      // If we have a valid shortcut, stop recording
       const hasModifier = recordedKeys.some(k => validModifiers.includes(k));
       const hasKey = recordedKeys.some(k => !validModifiers.includes(k));
       
@@ -433,20 +423,19 @@ function ShortcutStep({ onNext }: { onNext: () => void }) {
         return k;
       }).join('+');
 
-      // Actually register the hotkey with the main process
+      // actually register
       const result = await window.desktopAPI.setGlobalHotkey(accelerator);
       if (!result?.ok) {
         setError(result?.error || 'Failed to register shortcut');
         return;
       }
 
-      // Also save to localStorage as backup
       try {
         localStorage.setItem('stuard_global_hotkey', accelerator);
       } catch {}
       
       setSaved(true);
-      setTimeout(onNext, 800);
+      onNext();
     } catch (e) {
       setError('An error occurred while saving the shortcut');
     }
@@ -458,201 +447,126 @@ function ShortcutStep({ onNext }: { onNext: () => void }) {
     setError(null);
   };
 
-  const formatKeyDisplay = (key: string) => {
-    const icons: Record<string, React.ReactNode> = {
-      'Control': <span className="text-xs">Ctrl</span>,
-      'Alt': <span className="text-xs">Alt</span>,
-      'Shift': <span className="text-xs">⇧</span>,
-      'Command': <span className="text-xs">⌘</span>,
-      'Space': <span className="text-xs">Space</span>,
-      'ArrowUp': <span className="text-xs">↑</span>,
-      'ArrowDown': <span className="text-xs">↓</span>,
-      'ArrowLeft': <span className="text-xs">←</span>,
-      'ArrowRight': <span className="text-xs">→</span>,
-      'Enter': <span className="text-xs">↵</span>,
-    };
-    return icons[key] || key;
+  // Helper to use default
+  const useDefault = () => {
+     // Default is Ctrl+Shift+Space
+     setRecordedKeys(['Control', 'Shift', 'Space']);
+     // We don't save immediately, user has to click Complete Setup? 
+     // Or we can save immediately? The screenshot implies "Use Default" is an action.
+     // Let's just set the keys so the UI updates to "Recorded" state, then user clicks "Complete Setup".
+     // Or better: auto-save defaults might be nicer UX but inconsistent with manual record flow.
+     // I'll just set keys.
   };
 
   return (
-    <div className="text-center">
+    <div className="text-center pt-8">
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="mb-6"
+        className="mb-8"
       >
-        <div className="mx-auto mb-4 w-14 h-14 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center">
-          <Keyboard className="text-white/90" size={24} />
-        </div>
-        <h2 className="text-2xl font-bold text-white mb-2">Your Magic Shortcut</h2>
-        <p className="text-white/50 text-sm">Set a global hotkey to summon Stuard</p>
+        <h2 className="text-2xl font-semibold text-white mb-2">Your Magic Shortcut</h2>
+        <p className="text-white/60 text-sm">Set a global hotkey to summon Stuard</p>
       </motion.div>
 
       {/* Recording Area */}
       <motion.div
-        initial={{ opacity: 0, scale: 0.9 }}
+        initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        transition={{ delay: 0.2, type: "spring", stiffness: 200 }}
-        className={clsx(
-          "rounded-xl p-6 mb-5 relative overflow-hidden transition-all duration-300",
-          recording 
-            ? 'bg-white/10 border-2 border-white' 
-            : 'bg-white/5 border border-white/10'
-        )}
+        transition={{ delay: 0.2 }}
+        className="bg-white/5 border border-white/10 rounded-2xl p-8 mb-6 min-h-[220px] flex flex-col items-center justify-center relative overflow-hidden"
       >
-        {/* Recording indicator */}
-        {recording && (
-          <div className="absolute top-3 right-3 flex items-center gap-2">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-            </span>
-            <span className="text-[10px] font-medium text-red-400 uppercase tracking-wide">REC</span>
-          </div>
-        )}
-
-        {/* Key display */}
-        <div className="min-h-[60px] flex items-center justify-center">
-          {recordedKeys.length === 0 ? (
-            <div className="text-center">
-              {recording ? (
-                <p className="text-white/60 animate-pulse text-sm">Press your keys...</p>
-              ) : (
-                <p className="text-white/40 text-sm">Click below to set your shortcut</p>
-              )}
+        {recording ? (
+             <div className="flex flex-col items-center gap-4">
+                  <div className="text-white/60 animate-pulse text-sm">Press keys now...</div>
+                   <div className="flex items-center gap-2 flex-wrap justify-center">
+                      {recordedKeys.map((key, i) => (
+                        <span key={i} className="text-3xl font-mono text-white">
+                            {i > 0 && " + "}{key === 'Control' ? 'Ctrl' : key}
+                        </span>
+                      ))}
+                    </div>
+             </div>
+        ) : recordedKeys.length > 0 ? (
+            <div className="flex flex-col items-center gap-6">
+                 <div className="text-4xl font-semibold text-white tracking-tight">
+                      {recordedKeys.map((key, i) => (
+                          <span key={i}>
+                              {i > 0 && " + "}{key === 'Control' ? 'Ctrl' : key}
+                          </span>
+                      ))}
+                 </div>
+                 <button 
+                    onClick={clearRecording}
+                    className="px-4 py-2 rounded-lg border border-white/10 bg-white/5 text-white/60 text-xs hover:text-white hover:bg-white/10 transition-colors flex items-center gap-2"
+                 >
+                    <X size={12} />
+                    Delete Binding
+                 </button>
             </div>
-          ) : (
-            <div className="flex items-center gap-2 flex-wrap justify-center">
-              {recordedKeys.map((key, i) => (
-                <React.Fragment key={i}>
-                  <motion.div
-                    initial={{ scale: 0, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    className={clsx(
-                      "px-3 py-1.5 rounded-lg font-medium text-sm min-w-[2rem] flex items-center justify-center border",
-                      validModifiers.includes(key) 
-                        ? 'bg-white text-black border-white shadow-sm' 
-                        : 'bg-white/10 text-white border-white/20'
-                    )}
-                  >
-                    {formatKeyDisplay(key)}
-                  </motion.div>
-                  {i < recordedKeys.length - 1 && (
-                    <span className="text-white/30">+</span>
-                  )}
-                </React.Fragment>
-              ))}
+        ) : (
+            <div className="flex flex-col items-center gap-6">
+                 <button
+                   onClick={startRecording}
+                   className="px-8 py-3 rounded-lg bg-white text-black font-semibold text-sm 
+                            hover:bg-gray-100 transition-all active:scale-[0.98]
+                            flex items-center gap-2 shadow-lg shadow-white/5"
+                 >
+                   <Command size={16} />
+                   Record Key Binding
+                 </button>
+                 <p className="text-white/40 text-xs">
+                   Tip: Use Ctrl, Alt, or Shift + a letter key
+                 </p>
             </div>
-          )}
-        </div>
-
-        {/* Action buttons */}
-        <div className="mt-4 flex gap-2 justify-center">
-          {!recording && recordedKeys.length === 0 && (
-            <button
-              onClick={startRecording}
-              className="px-5 py-2 rounded-lg bg-white text-black font-medium text-sm 
-                       hover:bg-white/90 transition-all active:scale-[0.98]
-                       flex items-center gap-2"
-            >
-              <Keyboard size={14} />
-              Record Shortcut
-            </button>
-          )}
-
-          {recording && (
-            <button
-              onClick={() => setRecording(false)}
-              className="px-5 py-2 rounded-lg border border-white/20 text-white/70 font-medium text-sm 
-                       hover:text-white hover:bg-white/5 transition-all"
-            >
-              Stop Recording
-            </button>
-          )}
-
-          {!recording && recordedKeys.length > 0 && (
-            <>
-              <button
-                onClick={saveShortcut}
-                disabled={saved}
-                className={clsx(
-                  "px-5 py-2 rounded-lg font-medium text-sm transition-all flex items-center gap-2",
-                  saved 
-                    ? 'bg-white text-black' 
-                    : 'bg-white text-black hover:bg-white/90 active:scale-[0.98]'
-                )}
-              >
-                {saved ? (
-                  <>
-                    <Check size={14} />
-                    Saved!
-                  </>
-                ) : (
-                  'Save & Continue'
-                )}
-              </button>
-              <button
-                onClick={clearRecording}
-                className="px-4 py-2 rounded-lg border border-white/20 text-white/60 font-medium text-sm 
-                         hover:text-white hover:bg-white/5 transition-all"
-              >
-                Clear
-              </button>
-            </>
-          )}
-        </div>
-
-        {/* Error message */}
-        {error && (
-          <motion.p
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mt-3 text-sm text-red-400 text-center"
-          >
-            {error}
-          </motion.p>
-        )}
-
-        {/* Tips */}
-        {!recording && recordedKeys.length === 0 && (
-          <p className="mt-3 text-xs text-white/40">
-            Tip: Use Ctrl, Alt, or Shift + a letter key
-          </p>
         )}
       </motion.div>
 
-      {/* Default option */}
+      {/* Bottom Area */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 0.4 }}
-        className="space-y-2"
+        className="space-y-4"
       >
-        <div className="p-3 rounded-lg bg-white/5 border border-white/10">
-          <div className="flex items-center justify-between">
-            <div className="text-left">
-              <div className="text-sm font-medium text-white">Use default</div>
-              <div className="text-xs text-white/50">Ctrl + Shift + Space</div>
-            </div>
-            <button
-              onClick={onNext}
-              className="px-3 py-1.5 rounded-md text-xs font-medium text-white bg-white/10
-                       hover:bg-white/20 transition-all"
-            >
-              Use Default
-            </button>
-          </div>
-        </div>
-
-        <button
-          onClick={onNext}
-          className="w-full py-2.5 rounded-lg border border-white/10 text-white/50 font-medium 
-                   text-sm hover:text-white hover:bg-white/5 transition-all 
-                   flex items-center justify-center gap-2"
-        >
-          Skip for now
-          <ArrowRight size={14} />
-        </button>
+         {/* If recorded, show Complete Setup Button */}
+         {recordedKeys.length > 0 ? (
+             <button
+                onClick={saveShortcut}
+                disabled={saved}
+                className="w-full py-3.5 rounded-xl bg-white text-black font-semibold text-sm 
+                         hover:bg-gray-100 transition-all active:scale-[0.98] 
+                         flex items-center justify-center gap-2 shadow-lg shadow-white/5"
+             >
+                {saved ? "Saved!" : "Complete Setup"}
+                <ArrowRight size={14} />
+             </button>
+         ) : (
+            <>
+                <div className="flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/10">
+                    <div className="text-left">
+                        <div className="text-white font-medium text-sm">Default Shortcut</div>
+                        <div className="text-white/50 text-xs mt-0.5">Ctrl + Shift + Space</div>
+                    </div>
+                    <button
+                        onClick={useDefault}
+                        className="px-4 py-2 rounded-lg bg-white/10 text-white text-xs font-medium hover:bg-white/20 transition-colors"
+                    >
+                        Use Default
+                    </button>
+                </div>
+                
+                <button
+                    onClick={onNext}
+                    className="w-full py-3 rounded-xl border border-white/10 text-white/50 font-medium 
+                             text-sm hover:text-white hover:bg-white/5 transition-all 
+                             flex items-center justify-center gap-2"
+                >
+                    Skip for now
+                    <ArrowRight size={14} />
+                </button>
+            </>
+         )}
       </motion.div>
     </div>
   );
@@ -869,7 +783,8 @@ interface WelcomeFlowProps {
 
 export function WelcomeFlow({ onComplete, onSkip }: WelcomeFlowProps) {
   const [step, setStep] = useState(0);
-  const steps = ['welcome', 'privacy', 'persona', 'shortcut', 'tour'];
+  // Updated order to match screenshots: Welcome -> Persona -> Privacy -> Shortcut
+  const steps = ['welcome', 'persona', 'privacy', 'shortcut'];
   
   const handleNext = () => {
     if (step < steps.length - 1) {
@@ -885,63 +800,71 @@ export function WelcomeFlow({ onComplete, onSkip }: WelcomeFlowProps) {
     }
   };
 
-  const isTour = step === 4;
-
   return (
-    <div className="w-full h-full flex flex-col">
-      {/* Progress bar at top - Hide during tour */}
-      {!isTour && (
-        <div className="px-6 pt-2 pb-4 shrink-0">
-          <div className="flex items-center gap-1.5">
-            {steps.map((_, i) => (
-              <div
-                key={i}
-                className={clsx(
-                  "h-1 rounded-full transition-all duration-500 flex-1",
-                  i === step 
-                    ? 'bg-white' 
-                    : i < step 
-                      ? 'bg-white/40' 
-                      : 'bg-white/10'
-                )}
-              />
-            ))}
-          </div>
-          <div className="flex items-center justify-between mt-2">
-            <span className="text-xs text-white/40">Step {step + 1} of {steps.length}</span>
-            {step > 0 && (
-              <button 
-                onClick={handleBack}
-                className="text-xs text-white/50 hover:text-white/80 transition-colors flex items-center gap-1"
-              >
-                <ChevronLeft size={14} />
-                Back
-              </button>
+    <div className="w-full h-full flex flex-col relative overflow-hidden bg-[#09090b]">
+      {/* Background ambient effect */}
+      <div className="absolute inset-0 bg-gradient-to-b from-blue-500/5 via-transparent to-transparent pointer-events-none" />
+      
+      {/* Step Indicators */}
+      <div className="absolute top-8 left-0 right-0 z-20 flex justify-center gap-2">
+        {steps.map((_, i) => (
+          <div
+            key={i}
+            className={clsx(
+              "h-1 rounded-full transition-all duration-300",
+              i === step ? "w-8 bg-white" : "w-8 bg-white/20"
             )}
-          </div>
-        </div>
-      )}
+          />
+        ))}
+      </div>
 
-      {/* Content area */}
-      <div className={clsx("flex-1 overflow-y-auto custom-scrollbar", !isTour && "px-6 pb-6")}>
-        <div className={clsx("flex items-center justify-center min-h-full", isTour ? "w-full" : "")}>
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={step}
+      <div className="flex-1 flex items-center justify-center p-6 mt-8 relative z-10">
+        <AnimatePresence mode="wait">
+          {step === 0 && (
+            <motion.div 
+              key="welcome"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-sm"
+            >
+              <WelcomeStep onNext={handleNext} />
+            </motion.div>
+          )}
+          {step === 1 && (
+            <motion.div 
+              key="persona"
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-              className={clsx("w-full", isTour ? "h-full" : "max-w-lg")}
+              className="w-full max-w-sm"
             >
-              {step === 0 && <WelcomeStep onNext={handleNext} />}
-              {step === 1 && <PrivacyStep onNext={handleNext} />}
-              {step === 2 && <PersonaStep onNext={handleNext} />}
-              {step === 3 && <ShortcutStep onNext={handleNext} />}
-              {step === 4 && <InteractiveTourStep onNext={handleNext} />}
+              <PersonaStep onBack={handleBack} onNext={handleNext} />
             </motion.div>
-          </AnimatePresence>
-        </div>
+          )}
+          {step === 2 && (
+            <motion.div 
+              key="privacy"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="w-full max-w-sm"
+            >
+              <PrivacyStep onBack={handleBack} onNext={handleNext} />
+            </motion.div>
+          )}
+          {step === 3 && (
+            <motion.div 
+              key="shortcut"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="w-full max-w-sm"
+            >
+              <ShortcutStep onNext={handleNext} />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

@@ -32,6 +32,8 @@ export const stream_read = makeLocalTool(
     maxChunks: z.number().optional().default(50).describe('Max chunks to return'),
     waitMs: z.number().optional().default(0).describe('Wait up to this many ms for new data if none available'),
     asBase64: z.boolean().optional().default(false).describe('Encode binary chunks as base64'),
+    latestOnly: z.boolean().optional().default(false).describe('If true, return only the newest available chunk (real-time catch-up mode)'),
+    format: z.enum(['base64', 'ref']).optional().describe('Chunk format for video frames: "base64" (default) encodes as data URL, "ref" passes zero-copy memory reference for high-performance Python pipelines'),
   }),
 );
 

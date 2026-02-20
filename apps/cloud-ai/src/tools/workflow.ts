@@ -88,6 +88,28 @@ function genId(prefix = 'step'): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/**
+ * Sanitize a guard object to fix common LLM serialization issues.
+ * LLMs sometimes double-quote JSONLogic operators, producing keys like
+ * '"=="' (4 chars with embedded quotes) instead of '==' (2 chars).
+ * This recursively strips leading/trailing quote characters from object keys
+ * that look like they should be JSONLogic operators or "var".
+ */
+function sanitizeGuard(guard: any): any {
+  if (!guard || typeof guard !== 'object') return guard;
+  if (guard === 'always') return guard;
+  if (Array.isArray(guard)) return guard.map(sanitizeGuard);
+
+  const cleaned: Record<string, any> = {};
+  for (const [key, value] of Object.entries(guard)) {
+    // Strip leading/trailing " from keys (e.g. '"=="' → '==', '"var"' → 'var')
+    const stripped = key.replace(/^"+|"+$/g, '');
+    const cleanKey = stripped || key; // fallback to original if stripping emptied it
+    cleaned[cleanKey] = sanitizeGuard(value);
+  }
+  return cleaned;
+}
+
 // ============================================================================
 // Diagrammatic Representation Generator
 // ============================================================================
@@ -426,7 +448,12 @@ ADD_VARIABLE - Add workflow variable
   { op: "add_variable", varName: "counter", varType: "number", varDefault: 0 }
 
 RENAME - Change workflow name
-  { op: "rename", name: "New Name" }`,
+  { op: "rename", name: "New Name" }
+
+STUARD FILE TARGETING:
+  By default, modify_workflow edits the main workflow (main.stuard).
+  To modify a sub-workflow .stuard file, pass stuardFile:
+  { op: "add_node", tool: "log", args: { message: "hi" }, stuardFile: "helpers/send-email.stuard" }`,
 
   inputSchema: z.object({
     op: z.enum([
@@ -434,6 +461,9 @@ RENAME - Change workflow name
       'add_wire', 'remove_wire',
       'set_path', 'add_variable', 'rename'
     ]).describe('Operation to perform'),
+
+    // Target stuard file (defaults to main workflow)
+    stuardFile: z.string().optional().describe('Optional: relative path to the .stuard file to modify (e.g. "helpers/send-email.stuard"). Defaults to the main workflow if not specified.'),
 
     // workflow is now OPTIONAL - will be loaded from session
     workflow: z.any().optional().describe('Optional: workflow JSON. If not provided, uses the current session workflow.'),
@@ -472,6 +502,7 @@ RENAME - Change workflow name
   outputSchema: z.object({
     ok: z.boolean(),
     workflow: z.any().optional(),
+    stuardFile: z.string().optional().describe('Which .stuard file was modified (if specified)'),
     message: z.string().optional(),
     error: z.string().optional(),
     diagram: z.string().optional().describe('ASCII diagram of the workflow structure'),
@@ -479,7 +510,7 @@ RENAME - Change workflow name
 
   execute: async (inputData, { writer }) => {
     const ctx = inputData as any;
-    const { op, workflowId } = ctx;
+    const { op, workflowId, stuardFile } = ctx;
     let { workflow } = ctx;
 
     // PRIORITY 1: If workflow object is provided directly, use it
@@ -530,7 +561,7 @@ RENAME - Change workflow name
     }
 
     const wf = cloneWorkflow(workflow);
-    log('start', { op, workflowId: wf.id });
+    log('start', { op, workflowId: wf.id, stuardFile: stuardFile || undefined });
 
     try {
       let message = '';
@@ -703,7 +734,7 @@ RENAME - Change workflow name
           if (exists) return { ok: false, error: `Wire already exists: ${from} → ${to}` };
 
           const wire: WorkflowWire = { from, to };
-          if (guard) wire.guard = guard;
+          if (guard) wire.guard = sanitizeGuard(guard);
           wf.wires.push(wire);
 
           message = `Connected ${from} → ${to}`;
@@ -782,9 +813,9 @@ RENAME - Change workflow name
       // Generate diagram for visual understanding
       const diagram = generateWorkflowDiagram(wf);
 
-      const result = { ok: true as const, workflow: wf, message, diagram };
+      const result = { ok: true as const, workflow: wf, message, diagram, ...(stuardFile ? { stuardFile } : {}) };
 
-      log('success', { workflowId: wf.id, message });
+      log('success', { workflowId: wf.id, message, stuardFile: stuardFile || undefined });
 
       // Emit event for immediate UI update
       await safeToolWrite(writer as any, {
@@ -792,6 +823,7 @@ RENAME - Change workflow name
         tool: 'modify_workflow',
         status: 'completed',
         workflowId: wf.id,
+        ...(stuardFile ? { stuardFile } : {}),
         result,
       });
 

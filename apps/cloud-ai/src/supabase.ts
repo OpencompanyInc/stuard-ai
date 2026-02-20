@@ -1,6 +1,7 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { estimateCostUsd, monthlyCreditLimitForPlan, creditsFromUsd, creditsPerUsd } from './pricing';
 import { DEV_MODE } from './utils/config';
+import { normalizeUsage } from './utils/usage';
 import { embedMany } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { DEFAULT_EMBEDDER } from './utils/config';
@@ -64,6 +65,9 @@ export type ExternalAccount = {
   id: string;
   user_id: string;
   provider: string;
+  profile_label: string;
+  is_default: boolean;
+  account_email?: string | null;
   scopes: string[];
   access_token: string;
   refresh_token?: string | null;
@@ -71,19 +75,149 @@ export type ExternalAccount = {
   meta?: any;
 };
 
-export async function getExternalAccount(userId: string, provider: string): Promise<ExternalAccount | null> {
+/**
+ * Get a single external account. If profileLabel is provided, fetches that specific
+ * profile. Otherwise returns the default profile for the provider.
+ */
+export async function getExternalAccount(
+  userId: string,
+  provider: string,
+  profileLabel?: string,
+): Promise<ExternalAccount | null> {
   if (!supabaseService) return null;
   try {
+    const cols = 'id, user_id, provider, profile_label, is_default, account_email, scopes, access_token, refresh_token, expires_at, meta';
+    if (profileLabel) {
+      const { data, error } = await supabaseService
+        .from('external_accounts')
+        .select(cols)
+        .eq('user_id', userId)
+        .eq('provider', provider)
+        .eq('profile_label', profileLabel)
+        .single();
+      if (error || !data) return null;
+      return data as any;
+    }
+    // Fetch default profile
     const { data, error } = await supabaseService
       .from('external_accounts')
-      .select('id, user_id, provider, scopes, access_token, refresh_token, expires_at, meta')
+      .select(cols)
       .eq('user_id', userId)
       .eq('provider', provider)
+      .eq('is_default', true)
       .single();
-    if (error || !data) return null;
-    return data as any;
+    if (!error && data) return data as any;
+    // Fallback: if no default flag, get oldest (original) entry
+    const { data: fallback } = await supabaseService
+      .from('external_accounts')
+      .select(cols)
+      .eq('user_id', userId)
+      .eq('provider', provider)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .single();
+    return (fallback as any) || null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * List all connected profiles for a provider (or all providers if omitted).
+ */
+export async function listExternalAccounts(
+  userId: string,
+  provider?: string,
+): Promise<ExternalAccount[]> {
+  if (!supabaseService) return [];
+  try {
+    const cols = 'id, user_id, provider, profile_label, is_default, account_email, scopes, access_token, refresh_token, expires_at, meta';
+    let q = supabaseService
+      .from('external_accounts')
+      .select(cols)
+      .eq('user_id', userId)
+      .order('is_default', { ascending: false })
+      .order('created_at', { ascending: true });
+    if (provider) q = q.eq('provider', provider);
+    const { data, error } = await q;
+    if (error || !data) return [];
+    return data as any[];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Set a profile as the default for its provider. Clears is_default on all
+ * other profiles for the same (user_id, provider).
+ */
+export async function setDefaultExternalAccount(
+  userId: string,
+  provider: string,
+  profileLabel: string,
+): Promise<boolean> {
+  if (!supabaseService) return false;
+  try {
+    // Unset current default(s)
+    await supabaseService
+      .from('external_accounts')
+      .update({ is_default: false, updated_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('provider', provider)
+      .eq('is_default', true);
+    // Set new default
+    const { error } = await supabaseService
+      .from('external_accounts')
+      .update({ is_default: true, updated_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('provider', provider)
+      .eq('profile_label', profileLabel);
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Delete a specific profile. If it was the default, promote the next one.
+ */
+export async function deleteExternalAccount(
+  userId: string,
+  provider: string,
+  profileLabel: string,
+): Promise<boolean> {
+  if (!supabaseService) return false;
+  try {
+    const { data: deleted } = await supabaseService
+      .from('external_accounts')
+      .delete()
+      .eq('user_id', userId)
+      .eq('provider', provider)
+      .eq('profile_label', profileLabel)
+      .select('is_default')
+      .single();
+    // If deleted was default, promote next oldest
+    if ((deleted as any)?.is_default) {
+      const { data: next } = await supabaseService
+        .from('external_accounts')
+        .select('profile_label')
+        .eq('user_id', userId)
+        .eq('provider', provider)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .single();
+      if (next) {
+        await supabaseService
+          .from('external_accounts')
+          .update({ is_default: true, updated_at: new Date().toISOString() })
+          .eq('user_id', userId)
+          .eq('provider', provider)
+          .eq('profile_label', (next as any).profile_label);
+      }
+    }
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -95,12 +229,25 @@ export async function upsertExternalAccount(input: {
   refresh_token?: string | null;
   expires_at?: string | null;
   meta?: any;
+  profileLabel?: string;
+  accountEmail?: string | null;
 }): Promise<void> {
   if (!supabaseService) return;
   try {
+    const profileLabel = input.profileLabel || 'default';
+    // Check if any profile exists for this provider
+    const { data: existing } = await supabaseService
+      .from('external_accounts')
+      .select('profile_label')
+      .eq('user_id', input.userId)
+      .eq('provider', input.provider);
+    const isFirstProfile = !existing || existing.length === 0;
     const values: any = {
       user_id: input.userId,
       provider: input.provider,
+      profile_label: profileLabel,
+      is_default: isFirstProfile,
+      account_email: input.accountEmail ?? null,
       access_token: input.access_token,
       scopes: Array.isArray(input.scopes) ? input.scopes : [],
       refresh_token: input.refresh_token ?? null,
@@ -108,15 +255,22 @@ export async function upsertExternalAccount(input: {
       meta: input.meta ?? null,
       updated_at: new Date().toISOString(),
     };
-    // Upsert by (user_id, provider)
+    // Upsert by (user_id, provider, profile_label)
     await supabaseService
       .from('external_accounts')
-      .upsert(values, { onConflict: 'user_id,provider' });
+      .upsert(values, { onConflict: 'user_id,provider,profile_label' });
   } catch {}
 }
 
-export async function getExternalAccessToken(userId: string, provider: string): Promise<string | null> {
-  const acc = await getExternalAccount(userId, provider);
+/**
+ * Get the access token for a provider. Uses the specified profile or the default.
+ */
+export async function getExternalAccessToken(
+  userId: string,
+  provider: string,
+  profileLabel?: string,
+): Promise<string | null> {
+  const acc = await getExternalAccount(userId, provider, profileLabel);
   return acc?.access_token || null;
 }
 if (SUPABASE_URL && SUPABASE_SECRET_KEY) {
@@ -232,10 +386,10 @@ export async function addUserMessage(
 export async function logUsageEvent(userId: string, conversationId: string | null, model: string, usage: any): Promise<void> {
   if (!supabaseService) return;
   try {
-    const u: any = usage || {};
-    const promptTokens = typeof u.promptTokens === 'number' ? u.promptTokens : (typeof u.inputTokens === 'number' ? u.inputTokens : 0);
-    const completionTokens = typeof u.completionTokens === 'number' ? u.completionTokens : (typeof u.outputTokens === 'number' ? u.outputTokens : 0);
-    const totalTokens = typeof u.totalTokens === 'number' ? u.totalTokens : (promptTokens + completionTokens);
+    const u = normalizeUsage(usage);
+    const promptTokens = u.promptTokens;
+    const completionTokens = u.completionTokens;
+    const totalTokens = u.totalTokens;
     // Attempt to read cached input tokens from various possible fields
     let cachedPromptTokens = 0;
     try {
@@ -263,7 +417,10 @@ export async function logUsageEvent(userId: string, conversationId: string | nul
     } catch {
       cachedPromptTokens = 0;
     }
-    const costUsd = estimateCostUsd(model, promptTokens, completionTokens, cachedPromptTokens);
+    const explicitCostUsd = Number(u.costUsd ?? u.cost_usd);
+    const costUsd = Number.isFinite(explicitCostUsd) && explicitCostUsd >= 0
+      ? Number(explicitCostUsd.toFixed(8))
+      : estimateCostUsd(model, promptTokens, completionTokens, cachedPromptTokens);
     await supabaseService.from('usage_events').insert([
       {
         user_id: userId,
@@ -273,7 +430,7 @@ export async function logUsageEvent(userId: string, conversationId: string | nul
         completion_tokens: completionTokens,
         total_tokens: totalTokens,
         cost_usd: costUsd,
-        raw: usage ?? null,
+        raw: u,
       },
     ]);
   } catch {}
@@ -358,7 +515,10 @@ export async function getMonthlyUsageCredits(userId: string, monthStart?: Date):
         }
         if (!isFinite(cachedPt) || cachedPt < 0) cachedPt = 0;
       } catch { cachedPt = 0; }
-      const usd = typeof r.cost_usd === 'number' ? r.cost_usd : estimateCostUsd(model, pt, ct, cachedPt);
+      const explicitUsd = Number((r as any).cost_usd);
+      const usd = Number.isFinite(explicitUsd) && explicitUsd >= 0
+        ? explicitUsd
+        : estimateCostUsd(model, pt, ct, cachedPt);
       if (typeof usd === 'number' && isFinite(usd) && usd > 0) totalUsd += usd;
     }
     const credits = totalUsd * creditsPerUsd();

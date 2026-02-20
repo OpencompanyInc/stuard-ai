@@ -164,6 +164,7 @@ interface Message {
   images?: Array<{ path: string; name: string; dataUrl?: string; data?: string; mimeType?: string }>;
   parts?: StreamItem[];
   reasoning?: string;
+  reasoningDuration?: number; // Duration in seconds for completed reasoning
 }
 
 export interface ToolEvent {
@@ -967,6 +968,8 @@ export function ChatPanel({
                     text={msg.reasoning} 
                     isOpen={false} 
                     onToggle={() => {}} // History items don't toggle state
+                    isComplete={true}
+                    duration={msg.reasoningDuration}
                   />
                 </div>
               )}

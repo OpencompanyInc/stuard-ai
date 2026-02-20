@@ -93,10 +93,14 @@ create policy if not exists profiles_owner_update on public.profiles
   for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- External accounts (OAuth tokens for integrations: github, google, etc.)
+-- Supports multiple profiles per provider (e.g. work Google, personal Google)
 create table if not exists public.external_accounts (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   provider text not null,
+  profile_label text not null default 'default',
+  is_default boolean not null default true,
+  account_email text,
   scopes text[] not null default '{}',
   access_token text not null,
   refresh_token text,
@@ -104,7 +108,7 @@ create table if not exists public.external_accounts (
   meta jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (user_id, provider)
+  unique (user_id, provider, profile_label)
 );
 
 alter table public.external_accounts enable row level security;
@@ -115,3 +119,30 @@ create policy if not exists external_accounts_owner_insert on public.external_ac
   for insert with check (auth.uid() = user_id);
 create policy if not exists external_accounts_owner_update on public.external_accounts
   for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ─── Deployments (CI/CD version control) ────────────────────────────────────
+create table if not exists public.deployments (
+  id uuid primary key default gen_random_uuid(),
+  channel text not null check (channel in ('beta', 'staging', 'production')),
+  version text,
+  status text not null default 'pending' check (status in ('pending', 'building', 'deploying', 'deployed', 'failed', 'rolled_back')),
+  git_branch text,
+  git_commit_sha text,
+  git_tag text,
+  triggered_by text,
+  targets jsonb not null default '{"website": true, "cloud": true, "desktop": true}'::jsonb,
+  workflow_run_url text,
+  workflow_run_id text,
+  duration_seconds integer,
+  error_message text,
+  metadata jsonb default '{}'::jsonb,
+  started_at timestamptz not null default now(),
+  completed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_deployments_channel on public.deployments(channel);
+create index if not exists idx_deployments_status on public.deployments(status);
+create index if not exists idx_deployments_created_at on public.deployments(created_at desc);
+
+alter table public.deployments enable row level security;

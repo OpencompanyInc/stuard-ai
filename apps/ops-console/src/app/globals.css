@@ -1,18 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  /* Match website theme - Light cream/beige */
   color-scheme: light;
-  
-  --background: #F3F1EB;
-  --foreground: #111827;
-  
-  /* Brand Colors */
-  --primary: #007AFF;
-  --primary-hover: #0066CC;
-  --muted: #6B7280;
-  --border: #E5E7EB;
-  
+  --background: #F8FAFC;
+  --foreground: #0F172A;
+  --sidebar-bg: #0F172A;
+  --sidebar-text: #94A3B8;
+  --sidebar-active: #FFFFFF;
+  --sidebar-hover: rgba(255,255,255,0.06);
+  --primary: #3B82F6;
+  --primary-hover: #2563EB;
+  --muted: #64748B;
+  --border: #E2E8F0;
+  --card-bg: #FFFFFF;
   --font-geist-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans", "Liberation Sans", sans-serif;
   --font-geist-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
@@ -25,133 +25,100 @@
   --font-mono: var(--font-geist-mono);
 }
 
-html {
-  color-scheme: light;
-}
+html { color-scheme: light; }
 
 body {
-  background-color: transparent;
-  color: #111827;
+  background-color: var(--background);
+  color: var(--foreground);
   font-family: var(--font-geist-sans);
-  position: relative;
+  margin: 0;
 }
 
-/* Grid background pattern - matching website */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  background-color: #F3F1EB;
-  background-image:
-    linear-gradient(to right, rgba(0, 0, 0, 0.06) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(0, 0, 0, 0.06) 1px, transparent 1px);
-  background-size: 24px 24px;
-  z-index: -2;
-  pointer-events: none;
-}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.2); }
+::selection { background: rgba(59, 130, 246, 0.2); }
 
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.03);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.25);
-}
-
-/* Custom selection */
-::selection {
-  background: rgba(0, 122, 255, 0.2);
-}
-
-/* Card styles */
 .card {
-  background: white;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 16px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
 }
+.card-hover { transition: all 0.15s ease; }
+.card-hover:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.06); border-color: #CBD5E1; }
 
-.card-hover:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  border-color: rgba(0, 0, 0, 0.12);
-}
-
-/* Button styles */
 .btn-primary {
-  background: linear-gradient(135deg, #007AFF 0%, #0066CC 100%);
+  background: var(--primary);
   color: white;
   border: none;
-  border-radius: 10px;
+  border-radius: 8px;
   font-weight: 500;
-  transition: all 0.2s;
+  font-size: 13px;
+  transition: all 0.15s;
+  cursor: pointer;
 }
-
-.btn-primary:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
-}
+.btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .btn-secondary {
   background: white;
-  color: #111827;
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  border-radius: 10px;
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: 8px;
   font-weight: 500;
-  transition: all 0.2s;
+  font-size: 13px;
+  transition: all 0.15s;
+  cursor: pointer;
 }
+.btn-secondary:hover:not(:disabled) { background: #F8FAFC; border-color: #CBD5E1; }
+.btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.btn-secondary:hover {
-  background: #f9f9f7;
-  border-color: rgba(0, 0, 0, 0.15);
+.btn-danger {
+  background: #EF4444;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-weight: 500;
+  font-size: 13px;
+  transition: all 0.15s;
+  cursor: pointer;
 }
+.btn-danger:hover:not(:disabled) { background: #DC2626; }
 
-/* Status badges */
-.badge-success {
-  background: #ECFDF5;
-  color: #059669;
-  border: 1px solid #A7F3D0;
+.badge-success { background: #F0FDF4; color: #16A34A; border: 1px solid #BBF7D0; }
+.badge-warning { background: #FFFBEB; color: #D97706; border: 1px solid #FDE68A; }
+.badge-error { background: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; }
+.badge-info { background: #EFF6FF; color: #2563EB; border: 1px solid #BFDBFE; }
+
+.input-field {
+  width: 100%;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--foreground);
+  outline: none;
+  transition: border-color 0.15s;
 }
+.input-field:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+.input-field::placeholder { color: #94A3B8; }
 
-.badge-warning {
-  background: #FFFBEB;
-  color: #D97706;
-  border: 1px solid #FDE68A;
-}
-
-.badge-error {
-  background: #FEF2F2;
-  color: #DC2626;
-  border: 1px solid #FECACA;
-}
-
-.badge-info {
-  background: #EFF6FF;
-  color: #2563EB;
-  border: 1px solid #BFDBFE;
-}
-
-/* Animations */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
+.animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
 
-.animate-fade-in {
-  animation: fadeIn 0.4s ease-out forwards;
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
+.animate-pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
 
-.animate-delay-100 { animation-delay: 100ms; }
-.animate-delay-200 { animation-delay: 200ms; }
-.animate-delay-300 { animation-delay: 300ms; }
+/* Recharts overrides */
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line { stroke: #F1F5F9; }
+.recharts-text { fill: #64748B; font-size: 11px; }

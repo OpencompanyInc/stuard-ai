@@ -130,16 +130,19 @@ const ThinkingIndicator: React.FC<{
     <div className="flex flex-col items-start">
       <button
         onClick={toggleExpanded}
-        className="flex items-center gap-1.5 text-[11px] text-theme-muted hover:text-theme-fg transition-colors select-none font-bold uppercase tracking-widest pl-1"
+        className="flex items-center gap-1.5 text-[11px] text-neutral-400 hover:text-neutral-500 transition-colors select-none pl-1"
         disabled={!hasReasoning}
       >
         <ChevronRight
           className={`w-3 h-3 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
         />
-        <span className="italic">
-          {expanded ? 'Hide reasoning' : 'View reasoning'}
+        <span className="italic font-medium">
+          {hasReasoning
+            ? (expanded ? `Thinking ${formatDuration(elapsed)}` : `Thinking ${formatDuration(elapsed)}`)
+            : `Thinking ${formatDuration(elapsed)}`
+          }
         </span>
-        <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+        <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
       </button>
 
       {/* Expanded reasoning preview */}
@@ -154,7 +157,7 @@ const ThinkingIndicator: React.FC<{
           >
             <div
               ref={reasoningRef}
-              className="pl-4 border-l-2 border-theme/20 max-h-32 overflow-y-auto scrollbar-hidden"
+              className="pl-3 border-l-2 border-violet-200/60 max-h-36 overflow-y-auto custom-scrollbar"
             >
               <div className="text-[12px] text-theme-muted leading-relaxed py-1 prose prose-sm max-w-none prose-p:my-1 prose-headings:text-theme-fg prose-headings:font-bold prose-headings:text-xs prose-code:text-primary prose-code:bg-theme-hover prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[10px] prose-strong:text-theme-fg prose-ul:my-1 prose-ol:my-1 prose-li:my-0">
                 <ReactMarkdown
@@ -163,7 +166,7 @@ const ThinkingIndicator: React.FC<{
                 >
                   {normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(reasoning || '')))}
                 </ReactMarkdown>
-                <span className="inline-block w-[3px] h-3 bg-primary/30 ml-1 animate-[blink_1s_step-end_infinite] align-middle rounded-full" />
+                <span className="inline-block w-[2px] h-3 bg-violet-300 ml-0.5 animate-[blink_1s_step-end_infinite] align-middle rounded-full" />
               </div>
             </div>
           </motion.div>

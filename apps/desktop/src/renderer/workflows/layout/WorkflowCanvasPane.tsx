@@ -27,6 +27,12 @@ interface WorkflowCanvasPaneProps {
   floatingContent?: React.ReactNode;
   onSetActiveTab: (tab: string) => void;
   onCloseFileTab: (filePath: string) => void;
+  /** Breadcrumbs for sub-workflow navigation */
+  breadcrumbs?: Array<{ label: string; path: string | null }>;
+  /** Current sub-workflow path (null = main) */
+  currentSubPath?: string | null;
+  /** Navigate back to parent workflow */
+  onNavigateBack?: () => void;
   onToggleLogs: () => void;
   onClearLogs: () => void;
   onSendLogsToChat: (text: string) => void;
@@ -98,6 +104,9 @@ export function WorkflowCanvasPane({
   onWireContextMenu,
   onWireReconnect,
   onCanvasContextMenu,
+  breadcrumbs,
+  currentSubPath,
+  onNavigateBack,
 }: WorkflowCanvasPaneProps) {
   const activeFileTab = activeTab !== "canvas" ? openTabs.find((t) => t.filePath === activeTab) : null;
 
@@ -108,6 +117,9 @@ export function WorkflowCanvasPane({
         activeTab={activeTab}
         onSetActiveTab={onSetActiveTab}
         onCloseFileTab={onCloseFileTab}
+        breadcrumbs={breadcrumbs}
+        currentSubPath={currentSubPath}
+        onNavigateBack={onNavigateBack}
       />
 
       <div className="flex-1 relative h-full" style={{ display: activeTab === "canvas" ? "block" : "none" }}>
@@ -150,7 +162,7 @@ export function WorkflowCanvasPane({
       </div>
 
       {activeFileTab && (
-        <div className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 flex h-full">
           <WorkspaceFileEditor
             flowId={selectedId}
             filePath={activeFileTab.filePath}

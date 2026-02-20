@@ -4,6 +4,7 @@ import { RouterContext } from '../types';
 // WebSocket connection pool for Python agent
 let agentWs: WebSocket | null = null;
 let agentReady: Promise<WebSocket> | null = null;
+let agentPingInterval: NodeJS.Timeout | null = null;
 
 function ensureAgentWs(url: string): Promise<WebSocket> {
   if (agentWs && agentWs.readyState === WebSocket.OPEN) return Promise.resolve(agentWs);
@@ -20,6 +21,18 @@ function ensureAgentWs(url: string): Promise<WebSocket> {
       ws.on('open', () => {
         clearTimeout(timeout);
         agentWs = ws;
+        // Start ping/pong keepalive to detect stale connections
+        if (agentPingInterval) clearInterval(agentPingInterval);
+        agentPingInterval = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            try { ws.ping(); } catch { }
+          } else {
+            // Connection is no longer open — clean up
+            if (agentPingInterval) { clearInterval(agentPingInterval); agentPingInterval = null; }
+            agentWs = null;
+            agentReady = null;
+          }
+        }, 15000);
         resolve(ws);
       });
       ws.on('error', (e: Error) => {
@@ -27,6 +40,7 @@ function ensureAgentWs(url: string): Promise<WebSocket> {
         reject(e);
       });
       ws.on('close', () => {
+        if (agentPingInterval) { clearInterval(agentPingInterval); agentPingInterval = null; }
         agentWs = null;
         agentReady = null;
       });
@@ -61,7 +75,9 @@ export async function execLocalTool(tool: string, args: any, ctx: RouterContext,
   // - When progress events are received, reset to a shorter keep-alive timeout
   // - This prevents premature timeouts while still detecting dead connections
   const KEEPALIVE_TIMEOUT = 120000; // 2 minutes between progress events
-  const isLongRunning = effectiveTimeout > 300000; // > 5 minutes
+  const isLongRunning = effectiveTimeout >= 300000; // >= 5 minutes
+  
+  console.log(`[execLocalTool] SEND tool_exec id=${id} tool=${tool} timeout=${effectiveTimeout}ms`);
   
   return new Promise((resolve) => {
     let done = false;
@@ -74,7 +90,9 @@ const resetTimeout = (ms: number) => {
       timeoutId = setTimeout(() => {
         if (done) return;
         done = true;
+        console.log(`[execLocalTool] TIMEOUT id=${id} tool=${tool} after ${ms}ms`);
         ws.off('message', onMessage);
+        ws.off('close', onClose);
         resolve({ ok: false, error: 'timeout' });
       }, ms);
     };
@@ -117,6 +135,10 @@ const resetTimeout = (ms: number) => {
             ctx.logFn(`✓ ${data.count || 0} package(s) ready`);
           } else if (status === 'executing') {
             ctx.logFn(`▶ Running script...`);
+          } else if (status === 'running') {
+            const elapsed = data.elapsed || 0;
+            const secs = Math.round(elapsed / 1000);
+            ctx.logFn(`⏳ Running... ${secs}s`);
           } else if (status === 'completed') {
             ctx.logFn(`✓ Script completed`);
           } else if (status === 'script_error') {
@@ -163,6 +185,7 @@ const resetTimeout = (ms: number) => {
           } else if (status === 'approval_required') {
             if (timeoutId) clearTimeout(timeoutId);
             ws.off('message', onMessage);
+            ws.off('close', onClose);
             if (!done) { done = true; resolve({ ok: false, error: 'approval_required' }); }
             return;
           } else if (status) {
@@ -175,18 +198,27 @@ const resetTimeout = (ms: number) => {
         if (t === 'tool_result' && String(msg?.id || '') === id) {
           if (timeoutId) clearTimeout(timeoutId);
           ws.off('message', onMessage);
+          ws.off('close', onClose);
           if (!done) { done = true; resolve(msg?.result ?? { ok: false, error: 'invalid_result' }); }
           return;
         }
       } catch {}
     };
     
+    // If the WS closes while waiting for a response, resolve immediately instead of waiting for timeout
+    const onClose = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      ws.off('message', onMessage);
+      if (!done) { done = true; resolve({ ok: false, error: 'agent_ws_closed' }); }
+    };
     ws.on('message', onMessage);
+    ws.once('close', onClose);
     try { 
       ws.send(JSON.stringify(payload)); 
     } catch {
       if (timeoutId) clearTimeout(timeoutId);
       ws.off('message', onMessage);
+      ws.off('close', onClose);
       if (!done) { done = true; resolve({ ok: false, error: 'send_failed' }); }
     }
   });

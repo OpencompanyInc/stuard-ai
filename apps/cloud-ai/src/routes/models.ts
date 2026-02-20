@@ -59,7 +59,7 @@ function writeText(res: ServerResponse, status: number, text: string, headers?: 
   res.end(text);
 }
 
-const SUPPORTED_PROVIDERS = new Set(['openai', 'google', 'xai', 'deepseek']);
+const SUPPORTED_PROVIDERS = new Set(['openai', 'google', 'xai', 'deepseek', 'anthropic']);
 const MODELS_DEV_API = 'https://models.dev/api.json';
 const MODELS_DEV_LOGO_BASE = 'https://models.dev/logos/';
 

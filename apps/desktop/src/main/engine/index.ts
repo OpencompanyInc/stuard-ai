@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { EngineContext, StuardSpec, StuardStep, StuardEdge, LoopConfig, StreamWireConfig } from './types';
 import { emitStepEvent, emitFlowEvent, emitStreamEvent } from './events';
-import { safeStuardId, summarizeOutput, interpolateForTool, getAtPath } from './utils';
+import { safeStuardId, summarizeOutput, interpolateForTool, getAtPath, evalIfGuard } from './utils';
 import { execTool, getToolKind, execLocalTool, getVariable } from '../tool-router';
 import { executeStep } from './execution';
 
@@ -141,9 +141,12 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
   }
 
   // Ensure trigger context is available for templates (fixes {{trigger.data.X}})
+  // Also spread payload fields to top level so {{trigger.event}} works alongside {{trigger.data.event}}
   if (!ctx.trigger) {
+    const triggerData = ctx.args || ctx.input || {};
     ctx.trigger = {
-      data: ctx.args || ctx.input || {}
+      data: triggerData,
+      ...(triggerData && typeof triggerData === 'object' ? triggerData : {}),
     };
   }
 
@@ -420,6 +423,16 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
     let lastDataTime = Date.now();
     let chunkIndex = 0;
     let accumulatedText = '';
+    const preferLatestOnly = (consumerStep as any).type === 'local.tool' && /^mediapipe_/.test(String((consumerStep as any).tool || ''));
+    // Auto-detect optimal stream format based on consumer tool type:
+    // - Python tools (mediapipe, run_python_script, etc.) benefit from zero-copy refs
+    // - UI tools (custom_ui, browser) need base64 data URLs
+    // - User can always override via explicit stream.format on the wire
+    const consumerTool = String((consumerStep as any).tool || '');
+    const isPythonConsumer = (consumerStep as any).type === 'local.tool' && (
+      consumerTool.startsWith('mediapipe_')
+    );
+    const streamFormat = _streamCfg?.format || (isPythonConsumer ? 'ref' : 'base64');
     
     while (!controller.signal.aborted) {
       // Server-side blocking read: the Python agent polls internally at 20ms
@@ -428,8 +441,10 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
       const readResult = await execLocalTool('stream_read', {
         streamId,
         subscriberId,
-        maxChunks: 10,
+        maxChunks: preferLatestOnly ? 1 : 10,
         waitMs: serverWaitMs,
+        latestOnly: preferLatestOnly,
+        format: streamFormat,
       }, engineCtx);
       
       if (!readResult?.ok) {
@@ -455,7 +470,8 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
         if (chunks.length > 1) {
           const lastChunk = chunks[chunks.length - 1];
           const lastData = lastChunk?.data !== undefined ? lastChunk.data : lastChunk;
-          const isVideoFrame = typeof lastData === 'string' && lastData.startsWith('data:image/');
+          const isVideoFrame = (typeof lastData === 'string' && lastData.startsWith('data:image/'))
+            || (typeof lastData === 'object' && lastData !== null && '__ref' in lastData);
           if (isVideoFrame) {
             const skipped = chunks.length - 1;
             if (skipped > 0) {
@@ -506,17 +522,29 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
             // This lets downstream steps (e.g. custom_ui) run for every frame
             // in a pipeline like: capture_media →(stream)→ mediapipe →(flow)→ custom_ui
             const downstreamFlowEdges = (out.edges || []).filter(e => !e.stream);
-            if (downstreamFlowEdges.length > 0) {
-              for (const edge of downstreamFlowEdges) {
+            if (downstreamFlowEdges.length === 1) {
+              // Single downstream edge — run inline
+              const nextStep = map.get(downstreamFlowEdges[0].to);
+              if (nextStep) {
+                try {
+                  await runBranch(nextStep, baseCtx, consumerStep.id);
+                } catch (err) {
+                  engineCtx.logFn(`[${consumerStep.id}] ⚠️ Downstream error on chunk ${chunkIndex}: ${err}`);
+                }
+              }
+            } else if (downstreamFlowEdges.length > 1) {
+              // Multiple downstream edges — run in parallel so fast side-effects
+              // (e.g. set_variable for UI) don't wait for slow processing chains
+              await Promise.all(downstreamFlowEdges.map(async (edge) => {
                 const nextStep = map.get(edge.to);
                 if (nextStep) {
                   try {
-                    await runBranch(nextStep, baseCtx, consumerStep.id);
+                    await runBranch(nextStep, { ...baseCtx }, consumerStep.id);
                   } catch (err) {
                     engineCtx.logFn(`[${consumerStep.id}] ⚠️ Downstream error on chunk ${chunkIndex}: ${err}`);
                   }
                 }
-              }
+              }));
             }
           }
           
@@ -751,13 +779,22 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
       while (iterations < maxIterations) {
         if (controller.signal.aborted) break;
         
-        // Check condition
+        // Check condition using the same expression evaluator as guards
         if (conditionText) {
-          const resolved = interpolateForTool({ cond: conditionText }, ctx, 'loop');
-          const condValue = resolved.cond;
-          // Evaluate condition - simple truthy check
-          if (!condValue || condValue === 'false' || condValue === '0') {
-            engineCtx.logFn(`[${step.id}] 🔄 while condition false, stopping`);
+          // Strip {{ }} wrapper if present, then evaluate as expression
+          const expr = conditionText.trim().replace(/^\{\{/, '').replace(/\}\}$/, '').trim();
+          let condResult = false;
+          try {
+            // First try as a full expression (supports "workflow.is_running == true", "$vars.count > 5", etc.)
+            condResult = evalIfGuard(expr, ctx);
+          } catch {
+            // Fallback: interpolate and do truthy check (for simple {{$vars.flag}} style)
+            const resolved = interpolateForTool({ cond: conditionText }, ctx, 'loop');
+            const condValue = resolved.cond;
+            condResult = !!condValue && condValue !== 'false' && condValue !== '0';
+          }
+          if (!condResult) {
+            engineCtx.logFn(`[${step.id}] 🔄 while condition false (${expr}), stopping`);
             break;
           }
         }

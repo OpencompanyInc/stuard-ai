@@ -12,7 +12,7 @@ import { deployHeadlessAgent } from '../../tools/deploy-headless-agent';
 import { getHeadlessAgentStatus } from '../../tools/get-headless-agent-status';
 import { listHeadlessAgentTasks } from '../../tools/list-headless-agent-tasks';
 import { stopHeadlessAgent } from '../../tools/stop-headless-agent';
-import { ffmpeg_status, ffmpeg_setup, ffmpeg_run, ffmpeg_convert_media, ffmpeg_extract_audio, ffmpeg_trim_media, ffmpeg_probe_media, ffmpeg_extract_frames, folder_permission_add, folder_permission_remove, folder_permission_list, folder_permission_set_enabled, folder_permission_check } from '../../tools/device-tools';
+import { ffmpeg_status, ffmpeg_setup, ffmpeg_run, ffmpeg_convert_media, ffmpeg_extract_audio, ffmpeg_trim_media, ffmpeg_probe_media, ffmpeg_extract_frames, folder_permission_add, folder_permission_remove, folder_permission_list, folder_permission_set_enabled, folder_permission_check, get_datetime, math_eval, generate_uuid, random_number, random_choice, get_env_var, get_system_info, hash_string, base64_encode, base64_decode, json_parse, json_stringify, sleep, regex_match, regex_replace } from '../../tools/device-tools';
 import { submitFeedback, reportBug, suggestFeature, listMyFeedback, getFeedbackDetails } from '../../tools/feedback-tools';
 import { http_request } from '../../tools/http-tools';
 import { createRequire } from 'node:module';
@@ -140,6 +140,22 @@ export const ALL_TOOLS = {
   folder_permission_list,
   folder_permission_set_enabled,
   folder_permission_check,
+  // Utility tools (no scripts needed)
+  get_datetime,
+  math_eval,
+  generate_uuid,
+  random_number,
+  random_choice,
+  get_env_var,
+  get_system_info,
+  hash_string,
+  base64_encode,
+  base64_decode,
+  json_parse,
+  json_stringify,
+  sleep,
+  regex_match,
+  regex_replace,
   // Window management
   list_open_windows,
   bring_window_to_foreground,
@@ -268,89 +284,50 @@ export const MINIMAL_PARAMOUNT_TOOLS = [
 ] as const;
 
 /**
- * Tier 1 Paramount Tools - ALWAYS loaded at runtime
- * These essential tools are loaded upfront for all agents.
- * When SIS runtime is enabled, discovery tools are added on top.
+ * Tier 1 Paramount Tools - ALWAYS loaded at runtime (~35 tools)
+ * Only the essential tools for most conversations.
+ * Everything else is discoverable via SIS (sis_search_tools → sis_execute_tool).
  */
 export const TIER_1_PARAMOUNT_TOOLS = [
-  // Orchestration (3)
-  'wait', 'run_sequential', 'run_parallel',
+  // Orchestration (2)
+  'wait', 'run_sequential',
 
-  // Basic File Operations (10)
-  'read_file', 'write_file', 'list_directory', 'create_directory',
-  'file_read', 'file_edit', 'open_file', 'move_file',
-  'glob', 'grep',
+  // File Operations (7)
+  'list_directory', 'read_file', 'write_file', 'create_directory',
+  'file_read', 'file_edit', 'open_file',
 
-  // System Commands (13)
-  'run_command', 'run_system_command', 'list_terminals', 'read_terminal',
-  'terminal_create', 'terminal_list', 'terminal_get', 'terminal_read',
-  'terminal_send_input', 'terminal_send_raw', 'terminal_send_keys',
-  'terminal_wait_for', 'terminal_destroy',
+  // System Commands (3)
+  'run_command', 'run_system_command', 'run_python_script',
 
-  // Input/Automation (7)
-  'send_hotkey',
-  'computer_use',
-  'computer_use_agent',
-  'get_mouse_position',
-  'click_at_coordinates',
-  'double_click_at_coordinates',
-  'type_text',
-  'scroll',
-  'drag_and_drop',
+  // Interactive Terminal (4)
+  'terminal_create', 'terminal_send_input', 'terminal_read', 'terminal_destroy',
 
-  // Vision/Media/Capture (4)
-  'analyze_media', 'capture_screen', 'capture_media', 'stop_capture',
+  // Input/Automation (3)
+  'send_hotkey', 'type_text', 'click_at_coordinates',
 
-  // Memory/Context & Spaces (17)
+  // Vision/Media (2)
+  'analyze_media', 'capture_screen',
+
+  // Web (3)
+  'web_search', 'scrape_url', 'http_request',
+
+  // Memory (2)
   'search_past_conversations', 'get_conversation_context',
-  'list_user_spaces', 'get_space_contents',
-  'create_space', 'add_to_space', 'add_source_to_space',
-  'add_note_to_space', 'add_code_snippet_to_space',
-  'ensure_space_path', 'list_space_path', 'add_to_space_path', 'get_space_tree',
-  'find_or_create_space', 'update_space_item', 'delete_space_item',
-  'link_conversation_to_space',
 
-  // Web Search (1)
-  'web_search',
+  // Workflows (2)
+  'search_local_workflows', 'run_workflow',
 
-  // HTTP Requests (1)
-  'http_request',
+  // Productivity (2)
+  'calendar_crud', 'task_crud',
 
-  // Web Extraction (1)
-  'scrape_url',
-
-  // Headless Agents (4)
-  'deploy_headless_agent', 'get_headless_agent_status',
-  'list_headless_agent_tasks', 'stop_headless_agent',
-
-  // Workflows as Tools (4)
-  'execute_workflow',
-  'find_workflow_semantic',
-  'search_local_workflows',
-  'run_workflow',
-
-  // Agent Todo Management (1)
+  // Task Tracking (1)
   'agent_todo',
 
-  // Productivity (4)
-  'calendar_crud',
-  'task_crud',
-  'task_reminders',
-  'planner_list_items',
+  // Window Management (2)
+  'list_open_windows', 'smart_bring_window_to_foreground',
 
-  // Canvas Documents (5) - AI can read/write user's canvas notes
-  'canvas_list',
-  'canvas_read',
-  'canvas_write',
-  'canvas_create',
-  'canvas_delete',
-
-  // Feedback (5) - Bug reports and feature requests
-  'submit_feedback',
-  'report_bug',
-  'suggest_feature',
-  'list_my_feedback',
-  'get_feedback_details',
+  // Utils - Common operations without scripts (6)
+  'get_datetime', 'math_eval', 'generate_uuid', 'random_number', 'sleep', 'get_system_info',
 ] as const;
 
 const _FFMPEG_TIER_1_TOOLS = [
@@ -444,21 +421,49 @@ export function getTools(
   // Start with MCP tools
   const tools: Record<string, any> = { ...mcpTools };
 
-  // xAI models have stricter grammar limits - use only Tier 1 tools
-  if (isXaiModel(modelId)) {
-    for (const name of TIER_1_PARAMOUNT_TOOLS) {
-      if ((ALL_TOOLS as any)[name]) {
-        tools[name] = (ALL_TOOLS as any)[name];
-      }
-    }
-    if (process.env.SIS_DEBUG === '1') {
-      console.log(`[tools] xAI model detected (${modelId}), limited to ${Object.keys(tools).length} Tier 1 tools`);
-    }
+  // Default: Tier 1 + SIS discovery tools (lean ~35 tools)
+  // Use SIS_LOAD_ALL=1 to force loading all tools (legacy behavior)
+  if (process.env.SIS_LOAD_ALL === '1') {
+    Object.assign(tools, ALL_TOOLS);
     return tools;
   }
 
-  // Add ALL registered tools for other providers
-  Object.assign(tools, ALL_TOOLS);
+  // Load Tier 1 tools
+  for (const name of TIER_1_PARAMOUNT_TOOLS) {
+    if ((ALL_TOOLS as any)[name]) {
+      tools[name] = (ALL_TOOLS as any)[name];
+    }
+  }
+
+  // Always add SIS discovery tools
+  for (const name of SIS_META_TOOL_NAMES) {
+    if ((ALL_TOOLS as any)[name]) {
+      tools[name] = (ALL_TOOLS as any)[name];
+    }
+  }
+
+  // Add integration tools if user has them connected
+  if (enabledIntegrations.includes('google')) {
+    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+      if (name.startsWith('google_') || name.startsWith('gmail_') || name.startsWith('calendar_') || name.startsWith('drive_') || name.startsWith('sheets_') || name.startsWith('docs_') || name.startsWith('tasks_')) {
+        tools[name] = tool;
+      }
+    }
+  }
+  if (enabledIntegrations.includes('outlook')) {
+    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+      if (name.startsWith('outlook_')) tools[name] = tool;
+    }
+  }
+  if (enabledIntegrations.includes('github')) {
+    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+      if (name.startsWith('github_')) tools[name] = tool;
+    }
+  }
+
+  if (process.env.SIS_DEBUG === '1') {
+    console.log(`[tools] Lean mode: ${Object.keys(tools).length} tools (Tier1 + SIS + integrations)`);
+  }
 
   return tools;
 }
@@ -470,95 +475,61 @@ export async function getToolsForQuery(
   modelId?: string,
   rankedToolNames?: string[]
 ): Promise<Record<string, any>> {
-  // Start with MCP tools
   const selected: Record<string, any> = { ...mcpTools };
 
-  // xAI models have stricter grammar limits - use only Tier 1 tools
-  if (isXaiModel(modelId)) {
-    for (const name of TIER_1_PARAMOUNT_TOOLS) {
-      if ((ALL_TOOLS as any)[name]) {
-        selected[name] = (ALL_TOOLS as any)[name];
-      }
-    }
-    if (process.env.SIS_DEBUG === '1') {
-      console.log(`[tools] xAI model detected (${modelId}), limited to ${Object.keys(selected).length} Tier 1 tools`);
-    }
+  // ── Escape hatch: SIS_LOAD_ALL=1 loads everything (legacy) ──
+  if (process.env.SIS_LOAD_ALL === '1') {
+    Object.assign(selected, ALL_TOOLS);
     return selected;
   }
 
-  // =========================================================================
-  // SIS_TOOL_PREFILTER mode: Tier 1 + SIS meta + top-N ranked tools
-  // Default (off): load ALL registered tools as before
-  // =========================================================================
-  if (process.env.SIS_TOOL_PREFILTER === '1') {
-    // 1. Always load Tier 1 paramount tools
-    for (const name of TIER_1_PARAMOUNT_TOOLS) {
-      if ((ALL_TOOLS as any)[name]) {
-        selected[name] = (ALL_TOOLS as any)[name];
-      }
+  // ── 1. Tier 1 paramount tools (always loaded, ~35) ──
+  for (const name of TIER_1_PARAMOUNT_TOOLS) {
+    if ((ALL_TOOLS as any)[name]) {
+      selected[name] = (ALL_TOOLS as any)[name];
     }
-
-    // 2. Always load SIS meta-tools (for long-tail discovery)
-    for (const name of SIS_META_TOOL_NAMES) {
-      if ((ALL_TOOLS as any)[name]) {
-        selected[name] = (ALL_TOOLS as any)[name];
-      }
-    }
-
-    // 3. Add top-N ranked tools from embedding-based likelihood ranking
-    if (rankedToolNames && rankedToolNames.length > 0) {
-      for (const name of rankedToolNames) {
-        if ((ALL_TOOLS as any)[name] && !selected[name]) {
-          selected[name] = (ALL_TOOLS as any)[name];
-        }
-      }
-    }
-
-    if (process.env.SIS_DEBUG === '1') {
-      const tier1Count = TIER_1_PARAMOUNT_TOOLS.length;
-      const sisCount = SIS_META_TOOL_NAMES.length;
-      const rankedCount = rankedToolNames?.length || 0;
-      console.log(`[sis-prefilter] Loaded ${Object.keys(selected).length} tools (Tier1=${tier1Count}, SIS=${sisCount}, Ranked=${rankedCount}, MCP=${Object.keys(mcpTools).length})`);
-      if (rankedToolNames && rankedToolNames.length > 0) {
-        console.log(`[sis-prefilter] Ranked tools added: ${rankedToolNames.join(', ')}`);
-      }
-    }
-
-    return selected;
   }
 
-  // =========================================================================
-  // Default: Load ALL registered tools (~200+ tools) for non-xAI providers
-  // =========================================================================
-  Object.assign(selected, ALL_TOOLS);
+  // ── 2. SIS meta-tools for long-tail discovery (always loaded, 3) ──
+  for (const name of SIS_META_TOOL_NAMES) {
+    if ((ALL_TOOLS as any)[name]) {
+      selected[name] = (ALL_TOOLS as any)[name];
+    }
+  }
+
+  // ── 3. Embedding-ranked tools (dynamic, top-N from pgvector) ──
+  // These are the tools most likely needed for this specific query,
+  // selected by cosine similarity between prompt embedding and tool embeddings.
+  // The embedding is memoized and shared with knowledge/memory retrieval.
+  if (rankedToolNames && rankedToolNames.length > 0) {
+    for (const name of rankedToolNames) {
+      if ((ALL_TOOLS as any)[name] && !selected[name]) {
+        selected[name] = (ALL_TOOLS as any)[name];
+      }
+    }
+  }
+
+  // ── 4. Integration tools (only if user has the integration connected) ──
+  const integrationPrefixes: Record<string, string[]> = {
+    google: ['google_', 'gmail_', 'calendar_', 'drive_', 'sheets_', 'docs_', 'tasks_'],
+    outlook: ['outlook_'],
+    github: ['github_'],
+    notion: ['notion_'],
+    linear: ['linear_'],
+  };
+  for (const integration of enabledIntegrations) {
+    const prefixes = integrationPrefixes[integration];
+    if (!prefixes) continue;
+    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+      if (!selected[name] && prefixes.some(p => name.startsWith(p))) {
+        selected[name] = tool;
+      }
+    }
+  }
 
   if (process.env.SIS_DEBUG === '1') {
-    const searchMode = isSupabaseSISEnabled() ? 'semantic (Supabase)' : 'keyword (fallback)';
-    console.log(`[sis-runtime] Loaded ${Object.keys(selected).length} tools (Full + MCP)`);
-    console.log(`[sis-runtime] Search mode: ${searchMode}`);
-    console.log('[sis-runtime] SIS tools added: sis_search_tools, sis_execute_tool, sis_list_categories');
-  }
-
-  // Also try in-memory SIS for additional query-based tools if enabled
-  if (process.env.SIS_ENABLE === '1') {
-    const sis = await getSis();
-    if (sis) {
-      try {
-        const resolved = await sis.resolve(String(query || ''), { format: 'raw' });
-        for (const r of resolved) {
-          if ((ALL_TOOLS as any)[r.name] && !selected[r.name]) {
-            selected[r.name] = (ALL_TOOLS as any)[r.name];
-          }
-        }
-        if (process.env.SIS_DEBUG === '1') {
-          console.log('[sis-memory] Added additional tools from in-memory SIS');
-        }
-      } catch (e) {
-        if (process.env.SIS_DEBUG === '1') {
-          console.warn('[sis-memory] In-memory resolve failed:', e);
-        }
-      }
-    }
+    const rankedCount = rankedToolNames?.length || 0;
+    console.log(`[tools] ${Object.keys(selected).length} tools loaded (Tier1=${TIER_1_PARAMOUNT_TOOLS.length} + SIS=${SIS_META_TOOL_NAMES.length} + Ranked=${rankedCount} + Integrations)`);
   }
 
   return selected;

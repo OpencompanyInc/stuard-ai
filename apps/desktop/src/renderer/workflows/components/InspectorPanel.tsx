@@ -10,57 +10,10 @@ import { getToolIcon, getToolColor, CATEGORY_COLORS } from "../constants/palette
 import { parseGuard, guardToString } from "../builder/guards";
 import { VariablesPanel } from "./VariablesPanel";
 import type { DesignerModel, WorkflowVariable, DesignerWire, WorkflowInputParam, WorkflowOutputField } from "../types";
+import { isBackEdge as isBackEdgeCycle } from "../utils/graphUtils";
 // UIBuilderModal is now handled inside ToolArgsEditor for custom_ui/update_custom_ui tools
 
-/**
- * Compute chain indices for all nodes based on the flow of connections.
- * Triggers start at index 0, and each step downstream gets a higher index.
- */
-function computeChainIndices(
-  triggers: { id: string }[],
-  nodes: { id: string }[],
-  wires: DesignerWire[]
-): Map<string, number> {
-  const indices = new Map<string, number>();
-  const queue: { id: string; index: number }[] = triggers.map(t => ({ id: t.id, index: 0 }));
-  
-  while (queue.length > 0) {
-    const { id, index } = queue.shift()!;
-    const existingIndex = indices.get(id);
-    if (existingIndex !== undefined && existingIndex <= index) continue;
-    indices.set(id, index);
-    
-    for (const w of wires) {
-      if (w.from === id) {
-        const targetIndex = indices.get(w.to);
-        if (targetIndex === undefined || targetIndex > index + 1) {
-          queue.push({ id: w.to, index: index + 1 });
-        }
-      }
-    }
-  }
-  
-  let maxIndex = Math.max(0, ...indices.values());
-  for (const node of nodes) {
-    if (!indices.has(node.id)) {
-      indices.set(node.id, ++maxIndex);
-    }
-  }
-  return indices;
-}
-
-/**
- * Check if a wire is a back edge based on chain indices.
- */
-function isBackEdgeByChain(
-  chainIndices: Map<string, number>,
-  from: string,
-  to: string
-): boolean {
-  const fromIndex = chainIndices.get(from) ?? 0;
-  const toIndex = chainIndices.get(to) ?? 0;
-  return fromIndex >= toIndex;
-}
+// Back edge (cycle) detection is in ../utils/graphUtils.ts
 
 interface InspectorPanelProps {
   model: DesignerModel;
@@ -145,11 +98,10 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
       w => w.to === selectedNodeId && (w as any).loop
     );
     
-    // Also check if any incoming wire forms a back edge based on chain index
-    const chainIndices = computeChainIndices(model.triggers, model.nodes, model.wires || []);
+    // Also check if any incoming wire forms a back edge (actual cycle)
     const incomingBackEdge = (model.wires || []).find(w => {
       if (w.to !== selectedNodeId) return false;
-      return isBackEdgeByChain(chainIndices, w.from, w.to);
+      return isBackEdgeCycle(w.from, w.to, model.wires || []);
     });
     
     if (incomingLoopWire || incomingBackEdge) {

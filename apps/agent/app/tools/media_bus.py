@@ -34,6 +34,20 @@ from collections import deque
 # Types and Data Structures
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _normalize_silence_threshold(value: float) -> float:
+    """Convert silence threshold to RMS (0.0-1.0).
+    
+    Accepts either:
+    - Volume percentage (1-100): e.g. 5 means 5% volume → RMS 0.05
+    - Legacy RMS value (0.0-1.0): e.g. 0.01 → used directly
+    
+    Heuristic: values > 1.0 are treated as percentages, values <= 1.0 as raw RMS.
+    """
+    if value > 1.0:
+        return min(value, 100.0) / 100.0
+    return max(0.0, min(value, 1.0))
+
+
 @dataclass
 class BusSubscriber:
     """A subscriber to a media bus."""
@@ -284,6 +298,8 @@ def _audio_bus_worker(bus: MediaBus) -> None:
             last_nonzero_ts = time.time()
             # Track silence state for each subscriber
             subscriber_silence_start: Dict[str, float] = {}
+            # Smoothed RMS window per subscriber (avoids false resets from brief spikes)
+            subscriber_rms_windows: Dict[str, deque] = {}
             
             while not bus.stop_event.is_set():
                 # Check if we have any subscribers
@@ -317,9 +333,9 @@ def _audio_bus_worker(bus: MediaBus) -> None:
                         except Exception:
                             pass
                         
-                        # Add to ring buffer with index
+                        # Add to ring buffer with index + volume
                         with bus.buffer_lock:
-                            bus.buffer.append((bus.buffer_index, chunk, time.time()))
+                            bus.buffer.append((bus.buffer_index, chunk, time.time(), rms))
                             bus.buffer_index += 1
                             bus.total_frames += 1
                         
@@ -329,33 +345,39 @@ def _audio_bus_worker(bus: MediaBus) -> None:
                             for sub in bus.subscribers.values():
                                 if sub.recording_active:
                                     sub.recorded_chunks.append(chunk)
-                                # Push to linked stream if set
+                                # Push to linked stream if set (include volume)
                                 if sub.stream_id:
                                     try:
                                         from . import streams as _streams_mod
-                                        _streams_mod.push_to_stream(sub.stream_id, chunk)
+                                        _streams_mod.push_to_stream(sub.stream_id, chunk, metadata={"volume": round(rms * 100, 2)})
                                     except Exception:
                                         pass
                                 
-                                # Silence detection for this subscriber
+                                # Silence detection for this subscriber (smoothed RMS)
                                 if sub.silence_threshold is not None and sub.silence_duration_ms is not None:
-                                    is_silent = rms < sub.silence_threshold
+                                    # Maintain a sliding window of RMS values per subscriber
+                                    if sub.id not in subscriber_rms_windows:
+                                        subscriber_rms_windows[sub.id] = deque(maxlen=5)  # ~500ms at 100ms blocks
+                                    subscriber_rms_windows[sub.id].append(rms)
+                                    avg_rms = sum(subscriber_rms_windows[sub.id]) / len(subscriber_rms_windows[sub.id])
+                                    is_silent = avg_rms < sub.silence_threshold
                                     silence_duration_s = sub.silence_duration_ms / 1000.0
                                     
                                     if is_silent:
                                         if sub.id not in subscriber_silence_start:
                                             subscriber_silence_start[sub.id] = time.time()
-                                            print(f"[audio_bus] Silence detected for subscriber {sub.id}")
+                                            print(f"[audio_bus] Silence detected for subscriber {sub.id} (avg volume: {avg_rms*100:.2f}%)")
                                     else:
                                         if sub.id in subscriber_silence_start:
-                                            print(f"[audio_bus] Sound detected for subscriber {sub.id}, resetting silence timer")
+                                            elapsed = time.time() - subscriber_silence_start[sub.id]
+                                            print(f"[audio_bus] Sound detected for subscriber {sub.id} after {elapsed:.1f}s silence (avg volume: {avg_rms*100:.2f}%)")
                                             del subscriber_silence_start[sub.id]
                                     
                                     # Check if silence duration exceeded
                                     if sub.id in subscriber_silence_start:
                                         silence_elapsed = time.time() - subscriber_silence_start[sub.id]
                                         if silence_elapsed >= silence_duration_s:
-                                            print(f"[audio_bus] Silence duration ({silence_elapsed:.1f}s) exceeded for subscriber {sub.id}, stopping")
+                                            print(f"[audio_bus] Silence for {silence_elapsed:.1f}s >= {silence_duration_s:.1f}s for subscriber {sub.id}, stopping")
                                             if sub.silence_stop_event:
                                                 sub.silence_stop_event.set()
                                             del subscriber_silence_start[sub.id]
@@ -794,7 +816,7 @@ async def subscribe_media_bus(
     subscriber = BusSubscriber(
         id=subscriber_id,
         cursor=bus.buffer_index,  # Start from current position
-        silence_threshold=float(silence_threshold) if silence_threshold is not None else None,
+        silence_threshold=_normalize_silence_threshold(float(silence_threshold)) if silence_threshold is not None else None,
         silence_duration_ms=int(silence_duration_ms) if silence_duration_ms is not None else None,
         mirror=mirror,
     )
@@ -1336,7 +1358,14 @@ async def get_bus_frames(
     frames = []
     new_cursor = cursor
     
-    for idx, data, timestamp in snap:
+    for item in snap:
+        # Support both 3-tuple (legacy) and 4-tuple (with rms) formats
+        if len(item) == 4:
+            idx, data, timestamp, chunk_rms = item
+        else:
+            idx, data, timestamp = item
+            chunk_rms = None
+
         if idx >= cursor:
             if len(frames) >= max_frames:
                 break
@@ -1359,6 +1388,9 @@ async def get_bus_frames(
                     frame_data["data"] = data.tolist() if hasattr(data, 'tolist') else list(data)
                 except Exception:
                     frame_data["samples"] = 0
+                # Include volume (RMS as 0-100%)
+                if chunk_rms is not None:
+                    frame_data["volume"] = round(chunk_rms * 100, 2)
             
             frames.append(frame_data)
             new_cursor = idx + 1

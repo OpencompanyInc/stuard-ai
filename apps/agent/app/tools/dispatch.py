@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Callable, Awaitable
 
-from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http, streams, database, folder_limiter, mediapipe_tools
+from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http, streams, database, folder_limiter, mediapipe_tools, utils
 
 
 # Tool metadata for discovery (category and description)
@@ -66,6 +66,23 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "python_install": ("system", "Install Python packages in an environment"),
     "run_python_script": ("system", "Run Python code inline or from file"),
     "run_node_script": ("system", "Run Node.js code inline or from file"),
+
+    # Utilities (no scripts needed)
+    "get_datetime": ("utils", "Get current date and time with formatting"),
+    "math_eval": ("utils", "Evaluate a safe math expression"),
+    "generate_uuid": ("utils", "Generate UUID(s)"),
+    "random_number": ("utils", "Generate random number(s)"),
+    "random_choice": ("utils", "Pick random item(s) from a list"),
+    "get_env_var": ("utils", "Get environment variable value"),
+    "get_system_info": ("utils", "Get basic system information"),
+    "hash_string": ("utils", "Hash a string using various algorithms"),
+    "base64_encode": ("utils", "Encode text to base64"),
+    "base64_decode": ("utils", "Decode base64 to text"),
+    "json_parse": ("utils", "Parse a JSON string"),
+    "json_stringify": ("utils", "Convert data to JSON string"),
+    "sleep": ("utils", "Sleep/wait for a duration"),
+    "regex_match": ("utils", "Match regex pattern against text"),
+    "regex_replace": ("utils", "Replace text using regex"),
 
     # Memory (Knowledge Graph)
     "memory_retrieval": ("memory", "Retrieve memories by query"),
@@ -403,6 +420,23 @@ _HANDLERS = {
     "python_install": system.python_install,
     "run_python_script": system.run_python_script,
     "run_node_script": system.run_node_script,
+
+    # Utilities
+    "get_datetime": utils.get_datetime,
+    "math_eval": utils.math_eval,
+    "generate_uuid": utils.generate_uuid,
+    "random_number": utils.random_number,
+    "random_choice": utils.random_choice,
+    "get_env_var": utils.get_env_var,
+    "get_system_info": utils.get_system_info,
+    "hash_string": utils.hash_string,
+    "base64_encode": utils.base64_encode,
+    "base64_decode": utils.base64_decode,
+    "json_parse": utils.json_parse,
+    "json_stringify": utils.json_stringify,
+    "sleep": utils.sleep,
+    "regex_match": utils.regex_match,
+    "regex_replace": utils.regex_replace,
 
     # Memory (Knowledge Graph)
     "memory_retrieval": memory.memory_retrieval,

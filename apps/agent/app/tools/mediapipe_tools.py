@@ -15,6 +15,7 @@ import base64
 import importlib
 import os
 import sys
+import threading
 import uuid
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 from urllib.request import urlretrieve
@@ -26,6 +27,13 @@ from urllib.request import urlretrieve
 _MP_ENV_ID = "mediapipe_env"
 _REQUIRED_PACKAGES = ["mediapipe", "opencv-python", "numpy"]
 _env_ready = False
+
+# Long-lived detector caches (high impact for streaming workflows)
+_CACHE_LOCK = threading.Lock()
+_POSE_LANDMARKERS: Dict[str, Any] = {}
+_POSE_LOCKS: Dict[str, threading.Lock] = {}
+_HAND_LANDMARKERS: Dict[str, Any] = {}
+_HAND_LOCKS: Dict[str, threading.Lock] = {}
 
 # Model download URLs (Google-hosted, stable)
 _MODEL_URLS: Dict[str, str] = {
@@ -214,6 +222,46 @@ def _save_image(img, output_path: Optional[str] = None) -> str:
     return output_path
 
 
+async def _resolve_image(args: Dict[str, Any]):
+    """Resolve image from a chunk reference, base64 data URL, or file path.
+
+    Supports:
+      - imageData as dict with __ref key → zero-copy numpy from chunk ref registry
+      - imageData as base64 data URL string → decode from base64
+      - imagePath as file path → read from disk
+
+    Returns a BGR numpy array ready for MediaPipe processing.
+    """
+    import cv2
+    image_path = str(args.get("imagePath") or "").strip()
+    image_data = args.get("imageData")  # Can be string OR dict with __ref
+
+    # ---- Zero-copy chunk reference (from stream wire with format='ref') ----
+    if isinstance(image_data, dict) and "__ref" in image_data:
+        from .streams import get_chunk_ref, release_chunk_ref
+        ref_id = image_data["__ref"]
+        img = get_chunk_ref(ref_id)
+        if img is None:
+            raise ValueError(f"Chunk reference '{ref_id}' not found or expired")
+        # Release the ref immediately — we have the numpy array in hand
+        release_chunk_ref(ref_id)
+        # Ensure it's a proper BGR image (camera frames are already BGR)
+        if hasattr(img, 'shape') and len(img.shape) == 3:
+            return img
+        raise ValueError("Chunk reference does not contain a valid image array")
+
+    # ---- Base64 data URL ----
+    image_data_str = str(image_data or "").strip()
+    if image_data_str and image_data_str.startswith("data:"):
+        return await asyncio.to_thread(_load_image_from_data_url, image_data_str)
+
+    # ---- File path ----
+    if image_path:
+        return await asyncio.to_thread(_load_image, image_path)
+
+    raise ValueError("imagePath or imageData is required")
+
+
 def _nml_to_list(landmarks, image_width: int = 0, image_height: int = 0) -> List[Dict[str, Any]]:
     """Convert a NormalizedLandmark list (tasks API) to serialisable dicts."""
     result = []
@@ -231,6 +279,60 @@ def _nml_to_list(landmarks, image_width: int = 0, image_height: int = 0) -> List
             entry["px_y"] = int(lm.y * image_height)
         result.append(entry)
     return result
+
+
+def _pose_cache_key(model_path: str, min_det: float, min_track: float) -> str:
+    return f"{model_path}|{round(float(min_det), 4)}|{round(float(min_track), 4)}"
+
+
+def _hand_cache_key(model_path: str, max_hands: int, min_det: float, min_track: float) -> str:
+    return f"{model_path}|{int(max_hands)}|{round(float(min_det), 4)}|{round(float(min_track), 4)}"
+
+
+def _get_or_create_pose_landmarker(model_path: str, min_det: float, min_track: float):
+    from mediapipe.tasks.python import BaseOptions
+    from mediapipe.tasks.python.vision import PoseLandmarker, PoseLandmarkerOptions, RunningMode
+
+    key = _pose_cache_key(model_path, min_det, min_track)
+    with _CACHE_LOCK:
+        lm = _POSE_LANDMARKERS.get(key)
+        lock = _POSE_LOCKS.get(key)
+        if lm is None:
+            options = PoseLandmarkerOptions(
+                base_options=BaseOptions(model_asset_path=model_path),
+                running_mode=RunningMode.IMAGE,
+                num_poses=1,
+                min_pose_detection_confidence=float(min_det),
+                min_tracking_confidence=float(min_track),
+            )
+            lm = PoseLandmarker.create_from_options(options)
+            lock = threading.Lock()
+            _POSE_LANDMARKERS[key] = lm
+            _POSE_LOCKS[key] = lock
+        return lm, lock
+
+
+def _get_or_create_hand_landmarker(model_path: str, max_hands: int, min_det: float, min_track: float):
+    from mediapipe.tasks.python import BaseOptions
+    from mediapipe.tasks.python.vision import HandLandmarker, HandLandmarkerOptions, RunningMode
+
+    key = _hand_cache_key(model_path, max_hands, min_det, min_track)
+    with _CACHE_LOCK:
+        lm = _HAND_LANDMARKERS.get(key)
+        lock = _HAND_LOCKS.get(key)
+        if lm is None:
+            options = HandLandmarkerOptions(
+                base_options=BaseOptions(model_asset_path=model_path),
+                running_mode=RunningMode.IMAGE,
+                num_hands=int(max_hands),
+                min_hand_detection_confidence=float(min_det),
+                min_tracking_confidence=float(min_track),
+            )
+            lm = HandLandmarker.create_from_options(options)
+            lock = threading.Lock()
+            _HAND_LANDMARKERS[key] = lm
+            _HAND_LOCKS[key] = lock
+        return lm, lock
 
 
 # ---------------------------------------------------------------------------
@@ -301,11 +403,9 @@ async def mediapipe_pose(
     await _ensure_mediapipe(emit)
     import cv2
     import mediapipe as mp
-    from mediapipe.tasks.python import BaseOptions
-    from mediapipe.tasks.python.vision import PoseLandmarker, PoseLandmarkerOptions, RunningMode
 
     image_path = str(args.get("imagePath") or "").strip()
-    image_data = str(args.get("imageData") or "").strip()
+    image_data = args.get("imageData")
     output_path = str(args.get("outputPath") or "").strip() or None
     output_format = str(args.get("outputFormat") or "base64").strip().lower()
     draw = bool(args.get("drawLandmarks", True))
@@ -319,28 +419,26 @@ async def mediapipe_pose(
         await emit("mediapipe_processing", {"task": "pose"})
 
     model_path = await asyncio.to_thread(_get_model_path, "pose_landmarker")
-    options = PoseLandmarkerOptions(
-        base_options=BaseOptions(model_asset_path=model_path),
-        running_mode=RunningMode.IMAGE,
-        num_poses=1,
-        min_pose_detection_confidence=min_det,
-        min_tracking_confidence=min_track,
-    )
 
-    # Load image: prefer in-memory base64 (zero I/O) over file path
-    if image_data and image_data.startswith("data:"):
-        img = _load_image_from_data_url(image_data)
-    else:
-        img = await asyncio.to_thread(_load_image, image_path)
+    # Load image: supports chunk refs (zero-copy), base64, or file path
+    try:
+        img = await _resolve_image(args)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
     h, w = img.shape[:2]
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
-    with PoseLandmarker.create_from_options(options) as landmarker:
+    landmarker, detector_lock = await asyncio.to_thread(_get_or_create_pose_landmarker, model_path, min_det, min_track)
+    with detector_lock:
         result = landmarker.detect(mp_image)
 
     if not result.pose_landmarks:
-        return {"ok": True, "poseDetected": False, "landmarks": [], "landmarkCount": 0}
+        # No detection — still return the raw frame so streaming pipelines don't go blank
+        no_det_data_url = None
+        if output_format == 'base64' or not output_path:
+            no_det_data_url = await asyncio.to_thread(_encode_image_to_data_url, img)
+        return {"ok": True, "poseDetected": False, "landmarks": [], "landmarkCount": 0, "outputDataUrl": no_det_data_url, "outputPath": None}
 
     landmarks = _nml_to_list(result.pose_landmarks[0], w, h)
 
@@ -356,7 +454,7 @@ async def mediapipe_pose(
                 output_path = os.path.join(_get_output_dir(), f"mp_pose_{uuid.uuid4().hex[:8]}.png")
             out_path = await asyncio.to_thread(_save_image, annotated, output_path)
         if output_format == 'base64' or not output_path:
-            out_data_url = _encode_image_to_data_url(annotated)
+            out_data_url = await asyncio.to_thread(_encode_image_to_data_url, annotated)
 
     return {
         "ok": True,
@@ -379,11 +477,9 @@ async def mediapipe_hands(
     await _ensure_mediapipe(emit)
     import cv2
     import mediapipe as mp
-    from mediapipe.tasks.python import BaseOptions
-    from mediapipe.tasks.python.vision import HandLandmarker, HandLandmarkerOptions, RunningMode
 
     image_path = str(args.get("imagePath") or "").strip()
-    image_data = str(args.get("imageData") or "").strip()
+    image_data = args.get("imageData")
     output_path = str(args.get("outputPath") or "").strip() or None
     output_format = str(args.get("outputFormat") or "base64").strip().lower()
     draw = bool(args.get("drawLandmarks", True))
@@ -398,27 +494,25 @@ async def mediapipe_hands(
         await emit("mediapipe_processing", {"task": "hands"})
 
     model_path = await asyncio.to_thread(_get_model_path, "hand_landmarker")
-    options = HandLandmarkerOptions(
-        base_options=BaseOptions(model_asset_path=model_path),
-        running_mode=RunningMode.IMAGE,
-        num_hands=max_hands,
-        min_hand_detection_confidence=min_det,
-        min_tracking_confidence=min_track,
-    )
 
-    if image_data and image_data.startswith("data:"):
-        img = _load_image_from_data_url(image_data)
-    else:
-        img = await asyncio.to_thread(_load_image, image_path)
+    try:
+        img = await _resolve_image(args)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
     h, w = img.shape[:2]
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
-    with HandLandmarker.create_from_options(options) as landmarker:
+    landmarker, detector_lock = await asyncio.to_thread(_get_or_create_hand_landmarker, model_path, max_hands, min_det, min_track)
+    with detector_lock:
         result = landmarker.detect(mp_image)
 
     if not result.hand_landmarks:
-        return {"ok": True, "hands": [], "handCount": 0}
+        # No detection — still return the raw frame so streaming pipelines don't go blank
+        no_det_data_url = None
+        if output_format == 'base64' or not output_path:
+            no_det_data_url = await asyncio.to_thread(_encode_image_to_data_url, img)
+        return {"ok": True, "hands": [], "handCount": 0, "outputDataUrl": no_det_data_url, "outputPath": None}
 
     hand_data = []
     for i, hand_lms in enumerate(result.hand_landmarks):
@@ -442,7 +536,7 @@ async def mediapipe_hands(
                 output_path = os.path.join(_get_output_dir(), f"mp_hands_{uuid.uuid4().hex[:8]}.png")
             out_path = await asyncio.to_thread(_save_image, annotated, output_path)
         if output_format == 'base64' or not output_path:
-            out_data_url = _encode_image_to_data_url(annotated)
+            out_data_url = await asyncio.to_thread(_encode_image_to_data_url, annotated)
 
     return {"ok": True, "hands": hand_data, "handCount": len(hand_data), "outputPath": out_path, "outputDataUrl": out_data_url}
 
@@ -462,7 +556,7 @@ async def mediapipe_face_detection(
     from mediapipe.tasks.python.vision import FaceDetector, FaceDetectorOptions, RunningMode
 
     image_path = str(args.get("imagePath") or "").strip()
-    image_data = str(args.get("imageData") or "").strip()
+    image_data = args.get("imageData")
     output_path = str(args.get("outputPath") or "").strip() or None
     output_format = str(args.get("outputFormat") or "base64").strip().lower()
     draw = bool(args.get("drawDetections", True))
@@ -481,10 +575,10 @@ async def mediapipe_face_detection(
         min_detection_confidence=min_det,
     )
 
-    if image_data and image_data.startswith("data:"):
-        img = _load_image_from_data_url(image_data)
-    else:
-        img = await asyncio.to_thread(_load_image, image_path)
+    try:
+        img = await _resolve_image(args)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
     h, w = img.shape[:2]
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
@@ -493,7 +587,11 @@ async def mediapipe_face_detection(
         result = detector.detect(mp_image)
 
     if not result.detections:
-        return {"ok": True, "faces": [], "faceCount": 0}
+        # No detection — still return the raw frame so streaming pipelines don't go blank
+        no_det_data_url = None
+        if output_format == 'base64' or not output_path:
+            no_det_data_url = await asyncio.to_thread(_encode_image_to_data_url, img)
+        return {"ok": True, "faces": [], "faceCount": 0, "outputDataUrl": no_det_data_url, "outputPath": None}
 
     faces = []
     for det in result.detections:
@@ -544,7 +642,7 @@ async def mediapipe_face_mesh(
     from mediapipe.tasks.python.vision import FaceLandmarker, FaceLandmarkerOptions, RunningMode
 
     image_path = str(args.get("imagePath") or "").strip()
-    image_data = str(args.get("imageData") or "").strip()
+    image_data = args.get("imageData")
     output_path = str(args.get("outputPath") or "").strip() or None
     output_format = str(args.get("outputFormat") or "base64").strip().lower()
     draw = bool(args.get("drawLandmarks", True))
@@ -567,10 +665,10 @@ async def mediapipe_face_mesh(
         min_tracking_confidence=min_track,
     )
 
-    if image_data and image_data.startswith("data:"):
-        img = _load_image_from_data_url(image_data)
-    else:
-        img = await asyncio.to_thread(_load_image, image_path)
+    try:
+        img = await _resolve_image(args)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
     h, w = img.shape[:2]
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
@@ -579,7 +677,11 @@ async def mediapipe_face_mesh(
         result = landmarker.detect(mp_image)
 
     if not result.face_landmarks:
-        return {"ok": True, "faces": [], "faceCount": 0}
+        # No detection — still return the raw frame so streaming pipelines don't go blank
+        no_det_data_url = None
+        if output_format == 'base64' or not output_path:
+            no_det_data_url = await asyncio.to_thread(_encode_image_to_data_url, img)
+        return {"ok": True, "faces": [], "faceCount": 0, "outputDataUrl": no_det_data_url, "outputPath": None}
 
     face_data = []
     for face_lms in result.face_landmarks:
@@ -618,7 +720,7 @@ async def mediapipe_segmentation(
     from mediapipe.tasks.python.vision import ImageSegmenter, ImageSegmenterOptions, RunningMode
 
     image_path = str(args.get("imagePath") or "").strip()
-    image_data = str(args.get("imageData") or "").strip()
+    image_data = args.get("imageData")
     output_path = str(args.get("outputPath") or "").strip() or None
     output_format = str(args.get("outputFormat") or "base64").strip().lower()
     threshold = float(args.get("threshold", 0.5))
@@ -640,10 +742,10 @@ async def mediapipe_segmentation(
         output_confidence_masks=True,
     )
 
-    if image_data and image_data.startswith("data:"):
-        img = _load_image_from_data_url(image_data)
-    else:
-        img = await asyncio.to_thread(_load_image, image_path)
+    try:
+        img = await _resolve_image(args)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
@@ -710,7 +812,7 @@ async def mediapipe_holistic(
     )
 
     image_path = str(args.get("imagePath") or "").strip()
-    image_data = str(args.get("imageData") or "").strip()
+    image_data = args.get("imageData")
     output_path = str(args.get("outputPath") or "").strip() or None
     output_format = str(args.get("outputFormat") or "base64").strip().lower()
     draw = bool(args.get("drawLandmarks", True))
@@ -723,10 +825,10 @@ async def mediapipe_holistic(
     if emit:
         await emit("mediapipe_processing", {"task": "holistic"})
 
-    if image_data and image_data.startswith("data:"):
-        img = _load_image_from_data_url(image_data)
-    else:
-        img = await asyncio.to_thread(_load_image, image_path)
+    try:
+        img = await _resolve_image(args)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
     h, w = img.shape[:2]
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)

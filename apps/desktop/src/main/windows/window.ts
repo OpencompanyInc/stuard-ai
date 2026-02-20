@@ -437,6 +437,9 @@ export function createWindow() {
 
   logger.info("BrowserWindow created");
   win.setMenu(null);
+  if (screenCaptureInvisibleEnabled) {
+    try { win.setContentProtection(true); } catch {}
+  }
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   centerTopWithContentSize(win, WIDTH, HEIGHT);
   // Initialize stable content size baseline
@@ -624,6 +627,9 @@ export function openOnboardingWindow() {
   });
 
   onboardingWin.setMenu(null);
+  if (screenCaptureInvisibleEnabled) {
+    try { onboardingWin.setContentProtection(true); } catch {}
+  }
 
   // Center on screen
   const { workArea } = screen.getPrimaryDisplay();
@@ -700,6 +706,9 @@ export function openDashboardWindow(options?: { tab?: string }) {
   });
   d.setMenu(null);
   d.setMenuBarVisibility(false);
+  if (screenCaptureInvisibleEnabled) {
+    try { d.setContentProtection(true); } catch {}
+  }
   if (isDev) {
     const url = initialTab
       ? `${getRendererUrl("dashboard")}?tab=${encodeURIComponent(initialTab)}`
@@ -773,6 +782,9 @@ export function openWorkflowsWindow(options?: { marketplaceSlug?: string }) {
   });
   d.setMenu(null);
   d.setMenuBarVisibility(false);
+  if (screenCaptureInvisibleEnabled) {
+    try { d.setContentProtection(true); } catch {}
+  }
   // Open devTools in production for debugging workflow UI issues
   if (!isDev) {
     d.webContents.on('did-finish-load', () => {
@@ -874,6 +886,9 @@ export function openSidebarWindow(options?: { tab?: 'spaces' | 'canvas' | 'termi
   });
 
   sidebarWin.setMenu(null);
+  if (screenCaptureInvisibleEnabled) {
+    try { sidebarWin.setContentProtection(true); } catch {}
+  }
   // Always standalone mode - no special always-on-top handling needed
 
   // Build URL/file with tab and expanded params (always expanded)
@@ -1823,6 +1838,28 @@ export function getNotificationWindow() {
   return notificationWin;
 }
 
+// Track global screen capture invisibility state
+let screenCaptureInvisibleEnabled = false;
+
+export function getScreenCaptureInvisible(): boolean {
+  return screenCaptureInvisibleEnabled;
+}
+
+export function setScreenCaptureInvisible(enabled: boolean) {
+  screenCaptureInvisibleEnabled = enabled;
+  const allWindows = [win, dashboardWin, workflowsWin, onboardingWin, sidebarWin, hudWin, notificationWin];
+  for (const w of allWindows) {
+    if (w && !w.isDestroyed()) {
+      try { w.setContentProtection(enabled); } catch {}
+    }
+  }
+  // Also apply to all BrowserWindows (catches custom_ui windows)
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { w.setContentProtection(enabled); } catch {}
+  }
+  logger.info(`Screen capture invisibility ${enabled ? 'enabled' : 'disabled'} for all windows`);
+}
+
 export function openNotificationWindow() {
   if (notificationWin && !notificationWin.isDestroyed()) {
     // Should be invisible to interaction but visible for rendering
@@ -1863,6 +1900,9 @@ export function openNotificationWindow() {
   // Make it click-through by default
   notificationWin.setIgnoreMouseEvents(true, { forward: true });
   notificationWin.setMenu(null);
+  if (screenCaptureInvisibleEnabled) {
+    try { notificationWin.setContentProtection(true); } catch {}
+  }
 
   if (isDev) {
     notificationWin.loadURL(getRendererUrl("notification"));

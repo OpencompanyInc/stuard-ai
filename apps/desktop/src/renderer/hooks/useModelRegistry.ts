@@ -4,6 +4,10 @@ import { FALLBACK_MODELS, ALL_CHAT_MODEL_IDS, type ModelMeta } from "./usePrefer
 
 const ALLOWED_MODEL_SET = new Set(ALL_CHAT_MODEL_IDS);
 
+const OVERRIDE_PROVIDER_LOGOS: Record<string, string> = {
+  anthropic: 'https://models.dev/logos/anthropic.svg',
+};
+
 export type CloudModelRegistry = {
   ok: boolean;
   source?: string;
@@ -92,7 +96,7 @@ export function useModelRegistry() {
   }, []);
 
   const logoByProviderId = useMemo(() => {
-    const map: Record<string, string> = {};
+    const map: Record<string, string> = { ...OVERRIDE_PROVIDER_LOGOS };
     (registry?.providers || []).forEach((p) => {
       if (p?.id && p?.logoUrl) map[String(p.id)] = String(p.logoUrl);
     });
@@ -131,8 +135,16 @@ export function useModelRegistry() {
       category: fallbackById.get(m.id)?.category || ((m.tier as any) || (m.reasoning ? "smart" : "balanced")),
     }));
 
-    // Add fallback models that aren't in registry (e.g., Perplexity research models)
-    const missingFallbacks = FALLBACK_MODELS.filter(m => !registryIds.has(m.id));
+    // Add fallback models that aren't in registry (e.g., Perplexity/Anthropic aliases)
+    // while still attaching provider logos when available.
+    const missingFallbacks = FALLBACK_MODELS
+      .filter(m => !registryIds.has(m.id))
+      .map((m) => {
+        const providerId = m.providerId || String(m.id).split('/')[0];
+        const providerLogo = providerId ? logoByProviderId[providerId] : undefined;
+        if (!providerLogo || m.logoUrl) return m;
+        return { ...m, logoUrl: providerLogo };
+      });
 
     return [...registryModels, ...missingFallbacks];
   }, [registry, logoByProviderId, fallbackById]);

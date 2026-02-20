@@ -7,70 +7,9 @@ import { WorkflowNode } from "./WorkflowNodeCard";
 import type { DesignerModel, DesignerWire } from "../types";
 import type { StepExecutionStatus } from "./WorkflowNodeCard";
 import type { AlignmentGuide } from "../utils/alignment";
+import { isBackEdge as isBackEdgeCycle } from "../utils/graphUtils";
 
-/**
- * Compute chain indices for all nodes based on the flow of connections.
- * Triggers start at index 0, and each step downstream gets a higher index.
- * This creates a topological ordering that ignores back edges.
- */
-function computeChainIndices(
-  triggers: { id: string }[],
-  nodes: { id: string }[],
-  wires: DesignerWire[]
-): Map<string, number> {
-  const indices = new Map<string, number>();
-  const visited = new Set<string>();
-  
-  // Start with triggers at index 0
-  const queue: { id: string; index: number }[] = triggers.map(t => ({ id: t.id, index: 0 }));
-  
-  while (queue.length > 0) {
-    const { id, index } = queue.shift()!;
-    
-    // If already visited with a lower or equal index, skip
-    // If visited with higher index, update to lower (closer to source)
-    const existingIndex = indices.get(id);
-    if (existingIndex !== undefined && existingIndex <= index) continue;
-    
-    indices.set(id, index);
-    
-    // Find all outgoing wires and queue their targets with index + 1
-    for (const w of wires) {
-      if (w.from === id) {
-        const targetIndex = indices.get(w.to);
-        // Only queue if not visited or if we found a shorter path
-        if (targetIndex === undefined || targetIndex > index + 1) {
-          queue.push({ id: w.to, index: index + 1 });
-        }
-      }
-    }
-  }
-  
-  // Assign indices to any disconnected nodes (shouldn't happen but just in case)
-  let maxIndex = Math.max(0, ...indices.values());
-  for (const node of nodes) {
-    if (!indices.has(node.id)) {
-      indices.set(node.id, ++maxIndex);
-    }
-  }
-  
-  return indices;
-}
-
-/**
- * Check if a wire is a back edge based on chain indices.
- * A back edge goes from a higher index to a lower or equal index in the chain.
- */
-function isBackEdgeByChain(
-  chainIndices: Map<string, number>,
-  from: string,
-  to: string
-): boolean {
-  const fromIndex = chainIndices.get(from) ?? 0;
-  const toIndex = chainIndices.get(to) ?? 0;
-  // Back edge if going from higher index to lower or equal index
-  return fromIndex >= toIndex;
-}
+// Back edge (cycle) detection is in ../utils/graphUtils.ts
 
 interface ExecutionState {
   flowId: string;
@@ -256,8 +195,6 @@ export function WorkflowCanvas({
           </defs>
 
           {(() => {
-            // Compute chain indices once for all nodes based on connection flow
-            const chainIndices = computeChainIndices(model.triggers, model.nodes, safeWires);
 
             // Compute which nodes are part of an active streaming pipeline.
             // Walk forward from stream consumer nodes through flow wires so
@@ -293,8 +230,8 @@ export function WorkflowCanvas({
 
             const isStreamWire = !!(w as any).stream;
 
-            // Detect if this is a back edge based on chain index
-            const isBackEdge = isBackEdgeByChain(chainIndices, w.from, w.to);
+            // Detect if this wire creates an actual cycle (x→y→...→x)
+            const isBackEdge = isBackEdgeCycle(w.from, w.to, safeWires);
 
             let x1: number, y1: number, x2: number, y2: number;
             let pathD: string;

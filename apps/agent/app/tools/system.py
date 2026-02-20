@@ -22,6 +22,35 @@ _terminal_sessions: Dict[str, Dict[str, Any]] = {}
 COMMAND_CHECKPOINT_MAX_ENTRIES = int(os.getenv("COMMAND_CHECKPOINT_MAX_ENTRIES", "2000"))
 
 
+def _checkpoint_requested(args: Dict[str, Any]) -> bool:
+    """
+    Check whether this tool call explicitly requests filesystem checkpointing.
+
+    Supported flags (in priority order):
+      - checkpoint: boolean
+      - checkpointMode: "always" | "never" | "auto" (auto currently behaves like false)
+      - isDestructive / isModification / writesFiles / modifiesFiles: boolean aliases
+    """
+    try:
+        direct = args.get("checkpoint")
+        if isinstance(direct, bool):
+            return direct
+
+        mode = str(args.get("checkpointMode") or "").strip().lower()
+        if mode in ("always", "on", "true", "required"):
+            return True
+        if mode in ("never", "off", "false", "none", "auto", ""):
+            return False
+
+        for key in ("isDestructive", "isModification", "writesFiles", "modifiesFiles"):
+            v = args.get(key)
+            if isinstance(v, bool):
+                return v
+    except Exception:
+        return False
+    return False
+
+
 def _now_ms() -> int:
     return int(time.time() * 1000)
 
@@ -53,8 +82,14 @@ def _collect_path_snapshot(root: str, max_entries: int = COMMAND_CHECKPOINT_MAX_
         return {"root": root_abs, "files": files, "dirs": dirs, "truncated": truncated}
 
     count = 0
+    dir_count = 0
+    max_dirs = max_entries * 5  # Safety cap to prevent walking huge dir trees
     for cur_root, dirnames, filenames in os.walk(root_abs):
         dirs.add(cur_root)
+        dir_count += 1
+        if dir_count >= max_dirs:
+            truncated = True
+            break
         for name in filenames:
             fp = os.path.join(cur_root, name)
             try:
@@ -75,8 +110,14 @@ def _collect_path_snapshot(root: str, max_entries: int = COMMAND_CHECKPOINT_MAX_
 
 
 def _start_command_checkpoint(cwd: Optional[str]) -> Optional[Dict[str, Any]]:
-    root_input = cwd if isinstance(cwd, str) and cwd.strip() else os.getcwd()
-    root = os.path.abspath(os.path.expanduser(root_input))
+    # Only checkpoint when an explicit cwd is provided.
+    # Without an explicit cwd, os.getcwd() could be the user's home dir or a
+    # PyInstaller temp dir — walking those with os.walk blocks the event loop
+    # for minutes on large directory trees (AppData, node_modules, etc.).
+    if not isinstance(cwd, str) or not cwd.strip():
+        return None
+
+    root = os.path.abspath(os.path.expanduser(cwd.strip()))
     if not os.path.isdir(root):
         return None
 
@@ -288,7 +329,7 @@ async def run_system_command(args: Dict[str, Any], emit: Callable[[str, Dict[str
     if not cmd:
         raise ValueError("missing command")
 
-    checkpoint = _start_command_checkpoint(cwd if isinstance(cwd, str) else None)
+    checkpoint = _start_command_checkpoint(cwd if isinstance(cwd, str) else None) if _checkpoint_requested(args) else None
 
     if emit:
         await emit("executing", {"command": cmd})
@@ -343,7 +384,7 @@ async def run_command(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] 
     if not cmd:
         raise ValueError("missing command")
 
-    checkpoint = _start_command_checkpoint(cwd if isinstance(cwd, str) else None)
+    checkpoint = _start_command_checkpoint(cwd if isinstance(cwd, str) else None) if _checkpoint_requested(args) else None
 
     def _is_windows() -> bool:
         return sys.platform.startswith("win")
@@ -630,20 +671,21 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
         timeoutMs: Script execution timeout (default: 30000)
         cwd: Working directory for script execution
         autoInstall: Auto-install missing packages (default: True)
+        checkpoint: Optional boolean. When true, records a filesystem checkpoint for rollback.
     
     Returns:
         { ok, exitCode, stdout, stderr, python, envId, packagesInstalled? }
     """
     try:
         code = str(args.get("code") or "")
-        path = str(args.get("path") or "")
+        path = str(args.get("path") or args.get("filePath") or "")
         arg_list = [str(a) for a in (args.get("args") or [])]
         env_id = str(args.get("envId") or "").strip()
         packages = args.get("packages") or []
         req_txt = str(args.get("requirementsTxt") or "")
         timeout_ms = int(args.get("timeoutMs") or 30000)
         cwd = args.get("cwd")
-        checkpoint = _start_command_checkpoint(cwd if isinstance(cwd, str) else None)
+        checkpoint = _start_command_checkpoint(cwd if isinstance(cwd, str) else None) if _checkpoint_requested(args) else None
         auto_install = args.get("autoInstall", True)
 
         # Normalize packages to list
@@ -763,7 +805,10 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
             is_frozen = getattr(sys, 'frozen', False) or hasattr(sys, '_MEIPASS')
             if is_frozen:
                 # Prefer system Python from PATH to keep user scripts clean
-                py_bin = shutil.which("python") or shutil.which("python3") or shutil.which("py") or sys.executable
+                # Run in thread to avoid blocking the event loop on Windows PATH traversal
+                py_bin = await asyncio.to_thread(
+                    lambda: shutil.which("python") or shutil.which("python3") or shutil.which("py") or sys.executable
+                )
             else:
                 py_bin = sys.executable or shutil.which("python") or shutil.which("python3") or ("py" if sys.platform.startswith("win") else "python")
 
@@ -866,14 +911,17 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
 async def run_node_script(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None) -> Dict[str, Any]:
     try:
         code = str(args.get("code") or "")
-        path = str(args.get("path") or "")
+        path = str(args.get("path") or args.get("filePath") or "")
         arg_list = [str(a) for a in (args.get("args") or [])]
         timeout_ms = int(args.get("timeoutMs") or 30000)
         cwd = args.get("cwd")
-        checkpoint = _start_command_checkpoint(cwd if isinstance(cwd, str) else None)
+        checkpoint = _start_command_checkpoint(cwd if isinstance(cwd, str) else None) if _checkpoint_requested(args) else None
 
-        # Find node executable
-        node_bin = shutil.which("node") or shutil.which("nodejs")
+        # Find node executable (run in thread to avoid blocking the event loop
+        # on Windows where PATH traversal can be slow)
+        node_bin = await asyncio.to_thread(
+            lambda: shutil.which("node") or shutil.which("nodejs")
+        )
         if not node_bin:
             return {"ok": False, "error": "node_not_found"}
 
@@ -925,20 +973,67 @@ async def run_node_script(args: Dict[str, Any], emit: Callable[[str, Dict[str, A
 
         if emit:
             await emit("executing", {"node": node_bin, "path": script_path})
+        
         try:
-            proc = await asyncio.to_thread(
-                subprocess.run,
-                [node_bin, script_path, *arg_list],
-                capture_output=True,
-                text=True,
-                timeout=max(0.1, timeout_ms / 1000),
-                cwd=cwd if isinstance(cwd, str) and cwd else None,
-            )
+            # Run subprocess.run in a thread (handles pipe I/O correctly)
+            # while emitting keepalive progress events from the async loop.
+            import threading
+            import time as _time
+            
+            done_event = threading.Event()
+            result_box: dict = {}
+            
+            def _run_in_thread():
+                try:
+                    proc = subprocess.run(
+                        [node_bin, script_path, *arg_list],
+                        capture_output=True,
+                        text=True,
+                        timeout=max(0.1, timeout_ms / 1000),
+                        cwd=cwd if isinstance(cwd, str) and cwd else None,
+                    )
+                    result_box["proc"] = proc
+                except subprocess.TimeoutExpired as e:
+                    result_box["timeout"] = True
+                    result_box["stdout"] = (e.stdout or "") if isinstance(e.stdout, str) else ""
+                    result_box["stderr"] = (e.stderr or "") if isinstance(e.stderr, str) else ""
+                except Exception as e:
+                    result_box["error"] = str(e)
+                finally:
+                    done_event.set()
+            
+            thread = threading.Thread(target=_run_in_thread, daemon=True)
+            start_wall = _time.monotonic()
+            thread.start()
+            
+            # Emit keepalive progress while waiting for thread
+            last_keepalive = 0
+            try:
+                while not done_event.is_set():
+                    await asyncio.sleep(0.5)
+                    elapsed_s = _time.monotonic() - start_wall
+                    sec = int(elapsed_s)
+                    if emit and sec >= last_keepalive + 5:
+                        last_keepalive = sec
+                        await emit("running", {"elapsed": int(elapsed_s * 1000), "timeoutMs": timeout_ms})
+                
+                thread.join(timeout=2)
+            except asyncio.CancelledError:
+                return {"ok": False, "error": "cancelled"}
+            
             _finish_command_checkpoint(checkpoint)
-            return {"ok": True, "exitCode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
-        except subprocess.TimeoutExpired:
-            _finish_command_checkpoint(checkpoint)
-            return {"ok": False, "error": "timeout"}
+            
+            if "proc" in result_box:
+                proc = result_box["proc"]
+                if emit:
+                    await emit("completed", {"exitCode": proc.returncode})
+                return {"ok": True, "exitCode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
+            elif result_box.get("timeout"):
+                if emit:
+                    await emit("timeout", {"timeoutMs": timeout_ms})
+                return {"ok": False, "error": "timeout", "stdout": result_box.get("stdout", ""), "stderr": result_box.get("stderr", "")}
+            else:
+                return {"ok": False, "error": result_box.get("error", "unknown")}
         finally:
             for p in cleanup:
                 try:

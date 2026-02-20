@@ -174,7 +174,7 @@ export function usePlannerData(accessToken?: string | null): UsePlannerDataResul
 
   const fetchTasks = async (baseUrl: string): Promise<PlannerTask[] | null> => {
     try {
-      const urls = [`${baseUrl}/v1/tasks/list`, `${baseUrl}/tasks/list`];
+      const urls = [`${baseUrl}/v1/tasks/list`];
       for (const url of urls) {
         try {
           const res = await fetch(url);
@@ -195,7 +195,7 @@ export function usePlannerData(accessToken?: string | null): UsePlannerDataResul
 
   const fetchReminders = async (baseUrl: string): Promise<PlannerReminder[] | null> => {
     try {
-      const urls = [`${baseUrl}/v1/reminders/list`, `${baseUrl}/reminders/list`];
+      const urls = [`${baseUrl}/v1/reminders/list`];
       for (const url of urls) {
         try {
           const res = await fetch(url);

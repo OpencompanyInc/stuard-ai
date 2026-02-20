@@ -5,6 +5,19 @@ import { getBridgeSecrets } from './bridge';
 
 const GH_API = 'https://api.github.com';
 
+// Optional profile field for all GitHub tools. Omit to use the default profile.
+const profileField = z.string().optional().describe(
+  'OAuth profile label to use (e.g. "work", "personal"). Omit to use the default profile.'
+);
+
+function resolveProfile(explicit?: string): string | undefined {
+  if (explicit) return explicit;
+  try {
+    const secrets = getBridgeSecrets();
+    return (secrets as any)?.githubProfile || (secrets as any)?.profile || undefined;
+  } catch { return undefined; }
+}
+
 async function ghFetch(path: string, token: string, init?: RequestInit) {
   const url = path.startsWith('http') ? path : `${GH_API}${path}`;
   const headers: Record<string, string> = {
@@ -23,11 +36,12 @@ async function ghFetch(path: string, token: string, init?: RequestInit) {
   return body;
 }
 
-async function requireGithubToken(): Promise<string> {
+async function requireGithubToken(profileLabel?: string): Promise<string> {
   const secrets = getBridgeSecrets();
   const userId = String((secrets as any)?.userId || '');
   if (!userId) throw new Error('missing_user_context');
-  const token = await getExternalAccessToken(userId, 'github');
+  const profile = resolveProfile(profileLabel);
+  const token = await getExternalAccessToken(userId, 'github', profile);
   if (!token) throw new Error('github_not_connected');
   return token;
 }
@@ -35,9 +49,10 @@ async function requireGithubToken(): Promise<string> {
 export const github_get_me = createTool({
   id: 'github_get_me',
   description: 'Get the authenticated GitHub user profile.',
-  inputSchema: z.object({}),
-  execute: async () => {
-    const token = await requireGithubToken();
+  inputSchema: z.object({ profile: profileField }),
+  execute: async (inputData) => {
+    const { profile } = inputData as any;
+    const token = await requireGithubToken(profile);
     const me = await ghFetch('/user', token);
     return { me };
   },
@@ -47,12 +62,14 @@ export const github_list_repos = createTool({
   id: 'github_list_repos',
   description: 'List repositories for the authenticated user. visibility can be all, public, or private.',
   inputSchema: z.object({
+    profile: profileField,
     visibility: z.enum(['all', 'public', 'private']).default('all'),
     per_page: z.number().int().min(1).max(100).default(30),
     page: z.number().int().min(1).default(1),
   }),
   execute: async (inputData, context) => {
-    const token = await requireGithubToken();
+    const { profile } = inputData as any;
+    const token = await requireGithubToken(profile);
     const { visibility, per_page, page  } = inputData as any;
     const params = new URLSearchParams();
     params.set('visibility', visibility || 'all');
@@ -67,6 +84,7 @@ export const github_list_issues = createTool({
   id: 'github_list_issues',
   description: 'List issues for a repository. owner and repo are required.',
   inputSchema: z.object({
+    profile: profileField,
     owner: z.string().min(1),
     repo: z.string().min(1),
     state: z.enum(['open', 'closed', 'all']).default('open'),
@@ -74,7 +92,8 @@ export const github_list_issues = createTool({
     page: z.number().int().min(1).default(1),
   }),
   execute: async (inputData, context) => {
-    const token = await requireGithubToken();
+    const { profile } = inputData as any;
+    const token = await requireGithubToken(profile);
     const { owner, repo, state, per_page, page  } = inputData as any;
     const params = new URLSearchParams();
     params.set('state', state || 'open');
@@ -89,6 +108,7 @@ export const github_create_issue = createTool({
   id: 'github_create_issue',
   description: 'Create an issue in a repository. Requires repo scope.',
   inputSchema: z.object({
+    profile: profileField,
     owner: z.string().min(1),
     repo: z.string().min(1),
     title: z.string().min(1),
@@ -97,7 +117,8 @@ export const github_create_issue = createTool({
     assignees: z.array(z.string()).optional(),
   }),
   execute: async (inputData, context) => {
-    const token = await requireGithubToken();
+    const { profile } = inputData as any;
+    const token = await requireGithubToken(profile);
     const { owner, repo, title, body, labels, assignees  } = inputData as any;
     const payload: any = { title };
     if (typeof body === 'string' && body) payload.body = body;

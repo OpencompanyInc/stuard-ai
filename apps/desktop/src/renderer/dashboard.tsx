@@ -181,7 +181,7 @@ function DashboardApp() {
   const [creditsInfo, setCreditsInfo] = useState<null | { ok?: boolean; plan?: string; limit?: number; used?: number; remaining?: number; unlimited?: boolean; creditsPerUsd?: number }>(null);
 
   // Preferences
-  const { tone, setTone, customTone, setCustomTone, setOnboardingComplete, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, persona, setPersona, translucentMode, setTranslucentMode, wakewordEnabled, setWakewordEnabled, terminalEnabled, setTerminalEnabled, browserEnabled, setBrowserEnabled, chatMode, setChatMode, chatModels, setChatModels } = usePreferences();
+  const { tone, setTone, customTone, setCustomTone, setOnboardingComplete, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, persona, setPersona, translucentMode, setTranslucentMode, wakewordEnabled, setWakewordEnabled, terminalEnabled, setTerminalEnabled, browserEnabled, setBrowserEnabled, screenCaptureInvisible, setScreenCaptureInvisible, chatMode, setChatMode, chatModels, setChatModels } = usePreferences();
   const [personaDraft, setPersonaDraft] = useState<string>(persona || "");
   useEffect(() => { setPersonaDraft(persona || ""); }, [persona]);
 
@@ -221,6 +221,12 @@ function DashboardApp() {
     setupPython,
     installPython,
     runPython,
+    // profiles
+    profiles,
+    profilesLoading,
+    refreshProfiles,
+    setDefaultProfile,
+    deleteProfile,
   } = useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP });
 
   // Local automations (Deployed Stuards)
@@ -1044,6 +1050,8 @@ function DashboardApp() {
                               setWakewordEnabled={setWakewordEnabled}
                               terminalEnabled={terminalEnabled}
                               setTerminalEnabled={setTerminalEnabled}
+                              screenCaptureInvisible={screenCaptureInvisible}
+                              setScreenCaptureInvisible={setScreenCaptureInvisible}
                               handleSaveTheme={handleSaveTheme}
                               tone={tone}
                               setTone={setTone}
@@ -1103,6 +1111,11 @@ function DashboardApp() {
                                 installPython={installPython}
                                 runPython={runPython}
                                 browserStatus={browserStatus}
+                                profiles={profiles}
+                                profilesLoading={profilesLoading}
+                                refreshProfiles={refreshProfiles}
+                                setDefaultProfile={setDefaultProfile}
+                                deleteProfile={deleteProfile}
                               />
                             </>
                           )}

@@ -84,6 +84,14 @@ jobs:
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
 
+      - name: Notify Ops – Deploying
+        if: ${{ always() }}
+        continue-on-error: true
+        run: |
+          curl -sf -X POST https://api.stuard.ai/v1/ops/deployments/callback \
+            -H 'Content-Type: application/json' \
+            -d "{\"secret\":\"${{ secrets.DEPLOY_CALLBACK_SECRET }}\",\"channel\":\"beta\",\"status\":\"deploying\",\"workflow_run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+
       - name: Deploy to Cloud Run (Beta)
         run: |
           IMAGE="$GAR_HOST/$GCP_PROJECT_ID/$GAR_REPO/stuard-cloud-ai:beta"
@@ -95,6 +103,22 @@ jobs:
             --service-account "${{ secrets.GCP_RUN_SA }}" \
             --set-env-vars NODE_ENV=beta,CLOUD_PUBLIC_URL=https://beta-api.stuard.ai,WEBSITE_BASE_URL=https://beta.stuard.ai,SUPABASE_URL=${{ secrets.SUPABASE_URL }} \
             --set-secrets XAI_API_KEY=XAI_API_KEY:latest,GOOGLE_GENERATIVE_AI_API_KEY=GOOGLE_GENERATIVE_AI_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,SUPABASE_PUBLISHABLE_KEY=SUPABASE_PUBLISHABLE_KEY:latest,SUPABASE_SECRET_KEY=SUPABASE_SECRET_KEY:latest,PERPLEXITY_API_KEY=PERPLEXITY_API_KEY:latest,ASSEMBLYAI_API_KEY=ASSEMBLYAI_API_KEY:latest,OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest
+
+      - name: Notify Ops – Deployed
+        if: ${{ success() }}
+        continue-on-error: true
+        run: |
+          curl -sf -X POST https://api.stuard.ai/v1/ops/deployments/callback \
+            -H 'Content-Type: application/json' \
+            -d "{\"secret\":\"${{ secrets.DEPLOY_CALLBACK_SECRET }}\",\"channel\":\"beta\",\"status\":\"deployed\"}"
+
+      - name: Notify Ops – Failed
+        if: ${{ failure() }}
+        continue-on-error: true
+        run: |
+          curl -sf -X POST https://api.stuard.ai/v1/ops/deployments/callback \
+            -H 'Content-Type: application/json' \
+            -d "{\"secret\":\"${{ secrets.DEPLOY_CALLBACK_SECRET }}\",\"channel\":\"beta\",\"status\":\"failed\",\"error_message\":\"Cloud Run deploy failed\"}"
 
   # 2. Deploy Website (Frontend) to Vercel Preview
   deploy-beta-website:

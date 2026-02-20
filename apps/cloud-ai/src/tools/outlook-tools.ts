@@ -5,6 +5,19 @@ import { getBridgeSecrets } from './bridge';
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
+// Optional profile field for all Outlook tools. Omit to use the default profile.
+const profileField = z.string().optional().describe(
+  'OAuth profile label to use (e.g. "work", "personal"). Omit to use the default profile.'
+);
+
+function resolveProfile(explicit?: string): string | undefined {
+  if (explicit) return explicit;
+  try {
+    const secrets = getBridgeSecrets();
+    return (secrets as any)?.outlookProfile || (secrets as any)?.profile || undefined;
+  } catch { return undefined; }
+}
+
 async function graphFetch(path: string, accessToken: string, init?: RequestInit) {
   const url = path.startsWith('http') ? path : `${GRAPH_BASE}${path}`;
   const headers: Record<string, string> = {
@@ -22,11 +35,12 @@ async function graphFetch(path: string, accessToken: string, init?: RequestInit)
   return body;
 }
 
-async function requireOutlookToken(): Promise<string> {
+async function requireOutlookToken(profileLabel?: string): Promise<string> {
   const secrets = getBridgeSecrets();
   const userId = String((secrets as any)?.userId || '');
   if (!userId) throw new Error('missing_user_context');
-  const token = await getExternalAccessToken(userId, 'outlook');
+  const profile = resolveProfile(profileLabel);
+  const token = await getExternalAccessToken(userId, 'outlook', profile);
   if (!token) throw new Error('outlook_not_connected');
   return token;
 }
@@ -34,9 +48,10 @@ async function requireOutlookToken(): Promise<string> {
 export const outlook_get_me = createTool({
   id: 'outlook_get_me',
   description: 'Get current user profile from Microsoft Graph (/me). Requires User.Read scope.',
-  inputSchema: z.object({}),
-  execute: async () => {
-    const accessToken = await requireOutlookToken();
+  inputSchema: z.object({ profile: profileField }),
+  execute: async (inputData) => {
+    const { profile } = inputData as any;
+    const accessToken = await requireOutlookToken(profile);
     const me = await graphFetch('/me', accessToken);
     return { me };
   },
@@ -46,12 +61,14 @@ export const outlook_list_messages = createTool({
   id: 'outlook_list_messages',
   description: 'List recent messages from Inbox (or specified folder). Requires Mail.Read scope.',
   inputSchema: z.object({
+    profile: profileField,
     folder: z.string().default('Inbox'),
     top: z.number().int().min(1).max(50).default(10),
     select: z.array(z.string()).optional(),
   }),
   execute: async (inputData, context) => {
-    const accessToken = await requireOutlookToken();
+    const { profile } = inputData as any;
+    const accessToken = await requireOutlookToken(profile);
     const { folder, top, select  } = inputData as any;
     const sel = Array.isArray(select) && select.length ? `$select=${select.join(',')}` : '';
     const query = [`$top=${Math.max(1, Math.min(50, Number(top || 10)))}`, `$orderby=receivedDateTime desc`, sel].filter(Boolean).join('&');
@@ -68,11 +85,13 @@ export const outlook_search_messages = createTool({
   id: 'outlook_search_messages',
   description: 'Search messages with Graph $search. Requires Mail.Read scope. Use simple keywords (from:, subject:, body:).',
   inputSchema: z.object({
+    profile: profileField,
     query: z.string(),
     top: z.number().int().min(1).max(25).default(10),
   }),
   execute: async (inputData, context) => {
-    const accessToken = await requireOutlookToken();
+    const { profile } = inputData as any;
+    const accessToken = await requireOutlookToken(profile);
     const { query, top  } = inputData as any;
     const params = new URLSearchParams();
     params.set('$search', `"${query}"`);
@@ -93,13 +112,15 @@ export const outlook_send_mail = createTool({
   id: 'outlook_send_mail',
   description: 'Send an email via Microsoft Graph. Requires Mail.Send or Mail.ReadWrite scope.',
   inputSchema: z.object({
+    profile: profileField,
     to: z.array(z.string().email()).min(1),
     subject: z.string().min(1),
     body: z.string().min(1),
     contentType: z.enum(['Text', 'HTML']).default('Text'),
   }),
   execute: async (inputData, context) => {
-    const accessToken = await requireOutlookToken();
+    const { profile } = inputData as any;
+    const accessToken = await requireOutlookToken(profile);
     const { to, subject, body, contentType  } = inputData as any;
     const payload = {
       message: {

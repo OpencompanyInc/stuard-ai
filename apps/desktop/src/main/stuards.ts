@@ -181,6 +181,14 @@ export async function execLocalTool(tool: string, args: any): Promise<any> {
   const payload = { type: 'tool_exec', id, tool, args } as any;
   return new Promise((resolve) => {
     let done = false;
+    let timeoutId: NodeJS.Timeout | undefined;
+
+    const cleanup = () => {
+      if (timeoutId) { clearTimeout(timeoutId); timeoutId = undefined; }
+      ws.off('message', onMessage);
+      ws.off('close', onClose);
+    };
+
     const onMessage = (raw: WebSocket.RawData) => {
       try {
         const s = raw.toString('utf8');
@@ -190,7 +198,7 @@ export async function execLocalTool(tool: string, args: any): Promise<any> {
           if (String(msg?.status || '') === 'approval_required') {
             if (!done) {
               done = true;
-              ws.off('message', onMessage);
+              cleanup();
               resolve({ ok: false, error: 'approval_required' });
             }
           }
@@ -199,19 +207,29 @@ export async function execLocalTool(tool: string, args: any): Promise<any> {
         if (t === 'tool_result' && String(msg?.id || '') === id) {
           if (!done) {
             done = true;
-            ws.off('message', onMessage);
+            cleanup();
             resolve(msg?.result ?? { ok: false, error: 'invalid_result' });
           }
           return;
         }
       } catch { }
     };
+
+    const onClose = () => {
+      if (!done) {
+        done = true;
+        cleanup();
+        resolve({ ok: false, error: 'agent_ws_closed' });
+      }
+    };
+
     ws.on('message', onMessage);
+    ws.once('close', onClose);
     
-    const timeout = setTimeout(() => {
+    timeoutId = setTimeout(() => {
       if (done) return;
       done = true;
-      ws.off('message', onMessage);
+      cleanup();
       resolve({ ok: false, error: 'timeout' });
     }, 60000);
     
@@ -220,7 +238,7 @@ export async function execLocalTool(tool: string, args: any): Promise<any> {
     } catch {
       if (!done) {
         done = true;
-        ws.off('message', onMessage);
+        cleanup();
         resolve({ ok: false, error: 'send_failed' });
       }
     }

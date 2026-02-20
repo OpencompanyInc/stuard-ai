@@ -42,12 +42,13 @@ import {
   MessageSquare,
   ListTodo,
   PanelRight,
-  PanelLeft
+  PanelLeft,
+  CheckCircle
 } from 'lucide-react';
 import type { UsePlannerDataResult, NextUpItem, PlannerTask } from '../hooks/usePlannerData';
 import { CommandItem } from './CommandPalette';
 import { clsx } from 'clsx';
-import type { ChatMode, ChatModelsConfig } from '../hooks/usePreferences';
+import type { ChatMode, ChatModelsConfig, ReasoningLevel } from '../hooks/usePreferences';
 import { ModelSelector } from './ModelSelector';
 import { useModelRegistry } from '../hooks/useModelRegistry';
 import { SidebarTabsPanel } from './SidebarTabsPanel';
@@ -89,6 +90,8 @@ interface LauncherViewProps {
   onChatModeChange?: (mode: ChatMode) => void;
   chatModels?: ChatModelsConfig;
   onChatModelsChange?: (cfg: ChatModelsConfig) => void;
+  reasoningLevel?: ReasoningLevel;
+  onReasoningLevelChange?: (level: ReasoningLevel) => void;
 
   // Internal Sidebar
   activeSidebarTab?: 'spaces' | 'canvas' | 'terminal';
@@ -163,6 +166,8 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   onChatModeChange,
   chatModels,
   onChatModelsChange,
+  reasoningLevel,
+  onReasoningLevelChange,
 
   // Internal Sidebar
   activeSidebarTab = 'spaces',
@@ -429,29 +434,34 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 
       <div
         className={clsx(
-          "flex-1 flex flex-col overflow-hidden transition-all duration-300",
-          // Seamless sidebar: no left rounding when sidebar is open
-          sidebarOpen ? "rounded-r-3xl rounded-l-none border-l-0" : "rounded-3xl",
+          "flex-1 min-h-0 flex flex-col p-3 transition-all duration-300",
+          sidebarOpen ? "rounded-r-[28px] rounded-l-none border-l-0" : "rounded-[28px]",
           translucentMode
             ? "bg-theme-bg/25 backdrop-blur-2xl border border-theme/20"
-            : "bg-theme-card border border-theme/50"
+            : "bg-theme-bg border border-theme/10"
         )}
       >
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className={clsx(
+          "flex-1 min-h-0 flex flex-col overflow-hidden p-2",
+          "rounded-[24px]",
+          translucentMode
+            ? "bg-theme-bg backdrop-blur-xl border border-theme/5"
+            : "bg-theme-card border border-theme/10 shadow-sm"
+        )}>
           {/* Top Bar */}
-          <div className="flex items-center justify-between px-5 py-4 border-b border-theme/10 shrink-0">
+          <div className="flex items-center justify-between px-3 py-2 shrink-0">
             {/* Status */}
             <button
               type="button"
               onClick={() => nextUp && window.desktopAPI?.openDashboard?.({ tab: 'planner' })}
               className={clsx(
-                "flex items-center gap-3 min-w-0",
+                "flex items-center gap-2 min-w-0",
                 nextUp && "cursor-pointer hover:opacity-80 transition-opacity"
               )}
               title={nextUp ? 'View in Planner' : undefined}
             >
               <div className={clsx(
-                "w-6 h-6 rounded-full flex items-center justify-center transition-all",
+                "w-5 h-5 rounded-full flex items-center justify-center transition-all",
                 nextUp ? getNextUpBgColor(nextUp) : (
                   connectionStatus === 'connected' ? 'bg-primary' :
                     connectionStatus === 'connecting' ? 'bg-amber-500 animate-pulse' :
@@ -460,12 +470,12 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                 )
               )}>
                 {nextUp ? <NextUpIcon type={nextUp.icon} /> : (
-                  showConnSpinner ? <div className="w-3.5 h-3.5 border-2 border-white/90 border-t-transparent rounded-full animate-spin" /> :
-                    <Video className="w-3.5 h-3.5 text-white" />
+                  showConnSpinner ? <div className="w-3 h-3 border-2 border-white/90 border-t-transparent rounded-full animate-spin" /> :
+                    <CheckCircle className="w-3 h-3 text-white" />
                 )}
               </div>
               <span className={clsx(
-                "font-semibold text-sm truncate transition-colors",
+                "font-semibold text-[13px] truncate transition-colors",
                 nextUp ? getNextUpTextColor(nextUp) : (
                   connectionStatus === 'connected' ? 'text-theme-fg' :
                     connectionStatus === 'connecting' ? 'text-amber-700 dark:text-amber-500' :
@@ -529,6 +539,99 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                 <Home className="w-4 h-4" />
               </button>
 
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <button className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-theme-fg hover:bg-theme-hover relative" title="Tasks">
+                    <ListTodo className="w-4 h-4" />
+                    {tasksCount > 0 && <span className="absolute -top-1 -right-1 bg-primary text-primary-fg text-[9px] px-1 rounded-full min-w-[14px] text-center font-bold">{tasksCount}</span>}
+                  </button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content className="DropdownContent z-[10002] w-80 bg-theme-bg rounded-xl border border-theme/20 p-3 shadow-lg shadow-black/10 backdrop-blur-xl" sideOffset={8} align="end">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-[11px] font-bold text-theme-muted uppercase tracking-wider">Active Tasks</span>
+                      <button
+                        onClick={() => window.desktopAPI?.openDashboard?.({ tab: 'tasks' })}
+                        className="text-[10px] font-bold text-primary hover:text-primary/80 transition-colors"
+                      >
+                        View All
+                      </button>
+                    </div>
+                    <div className="max-h-[280px] overflow-y-auto custom-scrollbar space-y-1.5">
+                      {tasks.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-8 text-center">
+                          <div className="w-12 h-12 bg-theme-muted/5 rounded-full flex items-center justify-center mb-3">
+                            <ListTodo className="w-6 h-6 text-theme-muted/30" />
+                          </div>
+                          <p className="text-[12px] text-theme-muted">No pending tasks</p>
+                          <p className="text-[10px] text-theme-muted/70 mt-1">Add tasks from the dashboard</p>
+                        </div>
+                      ) : tasks.slice(0, 6).map(task => {
+                        const isOverdue = task.due && new Date(task.due) < new Date();
+                        const priorityColors: Record<string, string> = {
+                          urgent: 'text-red-500 bg-red-500/10',
+                          high: 'text-orange-500 bg-orange-500/10',
+                          normal: 'text-blue-500 bg-blue-500/10',
+                          low: 'text-theme-muted bg-theme-muted/10',
+                        };
+                        return (
+                          <div 
+                            key={task.id} 
+                            className="flex items-start gap-3 p-2.5 rounded-xl hover:bg-theme-hover/50 transition-all group/task border border-transparent hover:border-theme/10"
+                          >
+                            <div className={clsx(
+                              "mt-0.5 w-4 h-4 rounded-full border-[1.5px] flex items-center justify-center shrink-0 transition-colors",
+                              "border-theme-muted/30 hover:border-primary cursor-pointer"
+                            )}>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-0.5">
+                                <span className="text-[12px] text-theme-fg font-semibold truncate">
+                                  {task.title}
+                                </span>
+                                {task.priority && task.priority !== 'normal' && task.priority !== 'low' && (
+                                  <span className={clsx(
+                                    "text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase",
+                                    priorityColors[task.priority] || priorityColors.normal
+                                  )}>
+                                    {task.priority}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 text-[10px] text-theme-muted">
+                                {task.due && (
+                                  <span className={clsx(
+                                    "flex items-center gap-1",
+                                    isOverdue && "text-red-500"
+                                  )}>
+                                    <Calendar className="w-3 h-3" />
+                                    {new Date(task.due).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                  </span>
+                                )}
+                                {(task.subTodosTotal || 0) > 0 && (
+                                  <span className="flex items-center gap-1">
+                                    <ListTodo className="w-3 h-3" />
+                                    {task.subTodosCompleted || 0}/{task.subTodosTotal}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {tasks.length > 6 && (
+                        <button
+                          onClick={() => window.desktopAPI?.openDashboard?.({ tab: 'tasks' })}
+                          className="w-full text-center text-[11px] font-semibold text-primary hover:text-primary/80 py-2 transition-colors"
+                        >
+                          +{tasks.length - 6} more tasks
+                        </button>
+                      )}
+                    </div>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+
               <DropdownMenu.Root open={chatMenuOpen} onOpenChange={onChatMenuOpenChange}>
                 <DropdownMenu.Trigger asChild>
                   <button
@@ -572,84 +675,37 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
+
+              <button onClick={() => (window as any).desktopAPI?.hide?.()} className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-red-500 hover:bg-red-500/10" title="Close">
+                <Power className="w-4 h-4" />
+              </button>
             </div>
           </div>
 
           {/* Main Content Area */}
-          <div className="flex-1 flex flex-col items-center justify-center px-5 pb-5 overflow-hidden">
-            <div className="w-full max-w-2xl flex flex-col h-full">
+          <div className="flex-1 flex flex-col items-center px-4 pb-3 overflow-y-auto custom-scrollbar">
+            <div className="w-full max-w-xl flex flex-col flex-1">
               {/* Greeting */}
-              <div className="text-center py-6 shrink-0">
-                <h1 className="text-2xl font-bold text-theme-fg mb-2">What can I help with?</h1>
-                <p className="text-theme-muted text-sm font-medium">Ask anything, search files, or run automations</p>
+              <div className="text-center pt-4 pb-2 shrink-0">
+                <h1 className="text-lg font-bold text-theme-fg mb-1">What can I help with?</h1>
+                <p className="text-theme-muted text-xs font-medium">Ask anything, search files, or run automations</p>
               </div>
 
-              {/* Search Input */}
-              <div className="relative group mb-5 shrink-0">
-                <div className={clsx(
-                  "relative flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-300",
-                  "bg-theme-hover/50 border border-theme",
-                  "group-focus-within:bg-theme-active/50 group-focus-within:border-primary/30 group-focus-within:ring-2 group-focus-within:ring-primary/10"
-                )}>
-                  <Search className="w-5 h-5 text-theme-muted flex-shrink-0" />
-                  <TextareaAutosize
-                    className="flex-1 bg-transparent outline-none text-theme-fg placeholder:text-theme-muted resize-none py-0 overflow-y-auto font-semibold text-[15px]"
-                    placeholder="Ask Stuard anything..."
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if ((e.nativeEvent as any)?.isComposing) return;
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        onSend();
-                      }
-                    }}
-                    minRows={1}
-                    maxRows={4}
-                  />
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <ModelSelector
-                      selectedModelId={selectedModelId}
-                      onSelectModel={(id) => onChatModeChange?.(id as any)}
-                      side="bottom"
-                      align="end"
-                    />
-                    <button
-                      onClick={onMicClick}
-                      className={clsx(
-                        "p-2.5 rounded-xl transition-all hover:scale-105 active:scale-95",
-                        isRecording ? "bg-red-500 text-white animate-pulse" : "bg-theme-hover border border-theme/10 text-theme-muted hover:text-theme-fg"
-                      )}
-                    >
-                      <Mic className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={onSend}
-                      disabled={!query.trim()}
-                      className={clsx(
-                        "p-2.5 rounded-xl transition-all hover:scale-105 active:scale-95",
-                        query.trim() ? "bg-primary text-primary-fg" : "bg-theme-hover/50 text-theme-muted/50 cursor-not-allowed"
-                      )}
-                    >
-                      <Send className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              </div>
+
 
               {/* Quick Actions Grid */}
               {!showResults && (
-                <div className="grid grid-cols-4 gap-2 mb-4 shrink-0">
+                <div className="grid grid-cols-4 gap-1.5 mb-3 shrink-0">
                   {quickActions.map((action) => (
                     <button
                       key={action.id}
                       onClick={() => handleQuickAction(action.id)}
-                      className="group flex flex-col items-center gap-2 p-3 rounded-2xl bg-transparent hover:bg-theme-hover border border-theme/10 hover:border-theme/30 transition-all duration-300 hover:-translate-y-0.5"
+                      className="group flex flex-col items-center gap-1.5 p-2.5 rounded-xl bg-transparent hover:bg-theme-hover/70 border border-theme/5 hover:border-theme/20 transition-all duration-200"
                     >
                       <div className={clsx("w-5 h-5 rounded-lg flex items-center justify-center transition-all group-hover:scale-110", action.bgLight, action.textColor)}>
                         <action.icon className="w-3 h-3" />
                       </div>
-                      <span className="text-[11px] font-semibold text-theme-muted group-hover:text-theme-fg transition-colors">{action.label}</span>
+                      <span className="text-[10px] font-semibold text-theme-muted group-hover:text-theme-fg transition-colors">{action.label}</span>
                     </button>
                   ))}
                 </div>
@@ -657,7 +713,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 
               {/* Quick Shortcuts / Bookmarks */}
               {!showResults && (
-                <div className="bg-theme-hover/20 rounded-2xl border border-theme/10 shrink-0">
+                <div className="bg-theme-hover/15 rounded-xl border border-theme/5 shrink-0">
                   <QuickShortcutsGrid
                     bookmarks={bookmarks}
                     onExecute={executeBookmark}
@@ -709,104 +765,47 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
             </div>
           </div>
 
-          {/* Bottom Bar */}
-          <div className="shrink-0 flex items-center justify-between px-5 pb-4">
-            <DropdownMenu.Root>
-              <DropdownMenu.Trigger asChild>
-                <button className="flex items-center gap-2 px-4 py-2 rounded-xl bg-theme-hover/30 hover:bg-theme-hover border border-theme/10 transition-all text-sm text-theme-muted hover:text-theme-fg">
-                  <ListTodo className="w-4 h-4 text-primary" />
-                  <span className="font-semibold">Tasks</span>
-                  {tasksCount > 0 && <span className="bg-primary text-primary-fg text-[10px] px-1.5 py-0.5 rounded-full min-w-[18px] text-center font-bold">{tasksCount}</span>}
-                </button>
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content className="DropdownContent z-[10002] w-80 bg-theme-bg rounded-xl border border-theme/20 p-3 shadow-lg shadow-black/10 backdrop-blur-xl" sideOffset={8} align="start">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-[11px] font-bold text-theme-muted uppercase tracking-wider">Active Tasks</span>
-                    <button
-                      onClick={() => window.desktopAPI?.openDashboard?.({ tab: 'tasks' })}
-                      className="text-[10px] font-bold text-primary hover:text-primary/80 transition-colors"
-                    >
-                      View All
-                    </button>
-                  </div>
-                  <div className="max-h-[280px] overflow-y-auto custom-scrollbar space-y-1.5">
-                    {tasks.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center py-8 text-center">
-                        <div className="w-12 h-12 bg-theme-muted/5 rounded-full flex items-center justify-center mb-3">
-                          <ListTodo className="w-6 h-6 text-theme-muted/30" />
-                        </div>
-                        <p className="text-[12px] text-theme-muted">No pending tasks</p>
-                        <p className="text-[10px] text-theme-muted/70 mt-1">Add tasks from the dashboard</p>
-                      </div>
-                    ) : tasks.slice(0, 6).map(task => {
-                      const isOverdue = task.due && new Date(task.due) < new Date();
-                      const priorityColors: Record<string, string> = {
-                        urgent: 'text-red-500 bg-red-500/10',
-                        high: 'text-orange-500 bg-orange-500/10',
-                        normal: 'text-blue-500 bg-blue-500/10',
-                        low: 'text-theme-muted bg-theme-muted/10',
-                      };
-                      return (
-                        <div 
-                          key={task.id} 
-                          className="flex items-start gap-3 p-2.5 rounded-xl hover:bg-theme-hover/50 transition-all group/task border border-transparent hover:border-theme/10"
-                        >
-                          <div className={clsx(
-                            "mt-0.5 w-4 h-4 rounded-full border-[1.5px] flex items-center justify-center shrink-0 transition-colors",
-                            "border-theme-muted/30 hover:border-primary cursor-pointer"
-                          )}>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-0.5">
-                              <span className="text-[12px] text-theme-fg font-semibold truncate">
-                                {task.title}
-                              </span>
-                              {task.priority && task.priority !== 'normal' && task.priority !== 'low' && (
-                                <span className={clsx(
-                                  "text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase",
-                                  priorityColors[task.priority] || priorityColors.normal
-                                )}>
-                                  {task.priority}
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2 text-[10px] text-theme-muted">
-                              {task.due && (
-                                <span className={clsx(
-                                  "flex items-center gap-1",
-                                  isOverdue && "text-red-500"
-                                )}>
-                                  <Calendar className="w-3 h-3" />
-                                  {new Date(task.due).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                                </span>
-                              )}
-                              {(task.subTodosTotal || 0) > 0 && (
-                                <span className="flex items-center gap-1">
-                                  <ListTodo className="w-3 h-3" />
-                                  {task.subTodosCompleted || 0}/{task.subTodosTotal}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {tasks.length > 6 && (
-                      <button
-                        onClick={() => window.desktopAPI?.openDashboard?.({ tab: 'tasks' })}
-                        className="w-full text-center text-[11px] font-semibold text-primary hover:text-primary/80 py-2 transition-colors"
-                      >
-                        +{tasks.length - 6} more tasks
-                      </button>
-                    )}
-                  </div>
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
-            <button onClick={() => (window as any).desktopAPI?.hide?.()} className="p-2 rounded-xl bg-theme-hover/30 hover:bg-red-500/10 border border-theme/10 text-theme-muted hover:text-red-500 transition-all">
-              <Power className="w-4 h-4" />
-            </button>
+          {/* Bottom Input Area - Integrated into the single card */}
+          <div className="shrink-0 w-full max-w-3xl mx-auto mt-auto px-4 pb-4">
+            <div className="flex items-center gap-2 bg-theme-hover/50 rounded-[24px] p-1.5 pr-2 focus-within:ring-2 focus-within:ring-primary/10 transition-all border border-theme/5">
+              <div className="flex-1 relative rounded-xl transition-all flex items-center">
+                <TextareaAutosize
+                  className="w-full bg-transparent outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-semibold min-w-0 resize-none leading-5 py-2 overflow-y-auto custom-scrollbar px-3"
+                  placeholder="Just ask Stuard"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if ((e.nativeEvent as any)?.isComposing) return;
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      onSend();
+                    }
+                  }}
+                  minRows={1}
+                  maxRows={3}
+                  autoFocus
+                />
+              </div>
+
+              <ModelSelector
+                selectedModelId={selectedModelId}
+                onSelectModel={(id) => onChatModeChange?.(id as any)}
+                reasoningLevel={reasoningLevel}
+                onReasoningLevelChange={onReasoningLevelChange}
+                side="top"
+                align="end"
+              />
+
+              <button
+                onClick={onMicClick}
+                className={clsx(
+                  "h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0",
+                  isRecording ? "bg-red-500 text-white animate-pulse" : "bg-primary text-primary-fg hover:opacity-90"
+                )}
+              >
+                <Mic className="w-5 h-5" />
+              </button>
+            </div>
           </div>
         </div>
       </div>

@@ -125,14 +125,50 @@ describe('parseChunk', () => {
     });
   });
 
+  describe('reasoning/thinking events', () => {
+    it('should normalize reasoning-start', () => {
+      const chunk = { type: 'reasoning-start', payload: { id: 'r-1' } };
+      expect(parseChunk(chunk)).toEqual({ type: 'reasoning-start', id: 'r-1' });
+    });
+
+    it('should normalize thinking-start to reasoning-start', () => {
+      const chunk = { type: 'thinking-start', payload: { id: 't-1' } };
+      expect(parseChunk(chunk)).toEqual({ type: 'reasoning-start', id: 't-1' });
+    });
+
+    it('should normalize reasoning-delta and thinking-delta', () => {
+      expect(parseChunk({ type: 'reasoning-delta', payload: { text: 'step A' } })).toEqual({
+        type: 'reasoning-delta',
+        text: 'step A',
+      });
+
+      expect(parseChunk({ type: 'thinking-delta', payload: { text: 'step B' } })).toEqual({
+        type: 'reasoning-delta',
+        text: 'step B',
+      });
+    });
+
+    it('should return null for empty reasoning/thinking deltas', () => {
+      expect(parseChunk({ type: 'reasoning-delta', payload: { text: '' } })).toBeNull();
+      expect(parseChunk({ type: 'thinking-delta', payload: { text: '' } })).toBeNull();
+    });
+
+    it('should normalize reasoning-end and thinking-end', () => {
+      expect(parseChunk({ type: 'reasoning-end', payload: { id: 'r-2' } })).toEqual({
+        type: 'reasoning-end',
+        id: 'r-2',
+      });
+
+      expect(parseChunk({ type: 'thinking-end', payload: { id: 't-2' } })).toEqual({
+        type: 'reasoning-end',
+        id: 't-2',
+      });
+    });
+  });
+
   describe('ignored events', () => {
     it.each([
-      'reasoning-start',
-      'thinking-start',
-      'reasoning-delta',
-      'thinking-delta',
-      'reasoning-end',
-      'thinking-end',
+      'reasoning-signature',
       'step-finish',
       'step-start',
       'response-metadata',
@@ -231,6 +267,16 @@ describe('updateStreamState', () => {
     const tracked = state.toolCalls.get('tc-1');
     expect(tracked?.status).toBe('completed');
     expect(tracked?.result).toEqual({ success: true });
+  });
+
+  it('should accumulate reasoning from reasoning-delta events', () => {
+    const state = createStreamState();
+    updateStreamState(state, { type: 'reasoning-delta', text: 'step 1 ' });
+    updateStreamState(state, { type: 'reasoning-delta', text: 'step 2' });
+
+    expect(state.reasoning).toBe('step 1 step 2');
+    expect(state.chunks).toHaveLength(1);
+    expect(state.chunks[0]).toEqual({ type: 'reasoning', content: 'step 1 step 2' });
   });
 
   it('should set finish reason and usage on finish event', () => {

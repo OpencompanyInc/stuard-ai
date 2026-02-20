@@ -54,6 +54,7 @@ describe('runAgent tool-call JSON parse failure handling', () => {
 
     const sent: any[] = [];
     const ws: any = {
+      on: vi.fn(),
       send: (data: string) => {
         sent.push(JSON.parse(data));
       },

@@ -233,6 +233,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       const body = await readJsonBody(req);
       const task = String(body?.task || 'Analyze this media and provide a summary.');
       const media = Array.isArray(body?.media) ? body.media : [];
+      const requestedModel = String(body?.model || '').trim().toLowerCase();
       
       if (media.length === 0) {
         writeJson(res, 400, { ok: false, error: 'no_media_provided' }, corsOrigin);
@@ -240,8 +241,10 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       }
       
       try {
-        // Use Gemini for multimodal analysis
-        const model = google('gemini-2.5-flash');
+        // Use Gemini for multimodal analysis (default fast; allow explicit 3.1 pro selection)
+        const model = requestedModel === 'gemini-3.1-pro-preview' || requestedModel === '3.1'
+          ? google('gemini-3.1-pro-preview')
+          : google('gemini-2.5-flash');
         
         // Build content parts in the correct format for AI SDK
         // Must use 'mimeType' and keep data as base64 string
@@ -282,6 +285,13 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
 
   if (req.method === 'POST' && path === '/inference/ai/vision-structured') {
     try {
+      // Vision inference consumes provider credits; require auth in production.
+      const { isAuthed } = await validateAuth(req);
+      if (!isAuthed) {
+        writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
+        return true;
+      }
+
       const body = await readJsonBody(req);
       const shapeField = z.object({
         type: z.enum(['string', 'number', 'boolean', 'string[]', 'number[]', 'boolean[]']),
@@ -483,6 +493,13 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
   // Multimodal file summarization - supports images, audio, video, PDF as attachments
   if (req.method === 'POST' && path === '/inference/ai/summarize-file') {
     try {
+      // Summarization consumes provider credits; require auth in production.
+      const { isAuthed } = await validateAuth(req);
+      if (!isAuthed) {
+        writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
+        return true;
+      }
+
       const body = await readJsonBody(req);
       const filename = String(body?.filename || 'file');
       const mimeType = String(body?.mimeType || 'application/octet-stream');

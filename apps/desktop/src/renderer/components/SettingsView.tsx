@@ -47,6 +47,8 @@ interface SettingsViewProps {
   setWakewordEnabled: (v: boolean) => void;
   terminalEnabled: boolean;
   setTerminalEnabled: (v: boolean) => void;
+  screenCaptureInvisible: boolean;
+  setScreenCaptureInvisible: (v: boolean) => void;
   handleSaveTheme: () => void;
   tone: TonePreset;
   setTone: (t: TonePreset) => void;
@@ -60,8 +62,8 @@ interface SettingsViewProps {
 }
 
 const SectionHeader = ({ title, description }: { title: string, description: string }) => (
-  <div className="mb-6">
-    <h3 className="text-xl font-stuard text-theme-fg tracking-tight">{title}</h3>
+  <div className="mb-8 border-b border-theme/50 pb-4">
+    <h3 className="text-2xl font-stuard text-theme-fg tracking-tight mb-1">{title}</h3>
     <p className="text-sm text-theme-muted font-medium">{description}</p>
   </div>
 );
@@ -69,9 +71,9 @@ const SectionHeader = ({ title, description }: { title: string, description: str
 const PresetButton = ({ label, active, onClick }: { label: string, active: boolean, onClick: () => void }) => (
   <button
     onClick={onClick}
-    className={`px-3 py-1.5 rounded-theme-button text-[12px] font-bold transition-all border shadow-sm ${active
-        ? "bg-primary text-primary-fg border-primary shadow-md"
-        : "bg-theme-hover text-theme-fg border-theme hover:bg-theme-active"
+    className={`px-4 py-2 rounded-xl text-[13px] font-bold transition-all duration-300 border shadow-sm ${active
+        ? "bg-primary text-primary-fg border-primary shadow-primary/20 shadow-md scale-105"
+        : "bg-theme-hover text-theme-fg border-theme hover:bg-theme-active hover:border-theme-fg/20"
       }`}
   >
     {label}
@@ -216,72 +218,78 @@ const UpdateManager: React.FC = () => {
 
   return (
     <>
-      <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm mb-8">
-        <SectionHeader title="Updates" description="Manage application updates and release channels." />
-        <div className="flex items-center justify-between p-4 bg-theme-hover rounded-theme-button mb-4 border border-theme">
-          <div>
-            <div className="text-[10px] font-black text-theme-muted uppercase tracking-widest mb-1 pl-1">Current Version</div>
-            <div className="text-2xl font-black text-theme-fg tracking-tight pl-1 font-stuard">{state.currentVersion}</div>
-          </div>
-          <div className="flex items-center gap-3 bg-theme-card px-4 py-2 rounded-theme-button border border-theme shadow-sm">
-            {statusIcon()}
-            <span className="text-xs font-bold text-theme-fg">{statusText()}</span>
-          </div>
-        </div>
-        
-        {/* Environment Badge */}
-        <div className={`flex items-center justify-between p-3 rounded-theme-button mb-6 border-2 ${CHANNEL_INFO[state.channel].borderColor} ${CHANNEL_INFO[state.channel].bgColor}`}>
-          <div className="flex items-center gap-3">
-            <div className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${CHANNEL_INFO[state.channel].color} bg-theme-card border border-theme`}>
-              {CHANNEL_INFO[state.channel].label}
+      <div className="bg-theme-card rounded-3xl border border-theme/50 p-8 shadow-lg hover:shadow-xl hover:border-primary/20 transition-all duration-500 relative overflow-hidden group mb-8">
+        <div className="absolute top-0 right-0 p-32 bg-gradient-to-bl from-blue-500/5 to-transparent rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none opacity-50 group-hover:opacity-100 transition-opacity duration-700"></div>
+        <div className="relative z-10">
+          <SectionHeader title="Updates" description="Manage application updates and release channels." />
+          <div className="flex items-center justify-between p-5 bg-theme-hover/50 rounded-2xl mb-6 border border-theme/50 shadow-inner">
+            <div>
+              <div className="text-[11px] font-black text-theme-muted uppercase tracking-widest mb-1 pl-1">Current Version</div>
+              <div className="text-3xl font-black text-theme-fg tracking-tight pl-1 font-stuard">{state.currentVersion}</div>
             </div>
-            <div className="text-xs text-theme-muted font-medium">
-              Connected to <span className="font-mono text-theme-fg">{apiEndpoint || CHANNEL_INFO[state.channel].apiUrl}</span>
+            <div className="flex items-center gap-3 bg-theme-card px-5 py-2.5 rounded-xl border border-theme/50 shadow-sm">
+              {statusIcon()}
+              <span className="text-[13px] font-bold text-theme-fg">{statusText()}</span>
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
-            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase">Live</span>
+          
+          {/* Environment Badge */}
+          <div className={`flex items-center justify-between p-4 rounded-2xl mb-8 border-2 ${CHANNEL_INFO[state.channel].borderColor} ${CHANNEL_INFO[state.channel].bgColor} shadow-sm`}>
+            <div className="flex items-center gap-4">
+              <div className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest ${CHANNEL_INFO[state.channel].color} bg-theme-card border border-theme/50 shadow-sm`}>
+                {CHANNEL_INFO[state.channel].label}
+              </div>
+              <div className="text-[13px] text-theme-muted font-medium">
+                Connected to <span className="font-mono text-theme-fg font-bold">{apiEndpoint || CHANNEL_INFO[state.channel].apiUrl}</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 bg-theme-card px-3 py-1.5 rounded-lg border border-theme/50 shadow-sm">
+              <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+              <span className="text-[11px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest">Live</span>
+            </div>
           </div>
-        </div>
-        <div className="mb-6">
-          <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">Update Channel</label>
-          <div className={`grid gap-4 ${canAccessStaging ? 'grid-cols-3' : canAccessBeta ? 'grid-cols-2' : 'grid-cols-1'}`}>
-            <button onClick={() => handleChannelChange("stable")} disabled={changingChannel} className={`p-4 rounded-theme-card border-2 transition-all relative overflow-hidden group ${state.channel === "stable" ? "border-emerald-500/50 bg-emerald-500/5" : "border-theme hover:border-emerald-500/30 bg-theme-bg hover:bg-theme-hover"}`}>
-              <div className="flex items-center gap-2 mb-1.5"><CheckCircle className={`w-4 h-4 ${state.channel === "stable" ? "text-emerald-500" : "text-theme-muted group-hover:text-theme-fg"}`} /><span className={`font-bold text-[14px] ${state.channel === "stable" ? "text-emerald-600 dark:text-emerald-400" : "text-theme-muted"}`}>Stable</span></div>
-              <p className="text-[11px] text-theme-muted text-left font-medium group-hover:text-theme-fg pl-6">Production releases</p>
-            </button>
-            {canAccessBeta && (
-              <button onClick={() => handleChannelChange("beta")} disabled={changingChannel} className={`p-4 rounded-theme-card border-2 transition-all relative overflow-hidden group ${state.channel === "beta" ? "border-amber-500/50 bg-amber-500/5" : "border-theme hover:border-amber-500/30 bg-theme-bg hover:bg-theme-hover"}`}>
-                <div className="flex items-center gap-2 mb-1.5"><Beaker className={`w-4 h-4 ${state.channel === "beta" ? "text-amber-500" : "text-theme-muted group-hover:text-theme-fg"}`} /><span className={`font-bold text-[14px] ${state.channel === "beta" ? "text-amber-600 dark:text-amber-400" : "text-theme-muted"}`}>Beta</span></div>
-                <p className="text-[11px] text-theme-muted text-left font-medium group-hover:text-theme-fg pl-6">Early access features</p>
+          <div className="mb-8">
+            <label className="block text-[11px] font-black text-theme-muted uppercase tracking-widest mb-4 ml-1">Update Channel</label>
+            <div className={`grid gap-5 ${canAccessStaging ? 'grid-cols-3' : canAccessBeta ? 'grid-cols-2' : 'grid-cols-1'}`}>
+              <button onClick={() => handleChannelChange("stable")} disabled={changingChannel} className={`p-5 rounded-2xl border-2 transition-all duration-300 relative overflow-hidden group/btn ${state.channel === "stable" ? "border-emerald-500/50 bg-emerald-500/10 shadow-lg shadow-emerald-500/10 scale-105" : "border-theme/50 hover:border-emerald-500/30 bg-theme-hover/30 hover:bg-theme-hover shadow-sm"}`}>
+                <div className="flex items-center gap-3 mb-2"><CheckCircle className={`w-5 h-5 transition-colors duration-300 ${state.channel === "stable" ? "text-emerald-500" : "text-theme-muted group-hover/btn:text-emerald-500/70"}`} /><span className={`font-black text-[15px] transition-colors duration-300 ${state.channel === "stable" ? "text-emerald-600 dark:text-emerald-400" : "text-theme-muted group-hover/btn:text-theme-fg"}`}>Stable</span></div>
+                <p className="text-[12px] text-theme-muted text-left font-medium group-hover/btn:text-theme-fg pl-8 transition-colors duration-300">Production releases</p>
               </button>
+              {canAccessBeta && (
+                <button onClick={() => handleChannelChange("beta")} disabled={changingChannel} className={`p-5 rounded-2xl border-2 transition-all duration-300 relative overflow-hidden group/btn ${state.channel === "beta" ? "border-amber-500/50 bg-amber-500/10 shadow-lg shadow-amber-500/10 scale-105" : "border-theme/50 hover:border-amber-500/30 bg-theme-hover/30 hover:bg-theme-hover shadow-sm"}`}>
+                  <div className="flex items-center gap-3 mb-2"><Beaker className={`w-5 h-5 transition-colors duration-300 ${state.channel === "beta" ? "text-amber-500" : "text-theme-muted group-hover/btn:text-amber-500/70"}`} /><span className={`font-black text-[15px] transition-colors duration-300 ${state.channel === "beta" ? "text-amber-600 dark:text-amber-400" : "text-theme-muted group-hover/btn:text-theme-fg"}`}>Beta</span></div>
+                  <p className="text-[12px] text-theme-muted text-left font-medium group-hover/btn:text-theme-fg pl-8 transition-colors duration-300">Early access features</p>
+                </button>
+              )}
+              {canAccessStaging && (
+                <button onClick={() => handleChannelChange("staging")} disabled={changingChannel} className={`p-5 rounded-2xl border-2 transition-all duration-300 relative overflow-hidden group/btn ${state.channel === "staging" ? "border-primary/50 bg-primary/10 shadow-lg shadow-primary/10 scale-105" : "border-theme/50 hover:border-primary/30 bg-theme-hover/30 hover:bg-theme-hover shadow-sm"}`}>
+                  <div className="flex items-center gap-3 mb-2"><FlaskConical className={`w-5 h-5 transition-colors duration-300 ${state.channel === "staging" ? "text-primary" : "text-theme-muted group-hover/btn:text-primary/70"}`} /><span className={`font-black text-[15px] transition-colors duration-300 ${state.channel === "staging" ? "text-primary" : "text-theme-muted group-hover/btn:text-theme-fg"}`}>Staging</span></div>
+                  <p className="text-[12px] text-theme-muted text-left font-medium group-hover/btn:text-theme-fg pl-8 transition-colors duration-300">Development builds</p>
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="flex gap-4 pt-6 border-t border-theme/50">
+            {(state.status === "idle" || state.status === "up-to-date" || state.status === "error") && (
+              <button onClick={handleCheck} className="px-6 py-2.5 rounded-xl bg-primary text-primary-fg text-[13px] font-black hover:opacity-90 hover:scale-105 hover:shadow-lg hover:shadow-primary/20 transition-all duration-300 flex items-center gap-2.5 active:scale-95"><RefreshCw className="w-4 h-4" />Check for Updates</button>
             )}
-            {canAccessStaging && (
-              <button onClick={() => handleChannelChange("staging")} disabled={changingChannel} className={`p-4 rounded-theme-card border-2 transition-all relative overflow-hidden group ${state.channel === "staging" ? "border-primary/50 bg-primary/5" : "border-theme hover:border-primary/30 bg-theme-bg hover:bg-theme-hover"}`}>
-                <div className="flex items-center gap-2 mb-1.5"><FlaskConical className={`w-4 h-4 ${state.channel === "staging" ? "text-primary" : "text-theme-muted group-hover:text-theme-fg"}`} /><span className={`font-bold text-[14px] ${state.channel === "staging" ? "text-primary" : "text-theme-muted"}`}>Staging</span></div>
-                <p className="text-[11px] text-theme-muted text-left font-medium group-hover:text-theme-fg pl-6">Development builds</p>
-              </button>
+            {state.status === "available" && (
+              <button onClick={handleDownload} className="px-6 py-2.5 rounded-xl bg-primary text-primary-fg text-[13px] font-black hover:opacity-90 hover:scale-105 hover:shadow-lg hover:shadow-primary/20 transition-all duration-300 flex items-center gap-2.5 active:scale-95"><Download className="w-4 h-4" />Download Update</button>
+            )}
+            {state.status === "downloaded" && (
+              <button onClick={() => setShowRestartModal(true)} className="px-6 py-2.5 rounded-xl bg-emerald-600 text-white text-[13px] font-black hover:bg-emerald-500 hover:scale-105 hover:shadow-lg hover:shadow-emerald-500/20 transition-all duration-300 flex items-center gap-2.5 active:scale-95"><RotateCcw className="w-4 h-4" />Restart to Update</button>
             )}
           </div>
-        </div>
-        <div className="flex gap-3">
-          {(state.status === "idle" || state.status === "up-to-date" || state.status === "error") && (
-            <button onClick={handleCheck} className="px-5 py-2 rounded-theme-button bg-primary text-primary-fg text-[12px] font-bold hover:opacity-90 transition-all shadow-sm flex items-center gap-2 active:scale-95"><RefreshCw className="w-4 h-4" />Check for Updates</button>
-          )}
-          {state.status === "available" && (
-            <button onClick={handleDownload} className="px-5 py-2 rounded-theme-button bg-primary text-primary-fg text-[12px] font-bold hover:opacity-90 transition-all shadow-sm flex items-center gap-2 active:scale-95"><Download className="w-4 h-4" />Download Update</button>
-          )}
-          {state.status === "downloaded" && (
-            <button onClick={() => setShowRestartModal(true)} className="px-5 py-2 rounded-theme-button bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-500 transition-all shadow-sm flex items-center gap-2 active:scale-95"><RotateCcw className="w-4 h-4" />Restart to Update</button>
+          {state.releaseNotes && (state.status === "available" || state.status === "downloaded") && (
+            <div className="mt-8 p-6 bg-theme-hover/50 rounded-2xl border border-theme/50 shadow-inner">
+              <div className="text-[11px] font-black text-theme-muted mb-3 uppercase tracking-widest flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-primary" />
+                What's New in {state.latestVersion}
+              </div>
+              <div className="text-[14px] text-theme-fg leading-relaxed font-medium whitespace-pre-wrap">{state.releaseNotes}</div>
+            </div>
           )}
         </div>
-        {state.releaseNotes && (state.status === "available" || state.status === "downloaded") && (
-          <div className="mt-6 p-5 bg-theme-hover rounded-theme-button border border-theme">
-            <div className="text-[10px] font-black text-theme-muted mb-2 uppercase tracking-widest">What's New in {state.latestVersion}</div>
-            <div className="text-[13px] text-theme-fg leading-relaxed font-medium">{state.releaseNotes}</div>
-          </div>
-        )}
       </div>
       <RestartModal open={showRestartModal} version={state.latestVersion || ""} onConfirm={handleInstall} onCancel={() => setShowRestartModal(false)} />
     </>
@@ -296,6 +304,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   translucentMode, setTranslucentMode,
   wakewordEnabled, setWakewordEnabled,
   terminalEnabled, setTerminalEnabled,
+  screenCaptureInvisible, setScreenCaptureInvisible,
   handleSaveTheme,
   tone, setTone,
   customTone, setCustomTone,
@@ -394,20 +403,37 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm mb-6">
         <SectionHeader title="Advanced Features" description="Enable or disable advanced functionality." />
-        <div className="space-y-3">
-          <div className="p-4 rounded-theme-button bg-theme-hover/50 border border-theme">
+        <div className="space-y-4">
+          <div className="p-4 rounded-theme-button bg-primary/5 border border-primary/20">
             <label className="flex items-center gap-3 cursor-pointer">
-              <input type="checkbox" checked={wakewordEnabled} onChange={(e) => setWakewordEnabled(e.target.checked)} className="w-4 h-4 rounded border-theme bg-theme-card text-primary focus:ring-primary" />
-              <span className="text-[13px] font-bold text-theme-fg">Voice Wake Word ("Hey Stuard")</span>
+              <input type="checkbox" checked={wakewordEnabled} onChange={(e) => setWakewordEnabled(e.target.checked)} className="w-4 h-4 rounded border-primary bg-theme-card text-primary focus:ring-primary" />
+              <span className="text-[13px] font-bold text-theme-fg">Wakeword Detection ("Hey Stuard")</span>
             </label>
-            <p className="text-[11px] text-theme-muted mt-1 pl-7 font-bold">Voice activation with wake word detection.</p>
+            <p className="text-[11px] text-theme-muted mt-1 pl-7 font-bold">Runs continuously in the background using the shared audio bus.</p>
           </div>
-          <div className="p-4 rounded-theme-button bg-theme-hover/50 border border-theme">
+
+          <div className="p-4 rounded-theme-button bg-theme-hover border border-theme">
             <label className="flex items-center gap-3 cursor-pointer">
               <input type="checkbox" checked={terminalEnabled} onChange={(e) => setTerminalEnabled(e.target.checked)} className="w-4 h-4 rounded border-theme bg-theme-card text-primary focus:ring-primary" />
               <span className="text-[13px] font-bold text-theme-fg">Terminal Access</span>
             </label>
-            <p className="text-[11px] text-theme-muted mt-1 pl-7 font-bold">Interactive terminal and command execution.</p>
+            <p className="text-[11px] text-theme-muted mt-1 pl-7">Interactive terminal and command execution.</p>
+          </div>
+
+          <div className="p-4 rounded-theme-button bg-theme-hover border border-theme">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={screenCaptureInvisible}
+                onChange={(e) => {
+                  setScreenCaptureInvisible(e.target.checked);
+                  (window as any).desktopAPI?.setScreenCaptureInvisible?.(e.target.checked);
+                }}
+                className="w-4 h-4 rounded border-theme bg-theme-card text-primary focus:ring-primary"
+              />
+              <span className="text-[13px] font-bold text-theme-fg">Screen Capture Invisibility</span>
+            </label>
+            <p className="text-[11px] text-theme-muted mt-1 pl-7">Hide Stuard windows from screenshots and screen recordings.</p>
           </div>
         </div>
       </div>

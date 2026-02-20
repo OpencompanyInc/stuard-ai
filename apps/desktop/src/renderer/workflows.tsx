@@ -91,6 +91,12 @@ function WorkflowsApp() {
   const [openTabs, setOpenTabs] = useState<OpenFileTab[]>([]);
   const [activeTab, setActiveTab] = useState<string>('canvas'); // 'canvas' or a filePath
 
+  // Sub-workflow navigation: stack of { path, model } where path is where we came FROM
+  // activeSubPath tracks what we're currently editing (null = main workflow)
+  const [subWorkflowStack, setSubWorkflowStack] = useState<Array<{ path: string; model: DesignerModel }>>([]);
+  const [activeSubPath, setActiveSubPath] = useState<string | null>(null);
+  const currentSubPath = activeSubPath; // For prop compatibility
+
   const openFileTab = useCallback((filePath: string, fileName: string) => {
     setOpenTabs(prev => {
       if (prev.some(t => t.filePath === filePath)) return prev;
@@ -98,6 +104,70 @@ function WorkflowsApp() {
     });
     setActiveTab(filePath);
   }, []);
+
+  // Navigate into a .stuard sub-workflow (loads it as a visual canvas)
+  const openStuardCanvas = useCallback(async (subPath: string) => {
+    if (!selectedId) return;
+    // main.stuard → go back to main canvas
+    if (subPath === 'main.stuard') {
+      // Pop entire stack and restore main model
+      if (subWorkflowStack.length > 0) {
+        const mainModel = subWorkflowStack[0].model;
+        setModel(mainModel);
+        setSubWorkflowStack([]);
+        setActiveSubPath(null);
+      }
+      setActiveTab('canvas');
+      return;
+    }
+    // Load the sub-workflow content
+    try {
+      const res = await (window as any).desktopAPI?.workflowsReadWorkspaceStuard?.(selectedId, subPath);
+      if (!res?.ok) {
+        console.error('Failed to load sub-workflow:', res?.error);
+        return;
+      }
+      const subModel = JSON.parse(res.content) as DesignerModel;
+      // Push current model onto the stack (save it before navigating in)
+      if (model) {
+        setSubWorkflowStack(prev => [...prev, { path: activeSubPath || 'main.stuard', model }]);
+      }
+      setModel(subModel);
+      setActiveSubPath(subPath); // Track which sub-workflow we're now editing
+      setActiveTab('canvas');
+      setDirty(false);
+    } catch (e) {
+      console.error('Failed to open sub-workflow:', e);
+    }
+  }, [selectedId, model, activeSubPath, subWorkflowStack]);
+
+  // Navigate back to parent workflow
+  const navigateBack = useCallback(() => {
+    if (subWorkflowStack.length === 0) return;
+    const stack = [...subWorkflowStack];
+    const parent = stack.pop()!;
+    setModel(parent.model);
+    setSubWorkflowStack(stack);
+    // Set activeSubPath to parent's path (null if back to main)
+    setActiveSubPath(parent.path === 'main.stuard' ? null : parent.path);
+    setDirty(false);
+  }, [subWorkflowStack]);
+
+  // Get breadcrumb path for current navigation state
+  const breadcrumbPath = useMemo(() => {
+    const crumbs: Array<{ label: string; path: string | null }> = [
+      { label: 'Main', path: null }
+    ];
+    for (const item of subWorkflowStack) {
+      if (item.path !== 'main.stuard') {
+        crumbs.push({ label: item.path.replace('.stuard', '').split('/').pop() || item.path, path: item.path });
+      }
+    }
+    if (currentSubPath && currentSubPath !== 'main.stuard') {
+      // Current location (not clickable)
+    }
+    return crumbs;
+  }, [subWorkflowStack, currentSubPath]);
 
   const closeFileTab = useCallback((filePath: string) => {
     setOpenTabs(prev => prev.filter(t => t.filePath !== filePath));
@@ -217,8 +287,10 @@ function WorkflowsApp() {
     model,
     onApplyModel: applyModel,
     cloudAiHttp: CLOUD_AI_HTTP,
+    workflowId: selectedId, // Pass workflow ID for session scoping
     errors,
     selectedModelId: workflowChatModelId,
+    workspaceInfo,
   });
 
   // Fetch credits on mount
@@ -287,9 +359,20 @@ function WorkflowsApp() {
 
   const save = useCallback(async () => {
     if (!selectedId || !model) return;
-    const res = await (window as any).desktopAPI?.workflowsSave?.(selectedId, JSON.stringify(model, null, 2));
-    if (res?.ok) { setDirty(false); await refresh(); } else alert(res?.error || 'Save failed');
-  }, [model, refresh, selectedId]);
+    // If we're in a sub-workflow (activeSubPath is set), save to that file
+    if (activeSubPath) {
+      const res = await (window as any).desktopAPI?.workflowsSaveWorkspaceStuard?.(
+        selectedId,
+        activeSubPath,
+        JSON.stringify(model, null, 2)
+      );
+      if (res?.ok) { setDirty(false); } else alert(res?.error || 'Save failed');
+    } else {
+      // Save main workflow
+      const res = await (window as any).desktopAPI?.workflowsSave?.(selectedId, JSON.stringify(model, null, 2));
+      if (res?.ok) { setDirty(false); await refresh(); } else alert(res?.error || 'Save failed');
+    }
+  }, [model, refresh, selectedId, activeSubPath]);
 
   const {
     showImport,
@@ -802,6 +885,9 @@ function WorkflowsApp() {
         onToggleInspector={() => {
           if (!model?.locked) setRightPanel((p) => (p === 'inspector' ? 'none' : 'inspector'));
         }}
+        onToggleDocs={() => {
+          setRightPanel((p) => (p === 'docs' ? 'none' : 'docs'));
+        }}
         onToggleCode={() => {
           if (!model?.locked) setRightPanel((p) => (p === 'code' ? 'none' : 'code'));
         }}
@@ -836,6 +922,7 @@ function WorkflowsApp() {
                 onRefresh={() => refreshWorkspace()}
                 onClose={() => setShowWorkspace(false)}
                 onOpenFile={openFileTab}
+                onOpenStuard={openStuardCanvas}
               />
             </PanelErrorBoundary>
           </div>
@@ -909,8 +996,12 @@ function WorkflowsApp() {
           onRefreshWorkspace={() => refreshWorkspace()}
           onCloseWorkspace={() => setShowWorkspace(false)}
           onOpenFile={openFileTab}
+          onOpenStuard={openStuardCanvas}
           chatInputRef={chatInputRef}
           toolPaletteRef={toolPaletteRef}
+          breadcrumbs={breadcrumbPath}
+          currentSubPath={currentSubPath}
+          onNavigateBack={navigateBack}
         />
       </div>
 

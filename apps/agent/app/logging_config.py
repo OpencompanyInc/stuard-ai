@@ -58,6 +58,27 @@ def _setup_logging():
             backupCount=2,
             encoding="utf-8"
         )
+        # On Windows, os.rename fails if the target is held open by another
+        # process (e.g. the desktop app tailing the log).  Use copy+truncate
+        # instead so rotation never raises PermissionError.
+        if sys.platform == "win32":
+            import shutil
+            def _win_rotator(source: str, dest: str) -> None:
+                try:
+                    if os.path.exists(dest):
+                        os.remove(dest)
+                except OSError:
+                    pass
+                try:
+                    shutil.copy2(source, dest)
+                except OSError:
+                    pass
+                try:
+                    with open(source, "w"):
+                        pass  # truncate
+                except OSError:
+                    pass
+            file_handler.rotator = _win_rotator
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)

@@ -5,6 +5,7 @@ import { getWorkflowAgent, WORKFLOW_SYSTEM_PROMPT } from '../../agents/workflow-
 import { withClientBridge } from '../../tools/bridge';
 import { routeModel, ModelChoice } from '../../router/model-router';
 import { writeLog } from '../../utils/logger';
+import { normalizeUsage } from '../../utils/usage';
 
 type AgentType = 'stuard' | 'workflow';
 
@@ -14,6 +15,7 @@ interface AgentMessage {
   model?: ModelChoice | 'auto';
   modelId?: string;
   modelConfig?: any;
+  reasoningLevel?: 'none' | 'low' | 'medium' | 'high';
   integrations?: string[];
   history?: any[]; // Context history
   context?: {
@@ -146,16 +148,63 @@ export async function runAgent(ws: WebSocket, message: AgentMessage): Promise<{ 
         abortSignal: abortController.signal,
       };
 
-      // Enable thinking for Google Gemini 3 models and workflow agent
-      if (chosenModelId?.includes('google/gemini-3')) {
+      // Enable thinking/reasoning streams for supported providers.
+      const reasoningLevel: 'none' | 'low' | 'medium' | 'high' =
+        (['none', 'low', 'medium', 'high'].includes(message.reasoningLevel || '') ? message.reasoningLevel : 'high') as any;
+
+      // ---------- Google Gemini thinking ----------
+      if (chosenModelId?.includes('google/gemini-3') || chosenModelId?.includes('google/gemini-2.5')) {
         streamOptions.providerOptions = {
+          ...(streamOptions.providerOptions || {}),
           google: {
             thinkingConfig: {
-              thinkingLevel: 'high',
-              includeThoughts: true,
+              thinkingLevel: reasoningLevel,
+              includeThoughts: reasoningLevel !== 'none',
             },
           },
         };
+      }
+
+      // ---------- Anthropic thinking ----------
+      if (chosenModelId?.includes('anthropic/')) {
+        if (reasoningLevel === 'none') {
+          streamOptions.providerOptions = {
+            ...(streamOptions.providerOptions || {}),
+            anthropic: {
+              thinking: { type: 'disabled' },
+            },
+          };
+        } else {
+          const anthropicBudget: Record<string, number | undefined> = {
+            low: 5000,
+            medium: 16384,
+            high: undefined, // no cap
+          };
+          const budgetTokens = anthropicBudget[reasoningLevel];
+          streamOptions.providerOptions = {
+            ...(streamOptions.providerOptions || {}),
+            anthropic: {
+              sendReasoning: true,
+              thinking: budgetTokens
+                ? { type: 'enabled', budgetTokens }
+                : { type: 'enabled' },
+            },
+          };
+        }
+      }
+
+      // ---------- OpenAI reasoning effort ----------
+      if (chosenModelId?.includes('openai/')) {
+        const modelPart = (chosenModelId || '').split('/').pop() || '';
+        const supportsEffort = /^(o[1-9]|gpt-5-pro|gpt-5\.1)/.test(modelPart);
+        if (supportsEffort && reasoningLevel !== 'none') {
+          streamOptions.providerOptions = {
+            ...(streamOptions.providerOptions || {}),
+            openai: {
+              reasoningEffort: reasoningLevel,
+            },
+          };
+        }
       }
 
       // Get stream result from Mastra
@@ -171,6 +220,12 @@ export async function runAgent(ws: WebSocket, message: AgentMessage): Promise<{ 
         let reasoningChunks = 0;
         for await (const chunk of stream) {
           chunkCount++;
+          if (chunk?.type === 'finish') {
+            const finishUsage = chunk?.usage ?? chunk?.payload?.usage ?? chunk?.payload;
+            if (finishUsage) {
+              usage = normalizeUsage(finishUsage);
+            }
+          }
           // Debug: log thinking/reasoning chunks
           if (chunk?.type?.includes('reasoning') || chunk?.type?.includes('thinking')) {
             reasoningChunks++;
@@ -190,7 +245,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage): Promise<{ 
           send(ws, { type: 'progress', event: 'delta', data: { text: fullText } });
         }
         if (streamResult?.usage) {
-          usage = streamResult.usage;
+          usage = normalizeUsage(streamResult.usage);
         }
       }
 
@@ -201,7 +256,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage): Promise<{ 
       
       // Get usage from stream result if not set
       if (!usage && streamResult?.usage) {
-        usage = streamResult.usage;
+        usage = normalizeUsage(streamResult.usage);
       }
 
       // Check for reasoning/thinking in final result (Gemini returns this with includeThoughts)
@@ -217,7 +272,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage): Promise<{ 
       // Send final message
       send(ws, {
         type: 'final',
-        result: { text: fullText, response: fullText },
+        result: { text: fullText, response: fullText, usage },
         usage
       });
 

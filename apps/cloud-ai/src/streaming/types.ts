@@ -6,6 +6,9 @@
 export type StreamEvent =
   | StartEvent
   | TextDeltaEvent
+  | ReasoningStartEvent
+  | ReasoningDeltaEvent
+  | ReasoningEndEvent
   | ToolCallEvent
   | ToolResultEvent
   | FinishEvent
@@ -19,6 +22,21 @@ export interface StartEvent {
 export interface TextDeltaEvent {
   type: 'text-delta';
   text: string;
+}
+
+export interface ReasoningStartEvent {
+  type: 'reasoning-start';
+  id?: string;
+}
+
+export interface ReasoningDeltaEvent {
+  type: 'reasoning-delta';
+  text: string;
+}
+
+export interface ReasoningEndEvent {
+  type: 'reasoning-end';
+  id?: string;
 }
 
 export interface ToolCallEvent {
@@ -43,6 +61,9 @@ export interface FinishEvent {
     promptTokens?: number;
     completionTokens?: number;
     totalTokens?: number;
+    thinkingTokens?: number;
+    reasoningTokens?: number;
+    cachedPromptTokens?: number;
   };
   finishReason: 'stop' | 'length' | 'tool-calls' | 'content-filter' | 'error' | 'unknown';
 }

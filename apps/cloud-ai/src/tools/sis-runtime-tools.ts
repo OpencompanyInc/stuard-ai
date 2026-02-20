@@ -82,42 +82,28 @@ function searchToolsKeyword(
 }
 
 /**
- * Search for tools semantically. Returns tool names, descriptions, and full schemas.
- * The agent can use this to discover what tools are available for a task.
+ * Search for tools semantically. Returns tool names and short descriptions.
+ * Use sis_execute_tool to run a discovered tool.
  */
 export const sis_search_tools = createTool({
   id: 'sis_search_tools',
-  description: `Search for available tools by describing what you need. Returns matching tools with their full schemas so you can use them immediately.
-
-Examples:
-- "send an email" → returns gmail_send_message, outlook_send_mail with schemas
-- "automate browser clicks" → returns browser_click_element, browser_fill_form, etc.
-- "run python code" → returns run_python_script with schema
-- "take a screenshot" → returns capture_screen, take_screenshot
-
-Use this when you need a capability that isn't in your current toolset. IMPORTANT: You can discover and use ANY tool in the system this way - don't assume tools aren't available.`,
+  description: 'Discover available tools by describing what you need. Returns tool names and descriptions. Use sis_execute_tool to run them.',
 
   inputSchema: z.object({
-    query: z.string().min(3).describe('Describe what you want to do. Be specific about the action needed. Example: "send email", "capture screenshot", "click button in browser"'),
+    query: z.string().min(3).describe('What you want to do, e.g. "send email", "screenshot", "browser click"'),
     category: z.enum([
       'system', 'core', 'input', 'ui', 'vision', 'data', 'integrations', 'flow'
-    ]).optional().describe('Optional: filter by tool category'),
-    limit: z.number().int().min(1).max(20).optional().default(10).describe('Max number of tools to return (default 10)'),
+    ]).optional().describe('Filter by category'),
+    limit: z.number().int().min(1).max(10).optional().default(5).describe('Max results (default 5)'),
   }),
 
   outputSchema: z.object({
     success: z.boolean(),
-    query: z.string().optional(),
     count: z.number().optional(),
     tools: z.array(z.object({
       name: z.string(),
       description: z.string(),
-      category: z.string(),
-      kind: z.string(),
-      score: z.number(),
-      schema: z.any(),
     })).optional(),
-    hint: z.string().optional(),
     error: z.string().optional(),
   }),
 
@@ -209,15 +195,16 @@ Use this when you need a capability that isn't in your current toolset. IMPORTAN
     tools.sort((a, b) => b.score - a.score);
     tools = tools.slice(0, limit);
 
+    // Return compact format: name + short description only (no schemas)
+    const compactTools = tools.map(t => ({
+      name: t.name,
+      description: String(t.description || '').slice(0, 150),
+    }));
+
     return {
       success: true,
-      query,
-      count: tools.length,
-      tools,
-      searchMethod,
-      hint: tools.length > 0
-        ? `Found ${tools.length} tools matching "${query}" (${searchMethod} search). Use the tool directly by name, or use sis_execute_tool for dynamic execution.`
-        : `No matching tools found for "${query}". Try rephrasing your query or use sis_list_categories to see available tool categories.`,
+      count: compactTools.length,
+      tools: compactTools,
     };
   },
 });
@@ -228,19 +215,7 @@ Use this when you need a capability that isn't in your current toolset. IMPORTAN
  */
 export const sis_execute_tool = createTool({
   id: 'sis_execute_tool',
-  description: `Execute any tool by name. Use this after discovering a tool with sis_search_tools.
-
-The tool must exist in the system. Pass arguments as specified in the tool's schema.
-
-Example:
-  sis_execute_tool({
-    tool_name: "gmail_send_message",
-    args: {
-      to: ["user@example.com"],
-      subject: "Hello",
-      body: "Message content"
-    }
-  })`,
+  description: 'Execute a tool by name after discovering it with sis_search_tools. Pass args matching the tool schema.',
 
   inputSchema: z.object({
     tool_name: z.string().describe('The exact name of the tool to execute'),

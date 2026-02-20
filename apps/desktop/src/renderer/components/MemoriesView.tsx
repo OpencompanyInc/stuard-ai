@@ -205,7 +205,7 @@ export function MemoriesView() {
   ];
 
   return (
-    <div className="flex flex-col h-full bg-theme-bg/50 backdrop-blur-3xl overflow-hidden" data-onboarding="memories-view">
+    <div className="flex flex-col h-full bg-theme-bg/50 backdrop-blur-3xl overflow-hidden pb-16 max-w-6xl mx-auto w-full" data-onboarding="memories-view">
       <div className="flex-none px-10 py-5 border-b border-theme/10 flex items-center justify-between bg-theme-card/30 z-30 transition-all">
         <div className="space-y-0.5">
           <h1 className="text-2xl font-black text-theme-fg tracking-tight font-stuard">Memories</h1>

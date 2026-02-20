@@ -180,7 +180,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
   };
 
   // Preview background style
-  const getPreviewBackground = () => {
+  const getPreviewBackground = (): React.CSSProperties => {
     switch (config.backgroundType) {
       case 'gradient':
         if (config.gradient) {
@@ -198,6 +198,22 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
           };
         }
         break;
+      case 'translucent': {
+        const tColor = config.translucent?.color || '#1a1a2e';
+        const tOpacity = config.translucent?.opacity ?? 0.7;
+        const r = parseInt(tColor.slice(1, 3), 16) || 0;
+        const g = parseInt(tColor.slice(3, 5), 16) || 0;
+        const b = parseInt(tColor.slice(5, 7), 16) || 0;
+        return {
+          backgroundColor: `rgba(${r}, ${g}, ${b}, ${tOpacity})`,
+          backdropFilter: `blur(${config.translucent?.blur ?? 12}px)`,
+        } as React.CSSProperties;
+      }
+      case 'transparent':
+        return {
+          backgroundImage: 'repeating-conic-gradient(#e2e8f0 0% 25%, #fff 0% 50%)',
+          backgroundSize: '16px 16px',
+        };
       case 'color':
       default:
         if (config.backgroundColor) {
@@ -442,19 +458,26 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
             <div className="px-4 pb-4 space-y-4">
               {/* Background Type Tabs */}
               <div className="flex p-1 bg-slate-100 rounded-lg">
-                {(['color', 'gradient', 'image', 'transparent'] as const).map((type) => (
+                {(['color', 'gradient', 'image', 'translucent', 'transparent'] as const).map((type) => (
                   <button
                     key={type}
                     onClick={() => {
                       if (type === 'transparent') {
                         onChange({ ...config, backgroundType: 'transparent', backgroundColor: 'transparent' });
-                      } else if (config.backgroundType === 'transparent') {
+                      } else if (type === 'translucent') {
+                        onChange({
+                          ...config,
+                          backgroundType: 'translucent',
+                          frameless: true,
+                          translucent: config.translucent || { color: '#1a1a2e', opacity: 0.7, blur: 12 },
+                        });
+                      } else if (config.backgroundType === 'transparent' || config.backgroundType === 'translucent') {
                         onChange({ ...config, backgroundType: type, backgroundColor: type === 'color' ? '#1a1a2e' : config.backgroundColor });
                       } else {
                         updateConfig('backgroundType', type);
                       }
                     }}
-                    className={`flex-1 px-2 py-1.5 text-xs font-medium rounded-md transition-all capitalize ${
+                    className={`flex-1 px-2 py-1.5 text-[10px] font-medium rounded-md transition-all capitalize ${
                       config.backgroundType === type || (type === 'color' && !config.backgroundType)
                         ? 'bg-white text-indigo-700 shadow-sm'
                         : 'text-slate-600 hover:text-slate-800'
@@ -464,6 +487,102 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                   </button>
                 ))}
               </div>
+
+              {/* Translucent Background */}
+              {config.backgroundType === 'translucent' && (
+                <div className="space-y-4">
+                  <div className="p-3 rounded-lg border border-indigo-200 bg-indigo-50/50">
+                    <div className="text-center space-y-1">
+                      <div className="text-sm font-medium text-indigo-700">Translucent Background</div>
+                      <p className="text-[10px] text-indigo-500">
+                        Semi-transparent with backdrop blur. Content behind the window shows through.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Base Color */}
+                  <div className="space-y-2">
+                    <label className="text-xs text-slate-500">Base Color</label>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="color"
+                        value={config.translucent?.color || '#1a1a2e'}
+                        onChange={(e) => onChange({
+                          ...config,
+                          translucent: { ...config.translucent, color: e.target.value, opacity: config.translucent?.opacity ?? 0.7, blur: config.translucent?.blur ?? 12 },
+                        })}
+                        className="w-10 h-10 rounded-lg cursor-pointer border-2 border-slate-200"
+                      />
+                      <input
+                        type="text"
+                        value={config.translucent?.color || '#1a1a2e'}
+                        onChange={(e) => onChange({
+                          ...config,
+                          translucent: { ...config.translucent, color: e.target.value, opacity: config.translucent?.opacity ?? 0.7, blur: config.translucent?.blur ?? 12 },
+                        })}
+                        className="flex-1 px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                        placeholder="#1a1a2e"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Opacity */}
+                  <div>
+                    <label className="text-xs text-slate-500 mb-1 block">
+                      Opacity: {Math.round((config.translucent?.opacity ?? 0.7) * 100)}%
+                    </label>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={Math.round((config.translucent?.opacity ?? 0.7) * 100)}
+                      onChange={(e) => onChange({
+                        ...config,
+                        translucent: { ...config.translucent, color: config.translucent?.color || '#1a1a2e', opacity: parseInt(e.target.value) / 100, blur: config.translucent?.blur ?? 12 },
+                      })}
+                      className="w-full"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-400 mt-0.5">
+                      <span>0% (invisible)</span>
+                      <span>50%</span>
+                      <span>100% (solid)</span>
+                    </div>
+                  </div>
+
+                  {/* Blur */}
+                  <div>
+                    <label className="text-xs text-slate-500 mb-1 block">
+                      Backdrop Blur: {config.translucent?.blur ?? 12}px
+                    </label>
+                    <input
+                      type="range"
+                      min="0"
+                      max="50"
+                      value={config.translucent?.blur ?? 12}
+                      onChange={(e) => onChange({
+                        ...config,
+                        translucent: { ...config.translucent, color: config.translucent?.color || '#1a1a2e', opacity: config.translucent?.opacity ?? 0.7, blur: parseInt(e.target.value) },
+                      })}
+                      className="w-full"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-400 mt-0.5">
+                      <span>0px (none)</span>
+                      <span>25px</span>
+                      <span>50px (heavy)</span>
+                    </div>
+                  </div>
+
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={config.frameless === true}
+                      onChange={(e) => updateConfig('frameless', e.target.checked)}
+                      className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span className="text-xs text-slate-700">Frameless mode <span className="text-slate-400">(required for translucent)</span></span>
+                  </label>
+                </div>
+              )}
 
               {/* Transparent Background */}
               {config.backgroundType === 'transparent' && (

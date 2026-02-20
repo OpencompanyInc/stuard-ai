@@ -724,8 +724,10 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   </script>
   <script>
     // === User JS (separate script so parse errors don't block setup) ===
+    // Pre-declare App so function assignment inside try{} escapes block scope
+    var App;
     try {
-      ${js || ''}
+      ${(js || '').replace(/^(\s*)function\s+App\s*\(/m, '$1App = function App(')}
     } catch(__jsErr) {
       console.error('[Preview] Script error:', __jsErr);
     }
@@ -735,6 +737,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       try {
         var __root = document.querySelector('.stuard-root');
         if (__root) {
+          __root.innerHTML = ''; // Clear static HTML before React mount
           ReactDOM.render(React.createElement(App), __root);
           setTimeout(function() {
             if (typeof initializeElements === 'function') initializeElements();

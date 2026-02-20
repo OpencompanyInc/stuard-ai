@@ -109,6 +109,25 @@ export {
   run_node_script,
 } from './device/python';
 
+// Utility tools (no scripts needed)
+export {
+  get_datetime,
+  math_eval,
+  generate_uuid,
+  random_number,
+  random_choice,
+  get_env_var,
+  get_system_info,
+  hash_string,
+  base64_encode,
+  base64_decode,
+  json_parse,
+  json_stringify,
+  sleep,
+  regex_match,
+  regex_replace,
+} from './device/utils';
+
 export {
   list_open_windows,
   bring_window_to_foreground,
@@ -234,6 +253,18 @@ export {
 } from './device/sidebar-canvas';
 
 // ============================================================================
+// Workspace File Management — Read/write/list files in workflow workspace
+// ============================================================================
+export {
+  workspace_read_file,
+  workspace_write_file,
+  workspace_delete_file,
+  workspace_list_files,
+  workspace_create_folder,
+  workspace_get_info,
+} from './device/workspace';
+
+// ============================================================================
 // Workflow Variables - Persistent state across workflow runs
 // ============================================================================
 export {
@@ -295,27 +326,7 @@ export {
 // ═══════════════════════════════════════════════════════════════════════════════
 export const agent_todo = createTool({
   id: 'agent_todo',
-  description: `Agent's internal todo management for long-running tasks within a session.
-
-Actions:
-- list: Get all todos for the session
-- create: Create a new todo
-- update: Update a todo's status or details
-- complete: Mark a todo as completed
-- fail: Mark a todo as failed with error
-- delete: Remove a todo
-- clear: Clear all todos for the session
-- get_current: Get the currently in-progress todo
-- get_next: Get the next pending todo
-- progress: Get progress summary
-- bulk_create: Create multiple todos at once
-- start: Mark a todo as in_progress
-- block: Mark a todo as blocked
-
-Args:
-  action: The action to perform
-  sessionId: The conversation/thread ID (required)
-  data: Action-specific data`,
+  description: 'Track multi-step tasks. Actions: list, create, bulk_create, start, complete, fail, delete, clear, progress, get_current, get_next, block.',
   inputSchema: z.object({
     action: z.string().describe('The action to perform'),
     sessionId: z.string().describe('The conversation/thread ID'),

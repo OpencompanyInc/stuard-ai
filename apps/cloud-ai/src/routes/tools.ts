@@ -3,7 +3,7 @@ import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
 import { initToolRegistry } from '../tools/meta-tools';
 import { getToolRegistry } from '../tools/tool-registry';
 import { runWithSecrets } from '../tools/bridge';
-import { verifyToken } from '../supabase';
+import { verifyToken, checkAccess, logUsageEvent } from '../supabase';
 import { CORS_ALLOWED_ORIGINS, PUBLIC_TOOLS_ALLOWLIST, REQUIRE_TOOL_AUTH, IS_DEVELOPMENT } from '../utils/config';
 
 function getCorsOrigin(req: IncomingMessage): string {
@@ -72,6 +72,7 @@ async function streamToBuffer(stream: ReadableStream<Uint8Array>): Promise<Buffe
 }
 
 const DEFAULT_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb';
+const TTS_USAGE_MODEL = 'elevenlabs/tts';
 const FORMAT_MAP: Record<string, string> = {
   mp3: 'mp3_44100_128',
   opus: 'opus_48000_128',
@@ -79,6 +80,14 @@ const FORMAT_MAP: Record<string, string> = {
   aac: 'mp3_44100_128',
   flac: 'wav_44100',
 };
+
+function estimateTtsCostUsd(textLength: number): number {
+  const envPrice = Number(process.env.PRICE_ELEVENLABS_TTS_PER_1K_CHARS_USD);
+  const pricePer1kChars = Number.isFinite(envPrice) && envPrice > 0 ? envPrice : 0.3;
+  const chars = Math.max(0, textLength);
+  const usd = (chars / 1000) * pricePer1kChars;
+  return Number(usd.toFixed(8));
+}
 
 export async function handleToolsRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   const path = String(parsedUrl.pathname || '');
@@ -101,6 +110,30 @@ export async function handleToolsRoutes(req: IncomingMessage, res: ServerRespons
 
   if (req.method === 'POST' && path === '/tools/text_to_speech') {
     try {
+      const auth = req.headers.authorization || '';
+      const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+      const authed = token ? await verifyToken(token) : null;
+      const userId = authed?.userId || null;
+
+      if (!userId && !IS_DEVELOPMENT) {
+        writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
+        return true;
+      }
+
+      if (userId) {
+        const access = await checkAccess(userId);
+        if (!access.allowed) {
+          writeJson(res, 403, {
+            ok: false,
+            error: access.reason || 'access_denied',
+            plan: access.plan,
+            limit: access.limit,
+            used: access.used,
+          }, corsOrigin);
+          return true;
+        }
+      }
+
       const body = await readJsonBody(req);
       const text = String(body?.text || '').slice(0, 5000);
       const voiceId = body?.voice_id || body?.voice || DEFAULT_VOICE_ID;
@@ -139,6 +172,22 @@ export async function handleToolsRoutes(req: IncomingMessage, res: ServerRespons
       const audioStream = await client.textToSpeech.convert(voiceId, requestParams as any);
       const audioBuffer = await streamToBuffer(audioStream);
       const audioBase64 = audioBuffer.toString('base64');
+
+      if (userId) {
+        const costUsd = estimateTtsCostUsd(text.length);
+        try {
+          await logUsageEvent(userId, null, TTS_USAGE_MODEL, {
+            totalTokens: 0,
+            costUsd,
+            provider: 'elevenlabs',
+            endpoint: '/tools/text_to_speech',
+            textLength: text.length,
+            voiceId,
+            modelId,
+            format,
+          });
+        } catch {}
+      }
 
       writeJson(res, 200, {
         ok: true,

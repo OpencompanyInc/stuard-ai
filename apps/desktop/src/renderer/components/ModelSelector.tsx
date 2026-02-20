@@ -13,13 +13,15 @@ import {
   Settings2,
   Globe
 } from 'lucide-react';
-import type { ModelMeta } from '../hooks/usePreferences';
+import type { ModelMeta, ReasoningLevel } from '../hooks/usePreferences';
 import { useModelRegistry } from '../hooks/useModelRegistry';
 import { clsx } from 'clsx';
 
 interface ModelSelectorProps {
   selectedModelId: string | 'auto';
   onSelectModel: (id: string | 'auto') => void;
+  reasoningLevel?: ReasoningLevel;
+  onReasoningLevelChange?: (level: ReasoningLevel) => void;
   className?: string;
   side?: 'top' | 'bottom';
   align?: 'start' | 'center' | 'end';
@@ -31,12 +33,13 @@ const PROVIDER_FALLBACK_ICONS: Record<string, React.ReactNode> = {
   'xAI': <span className="w-4 h-4 flex items-center justify-center text-[10px] font-bold bg-black text-white rounded italic">x</span>,
   'DeepSeek': <span className="w-4 h-4 flex items-center justify-center text-[10px] font-bold bg-blue-600 text-white rounded">D</span>,
   'Perplexity': <span className="w-4 h-4 flex items-center justify-center text-[10px] font-bold bg-cyan-500 text-white rounded">P</span>,
+  'Anthropic': <span className="w-4 h-4 flex items-center justify-center text-[10px] font-bold bg-orange-500 text-white rounded">A</span>,
 };
 
 const TIER_DEFAULTS: Record<'fast' | 'balanced' | 'smart' | 'research', string> = {
   fast: 'deepseek/deepseek-chat',
   balanced: 'xai/grok-4-1-fast',
-  smart: 'google/gemini-3-pro-preview',
+  smart: 'google/gemini-3.1-pro-preview',
   research: 'perplexity/sonar-pro',
 };
 
@@ -70,6 +73,8 @@ function seededShuffle<T>(arr: T[], seed: string): T[] {
 export const ModelSelector: React.FC<ModelSelectorProps> = ({
   selectedModelId,
   onSelectModel,
+  reasoningLevel = 'high',
+  onReasoningLevelChange,
   className,
   side = 'top',
   align = 'start'
@@ -173,6 +178,8 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     return selectedModel ? selectedModel.name : selectedModelId;
   }, [selectedModelId, selectedModel]);
 
+  const showReasoningConfig = true; // Global preference — always visible
+
   const handleSelect = (id: string | 'auto') => {
     onSelectModel(id);
     setOpen(false);
@@ -230,9 +237,21 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           )}
         </div>
         <div className="flex flex-col items-start min-w-0">
-          <span className="text-[12px] font-semibold text-neutral-600 truncate max-w-[80px] leading-none group-hover:text-neutral-900">
-            {selectedModelName}
-          </span>
+          <div className="flex items-center gap-1 min-w-0">
+            <span className="text-[12px] font-semibold text-neutral-600 truncate max-w-[80px] leading-none group-hover:text-neutral-900">
+              {selectedModelName}
+            </span>
+            {reasoningLevel !== 'high' && (
+              <span className={clsx(
+                "text-[8px] font-bold uppercase tracking-wider px-1 py-0.5 rounded leading-none",
+                reasoningLevel === 'none'
+                  ? "text-theme-muted bg-theme-hover"
+                  : "text-purple-500 bg-purple-500/10"
+              )}>
+                {reasoningLevel === 'none' ? 'Off' : reasoningLevel === 'low' ? 'L' : 'M'}
+              </span>
+            )}
+          </div>
         </div>
         <ChevronDown className={clsx("w-3 h-3 text-neutral-400/70 transition-transform duration-300 ml-0.5", open && "rotate-180")} />
       </button>
@@ -410,20 +429,60 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             )}
           </div>
 
-          {/* Footer Info */}
-          <div className="p-3 bg-theme-bg/50 border-t border-theme/10 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 text-[10px] text-theme-muted font-bold uppercase tracking-wider">
-                <Command className="w-3 h-3" />
-                <span>Nav</span>
+          {/* Footer: Reasoning Level Config + Info */}
+          <div className="p-3 bg-theme-bg/50 border-t border-theme/10 flex flex-col gap-2">
+            {showReasoningConfig && (
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <Brain className="w-3 h-3 text-purple-500" />
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-bold text-theme-muted uppercase tracking-wider leading-none">Thinking</span>
+                    <span className="text-[9px] text-theme-muted/60 leading-none mt-0.5">For reasoning models</span>
+                  </div>
+                </div>
+                <div className="flex-1 flex items-center bg-theme-hover/50 rounded-lg p-0.5 gap-0.5">
+                  {([
+                    { level: 'none' as ReasoningLevel, label: 'Off' },
+                    { level: 'low' as ReasoningLevel, label: 'Low' },
+                    { level: 'medium' as ReasoningLevel, label: 'Med' },
+                    { level: 'high' as ReasoningLevel, label: 'High' },
+                  ]).map(({ level, label }) => (
+                    <button
+                      key={level}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onReasoningLevelChange?.(level);
+                      }}
+                      className={clsx(
+                        "flex-1 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all text-center",
+                        reasoningLevel === level
+                          ? level === 'none'
+                            ? "bg-theme-muted/30 text-theme-fg shadow-sm"
+                            : "bg-purple-500 text-white shadow-sm"
+                          : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="flex items-center gap-2 text-[10px] text-theme-muted font-bold uppercase tracking-wider hover:text-theme-fg cursor-pointer transition-colors">
-                <Settings2 className="w-3 h-3" />
-                <span>Config</span>
+            )}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 text-[10px] text-theme-muted font-bold uppercase tracking-wider">
+                  <Command className="w-3 h-3" />
+                  <span>Nav</span>
+                </div>
+                <div className="flex items-center gap-2 text-[10px] text-theme-muted font-bold uppercase tracking-wider hover:text-theme-fg cursor-pointer transition-colors">
+                  <Settings2 className="w-3 h-3" />
+                  <span>Config</span>
+                </div>
               </div>
-            </div>
-            <div className="text-[10px] text-theme-muted italic">
-              {ALL_MODELS.length} models
+              <div className="text-[10px] text-theme-muted italic">
+                {ALL_MODELS.length} models
+              </div>
             </div>
           </div>
         </div>

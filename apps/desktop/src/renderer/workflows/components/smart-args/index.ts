@@ -12,6 +12,7 @@ export type { SmartArgEditorProps, UpstreamNode } from './SmartArgEditor';
 // Individual editor components
 export { BooleanToggle } from './editors/BooleanToggle';
 export { HotkeyEditor } from './editors/HotkeyEditor';
+export { AcceleratorEditor } from './editors/AcceleratorEditor';
 export { SelectInput } from './editors/SelectInput';
 export { TextInputWithVariables } from './editors/TextInputWithVariables';
 export { CodeEditor } from './editors/CodeEditor';

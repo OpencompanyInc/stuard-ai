@@ -7,7 +7,7 @@ function parseIso(iso?: string | null): number | null {
   try { return iso ? new Date(iso).getTime() : null; } catch { return null; }
 }
 
-export async function refreshGoogleTokenIfNeeded(userId: string, acc: any): Promise<string> {
+export async function refreshGoogleTokenIfNeeded(userId: string, acc: any, profileLabel?: string): Promise<string> {
   let accessToken = String(acc?.access_token || '');
   const expiresAt = parseIso(acc?.expires_at);
   const now = Date.now();
@@ -41,6 +41,8 @@ export async function refreshGoogleTokenIfNeeded(userId: string, acc: any): Prom
           refresh_token: refresh_token || null,
           expires_at,
           meta: { token_type: tBody.token_type || (acc.meta?.token_type || 'Bearer') },
+          profileLabel: profileLabel || acc.profile_label || 'default',
+          accountEmail: acc.account_email || null,
         });
       } catch {}
       accessToken = newAccess;

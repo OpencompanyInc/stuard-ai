@@ -65,6 +65,13 @@ interface WorkflowCanvasAndPanelsProps {
   onRefreshWorkspace: () => void;
   onCloseWorkspace: () => void;
   onOpenFile: (filePath: string, fileName: string) => void;
+  onOpenStuard?: (subPath: string) => void;
+  /** Breadcrumbs for sub-workflow navigation */
+  breadcrumbs?: Array<{ label: string; path: string | null }>;
+  /** Current sub-workflow path (null = main) */
+  currentSubPath?: string | null;
+  /** Navigate back to parent workflow */
+  onNavigateBack?: () => void;
 }
 
 export function WorkflowCanvasAndPanels({
@@ -127,6 +134,10 @@ export function WorkflowCanvasAndPanels({
   onRefreshWorkspace,
   onCloseWorkspace,
   onOpenFile,
+  onOpenStuard,
+  breadcrumbs,
+  currentSubPath,
+  onNavigateBack,
 }: WorkflowCanvasAndPanelsProps) {
   return (
     <>
@@ -175,6 +186,9 @@ export function WorkflowCanvasAndPanels({
         onWireContextMenu={onWireContextMenu}
         onWireReconnect={onWireReconnect}
         onCanvasContextMenu={onCanvasContextMenu}
+        breadcrumbs={breadcrumbs}
+        currentSubPath={currentSubPath}
+        onNavigateBack={onNavigateBack}
       />
 
       <WorkflowRightPanels
@@ -197,6 +211,7 @@ export function WorkflowCanvasAndPanels({
         onRefreshWorkspace={onRefreshWorkspace}
         onCloseWorkspace={onCloseWorkspace}
         onOpenFile={onOpenFile}
+        onOpenStuard={onOpenStuard}
       />
     </>
   );

@@ -27,8 +27,12 @@ class WebSocketSession:
                 data["requestId"] = request_id
             async with self.send_lock:
                 await self.ws.send_text(json.dumps(data))
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger("agent").warning(
+                "ws_send_json_failed type=%s id=%s err=%s",
+                data.get("type", "?"), data.get("id", "?"), str(e)[:120]
+            )
 
     async def progress(self, event: str, payload: Dict[str, Any], request_id: Optional[str] = None) -> None:
         await self.send_json({

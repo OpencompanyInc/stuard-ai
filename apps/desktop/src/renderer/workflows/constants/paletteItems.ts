@@ -6,6 +6,7 @@ export const TRIGGER_ITEMS: PaletteItem[] = [
   { k: 'trigger', t: 'webhook.local', label: 'Webhook (Local)', args: {} },
   { k: 'trigger', t: 'webhook.cloud', label: 'Webhook (Cloud)', args: {} },
   { k: 'trigger', t: 'hotkey', label: 'Hotkey', args: { accelerator: 'Ctrl+Alt+C' } },
+  { k: 'trigger', t: 'hotkey.release', label: 'Hotkey Release', args: { accelerator: 'Ctrl+Alt+C' } },
   { k: 'trigger', t: 'outlook.calendar.poll', label: 'Outlook Calendar (poll)', args: { intervalSec: 60 } },
   { k: 'trigger', t: 'command.watch', label: 'Custom Script (watch)', args: { cmd: 'python', args: ['C:/path/to/script.py'] } }
 ];
@@ -60,21 +61,23 @@ export const LOCAL_TOOL_ITEMS: PaletteItem[] = [
   // Screen capture & media
   { k: 'local.tool', t: 'take_screenshot', label: 'Screenshot', args: {} },
   { k: 'local.tool', t: 'capture_media', label: 'Capture Photo', args: { kind: 'photo' } },
-  { k: 'local.tool', t: 'capture_media', label: 'Record Video (fixed)', args: { kind: 'video', mode: 'fixed', durationMs: 5000 } },
-  { k: 'local.tool', t: 'capture_media', label: 'Record Video (until stop)', args: { kind: 'video', mode: 'until_stop', maxDurationMs: 300000 } },
-  { k: 'local.tool', t: 'capture_media', label: 'Record Audio (fixed)', args: { kind: 'audio', mode: 'fixed', durationMs: 5000 } },
-  { k: 'local.tool', t: 'capture_media', label: 'Record Audio (until stop)', args: { kind: 'audio', mode: 'until_stop', maxDurationMs: 300000 } },
-  { k: 'local.tool', t: 'capture_media', label: 'Record Webcam + Mic (fixed)', args: { kind: 'audiovideo', mode: 'fixed', durationMs: 5000 } },
-  { k: 'local.tool', t: 'capture_media', label: 'Record Webcam + Mic (until stop)', args: { kind: 'audiovideo', mode: 'until_stop', maxDurationMs: 300000 } },
+  { k: 'local.tool', t: 'capture_media', label: 'Record Video (fixed)', args: { kind: 'video', mode: 'fixed', duration: 5 } },
+  { k: 'local.tool', t: 'capture_media', label: 'Record Video (until stop)', args: { kind: 'video', mode: 'until_stop', maxDuration: 300 } },
+  { k: 'local.tool', t: 'capture_media', label: 'Record Audio (fixed)', args: { kind: 'audio', mode: 'fixed', duration: 5 } },
+  { k: 'local.tool', t: 'capture_media', label: 'Record Audio (until stop)', args: { kind: 'audio', mode: 'until_stop', maxDuration: 300 } },
+  { k: 'local.tool', t: 'capture_media', label: 'Record Audio (until silence)', args: { kind: 'audio', mode: 'silence', silenceThreshold: 5, silenceDuration: 2, maxDuration: 300 } },
+  { k: 'local.tool', t: 'capture_media', label: 'Record Webcam + Mic (fixed)', args: { kind: 'audiovideo', mode: 'fixed', duration: 5 } },
+  { k: 'local.tool', t: 'capture_media', label: 'Record Webcam + Mic (until stop)', args: { kind: 'audiovideo', mode: 'until_stop', maxDuration: 300 } },
   { k: 'local.tool', t: 'stop_capture', label: 'Stop Recording', args: { sessionId: '' } },
 
   // Screen recording & system audio
-  { k: 'local.tool', t: 'capture_screen', label: 'Record Screen (fixed)', args: { mode: 'fixed', durationMs: 5000, target: 'fullscreen', fps: 30, quality: 'medium' } },
+  { k: 'local.tool', t: 'capture_screen', label: 'Record Screen (fixed)', args: { mode: 'fixed', duration: 5, target: 'fullscreen', fps: 30, quality: 'medium' } },
   { k: 'local.tool', t: 'capture_screen', label: 'Record Screen (until stop)', args: { mode: 'until_stop', target: 'fullscreen', fps: 30, quality: 'medium' } },
   { k: 'local.tool', t: 'capture_screen', label: 'Record Screen + Audio', args: { mode: 'until_stop', target: 'fullscreen', includeSystemAudio: true, fps: 30, quality: 'medium' } },
   { k: 'local.tool', t: 'stop_screen_capture', label: 'Stop Screen Recording', args: { sessionId: '' } },
-  { k: 'local.tool', t: 'capture_system_audio', label: 'Record System Audio (fixed)', args: { mode: 'fixed', durationMs: 5000, format: 'wav' } },
+  { k: 'local.tool', t: 'capture_system_audio', label: 'Record System Audio (fixed)', args: { mode: 'fixed', duration: 5, format: 'wav' } },
   { k: 'local.tool', t: 'capture_system_audio', label: 'Record System Audio (until stop)', args: { mode: 'until_stop', format: 'wav' } },
+  { k: 'local.tool', t: 'capture_system_audio', label: 'Record System Audio (until silence)', args: { mode: 'silence', silenceThreshold: 5, silenceDuration: 2, format: 'wav' } },
   { k: 'local.tool', t: 'stop_system_audio', label: 'Stop System Audio', args: { sessionId: '' } },
 
   // Mouse & keyboard
@@ -106,6 +109,22 @@ export const LOCAL_TOOL_ITEMS: PaletteItem[] = [
   // Memory & groups
   { k: 'local.tool', t: 'memory_retrieval', label: 'Memory', args: {} },
   { k: 'local.tool', t: 'group_management', label: 'Groups', args: {} },
+
+  // Utilities (no scripts needed)
+  { k: 'local.tool', t: 'get_datetime', label: 'Get Date & Time', args: {} },
+  { k: 'local.tool', t: 'math_eval', label: 'Math Expression', args: { expression: 'sqrt(16) + pow(2, 3)' } },
+  { k: 'local.tool', t: 'generate_uuid', label: 'Generate UUID', args: {} },
+  { k: 'local.tool', t: 'random_number', label: 'Random Number', args: { min: 1, max: 100 } },
+  { k: 'local.tool', t: 'random_choice', label: 'Random Choice', args: { items: ['a', 'b', 'c'] } },
+  { k: 'local.tool', t: 'sleep', label: 'Sleep / Delay', args: { seconds: 1 } },
+  { k: 'local.tool', t: 'get_system_info', label: 'System Info', args: {} },
+  { k: 'local.tool', t: 'get_env_var', label: 'Get Env Variable', args: { name: 'PATH' } },
+  { k: 'local.tool', t: 'hash_string', label: 'Hash String', args: { text: 'hello', algorithm: 'sha256' } },
+  { k: 'local.tool', t: 'base64_encode', label: 'Base64 Encode', args: { text: 'hello world' } },
+  { k: 'local.tool', t: 'base64_decode', label: 'Base64 Decode', args: { encoded: 'aGVsbG8gd29ybGQ=' } },
+  { k: 'local.tool', t: 'json_parse', label: 'Parse JSON', args: { text: '{"key": "value"}' } },
+  { k: 'local.tool', t: 'regex_match', label: 'Regex Match', args: { text: 'hello world', pattern: '(\\w+)' } },
+  { k: 'local.tool', t: 'regex_replace', label: 'Regex Replace', args: { text: 'hello world', pattern: 'world', replacement: 'there' } },
 
   // Orchestration & timing
   { k: 'local.tool', t: 'wait', label: 'Wait', args: { ms: 1000 } },

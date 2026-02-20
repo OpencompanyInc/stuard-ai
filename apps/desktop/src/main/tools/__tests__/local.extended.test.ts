@@ -32,6 +32,25 @@ describe('calcToolTimeout - Extended Tests', () => {
     });
   });
 
+  describe('capture_screen / capture_system_audio', () => {
+    it('should return 60s for until_stop and stream modes', () => {
+      expect(calcToolTimeout('capture_screen', { mode: 'until_stop' })).toBe(60000);
+      expect(calcToolTimeout('capture_screen', { mode: 'stream' })).toBe(60000);
+      expect(calcToolTimeout('capture_screen', { stream: true })).toBe(60000);
+
+      expect(calcToolTimeout('capture_system_audio', { mode: 'until_stop' })).toBe(60000);
+      expect(calcToolTimeout('capture_system_audio', { mode: 'stream' })).toBe(60000);
+      expect(calcToolTimeout('capture_system_audio', { stream: true })).toBe(60000);
+    });
+
+    it('should apply fixed-mode duration rules', () => {
+      expect(calcToolTimeout('capture_screen', { mode: 'fixed', durationMs: 10000 })).toBe(70000);
+      expect(calcToolTimeout('capture_system_audio', { mode: 'fixed', durationMs: 10000 })).toBe(70000);
+      expect(calcToolTimeout('capture_screen', { mode: 'fixed', durationMs: 360000 })).toBe(480000);
+      expect(calcToolTimeout('capture_system_audio', { mode: 'fixed', durationMs: 360000 })).toBe(480000);
+    });
+  });
+
   describe('stream_speech', () => {
     it('should add 60s to duration', () => {
       expect(calcToolTimeout('stream_speech', { durationMs: 30000 })).toBe(90000);
@@ -113,6 +132,25 @@ describe('calcToolTimeout - Extended Tests', () => {
   describe('analyze_media', () => {
     it('should return 10 minute timeout', () => {
       expect(calcToolTimeout('analyze_media', {})).toBe(600000);
+    });
+  });
+
+  describe('ffmpeg tools', () => {
+    it('should return 20 minutes for ffmpeg_setup', () => {
+      expect(calcToolTimeout('ffmpeg_setup', {})).toBe(1200000);
+    });
+
+    it('should use default timeout for ffmpeg operations', () => {
+      expect(calcToolTimeout('ffmpeg_convert_media', {})).toBe(600000);
+      expect(calcToolTimeout('ffmpeg_probe_media', {})).toBe(600000);
+    });
+
+    it('should add 30s buffer to custom timeout for ffmpeg operations', () => {
+      expect(calcToolTimeout('ffmpeg_run', { timeoutMs: 10000 })).toBe(40000);
+    });
+
+    it('should cap ffmpeg operation timeout at 30 minutes', () => {
+      expect(calcToolTimeout('ffmpeg_extract_audio', { timeoutMs: 99999999 })).toBe(1800000);
     });
   });
 

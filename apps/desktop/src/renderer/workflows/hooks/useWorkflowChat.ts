@@ -2,6 +2,14 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { StreamItem, ToolEvent } from '../components/ChatPanel';
 import { specToDesignerModel } from '../utils/conversions';
+import {
+  ChatSession,
+  createSession,
+  getSession,
+  getSessionsForWorkflow,
+  saveSession,
+  deleteSession as deleteStoredSession,
+} from '../utils/chatStorage';
 
 export type { StreamItem, ToolEvent };
 
@@ -13,22 +21,32 @@ export interface Message {
   reasoning?: string;
 }
 
+interface WorkspaceInfoForChat {
+  workspacePath: string;
+  subdirs: string[];
+  files: Array<{ name: string; path: string; type: 'file' | 'directory'; size?: number }>;
+}
+
 interface UseWorkflowChatProps {
   model: any;
   onApplyModel: (model: any) => void;
   cloudAiHttp: string;
+  workflowId?: string; // Required for session persistence
   initialMessages?: Message[];
   errors?: any[];
   selectedModelId?: string | 'auto';
+  workspaceInfo?: WorkspaceInfoForChat | null;
 }
 
 export function useWorkflowChat({
   model,
   onApplyModel,
   cloudAiHttp,
+  workflowId,
   initialMessages = [],
   errors = [],
-  selectedModelId = 'auto'
+  selectedModelId = 'auto',
+  workspaceInfo,
 }: UseWorkflowChatProps) {
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [streamItems, setStreamItems] = useState<StreamItem[]>([]);
@@ -38,12 +56,89 @@ export function useWorkflowChat({
   const wsRef = useRef<WebSocket | null>(null);
   const abortedRef = useRef(false);
 
-  // Initialize welcome message
+  // Session management - workflow-scoped
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [pastSessions, setPastSessions] = useState<ChatSession[]>([]);
+  const [showSessionHistory, setShowSessionHistory] = useState(false);
+
+  // Load sessions when workflow changes
   useEffect(() => {
-    if (messages.length === 0) {
+    if (!workflowId) {
+      setPastSessions([]);
+      setCurrentSessionId(null);
+      return;
+    }
+    // Load past sessions for this workflow
+    const sessions = getSessionsForWorkflow(workflowId);
+    setPastSessions(sessions);
+    // Create a new session for this workflow
+    const newSession = createSession(workflowId);
+    setCurrentSessionId(newSession.id);
+    // Reset messages with welcome
+    setMessages([{ role: 'assistant', content: 'Hi! I\'m your Workflow Architect. Describe what you want to change or add to this workflow.' }]);
+  }, [workflowId]);
+
+  // Save messages to current session whenever they change
+  useEffect(() => {
+    if (!currentSessionId || messages.length <= 1) return; // Don't save just the welcome message
+    // Convert to storable format (strip parts/images for storage)
+    const storableMessages = messages.map(m => ({
+      role: m.role,
+      content: m.content
+    }));
+    saveSession(currentSessionId, storableMessages);
+    // Refresh past sessions list
+    if (workflowId) {
+      setPastSessions(getSessionsForWorkflow(workflowId));
+    }
+  }, [messages, currentSessionId, workflowId]);
+
+  // Create a new chat session for current workflow
+  const newSession = useCallback(() => {
+    if (!workflowId) return;
+    const session = createSession(workflowId);
+    setCurrentSessionId(session.id);
+    setMessages([{ role: 'assistant', content: 'Hi! I\'m your Workflow Architect. Describe what you want to change or add to this workflow.' }]);
+    setPastSessions(getSessionsForWorkflow(workflowId));
+    setShowSessionHistory(false);
+  }, [workflowId]);
+
+  // Load a past session
+  const loadSession = useCallback((sessionId: string) => {
+    const session = getSession(sessionId);
+    if (!session) return;
+    setCurrentSessionId(session.id);
+    // Restore messages (add parts/images placeholders)
+    const restoredMessages: Message[] = session.messages.map(m => ({
+      role: m.role as 'user' | 'assistant' | 'system',
+      content: m.content
+    }));
+    setMessages(restoredMessages.length > 0 ? restoredMessages : [
+      { role: 'assistant', content: 'Hi! I\'m your Workflow Architect. Describe what you want to change or add to this workflow.' }
+    ]);
+    setShowSessionHistory(false);
+  }, []);
+
+  // Delete a session
+  const deleteSession = useCallback((sessionId: string) => {
+    deleteStoredSession(sessionId);
+    if (workflowId) {
+      setPastSessions(getSessionsForWorkflow(workflowId));
+    }
+    // If deleting current session, start a new one
+    if (sessionId === currentSessionId && workflowId) {
+      const session = createSession(workflowId);
+      setCurrentSessionId(session.id);
       setMessages([{ role: 'assistant', content: 'Hi! I\'m your Workflow Architect. Describe what you want to change or add to this workflow.' }]);
     }
-  }, []);
+  }, [currentSessionId, workflowId]);
+
+  // Initialize welcome message (only if no workflowId - legacy behavior)
+  useEffect(() => {
+    if (!workflowId && messages.length === 0) {
+      setMessages([{ role: 'assistant', content: 'Hi! I\'m your Workflow Architect. Describe what you want to change or add to this workflow.' }]);
+    }
+  }, [workflowId]);
 
   const sendMessage = useCallback(async (text: string, attachedImages: any[] = []) => {
     if (!text && attachedImages.length === 0) return;
@@ -104,8 +199,23 @@ ${wiresSummary}
         ? `\n\nUser has attached ${attachedImages.length} reference image(s):\n${attachedImages.map((img: any) => `- ${img.name}: ${img.path}`).join('\n')}\nThese images are available for visual context. Use analyze_media tool if you need to analyze them.`
         : '';
 
+      // Build workspace path section
+      let workspaceSection = '';
+      if (workspaceInfo?.workspacePath) {
+        const fileTree = (workspaceInfo.files || []).map((f: any) => {
+          const rel = f.path.replace(/\\/g, '/').replace(workspaceInfo.workspacePath.replace(/\\/g, '/') + '/', '');
+          return `  ${f.type === 'directory' ? '📁' : '📄'} ${rel}${f.size ? ` (${f.size} bytes)` : ''}`;
+        }).join('\n');
+        workspaceSection = `\n═══════════════════════════════════════════════════
+WORKSPACE PATHS
+═══════════════════════════════════════════════════
+workspacePath: ${workspaceInfo.workspacePath.replace(/\\/g, '/')}
+subdirs: ${(workspaceInfo.subdirs || []).join(', ')}
+Files:\n${fileTree || '  (empty workspace)'}\n`;
+      }
+
       // Build context as a separate system message, and keep user request clean
-      const workflowContextText = `${debugSection ? debugSection + '\n' : ''}CURRENT WORKFLOW (for reference only - do NOT modify unless user requests):
+      const workflowContextText = `${debugSection ? debugSection + '\n' : ''}${workspaceSection}CURRENT WORKFLOW (for reference only - do NOT modify unless user requests):
 ${JSON.stringify(designerModel, null, 2)}
 
 ${structureSummary}
@@ -160,11 +270,10 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
           try {
             // Build messages with context as a system message, user request as user message
             const conversationMessages = newMessages.filter(m => m.role !== 'system').map(m => {
-              const msg: any = { role: m.role, content: m.content };
-              if ((m as any).parts && (m as any).parts.length > 0) {
-                msg.parts = (m as any).parts;
-              }
-              return msg;
+              // Only send role + content to cloud-ai. Do NOT include 'parts' or 'reasoning'
+              // as those are UI-only fields. Gemini treats 'parts' as a reserved field name
+              // and will reject messages with non-standard parts objects.
+              return { role: m.role, content: m.content };
             });
 
             // Insert workflow context as a system message before the conversation
@@ -178,6 +287,13 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
             if (designerModel && (designerModel.id || designerModel.triggers || designerModel.nodes)) {
               payloadContext.workflow = designerModel;
               if (designerModel.id) payloadContext.workflowId = designerModel.id;
+            }
+            if (workspaceInfo?.workspacePath) {
+              payloadContext.workspacePath = workspaceInfo.workspacePath.replace(/\\/g, '/');
+              payloadContext.workspaceSubdirs = workspaceInfo.subdirs || [];
+              payloadContext.workspaceFiles = (workspaceInfo.files || []).map((f: any) => ({
+                name: f.name, path: f.path.replace(/\\/g, '/'), type: f.type, size: f.size
+              }));
             }
             const payload: any = {
               type: "chat",
@@ -498,6 +614,7 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
     } finally {
       wsRef.current = null;
       setStreamItems([]);
+      setReasoningText('');
       setBusy(false);
     }
   }, [messages, busy, model, errors, cloudAiHttp, onApplyModel]);
@@ -523,6 +640,14 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
     sendMessage,
     stopGeneration,
     showReasoning,
-    setShowReasoning
-  }), [messages, streamItems, reasoningText, busy, sendMessage, stopGeneration, showReasoning]);
+    setShowReasoning,
+    // Session management
+    currentSessionId,
+    pastSessions,
+    showSessionHistory,
+    setShowSessionHistory,
+    newSession,
+    loadSession,
+    deleteSession,
+  }), [messages, streamItems, reasoningText, busy, sendMessage, stopGeneration, showReasoning, currentSessionId, pastSessions, showSessionHistory, newSession, loadSession, deleteSession]);
 }

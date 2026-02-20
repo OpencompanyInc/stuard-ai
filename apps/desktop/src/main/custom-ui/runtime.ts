@@ -8,6 +8,7 @@ import { calculatePosition } from './position';
 import { getPreloadPath } from './preload';
 import { generateEnhancedCustomUiHtml } from './html';
 import { setVariable, type VariableValue } from '../workflow-variables';
+import { getScreenCaptureInvisible } from '../windows/window';
 
 // Temp directory for custom UI HTML files (allows file:// loading so local images work)
 const CUSTOM_UI_TMP_DIR = path.join(os.tmpdir(), 'stuard_custom_ui');
@@ -59,11 +60,14 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
   const backgroundColor = windowCfg.backgroundColor || 'transparent';
   const gradient = windowCfg.gradient;
   const backgroundImage = windowCfg.backgroundImage;
+  const translucent = windowCfg.translucent || undefined;
   const shadow = windowCfg.shadow || { enabled: false };
   const border = windowCfg.border || { enabled: false };
   const animation = windowCfg.animation;
   const contentPadding = windowCfg.contentPadding || 0;
   const overflow = windowCfg.overflow || '';
+  const invisible = windowCfg.invisible === true || windowCfg.invisible === 'true';
+  const isTranslucent = backgroundType === 'translucent';
 
   const transparentBg =
     windowCfg.noBackground === true ||
@@ -71,7 +75,8 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     windowCfg.transparentBg === true ||
     windowCfg.transparentBg === 'true' ||
     wantsTransparentWindow ||
-    (rawHtml && wantsTransparentWindow);
+    (rawHtml && wantsTransparentWindow) ||
+    isTranslucent;
 
   const flowId = args?.flowId || (ctx as any)?.flowId || '';
 
@@ -128,6 +133,12 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
 
   ctx.logFn(`custom_ui: data keys=[${Object.keys(safeData).join(', ')}]`);
 
+  // Debug: log actual data values to diagnose template resolution
+  for (const [k, v] of Object.entries(safeData)) {
+    const vs = typeof v === 'string' ? v.slice(0, 80) : JSON.stringify(v)?.slice(0, 80);
+    ctx.logFn(`custom_ui: data.${k} = ${vs}`);
+  }
+
   const { x, y } = calculatePosition(windowCfg.position, width, height, windowCfg.x, windowCfg.y, margin);
 
   // Handle existing window — push data via variable system (no page reload)
@@ -155,6 +166,7 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     if (!existing.isVisible()) {
       existing.show();
     }
+    existing.focus();
 
     // Update stored data
     const existingData = windowData.get(id);
@@ -181,7 +193,7 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
   // Only enable Electron-level transparency when the window is frameless.
   // On Windows, transparent + framed windows don't render CSS backgrounds correctly.
   // borderRadius still applies visually via CSS overflow:hidden inside the frame.
-  const transparent = frameless && (!!windowCfg.transparent || borderRadius > 0 || transparentBg);
+  const transparent = frameless && (!!windowCfg.transparent || borderRadius > 0 || transparentBg || isTranslucent);
   const isAlwaysOnTop = windowCfg.alwaysOnTop !== false;
   const shouldSkipTaskbar = windowCfg.skipTaskbar === true || (isAlwaysOnTop && windowCfg.skipTaskbar !== false);
 
@@ -205,7 +217,7 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     show: false,
     frame: !frameless,
     transparent,
-    backgroundColor: transparent ? '#00000000' : (backgroundColor || '#1a1a2e'),
+    backgroundColor: (transparent || isTranslucent) ? '#00000000' : (backgroundColor || '#1a1a2e'),
     resizable: windowCfg.resizable !== false,
     movable: windowCfg.movable !== false,
     minimizable: false,
@@ -225,6 +237,11 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
   });
 
   if (frameless) win.setMenu(null);
+
+  // Apply screen capture invisibility (per-window property OR global setting)
+  if (invisible || getScreenCaptureInvisible()) {
+    try { win.setContentProtection(true); } catch {}
+  }
 
   if (isAlwaysOnTop) {
     try {
@@ -255,16 +272,34 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     backgroundColor,
     gradient,
     backgroundImage,
+    translucent,
     shadow,
     border,
     animation,
     contentPadding,
     overflow,
+    draggable: windowCfg.draggable !== false,
   });
 
   const tmpHtmlPath = writeTempHtml(id, htmlContent);
-  await win.loadURL(`file://${tmpHtmlPath.replace(/\\/g, '/')}`);
+  try {
+    await win.loadFile(tmpHtmlPath);
+  } catch (loadErr: any) {
+    ctx.logFn(`custom_ui: loadFile failed for "${id}": ${loadErr?.message || loadErr}`);
+    // Retry once with a small delay (Windows file system latency)
+    await new Promise(r => setTimeout(r, 100));
+    try {
+      await win.loadFile(tmpHtmlPath);
+    } catch (retryErr: any) {
+      ctx.logFn(`custom_ui: loadFile retry also failed: ${retryErr?.message || retryErr}`);
+      if (!win.isDestroyed()) { try { win.close(); } catch {} }
+      customUiWindows.delete(id);
+      windowData.delete(id);
+      return { ok: false, error: `Failed to load UI: ${retryErr?.message || 'ERR_FAILED'}` };
+    }
+  }
   win.show();
+  win.focus();
 
   // Legacy fallback: listen for title-based submit/close signals from runtime script
   // (used when preload is unavailable)

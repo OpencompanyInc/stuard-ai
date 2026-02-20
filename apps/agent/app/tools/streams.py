@@ -107,6 +107,52 @@ _streams: Dict[str, Stream] = {}
 _streams_lock = threading.Lock()
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Chunk References — zero-copy passing of in-memory data between Python tools
+# ─────────────────────────────────────────────────────────────────────────────
+
+_chunk_refs: Dict[str, Any] = {}
+_chunk_refs_ts: Dict[str, float] = {}  # creation timestamps
+_chunk_refs_lock = threading.Lock()
+_CHUNK_REF_TTL = 10.0  # seconds before auto-cleanup
+
+
+def store_chunk_ref(data: Any) -> str:
+    """Store data in-memory and return a lightweight reference ID."""
+    ref_id = f"ref_{uuid.uuid4().hex[:12]}"
+    with _chunk_refs_lock:
+        _chunk_refs[ref_id] = data
+        _chunk_refs_ts[ref_id] = time.time()
+    return ref_id
+
+
+def get_chunk_ref(ref_id: str) -> Any:
+    """Retrieve in-memory data by reference ID. Returns None if expired/missing."""
+    with _chunk_refs_lock:
+        return _chunk_refs.get(ref_id)
+
+
+def release_chunk_ref(ref_id: str) -> None:
+    """Explicitly release a chunk reference."""
+    with _chunk_refs_lock:
+        _chunk_refs.pop(ref_id, None)
+        _chunk_refs_ts.pop(ref_id, None)
+
+
+def _cleanup_expired_refs() -> int:
+    """Remove references older than TTL. Returns count removed."""
+    now = time.time()
+    expired: List[str] = []
+    with _chunk_refs_lock:
+        for rid, ts in _chunk_refs_ts.items():
+            if now - ts > _CHUNK_REF_TTL:
+                expired.append(rid)
+        for rid in expired:
+            _chunk_refs.pop(rid, None)
+            _chunk_refs_ts.pop(rid, None)
+    return len(expired)
+
+
 def _get_stream(stream_id: str) -> Optional[Stream]:
     with _streams_lock:
         return _streams.get(stream_id)
@@ -302,6 +348,8 @@ async def stream_read(
     max_chunks = int(args.get("maxChunks") or 50)
     wait_ms = int(args.get("waitMs") or 0)
     as_base64 = bool(args.get("asBase64", False))
+    latest_only = bool(args.get("latestOnly", False))
+    format_opt = str(args.get("format") or "").strip().lower()
 
     if not stream_id:
         return {"ok": False, "error": "missing_streamId"}
@@ -312,6 +360,9 @@ async def stream_read(
     if not stream:
         return {"ok": False, "error": "stream_not_found"}
 
+    # Periodically clean up expired chunk references
+    _cleanup_expired_refs()
+
     with stream.subscribers_lock:
         sub = stream.subscribers.get(subscriber_id)
         if not sub:
@@ -319,14 +370,14 @@ async def stream_read(
         cursor = sub.cursor
 
     # Try to read chunks
-    chunks = _read_chunks_from_buffer(stream, cursor, max_chunks, as_base64)
+    chunks = _read_latest_chunk_from_buffer(stream, cursor, as_base64, format_opt) if latest_only else _read_chunks_from_buffer(stream, cursor, max_chunks, as_base64, format_opt)
 
     # If no chunks and waitMs > 0, poll briefly
     if not chunks and wait_ms > 0 and not stream.closed:
         deadline = time.time() + (wait_ms / 1000.0)
         while time.time() < deadline and not stream.closed:
             await asyncio.sleep(0.02)  # 20ms poll interval
-            chunks = _read_chunks_from_buffer(stream, cursor, max_chunks, as_base64)
+            chunks = _read_latest_chunk_from_buffer(stream, cursor, as_base64, format_opt) if latest_only else _read_chunks_from_buffer(stream, cursor, max_chunks, as_base64, format_opt)
             if chunks:
                 break
 
@@ -417,7 +468,7 @@ def _cleanup_stream_frames(stream_id: str) -> None:
 
 
 def _read_chunks_from_buffer(
-    stream: Stream, cursor: int, max_chunks: int, as_base64: bool
+    stream: Stream, cursor: int, max_chunks: int, as_base64: bool, format_opt: str = ""
 ) -> List[Dict[str, Any]]:
     """Read chunks from the ring buffer starting at cursor."""
     try:
@@ -427,35 +478,88 @@ def _read_chunks_from_buffer(
         snap = list(stream.buffer)
 
     chunks: List[Dict[str, Any]] = []
-    for idx, data, timestamp in snap:
+    for item in snap:
+        # Support both 3-tuple (legacy) and 4-tuple (with metadata) formats
+        if len(item) == 4:
+            idx, data, timestamp, meta = item
+        else:
+            idx, data, timestamp = item
+            meta = None
+
         if idx >= cursor:
             if len(chunks) >= max_chunks:
                 break
 
-            chunk_data: Any = data
+            chunk_data = _serialize_chunk_data(data, as_base64, format_opt)
 
-            # Video frames (numpy H×W×C arrays) — encode as base64 data URL
-            # in-memory for zero-disk-I/O streaming.  The chunk data is a dict
-            # so the engine can auto-inject imageData for mediapipe tools.
-            if _is_video_frame(data):
-                try:
-                    data_url = _encode_frame_base64(data)
-                    chunk_data = data_url
-                except Exception as exc:
-                    chunk_data = f"__frame_encode_error:{exc}"
-            elif as_base64:
-                if isinstance(data, (bytes, bytearray)):
-                    chunk_data = base64.b64encode(data).decode("utf-8")
-                elif hasattr(data, 'tobytes'):
-                    chunk_data = base64.b64encode(data.tobytes()).decode("utf-8")
-
-            chunks.append({
+            chunk_out: Dict[str, Any] = {
                 "index": idx,
                 "data": chunk_data,
                 "timestamp": timestamp,
-            })
+            }
+            # Merge metadata (e.g. volume) into the chunk output
+            if meta and isinstance(meta, dict):
+                chunk_out.update(meta)
+            chunks.append(chunk_out)
 
     return chunks
+
+
+def _read_latest_chunk_from_buffer(
+    stream: Stream, cursor: int, as_base64: bool, format_opt: str = ""
+) -> List[Dict[str, Any]]:
+    """Read only the newest available chunk at/after cursor (real-time mode)."""
+    try:
+        with stream.buffer_lock:
+            snap = list(stream.buffer)
+    except Exception:
+        snap = list(stream.buffer)
+
+    for item in reversed(snap):
+        # Support both 3-tuple (legacy) and 4-tuple (with metadata) formats
+        if len(item) == 4:
+            idx, data, timestamp, meta = item
+        else:
+            idx, data, timestamp = item
+            meta = None
+
+        if idx >= cursor:
+            chunk_out: Dict[str, Any] = {
+                "index": idx,
+                "data": _serialize_chunk_data(data, as_base64, format_opt),
+                "timestamp": timestamp,
+            }
+            if meta and isinstance(meta, dict):
+                chunk_out.update(meta)
+            return [chunk_out]
+
+    return []
+
+
+def _serialize_chunk_data(data: Any, as_base64: bool, format_opt: str = "") -> Any:
+    """Serialize a buffer chunk into a wire-safe representation.
+
+    format_opt:
+        ""      — default (base64 for video frames)
+        "ref"   — store in-memory, return {"__ref": ref_id} (zero-copy)
+        "base64" — always encode video frames as base64 data URL
+    """
+    if _is_video_frame(data):
+        if format_opt == "ref":
+            ref_id = store_chunk_ref(data)
+            return {"__ref": ref_id, "shape": list(data.shape)}
+        try:
+            return _encode_frame_base64(data)
+        except Exception as exc:
+            return f"__frame_encode_error:{exc}"
+
+    if as_base64:
+        if isinstance(data, (bytes, bytearray)):
+            return base64.b64encode(data).decode("utf-8")
+        if hasattr(data, 'tobytes'):
+            return base64.b64encode(data.tobytes()).decode("utf-8")
+
+    return data
 
 
 async def stream_close(
@@ -865,10 +969,15 @@ async def stream_get_status(
 # Media Bus Bridge
 # ─────────────────────────────────────────────────────────────────────────────
 
-def push_to_stream(stream_id: str, chunk: Any) -> bool:
+def push_to_stream(stream_id: str, chunk: Any, metadata: Optional[Dict[str, Any]] = None) -> bool:
     """
     Push a chunk directly into a stream (called from media bus workers).
     This is a synchronous function for use from capture threads.
+
+    Args:
+        stream_id: ID of the stream to push to.
+        chunk: The data chunk (e.g. numpy array, bytes, dict).
+        metadata: Optional metadata dict (e.g. {"volume": 42.5}) attached to the buffer entry.
 
     Returns True if the chunk was written, False if stream not found or closed.
     """
@@ -880,7 +989,7 @@ def push_to_stream(stream_id: str, chunk: Any) -> bool:
     transformed = _apply_transforms(stream, chunk)
 
     with stream.buffer_lock:
-        stream.buffer.append((stream.buffer_index, transformed, time.time()))
+        stream.buffer.append((stream.buffer_index, transformed, time.time(), metadata))
         stream.buffer_index += 1
         stream.total_chunks += 1
 

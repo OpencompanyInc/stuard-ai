@@ -864,6 +864,7 @@ export function generateCustomUIArgs(design: UIDesign): Record<string, any> {
       backgroundType: wc.backgroundType || 'color',
       gradient: wc.gradient,
       backgroundImage: wc.backgroundImage,
+      translucent: wc.translucent,
       shadow: wc.shadow,
       border: wc.border,
       animation: wc.animation,
@@ -907,6 +908,9 @@ export function parseCustomUIArgs(args: Record<string, any>): UIDesign | null {
     design.windowConfig.transparent = windowConfig.transparent ?? args.transparent ?? false;
     design.windowConfig.borderRadius = windowConfig.borderRadius ?? args.borderRadius ?? 8;
     design.windowConfig.title = args.title || 'Custom UI';
+    if (windowConfig.backgroundType) design.windowConfig.backgroundType = windowConfig.backgroundType;
+    if (windowConfig.translucent) design.windowConfig.translucent = windowConfig.translucent;
+    if (windowConfig.backgroundColor) design.windowConfig.backgroundColor = windowConfig.backgroundColor;
 
     return design;
   }

@@ -23,6 +23,7 @@ import * as memoryService from './memory/conversations';
 import { registerWebhookClient, deliverQueuedWebhooks } from './webhooks/dispatch';
 import { getOrCreateQueryEmbedding } from './utils/shared-embedding';
 import { getRankedToolNames } from './utils/tool-ranking';
+import { normalizeUsage } from './utils/usage';
 
 import { getAgentForQuery } from './agents/stuard/index';
 
@@ -505,6 +506,15 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           return;
         }
 
+        // Send immediate acknowledgment to reduce perceived latency
+        send(ws, { type: 'progress', event: 'ack', data: { ts: Date.now() } }, requestId);
+
+        // Kick off embedding early (memoized promise - will be reused by knowledge/memory later)
+        // This runs in parallel with agent selection and other setup
+        const earlyEmbeddingPromise = process.env.SIS_PARALLEL_EMBEDDINGS === '1'
+          ? getOrCreateQueryEmbedding(prompt).catch(() => null)
+          : null;
+
         // Determine which agent/model to use
         const rawAgent = typeof (msg as any)?.agent === 'string' ? String((msg as any).agent) : '';
         const rawAgentLower = rawAgent.toLowerCase().trim();
@@ -558,6 +568,12 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               setSessionWorkflow(directWorkflow);
               sessionLoaded = true;
               console.log('[cloud-ai] Pre-stored workflow from context:', { id: directWorkflow.id, nodes: directWorkflow.nodes?.length, triggers: directWorkflow.triggers?.length });
+            }
+
+            // Log workspace path info if provided by client
+            const workspacePath = incomingCtx?.workspacePath;
+            if (workspacePath) {
+              console.log('[cloud-ai] Workflow workspace path:', workspacePath);
             }
 
             // Fallback: Extract workflow JSON from system context message
@@ -627,26 +643,27 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           }
         } else {
           // ─── Parallel embedding + tool ranking pipeline ───────────────
-          // When SIS flags are enabled, start the embedding early and run
-          // tool ranking in parallel so we can build a smaller, focused toolset.
+          // Always attempt embedding-based tool ranking. The embedding is
+          // memoized and reused by knowledge/memory retrieval later, so
+          // this is essentially free. Falls back to static Tier 1 if
+          // embedding or Supabase is unavailable.
           let rankedToolNames: string[] | undefined;
 
-          if (process.env.SIS_PARALLEL_EMBEDDINGS === '1' && process.env.SIS_TOOL_PREFILTER === '1' && prompt) {
+          if (prompt) {
             try {
-              // Kick off the shared embedding (memoized promise — reused by knowledge/memory later)
-              const embeddingPromise = getOrCreateQueryEmbedding(prompt);
-
-              // Run tool ranking in parallel (awaits the same embedding internally)
-              const queryEmbedding = await embeddingPromise;
-              const topN = Number(process.env.SIS_RANKED_TOPN || '5');
-              rankedToolNames = await getRankedToolNames(queryEmbedding, enabledIntegrations, topN);
-
-              if (process.env.SIS_DEBUG === '1') {
-                console.log(`[sis-parallel] Ranked ${rankedToolNames.length} tools for agent toolset`);
+              const queryEmbedding = await getOrCreateQueryEmbedding(prompt);
+              if (queryEmbedding && queryEmbedding.length > 0) {
+                const topN = Number(process.env.SIS_RANKED_TOPN || '8');
+                rankedToolNames = await getRankedToolNames(queryEmbedding, enabledIntegrations, topN);
+                if (process.env.SIS_DEBUG === '1') {
+                  console.log(`[tool-rank] Ranked ${rankedToolNames.length} tools: ${rankedToolNames.join(', ')}`);
+                }
               }
             } catch (e: any) {
-              console.warn('[sis-parallel] Tool ranking failed, falling back to default:', e.message);
-              rankedToolNames = undefined;
+              // Graceful fallback — static Tier 1 tools still loaded
+              if (process.env.SIS_DEBUG === '1') {
+                console.warn('[tool-rank] Ranking failed, using static Tier 1:', e.message);
+              }
             }
           }
 
@@ -771,22 +788,44 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           if (!isNaN(n) && n > 0) maxSteps = Math.min(n, MAX_STEPS_CAP);
         } catch { }
 
-        // Prepend server time context (non-blocking - don't wait for client)
+        // ─── Build ONE compact system context message ────────────────────
+        // Consolidate time, paths, integrations, persona/tone into a single
+        // system message to reduce per-message framing overhead.
         try {
-          const now = new Date();
-          const timeMsg = `Current time: ${now.toISOString()}`;
-          inputMessages = [{ role: 'system', content: timeMsg }, ...inputMessages];
-        } catch { }
+          const contextParts: string[] = [];
 
-        // Add context paths (files/folders referenced via @) to system context
-        try {
+          // Time
+          contextParts.push(`Time: ${new Date().toISOString()}`);
+
+          // Integrations
+          if (enabledIntegrations.length > 0) {
+            contextParts.push(`Integrations: ${enabledIntegrations.join(', ')}`);
+          }
+
+          // Context paths (@-mentions)
           const incomingCtx: any = (msg as any)?.context || {};
           const paths: Array<{ path: string; name: string; isDirectory: boolean }> = Array.isArray(incomingCtx?.paths) ? incomingCtx.paths : [];
           if (paths.length > 0) {
-            const pathLines = paths.map(p => `- ${p.isDirectory ? '📁' : '📄'} ${p.name}: ${p.path}`).join('\n');
-            const contextMsg = `The user is referencing these files/folders:\n${pathLines}\n\nYou can use the read_file or list_directory tools to access their contents if needed.`;
-            inputMessages = [{ role: 'system', content: contextMsg }, ...inputMessages];
-            console.log('[cloud-ai] Context paths added:', paths.length, 'items');
+            const pathLines = paths.map(p => `${p.isDirectory ? '📁' : '📄'} ${p.name}: ${p.path}`).join(', ');
+            contextParts.push(`Referenced: ${pathLines}`);
+          }
+
+          // Persona / tone
+          const personaRaw = typeof incomingCtx?.persona === 'string' ? incomingCtx.persona.trim() : '';
+          const presetRaw = typeof incomingCtx?.tonePreset === 'string' ? incomingCtx.tonePreset : '';
+          const rawTone = typeof incomingCtx?.tone === 'string' ? incomingCtx.tone.trim() : '';
+          if (personaRaw) contextParts.push(`Persona: ${personaRaw}`);
+          const preset = (presetRaw || '').toLowerCase();
+          if (preset === 'custom' && rawTone) {
+            contextParts.push(`Tone: ${rawTone}`);
+          } else if (preset && preset !== 'default') {
+            contextParts.push(`Tone: ${preset}`);
+          } else if (rawTone) {
+            contextParts.push(`Tone: ${rawTone}`);
+          }
+
+          if (contextParts.length > 0) {
+            inputMessages = [{ role: 'system', content: contextParts.join(' | ') }, ...inputMessages];
           }
         } catch { }
 
@@ -795,53 +834,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           const hiddenContext: string | undefined = (msg as any)?.hiddenContext;
           if (hiddenContext && typeof hiddenContext === 'string' && hiddenContext.trim()) {
             inputMessages = [{ role: 'system', content: hiddenContext }, ...inputMessages];
-            console.log('[cloud-ai] Hidden context injected:', hiddenContext.length, 'chars');
-          }
-        } catch { }
-
-        // Inform agent about connected integrations and SIS categories
-        try {
-          const integrationsText = enabledIntegrations.length > 0
-            ? enabledIntegrations.join(', ')
-            : 'none';
-          const categoriesText = 'system, core, input, ui, vision, data, integrations, flow';
-          const sisHint = `Connected integrations: ${integrationsText}. A full toolset is loaded (~180+ tools). You can discover even more tools using sis_search_tools. Available SIS categories: ${categoriesText}.`;
-          inputMessages = [{ role: 'system', content: sisHint }, ...inputMessages];
-        } catch { }
-
-        // Apply user's persona and tone/style preferences if provided by the client
-        try {
-          const ctx: any = (msg as any)?.context || {};
-          const personaRaw = typeof ctx?.persona === 'string' ? ctx.persona : '';
-          const presetRaw = typeof ctx?.tonePreset === 'string' ? ctx.tonePreset : '';
-          const preset = presetRaw ? String(presetRaw).toLowerCase() : '';
-          const rawTone = typeof ctx?.tone === 'string' ? String(ctx.tone) : '';
-          // Persona guidelines
-          const persona = (personaRaw || '').trim();
-          if (persona) {
-            const personaMsg = `Behavior guidelines: ${persona}`;
-            inputMessages = [{ role: 'system', content: personaMsg }, ...inputMessages];
-          }
-          // Tone guidelines
-          let note = '';
-          if (preset === 'custom' && rawTone.trim()) {
-            note = `Tone & style: ${rawTone.trim()}`;
-          } else if (preset) {
-            const desc = preset === 'concise'
-              ? 'Be brief and direct. Prefer short sentences and bullet lists.'
-              : preset === 'friendly'
-                ? 'Use a warm, approachable tone.'
-                : preset === 'formal'
-                  ? 'Use a polite, professional tone.'
-                  : preset === 'technical'
-                    ? 'Be precise and technical; include implementation details when helpful.'
-                    : `Use a ${preset} tone.`;
-            note = `Tone & style: ${desc}`;
-          } else if (rawTone.trim()) {
-            note = `Tone & style: ${rawTone.trim()}`;
-          }
-          if (note) {
-            inputMessages = [{ role: 'system', content: note }, ...inputMessages];
           }
         } catch { }
 
@@ -853,146 +845,163 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           // duplicate OpenAI embedding calls.
           const useParallelEmbeddings = process.env.SIS_PARALLEL_EMBEDDINGS === '1';
 
+          // Token budget for knowledge context (chars, not tokens — ~4 chars/token)
+          const KNOWLEDGE_MAX_CHARS = 2000;
+
           if (useParallelEmbeddings && prompt) {
             try {
-              // Get (or reuse) the shared embedding for this prompt
               const queryEmbedding = await getOrCreateQueryEmbedding(prompt);
 
-              // Run knowledge and memory search in parallel using the same embedding
               const [knowledgeCtx, segmentMatches] = await Promise.all([
                 buildKnowledgeContext(prompt, {
                   includeIdentity: true,
                   includeDirectives: true,
-                  includeBio: true,
-                  maxGlobalFacts: 8,
+                  includeBio: false,
+                  maxGlobalFacts: 4,
                   detectEntities: true,
                   queryEmbedding,
-                }).catch((err: any) => {
-                  console.error('[cloud-ai] Knowledge context retrieval failed:', err);
-                  return null;
-                }),
-                memoryService.searchSegmentsByEmbedding(queryEmbedding, { limit: 6, threshold: 0.5 })
-                  .catch((err: any) => {
-                    console.error('[cloud-ai] Semantic conversation search failed:', err);
-                    return [] as Awaited<ReturnType<typeof memoryService.searchSegmentsByEmbedding>>;
-                  }),
+                }).catch(() => null),
+                memoryService.searchSegmentsByEmbedding(queryEmbedding, { limit: 3, threshold: 0.6 })
+                  .catch(() => [] as Awaited<ReturnType<typeof memoryService.searchSegmentsByEmbedding>>),
               ]);
 
-              // Inject similar conversations
+              // Build ONE merged context block
+              const ctxParts: string[] = [];
+              if (knowledgeCtx && knowledgeCtx.text.trim()) {
+                ctxParts.push(knowledgeCtx.text.trim().slice(0, KNOWLEDGE_MAX_CHARS));
+              }
               if (segmentMatches.length > 0) {
-                const similar = segmentMatches.filter(({ score }) => score >= 0.5);
+                const similar = segmentMatches.filter(({ score }) => score >= 0.6).slice(0, 3);
                 if (similar.length > 0) {
-                  const lines = ['[SIMILAR CONVERSATIONS]'];
+                  const lines = ['[PAST CONTEXT]'];
                   for (const { segment } of similar) {
-                    const summary = String(segment.summary || '').trim();
-                    if (!summary) continue;
-                    lines.push(`- ${segment.conversation_id}: ${summary}`);
+                    const summary = String(segment.summary || '').trim().slice(0, 100);
+                    if (summary) lines.push(`- ${summary}`);
                   }
-                  if (lines.length > 1) {
-                    inputMessages = [{ role: 'system', content: lines.join('\n') }, ...inputMessages];
-                  }
+                  if (lines.length > 1) ctxParts.push(lines.join('\n'));
                 }
               }
-
-              // Inject knowledge context
-              if (knowledgeCtx && knowledgeCtx.text.trim()) {
-                console.log('[cloud-ai] Knowledge context retrieved:', {
-                  length: knowledgeCtx.text.length,
-                  entities: knowledgeCtx.detectedEntities,
-                  hasIdentity: knowledgeCtx.lenses.identity.length > 0,
-                  hasDirectives: knowledgeCtx.lenses.directives.length > 0,
-                  hasBio: knowledgeCtx.lenses.bio.length > 0,
-                  globalFacts: knowledgeCtx.lenses.globalSearch.length,
-                });
-                inputMessages = [{ role: 'system', content: knowledgeCtx.text }, ...inputMessages];
+              if (ctxParts.length > 0) {
+                inputMessages = [{ role: 'system', content: ctxParts.join('\n\n') }, ...inputMessages];
               }
             } catch (parallelErr) {
               console.error('[cloud-ai] Parallel knowledge/memory pipeline failed:', parallelErr);
             }
           } else {
-            // ─── Legacy sequential path (SIS_PARALLEL_EMBEDDINGS off) ──
+            // ─── Legacy sequential path ──
+            const ctxParts: string[] = [];
             try {
               const knowledgeCtx = await buildKnowledgeContext(prompt, {
                 includeIdentity: true,
                 includeDirectives: true,
-                includeBio: true,
-                maxGlobalFacts: 8,
+                includeBio: false,
+                maxGlobalFacts: 4,
                 detectEntities: true,
               });
               if (knowledgeCtx.text.trim()) {
-                console.log('[cloud-ai] Knowledge context retrieved:', {
-                  length: knowledgeCtx.text.length,
-                  entities: knowledgeCtx.detectedEntities,
-                  hasIdentity: knowledgeCtx.lenses.identity.length > 0,
-                  hasDirectives: knowledgeCtx.lenses.directives.length > 0,
-                  hasBio: knowledgeCtx.lenses.bio.length > 0,
-                  globalFacts: knowledgeCtx.lenses.globalSearch.length,
-                });
-                inputMessages = [{ role: 'system', content: knowledgeCtx.text }, ...inputMessages];
+                ctxParts.push(knowledgeCtx.text.trim().slice(0, KNOWLEDGE_MAX_CHARS));
               }
-            } catch (knowledgeErr) {
-              console.error('[cloud-ai] Knowledge context retrieval failed:', knowledgeErr);
-            }
+            } catch { }
 
-            // Semantic search over past conversation segments (summary + conversation id)
             try {
               const query = String(prompt || '').trim();
               if (query) {
-                const matches = await memoryService.searchSegments(query, { limit: 6, threshold: 0.5 });
-                const similar = matches.filter(({ score }) => score >= 0.5);
+                const matches = await memoryService.searchSegments(query, { limit: 3, threshold: 0.6 });
+                const similar = matches.filter(({ score }) => score >= 0.6).slice(0, 3);
                 if (similar.length > 0) {
-                  const lines = ['[SIMILAR CONVERSATIONS]'];
+                  const lines = ['[PAST CONTEXT]'];
                   for (const { segment } of similar) {
-                    const summary = String(segment.summary || '').trim();
-                    if (!summary) continue;
-                    lines.push(`- ${segment.conversation_id}: ${summary}`);
+                    const summary = String(segment.summary || '').trim().slice(0, 100);
+                    if (summary) lines.push(`- ${summary}`);
                   }
-                  if (lines.length > 1) {
-                    inputMessages = [{ role: 'system', content: lines.join('\n') }, ...inputMessages];
-                  }
+                  if (lines.length > 1) ctxParts.push(lines.join('\n'));
                 }
               }
-            } catch (searchErr) {
-              console.error('[cloud-ai] Semantic conversation search failed:', searchErr);
+            } catch { }
+
+            if (ctxParts.length > 0) {
+              inputMessages = [{ role: 'system', content: ctxParts.join('\n\n') }, ...inputMessages];
             }
           }
         }
 
 
 
-        // Log system prompt for debugging
+        // Log system prompt size for debugging (compact log, no full dump)
         const systemMessages = inputMessages.filter((m: any) => m.role === 'system');
         if (systemMessages.length > 0) {
-          console.log('[cloud-ai] System prompt:', {
-            sections: systemMessages.length,
-            totalLength: systemMessages.reduce((sum: number, m: any) => sum + String(m.content || '').length, 0),
-            preview: systemMessages.map((m: any) => ({
-              type: String(m.content || '').split('\n')[0],
-              length: String(m.content || '').length,
-            })),
-          });
-          console.log('[cloud-ai] Full system prompt:', systemMessages.map((m: any) => m.content).join('\n\n---\n\n'));
+          const totalChars = systemMessages.reduce((sum: number, m: any) => sum + String(m.content || '').length, 0);
+          console.log(`[cloud-ai] System context: ${systemMessages.length} msgs, ~${totalChars} chars, ~${Math.round(totalChars / 4)} tokens est.`);
         }
 
-        // Provider options (keep minimal; do not enable thinking/reasoning streams)
+        // Provider options
         const providerOptions: any = {};
+        const reasoningLevel: string = (['none', 'low', 'medium', 'high'].includes(String((msg as any)?.reasoningLevel || '')))
+          ? String((msg as any).reasoningLevel)
+          : 'high';
 
-        // Enable thinking for Google Gemini 3 models to support tool calling with thought signatures.
+        // ---------- Google Gemini thinking ----------
+        // Enable thinking for Google Gemini models that support it (2.5+, 3+).
         // Gemini 3 models require thought parts to be preserved and passed back with function responses.
-        // NOTE: For workflow agent, chosenModelId is often empty (agent is configured with gemini-3-pro-preview internally),
-        // so we must enable this based on agentType/modelLabel too.
-        if (
-          (agentType === 'workflow' && typeof workflowModelId === 'string' && workflowModelId.includes('google/gemini-3')) ||
+        const isGeminiThinking =
+          (agentType === 'workflow' && typeof workflowModelId === 'string' && (workflowModelId.includes('google/gemini-3') || workflowModelId.includes('google/gemini-2.5'))) ||
           chosenModelId?.includes('google/gemini-3') ||
+          chosenModelId?.includes('google/gemini-2.5') ||
           modelLabel?.includes('google/gemini-3') ||
-          modelLabel?.includes('gemini-3')
-        ) {
+          modelLabel?.includes('gemini-3') ||
+          modelLabel?.includes('google/gemini-2.5') ||
+          modelLabel?.includes('gemini-2.5');
+
+        if (isGeminiThinking) {
           providerOptions.google = {
             thinkingConfig: {
-              includeThoughts: true,
-              thinkingLevel: 'high',
+              includeThoughts: reasoningLevel !== 'none',
+              thinkingLevel: reasoningLevel as 'none' | 'low' | 'medium' | 'high',
             },
           };
+        }
+
+        // ---------- Anthropic thinking ----------
+        if (
+          chosenModelId?.includes('anthropic/') ||
+          modelLabel?.includes('anthropic/')
+        ) {
+          if (reasoningLevel === 'none') {
+            providerOptions.anthropic = {
+              ...(providerOptions.anthropic || {}),
+              thinking: { type: 'disabled' },
+            };
+          } else {
+            const anthropicBudget: Record<string, number | undefined> = {
+              low: 5000,
+              medium: 16384,
+              high: undefined, // no cap — model default (max)
+            };
+            const budgetTokens = anthropicBudget[reasoningLevel];
+            providerOptions.anthropic = {
+              ...(providerOptions.anthropic || {}),
+              sendReasoning: true,
+              thinking: budgetTokens
+                ? { type: 'enabled', budgetTokens }
+                : { type: 'enabled' },
+            };
+          }
+        }
+
+        // ---------- OpenAI reasoning effort ----------
+        if (
+          chosenModelId?.includes('openai/') ||
+          modelLabel?.includes('openai/')
+        ) {
+          // Only set for models known to support reasoning effort (o-series, gpt-5-pro, gpt-5.1+)
+          const modelPart = (chosenModelId || modelLabel || '').split('/').pop() || '';
+          const supportsEffort = /^(o[1-9]|gpt-5-pro|gpt-5\.1)/.test(modelPart);
+          if (supportsEffort && reasoningLevel !== 'none') {
+            providerOptions.openai = {
+              ...(providerOptions.openai || {}),
+              reasoningEffort: reasoningLevel as 'low' | 'medium' | 'high',
+            };
+          }
         }
 
         // Create AbortController for this stream so it can be cancelled
@@ -1035,14 +1044,15 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             }
             didSendFinal = true;
             try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
+            const normalizedUsage = normalizeUsage(usage);
             try {
-              console.log('[cloud-ai] onFinish reason:', finishReason, 'usage:', usage);
+              console.log('[cloud-ai] onFinish reason:', finishReason, 'usage:', normalizedUsage);
             } catch { }
             let finalText = String(text || '').trim();
             if (!finalText && aggregatedText) {
               finalText = aggregatedText.trim();
             }
-            writeLog('stream_finish', { finishReason, usage, textLength: finalText.length, sawToolCall, sawAnyTextDelta });
+            writeLog('stream_finish', { finishReason, usage: normalizedUsage, textLength: finalText.length, sawToolCall, sawAnyTextDelta });
             history.push({ role: 'assistant', content: finalText });
             // Cap history to prevent unbounded memory growth per connection
             if (history.length > 100) history.splice(0, history.length - 100);
@@ -1063,7 +1073,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             }
 
             const stepsSafe = typeof steps !== 'undefined' ? sanitizeSteps(steps) : steps;
-            send(ws, { type: 'final', origin: 'cloud-ai', model: chosenModelId || routedTier, conversationId, result: { text: finalText, steps: stepsSafe, finishReason, usage } }, requestId);
+            send(ws, { type: 'final', origin: 'cloud-ai', model: chosenModelId || routedTier, conversationId, result: { text: finalText, steps: stepsSafe, finishReason, usage: normalizedUsage } }, requestId);
             if (authUser && conversationId && conversationCreatedNow) {
               // Only generate title for new conversations
               try {
@@ -1079,7 +1089,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                 send(ws, { type: 'title', conversationId, title }, requestId);
               } catch { }
             }
-            if (authUser) { try { await logUsageEvent(authUser.userId, conversationId, chosenModelId || routedTier, usage); } catch { } try { if (conversationId) await finishRun(authUser.userId, conversationId, finalText || ''); } catch { } }
+            if (authUser) { try { await logUsageEvent(authUser.userId, conversationId, chosenModelId || routedTier, normalizedUsage); } catch { } try { if (conversationId) await finishRun(authUser.userId, conversationId, finalText || ''); } catch { } }
 
             // Knowledge Graph Ingestion - extract and store knowledge from conversation
             try {
@@ -1193,14 +1203,33 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                     break;
                   }
 
-                  // Reasoning/Thinking events (disabled - do not forward or store)
+                  // Reasoning/Thinking events - forward to client for display
                   case 'reasoning-start':
-                  case 'thinking-start':
+                  case 'thinking-start': {
+                    send(ws, { type: 'progress', event: 'reasoning_start', data: { id: (chunk as any)?.payload?.id } }, requestId);
+                    handledChunk = true;
+                    break;
+                  }
+
                   case 'reasoning-delta':
-                  case 'thinking-delta':
+                  case 'thinking-delta': {
+                    const reasoningText = (chunk as any)?.payload?.text || (chunk as any)?.textDelta || (typeof (chunk as any)?.payload === 'string' ? (chunk as any).payload : '');
+                    if (reasoningText) {
+                      send(ws, { type: 'progress', event: 'reasoning', data: { text: reasoningText } }, requestId);
+                    }
+                    handledChunk = true;
+                    break;
+                  }
+
                   case 'reasoning-end':
-                  case 'thinking-end':
+                  case 'thinking-end': {
+                    send(ws, { type: 'progress', event: 'reasoning_end', data: { id: (chunk as any)?.payload?.id } }, requestId);
+                    handledChunk = true;
+                    break;
+                  }
+
                   case 'reasoning-signature':
+                    // Metadata only, no need to forward
                     handledChunk = true;
                     break;
 

@@ -9,7 +9,7 @@
  * run: pnpm sync-tool-defs (or manually update TOOL_DEFINITIONS below)
  */
 
-export type ArgType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect' | 'array' | 'object' | 'code' | 'path' | 'hotkey' | 'json' | 'cron' | 'files';
+export type ArgType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect' | 'array' | 'object' | 'code' | 'path' | 'hotkey' | 'accelerator' | 'json' | 'cron' | 'files';
 
 export interface ArgOption {
   value: string | number | boolean;
@@ -32,6 +32,8 @@ export interface ArgSchema {
   suggestFrom?: string[];
   advanced?: boolean;
   hidden?: boolean;
+  /** Conditional visibility: only show this arg when another arg has a specific value */
+  showWhen?: { field: string; value?: any; values?: any[] };
 }
 
 export interface ToolSchema {
@@ -47,7 +49,7 @@ export interface ToolSchema {
 // TOOL DEFINITIONS (synced from cloud-ai/src/tools/definitions.ts)
 // ============================================================================
 
-type ToolCategory = 'core' | 'system' | 'input' | 'ui' | 'vision' | 'data' | 'integrations' | 'flow';
+type ToolCategory = 'core' | 'system' | 'input' | 'ui' | 'vision' | 'data' | 'integrations' | 'flow' | 'utils';
 
 interface ToolDefinition {
   id: string;
@@ -69,18 +71,46 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'loop_executor', category: 'flow', kind: 'orchestration', description: '[DEPRECATED] Use wire loops instead. Execute a tool repeatedly', argsTemplate: { mode: 'each', items: ['a', 'b'], item_var: 'item', count: 3 }, outputSchema: { results: 'any[]' }, deprecated: true },
   { id: 'end', category: 'flow', kind: 'local', description: 'Terminate the workflow gracefully', argsTemplate: {}, outputSchema: { ok: 'boolean', terminated: 'boolean' } },
   { id: 'return_value', category: 'flow', kind: 'local', description: 'Return a value and terminate - use for workflow functions', argsTemplate: { value: '{{}}', success: true, message: '' }, outputSchema: { ok: 'boolean', terminated: 'boolean', value: 'any', success: 'boolean', message: 'string' } },
-  { id: 'call_workflow', category: 'flow', kind: 'local', description: 'Call another workflow file as a function with input parameters', argsTemplate: { workflowId: '', inputs: {} }, outputSchema: { ok: 'boolean', result: 'any', error: 'string' } },
+  { id: 'call_workflow', category: 'flow', kind: 'local', description: 'Call another workflow project as a function with input parameters', argsTemplate: { workflowId: '', inputs: {} }, outputSchema: { ok: 'boolean', result: 'any', error: 'string' } },
   { id: 'call_function', category: 'flow', kind: 'local', description: 'Call a function trigger within the same workflow by trigger ID', argsTemplate: { triggerId: '', inputs: {} }, outputSchema: { ok: 'boolean', result: 'any', error: 'string' } },
+  { id: 'call_workspace_function', category: 'flow', kind: 'local', description: 'Call a .stuard sub-workflow from the workspace (e.g. helpers/send-email.stuard)', argsTemplate: { path: '', inputs: {} }, outputSchema: { ok: 'boolean', functionPath: 'string', result: 'any', error: 'string' } },
+  { id: 'list_workspace_functions', category: 'flow', kind: 'local', description: 'List all callable .stuard sub-workflows in the workspace', argsTemplate: {}, outputSchema: { ok: 'boolean', functions: 'array' } },
+
+  // --- WORKSPACE FILE MANAGEMENT ---
+  { id: 'workspace_read_file', category: 'data', kind: 'local', description: 'Read a file from the workflow workspace directory. Path is relative to workspace root (e.g. "data/config.json").', argsTemplate: { path: 'data/config.json' }, outputSchema: { ok: 'boolean', content: 'string', size: 'number', updatedAt: 'string', error: 'string' } },
+  { id: 'workspace_write_file', category: 'data', kind: 'local', description: 'Write/create a file in the workflow workspace directory. Creates parent directories automatically.', argsTemplate: { path: 'data/config.json', content: '{}' }, outputSchema: { ok: 'boolean', error: 'string' } },
+  { id: 'workspace_delete_file', category: 'data', kind: 'local', description: 'Delete a file from the workflow workspace directory.', argsTemplate: { path: '' }, outputSchema: { ok: 'boolean', error: 'string' } },
+  { id: 'workspace_list_files', category: 'data', kind: 'local', description: 'List files and folders in the workflow workspace (or a subpath).', argsTemplate: { path: '' }, outputSchema: { ok: 'boolean', files: 'array', error: 'string' } },
+  { id: 'workspace_create_folder', category: 'data', kind: 'local', description: 'Create a subdirectory in the workflow workspace.', argsTemplate: { path: 'data/exports' }, outputSchema: { ok: 'boolean', error: 'string' } },
+  { id: 'workspace_get_info', category: 'data', kind: 'local', description: 'Get workspace info: absolute path, subdirectories, and all files.', argsTemplate: {}, outputSchema: { ok: 'boolean', workspacePath: 'string', subdirs: 'string[]', files: 'array', error: 'string' } },
   { id: 'log', category: 'flow', kind: 'local', description: 'Log a message to the workflow execution log', argsTemplate: { message: 'Step completed' }, outputSchema: { ok: 'boolean', logged: 'string' } },
   { id: 'send_notification', category: 'flow', kind: 'local', description: 'Show a local desktop notification (OS toast)', argsTemplate: { title: 'Stuard AI', body: 'Hello!', severity: 'info', taskId: '', workflowRunId: '' }, outputSchema: { ok: 'boolean', notification: 'object', error: 'string' } },
 
   // --- SYSTEM ---
-  { id: 'run_command', category: 'system', kind: 'local', description: 'Run shell commands cross-platform with timeout', argsTemplate: { command: 'echo hello', shell: 'auto', timeoutMs: 30000, cwd: '', background: false, terminalId: '' }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number', terminalId: 'string', pid: 'number', status: 'string', shell: 'string' } },
-  { id: 'run_system_command', category: 'system', kind: 'local', description: 'Execute system commands with timeout (shell=true)', argsTemplate: { command: 'echo hello', timeoutMs: 30000, shell: true, background: false, terminalId: '' }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number', terminalId: 'string', pid: 'number', status: 'string', shell: 'string' } },
+  { id: 'run_command', category: 'system', kind: 'local', description: 'Run shell commands cross-platform with timeout', argsTemplate: { command: 'echo hello', shell: 'auto', timeoutMs: 30000, cwd: '', checkpoint: false, background: false, terminalId: '' }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number', terminalId: 'string', pid: 'number', status: 'string', shell: 'string' } },
+  { id: 'run_system_command', category: 'system', kind: 'local', description: 'Execute system commands with timeout (shell=true)', argsTemplate: { command: 'echo hello', timeoutMs: 30000, shell: true, checkpoint: false, background: false, terminalId: '' }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number', terminalId: 'string', pid: 'number', status: 'string', shell: 'string' } },
   { id: 'list_terminals', category: 'system', kind: 'local', description: 'List active and recent terminal sessions', argsTemplate: {}, outputSchema: { ok: 'boolean', terminals: 'any[]' } },
   { id: 'read_terminal', category: 'system', kind: 'local', description: 'Read incremental terminal output for a terminalId', argsTemplate: { terminalId: '', sinceSeq: 0, maxChars: 8000 }, outputSchema: { ok: 'boolean', terminalId: 'string', chunks: 'any[]', done: 'boolean', exitCode: 'number', seq: 'number' } },
-  { id: 'run_python_script', category: 'system', kind: 'local', description: 'Run Python code inline or from a workspace file. Use filePath to run a .py file from your workspace (e.g. {{$workspace.scripts}}/process.py), or code for inline. filePath takes priority over code.', argsTemplate: { filePath: '', code: "print('hello')", packages: [], envId: 'default', timeoutMs: 30000 }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number', installed: 'string[]' } },
-  { id: 'run_node_script', category: 'system', kind: 'local', description: 'Run Node.js code inline or from a workspace file. Use filePath to run a .js file from your workspace (e.g. {{$workspace.scripts}}/app.js), or code for inline. filePath takes priority over code.', argsTemplate: { filePath: '', code: "console.log('hello')", timeoutMs: 30000 }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number' } },
+  { id: 'run_python_script', category: 'system', kind: 'local', description: 'Run Python code inline or from a workspace file. Use filePath to run a .py file from your workspace (e.g. {{$workspace.scripts}}/process.py), or code for inline. filePath takes priority over code.', argsTemplate: { filePath: '', code: "print('hello')", packages: [], envId: 'default', timeoutMs: 30000, checkpoint: false }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number', installed: 'string[]' } },
+  { id: 'run_node_script', category: 'system', kind: 'local', description: 'Run Node.js code inline or from a workspace file. Use filePath to run a .js file from your workspace (e.g. {{$workspace.scripts}}/app.js), or code for inline. filePath takes priority over code.', argsTemplate: { filePath: '', code: "console.log('hello')", timeoutMs: 30000, checkpoint: false }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number' } },
+
+  // --- UTILITIES (no scripts needed) ---
+  { id: 'get_datetime', category: 'utils', kind: 'local', description: 'Get current date and time with formatting', argsTemplate: { format: '', tzOffset: 0 }, outputSchema: { ok: 'boolean', iso: 'string', unix: 'number', date: 'string', time: 'string', time12: 'string', weekday: 'string', year: 'number', month: 'number', day: 'number', hour: 'number', minute: 'number', second: 'number', formatted: 'string' } },
+  { id: 'math_eval', category: 'utils', kind: 'local', description: 'Evaluate a safe math expression (sqrt, pow, sin, cos, log, pi, e, etc.)', argsTemplate: { expression: '' }, outputSchema: { ok: 'boolean', result: 'number', expression: 'string', type: 'string' } },
+  { id: 'generate_uuid', category: 'utils', kind: 'local', description: 'Generate UUID(s)', argsTemplate: { version: 4, count: 1 }, outputSchema: { ok: 'boolean', uuid: 'string', uuids: 'string[]', count: 'number' } },
+  { id: 'random_number', category: 'utils', kind: 'local', description: 'Generate random number(s)', argsTemplate: { min: 0, max: 100, count: 1, float: false, decimals: 2 }, outputSchema: { ok: 'boolean', value: 'number', values: 'number[]' } },
+  { id: 'random_choice', category: 'utils', kind: 'local', description: 'Pick random item(s) from a list', argsTemplate: { items: [], count: 1, allowDuplicates: false }, outputSchema: { ok: 'boolean', choice: 'any', choices: 'any[]' } },
+  { id: 'sleep', category: 'utils', kind: 'local', description: 'Sleep/wait for a duration (max 5 min)', argsTemplate: { ms: 0, seconds: 0 }, outputSchema: { ok: 'boolean', sleptMs: 'number' } },
+  { id: 'get_system_info', category: 'utils', kind: 'local', description: 'Get basic system info (OS, hostname, username, paths)', argsTemplate: {}, outputSchema: { ok: 'boolean', os: 'string', osVersion: 'string', machine: 'string', hostname: 'string', username: 'string', home: 'string', cwd: 'string' } },
+  { id: 'get_env_var', category: 'utils', kind: 'local', description: 'Get environment variable value', argsTemplate: { name: '', default: '' }, outputSchema: { ok: 'boolean', name: 'string', value: 'string', exists: 'boolean' } },
+  { id: 'hash_string', category: 'utils', kind: 'local', description: 'Hash a string (md5, sha1, sha256, sha512)', argsTemplate: { text: '', algorithm: 'sha256' }, outputSchema: { ok: 'boolean', hash: 'string', algorithm: 'string' } },
+  { id: 'base64_encode', category: 'utils', kind: 'local', description: 'Encode text to base64', argsTemplate: { text: '', urlSafe: false }, outputSchema: { ok: 'boolean', encoded: 'string' } },
+  { id: 'base64_decode', category: 'utils', kind: 'local', description: 'Decode base64 to text', argsTemplate: { encoded: '', urlSafe: false }, outputSchema: { ok: 'boolean', decoded: 'string' } },
+  { id: 'json_parse', category: 'utils', kind: 'local', description: 'Parse a JSON string into an object', argsTemplate: { text: '' }, outputSchema: { ok: 'boolean', data: 'any', type: 'string' } },
+  { id: 'json_stringify', category: 'utils', kind: 'local', description: 'Convert data to JSON string', argsTemplate: { data: {}, pretty: false }, outputSchema: { ok: 'boolean', json: 'string' } },
+  { id: 'regex_match', category: 'utils', kind: 'local', description: 'Match regex pattern and get all matches with groups', argsTemplate: { text: '', pattern: '', flags: '' }, outputSchema: { ok: 'boolean', matches: 'any[]', count: 'number', hasMatch: 'boolean' } },
+  { id: 'regex_replace', category: 'utils', kind: 'local', description: 'Replace text using regex', argsTemplate: { text: '', pattern: '', replacement: '', flags: '', count: 0 }, outputSchema: { ok: 'boolean', result: 'string', changed: 'boolean' } },
+
   { id: 'launch_application_or_uri', category: 'system', kind: 'local', description: 'Launch desktop applications or open URLs', argsTemplate: { target: 'https://example.com', args: [] }, outputSchema: { ok: 'boolean' } },
   { id: 'read_file', category: 'system', kind: 'local', description: 'Read text file contents', argsTemplate: { path: '', line_start: 1, line_end: 100 }, outputSchema: { ok: 'boolean', content: 'string', total_lines: 'number', line_start: 'number', line_end: 'number' } },
   { id: 'file_read', category: 'system', kind: 'local', description: 'Read file contents with line numbers', argsTemplate: { path: '', whole_file: true, line_start: 1, line_end: 100 }, outputSchema: { ok: 'boolean', content: 'string', total_lines: 'number', line_start: 'number', line_end: 'number', lines_returned: 'number', truncated: 'boolean', error: 'string' } },
@@ -153,7 +183,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'web_search', category: 'data', kind: 'cloud', description: 'Search the web using Perplexity AI', argsTemplate: { query: '', max_results: 5, max_tokens_per_page: 1024 }, outputSchema: { results: 'any[]', id: 'string' } },
 
   // --- UI ---
-  { id: 'custom_ui', category: 'ui', kind: 'local', description: 'Display custom overlay UI using React JSX components (offline)', argsTemplate: { id: 'my-panel', title: 'My Custom UI', component: '', css: '', data: {}, window: { width: 400, height: 500, position: 'center', alwaysOnTop: true }, blocking: true }, outputSchema: { ok: 'boolean', action: 'string', data: 'object' } },
+  { id: 'custom_ui', category: 'ui', kind: 'local', description: 'Display custom overlay UI using React JSX components (offline)', argsTemplate: { id: 'my-panel', title: 'My Custom UI', component: '', css: '', data: {}, window: { width: 400, height: 500, position: 'center', alwaysOnTop: true, frameless: true, borderRadius: 12, resizable: false, draggable: true, backgroundType: 'color', backgroundColor: '#1a1a2e', contentPadding: 24, shadow: { enabled: true, color: '#00000040', blur: 20, spread: 0, x: 0, y: 8 }, animation: { open: 'fade', close: 'fade', duration: 300, easing: 'ease-out' }, invisible: false, translucent: { color: '#1a1a2e', opacity: 0.7, blur: 12 } }, blocking: true }, outputSchema: { ok: 'boolean', action: 'string', data: 'object' } },
   { id: 'update_custom_ui', category: 'ui', kind: 'local', description: 'Update existing custom_ui window with new content', argsTemplate: { id: 'my-panel', title: '', html: '', css: '', data: {}, window: {} }, outputSchema: { ok: 'boolean', action: 'string', data: 'object' } },
   { id: 'close_custom_ui', category: 'ui', kind: 'local', description: 'Close a UI window', argsTemplate: { id: '' }, outputSchema: { ok: 'boolean' } },
   { id: 'ask_confirmation', category: 'ui', kind: 'local', description: 'Show a confirmation dialog to the user', argsTemplate: { title: 'Confirm Action', message: '', confirmLabel: 'Confirm', cancelLabel: 'Cancel', variant: 'warning' }, outputSchema: { confirmed: 'boolean' } },
@@ -267,7 +297,8 @@ const TRIGGER_DEFINITIONS = [
   { type: 'webhook.local', description: 'Local webhook trigger', argsTemplate: {} },
   { type: 'webhook.cloud', description: 'Cloud webhook trigger', argsTemplate: {} },
   { type: 'schedule.cron', description: 'Cron schedule trigger', argsTemplate: { cron: '* * * * *' } },
-  { type: 'hotkey', description: 'Global hotkey trigger (blocking)', argsTemplate: { accelerator: 'Ctrl+Alt+K', passthrough: false } },
+  { type: 'hotkey', description: 'Global hotkey trigger. Enable hold to fire on both press and release.', argsTemplate: { accelerator: 'Ctrl+Alt+K', passthrough: false, hold: false } },
+  { type: 'hotkey.release', description: 'Fires only when the key is released. Pair with a hotkey trigger for hold-to-record patterns.', argsTemplate: { accelerator: 'Ctrl+Alt+K' } },
   { type: 'fs.watch', description: 'File/Folder watch trigger - fires when files are created, modified, or deleted', argsTemplate: { path: '', pattern: '*.*', recursive: true, events: ['add', 'change', 'unlink'] } },
   { type: 'keystroke', description: 'Keystroke sequence trigger (type a word)', argsTemplate: { sequence: 'stuard' } },
 ];
@@ -302,6 +333,7 @@ const TTS_VOICE_OPTIONS: ArgOption[] = [
 const CAPTURE_MODE_OPTIONS: ArgOption[] = [
   { value: 'fixed', label: 'Fixed Duration', description: 'Record for a set time' },
   { value: 'until_stop', label: 'Until Stop', description: 'Record until stop_capture is called' },
+  { value: 'silence', label: 'Until Silence', description: 'Record until silence is detected (audio only)' },
   { value: 'stream', label: 'Stream', description: 'Emit live chunks via stream wire' },
 ];
 
@@ -352,6 +384,7 @@ const MODEL_OPTIONS: ArgOption[] = [
   { value: 'openai/gpt-5.3-codex', label: 'GPT-5.3 Codex', description: 'OpenAI GPT-5.3 Codex' },
   { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', description: 'Google Gemini 2.5 Flash' },
   { value: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro', description: 'Google Gemini 2.5 Pro' },
+  { value: 'google/gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview', description: 'Google Gemini 3.1 Pro Preview' },
   { value: 'anthropic/claude-sonnet-4-20250514', label: 'Claude Sonnet 4', description: 'Anthropic Claude Sonnet 4' },
   { value: 'anthropic/claude-3.5-haiku', label: 'Claude 3.5 Haiku', description: 'Anthropic Claude 3.5 Haiku — fast' },
 ];
@@ -467,6 +500,7 @@ function inferArgType(key: string, value: any): ArgType {
   if (key === 'path' || key === 'filePath' || key === 'imagePath' || key === 'src' || key === 'dest' || key === 'cwd' || key === 'outputPath' || key === 'inputPath' || key === 'outputPattern') return 'path';
   if (key === 'attachments') return 'files';
   if (key === 'keys' && Array.isArray(value)) return 'hotkey';
+  if (key === 'accelerator') return 'accelerator';
   if (key === 'schema' || key === 'layout' || key === 'window' || key === 'region' || key === 'bounds' || key === 'headers' || key === 'params' || key === 'data') return 'json';
   if (typeof value === 'boolean') return 'boolean';
   if (typeof value === 'number') return 'number';
@@ -530,6 +564,7 @@ const KNOWN_DESCRIPTIONS: Record<string, string> = {
   'recursive': 'Also check inside subfolders.',
   'events': 'Which file events to listen for.',
   'passthrough': 'Let the key press continue to other apps.',
+  'hold': 'Fire on both key press AND release (for hold-to-record patterns).',
 };
 
 // User-friendly labels for argument keys  
@@ -799,6 +834,39 @@ if (TOOL_SCHEMAS['capture_media']) {
     label: 'Mirror (Flip Horizontal)',
     description: 'Flip the video horizontally for a selfie-cam / webcam mirror effect. Only applies to video captures.',
     default: false,
+  };
+  // Silence detection parameters (for mode="silence")
+  TOOL_SCHEMAS['capture_media'].args.silenceThreshold = {
+    type: 'number' as any,
+    label: 'Silence Threshold (%)',
+    description: 'Volume percentage (0-100). Audio below this level is considered silence. Default: 5%',
+    default: 5,
+    showWhen: { field: 'mode', value: 'silence' },
+  };
+  TOOL_SCHEMAS['capture_media'].args.silenceDuration = {
+    type: 'number' as any,
+    label: 'Silence Duration (s)',
+    description: 'Seconds of continuous silence required to stop recording. Default: 2',
+    default: 2,
+    showWhen: { field: 'mode', value: 'silence' },
+  };
+}
+
+// capture_system_audio: silence mode support
+if (TOOL_SCHEMAS['capture_system_audio']) {
+  TOOL_SCHEMAS['capture_system_audio'].args.silenceThreshold = {
+    type: 'number' as any,
+    label: 'Silence Threshold (%)',
+    description: 'Volume percentage (0-100). Audio below this level is considered silence. Default: 5%',
+    default: 5,
+    showWhen: { field: 'mode', value: 'silence' },
+  };
+  TOOL_SCHEMAS['capture_system_audio'].args.silenceDuration = {
+    type: 'number' as any,
+    label: 'Silence Duration (s)',
+    description: 'Seconds of continuous silence required to stop recording. Default: 2',
+    default: 2,
+    showWhen: { field: 'mode', value: 'silence' },
   };
 }
 

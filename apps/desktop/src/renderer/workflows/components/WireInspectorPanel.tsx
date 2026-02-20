@@ -8,56 +8,9 @@ import { getToolOutputs } from "../constants/tool-schemas";
 import type { DesignerModel, DesignerWire, WorkflowVariable } from "../types";
 import { parseGuard, guardToString } from "../builder/guards";
 import { STREAM_CAPABLE_TOOLS } from "./WorkflowNodeCard";
+import { isBackEdge as isBackEdgeCycle } from "../utils/graphUtils";
 
-/**
- * Compute chain indices for all nodes based on connection flow.
- * Triggers start at index 0, downstream nodes get higher indices.
- */
-function computeChainIndices(
-  triggers: { id: string }[],
-  nodes: { id: string }[],
-  wires: DesignerWire[]
-): Map<string, number> {
-  const indices = new Map<string, number>();
-  const queue: { id: string; index: number }[] = triggers.map(t => ({ id: t.id, index: 0 }));
-  
-  while (queue.length > 0) {
-    const { id, index } = queue.shift()!;
-    const existingIndex = indices.get(id);
-    if (existingIndex !== undefined && existingIndex <= index) continue;
-    indices.set(id, index);
-    
-    for (const w of wires) {
-      if (w.from === id) {
-        const targetIndex = indices.get(w.to);
-        if (targetIndex === undefined || targetIndex > index + 1) {
-          queue.push({ id: w.to, index: index + 1 });
-        }
-      }
-    }
-  }
-  
-  let maxIndex = Math.max(0, ...indices.values());
-  for (const node of nodes) {
-    if (!indices.has(node.id)) {
-      indices.set(node.id, ++maxIndex);
-    }
-  }
-  return indices;
-}
-
-/**
- * Check if a wire is a back edge based on chain indices.
- */
-function isBackEdgeByChain(
-  chainIndices: Map<string, number>,
-  from: string,
-  to: string
-): boolean {
-  const fromIndex = chainIndices.get(from) ?? 0;
-  const toIndex = chainIndices.get(to) ?? 0;
-  return fromIndex >= toIndex;
-}
+// Back edge (cycle) detection is in ../utils/graphUtils.ts
 
 /** Styled dropdown to replace native selects */
 function StyledSelect({ 
@@ -212,11 +165,10 @@ export function WireInspectorPanel({ model, wireIndex, onUpdate, onDelete, onClo
   const sourceNode = [...model.triggers, ...model.nodes].find(n => n.id === wire.from);
   const targetNode = [...model.triggers, ...model.nodes].find(n => n.id === wire.to);
 
-  // Detect if this wire is a back edge (creates a loop in the flow)
+  // Detect if this wire creates an actual cycle (x→y→...→x)
   const isBackEdge = useMemo(() => {
-    const chainIndices = computeChainIndices(model.triggers, model.nodes, safeWires);
-    return isBackEdgeByChain(chainIndices, wire.from, wire.to);
-  }, [model, safeWires, wire.from, wire.to]);
+    return isBackEdgeCycle(wire.from, wire.to, safeWires);
+  }, [safeWires, wire.from, wire.to]);
 
   // Get upstream nodes for variable suggestions (from source node's perspective)
   const upstreamNodes = useMemo(() => {
@@ -644,7 +596,20 @@ function WireConditionSection({
   // Parse guard to extract builder fields
   const parseGuardToBuilder = useCallback((g: any): { lhs: string; op: string; rhs: string } | null => {
     if (!g || g === 'always') return null;
-    const raw = (g && typeof g === 'object' && 'if' in g) ? (g as any).if : g;
+    let raw = (g && typeof g === 'object' && 'if' in g) ? (g as any).if : g;
+
+    // String expression (e.g. "step_1.ok == true") — parse to JSON Logic first
+    if (typeof raw === 'string') {
+      try {
+        const parsed = parseGuard(raw);
+        if (!parsed || parsed === 'always') return null;
+        // parseGuard may wrap in { if: ... }, unwrap it
+        raw = (typeof parsed === 'object' && 'if' in parsed) ? parsed.if : parsed;
+      } catch {
+        return null;
+      }
+    }
+
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
     const op = Object.keys(raw)[0];
     if (!op || !['==', '!=', '>', '>=', '<', '<=', 'in'].includes(op)) return null;
@@ -694,8 +659,14 @@ function WireConditionSection({
         setBuilderLhs(parsed.lhs);
         setBuilderOp(parsed.op);
         setBuilderRhs(parsed.rhs);
+        setEditorMode('builder');
+      } else if (wire.guard && wire.guard !== 'always') {
+        // Complex guard (and/or/etc.) — can't display in builder, use advanced
+        setBuilderLhs('');
+        setBuilderOp('==');
+        setBuilderRhs('');
+        setEditorMode('advanced');
       } else {
-        // Reset to empty when guard is cleared or not parseable
         setBuilderLhs('');
         setBuilderOp('==');
         setBuilderRhs('');
@@ -714,6 +685,9 @@ function WireConditionSection({
       setBuilderLhs(parsed.lhs);
       setBuilderOp(parsed.op);
       setBuilderRhs(parsed.rhs);
+    } else if (wire.guard && wire.guard !== 'always') {
+      // Complex guard — auto-switch to advanced mode
+      setEditorMode('advanced');
     }
     const guardStr = guardToString(wire.guard);
     setLocalText(guardStr === 'always' ? '' : guardStr);
@@ -873,6 +847,10 @@ function WireConditionSection({
                       size="xs"
                       options={[
                         { value: '', label: 'Select…' },
+                        // Include current value if not already in options
+                        ...(builderLhs && !operandOptions.some(o => o.value === builderLhs)
+                          ? [{ value: builderLhs, label: builderLhs, group: 'Current' }]
+                          : []),
                         ...operandOptions
                       ]}
                     />
@@ -1098,7 +1076,7 @@ function StreamWireSection({
             if (hasStream) {
               onUpdate({ stream: undefined } as any);
             } else {
-              onUpdate({ stream: { sourceField: 'streamId', mode: 'reactive' } } as any);
+              onUpdate({ stream: { sourceField: 'streamId', mode: 'reactive', format: 'ref' } } as any);
             }
           }}
           className={`w-full px-4 py-3 flex items-center justify-between transition-colors ${
@@ -1129,6 +1107,47 @@ function StreamWireSection({
                 The target step runs <strong>once per chunk</strong> as data streams in real-time from the source.
               </span>
             </div>
+
+            {/* Stream format for video frames */}
+            {(sourceTool === 'capture_media' || sourceArgs?.kind === 'video_frames') && (
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">Video Frame Format</label>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {([
+                    { value: 'base64', label: 'Base64', desc: 'Encodes frames as data URLs — compatible with all tools' },
+                    { value: 'ref', label: 'Zero-Copy Ref', desc: 'Passes memory references — much faster for Python tools like MediaPipe' },
+                  ] as const).map(opt => {
+                    const currentFormat = (wire as any).stream?.format || 'base64';
+                    const isSelected = currentFormat === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        onClick={() => {
+                          onUpdate({ stream: { ...(wire as any).stream, format: opt.value } } as any);
+                        }}
+                        className={`px-3 py-2 rounded-lg border text-left transition-all ${
+                          isSelected
+                            ? 'border-cyan-300 bg-cyan-50 ring-1 ring-cyan-200'
+                            : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className={`text-[11px] font-semibold ${isSelected ? 'text-cyan-700' : 'text-slate-600'}`}>
+                          {opt.value === 'ref' && <span className="inline-block mr-1">⚡</span>}
+                          {opt.label}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5 leading-snug">{opt.desc}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+                {(wire as any).stream?.format === 'ref' && (
+                  <div className="flex items-start gap-1.5 text-[10px] text-amber-600 bg-amber-50 rounded-lg px-2.5 py-1.5 border border-amber-100">
+                    <span className="mt-0.5">⚠️</span>
+                    <span>Zero-copy refs only work with Python tools (MediaPipe, custom scripts). Use Base64 if the target is a UI component.</span>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* How to access chunks */}
             <div className="space-y-1.5">

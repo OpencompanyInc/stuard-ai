@@ -18,6 +18,8 @@ export type StreamWireConfig = {
   mode?: 'reactive' | 'batch';
   /** Ring buffer size override for this wire's subscription */
   bufferSize?: number;
+  /** Chunk format: 'ref' (default for Python tools) passes zero-copy memory references, 'base64' (default for UI tools) encodes video frames as data URLs */
+  format?: 'base64' | 'ref';
 };
 
 export type StuardEdge = {

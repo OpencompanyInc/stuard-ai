@@ -10,7 +10,7 @@ export interface ExecutionState {
   activeStreams?: Set<string>; // Set of "sourceId->consumerId" keys for active stream wires
 }
 
-export type RightPanel = "none" | "inspector" | "code" | "ai";
+export type RightPanel = "none" | "inspector" | "code" | "ai" | "docs";
 
 export interface OpenFileTab {
   id: string;

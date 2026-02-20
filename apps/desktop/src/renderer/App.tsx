@@ -57,8 +57,13 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [signedIn, setSignedIn] = useState(false);
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const { onboardingComplete, setOnboardingComplete, tourComplete, setTourComplete, tone, setTone, customTone, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, translucentMode, persona, wakewordEnabled, chatMode, setChatMode, chatModels, setChatModels } = usePreferences();
+  const { onboardingComplete, setOnboardingComplete, tourComplete, setTourComplete, tone, setTone, customTone, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, translucentMode, persona, wakewordEnabled, chatMode: defaultChatMode, chatModels: defaultChatModels } = usePreferences();
   const { modelById } = useModelRegistry();
+  const [reasoningLevel, setReasoningLevel] = useState<import('./hooks/usePreferences').ReasoningLevel>(() => {
+    try { const v = localStorage.getItem('stuard.pref.reasoning_level'); return (v === 'low' || v === 'medium') ? v : 'high'; } catch { return 'high'; }
+  });
+  // Persist reasoning level
+  useEffect(() => { try { localStorage.setItem('stuard.pref.reasoning_level', reasoningLevel); } catch {} }, [reasoningLevel]);
   const [showPalette, setShowPalette] = useState(false);
   const [showHotkeys, setShowHotkeys] = useState(false);
   const [updateState, setUpdateState] = useState<{ status: string; info?: any }>({ status: 'idle' });
@@ -173,9 +178,10 @@ export default function App() {
     sendMessage, stopGeneration, conversationId, newChat, loadConversation, deleteConversation,
     subscribeProgress, queueDepth, queuedMessages, respondToApproval, lastError, execLocalTool, submitToolOutput,
     tabs, activeTabId, addTab, closeTab, switchTab,
+    chatMode, setChatMode, chatModels, setChatModels,
     pendingMemories, confirmPendingMemory, rejectPendingMemory,
     editMessage, revertFiles
-  } = useAgent({ onTitleUpdate: handleTitleUpdate }) as any;
+  } = useAgent({ onTitleUpdate: handleTitleUpdate, initialChatMode: defaultChatMode, initialChatModels: defaultChatModels }) as any;
 
   // Speech Hook
   const { isRecording, transcript, interimTranscript, startRecording, stopRecording, clearTranscript, error: speechError } = useSpeechToText();
@@ -712,7 +718,7 @@ export default function App() {
       contextPaths: contextPaths.length > 0 ? contextPaths : undefined,
       mode: modeToSend,
       modelId: typeof modelIdToSend === 'string' ? modelIdToSend : undefined,
-      // modelConfig no longer required: we always pass explicit modelId when not Auto.
+      reasoningLevel,
     });
     setQuery("");
     setAttachments([]);
@@ -720,7 +726,7 @@ export default function App() {
     // Clear speech transcript state so it doesn't re-sync stale text
     clearTranscript();
     baseQueryRef.current = "";
-  }, [signedIn, query, attachments, contextPaths, chatMode, chatModels, tone, customTone, persona, sendMessage, handleSignIn, clearTranscript]);
+  }, [signedIn, query, attachments, contextPaths, chatMode, chatModels, tone, customTone, persona, reasoningLevel, sendMessage, handleSignIn, clearTranscript]);
 
   // Stable callback ref for child components
   const handleSend = useCallback((overrideText?: string) => {
@@ -1313,6 +1319,8 @@ export default function App() {
                     onChatModeChange={setChatMode as any}
                     chatModels={chatModels}
                     onChatModelsChange={setChatModels as any}
+                    reasoningLevel={reasoningLevel}
+                    onReasoningLevelChange={setReasoningLevel}
                     overlayMode={overlayMode}
                     tabs={tabs}
                     activeTabId={activeTabId}
@@ -1374,6 +1382,8 @@ export default function App() {
                     onChatModeChange={setChatMode as any}
                     chatModels={chatModels}
                     onChatModelsChange={setChatModels as any}
+                    reasoningLevel={reasoningLevel}
+                    onReasoningLevelChange={setReasoningLevel}
 
                     // Internal Sidebar
                     activeSidebarTab={activeSidebarTab}

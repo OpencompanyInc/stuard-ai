@@ -36,6 +36,17 @@ interface PassthroughHotkeyListener {
 const passthroughHotkeyListeners = new Map<string, PassthroughHotkeyListener>();
 const activeModifiers = new Set<string>(); // Track currently held modifiers
 
+// Hold hotkey state (fires on press AND release)
+interface HoldHotkeyListener {
+  flowId: string;
+  accelerator: string;
+  modifiers: Set<string>;
+  key: string;
+  triggerId?: string;
+  pressed: boolean; // Track whether currently held down
+}
+const holdHotkeyListeners = new Map<string, HoldHotkeyListener>();
+
 function startKeystrokeHook() {
   if (keystrokeHookStarted || !uiohook) return;
   try {
@@ -108,6 +119,30 @@ function startKeystrokeHook() {
         }
       }
 
+      // Check hold hotkey listeners (fire on press, suppress repeat)
+      if (char && holdHotkeyListeners.size > 0) {
+        for (const [listenerId, listener] of holdHotkeyListeners.entries()) {
+          // Skip release-only listeners on keydown
+          if ((listener as any).releaseOnly) continue;
+          
+          if (char.toLowerCase() !== listener.key) continue;
+          let modifiersMatch = true;
+          for (const mod of listener.modifiers) {
+            if (!activeModifiers.has(mod)) { modifiersMatch = false; break; }
+          }
+          if (modifiersMatch && activeModifiers.size === listener.modifiers.size) {
+            // Only fire on initial press, not on key repeat
+            if (!listener.pressed) {
+              listener.pressed = true;
+              console.log('[Workflows] Hold hotkey PRESSED:', listener.accelerator);
+              setImmediate(() => {
+                executeWorkflowFromTrigger(listener.flowId, `hotkey.hold:press:${listener.accelerator}`, { accelerator: listener.accelerator, event: 'press' }, listener.triggerId);
+              });
+            }
+          }
+        }
+      }
+
       // Continue with keystroke sequence handling
       if (!char) return;
 
@@ -138,11 +173,55 @@ function startKeystrokeHook() {
       }
     });
 
-    // Track modifier release
+    // Track modifier release + hold hotkey release
     uIOhook.on('keyup', (e: any) => {
       const modifier = modifierKeys[e.keycode];
       if (modifier) {
         activeModifiers.delete(modifier);
+        // Also check hold listeners: if a modifier is part of a held combo, fire release
+        if (holdHotkeyListeners.size > 0) {
+          for (const [listenerId, listener] of holdHotkeyListeners.entries()) {
+            if (listener.pressed && listener.modifiers.has(modifier)) {
+              listener.pressed = false;
+              console.log('[Workflows] Hold hotkey RELEASED (modifier up):', listener.accelerator);
+              setImmediate(() => {
+                executeWorkflowFromTrigger(listener.flowId, `hotkey.hold:release:${listener.accelerator}`, { accelerator: listener.accelerator, event: 'release' }, listener.triggerId);
+              });
+            }
+          }
+        }
+        return;
+      }
+
+      // Check hold hotkey listeners for main key release
+      const char = keyMap[e.keycode] || '';
+      if (char && holdHotkeyListeners.size > 0) {
+        for (const [listenerId, listener] of holdHotkeyListeners.entries()) {
+          if (char.toLowerCase() !== listener.key) continue;
+          
+          // Check modifiers match for release-only triggers
+          const isReleaseOnly = (listener as any).releaseOnly;
+          if (isReleaseOnly) {
+            // For release-only, check modifiers are still held
+            let modifiersMatch = true;
+            for (const mod of listener.modifiers) {
+              if (!activeModifiers.has(mod)) { modifiersMatch = false; break; }
+            }
+            if (modifiersMatch && activeModifiers.size === listener.modifiers.size) {
+              console.log('[Workflows] Release-only hotkey fired:', listener.accelerator);
+              setImmediate(() => {
+                executeWorkflowFromTrigger(listener.flowId, `hotkey.release:${listener.accelerator}`, { accelerator: listener.accelerator, event: 'release' }, listener.triggerId);
+              });
+            }
+          } else if (listener.pressed) {
+            // Normal hold listener - only fire if was pressed
+            listener.pressed = false;
+            console.log('[Workflows] Hold hotkey RELEASED:', listener.accelerator);
+            setImmediate(() => {
+              executeWorkflowFromTrigger(listener.flowId, `hotkey.hold:release:${listener.accelerator}`, { accelerator: listener.accelerator, event: 'release' }, listener.triggerId);
+            });
+          }
+        }
       }
     });
 
@@ -158,7 +237,7 @@ function stopKeystrokeHook() {
   if (!keystrokeHookStarted || !uiohook) return;
   try {
     // Only stop if no listeners remain
-    if (keystrokeListeners.size === 0 && passthroughHotkeyListeners.size === 0) {
+    if (keystrokeListeners.size === 0 && passthroughHotkeyListeners.size === 0 && holdHotkeyListeners.size === 0) {
       const { uIOhook } = uiohook;
       uIOhook.stop();
       keystrokeHookStarted = false;
@@ -272,6 +351,25 @@ export function logFlow(flowId: string, message: string) {
   } catch { }
 }
 
+/**
+ * Sanitize a guard object to fix LLM serialization issues.
+ * LLMs sometimes double-quote JSONLogic operators, producing keys like
+ * '"=="' (with embedded quotes) instead of '==' .
+ * Recursively strips leading/trailing quote characters from object keys.
+ */
+function sanitizeGuard(guard: any): any {
+  if (!guard || typeof guard !== 'object') return guard;
+  if (guard === 'always') return guard;
+  if (Array.isArray(guard)) return guard.map(sanitizeGuard);
+
+  const cleaned: Record<string, any> = {};
+  for (const [key, value] of Object.entries(guard)) {
+    const stripped = key.replace(/^"+|"+$/g, '');
+    cleaned[stripped || key] = sanitizeGuard(value);
+  }
+  return cleaned;
+}
+
 // Convert DesignerModel (workflow builder format) to StuardSpec (execution format)
 export function designerModelToStuardSpec(m: any, triggerId?: string): StuardSpec {
   const id = String(m?.id || '').trim() || 'stuard_' + Math.random().toString(36).slice(2, 8);
@@ -287,7 +385,9 @@ export function designerModelToStuardSpec(m: any, triggerId?: string): StuardSpe
     const outs = wires.filter((w: any) => String(w?.from || '') === fromId);
     const next = outs.map((w: any) => {
       const to = String(w?.to || '');
-      const g = (w as any)?.guard;
+      const gRaw = (w as any)?.guard;
+      // Sanitize guard keys first to fix LLM double-quoting (e.g. '"=="' → '==')
+      const g = (gRaw && typeof gRaw === 'object') ? sanitizeGuard(gRaw) : gRaw;
       let guard: any = 'always';
       if (g && typeof g === 'object') {
         // Check for wrapped formats first
@@ -364,11 +464,27 @@ export function designerModelToStuardSpec(m: any, triggerId?: string): StuardSpe
 
   let startNodeId: string | undefined;
 
-  // If a specific triggerId is provided, use only that trigger's wire
+  // If a specific triggerId is provided, use only that trigger's wires
   if (triggerId) {
-    const triggerWire = wires.find((w: any) => String(w?.from || '') === triggerId);
-    if (triggerWire) {
-      startNodeId = String(triggerWire.to || '');
+    const triggerWires = wires.filter((w: any) => String(w?.from || '') === triggerId);
+    const triggerTargetIds: string[] = Array.from(new Set(triggerWires.map((w: any) => String(w?.to || '')).filter(Boolean))) as string[];
+
+    if (triggerTargetIds.length > 1) {
+      // Multiple targets from this trigger: create synthetic parallel start
+      const syntheticStartId = '_trigger_parallel_start';
+      const parallelNext = triggerTargetIds.map(targetId => ({
+        to: targetId,
+        guard: 'always' as const
+      }));
+      steps.unshift({
+        id: syntheticStartId,
+        tool: 'noop',
+        args: {},
+        next: parallelNext
+      });
+      startNodeId = syntheticStartId;
+    } else if (triggerTargetIds.length === 1) {
+      startNodeId = triggerTargetIds[0];
     }
   }
 
@@ -490,7 +606,7 @@ export function emitFlowExecutionState(flowId: string, isRunning: boolean) {
  * Execute a workflow from a trigger (cron, file watch, webhook, etc.)
  * @param triggerId - Optional trigger ID to execute only the path connected to that specific trigger
  */
-export function executeWorkflowFromTrigger(flowId: string, origin: string, payload?: any, triggerId?: string) {
+export async function executeWorkflowFromTrigger(flowId: string, origin: string, payload?: any, triggerId?: string) {
   console.log('[Workflows] executeWorkflowFromTrigger called:', flowId, origin, 'triggerId:', triggerId);
   try {
     const safe = safeFlowId(flowId);
@@ -529,13 +645,32 @@ export function executeWorkflowFromTrigger(flowId: string, origin: string, paylo
       return;
     }
 
-    // Build engine context
+    // Build engine context — retrieve accessToken from any visible renderer window
     const stuardsDir = path.join(app.getPath('userData'), 'stuards');
+    let triggerAccessToken: string | undefined;
+    try {
+      const allWindows = BrowserWindow.getAllWindows();
+      for (const bw of allWindows) {
+        if (bw.isDestroyed() || !bw.webContents) continue;
+        try {
+          const token = await bw.webContents.executeJavaScript(
+            `(async () => { try { const sb = window.__supabase || window.supabase; if (!sb?.auth) return null; const { data } = await sb.auth.getSession(); return data?.session?.access_token || null; } catch { return null; } })()`,
+            true
+          );
+          if (token && typeof token === 'string') {
+            triggerAccessToken = token;
+            break;
+          }
+        } catch {}
+      }
+    } catch {}
+
     const engineCtx: EngineContext = {
       stuardsDir,
       agentWsUrl: process.env.AGENT_WS || process.env.AGENT_WS_URL || 'ws://127.0.0.1:8765/ws',
       cloudAiUrl: process.env.CLOUD_AI_HTTP || process.env.CLOUD_PUBLIC_URL || process.env.CLOUD_AI_URL || 'http://localhost:8082',
       logFn: (msg: string) => logFlow(safe, msg),
+      accessToken: triggerAccessToken,
     };
 
     // Actually execute the workflow
@@ -760,16 +895,38 @@ export function startFlowRuntime(id: string) {
     } else if (type === 'hotkey') {
       const accel = String(args?.accelerator || 'CommandOrControl+Alt+K');
       const passthrough = Boolean(args?.passthrough);
+      const holdMode = Boolean(args?.hold); // NEW: hold setting fires on press AND release
       const tId = triggerId; // Capture for closure
 
-      console.log('[Workflows] Hotkey trigger:', { accel, passthrough, uiohookLoaded: !!uiohook });
+      console.log('[Workflows] Hotkey trigger:', { accel, passthrough, holdMode, uiohookLoaded: !!uiohook });
 
-      if (passthrough && uiohook) {
+      // If hold mode is enabled, use the hold listener pattern (fires on press AND release)
+      if (holdMode && uiohook) {
+        const parsed = parseAccelerator(accel);
+        if (parsed) {
+          const listenerId = `${safe}_hotkey_hold_${tId || Date.now()}`;
+          holdHotkeyListeners.set(listenerId, {
+            flowId: safe,
+            accelerator: accel,
+            modifiers: parsed.modifiers,
+            key: parsed.key,
+            triggerId: tId,
+            pressed: false,
+          });
+          startKeystrokeHook();
+          (rt as any).holdHotkeyIds = (rt as any).holdHotkeyIds || [];
+          (rt as any).holdHotkeyIds.push(listenerId);
+          started++;
+          console.log('[Workflows] Hotkey with hold=true registered:', accel, '(press+release)');
+        } else {
+          console.error('[Workflows] Failed to parse accelerator for hold hotkey:', accel);
+        }
+      } else if (passthrough && uiohook) {
         // Use pass-through mode (non-blocking via uiohook)
         const parsed = parseAccelerator(accel);
         console.log('[Workflows] Parsed accelerator:', parsed);
         if (parsed) {
-          const listenerId = `${safe}_hotkey_${Date.now()}`;
+          const listenerId = `${safe}_hotkey_${tId || Date.now()}`;
           passthroughHotkeyListeners.set(listenerId, {
             flowId: safe,
             accelerator: accel,
@@ -809,12 +966,69 @@ export function startFlowRuntime(id: string) {
           console.error('[Workflows] Exception registering hotkey:', accel, e);
         }
       }
+    } else if (type === 'hotkey.hold') {
+      // DEPRECATED: Use hotkey with hold:true instead
+      // Kept for backward compatibility — fires on press AND release
+      const accel = String(args?.accelerator || '').trim();
+      const tId = triggerId;
+      if (accel && uiohook) {
+        const parsed = parseAccelerator(accel);
+        if (parsed) {
+          const listenerId = `${safe}_hold_${tId || Date.now()}`;
+          holdHotkeyListeners.set(listenerId, {
+            flowId: safe,
+            accelerator: accel,
+            modifiers: parsed.modifiers,
+            key: parsed.key,
+            triggerId: tId,
+            pressed: false,
+          });
+          startKeystrokeHook();
+          (rt as any).holdHotkeyIds = (rt as any).holdHotkeyIds || [];
+          (rt as any).holdHotkeyIds.push(listenerId);
+          started++;
+          console.log('[Workflows] Hold hotkey registered (legacy):', accel);
+        } else {
+          console.error('[Workflows] Failed to parse accelerator for hold hotkey:', accel);
+        }
+      } else if (accel && !uiohook) {
+        console.warn('[Workflows] hotkey.hold requires uiohook-napi which is not available');
+      }
+    } else if (type === 'hotkey.release') {
+      // NEW: Fires ONLY on key release — use for "release to stop" patterns
+      const accel = String(args?.accelerator || '').trim();
+      const tId = triggerId;
+      if (accel && uiohook) {
+        const parsed = parseAccelerator(accel);
+        if (parsed) {
+          const listenerId = `${safe}_release_${tId || Date.now()}`;
+          // Store as a hold listener but mark it as release-only
+          holdHotkeyListeners.set(listenerId, {
+            flowId: safe,
+            accelerator: accel,
+            modifiers: parsed.modifiers,
+            key: parsed.key,
+            triggerId: tId,
+            pressed: false,
+            releaseOnly: true, // Only fire on release
+          } as any);
+          startKeystrokeHook();
+          (rt as any).holdHotkeyIds = (rt as any).holdHotkeyIds || [];
+          (rt as any).holdHotkeyIds.push(listenerId);
+          started++;
+          console.log('[Workflows] Release-only hotkey registered:', accel);
+        } else {
+          console.error('[Workflows] Failed to parse accelerator for release hotkey:', accel);
+        }
+      } else if (accel && !uiohook) {
+        console.warn('[Workflows] hotkey.release requires uiohook-napi which is not available');
+      }
     } else if (type === 'keystroke') {
       // Keystroke sequence trigger - fires when user types a specific sequence
       const sequence = String(args?.sequence || '').toLowerCase();
       if (sequence && uiohook) {
         try {
-          const listenerId = `${safe}_${Date.now()}`;
+          const listenerId = `${safe}_keystroke_${triggerId || Date.now()}`;
           keystrokeListeners.set(listenerId, {
             flowId: safe,
             sequence,
@@ -880,6 +1094,11 @@ export function stopFlowRuntime(id: string) {
     for (const lid of hotkeyIds) {
       passthroughHotkeyListeners.delete(lid);
     }
+    // Cleanup hold hotkey listeners
+    const holdIds = (rt as any).holdHotkeyIds || [];
+    for (const lid of holdIds) {
+      holdHotkeyListeners.delete(lid);
+    }
     stopKeystrokeHook();
   } catch { }
   try { for (const t of rt.intervals) { try { clearInterval(t as any); } catch { } } } catch { }
@@ -906,30 +1125,43 @@ export function workflows_autostart() {
       return;
     }
 
-    // Collect all workflow JSON files from root and subfolders
-    const allFiles: { path: string; name: string }[] = [];
+    // Collect all workflow files from root and subfolders (both flat .json and workspace main.stuard)
+    const allFiles: { path: string; id: string }[] = [];
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isFile() && entry.name.endsWith('.json')) {
-        allFiles.push({ path: path.join(dir, entry.name), name: entry.name });
+        allFiles.push({ path: path.join(dir, entry.name), id: entry.name.replace(/\.json$/i, '') });
       } else if (entry.isDirectory() && !entry.name.startsWith('.')) {
-        try {
-          const subFiles = fs.readdirSync(path.join(dir, entry.name)).filter(f => f.endsWith('.json'));
-          for (const sf of subFiles) {
-            allFiles.push({ path: path.join(dir, entry.name, sf), name: sf });
-          }
-        } catch { }
+        // Check if this directory IS a workspace dir (has main.stuard)
+        const wsPath = path.join(dir, entry.name, 'main.stuard');
+        if (fs.existsSync(wsPath)) {
+          allFiles.push({ path: wsPath, id: entry.name });
+        } else {
+          // Otherwise scan subfolder for flat .json files and nested workspace dirs
+          try {
+            const subEntries = fs.readdirSync(path.join(dir, entry.name), { withFileTypes: true });
+            for (const sub of subEntries) {
+              if (sub.isFile() && sub.name.endsWith('.json')) {
+                allFiles.push({ path: path.join(dir, entry.name, sub.name), id: sub.name.replace(/\.json$/i, '') });
+              } else if (sub.isDirectory() && !sub.name.startsWith('.')) {
+                const nestedWs = path.join(dir, entry.name, sub.name, 'main.stuard');
+                if (fs.existsSync(nestedWs)) {
+                  allFiles.push({ path: nestedWs, id: sub.name });
+                }
+              }
+            }
+          } catch { }
+        }
       }
     }
 
     console.log(`[workflows] Found ${allFiles.length} workflow file(s), checking for autostart...`);
     let started = 0;
-    for (const { path: filePath, name: fileName } of allFiles) {
+    for (const { path: filePath, id } of allFiles) {
       try {
         const raw = fs.readFileSync(filePath, 'utf-8');
         const model = JSON.parse(raw || '{}');
         if (model && model.autostart) {
-          const id = fileName.replace(/\.json$/i, '');
           const triggerTypes = (model.triggers || []).map((t: any) => t?.type || 'unknown').join(', ');
 
           // IMPORTANT: Clean up any legacy stuard runtime/file that might conflict
@@ -949,7 +1181,7 @@ export function workflows_autostart() {
           started++;
         }
       } catch (e) {
-        console.error(`[workflows] Failed to autostart workflow ${fileName}:`, e);
+        console.error(`[workflows] Failed to autostart workflow ${id}:`, e);
       }
     }
     if (started > 0) {
@@ -1105,6 +1337,23 @@ export function workflows_save(payload: { id: string; content: string; folder?: 
     const existing = findWorkflowPath(safe);
 
     if (existing) {
+      // Preserve autostart flag from existing file if the incoming content doesn't have it
+      // This prevents the UI from accidentally removing the deployed state when saving changes
+      try {
+        const existingRaw = fs.readFileSync(existing, 'utf-8');
+        const existingModel = JSON.parse(existingRaw || '{}');
+        if (existingModel.autostart) {
+          const incoming = JSON.parse(content);
+          if (!incoming.autostart) {
+            incoming.autostart = true;
+            // Use the updated content with autostart preserved
+            const contentToSave = prepareForSave(JSON.stringify(incoming, null, 2));
+            fs.writeFileSync(existing, contentToSave, { encoding: 'utf-8' });
+            return { ok: true, isWorkspace: existing.endsWith('main.stuard') };
+          }
+        }
+      } catch { }
+
       // Save to existing location (workspace main.stuard or flat .json)
       const contentToSave = prepareForSave(content);
       fs.writeFileSync(existing, contentToSave, { encoding: 'utf-8' });
@@ -1781,6 +2030,41 @@ export function workflows_readWorkspaceFile(id: string, filePath: string) {
   }
 }
 
+/** Read a binary file from the workspace as base64 (for media preview) */
+export function workflows_readWorkspaceFileBinary(id: string, filePath: string) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe || !filePath) return { ok: false, error: 'invalid_args' };
+    const wsDir = getWorkspaceDir(safe);
+    if (!wsDir) return { ok: false, error: 'not_a_workspace' };
+
+    const target = path.join(wsDir, ...filePath.split('/').filter(Boolean));
+    if (!target.startsWith(wsDir)) return { ok: false, error: 'path_traversal' };
+    if (!fs.existsSync(target)) return { ok: false, error: 'file_not_found' };
+
+    const stat = fs.statSync(target);
+    if (stat.isDirectory()) return { ok: false, error: 'is_directory' };
+    if (stat.size > 50 * 1024 * 1024) return { ok: false, error: 'file_too_large' };
+
+    const buffer = fs.readFileSync(target);
+    const base64 = buffer.toString('base64');
+    const ext = path.extname(filePath).toLowerCase().slice(1);
+    const mimeMap: Record<string, string> = {
+      wav: 'audio/wav', mp3: 'audio/mpeg', ogg: 'audio/ogg', flac: 'audio/flac',
+      m4a: 'audio/mp4', aac: 'audio/aac', wma: 'audio/x-ms-wma', opus: 'audio/opus',
+      mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', avi: 'video/x-msvideo',
+      mkv: 'video/x-matroska', wmv: 'video/x-ms-wmv', m4v: 'video/mp4', ogv: 'video/ogg',
+      png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+      webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp', ico: 'image/x-icon',
+      tiff: 'image/tiff', avif: 'image/avif',
+    };
+    const mime = mimeMap[ext] || 'application/octet-stream';
+    return { ok: true, base64, mime, size: stat.size };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
 /** Write a file to the workspace */
 export function workflows_writeWorkspaceFile(id: string, filePath: string, content: string) {
   try {
@@ -1842,5 +2126,238 @@ export function workflows_createWorkspaceSubdir(id: string, subpath: string) {
     return { ok: true };
   } catch (e: any) {
     return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+/** Rename a file or directory in the workspace */
+export function workflows_renameWorkspaceFile(id: string, oldPath: string, newName: string) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe || !oldPath || !newName) return { ok: false, error: 'invalid_args' };
+    const wsDir = getWorkspaceDir(safe);
+    if (!wsDir) return { ok: false, error: 'not_a_workspace' };
+
+    const sanitizedName = String(newName).replace(/[<>:"|?*]/g, '').trim();
+    if (!sanitizedName) return { ok: false, error: 'invalid_name' };
+
+    const source = path.join(wsDir, ...oldPath.split('/').filter(Boolean));
+    if (!source.startsWith(wsDir)) return { ok: false, error: 'path_traversal' };
+    if (!fs.existsSync(source)) return { ok: false, error: 'not_found' };
+
+    const parentDir = path.dirname(source);
+    const target = path.join(parentDir, sanitizedName);
+    if (!target.startsWith(wsDir)) return { ok: false, error: 'path_traversal' };
+    if (fs.existsSync(target)) return { ok: false, error: 'target_exists' };
+
+    fs.renameSync(source, target);
+    // Compute new relative path
+    const newRelPath = path.relative(wsDir, target).replace(/\\/g, '/');
+    return { ok: true, newPath: newRelPath };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+/** Move a file or directory to a different location in the workspace */
+export function workflows_moveWorkspaceFile(id: string, sourcePath: string, destFolder: string) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe || !sourcePath) return { ok: false, error: 'invalid_args' };
+    const wsDir = getWorkspaceDir(safe);
+    if (!wsDir) return { ok: false, error: 'not_a_workspace' };
+
+    const source = path.join(wsDir, ...sourcePath.split('/').filter(Boolean));
+    if (!source.startsWith(wsDir)) return { ok: false, error: 'path_traversal' };
+    if (!fs.existsSync(source)) return { ok: false, error: 'not_found' };
+
+    // destFolder can be empty string for root, or a relative path
+    const destDir = destFolder
+      ? path.join(wsDir, ...destFolder.split('/').filter(Boolean))
+      : wsDir;
+    if (!destDir.startsWith(wsDir)) return { ok: false, error: 'path_traversal' };
+
+    // Ensure destination directory exists
+    if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+
+    const fileName = path.basename(source);
+    const target = path.join(destDir, fileName);
+    if (fs.existsSync(target)) return { ok: false, error: 'target_exists' };
+
+    fs.renameSync(source, target);
+    const newRelPath = path.relative(wsDir, target).replace(/\\/g, '/');
+    return { ok: true, newPath: newRelPath };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+/** Create a new .stuard sub-workflow file in the workspace */
+export function workflows_createWorkspaceStuard(id: string, subPath: string, name?: string) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe || !subPath) return { ok: false, error: 'invalid_args' };
+    const wsDir = getWorkspaceDir(safe);
+    if (!wsDir) return { ok: false, error: 'not_a_workspace' };
+
+    // Ensure path ends with .stuard
+    const resolvedPath = subPath.endsWith('.stuard') ? subPath : `${subPath}.stuard`;
+    const target = path.join(wsDir, ...resolvedPath.split('/').filter(Boolean));
+    if (!target.startsWith(wsDir)) return { ok: false, error: 'path_traversal' };
+    if (fs.existsSync(target)) return { ok: false, error: 'file_exists' };
+
+    // Ensure parent directory exists
+    const parentDir = path.dirname(target);
+    if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
+
+    const displayName = name || path.basename(resolvedPath, '.stuard').replace(/[-_]/g, ' ');
+
+    // Create a minimal workflow model with a function trigger
+    // Use DesignerModel format with position: { x, y } for nodes
+    const triggerId = `trig_fn_${Date.now().toString(36)}`;
+    const subWorkflow = {
+      id: `sub_${Date.now().toString(36)}`,
+      name: displayName,
+      version: '1',
+      triggers: [{
+        id: triggerId,
+        type: 'function',
+        args: {},
+        inputParams: [],
+        position: { x: 300, y: 80 },
+      }],
+      nodes: [{
+        id: `log_1`,
+        tool: 'log',
+        args: { message: `Hello from ${displayName}` },
+        position: { x: 300, y: 200 },
+      }, {
+        id: `return_1`,
+        tool: 'return_value',
+        args: { value: '{{log_1.ok}}', success: true },
+        position: { x: 300, y: 320 },
+      }],
+      wires: [{
+        from: triggerId,
+        to: 'log_1',
+      }, {
+        from: 'log_1',
+        to: 'return_1',
+      }],
+      outputSchema: [
+        { name: 'value', type: 'any', description: 'Return value' },
+      ],
+    };
+
+    fs.writeFileSync(target, JSON.stringify(subWorkflow, null, 2), 'utf-8');
+    const relPath = path.relative(wsDir, target).replace(/\\/g, '/');
+    console.log(`[workflows] Created workspace sub-workflow: ${relPath}`);
+    return { ok: true, path: relPath, name: displayName };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+/** Read a .stuard sub-workflow from workspace (for opening in canvas) */
+export function workflows_readWorkspaceStuard(id: string, subPath: string) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe || !subPath) return { ok: false, error: 'invalid_args' };
+    const wsDir = getWorkspaceDir(safe);
+    if (!wsDir) return { ok: false, error: 'not_a_workspace' };
+
+    const target = path.join(wsDir, ...subPath.split('/').filter(Boolean));
+    if (!target.startsWith(wsDir)) return { ok: false, error: 'path_traversal' };
+    if (!fs.existsSync(target)) return { ok: false, error: 'not_found' };
+
+    const raw = fs.readFileSync(target, 'utf-8');
+    return { ok: true, content: raw, subPath };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+/** Save a .stuard sub-workflow in workspace */
+export function workflows_saveWorkspaceStuard(id: string, subPath: string, content: string) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe || !subPath || !content) return { ok: false, error: 'invalid_args' };
+    const wsDir = getWorkspaceDir(safe);
+    if (!wsDir) return { ok: false, error: 'not_a_workspace' };
+
+    try { JSON.parse(content); } catch { return { ok: false, error: 'invalid_json' }; }
+
+    const target = path.join(wsDir, ...subPath.split('/').filter(Boolean));
+    if (!target.startsWith(wsDir)) return { ok: false, error: 'path_traversal' };
+
+    // Ensure parent directory exists
+    const parentDir = path.dirname(target);
+    if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
+
+    fs.writeFileSync(target, content, 'utf-8');
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+/** List all .stuard sub-workflows in workspace (for function discovery) */
+export function workflows_listWorkspaceFunctions(id: string) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe) return { ok: false, error: 'invalid_id', functions: [] };
+    const wsDir = getWorkspaceDir(safe);
+    if (!wsDir) return { ok: false, error: 'not_a_workspace', functions: [] };
+
+    const functions: Array<{
+      path: string;
+      name: string;
+      description?: string;
+      isFunction: boolean;
+      triggers?: string[];
+      inputParams?: any[];
+      outputSchema?: any[];
+    }> = [];
+
+    const walkDir = (dir: string, prefix: string) => {
+      try {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          const relPath = prefix ? `${prefix}/${entry.name}` : entry.name;
+          if (entry.isDirectory()) {
+            walkDir(fullPath, relPath);
+          } else if (entry.name.endsWith('.stuard') && entry.name !== 'main.stuard') {
+            try {
+              const raw = fs.readFileSync(fullPath, 'utf-8');
+              const model = JSON.parse(raw || '{}');
+              const triggers = Array.isArray(model?.triggers)
+                ? model.triggers.map((t: any) => String(t?.type || ''))
+                : [];
+              const functionTrigger = model?.triggers?.find((t: any) => t.type === 'function');
+              functions.push({
+                path: relPath,
+                name: model?.name || entry.name.replace('.stuard', ''),
+                description: model?.description || '',
+                isFunction: triggers.includes('function'),
+                triggers: triggers.filter(Boolean),
+                inputParams: functionTrigger?.inputParams || [],
+                outputSchema: model?.outputSchema || [],
+              });
+            } catch {
+              functions.push({
+                path: relPath,
+                name: entry.name.replace('.stuard', ''),
+                isFunction: false,
+              });
+            }
+          }
+        }
+      } catch { }
+    };
+
+    walkDir(wsDir, '');
+    return { ok: true, functions };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed'), functions: [] };
   }
 }

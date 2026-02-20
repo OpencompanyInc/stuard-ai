@@ -1,6 +1,25 @@
 import React, { useRef, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronRight } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
+import { convertLatexDelims, escapeCurrencyDollars } from "../utils/text";
+
+// Normalize markdown spacing for cleaner rendering
+function normalizeMarkdownSpacing(input: string): string {
+    const raw = String(input || '').replace(/\r\n/g, '\n');
+    const parts = raw.split('```');
+    const normalized = parts.map((part, idx) => {
+        if (idx % 2 === 1) return part;
+        return part
+            .replace(/[ \t]+\n/g, '\n')
+            .replace(/\n{3,}/g, '\n\n');
+    });
+    return normalized.join('```');
+}
 
 interface ReasoningBlockProps {
     text: string;
@@ -8,6 +27,7 @@ interface ReasoningBlockProps {
     onToggle: () => void;
     isComplete?: boolean;
     startTime?: number; // timestamp when thinking started
+    duration?: number; // pre-calculated duration in seconds (for history)
 }
 
 // Format seconds to human readable
@@ -18,14 +38,19 @@ function formatDuration(seconds: number): string {
     return `${mins}m ${secs}s`;
 }
 
-export const ReasoningBlock = ({ text, isOpen, onToggle, isComplete, startTime }: ReasoningBlockProps) => {
+export const ReasoningBlock = ({ text, isOpen, onToggle, isComplete, startTime, duration }: ReasoningBlockProps) => {
     const contentRef = useRef<HTMLDivElement>(null);
-    const [elapsed, setElapsed] = useState(0);
+    const [elapsed, setElapsed] = useState(duration ?? 0);
     const internalStartRef = useRef<number | null>(null);
+    const autoCollapseRef = useRef<NodeJS.Timeout | null>(null);
+    const [autoCollapsed, setAutoCollapsed] = useState(false);
 
-    // Track elapsed time
+    // If duration is provided (history), use it directly and skip timer
+    const hasPredefinedDuration = duration !== undefined && duration > 0;
+
+    // Track elapsed time (only if not pre-defined)
     useEffect(() => {
-        if (isComplete) return;
+        if (isComplete || hasPredefinedDuration) return;
         
         // Use provided startTime or create our own
         if (!internalStartRef.current) {
@@ -38,15 +63,26 @@ export const ReasoningBlock = ({ text, isOpen, onToggle, isComplete, startTime }
         }, 100);
         
         return () => clearInterval(interval);
-    }, [isComplete, startTime]);
+    }, [isComplete, startTime, hasPredefinedDuration]);
 
-    // Reset timer when complete
+    // Capture final elapsed time when complete
     useEffect(() => {
-        if (isComplete && internalStartRef.current) {
+        if (isComplete && internalStartRef.current && !hasPredefinedDuration) {
             const start = internalStartRef.current;
             setElapsed((Date.now() - start) / 1000);
         }
-    }, [isComplete]);
+    }, [isComplete, hasPredefinedDuration]);
+
+    // Auto-collapse after 4s of content flowing
+    useEffect(() => {
+        if (isOpen && !isComplete && !autoCollapsed && text.length > 30) {
+            autoCollapseRef.current = setTimeout(() => {
+                onToggle();
+                setAutoCollapsed(true);
+            }, 4000);
+        }
+        return () => { if (autoCollapseRef.current) clearTimeout(autoCollapseRef.current); };
+    }, [isOpen, isComplete, autoCollapsed, text, onToggle]);
 
     // Auto-scroll when streaming
     useEffect(() => {
@@ -57,24 +93,32 @@ export const ReasoningBlock = ({ text, isOpen, onToggle, isComplete, startTime }
 
     if (!text) return null;
 
+    const handleToggle = () => {
+        if (autoCollapseRef.current) {
+            clearTimeout(autoCollapseRef.current);
+            autoCollapseRef.current = null;
+        }
+        onToggle();
+    };
+
     return (
         <div className="mb-2">
             {/* Collapsed: Minimal "Thinking for Xs" chip */}
             <button
-                onClick={onToggle}
+                onClick={handleToggle}
                 className="group flex items-center gap-1.5 text-[11px] text-neutral-400 hover:text-neutral-500 transition-colors select-none"
             >
                 <ChevronRight 
                     className={`w-3 h-3 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`} 
                 />
-                <span className="italic">
+                <span className="italic font-medium">
                     {isComplete 
                         ? `Thought for ${formatDuration(elapsed)}`
-                        : `Thinking for ${formatDuration(elapsed)}`
+                        : `Thinking ${formatDuration(elapsed)}`
                     }
                 </span>
                 {!isComplete && (
-                    <span className="w-1 h-1 rounded-full bg-neutral-400 animate-pulse" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
                 )}
             </button>
 
@@ -90,13 +134,18 @@ export const ReasoningBlock = ({ text, isOpen, onToggle, isComplete, startTime }
                     >
                         <div
                             ref={contentRef}
-                            className="mt-2 pl-4 border-l-2 border-neutral-200 max-h-40 overflow-y-auto custom-scrollbar"
+                            className="mt-1.5 pl-3 border-l-2 border-violet-200/60 max-h-36 overflow-y-auto custom-scrollbar"
                         >
-                            <div className="text-[12px] text-neutral-400 leading-relaxed whitespace-pre-wrap font-light">
-                                {text}
+                            <div className="text-[12px] text-neutral-400 leading-relaxed font-light prose prose-sm max-w-none prose-p:my-1 prose-headings:text-neutral-500 prose-headings:font-semibold prose-headings:text-xs prose-code:text-violet-500 prose-code:bg-violet-50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[10px] prose-strong:text-neutral-500 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:bg-slate-800 prose-pre:text-slate-100 prose-pre:p-2 prose-pre:rounded-md prose-pre:text-[10px]">
+                                <ReactMarkdown
+                                    remarkPlugins={[remarkMath, remarkGfm]}
+                                    rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
+                                >
+                                    {normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(text)))}
+                                </ReactMarkdown>
                                 {/* Blinking cursor while streaming */}
                                 {!isComplete && (
-                                    <span className="inline-block w-[2px] h-3 bg-neutral-300 ml-0.5 animate-[blink_1s_step-end_infinite] align-middle" />
+                                    <span className="inline-block w-[2px] h-3 bg-violet-300 ml-0.5 animate-[blink_1s_step-end_infinite] align-middle rounded-full" />
                                 )}
                             </div>
                         </div>

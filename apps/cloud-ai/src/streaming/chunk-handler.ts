@@ -80,13 +80,26 @@ export function parseChunk(chunk: unknown): StreamEvent | null {
       return { type: 'error', message, code };
     }
 
-    // Internal/control events - ignore
+    // Reasoning/Thinking events - forward to client
     case 'reasoning-start':
-    case 'thinking-start':
+    case 'thinking-start': {
+      return { type: 'reasoning-start' as const, id: (payload?.id ?? undefined) as string | undefined };
+    }
+
     case 'reasoning-delta':
-    case 'thinking-delta':
+    case 'thinking-delta': {
+      const text = (payload?.text ?? c.textDelta ?? '') as string;
+      if (text) {
+        return { type: 'reasoning-delta' as const, text };
+      }
+      return null;
+    }
+
     case 'reasoning-end':
-    case 'thinking-end':
+    case 'thinking-end': {
+      return { type: 'reasoning-end' as const, id: (payload?.id ?? undefined) as string | undefined };
+    }
+
     case 'reasoning-signature':
     case 'step-finish':
     case 'step-start':
@@ -157,6 +170,23 @@ export function updateStreamState(state: StreamState, event: StreamEvent): void 
       } else {
         state.chunks.push({ type: 'text', content: event.text });
       }
+      break;
+
+    case 'reasoning-delta': {
+      state.reasoning += event.text;
+      // Append to last reasoning chunk or create new
+      const lastReasoningChunk = state.chunks[state.chunks.length - 1];
+      if (lastReasoningChunk?.type === 'reasoning') {
+        lastReasoningChunk.content += event.text;
+      } else {
+        state.chunks.push({ type: 'reasoning', content: event.text });
+      }
+      break;
+    }
+
+    case 'reasoning-start':
+    case 'reasoning-end':
+      // No-op for state tracking, these are control signals
       break;
 
     case 'tool-call': {

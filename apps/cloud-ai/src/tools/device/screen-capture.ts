@@ -15,17 +15,16 @@ export const capture_screen = makeLocalTool(
     mode: z
       .enum(['fixed', 'until_stop', 'stream'])
       .default('fixed')
-      .describe('fixed: capture for durationMs. until_stop: capture until stop_screen_capture is called. stream: emit live frame/audio chunks until stop_screen_capture is called'),
+      .describe('fixed: capture for duration. until_stop: capture until stop_screen_capture is called. stream: emit live frame/audio chunks until stop_screen_capture is called'),
     stream: z
       .boolean()
       .optional()
       .default(false)
       .describe('When true, enables streaming mode and returns streamId (equivalent to mode="stream").'),
-    durationMs: z
+    duration: z
       .number()
-      .int()
       .optional()
-      .describe('Duration in ms for fixed mode (required for fixed mode)'),
+      .describe('Duration in seconds for fixed mode (e.g. 5 = 5s). Required for fixed mode.'),
     target: z
       .enum(['fullscreen', 'monitor', 'window', 'region'])
       .default('fullscreen')
@@ -65,23 +64,21 @@ export const capture_screen = makeLocalTool(
       .string()
       .optional()
       .describe('Session ID for until_stop mode (auto-generated if not provided). Use this ID with stop_screen_capture.'),
-    maxDurationMs: z
+    maxDuration: z
       .number()
-      .int()
       .optional()
-      .default(7200000)
-      .describe('Safety limit for until_stop mode (default: 2 hours)'),
+      .default(7200)
+      .describe('Safety time limit in seconds (default: 7200 = 2 hours)'),
     silenceThreshold: z
       .number()
       .optional()
-      .default(0.01)
-      .describe('Audio RMS threshold for silence detection (0.0-1.0, default 0.01). Only applies when includeSystemAudio is true.'),
-    silenceDurationMs: z
+      .default(5)
+      .describe('Volume percentage threshold for silence detection (0-100, default 5). Audio below this % is considered silence. Only applies when includeSystemAudio is true.'),
+    silenceDuration: z
       .number()
-      .int()
       .optional()
-      .default(2000)
-      .describe('Duration of silence in ms before stopping recording (default 2000). Only applies when includeSystemAudio is true.'),
+      .default(2)
+      .describe('Seconds of silence before stopping recording (default: 2). Only applies when includeSystemAudio is true.'),
   }),
   z.object({
     ok: z.boolean(),
@@ -97,6 +94,7 @@ export const capture_screen = makeLocalTool(
     status: z.string().optional(),
     hasAudio: z.boolean().optional().describe('Whether the recording includes system audio'),
     streamId: z.string().optional().describe('Stream ID when stream mode is enabled'),
+    volumePercent: z.number().optional().describe('Current audio volume level (0-100%). Included in progress events when audio capture is active.'),
   }),
   (ctx) => {
     const mode = String((ctx as any)?.mode || 'fixed');
@@ -106,11 +104,10 @@ export const capture_screen = makeLocalTool(
       return 60000; // 60s for setup
     }
     // fixed mode blocks for the entire duration
-    const dur = Number((ctx as any)?.durationMs || 0);
-    const validDur = isNaN(dur) || dur <= 0 ? 0 : dur;
-    // 2 min cushion for long recordings (>5 min), 60s for shorter
-    const cushion = validDur > 300000 ? 120000 : 60000;
-    return Math.max(validDur + cushion, 60000);
+    const durSec = Number((ctx as any)?.duration || 0);
+    const durMs = durSec > 0 ? durSec * 1000 : 0;
+    const cushion = durMs > 300000 ? 120000 : 60000;
+    return Math.max(durMs + cushion, 60000);
   },
 );
 
@@ -157,22 +154,21 @@ export const describe_screen_capture_capabilities = makeLocalTool(
 
 export const capture_system_audio = makeLocalTool(
   'capture_system_audio',
-  'Capture system audio output (what you hear from speakers/headphones). Uses loopback recording. On Windows, uses WASAPI loopback. On macOS, requires a virtual audio device like BlackHole.',
+  'Capture system audio output (what you hear from speakers/headphones). Uses loopback recording. On Windows, uses WASAPI loopback. On macOS, requires a virtual audio device like BlackHole. Use mode="silence" to stop recording when silence is detected.',
   z.object({
     mode: z
-      .enum(['fixed', 'until_stop', 'stream'])
+      .enum(['fixed', 'until_stop', 'silence', 'stream'])
       .default('fixed')
-      .describe('fixed: capture for durationMs. until_stop: capture until stop_system_audio is called. stream: emit live audio chunks until stop_system_audio is called'),
+      .describe('fixed: capture for duration seconds. until_stop: capture until stop_system_audio is called. silence: capture until silence detected. stream: emit live audio chunks until stop_system_audio is called'),
     stream: z
       .boolean()
       .optional()
       .default(false)
       .describe('When true, enables streaming mode and returns streamId (equivalent to mode="stream").'),
-    durationMs: z
+    duration: z
       .number()
-      .int()
       .optional()
-      .describe('Duration in ms for fixed mode (required for fixed mode)'),
+      .describe('Duration in seconds for fixed mode (e.g. 5 = 5s). Required for fixed mode.'),
     device: z
       .string()
       .optional()
@@ -185,16 +181,25 @@ export const capture_system_audio = makeLocalTool(
       .string()
       .optional()
       .describe('Session ID for until_stop mode (auto-generated if not provided). Use this ID with stop_system_audio.'),
-    maxDurationMs: z
+    maxDuration: z
       .number()
-      .int()
       .optional()
-      .default(7200000)
-      .describe('Safety limit for until_stop mode (default: 2 hours)'),
+      .default(7200)
+      .describe('Safety time limit in seconds (default: 7200 = 2 hours)'),
     format: z
       .enum(['wav', 'mp3'])
       .default('wav')
       .describe('Output format: wav (uncompressed) or mp3'),
+    silenceThreshold: z
+      .number()
+      .optional()
+      .default(5)
+      .describe('Volume percentage threshold for silence detection (0-100, default 5). Audio below this % is considered silence. Only applies in silence mode.'),
+    silenceDuration: z
+      .number()
+      .optional()
+      .default(2)
+      .describe('Seconds of silence before stopping recording (default: 2). Only applies in silence mode.'),
   }),
   z.object({
     ok: z.boolean(),
@@ -202,13 +207,14 @@ export const capture_system_audio = makeLocalTool(
     mimeType: z.string().optional().describe('MIME type of the output file'),
     sessionId: z.string().optional().describe('Session ID for this capture'),
     stoppedBy: z
-      .enum(['stop_signal', 'max_duration'])
+      .enum(['stop_signal', 'max_duration', 'silence'])
       .optional()
-      .describe('How the capture was stopped (only for until_stop mode)'),
+      .describe('How the capture was stopped (only for until_stop/silence mode)'),
     mode: z.string().optional(),
     status: z.string().optional(),
     durationMs: z.number().optional().describe('Duration of the recording in ms'),
     streamId: z.string().optional().describe('Stream ID when stream mode is enabled'),
+    volumePercent: z.number().optional().describe('Current audio volume level (0-100%). Included in progress events.'),
   }),
   (ctx) => {
     const mode = String((ctx as any)?.mode || 'fixed');
@@ -216,10 +222,10 @@ export const capture_system_audio = makeLocalTool(
     if (mode === 'until_stop' || mode === 'stream' || stream) {
       return 60000; // 60s for setup (non-blocking)
     }
-    const dur = Number((ctx as any)?.durationMs || 0);
-    const validDur = isNaN(dur) || dur <= 0 ? 0 : dur;
-    const cushion = validDur > 300000 ? 120000 : 60000;
-    return Math.max(validDur + cushion, 60000);
+    const durSec = Number((ctx as any)?.duration || 0);
+    const durMs = durSec > 0 ? durSec * 1000 : 0;
+    const cushion = durMs > 300000 ? 120000 : 60000;
+    return Math.max(durMs + cushion, 60000);
   },
 );
 

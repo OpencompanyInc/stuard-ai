@@ -4,26 +4,36 @@ import { PERPLEXITY_API_KEY } from '../utils/config';
 
 const API_URL = 'https://api.perplexity.ai/search';
 
+/**
+ * Trim a search result to only essential fields for the LLM.
+ * Removes raw_content, extra metadata, and truncates long snippets.
+ */
+function trimSearchResult(result: any): any {
+  if (!result || typeof result !== 'object') return result;
+  const trimmed: any = {};
+  if (result.title) trimmed.title = String(result.title).slice(0, 200);
+  if (result.url) trimmed.url = result.url;
+  // Use snippet/content but cap length
+  const text = result.snippet || result.content || result.text || '';
+  if (text) trimmed.snippet = String(text).slice(0, 600);
+  return trimmed;
+}
+
 export const web_search = createTool({
   id: 'web_search',
-  description: 'Search the web using Perplexity AI to get ranked, citation-backed results. Supports advanced filtering by domain, language, and country.',
+  description: 'Search the web for up-to-date information. Returns concise results with title, URL, and snippet. Use scrape_url to read full page content when needed.',
   inputSchema: z.object({
-    query: z.string().min(1).describe('The search query string. Must be a non-empty string.'),
-    max_results: z.number().int().min(1).max(20).default(10).optional().describe('Number of results to return per query (max 20).'),
-    search_domain_filter: z.array(z.string()).max(20).optional().describe('List of domains to include or exclude (prefixed with -). Cannot mix allow and deny lists.'),
-    search_language_filter: z.array(z.string()).max(10).optional().describe('List of ISO 639-1 language codes (e.g. "en", "fr") to filter results.'),
-    country: z.string().length(2).optional().describe('ISO 3166-1 alpha-2 country code (e.g. "US", "GB") to localize results.'),
-    max_tokens_per_page: z.number().int().optional().describe('Max tokens to extract per page. Defaults to 1024. Use higher (2048) for research, lower (512) for speed.'),
+    query: z.string().min(1).describe('Search query'),
+    max_results: z.number().int().min(1).max(10).default(5).optional().describe('Number of results (default 5, max 10)'),
+    search_domain_filter: z.array(z.string()).max(10).optional().describe('Domains to include/exclude (prefix with -)'),
+    country: z.string().length(2).optional().describe('Country code (e.g. "US")'),
   }),
   outputSchema: z.object({
     results: z.array(z.any()),
-    id: z.string().optional(),
-    usage: z.any().optional(),
   }),
   execute: async (inputData, context) => {
-    const { query: rawQuery, max_results, search_domain_filter, search_language_filter, country, max_tokens_per_page } = inputData;
+    const { query: rawQuery, max_results, search_domain_filter, country } = inputData;
 
-    // Ensure query is always a string
     const query = typeof rawQuery === 'string' ? rawQuery : String(rawQuery ?? '');
     if (!query.trim()) {
       throw new Error('Query must be a non-empty string');
@@ -33,17 +43,13 @@ export const web_search = createTool({
       throw new Error('Missing PERPLEXITY_API_KEY configuration');
     }
 
-    const body = {
+    const body: any = {
       query: query.trim(),
-      max_results: max_results || 10,
-      search_domain_filter,
-      search_language_filter,
-      country,
-      max_tokens_per_page,
+      max_results: max_results || 5,
+      max_tokens_per_page: 512,
     };
-
-    // Remove undefined keys
-    Object.keys(body).forEach(key => (body as any)[key] === undefined && delete (body as any)[key]);
+    if (search_domain_filter) body.search_domain_filter = search_domain_filter;
+    if (country) body.country = country;
 
     const response = await fetch(API_URL, {
       method: 'POST',
@@ -61,11 +67,9 @@ export const web_search = createTool({
     }
 
     const data = await response.json();
-    const responseData: any = {
-      results: (data as any).results,
-      id: (data as any).id,
-      usage: (data as any).usage,
-    };
-    return responseData;
+    // Trim results to essential fields only - strip metadata the LLM doesn't need
+    const rawResults = Array.isArray((data as any).results) ? (data as any).results : [];
+    const trimmedResults = rawResults.map(trimSearchResult);
+    return { results: trimmedResults };
   },
 });

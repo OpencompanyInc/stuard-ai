@@ -2,7 +2,7 @@
  * Workflow Agent - Lean & Fast
  *
  * Specialized agent for designing, testing, and modifying Stuard workflows.
- * Only 6 core tools - all guidance lives in the system prompt.
+ * Only 7 core tools - all guidance lives in the system prompt.
  */
 
 import { Agent } from '@mastra/core/agent';
@@ -14,7 +14,9 @@ import os from 'node:os';
 import { search_tools } from '../../tools/meta-tools';
 import { retrieveToolFormat } from '../../tools/workflow-system';
 import { workflowModifyTool } from '../../tools/workflow';
-import { stop_automation } from '../../tools/device-tools';
+import { stop_automation, write_file, create_directory } from '../../tools/device-tools';
+import { file_edit } from '../../tools/agentic-file-tools';
+import { web_search } from '../../tools/perplexity-tools';
 import { executeStep, listWorkflows } from './tools';
 
 const GOOGLE_API_KEY = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || '';
@@ -44,6 +46,41 @@ STRATEGY:
 • ALWAYS search_tools first when user asks for integrations (calendar, email, browser, files, screenshots, etc.)
 • NEVER invent tool names - use get_tool_schema to get exact args
 • Prefer existing tools over custom scripts
+
+FILE & DIRECTORY TOOLS:
+• write_file({ path, content, append? }) - Create/write files on disk or in the workspace
+• create_directory({ path }) - Create directories/subdirectories
+• file_edit({ path, mode, old_string, new_string, replace_all? }) - Edit non-stuard files using string-based find/replace
+  Modes: replace, insert_before, insert_after, delete, regex
+
+TARGETING SUB-WORKFLOWS:
+• modify_workflow edits the main workflow by default
+• Pass stuardFile: "path/to/sub.stuard" to modify a specific .stuard sub-workflow file
+
+═══════════════════════════════════════════════════════════════════════════════
+WORKSPACE PATH SYSTEM
+═══════════════════════════════════════════════════════════════════════════════
+
+Each workflow has a workspace directory. The paths are provided in the system context
+as "WORKSPACE PATHS" (workspacePath, subdirs, files list). Use these to:
+• Know where files live on disk (absolute paths)
+• Reference files in tool args (write_file, file_edit, etc.) using the workspace paths
+• Understand the workspace structure before creating/editing files
+
+Standard workspace layout:
+  <workspacePath>/
+  ├── main.stuard           (main workflow definition)
+  ├── data/                 (CSVs, JSON, databases, etc.)
+  ├── scripts/              (Python/Node/shell scripts)
+  ├── assets/               (images, templates, etc.)
+  └── *.stuard              (sub-workflow files)
+
+At runtime, steps can reference workspace paths via template syntax:
+  {{ $workspace.path }}     → workspace root
+  {{ $workspace.data }}     → workspace/data/
+  {{ $workspace.scripts }}  → workspace/scripts/
+  {{ $workspace.assets }}   → workspace/assets/
+  {{ $workspace.id }}       → workflow ID
 
 ═══════════════════════════════════════════════════════════════════════════════
 WORKFLOW ARCHITECTURE OVERVIEW
@@ -86,7 +123,8 @@ TRIGGER TYPES:
 │ Type             │ Args & Behavior                                           │
 ├──────────────────┼───────────────────────────────────────────────────────────┤
 │ manual           │ {} - User clicks "Run" button                             │
-│ hotkey           │ { accelerator: "Ctrl+Alt+K" } - Global keyboard shortcut  │
+│ hotkey           │ { accelerator, hold?, passthrough? } - Keyboard shortcut  │
+│ hotkey.release   │ { accelerator } - Fires ONLY on key release               │
 │ keystroke        │ { sequence: "go" } - Type text anywhere to trigger        │
 │ schedule.cron    │ { cron: "0 9 * * *" } - Cron expression (every day 9am)   │
 │ webhook.local    │ {} - HTTP POST to local endpoint                          │
@@ -94,6 +132,35 @@ TRIGGER TYPES:
 │ function         │ {} - Called by call_function tool (internal reuse)        │
 │ app_start        │ {} - Runs when Stuard starts                              │
 └──────────────────┴───────────────────────────────────────────────────────────┘
+
+HOTKEY TRIGGER — args:
+  { 
+    accelerator: "Ctrl+Alt+K",  // Required: key combo
+    hold: true,                  // Optional: fire on press AND release (default: false)
+    passthrough: true            // Optional: don't block key from other apps
+  }
+
+  When hold: false (default) → fires once on key press
+  When hold: true → fires TWICE: on press (event: "press") and release (event: "release")
+    Prefer using a separate hotkey.release trigger instead of guards.
+
+HOTKEY.RELEASE TRIGGER — fires only on key release:
+  Use this for "release to stop" patterns without needing guards.
+  { type: "hotkey.release", args: { accelerator: "Ctrl+H" } }
+
+EXAMPLE — Push-to-talk (two triggers, no guards needed):
+  triggers: [
+    { id: "trig_press", type: "hotkey", args: { accelerator: "Ctrl+H" } },
+    { id: "trig_release", type: "hotkey.release", args: { accelerator: "Ctrl+H" } }
+  ]
+  nodes: [
+    { id: "start_rec", tool: "capture_media", args: { kind: "audio", mode: "until_stop", sessionId: "ptt" } },
+    { id: "stop_rec", tool: "stop_capture", args: { sessionId: "ptt" } }
+  ]
+  wires: [
+    { from: "trig_press", to: "start_rec" },
+    { from: "trig_release", to: "stop_rec" }
+  ]
 
 INPUT PARAMETERS (inputParams) - User Input Before Execution:
 ────────────────────────────────────────────────────────────────────────────────
@@ -207,8 +274,8 @@ WIRE TYPES - Visual Flow Patterns
                                  └────────┘
 
    wires: [
-     { from: "step_1", to: "step_2", guard: { if: "step_1.ok == true" } },
-     { from: "step_1", to: "step_3", guard: { if: "step_1.ok == false" } }
+     { from: "step_1", to: "step_2", guard: { if: { "==": [{ "var": "step_1.ok" }, true] } } },
+     { from: "step_1", to: "step_3", guard: { if: { "==": [{ "var": "step_1.ok" }, false] } } }
    ]
 
 3. PARALLEL BRANCHES (no guards = all run):
@@ -258,22 +325,19 @@ GUARDS - Conditional Wire Execution
 Guards determine whether a wire is followed. Only wires where guard evaluates 
 to true (or no guard) are taken.
 
-GUARD FORMATS:
+GUARD FORMATS (use JSONLOGIC — preferred by the visual editor):
 
-1. STRING EXPRESSION (simplest):
-   guard: { if: "step_1.ok" }                    // truthy check
-   guard: { if: "step_1.ok == true" }            // equality
-   guard: { if: "step_1.action == 'confirm'" }   // string compare
-   guard: { if: "workflow.counter > 5" }         // numeric compare
-   guard: { if: "step_1.ok && step_2.ok" }       // logical AND
-   guard: { if: "!step_1.error" }                // negation
-
-2. JSONLOGIC (structured):
+1. JSONLOGIC (PREFERRED — displays correctly in the visual condition builder):
    guard: { if: { "==": [{ "var": "step_1.ok" }, true] } }
+   guard: { if: { "!=": [{ "var": "step_1.ok" }, false] } }
+   guard: { if: { "==": [{ "var": "step_1.action" }, "confirm"] } }
+   guard: { if: { ">": [{ "var": "workflow.counter" }, 5] } }
    guard: { if: { "and": [
      { "==": [{ "var": "step_1.ok" }, true] },
      { ">": [{ "var": "step_1.count" }, 10] }
    ]}}
+
+   PATTERN: guard: { if: { "OPERATOR": [{ "var": "LEFT_SIDE" }, RIGHT_VALUE] } }
 
    JSONLOGIC OPERATORS:
    ┌────────────┬─────────────────────────────────────────────────────────────┐
@@ -281,12 +345,15 @@ GUARD FORMATS:
    ├────────────┼─────────────────────────────────────────────────────────────┤
    │ var        │ { "var": "step_1.ok" } - access context value               │
    │ ==, !=     │ { "==": [a, b] } - equality                                 │
-   │ ===, !==   │ { "===": [a, b] } - strict equality                         │
    │ >, <, >=   │ { ">": [a, b] } - comparison                                │
    │ and, or    │ { "and": [a, b, c] } - logical                              │
    │ not, !     │ { "not": a } - negation                                     │
    │ in         │ { "in": ["x", ["x","y","z"]] } - membership                 │
    └────────────┴─────────────────────────────────────────────────────────────┘
+
+2. STRING EXPRESSION (also supported but less compatible with visual editor):
+   guard: { if: "step_1.ok == true" }
+   guard: { if: "workflow.counter > 5" }
 
 3. AI ROUTING (dynamic, calls AI model):
    guard: { 
@@ -300,6 +367,14 @@ GUARD FORMATS:
    guard: { if: true }      // Always taken
    guard: "always"          // Always taken
    // OR: just omit guard   // No guard = always taken
+
+⚠️ CRITICAL — Guard Key Formatting:
+   JSONLogic keys must be PLAIN strings: "==", "var", "and", "!=", ">", etc.
+   NEVER double-quote or escape the keys. These are WRONG:
+     ✗ { "\"==\"": [{ "\"var\"": "x" }, "y"] }   ← keys contain literal quote chars
+     ✗ { '"=="': [{ '"var"': "x" }, "y"] }         ← same problem
+   CORRECT:
+     ✓ { "==": [{ "var": "x" }, "y"] }             ← plain 2-char key "=="
 
 GUARD EVALUATION ORDER:
 1. Guards are evaluated in order
@@ -422,7 +497,7 @@ WORKSPACE TEMPLATES (use in any node args):
 │ {{$workspace.data}}         │ Full path to data/ subdirectory             │
 │ {{$workspace.scripts}}      │ Full path to scripts/ subdirectory          │
 │ {{$workspace.assets}}       │ Full path to assets/ subdirectory           │
-│ {{$workspace.file.X.Y}}     │ Full path to file X/Y in workspace         │
+│ {{$workspace.file.X.Y}}     │ Full path to file X/Y in workspace          │
 │ {{$workspace.id}}           │ The workflow ID                             │
 └─────────────────────────────┴─────────────────────────────────────────────┘
 
@@ -441,18 +516,77 @@ SCRIPT TOOLS WITH FILE PATHS (game changer!):
   • Easy to edit, debug, and reuse scripts
   • Reference data files: open("{{$workspace.data}}/input.csv")
 
-FILE OPERATIONS IN WORKSPACE:
+WORKSPACE FILE TOOLS (preferred — no scripts needed!):
+  These tools manage files directly in the workflow workspace. The flowId is
+  auto-injected by the engine, so you never need to pass it.
+
+  • workspace_read_file:   { path: "data/config.json" }
+    → Returns { ok, content, size, updatedAt }
+  • workspace_write_file:  { path: "data/config.json", content: "{...}" }
+    → Creates parent dirs automatically
+  • workspace_list_files:  { path: "" }  (empty = root, or "data", "scripts" etc.)
+    → Returns { ok, files: [{ name, path, type, size, updatedAt }] }
+  • workspace_create_folder: { path: "data/exports" }
+  • workspace_delete_file: { path: "data/old.json" }
+  • workspace_get_info:    {}
+    → Returns { ok, workspacePath, subdirs, files }
+
+  IMPORTANT: Prefer workspace_read_file / workspace_write_file over
+  run_node_script or run_python_script for simple file I/O. Scripts
+  time out and are unreliable for basic read/write operations.
+
+UTILITY TOOLS (no scripts needed — instant results!):
+  These tools run natively without spawning processes. Use them instead of
+  run_node_script or run_python_script for common operations.
+
+  • get_datetime:   {}
+    → Returns { iso, unix, date, time, time12, weekday, year, month, day, hour, minute, second }
+    → Optional: { format: "%Y-%m-%d %H:%M", tzOffset: -360 }
+  • math_eval:      { expression: "sqrt(16) + pow(2, 3)" }
+    → Returns { result: 12.0 }  — supports: abs, round, min, max, sqrt, sin, cos, log, pow, pi, e, etc.
+  • generate_uuid:  {}
+    → Returns { uuid: "550e8400-..." }
+  • random_number:  { min: 1, max: 100 }
+    → Returns { value: 42 }  — optional: float, decimals, count
+  • random_choice:  { items: ["a", "b", "c"] }
+    → Returns { choice: "b" }
+  • sleep:          { seconds: 2 }  or  { ms: 500 }
+    → Pauses execution (max 5 min)
+  • get_system_info: {}
+    → Returns { os, hostname, username, home, cwd }
+  • get_env_var:    { name: "PATH" }
+    → Returns { value: "...", exists: true }
+  • hash_string:    { text: "hello", algorithm: "sha256" }
+    → Returns { hash: "2cf24dba..." }
+  • base64_encode:  { text: "hello" }
+    → Returns { encoded: "aGVsbG8=" }
+  • base64_decode:  { encoded: "aGVsbG8=" }
+    → Returns { decoded: "hello" }
+  • json_parse:     { text: '{"key":"val"}' }
+    → Returns { data: { key: "val" } }
+  • json_stringify:  { data: { key: "val" }, pretty: true }
+    → Returns { json: '{\n  "key": "val"\n}' }
+  • regex_match:    { text: "hello world", pattern: "(\\w+)", flags: "i" }
+    → Returns { matches: [...], count: 2, hasMatch: true }
+  • regex_replace:  { text: "hello world", pattern: "world", replacement: "there" }
+    → Returns { result: "hello there", changed: true }
+
+  IMPORTANT: Always prefer utility tools over scripts for these operations.
+  get_datetime is the go-to for timestamps. math_eval for calculations.
+
+LEGACY FILE OPERATIONS (use absolute paths with templates):
   • write_file: { path: "{{$workspace.data}}/results.json", content: "..." }
   • read_file: { path: "{{$workspace.data}}/config.json" }
   • list_directory: { path: "{{$workspace.scripts}}" }
 
 BEST PRACTICES:
+  • Use workspace_read_file / workspace_write_file for config, state, data files
   • Put Python/Node scripts in scripts/ and reference with filePath
   • Store input/output data in data/
   • Store templates, images in assets/
   • Use {{$workspace.path}} as cwd for run_command when needed
-  • When creating scripts for the user, use write_file to create the file
-    in the workspace, then reference it with filePath in the script node
+  • When creating scripts for the user, use workspace_write_file to create
+    the file, then reference it with filePath in the script node
 
 ═══════════════════════════════════════════════════════════════════════════════
 CUSTOM UI - React JSX (Offline)
@@ -490,11 +624,95 @@ CRITICAL RULES:
   3. Use JSX style objects: style={{color: 'red'}} NOT style="color: red".
   4. Use standard Tailwind classes (bg-slate-950), not arbitrary values (bg-[#050510]).
 
-TIMEOUTS: No timeout by default. Set timeoutMs if needed.
+BLOCKING:
+  blocking: true (default) — The workflow WAITS for the user to interact (stuard.submit/stuard.close).
+  blocking: false — The UI stays open but the workflow continues immediately. Use for dashboards/monitors.
+  timeoutMs: 30000 — Optional timeout in ms. If the user doesn't interact within this time, the step resolves with { action: "timeout" }.
+
+DATA PASSING — Feeding previous step output into custom_ui:
+  The 'data' field is how you pass values from earlier steps into the UI component.
+  Template references like {{step_id.json.field}} are resolved at runtime BEFORE the UI opens.
+  useVar(name, default) auto-seeds from matching keys in 'data'.
+
+  PATTERN:
+    1. Previous step (e.g. ai_inference) outputs JSON: { word: "你好", pinyin: "nǐ hǎo" }
+    2. In custom_ui args, set data keys that match your useVar names:
+       data: { "word": "{{prev_step.json.word}}", "pinyin": "{{prev_step.json.pinyin}}" }
+    3. In the component, useVar reads the seeded values:
+       const [word] = useVar('word', '');     // → "你好"
+       const [pinyin] = useVar('pinyin', ''); // → "nǐ hǎo"
+
+  RULES:
+    • data KEY names MUST match useVar first argument names exactly
+    • Template refs like {{step_id.json.field}} are resolved before the UI loads
+    • If a data value is undefined (template didn't resolve), useVar returns the default
+    • You can mix static values and templates: data: { "title": "Results", "count": "{{step1.json.total}}" }
+
+  COMPLETE EXAMPLE — Display AI results in a UI:
+    Step 1 (ai_inference): id="gen", outputs { word: "学习", pinyin: "xué xí", meaning: "to study" }
+    Step 2 (custom_ui):
+    {
+      id: "show", tool: "custom_ui",
+      args: {
+        title: "Result",
+        data: {
+          "word": "{{gen.json.word}}",
+          "pinyin": "{{gen.json.pinyin}}",
+          "meaning": "{{gen.json.meaning}}"
+        },
+        component: "function App() {\n  const [word] = useVar('word', '');\n  const [pinyin] = useVar('pinyin', '');\n  const [meaning] = useVar('meaning', '');\n  return (\n    <div className=\"p-6 text-center bg-slate-950 text-white h-full\">\n      <h1 className=\"text-5xl font-bold text-blue-400\">{word}</h1>\n      <p className=\"text-lg text-gray-400 mt-2\">{pinyin}</p>\n      <p className=\"text-xl text-gray-300 mt-1\">{meaning}</p>\n      <button onClick={() => stuard.submit({})} className=\"btn-primary mt-6\">Done</button>\n    </div>\n  );\n}",
+        blocking: true,
+        window: { width: 400, height: 300, frameless: true, borderRadius: 16 }
+      }
+    }
 
 WINDOW CONFIG (optional):
-  window: { width: 400, height: 300, position: "center", alwaysOnTop: true,
-            frameless: false, borderRadius: 12, backgroundColor: "#1a1a2e" }
+  window: {
+    width: 400, height: 300,
+    position: "center",          // "center"|"topleft"|"topright"|"bottomleft"|"bottomright"|"bottomcenter"|"cursor"|"custom"
+    alwaysOnTop: true,
+    frameless: true,             // Remove OS title bar (required for borderRadius, translucent, transparent)
+    transparent: false,          // Electron transparent window (auto-enabled when borderRadius > 0 + frameless)
+    borderRadius: 12,            // Corner radius in px — requires frameless: true to be visible
+    resizable: false,
+    draggable: true,             // Makes the window draggable by its background (default: true). Set false to disable.
+    backgroundColor: "#1a1a2e",  // Background color (used when backgroundType is "color")
+    backgroundType: "color",     // "color"|"gradient"|"image"|"translucent"|"transparent"
+    contentPadding: 24,          // Inner padding in px
+    shadow: { enabled: true, color: "#00000080", blur: 40, spread: 0, x: 0, y: 20 },
+    border: { enabled: false, color: "#ffffff20", width: 1, style: "solid" },
+    animation: { open: "fade", close: "fade", duration: 300, easing: "ease-out" },
+    invisible: false             // Hide from screenshots/screen recordings
+  }
+
+IMPORTANT — borderRadius + background:
+  When using borderRadius, the Electron window is made transparent and the border-radius
+  is applied via CSS on the inner container. The background color goes on the inner container
+  ONLY — html/body stay transparent so the rounded corners are visible.
+  Always set frameless: true when using borderRadius.
+
+BACKGROUND TYPES:
+  window.backgroundType: "color" | "gradient" | "image" | "translucent" | "transparent"
+
+  • color (default): Solid background. Set window.backgroundColor.
+  • translucent: Semi-transparent frosted glass. Requires frameless: true.
+    window: { backgroundType: "translucent", frameless: true,
+              translucent: { color: "#1a1a2e", opacity: 0.7, blur: 12 } }
+    - color: hex tint color  - opacity: 0-1 (0.7 = 70% opaque)  - blur: backdrop blur px (frosted glass)
+  • transparent: Fully transparent background. Requires frameless: true.
+    window: { backgroundType: "transparent", frameless: true }
+  • gradient/image: Advanced backgrounds (see UI builder).
+
+DRAGGABLE WINDOWS:
+  By default, frameless windows are draggable by their background (the .drag CSS class is
+  applied to the root container). Buttons, inputs, links, textareas, and elements with
+  class="no-drag" are excluded from dragging automatically.
+  Set window.draggable: false to disable window dragging entirely.
+
+HIDE FROM SCREENSHARE (content protection):
+  window.invisible: true — Hides this window from screenshots and screen recordings.
+  Use for sensitive overlays (passwords, private data, secret dashboards).
+  window: { invisible: true, ... }
 
 JSON ESCAPING for component field:
   In JSON, the component is a string. Use \\n for newlines and \\" for quotes.
@@ -597,7 +815,7 @@ REMOVE NODE (also used for triggers):
 
 ADD WIRE:
   modify_workflow({ op: "add_wire", from: "trig_0", to: "step_abc" })
-  modify_workflow({ op: "add_wire", from: "step_1", to: "step_2", guard: { if: "step_1.ok" } })
+  modify_workflow({ op: "add_wire", from: "step_1", to: "step_2", guard: { if: { "==": [{ "var": "step_1.ok" }, true] } } })
 
 ADD WIRE WITH LOOP:
   modify_workflow({ op: "set_path", path: "wires", value: [
@@ -763,7 +981,7 @@ EXAMPLE - File Converter App:
   }}
 
 ═══════════════════════════════════════════════════════════════════════════════
-YOUR 6 TOOLS
+YOUR 7 TOOLS
 ═══════════════════════════════════════════════════════════════════════════════
 
 1. search_tools({ query }) - Find tools by keyword
@@ -772,6 +990,7 @@ YOUR 6 TOOLS
 4. execute_step({ tool, args }) - Test a tool
 5. list_workflows({}) - List saved workflows
 6. stop_workflow({ id }) - Stop running workflow
+7. web_search({ query }) - Search the web for up-to-date information
 
 CRITICAL: NEVER pass the full workflow JSON to modify_workflow. Just use the op and params.
 NEVER output raw JSON. Use modify_workflow for all changes.`;
@@ -842,7 +1061,7 @@ export function getWorkflowAgent(modelIdOverride?: string): Agent {
     }
   });
 
-  // 6 LEAN TOOLS - no bloat
+  // 10 CORE TOOLS
   const tools = {
     // 1. Search tools (sis search)
     search_tools: createLoggedTool(search_tools, 'search_tools'),
@@ -856,37 +1075,51 @@ export function getWorkflowAgent(modelIdOverride?: string): Agent {
     list_workflows: createLoggedTool(listWorkflows, 'list_workflows'),
     // 6. Stop workflow
     stop_workflow: createLoggedTool(stop_automation, 'stop_workflow'),
+    // 7. Web search
+    web_search: createLoggedTool(web_search, 'web_search'),
+    // 8. Create/write files in the workspace or on disk
+    write_file: createLoggedTool(write_file, 'write_file'),
+    // 9. Create directories
+    create_directory: createLoggedTool(create_directory, 'create_directory'),
+    // 10. Edit non-stuard files (string-based find/replace)
+    file_edit: createLoggedTool(file_edit, 'file_edit'),
   };
+
+  // Determine if we should use thinking mode
+  const useThinking = provider === 'google' && modelId.includes('gemini-3');
 
   // Create agent with enhanced logging
   const agent = new Agent({
     id: 'workflow-architect',
     name: 'workflow-architect',
-    instructions: [
-      {
-        role: 'system',
-        content: WORKFLOW_SYSTEM_PROMPT,
-        providerOptions: (provider === 'google' && modelId.includes('gemini-3'))
-          ? {
+    instructions: WORKFLOW_SYSTEM_PROMPT,
+    model: model as any,
+    tools,
+  });
+
+  // Add message logging and inject providerOptions for thinking at stream level
+  const originalStream = agent.stream.bind(agent);
+  (agent as any).stream = async (input: any, options?: any) => {
+    console.log('[workflow-agent] Input message:', JSON.stringify(input, null, 2));
+    
+    // Inject thinkingConfig at the stream call level for Gemini 3 models
+    const mergedOptions = useThinking
+      ? {
+          ...options,
+          providerOptions: {
+            ...options?.providerOptions,
             google: {
+              ...options?.providerOptions?.google,
               thinkingConfig: {
                 includeThoughts: true,
                 thinkingLevel: 'high',
               },
             },
-          }
-          : undefined,
-      },
-    ] as any,
-    model: model as any,
-    tools,
-  });
-
-  // Add message logging
-  const originalStream = agent.stream.bind(agent);
-  (agent as any).stream = async (input: any, options?: any) => {
-    console.log('[workflow-agent] Input message:', JSON.stringify(input, null, 2));
-    const result = await originalStream(input, options);
+          },
+        }
+      : options;
+    
+    const result = await originalStream(input, mergedOptions);
     return result;
   };
 

@@ -3,6 +3,7 @@ import type { ValidationError } from "../builder/compiler";
 import { CodePanel } from "../components/CodePanel";
 import { InspectorPanel } from "../components/InspectorPanel";
 import { WireInspectorPanel } from "../components/WireInspectorPanel";
+import { WorkflowDocsPanel } from "../components/WorkflowDocsPanel";
 import { WorkspaceExplorer } from "../components/WorkspaceExplorer";
 import type { DesignerModel } from "../types";
 import { PanelErrorBoundary } from "./PanelErrorBoundary";
@@ -28,6 +29,7 @@ interface WorkflowRightPanelsProps {
   onRefreshWorkspace: () => void;
   onCloseWorkspace: () => void;
   onOpenFile: (filePath: string, fileName: string) => void;
+  onOpenStuard?: (subPath: string) => void;
 }
 
 export function WorkflowRightPanels({
@@ -50,6 +52,7 @@ export function WorkflowRightPanels({
   onRefreshWorkspace,
   onCloseWorkspace,
   onOpenFile,
+  onOpenStuard,
 }: WorkflowRightPanelsProps) {
   return (
     <>
@@ -98,6 +101,12 @@ export function WorkflowRightPanels({
                 <CodePanel model={model} errors={errors} onClose={() => onSetRightPanel("none")} onUpdateModel={onUpdateModel} />
               </PanelErrorBoundary>
             )}
+
+            {rightPanel === "docs" && (
+              <PanelErrorBoundary name="Docs">
+                <WorkflowDocsPanel onClose={() => onSetRightPanel("none")} />
+              </PanelErrorBoundary>
+            )}
           </div>
         </>
       )}
@@ -115,6 +124,7 @@ export function WorkflowRightPanels({
               onRefresh={onRefreshWorkspace}
               onClose={onCloseWorkspace}
               onOpenFile={onOpenFile}
+              onOpenStuard={onOpenStuard}
             />
           </PanelErrorBoundary>
         </div>

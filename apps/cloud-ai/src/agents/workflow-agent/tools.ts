@@ -1,13 +1,14 @@
 /**
- * Workflow Agent Tools - LEAN (only 2 tools here, 4 imported from elsewhere)
+ * Workflow Agent Tools - LEAN (only 2 tools here, 5 imported from elsewhere)
  *
- * Total: 6 tools for the workflow agent
+ * Total: 7 tools for the workflow agent
  * 1. search_tools (from meta-tools)
  * 2. get_tool_schema (from workflow-system)
  * 3. modify_workflow (from workflow.ts)
  * 4. execute_step (defined here)
  * 5. list_workflows (defined here)
  * 6. stop_workflow (from device-tools)
+ * 7. web_search (from perplexity-tools)
  */
 
 import { createTool } from '@mastra/core/tools';

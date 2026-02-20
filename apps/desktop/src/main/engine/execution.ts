@@ -38,6 +38,15 @@ export async function executeStep(
     const patchForThis = ctx?.__argsPatch?.[step.id];
     const toolName = step.tool || 'noop';
     const mergedArgs = interpolateForTool(deepMerge(step.args || {}, patchForThis || {}), ctx, toolName);
+
+    // Diagnostic: log resolved data values for custom_ui to trace template resolution
+    if (toolName === 'custom_ui' && mergedArgs?.data) {
+      for (const [k, v] of Object.entries(mergedArgs.data)) {
+        const vs = typeof v === 'string' ? v.slice(0, 80) : JSON.stringify(v)?.slice(0, 80);
+        engineCtx.logFn(`[${step.id}] interpolated data.${k} = ${vs}`);
+      }
+    }
+
     const kind = getToolKind(toolName);
 
     let result: any;
@@ -222,69 +231,98 @@ async function decideNext(
     }
   }
 
-  // Sort flow edges: specific guards first, catch-all guards (true/always) last
-  // This ensures conditional branches are evaluated before fallback edges
-  const sortedFlowEdges = [...flowEdges].sort((a, b) => {
-    const aIsDefault = isCatchAllGuard(a.guard);
-    const bIsDefault = isCatchAllGuard(b.guard);
-    if (aIsDefault && !bIsDefault) return 1;  // a goes after b
-    if (!aIsDefault && bIsDefault) return -1; // a goes before b
-    return 0; // preserve relative order
-  });
+  // ── Edge evaluation ──
+  // Unconditional "always" edges ALWAYS fire — they represent side-effects
+  // (e.g., UI updates) that must run regardless of which conditional branch is taken.
+  // Among conditional edges, the first matching guard wins (if/else semantics).
+  // Both sets are unioned into active edges for parallel execution.
+  //
+  // This enables stream consumer patterns like:
+  //   hand_pose → set_variable (always)   ← fires every frame to update UI
+  //   hand_pose → calc_cursor  (if: ...)  ← fires only when hands detected
 
-  for (const edge of sortedFlowEdges) {
-    const g = edge.guard;
+  // Check for AI routing — use exclusive first-match behavior for AI-routed edges
+  const hasAiRouting = conditionalFlowEdges.some(
+    e => e.guard && typeof e.guard === 'object' && e.guard.ai
+  );
 
-    // No guard or 'always' → take this edge
-    if (!g || g === 'always') {
-      activeEdges.push(edge);
-      return { ok: true, edges: activeEdges, ctx };
+  if (hasAiRouting) {
+    // AI routing: original exclusive behavior — AI picks the single target
+    const sortedFlowEdges = [...flowEdges].sort((a, b) => {
+      const aIsDefault = isCatchAllGuard(a.guard);
+      const bIsDefault = isCatchAllGuard(b.guard);
+      if (aIsDefault && !bIsDefault) return 1;
+      if (!aIsDefault && bIsDefault) return -1;
+      return 0;
+    });
+
+    for (const edge of sortedFlowEdges) {
+      const g = edge.guard;
+      if (!g || g === 'always') {
+        activeEdges.push(edge);
+        return { ok: true, edges: activeEdges, ctx };
+      }
+      if (g && typeof g === 'object' && g.if) {
+        try {
+          if (g.if === true || evalIfGuard(g.if, ctx)) {
+            activeEdges.push(edge);
+            return { ok: true, edges: activeEdges, ctx };
+          }
+        } catch { }
+      }
+      if (g && typeof g === 'object' && g.ai) {
+        const options = sortedFlowEdges.filter(e => e.to).map(e => ({ to: e.to, label: e.label }));
+        const out = await aiDecideNext(spec, step, ctx, options, g.ai, engineCtx);
+        if (!out.ok) {
+          const fb = step.fallback?.to;
+          if (fb) {
+            engineCtx.logFn(`${step.id}: AI routing failed, using fallback`);
+            activeEdges.push({ to: fb });
+            return { ok: true, edges: activeEdges, ctx };
+          }
+          return { ok: false, error: out.error || 'ai_routing_failed', ctx, edges: [] };
+        }
+        if (out.argsPatch && out.next) {
+          if (!ctx.__argsPatch) ctx.__argsPatch = {};
+          ctx.__argsPatch[out.next] = deepMerge(ctx.__argsPatch[out.next] || {}, out.argsPatch);
+        }
+        const matchedEdge = sortedFlowEdges.find(e => e.to === out.next);
+        if (matchedEdge) {
+          activeEdges.push(matchedEdge);
+        } else {
+          activeEdges.push({ to: out.next! });
+        }
+        return { ok: true, edges: activeEdges, ctx };
+      }
+    }
+  } else {
+    // Standard guard evaluation:
+    // - "always" edges fire unconditionally (parallel side-effects)
+    // - Conditional edges: first match wins (if/else among conditionals)
+
+    // Evaluate conditional edges — first match wins
+    for (const edge of conditionalFlowEdges) {
+      const g = edge.guard;
+      if (g && typeof g === 'object' && g.if) {
+        try {
+          if (g.if === true || evalIfGuard(g.if, ctx)) {
+            activeEdges.push(edge);
+            break;
+          }
+        } catch { }
+      }
     }
 
-    // JSONLogic guard
-    if (g && typeof g === 'object' && g.if) {
-      try {
-        // { if: true } is a catch-all, always matches
-        if (g.if === true || evalIfGuard(g.if, ctx)) {
-          activeEdges.push(edge);
-          return { ok: true, edges: activeEdges, ctx };
-        }
-      } catch { }
-    }
-
-    // AI routing guard (call cloud for decision)
-    if (g && typeof g === 'object' && g.ai) {
-      const options = sortedFlowEdges.filter(e => e.to).map(e => ({ to: e.to, label: e.label }));
-      const out = await aiDecideNext(spec, step, ctx, options, g.ai, engineCtx);
-
-      if (!out.ok) {
-        const fb = step.fallback?.to;
-        if (fb) {
-          engineCtx.logFn(`${step.id}: AI routing failed, using fallback`);
-          activeEdges.push({ to: fb });
-          return { ok: true, edges: activeEdges, ctx };
-        }
-        return { ok: false, error: out.error || 'ai_routing_failed', ctx, edges: [] };
+    // Always include unconditional edges — they fire regardless of conditional results
+    for (const edge of unconditionalFlowEdges) {
+      if (!activeEdges.some(e => e.to === edge.to)) {
+        activeEdges.push(edge);
       }
-
-      if (out.argsPatch && out.next) {
-        if (!ctx.__argsPatch) ctx.__argsPatch = {};
-        ctx.__argsPatch[out.next] = deepMerge(ctx.__argsPatch[out.next] || {}, out.argsPatch);
-      }
-
-      // Find the matching edge to preserve its full config
-      const matchedEdge = sortedFlowEdges.find(e => e.to === out.next);
-      if (matchedEdge) {
-        activeEdges.push(matchedEdge);
-      } else {
-        activeEdges.push({ to: out.next! });
-      }
-      return { ok: true, edges: activeEdges, ctx };
     }
   }
 
-  // No flow edge matched — check fallback
-  if (step.fallback?.to) {
+  // No edges matched at all — check fallback
+  if (activeEdges.length === 0 && step.fallback?.to) {
     activeEdges.push({ to: step.fallback.to });
     return { ok: true, edges: activeEdges, ctx };
   }

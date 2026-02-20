@@ -192,9 +192,16 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   workflowsGetWorkspaceInfo: (id: string) => ipcRenderer.invoke('workflows:getWorkspaceInfo', id),
   workflowsListWorkspaceFiles: (id: string, subpath?: string) => ipcRenderer.invoke('workflows:listWorkspaceFiles', id, subpath),
   workflowsReadWorkspaceFile: (id: string, filePath: string) => ipcRenderer.invoke('workflows:readWorkspaceFile', id, filePath),
+  workflowsReadWorkspaceFileBinary: (id: string, filePath: string) => ipcRenderer.invoke('workflows:readWorkspaceFileBinary', id, filePath),
   workflowsWriteWorkspaceFile: (id: string, filePath: string, content: string) => ipcRenderer.invoke('workflows:writeWorkspaceFile', id, filePath, content),
   workflowsDeleteWorkspaceFile: (id: string, filePath: string) => ipcRenderer.invoke('workflows:deleteWorkspaceFile', id, filePath),
   workflowsCreateWorkspaceSubdir: (id: string, subpath: string) => ipcRenderer.invoke('workflows:createWorkspaceSubdir', id, subpath),
+  workflowsRenameWorkspaceFile: (id: string, oldPath: string, newName: string) => ipcRenderer.invoke('workflows:renameWorkspaceFile', id, oldPath, newName),
+  workflowsMoveWorkspaceFile: (id: string, sourcePath: string, destFolder: string) => ipcRenderer.invoke('workflows:moveWorkspaceFile', id, sourcePath, destFolder),
+  workflowsCreateWorkspaceStuard: (id: string, subPath: string, name?: string) => ipcRenderer.invoke('workflows:createWorkspaceStuard', id, subPath, name),
+  workflowsReadWorkspaceStuard: (id: string, subPath: string) => ipcRenderer.invoke('workflows:readWorkspaceStuard', id, subPath),
+  workflowsSaveWorkspaceStuard: (id: string, subPath: string, content: string) => ipcRenderer.invoke('workflows:saveWorkspaceStuard', id, subPath, content),
+  workflowsListWorkspaceFunctions: (id: string) => ipcRenderer.invoke('workflows:listWorkspaceFunctions', id),
   onWorkflowsLog: (cb: (data: any) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('workflows:log', handler);
@@ -247,6 +254,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     return () => { try { ipcRenderer.off('stuards:ui:close', handler); } catch { } };
   },
   sendStuardsUiEvent: (stuardId: string, event: string, data?: any) => ipcRenderer.invoke('stuards:ui:event', { stuardId, event, data }),
+  setScreenCaptureInvisible: (enabled: boolean) => ipcRenderer.invoke('prefs:setScreenCaptureInvisible', enabled),
   themeApply: (prefs: any) => ipcRenderer.invoke('prefs:applyTheme', prefs),
   onThemeUpdated: (cb: (data: any) => void) => {
     const handler = (_e: any, data: any) => cb(data);
