@@ -1,7 +1,6 @@
 'use client';
 
-import { useState } from 'react';
-import { Search, ChevronLeft, ChevronRight, Users, Crown, Zap } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, Users, Crown } from 'lucide-react';
 import { UserEntry, formatNumber, formatCurrency, formatTimeAgo } from '../lib/api';
 
 const PLAN_COLORS: Record<string, string> = {

@@ -118,6 +118,8 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'write_file', category: 'system', kind: 'local', description: 'Write text content to a file', argsTemplate: { path: '', content: '', append: false }, outputSchema: { ok: 'boolean' } },
   { id: 'create_directory', category: 'system', kind: 'local', description: 'Create a directory on disk', argsTemplate: { path: '' }, outputSchema: { ok: 'boolean' } },
   { id: 'list_directory', category: 'system', kind: 'local', description: 'List directory contents', argsTemplate: { path: '' }, outputSchema: { ok: 'boolean', items: 'any[]' } },
+  { id: 'glob', category: 'system', kind: 'local', description: 'Find files and folders by name pattern. Use simple patterns like *.txt to find all text files, or **/*.js to find JavaScript files in all subfolders.', argsTemplate: { pattern: '*.txt', root: '' }, outputSchema: { ok: 'boolean', items: 'any[]', count: 'number', truncated: 'boolean', error: 'string' } },
+  { id: 'grep', category: 'system', kind: 'local', description: 'Search for text inside files. Finds every line that contains your search term across one or many files.', argsTemplate: { path: '', pattern: '', file_filter: '' }, outputSchema: { ok: 'boolean', results: 'any[]', count: 'number', truncated: 'boolean', error: 'string' } },
   { id: 'open_file', category: 'system', kind: 'local', description: 'Open a file or folder with the default application', argsTemplate: { path: '' }, outputSchema: { ok: 'boolean', opened: 'string', method: 'string' } },
   { id: 'move_file', category: 'system', kind: 'local', description: 'Move or rename files and directories', argsTemplate: { src: '', dest: '' }, outputSchema: { ok: 'boolean' } },
   { id: 'list_open_windows', category: 'system', kind: 'local', description: 'List all open windows and their properties', argsTemplate: {}, outputSchema: { ok: 'boolean', windows: 'any[]' } },
@@ -179,7 +181,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'get_tts_models', category: 'vision', kind: 'cloud', description: 'List available ElevenLabs TTS models', argsTemplate: {}, outputSchema: { ok: 'boolean', models: 'any[]' } },
 
   // --- DATA / AI ---
-  { id: 'ai_inference', category: 'data', kind: 'cloud', description: 'Run AI inference on text. Returns plain text or structured JSON.', argsTemplate: { prompt: '', input: '', mode: 'json', schema: {}, model: 'openai/gpt-4.1-mini', temperature: 0.3 }, outputSchema: { ok: 'boolean', text: 'string', json: 'any', model: 'string' } },
+  { id: 'ai_inference', category: 'data', kind: 'cloud', description: 'Run AI inference on text. Returns plain text, structured JSON, or vector embeddings.', argsTemplate: { prompt: '', input: '', mode: 'json', schema: {}, model: 'openai/gpt-4.1-mini', temperature: 0.3 }, outputSchema: { ok: 'boolean', text: 'string', json: 'any', embedding: 'number[]', model: 'string' } },
   { id: 'web_search', category: 'data', kind: 'cloud', description: 'Search the web using Perplexity AI', argsTemplate: { query: '', max_results: 5, max_tokens_per_page: 1024 }, outputSchema: { results: 'any[]', id: 'string' } },
 
   // --- UI ---
@@ -219,6 +221,20 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'docs_create_document', category: 'integrations', kind: 'cloud', description: 'Create a new Google Doc', argsTemplate: { title: '' }, outputSchema: { document: 'object' } },
   { id: 'docs_write_text', category: 'integrations', kind: 'cloud', description: 'Write text to a Google Doc', argsTemplate: { documentId: '', text: '' }, outputSchema: { result: 'object' } },
   { id: 'tasks_list', category: 'integrations', kind: 'cloud', description: 'List Google Tasks', argsTemplate: { tasklist: '', maxResults: 10 }, outputSchema: { items: 'any[]', count: 'number' } },
+  // Discord
+  { id: 'discord_list_guilds', category: 'integrations', kind: 'cloud', description: 'List Discord servers the user is in', argsTemplate: {}, outputSchema: { guilds: 'any[]', count: 'number' } },
+  { id: 'discord_list_channels', category: 'integrations', kind: 'cloud', description: 'List text channels in a Discord server', argsTemplate: { guild_id: '' }, outputSchema: { channels: 'any[]', count: 'number' } },
+  { id: 'discord_list_dms', category: 'integrations', kind: 'cloud', description: 'List Discord DM conversations', argsTemplate: {}, outputSchema: { dms: 'any[]', count: 'number' } },
+  { id: 'discord_read_messages', category: 'integrations', kind: 'cloud', description: 'Read messages from a Discord channel or DM', argsTemplate: { channel_id: '', limit: 25 }, outputSchema: { messages: 'any[]', count: 'number' } },
+  { id: 'discord_send_dm', category: 'integrations', kind: 'cloud', description: 'Send a direct message on Discord', argsTemplate: { channel_id: '', content: '' }, outputSchema: { sent: 'boolean', id: 'string', content: 'string' } },
+  { id: 'discord_add_reaction', category: 'integrations', kind: 'cloud', description: 'React to a Discord message with an emoji', argsTemplate: { channel_id: '', message_id: '', emoji: '👍' }, outputSchema: { success: 'boolean' } },
+  // Reddit
+  { id: 'reddit_search', category: 'integrations', kind: 'cloud', description: 'Search Reddit for posts', argsTemplate: { query: '', subreddit: '', sort: 'relevance', limit: 25 }, outputSchema: { items: 'any[]', count: 'number' } },
+  { id: 'reddit_view_subreddit', category: 'integrations', kind: 'cloud', description: 'View posts from a subreddit', argsTemplate: { subreddit: '', sort: 'hot', limit: 25 }, outputSchema: { items: 'any[]', count: 'number' } },
+  { id: 'reddit_view_comments', category: 'integrations', kind: 'cloud', description: 'View comments on a Reddit post', argsTemplate: { subreddit: '', post_id: '' }, outputSchema: { post: 'object', comments: 'any[]' } },
+  { id: 'reddit_create_post', category: 'integrations', kind: 'cloud', description: 'Create a new post on a subreddit', argsTemplate: { subreddit: '', title: '', kind: 'self', text: '' }, outputSchema: { success: 'boolean', id: 'string', url: 'string' } },
+  { id: 'reddit_comment', category: 'integrations', kind: 'cloud', description: 'Comment on a Reddit post or reply to a comment', argsTemplate: { thing_id: '', text: '' }, outputSchema: { success: 'boolean', id: 'string' } },
+  // YouTube
   { id: 'youtube_get_video', category: 'integrations', kind: 'cloud', description: 'Get detailed information about a YouTube video', argsTemplate: { url: '' }, outputSchema: { ok: 'boolean', video: 'object', error: 'string' } },
   { id: 'youtube_get_channel', category: 'integrations', kind: 'cloud', description: 'Get information about a YouTube channel', argsTemplate: { url: '' }, outputSchema: { ok: 'boolean', channel: 'object', error: 'string' } },
   { id: 'youtube_get_playlist', category: 'integrations', kind: 'cloud', description: 'Get information about a YouTube playlist', argsTemplate: { url: '', maxVideos: 10 }, outputSchema: { ok: 'boolean', playlist: 'object', videos: 'any[]', error: 'string' } },
@@ -239,12 +255,12 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'agent_todo', category: 'data', kind: 'local', description: 'Agent internal todo list for tracking long-running tasks (session-scoped)', argsTemplate: { action: 'list', sessionId: '', data: {} }, outputSchema: { ok: 'boolean', items: 'any[]', todo: 'object', progress: 'object', count: 'number' } },
 
   // --- VARIABLES ---
-  { id: 'set_variable', category: 'data', kind: 'local', description: 'Set a workflow variable. For workflow.* variables, they must be defined in the workflow variables array first.', argsTemplate: { name: '', value: '', scope: 'workflow', notifyUi: true }, outputSchema: { ok: 'boolean' } },
-  { id: 'get_variable', category: 'data', kind: 'local', description: 'Get a workflow variable value. For workflow.* variables, they must be defined in the workflow variables array.', argsTemplate: { name: '', default: '' }, outputSchema: { ok: 'boolean', value: 'any' } },
+  { id: 'set_variable', category: 'data', kind: 'local', description: 'Set a variable. workflow.* variables are shared across all stuard files in the current workflow. local.* variables are scoped to this stuard file only.', argsTemplate: { name: '', value: '', scope: 'workflow', notifyUi: true }, outputSchema: { ok: 'boolean' } },
+  { id: 'get_variable', category: 'data', kind: 'local', description: 'Get a variable value. workflow.* variables are shared across the workflow, local.* variables are file-scoped.', argsTemplate: { name: '', default: '' }, outputSchema: { ok: 'boolean', value: 'any' } },
   { id: 'delete_variable', category: 'data', kind: 'local', description: 'Delete a stored variable', argsTemplate: { name: '' }, outputSchema: { ok: 'boolean' } },
-  { id: 'toggle_variable', category: 'data', kind: 'local', description: 'Toggle a boolean workflow variable (must be defined in variables array)', argsTemplate: { name: '', notifyUi: true }, outputSchema: { ok: 'boolean', value: 'boolean' } },
-  { id: 'increment_variable', category: 'data', kind: 'local', description: 'Increment a numeric workflow variable (must be defined in variables array)', argsTemplate: { name: '', amount: 1, notifyUi: true }, outputSchema: { ok: 'boolean', value: 'number' } },
-  { id: 'append_to_list', category: 'data', kind: 'local', description: 'Append an item to a list workflow variable (must be defined in variables array)', argsTemplate: { name: '', item: '', notifyUi: true }, outputSchema: { ok: 'boolean', value: 'any[]' } },
+  { id: 'toggle_variable', category: 'data', kind: 'local', description: 'Toggle a boolean variable (workflow.* for workflow-scoped, local.* for file-scoped)', argsTemplate: { name: '', notifyUi: true }, outputSchema: { ok: 'boolean', value: 'boolean' } },
+  { id: 'increment_variable', category: 'data', kind: 'local', description: 'Increment a numeric variable (workflow.* for workflow-scoped, local.* for file-scoped)', argsTemplate: { name: '', amount: 1, notifyUi: true }, outputSchema: { ok: 'boolean', value: 'number' } },
+  { id: 'append_to_list', category: 'data', kind: 'local', description: 'Append an item to a list variable (workflow.* for workflow-scoped, local.* for file-scoped)', argsTemplate: { name: '', item: '', notifyUi: true }, outputSchema: { ok: 'boolean', value: 'any[]' } },
 
   // --- DATABASE ---
   { id: 'db_store', category: 'data', kind: 'local', description: 'Save a document (JSON data) into a collection. Auto-creates the collection if needed.', argsTemplate: { table: 'my_collection', id: '', data: { name: '', value: '' } }, outputSchema: { ok: 'boolean', id: 'string', table: 'string', error: 'string' } },
@@ -253,11 +269,6 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'db_delete', category: 'data', kind: 'local', description: 'Delete a document by its ID from a collection.', argsTemplate: { table: 'my_collection', id: '' }, outputSchema: { ok: 'boolean', deleted: 'boolean', error: 'string' } },
   { id: 'db_query', category: 'data', kind: 'local', description: 'Run a raw SQL query against the local workflow database. Use ? for parameter placeholders.', argsTemplate: { query: 'SELECT * FROM my_table LIMIT 10', params: [] }, outputSchema: { ok: 'boolean', results: 'any[]', count: 'number', affected_rows: 'number', error: 'string' } },
   { id: 'db_list_tables', category: 'data', kind: 'local', description: 'List all tables and collections in the workflow database.', argsTemplate: {}, outputSchema: { ok: 'boolean', tables: 'string[]', count: 'number', error: 'string' } },
-
-  // --- EMBEDDINGS ---
-  { id: 'embed_text', category: 'data', kind: 'cloud', description: 'Turn text into a number vector for similarity search. Useful for finding related content.', argsTemplate: { texts: ['Hello world'] }, outputSchema: { ok: 'boolean', embeddings: 'any[]', dimensions: 'number', count: 'number', error: 'string' } },
-  { id: 'vector_similarity', category: 'data', kind: 'cloud', description: 'Find the most similar items by comparing vectors. Use after Embed Text.', argsTemplate: { query: [], candidates: [], topK: 10, threshold: 0.5 }, outputSchema: { ok: 'boolean', results: 'any[]', count: 'number', error: 'string' } },
-  { id: 'embed_and_store', category: 'data', kind: 'cloud', description: 'Embed text and prepare it for storage. The result can be saved with Save Document.', argsTemplate: { text: '', metadata: {} }, outputSchema: { ok: 'boolean', document: 'object', error: 'string' } },
 
   // --- MEMORY / KNOWLEDGE ---
   { id: 'memory_retrieval', category: 'data', kind: 'cloud', description: 'Retrieve stored memories and facts', argsTemplate: { query: '' }, outputSchema: { ok: 'boolean', memories: 'any[]', facts: 'any[]' } },
@@ -359,6 +370,7 @@ const ANALYZE_MODE_OPTIONS: ArgOption[] = [
 const AI_INFERENCE_MODE_OPTIONS: ArgOption[] = [
   { value: 'text', label: 'Text', description: 'Return plain text' },
   { value: 'json', label: 'JSON', description: 'Return structured JSON (use with schema)' },
+  { value: 'embedding', label: 'Embedding', description: 'Return vector embeddings' },
 ];
 
 const ANALYZE_MEDIA_MODE_OPTIONS: ArgOption[] = [
@@ -382,6 +394,8 @@ const MODEL_OPTIONS: ArgOption[] = [
   { value: 'openai/o3-mini', label: 'o3-mini', description: 'OpenAI o3-mini reasoning' },
   { value: 'openai/gpt-5.2-codex', label: 'GPT-5.2 Codex', description: 'OpenAI GPT-5.2 Codex — advanced coding' },
   { value: 'openai/gpt-5.3-codex', label: 'GPT-5.3 Codex', description: 'OpenAI GPT-5.3 Codex' },
+  { value: 'openai/text-embedding-3-large', label: 'Text Embedding 3 Large', description: 'OpenAI Text Embedding 3 Large' },
+  { value: 'openai/text-embedding-3-small', label: 'Text Embedding 3 Small', description: 'OpenAI Text Embedding 3 Small' },
   { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', description: 'Google Gemini 2.5 Flash' },
   { value: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro', description: 'Google Gemini 2.5 Pro' },
   { value: 'google/gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview', description: 'Google Gemini 3.1 Pro Preview' },
@@ -428,8 +442,8 @@ const COMPARE_OP_OPTIONS: ArgOption[] = [
 ];
 
 const VARIABLE_SCOPE_OPTIONS: ArgOption[] = [
-  { value: 'workflow', label: 'Workflow', description: 'Scoped to this workflow run' },
-  { value: 'global', label: 'Global', description: 'Persistent across all runs' },
+  { value: 'workflow', label: 'Workflow', description: 'Shared across all stuard files in this workflow' },
+  { value: 'local', label: 'Local', description: 'Scoped to this stuard file only' },
 ];
 
 const STREAM_KIND_OPTIONS: ArgOption[] = [
@@ -711,6 +725,113 @@ if (TOOL_SCHEMAS['schedule.cron']) {
       description: 'Configure when this workflow should run automatically',
       required: true,
       default: '*/5 * * * *',
+    },
+  };
+}
+
+// Glob (Find Files) - user-friendly file search
+if (TOOL_SCHEMAS['glob']) {
+  TOOL_SCHEMAS['glob'].args = {
+    pattern: {
+      type: 'string',
+      label: 'File Name Pattern',
+      description: 'What files to look for. Use * as a wildcard (e.g., *.txt = all text files, report* = files starting with "report")',
+      required: true,
+      placeholder: '*.txt, *.pdf, my-file*',
+      default: '*.*',
+    },
+    root: {
+      type: 'path',
+      label: 'Search In Folder',
+      description: 'Which folder to search in (leave empty for current directory)',
+      placeholder: 'C:/Users/Documents',
+    },
+    recursive: {
+      type: 'boolean',
+      label: 'Include Subfolders',
+      description: 'Also search inside subfolders',
+      default: true,
+    },
+    include_files: {
+      type: 'boolean',
+      label: 'Show Files',
+      description: 'Include files in results',
+      default: true,
+      advanced: true,
+    },
+    include_dirs: {
+      type: 'boolean',
+      label: 'Show Folders',
+      description: 'Include folders in results',
+      default: true,
+      advanced: true,
+    },
+    max_results: {
+      type: 'number',
+      label: 'Max Results',
+      description: 'Maximum number of files to return',
+      default: 100,
+      advanced: true,
+    },
+  };
+}
+
+// Grep (Search In Files) - user-friendly text search
+if (TOOL_SCHEMAS['grep']) {
+  TOOL_SCHEMAS['grep'].args = {
+    path: {
+      type: 'path',
+      label: 'Search In',
+      description: 'File or folder to search inside',
+      required: true,
+      placeholder: 'C:/Users/Documents or a specific file',
+    },
+    pattern: {
+      type: 'string',
+      label: 'Search Text',
+      description: 'The word or phrase to look for inside files',
+      required: true,
+      placeholder: 'TODO, error, password, etc.',
+    },
+    case_sensitive: {
+      type: 'boolean',
+      label: 'Match Case',
+      description: 'Only find exact uppercase/lowercase matches',
+      default: false,
+    },
+    include_glob: {
+      type: 'string',
+      label: 'Only In File Types',
+      description: 'Only search in certain files (e.g., *.txt, *.js). Leave empty to search all files.',
+      placeholder: '*.txt, *.log',
+      advanced: true,
+    },
+    exclude_glob: {
+      type: 'string',
+      label: 'Skip File Types',
+      description: 'Don\'t search in these files (e.g., *.min.js). Leave empty to include everything.',
+      placeholder: '*.min.js, *.map',
+      advanced: true,
+    },
+    regex: {
+      type: 'boolean',
+      label: 'Use Regex',
+      description: 'Treat search text as a regular expression pattern (advanced)',
+      default: false,
+      advanced: true,
+    },
+    max_results: {
+      type: 'number',
+      label: 'Max Results',
+      description: 'Maximum number of matches to return',
+      default: 100,
+      advanced: true,
+    },
+    max_file_size: {
+      type: 'number',
+      label: 'Max File Size (bytes)',
+      description: 'Skip files larger than this size',
+      advanced: true,
     },
   };
 }
@@ -1119,7 +1240,7 @@ if (TOOL_SCHEMAS['task_crud']?.args?.action) {
 }
 
 // ============================================================================
-// SET VARIABLE — scope as dropdown
+// SET VARIABLE — scope as dropdown (workflow vs local)
 // ============================================================================
 
 if (TOOL_SCHEMAS['set_variable']) {
@@ -1127,7 +1248,7 @@ if (TOOL_SCHEMAS['set_variable']) {
     TOOL_SCHEMAS['set_variable'].args.scope = {
       type: 'select',
       label: 'Scope',
-      description: 'Where to store the variable',
+      description: 'Workflow = shared across all stuard files in this workflow. Local = scoped to this stuard file only.',
       options: VARIABLE_SCOPE_OPTIONS,
       default: 'workflow',
     };
@@ -1135,7 +1256,7 @@ if (TOOL_SCHEMAS['set_variable']) {
   TOOL_SCHEMAS['set_variable'].args.name = {
     type: 'string',
     label: 'Variable Name',
-    description: 'Name of the variable to set. Must match a defined workflow variable for useVar() to work in custom_ui.',
+    description: 'Name of the variable. Workflow-scoped vars are accessible across all stuard files. Local vars are file-scoped.',
     placeholder: 'streamed_frame',
   };
   TOOL_SCHEMAS['set_variable'].args.value = {
@@ -1505,6 +1626,8 @@ const AGENT_AVAILABLE_TOOLS: ArgOption[] = [
 
   // Files & Folders
   { value: 'list_directory', label: 'List Directory', description: 'List files in a folder', group: 'Files & Folders' },
+  { value: 'glob', label: 'Find Files', description: 'Find files by name pattern (e.g. *.txt)', group: 'Files & Folders' },
+  { value: 'grep', label: 'Search In Files', description: 'Search for text inside files', group: 'Files & Folders' },
   { value: 'read_file', label: 'Read File', description: 'Read file contents', group: 'Files & Folders' },
   { value: 'write_file', label: 'Write File', description: 'Write or create a file', group: 'Files & Folders' },
   { value: 'create_directory', label: 'Create Folder', description: 'Create a new directory', group: 'Files & Folders' },

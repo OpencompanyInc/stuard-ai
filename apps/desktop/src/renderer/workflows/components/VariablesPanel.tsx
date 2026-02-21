@@ -1,6 +1,7 @@
 /**
- * VariablesPanel - Workflow-level variable management with excellent UX
- * Allows users to define variables that can be referenced in any step using {{workflow.varName}}
+ * VariablesPanel - Workflow-scoped variable management
+ * Variables defined here are shared across all stuard files within the current workflow.
+ * For file-scoped (local) variables, use local.* prefix in set_variable.
  */
 import React, { useState } from "react";
 import { Plus, Trash2, Variable, ChevronDown, ChevronRight, Copy, Check, Hash, ToggleLeft, Type, Code2, Info, List, Save, RefreshCw } from "lucide-react";
@@ -325,7 +326,7 @@ export function VariablesPanel({ variables, onChange, disabled }: VariablesPanel
         <div className="flex-1">
           <div className="text-sm font-semibold text-slate-700">Workflow Variables</div>
           <div className="text-[11px] text-slate-400">
-            {variables.length === 0 ? 'No variables defined' : `${variables.length} variable${variables.length !== 1 ? 's' : ''}`}
+            {variables.length === 0 ? 'No variables defined' : `${variables.length} variable${variables.length !== 1 ? 's' : ''} — shared across all stuard files in this workflow`}
           </div>
         </div>
         {collapsed ? <ChevronRight className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
@@ -339,10 +340,11 @@ export function VariablesPanel({ variables, onChange, disabled }: VariablesPanel
             <div className="flex items-start gap-2 p-3 bg-indigo-50 rounded-lg border border-indigo-100">
               <Info className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
               <div className="text-xs text-indigo-700">
-                <p className="font-medium">Define workflow-level variables</p>
+                <p className="font-medium">Define workflow-scoped variables</p>
                 <p className="text-indigo-600/70 mt-0.5">
-                  Variables persist across runs and can be used in any step with{' '}
-                  <code className="bg-indigo-100 px-1 py-0.5 rounded">{`{{workflow.varName}}`}</code>
+                  These variables are shared across all stuard files in this workflow. Reference with{' '}
+                  <code className="bg-indigo-100 px-1 py-0.5 rounded">{`{{workflow.varName}}`}</code>.
+                  For file-scoped variables, use <code className="bg-indigo-100 px-1 py-0.5 rounded">local.*</code> in set_variable.
                 </p>
               </div>
             </div>

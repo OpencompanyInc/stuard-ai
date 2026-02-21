@@ -23,7 +23,7 @@ import AccessTab from './components/AccessTab';
 
 type Tab = 'overview' | 'analytics' | 'users' | 'deploy' | 'infra' | 'access';
 
-const NAV_ITEMS: { id: Tab; label: string; icon: any }[] = [
+const NAV_ITEMS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'analytics', label: 'Analytics', icon: BarChart3 },
   { id: 'users', label: 'Users', icon: Users },
@@ -36,18 +36,12 @@ const NAV_ITEMS: { id: Tab; label: string; icon: any }[] = [
 const ENV_TOKEN = process.env.NEXT_PUBLIC_OPS_ACCESS_TOKEN || '';
 
 function LoginGate({ children }: { children: React.ReactNode }) {
+  const storedToken = typeof window !== 'undefined' ? localStorage.getItem('stuard_access_token') : null;
+  const [token, setToken] = useState<string | null>(ENV_TOKEN || storedToken);
+  const [input, setInput] = useState('');
+
   // If env token is set, skip login entirely
   if (ENV_TOKEN) return <>{children}</>;
-
-  const [token, setToken] = useState<string | null>(null);
-  const [input, setInput] = useState('');
-  const [checking, setChecking] = useState(true);
-
-  useEffect(() => {
-    const stored = localStorage.getItem('stuard_access_token');
-    if (stored) setToken(stored);
-    setChecking(false);
-  }, []);
 
   const handleLogin = () => {
     const t = input.trim();
@@ -55,12 +49,6 @@ function LoginGate({ children }: { children: React.ReactNode }) {
     localStorage.setItem('stuard_access_token', t);
     setToken(t);
   };
-
-  if (checking) return (
-    <div className="flex items-center justify-center h-screen">
-      <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-    </div>
-  );
 
   if (!token) return (
     <div className="flex items-center justify-center h-screen bg-[#F8FAFC]">
@@ -409,7 +397,7 @@ export default function OpsConsole() {
                 onPageChange={handleUsersPageChange} page={usersPage} pageSize={PAGE_SIZE} />
             )}
             {activeTab === 'deploy' && (
-              <DeployTab status={status} onAction={doAction} loading={loading} message={message}
+              <DeployTab status={status} onAction={doAction} loading={loading}
                 deployments={deploymentsList} latestByChannel={latestByChannel} onRefreshDeploys={loadDeployments} />
             )}
             {activeTab === 'infra' && (

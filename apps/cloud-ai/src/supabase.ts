@@ -1,10 +1,18 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { estimateCostUsd, monthlyCreditLimitForPlan, creditsFromUsd, creditsPerUsd } from './pricing';
-import { DEV_MODE } from './utils/config';
+import { DEV_MODE, SYNC_ACCOUNTS_FALLBACK } from './utils/config';
 import { normalizeUsage } from './utils/usage';
 import { embedMany } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { DEFAULT_EMBEDDER } from './utils/config';
+import {
+  localGetExternalAccount,
+  localListExternalAccounts,
+  localUpsertExternalAccount,
+  localSetDefaultExternalAccount,
+  localDeleteExternalAccount,
+  localGetExternalAccessToken,
+} from './store/local-accounts';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 // Prefer new key names, fall back to legacy
@@ -40,6 +48,14 @@ export async function enqueueMemoryJob(input: {
   deviceId?: string | null;
 }): Promise<void> {
   if (!supabaseService) return;
+
+  // Respect sync_memories preference — skip cloud memory storage when disabled
+  const prefs = await getSyncPreferences(input.userId);
+  if (!prefs.sync_memories) {
+    console.log('[sync] sync_memories disabled — skipping cloud memory enqueue');
+    return;
+  }
+
   const texts = Array.isArray(input.texts) ? input.texts.filter((s) => typeof s === 'string' && s.trim()) : [];
   if (texts.length === 0) return;
   try {
@@ -75,11 +91,27 @@ export type ExternalAccount = {
   meta?: any;
 };
 
+/** Resolve whether sync_accounts is enabled for this user. */
+async function shouldSyncAccounts(userId: string): Promise<boolean> {
+  const prefs = await getSyncPreferences(userId);
+  return prefs.sync_accounts;
+}
+
 /**
  * Get a single external account. If profileLabel is provided, fetches that specific
  * profile. Otherwise returns the default profile for the provider.
+ * Routes to local store by default; uses Supabase only when sync_accounts is enabled.
  */
 export async function getExternalAccount(
+  userId: string,
+  provider: string,
+  profileLabel?: string,
+): Promise<ExternalAccount | null> {
+  if (!(await shouldSyncAccounts(userId))) return localGetExternalAccount(userId, provider, profileLabel);
+  return _supabaseGetExternalAccount(userId, provider, profileLabel);
+}
+
+async function _supabaseGetExternalAccount(
   userId: string,
   provider: string,
   profileLabel?: string,
@@ -129,6 +161,14 @@ export async function listExternalAccounts(
   userId: string,
   provider?: string,
 ): Promise<ExternalAccount[]> {
+  if (!(await shouldSyncAccounts(userId))) return localListExternalAccounts(userId, provider);
+  return _supabaseListExternalAccounts(userId, provider);
+}
+
+async function _supabaseListExternalAccounts(
+  userId: string,
+  provider?: string,
+): Promise<ExternalAccount[]> {
   if (!supabaseService) return [];
   try {
     const cols = 'id, user_id, provider, profile_label, is_default, account_email, scopes, access_token, refresh_token, expires_at, meta';
@@ -152,6 +192,15 @@ export async function listExternalAccounts(
  * other profiles for the same (user_id, provider).
  */
 export async function setDefaultExternalAccount(
+  userId: string,
+  provider: string,
+  profileLabel: string,
+): Promise<boolean> {
+  if (!(await shouldSyncAccounts(userId))) return localSetDefaultExternalAccount(userId, provider, profileLabel);
+  return _supabaseSetDefaultExternalAccount(userId, provider, profileLabel);
+}
+
+async function _supabaseSetDefaultExternalAccount(
   userId: string,
   provider: string,
   profileLabel: string,
@@ -182,6 +231,15 @@ export async function setDefaultExternalAccount(
  * Delete a specific profile. If it was the default, promote the next one.
  */
 export async function deleteExternalAccount(
+  userId: string,
+  provider: string,
+  profileLabel: string,
+): Promise<boolean> {
+  if (!(await shouldSyncAccounts(userId))) return localDeleteExternalAccount(userId, provider, profileLabel);
+  return _supabaseDeleteExternalAccount(userId, provider, profileLabel);
+}
+
+async function _supabaseDeleteExternalAccount(
   userId: string,
   provider: string,
   profileLabel: string,
@@ -232,6 +290,21 @@ export async function upsertExternalAccount(input: {
   profileLabel?: string;
   accountEmail?: string | null;
 }): Promise<void> {
+  if (!(await shouldSyncAccounts(input.userId))) return localUpsertExternalAccount(input);
+  return _supabaseUpsertExternalAccount(input);
+}
+
+async function _supabaseUpsertExternalAccount(input: {
+  userId: string;
+  provider: string;
+  access_token: string;
+  scopes?: string[];
+  refresh_token?: string | null;
+  expires_at?: string | null;
+  meta?: any;
+  profileLabel?: string;
+  accountEmail?: string | null;
+}): Promise<void> {
   if (!supabaseService) return;
   try {
     const profileLabel = input.profileLabel || 'default';
@@ -256,10 +329,17 @@ export async function upsertExternalAccount(input: {
       updated_at: new Date().toISOString(),
     };
     // Upsert by (user_id, provider, profile_label)
-    await supabaseService
+    const { error } = await supabaseService
       .from('external_accounts')
       .upsert(values, { onConflict: 'user_id,provider,profile_label' });
-  } catch {}
+    if (error) {
+      console.error(`[supabase] upsertExternalAccount failed for ${input.provider}/${profileLabel}:`, error.message, error.details, error.hint);
+      throw new Error(`Supabase upsert failed: ${error.message}`);
+    }
+  } catch (e: any) {
+    console.error(`[supabase] upsertExternalAccount error:`, e?.message || e);
+    throw e;
+  }
 }
 
 /**
@@ -293,14 +373,23 @@ export async function createConversation(
   userId: string,
   firstMessage: string,
   model: string,
-  firstMessageMetadata?: MessageMetadata
+  firstMessageMetadata?: MessageMetadata,
+  source: 'stuard' | 'workflow' = 'stuard'
 ): Promise<string | null> {
   if (!supabaseService) return null;
+
+  // Respect sync_conversations preference — skip cloud storage when disabled
+  const prefs = await getSyncPreferences(userId);
+  if (!prefs.sync_conversations) {
+    console.log('[sync] sync_conversations disabled — skipping cloud conversation storage');
+    return null;
+  }
+
   try {
     // Create a conversation and attach the first user message
     const { data: conv, error: convErr } = await supabaseService
       .from('conversations')
-      .insert([{ user_id: userId, model, status: 'started' }])
+      .insert([{ user_id: userId, model, source, status: 'started' }])
       .select('id')
       .single();
     if (convErr || !conv?.id) return null;
@@ -440,6 +529,54 @@ export function hasSupabase(): boolean {
   return !!supabaseAnon && !!supabaseService;
 }
 
+// ── Sync Preferences ────────────────────────────────────────────────────────
+
+export interface SyncPreferences {
+  sync_accounts: boolean;
+  sync_conversations: boolean;
+  sync_memories: boolean;
+}
+
+const defaultSyncPrefs: SyncPreferences = { sync_accounts: false, sync_conversations: true, sync_memories: false };
+
+/** Read sync preferences from the user's profile row. */
+export async function getSyncPreferences(userId: string): Promise<SyncPreferences> {
+  if (!supabaseService) return defaultSyncPrefs;
+  try {
+    const { data, error } = await supabaseService
+      .from('profiles')
+      .select('sync_accounts, sync_conversations, sync_memories')
+      .eq('user_id', userId)
+      .single();
+    if (error || !data) return defaultSyncPrefs;
+    return {
+      sync_accounts: !!(data as any).sync_accounts,
+      sync_conversations: (data as any).sync_conversations !== false, // default true
+      sync_memories: !!(data as any).sync_memories,
+    };
+  } catch {
+    return defaultSyncPrefs;
+  }
+}
+
+/** Update sync preferences on the user's profile row. */
+export async function updateSyncPreferences(userId: string, prefs: Partial<SyncPreferences>): Promise<boolean> {
+  if (!supabaseService) return false;
+  try {
+    const updates: any = { updated_at: new Date().toISOString() };
+    if (typeof prefs.sync_accounts === 'boolean') updates.sync_accounts = prefs.sync_accounts;
+    if (typeof prefs.sync_conversations === 'boolean') updates.sync_conversations = prefs.sync_conversations;
+    if (typeof prefs.sync_memories === 'boolean') updates.sync_memories = prefs.sync_memories;
+    const { error } = await supabaseService
+      .from('profiles')
+      .update(updates)
+      .eq('user_id', userId);
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
 export async function getProfile(userId: string): Promise<{ plan: string; daily_limit: number; daily_used: number } | null> {
   if (!supabaseService) return null;
   try {
@@ -537,6 +674,11 @@ export async function addMemoryOutbox(
   last_error?: string | null,
 ): Promise<void> {
   if (!supabaseService) return;
+
+  // Respect sync_memories preference
+  const prefs = await getSyncPreferences(userId);
+  if (!prefs.sync_memories) return;
+
   try {
     await supabaseService
       .from('memory_outbox')

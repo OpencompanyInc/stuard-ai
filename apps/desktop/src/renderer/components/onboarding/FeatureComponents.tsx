@@ -191,22 +191,49 @@ export function DiscoveryCard({
 export function OnboardingComplete({ onClose }: { onClose: () => void }) {
   const [showConfetti, setShowConfetti] = useState(true);
 
+  // Read the registered hotkey from localStorage, fall back to default
+  const savedHotkey = (() => {
+    try {
+      return localStorage.getItem('stuard_global_hotkey') || 'Ctrl+Shift+Space';
+    } catch {
+      return 'Ctrl+Shift+Space';
+    }
+  })();
+
+  // Format for display: "Ctrl+Shift+Space" → "Ctrl + Shift + Space"
+  const displayHotkey = savedHotkey
+    .replace(/Cmd/g, '⌘')
+    .split('+')
+    .map(k => k.trim())
+    .join(' + ');
+
   useEffect(() => {
-    const timer = setTimeout(() => setShowConfetti(false), 4000);
+    const timer = setTimeout(() => setShowConfetti(false), 5000);
     return () => clearTimeout(timer);
   }, []);
 
   return (
-    <div className="w-full h-full flex items-center justify-center px-6">
-      {/* Subtle confetti effect */}
+    <div className="w-full h-full flex flex-col items-center justify-center px-6 relative overflow-hidden">
+      {/* Background radial glow */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background: [
+            'radial-gradient(ellipse 120% 65% at 50% 105%, rgba(56,168,255,0.40) 0%, rgba(30,130,230,0.22) 35%, rgba(6,90,160,0.08) 60%, transparent 85%)',
+            'linear-gradient(to top, rgba(20,110,200,0.10) 0%, transparent 50%)',
+          ].join(', '),
+        }}
+      />
+
+      {/* Confetti particles */}
       {showConfetti && (
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
-          {[...Array(20)].map((_, i) => (
+          {[...Array(30)].map((_, i) => (
             <motion.div
               key={i}
               initial={{ 
-                y: -20, 
-                x: Math.random() * 500,
+                y: -10, 
+                x: 40 + Math.random() * 320,
                 scale: 0,
                 rotate: 0 
               }}
@@ -217,15 +244,17 @@ export function OnboardingComplete({ onClose }: { onClose: () => void }) {
               }}
               transition={{ 
                 duration: 2.5 + Math.random() * 2,
-                delay: Math.random() * 0.5,
+                delay: Math.random() * 0.8,
                 ease: "easeOut",
                 repeat: Infinity,
-                repeatDelay: Math.random() * 2
+                repeatDelay: Math.random() * 3
               }}
               className={clsx(
-                "absolute w-1.5 h-1.5 rounded-full",
-                i % 2 === 0 ? "bg-white" : "bg-white/50",
-                "opacity-40"
+                "absolute rounded-full",
+                i % 4 === 0 ? "w-2 h-2 bg-blue-400/50" : 
+                i % 4 === 1 ? "w-1.5 h-1.5 bg-white/60" : 
+                i % 4 === 2 ? "w-1 h-1 bg-cyan-300/40" :
+                "w-1.5 h-1.5 bg-white/30"
               )}
             />
           ))}
@@ -236,45 +265,83 @@ export function OnboardingComplete({ onClose }: { onClose: () => void }) {
         initial={{ scale: 0.9, opacity: 0, y: 20 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
         transition={{ delay: 0.2, type: "spring", stiffness: 200, damping: 20 }}
-        className="text-center max-w-sm mx-auto relative"
+        className="text-center max-w-sm mx-auto relative z-10"
       >
+        {/* Animated checkmark */}
         <motion.div
           initial={{ scale: 0, rotate: -45 }}
           animate={{ scale: 1, rotate: 0 }}
           transition={{ type: "spring", stiffness: 300, delay: 0.3 }}
-          className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-white/5 border border-white/10
-                   flex items-center justify-center shadow-lg"
+          className="w-20 h-20 mx-auto mb-8 rounded-2xl bg-gradient-to-br from-blue-500/20 to-cyan-400/10 border border-white/15
+                   flex items-center justify-center shadow-[0_0_40px_rgba(56,168,255,0.15)]"
         >
-          <Check className="w-8 h-8 text-white/90" strokeWidth={3} />
+          <motion.div
+            initial={{ pathLength: 0 }}
+            animate={{ pathLength: 1 }}
+            transition={{ delay: 0.6, duration: 0.4 }}
+          >
+            <Check className="w-10 h-10 text-white" strokeWidth={2.5} />
+          </motion.div>
         </motion.div>
 
-        <h2 className="text-2xl font-bold text-white mb-2 tracking-tight">
+        <motion.h2
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
+          className="text-3xl font-bold text-white mb-3 tracking-tight"
+        >
           You're All Set!
-        </h2>
-        <p className="text-white/60 text-sm mb-8 leading-relaxed">
-          Stuard is active and running locally.
-          <br />
-          <span className="opacity-80 mt-2 block">
-            Summon with <span className="text-white bg-white/10 px-1.5 py-0.5 rounded border border-white/10 font-mono text-xs">Ctrl + Shift + Space</span>
-          </span>
-        </p>
+        </motion.h2>
 
-        <div className="space-y-3">
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
+        <motion.p
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
+          className="text-white/50 text-sm mb-6 leading-relaxed"
+        >
+          Stuard is active and running locally.
+        </motion.p>
+
+        {/* Hotkey display card */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.6 }}
+          className="mb-8 p-4 rounded-xl bg-white/5 border border-white/10"
+        >
+          <p className="text-white/40 text-xs mb-2">Summon Stuard with</p>
+          <div className="flex items-center justify-center gap-1.5">
+            {displayHotkey.split(' + ').map((key, i) => (
+              <React.Fragment key={i}>
+                {i > 0 && <span className="text-white/30 text-sm">+</span>}
+                <span className="px-2.5 py-1.5 rounded-lg bg-white/10 border border-white/15 text-white font-mono text-sm font-medium shadow-sm">
+                  {key}
+                </span>
+              </React.Fragment>
+            ))}
+          </div>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.7 }}
+          className="space-y-3"
+        >
+          <button
             onClick={onClose}
-            className="w-full py-2.5 rounded-lg bg-white text-black font-medium text-sm
-                     hover:bg-white/90 transition-all shadow-lg flex items-center justify-center gap-2"
+            className="w-full py-3 rounded-xl bg-white text-black font-semibold text-sm
+                     hover:bg-gray-100 transition-all active:scale-[0.98] shadow-lg shadow-white/5
+                     flex items-center justify-center gap-2"
           >
             <Sparkles className="w-4 h-4" />
             Start Working Smarter
-          </motion.button>
+          </button>
           
-          <p className="text-white/40 text-xs">
-            Tip: Type <span className="font-mono text-white/60">/</span> to open commands
+          <p className="text-white/30 text-xs pt-1">
+            Tip: Type <span className="font-mono text-white/50">/</span> to open commands
           </p>
-        </div>
+        </motion.div>
       </motion.div>
     </div>
   );

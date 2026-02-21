@@ -5,6 +5,8 @@ import { handleCredits } from './credits';
 import { handleGithubRoutes } from './integrations/github';
 import { handleGoogleRoutes } from './integrations/google';
 import { handleOutlookRoutes } from './integrations/outlook';
+import { handleDiscordRoutes } from './integrations/discord';
+import { handleRedditRoutes } from './integrations/reddit';
 import { handleProfileRoutes } from './integrations/profiles';
 import { handleCalendarRoutes } from './calendar';
 import { handleInferenceRoutes } from './inference';
@@ -18,6 +20,7 @@ import { handleModelsRoutes } from './models';
 import { handleSharedSpacesRoutes } from './shared-spaces';
 import { handleMCPRoutes } from './mcp';
 import { handleFileIndexRoutes } from './file-index';
+import { handlePreferencesRoutes } from './preferences';
 
 export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   if (await handleWebhooks(req, res, parsedUrl)) return true;
@@ -29,6 +32,8 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleGithubRoutes(req, res, parsedUrl)) return true;
   if (await handleGoogleRoutes(req, res, parsedUrl)) return true;
   if (await handleOutlookRoutes(req, res, parsedUrl)) return true;
+  if (await handleDiscordRoutes(req, res, parsedUrl)) return true;
+  if (await handleRedditRoutes(req, res, parsedUrl)) return true;
   if (await handleProfileRoutes(req, res, parsedUrl)) return true;
   if (await handleCalendarRoutes(req, res, parsedUrl)) return true;
   if (await handleInferenceRoutes(req, res, parsedUrl)) return true;
@@ -39,5 +44,6 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleSharedSpacesRoutes(req, res, parsedUrl)) return true;
   if (await handleMCPRoutes(req, res, parsedUrl)) return true;
   if (await handleFileIndexRoutes(req, res, parsedUrl)) return true;
+  if (await handlePreferencesRoutes(req, res, parsedUrl)) return true;
   return false;
 }

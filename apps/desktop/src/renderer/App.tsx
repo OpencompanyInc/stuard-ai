@@ -613,6 +613,7 @@ export default function App() {
       const { data, error } = await supabase
         .from('conversations')
         .select('id, title, created_at')
+        .neq('source', 'workflow')
         .order('created_at', { ascending: false })
         .limit(20);
       if (!error) setConvList(Array.isArray(data) ? data : []);

@@ -207,6 +207,10 @@ export function getWorkflowVariableDefinitions(flowId: string): WorkflowVariable
  * Initialize workflow variables for a workflow.
  * This is called when a workflow is deployed or started.
  * 
+ * Scoping model:
+ * - workflow.* = shared across all stuard files in the current workflow
+ * - local.* = scoped to a single stuard file (managed at runtime, not initialized here)
+ * 
  * @param flowId - The workflow ID
  * @param variables - Array of variable definitions from the workflow JSON
  * @param forceReset - If true, always reset to default values. If false, respects persistState option.
@@ -252,6 +256,7 @@ export function initializeWorkflowVariables(
 /**
  * Cleanup workflow variables when a workflow is stopped/undeployed.
  * Only removes variables that don't have persistState set.
+ * Also removes all local.* variables for this workflow since they are file-scoped.
  */
 export function cleanupWorkflowVariables(flowId: string): void {
   const defs = variableDefinitions.get(flowId);
@@ -262,6 +267,14 @@ export function cleanupWorkflowVariables(flowId: string): void {
     if (!def.persistState) {
       variableStore.delete(fullName);
       console.log(`[VARS] Cleaned up non-persistent variable: ${fullName}`);
+    }
+  }
+
+  // Clean up all local.* variables associated with this workflow's flows
+  for (const [name, entry] of variableStore.entries()) {
+    if (name.startsWith('local.') && entry.flowId === flowId) {
+      variableStore.delete(name);
+      console.log(`[VARS] Cleaned up local variable: ${name} (flowId: ${flowId})`);
     }
   }
 

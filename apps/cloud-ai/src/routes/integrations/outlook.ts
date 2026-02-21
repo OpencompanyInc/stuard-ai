@@ -180,11 +180,9 @@ export async function handleOutlookRoutes(req: IncomingMessage, res: ServerRespo
         accountEmail = String(me?.mail || me?.userPrincipalName || '') || null;
       } catch {}
 
-      try { await upsertExternalAccount({ userId, provider: 'outlook', access_token, scopes, refresh_token: refresh_token || null, expires_at, meta: { token_type: tokenBody.token_type || 'Bearer' }, profileLabel, accountEmail }); } catch {}
-      let okSaved = false;
-      try { const acc = await getExternalAccount(userId, 'outlook', profileLabel); okSaved = !!acc; } catch { okSaved = false; }
-      if (!okSaved) {
-        res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=outlook&message=${encodeURIComponent('Could not save token. Ensure server is configured.')}`, 'Cache-Control': 'no-store' });
+      try { await upsertExternalAccount({ userId, provider: 'outlook', access_token, scopes, refresh_token: refresh_token || null, expires_at, meta: { token_type: tokenBody.token_type || 'Bearer' }, profileLabel, accountEmail }); } catch (saveErr: any) {
+        console.error('[outlook] Failed to save token:', saveErr?.message || saveErr);
+        res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=outlook&message=${encodeURIComponent('Could not save token: ' + (saveErr?.message || 'database error'))}`, 'Cache-Control': 'no-store' });
         res.end();
         return true;
       }

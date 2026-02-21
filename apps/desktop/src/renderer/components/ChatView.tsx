@@ -11,6 +11,8 @@ import { ChatInputArea } from './chat-view/ChatInputArea';
 import { FileNavigatorOverlay } from './chat-view/FileNavigatorOverlay';
 import { SidebarTabsPanel } from './SidebarTabsPanel';
 import { TasksView, TaskSubTab } from './TasksView';
+import { SubagentDashboard } from './chat-view/SubagentDashboard';
+import { useSubagentDashboard } from '../hooks/useSubagentDashboard';
 
 interface ChatViewProps {
   messages: any[];
@@ -189,6 +191,9 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   // View Mode State (Chat vs Tasks)
   const [viewMode, setViewMode] = useState<'chat' | 'tasks'>('chat');
   const [tasksSubTab, setTasksSubTab] = useState<TaskSubTab>('todo');
+
+  // Subagent Dashboard (pinned panel in chat)
+  const subagentDash = useSubagentDashboard();
 
   // Listen for view mode change events (e.g., from bookmark shortcuts)
   useEffect(() => {
@@ -486,19 +491,37 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                     <TasksView compact defaultSubTab={tasksSubTab} onSubTabChange={setTasksSubTab} />
                   </div>
                 ) : (
-                  <MessageList
-                    messages={messages}
-                    currentResponse={currentResponse}
-                    currentReasoning={currentReasoning}
-                    currentToolCalls={currentToolCalls}
-                    currentStreamChunks={currentStreamChunks}
-                    thinkingStartTime={thinkingStartTime}
-                    className="h-full px-4 py-3 scrollbar-hidden"
-                    onSubmitToolOutput={onSubmitToolOutput}
-                    onGenUIResponse={onGenUIResponse}
-                    onEditMessage={onEditMessage}
-                    onRevertFiles={onRevertFiles}
-                  />
+                  <>
+                    {/* Pinned SubAgent Dashboard */}
+                    <SubagentDashboard
+                      tasks={subagentDash.tasks}
+                      visibleTasks={subagentDash.visibleTasks}
+                      activeTask={subagentDash.activeTask}
+                      activeTaskId={subagentDash.activeTaskId}
+                      setActiveTaskId={subagentDash.setActiveTaskId}
+                      collapsed={subagentDash.collapsed}
+                      setCollapsed={subagentDash.setCollapsed}
+                      dismissed={subagentDash.dismissed}
+                      setDismissed={subagentDash.setDismissed}
+                      dismissTask={subagentDash.dismissTask}
+                      hasRunning={subagentDash.hasRunning}
+                      refresh={subagentDash.refresh}
+                      loading={subagentDash.loading}
+                    />
+                    <MessageList
+                      messages={messages}
+                      currentResponse={currentResponse}
+                      currentReasoning={currentReasoning}
+                      currentToolCalls={currentToolCalls}
+                      currentStreamChunks={currentStreamChunks}
+                      thinkingStartTime={thinkingStartTime}
+                      className="h-full px-4 py-3 scrollbar-hidden"
+                      onSubmitToolOutput={onSubmitToolOutput}
+                      onGenUIResponse={onGenUIResponse}
+                      onEditMessage={onEditMessage}
+                      onRevertFiles={onRevertFiles}
+                    />
+                  </>
                 )}
               </div>
             </div>
@@ -641,19 +664,37 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                     <TasksView compact defaultSubTab={tasksSubTab} onSubTabChange={setTasksSubTab} />
                   </div>
                 ) : (
-                  <MessageList
-                    messages={messages}
-                    currentResponse={currentResponse}
-                    currentReasoning={currentReasoning}
-                    currentToolCalls={currentToolCalls}
-                    currentStreamChunks={currentStreamChunks}
-                    thinkingStartTime={thinkingStartTime}
-                    className="h-full px-5 py-4 scrollbar-hidden"
-                    onSubmitToolOutput={onSubmitToolOutput}
-                    onGenUIResponse={onGenUIResponse}
-                    onEditMessage={onEditMessage}
-                    onRevertFiles={onRevertFiles}
-                  />
+                  <>
+                    {/* Pinned SubAgent Dashboard */}
+                    <SubagentDashboard
+                      tasks={subagentDash.tasks}
+                      visibleTasks={subagentDash.visibleTasks}
+                      activeTask={subagentDash.activeTask}
+                      activeTaskId={subagentDash.activeTaskId}
+                      setActiveTaskId={subagentDash.setActiveTaskId}
+                      collapsed={subagentDash.collapsed}
+                      setCollapsed={subagentDash.setCollapsed}
+                      dismissed={subagentDash.dismissed}
+                      setDismissed={subagentDash.setDismissed}
+                      dismissTask={subagentDash.dismissTask}
+                      hasRunning={subagentDash.hasRunning}
+                      refresh={subagentDash.refresh}
+                      loading={subagentDash.loading}
+                    />
+                    <MessageList
+                      messages={messages}
+                      currentResponse={currentResponse}
+                      currentReasoning={currentReasoning}
+                      currentToolCalls={currentToolCalls}
+                      currentStreamChunks={currentStreamChunks}
+                      thinkingStartTime={thinkingStartTime}
+                      className="h-full px-5 py-4 scrollbar-hidden"
+                      onSubmitToolOutput={onSubmitToolOutput}
+                      onGenUIResponse={onGenUIResponse}
+                      onEditMessage={onEditMessage}
+                      onRevertFiles={onRevertFiles}
+                    />
+                  </>
                 )}
               </div>
             </div>

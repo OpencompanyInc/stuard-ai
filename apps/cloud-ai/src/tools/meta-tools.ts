@@ -6,6 +6,8 @@ import { web_search } from './perplexity-tools';
 import { scrape_url } from './tavily-tools';
 import * as outlookTools from './outlook-tools';
 import * as githubTools from './github-tools';
+import * as discordTools from './discord-tools';
+import * as redditTools from './reddit-tools';
 import * as youtubeTools from './youtube-tools';
 import * as marketplaceTools from './marketplace-tools';
 import * as ttsTools from './tts-tools';
@@ -21,6 +23,55 @@ import { resolveEmbedder, cosineSimilarity } from '../utils/embeddings';
 import { embedMany } from 'ai';
 import { getSupabaseService } from '../supabase';
 import { registerTool, getToolRegistry, getToolCategories, getTool } from './tool-registry';
+import { execLocalTool, hasClientBridge } from './bridge';
+
+// ─── Zod → JSON Schema helper (lightweight, no external dep) ─────────────
+function unwrapZodMeta(schema: any): { schema: any; optional: boolean; defaultValue?: any; nullable: boolean } {
+  let s = schema, optional = false, nullable = false, defaultValue: any;
+  try {
+    while (s) {
+      if (s instanceof z.ZodOptional) { optional = true; s = s._def?.innerType; continue; }
+      if (s instanceof z.ZodNullable) { nullable = true; s = s._def?.innerType; continue; }
+      if (s instanceof z.ZodDefault) {
+        try { const dv = s._def?.defaultValue; defaultValue = typeof dv === 'function' ? dv() : dv; } catch {}
+        s = s._def?.innerType; continue;
+      }
+      break;
+    }
+  } catch {}
+  return { schema: s, optional, defaultValue, nullable };
+}
+
+function zodToJsonSchema(schema: any): any {
+  const { schema: s, optional, defaultValue, nullable } = unwrapZodMeta(schema);
+  const desc = schema?.description || schema?._def?.description;
+  const base: any = {};
+  if (desc) base.description = String(desc);
+  if (optional) base.optional = true;
+  if (typeof defaultValue !== 'undefined') base.default = defaultValue;
+  if (nullable) base.nullable = true;
+  if (!s) return { type: 'unknown', ...base };
+  if (s instanceof z.ZodObject) {
+    const shape = s.shape;
+    const properties: any = {}, required: string[] = [];
+    for (const key of Object.keys(shape)) {
+      properties[key] = zodToJsonSchema(shape[key]);
+      const child = unwrapZodMeta(shape[key]);
+      if (!child.optional && typeof child.defaultValue === 'undefined') required.push(key);
+    }
+    return { type: 'object', properties, ...(required.length ? { required } : {}), ...base };
+  }
+  if (s instanceof z.ZodArray) return { type: 'array', items: zodToJsonSchema(s.element), ...base };
+  if (s instanceof z.ZodString) return { type: 'string', ...base };
+  if (s instanceof z.ZodNumber) return { type: 'number', ...base };
+  if (s instanceof z.ZodBoolean) return { type: 'boolean', ...base };
+  if (s instanceof z.ZodEnum) return { type: 'string', enum: (s as any)._def?.values || (s as any).options || [], ...base };
+  if (s instanceof z.ZodLiteral) return { type: 'literal', value: (s._def as any)?.value ?? (s._def as any)?.values?.[0], ...base };
+  if (s instanceof z.ZodRecord) return { type: 'object', additionalProperties: true, ...base };
+  if (s instanceof z.ZodAny) return { type: 'any', ...base };
+  if (s instanceof z.ZodUnion) return { type: 'union', ...base };
+  return { type: 'unknown', ...base };
+}
 
 const MEMORY_AI_TOOL_IDS = new Set([
     'memory_retrieval',
@@ -309,6 +360,8 @@ if (outlookTools.outlook_send_mail) {
 }
 
 Object.values(githubTools).forEach(t => registerTool(t, 'GitHub'));
+Object.values(discordTools).forEach(t => registerTool(t, 'Discord'));
+Object.values(redditTools).forEach(t => registerTool(t, 'Reddit'));
 Object.values(youtubeTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'YouTube');
 });
@@ -334,7 +387,7 @@ export const search_tools = createTool({
     id: 'search_tools',
     description: 'Search for available tools by category or query string. Returns tool names and descriptions.',
     inputSchema: z.object({
-        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Streaming', 'Workflow', 'Memory', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'YouTube', 'Marketplace', 'Variables', 'Database', 'Embeddings', 'Math', 'Feedback', 'Webhooks', 'Integrations', 'Canvas', 'Other']).optional(),
+        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Streaming', 'Workflow', 'Memory', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'Discord', 'Reddit', 'YouTube', 'Marketplace', 'Variables', 'Database', 'Embeddings', 'Math', 'Feedback', 'Webhooks', 'Integrations', 'Canvas', 'Other']).optional(),
         query: z.string().optional(),
     }),
     outputSchema: z.object({
@@ -430,9 +483,9 @@ export const search_tools = createTool({
 
 export const get_tool_schema = createTool({
     id: 'get_tool_schema',
-    description: 'Get the full JSON schema (input arguments and output) for a specific tool.',
+    description: 'Get the full JSON schema (input args + output) for a tool before calling execute_tool. Returns the exact parameters the tool expects.',
     inputSchema: z.object({
-        tool_name: z.string(),
+        tool_name: z.string().describe('Exact tool name from the catalog or search_tools results'),
     }),
     outputSchema: z.object({
         name: z.string(),
@@ -440,42 +493,79 @@ export const get_tool_schema = createTool({
         inputSchema: z.any(),
         outputSchema: z.any().optional(),
     }),
-    execute: async (inputData, runCtx) => {
+    execute: async (inputData) => {
         const { tool_name } = inputData;
         const tool = getToolRegistry().get(tool_name);
 
         if (!tool) {
-            throw new Error(`Tool '${tool_name}' not found.`);
+            // Try the bridge for local-only tools
+            if (hasClientBridge()) {
+                try {
+                    const info = await execLocalTool('get_tool_info', { name: tool_name }) as any;
+                    if (info && !info.error) {
+                        return {
+                            name: tool_name,
+                            description: info.description || tool_name,
+                            inputSchema: info.args || info.inputSchema || {},
+                            outputSchema: info.outputSchema,
+                        };
+                    }
+                } catch {}
+            }
+            throw new Error(`Tool '${tool_name}' not found. Use search_tools to find available tools.`);
         }
 
         return {
             name: tool.id || (tool as any).name,
-            description: tool.description,
-            inputSchema: tool.inputSchema ? "See tool definition" : {}, // Placeholder
+            description: tool.description || '',
+            inputSchema: tool.inputSchema ? zodToJsonSchema(tool.inputSchema) : {},
+            outputSchema: tool.outputSchema ? zodToJsonSchema(tool.outputSchema) : undefined,
         };
     },
 });
 
 export const execute_tool = createTool({
     id: 'execute_tool',
-    description: 'Execute a tool by name with the given arguments.',
+    description: 'Execute any tool by name with arguments. Use get_tool_schema first if you are unsure of the args format.',
     inputSchema: z.object({
-        tool_name: z.string(),
-        args: z.any().describe('Arguments for the tool as a key-value object.'),
+        tool_name: z.string().describe('Exact tool name'),
+        args: z.record(z.string(), z.any()).optional().default({}).describe('Arguments matching the tool schema'),
     }),
-    outputSchema: z.any(),
+    outputSchema: z.object({
+        success: z.boolean(),
+        tool: z.string().optional(),
+        result: z.any().optional(),
+        error: z.string().optional(),
+    }),
     execute: async (inputData, runCtx) => {
-        const { tool_name, args: toolArgs } = inputData;
+        const { tool_name, args: toolArgs = {} } = inputData;
         const tool = getToolRegistry().get(tool_name);
 
-        if (!tool) {
-            throw new Error(`Tool '${tool_name}' not found.`);
+        if (tool) {
+            if (typeof tool.execute !== 'function') {
+                return { success: false, tool: tool_name, error: `Tool '${tool_name}' is not executable.` };
+            }
+            try {
+                const result = await tool.execute(toolArgs, runCtx);
+                return { success: true, tool: tool_name, result };
+            } catch (err: any) {
+                return { success: false, tool: tool_name, error: err.message || String(err) };
+            }
         }
 
-        if (typeof tool.execute !== 'function') {
-             throw new Error(`Tool '${tool_name}' is not executable.`);
+        // Fallback to local agent bridge
+        if (hasClientBridge()) {
+            try {
+                const result = await execLocalTool(tool_name, toolArgs);
+                if (result && typeof result === 'object' && (result as any).error === 'unknown_tool') {
+                    return { success: false, error: `Tool '${tool_name}' not found. Use search_tools to find available tools.` };
+                }
+                return { success: true, tool: tool_name, result };
+            } catch (err: any) {
+                return { success: false, tool: tool_name, error: err.message || String(err) };
+            }
         }
 
-        return await tool.execute(toolArgs, runCtx);
+        return { success: false, error: `Tool '${tool_name}' not found. Use search_tools to find available tools.` };
     },
 });

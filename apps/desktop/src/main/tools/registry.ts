@@ -176,6 +176,21 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'github_list_issues': { kind: 'cloud' },
   'github_create_issue': { kind: 'cloud' },
 
+  // Discord integrations
+  'discord_list_guilds': { kind: 'cloud' },
+  'discord_list_channels': { kind: 'cloud' },
+  'discord_list_dms': { kind: 'cloud' },
+  'discord_read_messages': { kind: 'cloud' },
+  'discord_send_dm': { kind: 'cloud' },
+  'discord_add_reaction': { kind: 'cloud' },
+
+  // Reddit integrations
+  'reddit_search': { kind: 'cloud' },
+  'reddit_view_subreddit': { kind: 'cloud' },
+  'reddit_view_comments': { kind: 'cloud' },
+  'reddit_create_post': { kind: 'cloud' },
+  'reddit_comment': { kind: 'cloud' },
+
   // Embeddings (cloud-side, requires OpenAI API)
   'embed_text': { kind: 'cloud' },
   'vector_similarity': { kind: 'cloud' },

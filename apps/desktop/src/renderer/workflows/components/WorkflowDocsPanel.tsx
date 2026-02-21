@@ -176,6 +176,7 @@ const DOCS: DocSection[] = [
             ["`{{step.ok}}`", "All tools (boolean success)"],
             ["`{{step.text}}`", "`ai_inference`, `agent_node`"],
             ["`{{step.json}}`", "`ai_inference` (mode: json)"],
+            ["`{{step.embedding}}`", "`ai_inference` (mode: embedding)"],
             ["`{{step.stdout}}`", "`run_command`, `run_python_script`"],
             ["`{{step.filePath}}`", "`take_screenshot`, `capture_media`"],
             ["`{{step.content}}`", "`read_file`"],
@@ -421,11 +422,11 @@ const DOCS: DocSection[] = [
     entries: [
       {
         id: "var-workflow",
-        title: "Workflow Variables",
-        summary: "Define default configuration values for the workflow",
-        tags: ["variable", "workflow", "config", "default", "state"],
+        title: "Workflow Variables (Shared)",
+        summary: "Variables shared across all stuard files in this workflow",
+        tags: ["variable", "workflow", "config", "default", "state", "shared"],
         content: [
-          { type: "text", value: "Workflow variables are defined in the spec and provide default values. Access with `{{workflow.varName}}`." },
+          { type: "text", value: "Workflow variables are defined in the spec and shared across all stuard files within the current workflow directory. Access with `{{workflow.varName}}`.\n\n**Scope:** Available to every stuard file in this workflow and its subdirectories. NOT shared across different workflows." },
           { type: "code", language: "json", value: `"variables": [\n  { "name": "outputDir", "type": "string", "defaultValue": "C:/output" },\n  { "name": "maxRetries", "type": "number", "defaultValue": 3 },\n  { "name": "isEnabled", "type": "boolean", "defaultValue": true },\n  { "name": "config", "type": "json", "defaultValue": { "timeout": 5000 } }\n]` },
           { type: "table", headers: ["Type", "Description"], rows: [
             ["`string`", "Text value"],
@@ -437,14 +438,28 @@ const DOCS: DocSection[] = [
         ],
       },
       {
+        id: "var-scoping",
+        title: "Variable Scoping",
+        summary: "Workflow-scoped vs local (file-scoped) variables",
+        tags: ["variable", "scope", "local", "workflow", "file"],
+        content: [
+          { type: "text", value: "Variables have two scopes:\n\n• **Workflow** (`workflow.*`) — Shared across all stuard files in the current workflow. Defined in the Variables panel or via `set_variable` with scope='workflow'.\n\n• **Local** (`local.*`) — Scoped to the current stuard file only. Other files in the same workflow cannot see these. Use `set_variable` with scope='local'." },
+          { type: "table", headers: ["Scope", "Prefix", "Visibility", "Use Case"], rows: [
+            ["Workflow", "`workflow.*`", "All stuard files in this workflow", "Shared state, config, counters"],
+            ["Local", "`local.*`", "Current stuard file only", "File-internal state, temp values"],
+          ]},
+          { type: "code", language: "json", value: `// Workflow-scoped (shared across stuard files)\n{ "tool": "set_variable", "args": { "name": "counter", "value": 0, "scope": "workflow" } }\n\n// Local (file-scoped, only visible to this stuard file)\n{ "tool": "set_variable", "args": { "name": "tempBuffer", "value": "", "scope": "local" } }`, label: "Scope Examples" },
+        ],
+      },
+      {
         id: "var-runtime",
         title: "Runtime Variables",
-        summary: "Set, get, toggle, and increment variables that persist across runs",
+        summary: "Set, get, toggle, and increment variables at runtime",
         tags: ["variable", "runtime", "persist", "set", "get", "toggle", "increment"],
         content: [
-          { type: "text", value: "Runtime variables persist across workflow runs and can be read/written by tool nodes." },
+          { type: "text", value: "Runtime variables can be read/written by tool nodes. Workflow-scoped variables persist across runs. Local variables are file-scoped." },
           { type: "table", headers: ["Tool", "Description", "Args"], rows: [
-            ["`set_variable`", "Set a value", "`{ name, value, type? }`"],
+            ["`set_variable`", "Set a value", "`{ name, value, scope?, type? }`"],
             ["`get_variable`", "Get a value", "`{ name, default? }`"],
             ["`toggle_variable`", "Flip boolean", "`{ name }`"],
             ["`increment_variable`", "Add to number", "`{ name, amount? }`"],
@@ -633,9 +648,9 @@ const DOCS: DocSection[] = [
           { type: "text", value: "Runs a full AI agent that can call other tools. Use for complex, multi-step AI tasks." },
           { type: "code", language: "json", value: `{\n  "tool": "agent_node",\n  "args": {\n    "prompt": "Analyze the screenshot and describe what you see",\n    "model": "balanced",    // balanced | fast | quality\n    "outputMode": "text",   // text | json\n    "maxSteps": 10\n  }\n}` },
           { type: "heading", value: "ai_inference — Simple LLM Call" },
-          { type: "text", value: "A single LLM call without tool access. Use for summarization, extraction, classification." },
-          { type: "code", language: "json", value: `{\n  "tool": "ai_inference",\n  "args": {\n    "prompt": "Extract the key points from this text",\n    "input": "{{read_file.content}}",\n    "mode": "text"    // text | json\n  }\n}` },
-          { type: "tip", value: "Use `mode: \"json\"` to get structured output. Access it with `{{step.json.fieldName}}`." },
+          { type: "text", value: "A single LLM call without tool access. Use for summarization, extraction, classification, or embeddings." },
+          { type: "code", language: "json", value: `{\n  "tool": "ai_inference",\n  "args": {\n    "prompt": "Extract the key points from this text",\n    "input": "{{read_file.content}}",\n    "mode": "text"    // text | json | embedding\n  }\n}` },
+          { type: "tip", value: "Use `mode: \"json\"` to get structured output. Access it with `{{step.json.fieldName}}`. Use `mode: \"embedding\"` to get vector embeddings." },
         ],
       },
       {

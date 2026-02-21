@@ -6,7 +6,7 @@ import { AnalyticsData, Activity as ActivityItem, SyncSystemData, ServerStatusDa
 
 const CHART_COLORS = { blue: '#3B82F6', emerald: '#10B981', purple: '#8B5CF6', amber: '#F59E0B', rose: '#F43F5E' };
 
-function KPICard({ label, value, sub, trend, icon: Icon, color }: { label: string; value: string; sub?: string; trend?: number; icon: any; color: string }) {
+function KPICard({ label, value, sub, trend, icon: Icon, color }: { label: string; value: string; sub?: string; trend?: number; icon: React.ElementType; color: string }) {
   const bg = { blue: 'bg-blue-50', emerald: 'bg-emerald-50', purple: 'bg-purple-50', amber: 'bg-amber-50', rose: 'bg-rose-50' }[color] || 'bg-gray-50';
   const iconColor = { blue: 'text-blue-600', emerald: 'text-emerald-600', purple: 'text-purple-600', amber: 'text-amber-600', rose: 'text-rose-600' }[color] || 'text-gray-600';
   return (
@@ -27,7 +27,7 @@ function KPICard({ label, value, sub, trend, icon: Icon, color }: { label: strin
   );
 }
 
-function MiniAreaChart({ data, dataKey, color }: { data: any[]; dataKey: string; color: string }) {
+function MiniAreaChart({ data, dataKey, color }: { data: Record<string, unknown>[]; dataKey: string; color: string }) {
   if (!data?.length) return <div className="h-[120px] flex items-center justify-center text-xs text-gray-400">No data</div>;
   return (
     <ResponsiveContainer width="100%" height={120}>
@@ -43,7 +43,7 @@ function MiniAreaChart({ data, dataKey, color }: { data: any[]; dataKey: string;
   );
 }
 
-const ACTIVITY_ICONS: Record<string, any> = {
+const ACTIVITY_ICONS: Record<string, React.ElementType> = {
   conversation: MessagesSquare, signup: UserPlus, feedback: Bug, download: Download, beta: Shield, waitlist: Users,
 };
 const ACTIVITY_COLORS: Record<string, string> = {

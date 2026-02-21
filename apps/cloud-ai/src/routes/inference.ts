@@ -5,6 +5,7 @@ import { google } from '@ai-sdk/google';
 import { z } from 'zod';
 import { verifyToken } from '../supabase';
 import { CORS_ALLOWED_ORIGINS, IS_DEVELOPMENT } from '../utils/config';
+import { buildProviderEmbeddingModel } from '../utils/models';
 
 /**
  * Extracts and validates Supabase auth token from request.
@@ -377,7 +378,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       const body = await readJsonBody(req);
       const prompt = String(body?.prompt || '');
       const input = body?.input ? String(body.input) : undefined;
-      const mode = body?.mode === 'json' ? 'json' : 'text';
+      const mode = body?.mode === 'json' ? 'json' : body?.mode === 'embedding' ? 'embedding' : 'text';
       const schema = body?.schema as Record<string, any> | undefined;
       const modelChoice = body?.model === 'quality' ? 'quality' : 'fast';
       const temperature = typeof body?.temperature === 'number' ? body.temperature : 0.3;
@@ -386,6 +387,32 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       if (!prompt) {
         writeJson(res, 400, { ok: false, error: 'prompt_required' }, corsOrigin);
         return true;
+      }
+
+      if (mode === 'embedding') {
+        const embeddingModelId = body?.model || 'openai/text-embedding-3-large';
+        const aiEmbeddingModel = buildProviderEmbeddingModel(embeddingModelId);
+        
+        if (!aiEmbeddingModel) {
+          writeJson(res, 400, { ok: false, error: `Failed to initialize embedding model: ${embeddingModelId}` }, corsOrigin);
+          return true;
+        }
+
+        const textToEmbed = input ? `${prompt}\n${input}` : prompt;
+
+        try {
+          const { embedding } = await embed({
+            model: aiEmbeddingModel,
+            value: textToEmbed,
+          });
+
+          writeJson(res, 200, { ok: true, embedding, model: embeddingModelId }, corsOrigin);
+          return true;
+        } catch (e: any) {
+          console.error('[inference] ai/embedding error:', e);
+          writeJson(res, 500, { ok: false, error: e?.message || 'embedding_failed', model: embeddingModelId }, corsOrigin);
+          return true;
+        }
       }
 
       // Select model

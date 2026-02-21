@@ -210,5 +210,11 @@ export const INTEGRATION_ITEMS: PaletteItem[] = [
   { k: 'cloud.tool', t: 'google_docs_read', label: 'Google Docs', args: {} },
   { k: 'cloud.tool', t: 'docs_create_document', label: 'Create Google Doc', args: { title: 'Untitled' } },
   { k: 'cloud.tool', t: 'docs_write_text', label: 'Write to Google Doc', args: { documentId: '', text: '' } },
-  { k: 'cloud.tool', t: 'outlook_send', label: 'Outlook Send', args: {} }
+  { k: 'cloud.tool', t: 'outlook_send', label: 'Outlook Send', args: {} },
+  { k: 'cloud.tool', t: 'discord_list_guilds', label: 'Discord Servers', args: {} },
+  { k: 'cloud.tool', t: 'discord_read_messages', label: 'Discord Messages', args: { channel_id: '' } },
+  { k: 'cloud.tool', t: 'discord_send_dm', label: 'Discord DM', args: { channel_id: '', content: '' } },
+  { k: 'cloud.tool', t: 'reddit_search', label: 'Reddit Search', args: { query: '' } },
+  { k: 'cloud.tool', t: 'reddit_view_subreddit', label: 'Reddit Feed', args: { subreddit: '' } },
+  { k: 'cloud.tool', t: 'reddit_create_post', label: 'Reddit Post', args: { subreddit: '', title: '', kind: 'self' } }
 ];

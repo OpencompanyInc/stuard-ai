@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import type { ThemeMode, TonePreset } from "../hooks/usePreferences";
-import { RefreshCw, Download, ArrowUpCircle, CheckCircle, AlertCircle, Loader2, FlaskConical, Beaker, RotateCcw, X, Sparkles } from "lucide-react";
+import { RefreshCw, Download, ArrowUpCircle, CheckCircle, AlertCircle, Loader2, FlaskConical, Beaker, RotateCcw, X, Sparkles, Cloud, CloudOff } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { clsx } from "clsx";
 import { FileIndexSettings } from "./FileIndexSettings";
@@ -296,6 +296,120 @@ const UpdateManager: React.FC = () => {
   );
 };
 
+/* ─── Cloud Sync Settings ─── */
+
+interface SyncPrefs {
+  sync_accounts: boolean;
+  sync_conversations: boolean;
+  sync_memories: boolean;
+}
+
+const CloudSyncSettings: React.FC = () => {
+  const [prefs, setPrefs] = useState<SyncPrefs>({ sync_accounts: false, sync_conversations: true, sync_memories: false });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchPrefs = useCallback(async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
+      const resp = await fetch(`${CLOUD_AI_HTTP}/v1/preferences/sync`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const json = await resp.json();
+      setPrefs({
+        sync_accounts: json.sync_accounts ?? false,
+        sync_conversations: json.sync_conversations ?? true,
+        sync_memories: json.sync_memories ?? false,
+      });
+      setError(null);
+    } catch (e: any) {
+      console.error("[CloudSync] fetch error", e);
+      setError("Could not load sync preferences");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchPrefs(); }, [fetchPrefs]);
+
+  const updatePref = async (key: keyof SyncPrefs, value: boolean) => {
+    setSaving(true);
+    setError(null);
+    const prev = { ...prefs };
+    setPrefs(p => ({ ...p, [key]: value }));
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Not authenticated");
+      const resp = await fetch(`${CLOUD_AI_HTTP}/v1/preferences/sync`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ [key]: value }),
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${resp.status}`);
+      }
+    } catch (e: any) {
+      console.error("[CloudSync] update error", e);
+      setPrefs(prev);
+      setError(e.message || "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const TOGGLES: { key: keyof SyncPrefs; label: string; description: string }[] = [
+    { key: "sync_accounts", label: "Sync Connected Accounts", description: "Store OAuth tokens (Discord, Google, etc.) in the cloud so they're available across devices. When off, tokens are stored locally with AES-256 encryption." },
+    { key: "sync_conversations", label: "Sync Conversations", description: "Save conversation history to the cloud. When off, conversations are only stored on this device." },
+    { key: "sync_memories", label: "Sync Memories", description: "Upload memory entries to the cloud. When off, memories remain local to this device." },
+  ];
+
+  return (
+    <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm mb-6">
+      <SectionHeader title="Cloud Sync" description="Control what data is synced to StuardAI cloud." />
+
+      {loading ? (
+        <div className="flex items-center gap-2 text-theme-muted text-sm">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading sync preferences...
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {TOGGLES.map(({ key, label, description }) => (
+            <div key={key} className={`p-4 rounded-theme-button border transition-all duration-300 ${prefs[key] ? 'bg-primary/5 border-primary/20' : 'bg-theme-hover border-theme'}`}>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={prefs[key]}
+                  onChange={(e) => updatePref(key, e.target.checked)}
+                  disabled={saving}
+                  className="w-4 h-4 rounded border-theme bg-theme-card text-primary focus:ring-primary disabled:opacity-50"
+                />
+                <div className="flex items-center gap-2">
+                  {prefs[key] ? <Cloud className="w-4 h-4 text-primary" /> : <CloudOff className="w-4 h-4 text-theme-muted" />}
+                  <span className="text-[13px] font-bold text-theme-fg">{label}</span>
+                </div>
+              </label>
+              <p className="text-[11px] text-theme-muted mt-1 pl-7 font-medium">{description}</p>
+            </div>
+          ))}
+
+          {error && (
+            <div className="flex items-center gap-2 p-3 bg-red-500/5 border border-red-500/20 rounded-theme-button text-red-500 text-[12px] font-bold">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" /> {error}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const SettingsView: React.FC<SettingsViewProps> = ({
   themeMode, setThemeMode,
   themeDarkShade, setThemeDarkShade,
@@ -324,6 +438,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       <BillingSettings />
 
       <FileIndexSettings />
+
+      <CloudSyncSettings />
 
       <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm mb-6">
         <SectionHeader title="AI Personality" description="Customize how the assistant communicates with you." />

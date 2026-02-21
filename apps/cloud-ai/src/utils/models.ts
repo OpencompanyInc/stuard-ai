@@ -35,6 +35,28 @@ export const buildProviderModel = (id: string): any | null => {
   }
 };
 
+/**
+ * Builds an AI SDK embedding model instance from a provider/model-id string.
+ * Format: "provider/model-id" (e.g. "openai/text-embedding-3-large")
+ */
+export const buildProviderEmbeddingModel = (id: string): any | null => {
+  try {
+    const raw = String(id || '').trim();
+    const idx = raw.indexOf('/');
+    if (idx <= 0 || idx >= raw.length - 1) return null;
+    const provider = raw.slice(0, idx).toLowerCase();
+    const mid = raw.slice(idx + 1);
+    if (!mid) return null;
+
+    if (provider === 'openai' || provider === 'penai') return openai.embedding(mid);
+    if (provider === 'google') return google.textEmbeddingModel(mid);
+    
+    return null;
+  } catch {
+    return null;
+  }
+};
+
 
 
 

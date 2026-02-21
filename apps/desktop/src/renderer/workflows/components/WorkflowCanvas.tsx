@@ -773,7 +773,7 @@ export function WorkflowCanvas({
       </div>
 
       {/* Zoom Controls - non-scrolling overlay */}
-      <div className="absolute bottom-6 left-6 z-50 flex items-center gap-1 bg-white/95 backdrop-blur-md rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.08)] border border-slate-100 p-1.5 transition-all hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+      <div className="absolute top-6 left-6 z-50 flex items-center gap-1 bg-white/95 backdrop-blur-md rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.08)] border border-slate-100 p-1.5 transition-all hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
         <button
           onClick={onZoomOut}
           className="p-2 rounded-xl hover:bg-slate-50 text-slate-400 hover:text-slate-900 transition-colors"
@@ -818,7 +818,7 @@ export function WorkflowCanvas({
       </div>
 
       {connectingFrom && (
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg z-50 flex items-center gap-2 pointer-events-none">
+        <div className="absolute top-8 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg z-50 flex items-center gap-2 pointer-events-none">
           <div className="w-2 h-2 bg-indigo-400 rounded-full animate-pulse" />
           Select a target node to connect
         </div>
@@ -826,7 +826,7 @@ export function WorkflowCanvas({
 
       {/* Reconnecting mode indicator */}
       {reconnecting && (
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-amber-600 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg z-50 flex items-center gap-2 pointer-events-none">
+        <div className="absolute top-8 left-1/2 -translate-x-1/2 bg-amber-600 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg z-50 flex items-center gap-2 pointer-events-none">
           <div className="w-2 h-2 bg-amber-300 rounded-full animate-pulse" />
           Click a node to reconnect the {reconnecting.end === 'from' ? 'source' : 'target'} • Press Esc to cancel
         </div>

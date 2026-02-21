@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { GitBranch, Rocket, RefreshCw, CheckCircle, AlertCircle, ShieldCheck, Beaker, Terminal, Cloud, Clock, XCircle, Loader2, ExternalLink, History } from 'lucide-react';
 import { StatusData, Deployment, formatDate, formatTimeAgo } from '../lib/api';
 
-const STATUS_STYLES: Record<string, { bg: string; text: string; icon: any }> = {
+const STATUS_STYLES: Record<string, { bg: string; text: string; icon: React.ElementType }> = {
   pending: { bg: 'bg-gray-100', text: 'text-gray-600', icon: Clock },
   building: { bg: 'bg-blue-50', text: 'text-blue-600', icon: Loader2 },
   deploying: { bg: 'bg-amber-50', text: 'text-amber-600', icon: Loader2 },
@@ -19,11 +19,10 @@ const CHANNEL_COLORS: Record<string, string> = {
   production: 'bg-emerald-50 text-emerald-700 border-emerald-200',
 };
 
-export default function DeployTab({ status, onAction, loading, message, deployments, latestByChannel, onRefreshDeploys }: {
+export default function DeployTab({ status, onAction, loading, deployments, latestByChannel, onRefreshDeploys }: {
   status: StatusData;
   onAction: (type: string, payload?: Record<string, unknown>) => Promise<boolean>;
   loading: boolean;
-  message: string;
   deployments: Deployment[];
   latestByChannel: Record<string, Deployment>;
   onRefreshDeploys: () => void;
@@ -294,13 +293,15 @@ export default function DeployTab({ status, onAction, loading, message, deployme
   );
 }
 
-function TargetCheckboxes({ targets, onChange }: { targets: { website: boolean; cloud: boolean; desktop: boolean }; onChange: (t: any) => void }) {
+type DeployTargets = { website: boolean; cloud: boolean; desktop: boolean };
+
+function TargetCheckboxes({ targets, onChange }: { targets: DeployTargets; onChange: (updater: (prev: DeployTargets) => DeployTargets) => void }) {
   return (
     <div className="space-y-1.5">
       <label className="block text-[10px] text-gray-500 font-medium uppercase">Deploy Targets</label>
-      <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={targets.website} onChange={() => onChange((p: any) => ({ ...p, website: !p.website }))} className="rounded" /> Website</label>
-      <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={targets.cloud} onChange={() => onChange((p: any) => ({ ...p, cloud: !p.cloud }))} className="rounded" /> Cloud API</label>
-      <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={targets.desktop} onChange={() => onChange((p: any) => ({ ...p, desktop: !p.desktop }))} className="rounded" /> Desktop</label>
+      <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={targets.website} onChange={() => onChange((p) => ({ ...p, website: !p.website }))} className="rounded" /> Website</label>
+      <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={targets.cloud} onChange={() => onChange((p) => ({ ...p, cloud: !p.cloud }))} className="rounded" /> Cloud API</label>
+      <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={targets.desktop} onChange={() => onChange((p) => ({ ...p, desktop: !p.desktop }))} className="rounded" /> Desktop</label>
     </div>
   );
 }

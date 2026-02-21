@@ -20,6 +20,7 @@ import { normalizeMessages, contentToText, buildAttachmentParts } from './utils/
 import { buildKnowledgeContext } from './knowledge/retrieval';
 import { ensureToolEmbeddings } from './tools/meta-tools';
 import * as memoryService from './memory/conversations';
+import { compactHistory } from './memory/context-compactor';
 import { registerWebhookClient, deliverQueuedWebhooks } from './webhooks/dispatch';
 import { getOrCreateQueryEmbedding } from './utils/shared-embedding';
 import { getRankedToolNames } from './utils/tool-ranking';
@@ -684,7 +685,8 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               authUser.userId,
               prompt,
               modelLabel,
-              { mode: requestedMode, tier: routedTier, modelId: chosenModelId, contextPaths: contextPathsForMeta }
+              { mode: requestedMode, tier: routedTier, modelId: chosenModelId, contextPaths: contextPathsForMeta },
+              agentType === 'workflow' ? 'workflow' : 'stuard'
             ) as any;
             if (conversationId) {
               conversationCreatedNow = true;
@@ -1053,10 +1055,48 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               finalText = aggregatedText.trim();
             }
             writeLog('stream_finish', { finishReason, usage: normalizedUsage, textLength: finalText.length, sawToolCall, sawAnyTextDelta });
-            history.push({ role: 'assistant', content: finalText });
-            // Cap history to prevent unbounded memory growth per connection
-            if (history.length > 100) history.splice(0, history.length - 100);
-            conversations.set(ws, history);
+            
+            // ── Persist tool calls + results in history so the LLM remembers what it did ──
+            const completedToolCalls = Array.from(toolCallsMap.values()).filter(tc => tc.status === 'completed');
+            if (completedToolCalls.length > 0) {
+              // Build AI SDK-compatible tool-call / tool-result message pairs
+              // This lets the LLM see its own previous actions in subsequent turns
+              const toolCallParts = completedToolCalls.map(tc => ({
+                type: 'tool-call' as const,
+                toolCallId: tc.id,
+                toolName: tc.tool,
+                args: tc.args || {},
+              }));
+              history.push({ role: 'assistant', content: toolCallParts });
+
+              for (const tc of completedToolCalls) {
+                // Truncate large results to avoid blowing up the context window
+                let resultStr = typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result ?? '');
+                if (resultStr.length > 2000) {
+                  resultStr = resultStr.slice(0, 1800) + '\n...[truncated, ' + resultStr.length + ' chars total]';
+                }
+                history.push({
+                  role: 'tool',
+                  content: [{ type: 'tool-result', toolCallId: tc.id, toolName: tc.tool, result: resultStr }],
+                });
+              }
+            }
+
+            // Final assistant text
+            if (finalText) {
+              history.push({ role: 'assistant', content: finalText });
+            }
+            
+            // Auto-compact: summarize older messages, truncate large tool results
+            // This runs asynchronously — fire-and-forget since we already have the final text
+            compactHistory(history).then(() => {
+              conversations.set(ws, history);
+            }).catch((err) => {
+              console.warn('[cloud-ai] Compaction failed:', err);
+              // Fallback: hard cap at 60
+              if (history.length > 60) history.splice(0, history.length - 60);
+              conversations.set(ws, history);
+            });
             if (authUser && conversationId) {
               // Build metadata for persistence
               const toolCallsList = Array.from(toolCallsMap.values());

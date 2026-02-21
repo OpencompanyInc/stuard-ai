@@ -47,6 +47,21 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   github_list_issues: ['issues', 'bugs', 'tickets', 'github issues'],
   github_create_issue: ['bug report', 'new issue', 'create ticket', 'report bug'],
 
+  // Discord
+  discord_list_guilds: ['discord servers', 'my servers', 'guilds', 'discord'],
+  discord_list_channels: ['discord channels', 'server channels', 'text channels'],
+  discord_list_dms: ['discord dms', 'direct messages', 'discord conversations', 'discord inbox'],
+  discord_read_messages: ['read discord', 'discord messages', 'check discord', 'view messages', 'discord chat'],
+  discord_send_dm: ['send discord message', 'dm on discord', 'direct message', 'message someone discord'],
+  discord_add_reaction: ['react discord', 'emoji reaction', 'discord reaction', 'react to message'],
+
+  // Reddit
+  reddit_search: ['search reddit', 'find on reddit', 'reddit lookup', 'reddit query'],
+  reddit_view_subreddit: ['subreddit posts', 'browse reddit', 'reddit feed', 'r/', 'subreddit'],
+  reddit_view_comments: ['reddit comments', 'post comments', 'reddit discussion', 'read comments'],
+  reddit_create_post: ['post on reddit', 'submit to reddit', 'create reddit post', 'new reddit post'],
+  reddit_comment: ['reply on reddit', 'reddit comment', 'respond on reddit', 'comment reddit'],
+
   // Browser
   browser_get_content: ['webpage', 'scrape', 'extract', 'page content', 'web page'],
   browser_click_element: ['click button', 'interact', 'automate click'],

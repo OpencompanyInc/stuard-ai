@@ -32,7 +32,15 @@ import {
   FileText,
   AtSign,
   History,
-  Minimize2
+  Minimize2,
+  Clipboard,
+  Search,
+  BookOpen,
+  Calendar,
+  Mail,
+  ImageIcon,
+  PenTool,
+  type LucideIcon
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -177,37 +185,37 @@ function PrivacyStep({ onNext, onBack }: { onNext: () => void; onBack: () => voi
   ];
 
   return (
-    <div className="pt-4">
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="text-center mb-8"
+    <div className="pt-2"> 
+      <motion.div 
+        initial={{ opacity: 0, y: 10 }} 
+        animate={{ opacity: 1, y: 0 }} 
+        className="text-center mb-4" 
       >
-        <h2 className="text-2xl font-semibold text-white mb-2">Trustworthy by Design</h2>
+        <h2 className="text-2xl font-semibold text-white mb-1">Trustworthy by Design</h2> 
         <p className="text-white/60 text-sm">Built to be a safe, private teammate.</p>
       </motion.div>
 
-      <div className="grid gap-3 mb-8">
+      <div className="grid gap-2 mb-4"> 
         {points.map((p, i) => (
           <motion.div
             key={p.title}
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.1 + i * 0.08 }}
-            className="flex gap-4 p-4 rounded-xl border border-white/10 bg-white/5"
+            className="flex gap-3 p-3 rounded-xl border border-white/10 bg-white/5 items-start" 
           >
             <div className="shrink-0 mt-0.5">
               <p.icon className="w-4 h-4 text-white/90" />
             </div>
             <div>
-              <h3 className="font-medium text-white text-sm mb-1">{p.title}</h3>
+              <h3 className="font-medium text-white text-sm mb-0.5">{p.title}</h3> 
               <p className="text-xs text-white/50 leading-relaxed">{p.desc}</p>
             </div>
           </motion.div>
         ))}
       </div>
 
-      <div className="flex gap-3">
+      <div className="flex gap-3 mt-auto"> 
         <button
           onClick={onBack}
           className="flex-1 py-3 rounded-xl bg-white/5 border border-white/10 text-white font-medium text-sm 
@@ -242,14 +250,16 @@ function PersonaStep({ onNext, onBack }: { onNext: () => void; onBack: () => voi
     { id: 'custom' as TonePreset, label: 'Custom', desc: 'Define your own style', icon: Settings },
   ];
 
+  const canContinue = tone !== 'custom' || (customTone && customTone.trim().length > 0);
+
   return (
-    <div className="pt-4">
+    <div className="pt-2">
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="text-center mb-8"
+        className="text-center mb-4"
       >
-        <h2 className="text-2xl font-semibold text-white mb-2">How should I speak?</h2>
+        <h2 className="text-2xl font-semibold text-white mb-1">How should I speak</h2>
         <p className="text-white/60 text-sm">Choose a communication style</p>
       </motion.div>
 
@@ -257,7 +267,7 @@ function PersonaStep({ onNext, onBack }: { onNext: () => void; onBack: () => voi
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
-        className="space-y-3 mb-8"
+        className="space-y-2 mb-4"
       >
         {personas.map((p, i) => (
           <motion.button
@@ -267,48 +277,56 @@ function PersonaStep({ onNext, onBack }: { onNext: () => void; onBack: () => voi
             transition={{ delay: 0.15 + i * 0.05 }}
             onClick={() => setTone(p.id)}
             className={clsx(
-              "w-full flex items-center gap-4 p-4 rounded-xl border transition-all duration-200 text-left",
+              "w-full flex items-center gap-3 p-3 rounded-xl border transition-all duration-200 text-left",
               tone === p.id
                 ? 'border-blue-500/50 bg-blue-500/10 shadow-[0_0_20px_rgba(59,130,246,0.15)] ring-1 ring-blue-500/50'
                 : 'border-white/10 bg-white/5 hover:bg-white/10 text-white'
             )}
           >
             <div className={clsx(
-              "w-10 h-10 rounded-lg flex items-center justify-center transition-colors shrink-0",
+              "w-9 h-9 rounded-lg flex items-center justify-center transition-colors shrink-0",
               tone === p.id ? "bg-blue-500 text-white" : "bg-white/10 text-white/50"
             )}>
-              <p.icon size={20} />
+              <p.icon size={18} />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-between mb-0.5">
-                <span className={clsx("font-medium text-sm", tone === p.id ? "text-blue-400" : "text-white")}>
-                  {p.label}
-                </span>
-              </div>
+              <span className={clsx("font-medium text-sm", tone === p.id ? "text-blue-400" : "text-white")}>
+                {p.label}
+              </span>
               <p className="text-xs text-white/50 truncate">{p.desc}</p>
             </div>
           </motion.button>
         ))}
       </motion.div>
 
-      {tone === 'custom' && (
-        <motion.div
-          initial={{ opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: 'auto' }}
-          className="mb-8"
-        >
-          <textarea
-            value={customTone}
-            onChange={(e) => setCustomTone(e.target.value)}
-            autoFocus
-            placeholder="e.g., Talk like a helpful colleague, explain like I'm 5..."
-            className="w-full bg-white/5 rounded-xl px-4 py-3 text-sm outline-none 
-                     placeholder:text-white/30 border border-white/10 focus:border-white/30 
-                     transition-all text-white resize-none"
-            rows={3}
-          />
-        </motion.div>
-      )}
+      <AnimatePresence>
+        {tone === 'custom' && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="mb-4 overflow-hidden"
+          >
+            <textarea
+              value={customTone}
+              onChange={(e) => setCustomTone(e.target.value)}
+              autoFocus
+              maxLength={200}
+              placeholder="e.g., Talk like a helpful colleague, explain like I'm 5..."
+              className="w-full bg-white/5 rounded-xl px-4 py-2.5 text-sm outline-none 
+                       placeholder:text-white/30 border border-white/10 focus:border-white/30 
+                       transition-all text-white resize-none"
+              rows={2}
+            />
+            <div className="flex items-center justify-between mt-1.5 px-1">
+              <p className="text-[10px] text-white/30">
+                {!customTone?.trim() ? 'Type your preferred style to continue' : ''}
+              </p>
+              <p className="text-[10px] text-white/30">{customTone?.length ?? 0}/200</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="flex gap-3">
         <button
@@ -323,9 +341,13 @@ function PersonaStep({ onNext, onBack }: { onNext: () => void; onBack: () => voi
           animate={{ opacity: 1 }}
           transition={{ delay: 0.4 }}
           onClick={onNext}
-          className="flex-1 py-3 rounded-xl bg-white text-black font-semibold text-sm 
-                   hover:bg-gray-100 transition-all active:scale-[0.98] 
-                   flex items-center justify-center gap-2"
+          disabled={!canContinue}
+          className={clsx(
+            "flex-1 py-3 rounded-xl font-semibold text-sm transition-all active:scale-[0.98] flex items-center justify-center gap-2",
+            canContinue
+              ? 'bg-white text-black hover:bg-gray-100'
+              : 'bg-white/10 text-white/30 cursor-not-allowed'
+          )}
         >
           Continue
           <ArrowRight size={14} />
@@ -572,6 +594,294 @@ function ShortcutStep({ onNext }: { onNext: () => void }) {
   );
 }
 
+// =============================================================================
+// WORKFLOW TEMPLATES FOR ONBOARDING
+// =============================================================================
+
+interface WorkflowTemplate {
+  id: string;
+  name: string;
+  description: string;
+  icon: LucideIcon;
+  category: 'productivity' | 'voice' | 'organization' | 'research' | 'media' | 'utility';
+  tags: string[];
+}
+
+const WORKFLOW_CATEGORIES = [
+  { id: 'all', label: 'All' },
+  { id: 'productivity', label: 'Productivity' },
+  { id: 'voice', label: 'Voice & Audio' },
+  { id: 'organization', label: 'Organization' },
+  { id: 'research', label: 'Research' },
+  { id: 'media', label: 'Media' },
+  { id: 'utility', label: 'Utility' },
+] as const;
+
+const ONBOARDING_WORKFLOWS: WorkflowTemplate[] = [
+  {
+    id: 'speech-to-text',
+    name: 'Speech to Text',
+    description: 'Transcribe audio from your microphone into text in real-time',
+    icon: Mic,
+    category: 'voice',
+    tags: ['dictation', 'transcription', 'accessibility'],
+  },
+  {
+    id: 'dictation-mode',
+    name: 'Dictation Mode',
+    description: 'Speak and have text typed directly into any application',
+    icon: PenTool,
+    category: 'voice',
+    tags: ['typing', 'hands-free', 'input'],
+  },
+  {
+    id: 'lecture-recorder',
+    name: 'Lecture Recorder',
+    description: 'Record lectures and automatically generate summaries and notes',
+    icon: BookOpen,
+    category: 'voice',
+    tags: ['education', 'notes', 'summary'],
+  },
+  {
+    id: 'daily-file-organizer',
+    name: 'Daily File Organizer',
+    description: 'Automatically sort and organize your downloads and desktop files',
+    icon: FolderOpen,
+    category: 'organization',
+    tags: ['files', 'cleanup', 'automation'],
+  },
+  {
+    id: 'clipboard-manager',
+    name: 'Clipboard Manager',
+    description: 'Keep a searchable history of everything you copy',
+    icon: Clipboard,
+    category: 'utility',
+    tags: ['copy', 'paste', 'history'],
+  },
+  {
+    id: 'quick-notes',
+    name: 'Quick Notes',
+    description: 'Floating scratchpad for quick notes with auto-save',
+    icon: FileText,
+    category: 'productivity',
+    tags: ['notes', 'scratchpad', 'capture'],
+  },
+  {
+    id: 'web-research',
+    name: 'Web Research',
+    description: 'Research any topic and get a structured summary with sources',
+    icon: Search,
+    category: 'research',
+    tags: ['search', 'summary', 'analysis'],
+  },
+  {
+    id: 'daily-planner',
+    name: 'Daily Planner',
+    description: 'Generate and manage your daily schedule with smart prioritization',
+    icon: Calendar,
+    category: 'productivity',
+    tags: ['schedule', 'tasks', 'planning'],
+  },
+  {
+    id: 'email-drafter',
+    name: 'Email Drafter',
+    description: 'Draft professional emails from quick bullet-point notes',
+    icon: Mail,
+    category: 'productivity',
+    tags: ['email', 'writing', 'communication'],
+  },
+  {
+    id: 'screenshot-organizer',
+    name: 'Screenshot Organizer',
+    description: 'Automatically tag, rename, and sort your screenshots',
+    icon: ImageIcon,
+    category: 'media',
+    tags: ['screenshots', 'images', 'sorting'],
+  },
+  {
+    id: 'meeting-summarizer',
+    name: 'Meeting Summarizer',
+    description: 'Record meetings and extract action items and key decisions',
+    icon: MessageSquare,
+    category: 'productivity',
+    tags: ['meetings', 'notes', 'action-items'],
+  },
+  {
+    id: 'competitor-intel',
+    name: 'Competitor Intel',
+    description: 'Track competitor updates and generate intelligence reports',
+    icon: Globe,
+    category: 'research',
+    tags: ['business', 'monitoring', 'reports'],
+  },
+];
+
+function WorkflowPickerStep({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('stuard_onboarding_workflows');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch { return new Set(); }
+  });
+  const [activeCategory, setActiveCategory] = useState<string>('all');
+
+  const filteredWorkflows = activeCategory === 'all'
+    ? ONBOARDING_WORKFLOWS
+    : ONBOARDING_WORKFLOWS.filter(w => w.category === activeCategory);
+
+  const toggleWorkflow = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleContinue = () => {
+    // Persist selected workflow IDs
+    try {
+      localStorage.setItem('stuard_onboarding_workflows', JSON.stringify([...selectedIds]));
+    } catch {}
+    onNext();
+  };
+
+  return (
+    <div className="pt-2 flex flex-col h-full">
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="text-center mb-3"
+      >
+        <h2 className="text-2xl font-semibold text-white mb-1">Pick Your Workflows</h2>
+        <p className="text-white/60 text-sm">Choose automations you'd like to explore</p>
+      </motion.div>
+
+      {/* Category Filter Tabs */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1 }}
+        className="flex gap-1.5 mb-3 overflow-x-auto pb-1 scrollbar-none"
+      >
+        {WORKFLOW_CATEGORIES.map(cat => (
+          <button
+            key={cat.id}
+            onClick={() => setActiveCategory(cat.id)}
+            className={clsx(
+              "px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all shrink-0",
+              activeCategory === cat.id
+                ? 'bg-white text-black'
+                : 'bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80 border border-white/5'
+            )}
+          >
+            {cat.label}
+          </button>
+        ))}
+      </motion.div>
+
+      {/* Workflow Grid */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 -mr-1 min-h-0">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.15 }}
+          className="grid grid-cols-2 gap-2"
+        >
+          {filteredWorkflows.map((wf, i) => {
+            const isSelected = selectedIds.has(wf.id);
+            return (
+              <motion.button
+                key={wf.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.05 * i }}
+                onClick={() => toggleWorkflow(wf.id)}
+                className={clsx(
+                  "flex flex-col items-start p-3 rounded-xl border transition-all duration-200 text-left group relative",
+                  isSelected
+                    ? 'border-blue-500/50 bg-blue-500/10 shadow-[0_0_15px_rgba(59,130,246,0.12)] ring-1 ring-blue-500/40'
+                    : 'border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20'
+                )}
+              >
+                {/* Selected checkmark */}
+                {isSelected && (
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    className="absolute top-2 right-2 w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center"
+                  >
+                    <Check size={10} className="text-white" />
+                  </motion.div>
+                )}
+
+                <div className={clsx(
+                  "w-8 h-8 rounded-lg flex items-center justify-center mb-2 transition-colors",
+                  isSelected ? 'bg-blue-500/20 text-blue-400' : 'bg-white/10 text-white/50 group-hover:text-white/70'
+                )}>
+                  <wf.icon size={16} />
+                </div>
+
+                <h3 className={clsx(
+                  "text-xs font-medium mb-0.5 transition-colors",
+                  isSelected ? 'text-blue-300' : 'text-white/90'
+                )}>
+                  {wf.name}
+                </h3>
+                <p className="text-[10px] text-white/40 leading-relaxed line-clamp-2">
+                  {wf.description}
+                </p>
+              </motion.button>
+            );
+          })}
+        </motion.div>
+      </div>
+
+      {/* Selected count + Nav */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.3 }}
+        className="pt-3 mt-auto"
+      >
+        {selectedIds.size > 0 && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            className="text-center mb-2"
+          >
+            <span className="text-xs text-white/40">
+              {selectedIds.size} workflow{selectedIds.size !== 1 ? 's' : ''} selected
+            </span>
+          </motion.div>
+        )}
+
+        <div className="flex gap-3">
+          <button
+            onClick={onBack}
+            className="flex-1 py-3 rounded-xl bg-white/5 border border-white/10 text-white font-medium text-sm 
+                     hover:bg-white/10 transition-all active:scale-[0.98]"
+          >
+            Go Back
+          </button>
+          <motion.button
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.4 }}
+            onClick={handleContinue}
+            className="flex-1 py-3 rounded-xl bg-white text-black font-semibold text-sm 
+                     hover:bg-gray-100 transition-all active:scale-[0.98] 
+                     flex items-center justify-center gap-2"
+          >
+            {selectedIds.size > 0 ? 'Continue' : 'Skip for now'}
+            <ArrowRight size={14} />
+          </motion.button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 function InteractiveTourStep({ onNext }: { onNext: () => void }) {
   const [tourStep, setTourStep] = useState(0);
 
@@ -783,8 +1093,8 @@ interface WelcomeFlowProps {
 
 export function WelcomeFlow({ onComplete, onSkip }: WelcomeFlowProps) {
   const [step, setStep] = useState(0);
-  // Updated order to match screenshots: Welcome -> Persona -> Privacy -> Shortcut
-  const steps = ['welcome', 'persona', 'privacy', 'shortcut'];
+  // Order: Welcome -> Privacy -> Persona -> Workflows -> Shortcut
+  const steps = ['welcome', 'privacy', 'persona', 'workflows', 'shortcut'];
   
   const handleNext = () => {
     if (step < steps.length - 1) {
@@ -802,8 +1112,16 @@ export function WelcomeFlow({ onComplete, onSkip }: WelcomeFlowProps) {
 
   return (
     <div className="w-full h-full flex flex-col relative overflow-hidden bg-[#09090b]">
-      {/* Background ambient effect */}
-      <div className="absolute inset-0 bg-gradient-to-b from-blue-500/5 via-transparent to-transparent pointer-events-none" />
+      {/* Background gradient – radial spotlight brightest at bottom-center, darker at edges */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background: [
+            'radial-gradient(ellipse 120% 65% at 50% 105%, rgba(56,168,255,0.40) 0%, rgba(30,130,230,0.22) 35%, rgba(6,90,160,0.08) 60%, transparent 85%)',
+            'linear-gradient(to top, rgba(20,110,200,0.10) 0%, transparent 50%)',
+          ].join(', '),
+        }}
+      />
       
       {/* Step Indicators */}
       <div className="absolute top-8 left-0 right-0 z-20 flex justify-center gap-2">
@@ -811,7 +1129,7 @@ export function WelcomeFlow({ onComplete, onSkip }: WelcomeFlowProps) {
           <div
             key={i}
             className={clsx(
-              "h-1 rounded-full transition-all duration-300",
+              "h-1.5 rounded-full transition-all duration-300",
               i === step ? "w-8 bg-white" : "w-8 bg-white/20"
             )}
           />
@@ -833,17 +1151,6 @@ export function WelcomeFlow({ onComplete, onSkip }: WelcomeFlowProps) {
           )}
           {step === 1 && (
             <motion.div 
-              key="persona"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="w-full max-w-sm"
-            >
-              <PersonaStep onBack={handleBack} onNext={handleNext} />
-            </motion.div>
-          )}
-          {step === 2 && (
-            <motion.div 
               key="privacy"
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
@@ -853,7 +1160,29 @@ export function WelcomeFlow({ onComplete, onSkip }: WelcomeFlowProps) {
               <PrivacyStep onBack={handleBack} onNext={handleNext} />
             </motion.div>
           )}
+          {step === 2 && (
+            <motion.div 
+              key="persona"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="w-full max-w-sm"
+            >
+              <PersonaStep onBack={handleBack} onNext={handleNext} />
+            </motion.div>
+          )}
           {step === 3 && (
+            <motion.div 
+              key="workflows"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="w-full max-w-sm h-full"
+            >
+              <WorkflowPickerStep onBack={handleBack} onNext={handleNext} />
+            </motion.div>
+          )}
+          {step === 4 && (
             <motion.div 
               key="shortcut"
               initial={{ opacity: 0, x: 20 }}

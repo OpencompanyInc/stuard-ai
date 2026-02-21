@@ -1,7 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { generateText, streamText } from 'ai';
-import { buildProviderModel } from '../utils/models';
+import { generateText, streamText, embed } from 'ai';
+import { buildProviderModel, buildProviderEmbeddingModel } from '../utils/models';
 import { safeToolWrite, execLocalTool } from './bridge';
 import { writeLog } from '../utils/logger';
 
@@ -65,19 +65,19 @@ function buildZodSchema(shape: Record<string, any>): z.ZodObject<any> {
 export const aiInferenceTool = createTool({
   id: 'ai_inference',
   description:
-    'Run AI inference on text input. Returns either plain text or structured JSON based on mode. Use for summarization, classification, extraction, Q&A, or any text-to-text/JSON transformation. Models: fast=DeepSeek/Gemini Flash, balanced=Grok/GPT-4o Mini, smart=Gemini Pro/GPT-5.',
+    'Run AI inference on text input. Returns either plain text, structured JSON, or embeddings based on mode. Use for summarization, classification, extraction, Q&A, or any text-to-text/JSON transformation. Models: fast=DeepSeek/Gemini Flash, balanced=Grok/GPT-4o Mini, smart=Gemini Pro/GPT-5.',
   inputSchema: z.object({
     prompt: z
       .string()
-      .describe('The instruction/question for the AI. Be specific about what you want.'),
+      .describe('The instruction/question for the AI. Be specific about what you want. For embedding mode, this is the text to embed.'),
     input: z
       .string()
       .optional()
       .describe('Optional input text to process. Can also be embedded in prompt.'),
     mode: z
-      .enum(['text', 'json'])
+      .enum(['text', 'json', 'embedding'])
       .default('text')
-      .describe('Output mode: "text" for plain text, "json" for structured output'),
+      .describe('Output mode: "text" for plain text, "json" for structured output, "embedding" for vector embeddings'),
     schema: z
       .record(z.string(), z.any())
       .optional()
@@ -106,6 +106,7 @@ export const aiInferenceTool = createTool({
     ok: z.boolean(),
     text: z.string().optional().describe('Plain text result (text mode)'),
     json: z.any().optional().describe('Structured JSON result (json mode)'),
+    embedding: z.array(z.number()).optional().describe('Vector embedding result (embedding mode)'),
     model: z.string().describe('Model used'),
     streamId: z.string().optional().describe('Stream ID when stream=true'),
     error: z.string().optional(),
@@ -123,7 +124,7 @@ export const aiInferenceTool = createTool({
     } = (inputData || {}) as {
       prompt: string;
       input?: string;
-      mode: 'text' | 'json';
+      mode: 'text' | 'json' | 'embedding';
       schema?: Record<string, any>;
       model: string;
       temperature: number;
@@ -138,6 +139,42 @@ export const aiInferenceTool = createTool({
       mode,
       model: modelId,
     });
+
+    if (mode === 'embedding') {
+      const embeddingModelId = modelId.includes('embedding') ? modelId : 'openai/text-embedding-3-large';
+      const aiEmbeddingModel = buildProviderEmbeddingModel(embeddingModelId);
+      
+      if (!aiEmbeddingModel) {
+        throw new Error(`Failed to initialize embedding model: ${embeddingModelId}`);
+      }
+
+      const textToEmbed = input ? `${prompt}\n${input}` : prompt;
+
+      try {
+        const { embedding: resultEmbedding } = await embed({
+          model: aiEmbeddingModel,
+          value: textToEmbed,
+        });
+
+        await safeToolWrite(writer, {
+          type: 'tool_event',
+          tool: 'ai_inference',
+          status: 'completed',
+          mode: 'embedding',
+        });
+
+        return { ok: true, embedding: resultEmbedding, model: embeddingModelId };
+      } catch (err: any) {
+        await safeToolWrite(writer, {
+          type: 'tool_event',
+          tool: 'ai_inference',
+          status: 'error',
+          error: err?.message || 'embedding_failed',
+        });
+
+        return { ok: false, error: err?.message || 'embedding_failed', model: embeddingModelId };
+      }
+    }
 
     // Select model directly
     const aiModel = buildProviderModel(modelId);

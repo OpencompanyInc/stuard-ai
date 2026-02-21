@@ -943,6 +943,79 @@ export function setupIpc() {
     return require('path').join(userDataPath, 'quick-shortcuts.json');
   };
 
+  // Track registered bookmark keybinds so we can unregister them
+  const registeredBookmarkKeybinds = new Set<string>();
+
+  const executeBookmarkById = async (bookmarkId: string) => {
+    const bookmarks = loadBookmarks();
+    const bookmark = bookmarks.find((b: any) => b.id === bookmarkId);
+    if (!bookmark) return;
+    // Reuse the bookmarks:execute handler logic inline
+    try {
+      const type = String(bookmark.type || '').toLowerCase();
+      const target = String(bookmark.target || '').trim();
+      switch (type) {
+        case 'url':
+          if (target) shell.openExternal(target);
+          break;
+        case 'app':
+        case 'file':
+        case 'folder':
+          if (target) shell.openPath(target);
+          break;
+        case 'workflow':
+          if (target) await workflows_run(target);
+          break;
+        case 'dashboard':
+          openDashboardWindow({ tab: target || undefined });
+          break;
+        case 'space':
+          openSidebarWindow({ tab: 'spaces', expanded: true });
+          break;
+        case 'canvas':
+          openSidebarWindow({ tab: 'canvas', expanded: true });
+          break;
+        case 'tasks':
+          setOverlayMode('window');
+          showWindow();
+          for (const w of BrowserWindow.getAllWindows()) {
+            try { w.webContents.send('overlay:view-mode', { mode: 'tasks', subTab: target === 'agent' ? 'agent' : 'todo' }); } catch { }
+          }
+          break;
+      }
+    } catch (e) {
+      logger.warn('Failed to execute bookmark via keybind:', e);
+    }
+  };
+
+  const registerBookmarkKeybinds = (bookmarks: any[]) => {
+    // Unregister all previously registered bookmark keybinds
+    for (const accel of registeredBookmarkKeybinds) {
+      try { globalShortcut.unregister(accel); } catch { }
+    }
+    registeredBookmarkKeybinds.clear();
+
+    // Register new keybinds
+    for (const bm of bookmarks) {
+      if (!bm.keybind || typeof bm.keybind !== 'string') continue;
+      const accel = bm.keybind;
+      const bmId = bm.id;
+      try {
+        const ok = globalShortcut.register(accel, () => {
+          executeBookmarkById(bmId);
+        });
+        if (ok) {
+          registeredBookmarkKeybinds.add(accel);
+          logger.info(`Registered bookmark keybind: ${accel} → ${bm.name}`);
+        } else {
+          logger.warn(`Failed to register bookmark keybind (may be in use): ${accel}`);
+        }
+      } catch (e) {
+        logger.warn(`Error registering bookmark keybind ${accel}:`, e);
+      }
+    }
+  };
+
   const loadBookmarks = (): any[] => {
     try {
       const p = bookmarksPath();
@@ -958,10 +1031,15 @@ export function setupIpc() {
   const saveBookmarks = (bookmarks: any[]) => {
     try {
       fs.writeFileSync(bookmarksPath(), JSON.stringify(bookmarks, null, 2), 'utf-8');
+      // Re-register all bookmark keybinds whenever bookmarks change
+      registerBookmarkKeybinds(bookmarks);
     } catch (e) {
       logger.warn('Failed to save bookmarks:', e);
     }
   };
+
+  // Register bookmark keybinds on startup
+  try { registerBookmarkKeybinds(loadBookmarks()); } catch { }
 
   ipcMain.handle('bookmarks:list', () => {
     return { ok: true, bookmarks: loadBookmarks() };

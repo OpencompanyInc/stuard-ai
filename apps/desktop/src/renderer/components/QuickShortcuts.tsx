@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { clsx } from 'clsx';
 import {
@@ -18,7 +18,9 @@ import {
   ChevronRight,
   Star,
   Sparkles,
-  ListTodo
+  ListTodo,
+  Keyboard,
+  RotateCcw
 } from 'lucide-react';
 
 export interface Bookmark {
@@ -28,6 +30,7 @@ export interface Bookmark {
   target: string;
   icon?: string;
   color?: string;
+  keybind?: string; // Electron accelerator e.g. "Ctrl+Shift+K"
 }
 
 interface QuickShortcutsProps {
@@ -60,6 +63,182 @@ const QUICK_PRESETS = [
 
 const getTypeConfig = (type: string) => {
   return BOOKMARK_TYPES.find(t => t.type === type) || BOOKMARK_TYPES[0];
+};
+
+// =============================================================================
+// KEYBIND RECORDER
+// =============================================================================
+
+const KEY_DISPLAY: Record<string, string> = {
+  Ctrl: '⌃',
+  Alt: '⌥',
+  Shift: '⇧',
+  Meta: '⌘',
+  Cmd: '⌘',
+  Space: '␣',
+  Return: '↵',
+  Escape: 'Esc',
+  Backspace: '⌫',
+  Delete: 'Del',
+  Up: '↑',
+  Down: '↓',
+  Left: '←',
+  Right: '→',
+  Tab: '⇥',
+};
+
+const KEY_TO_ACCEL: Record<string, string> = {
+  ' ': 'Space',
+  arrowup: 'Up', arrowdown: 'Down', arrowleft: 'Left', arrowright: 'Right',
+  enter: 'Return', escape: 'Escape', backspace: 'Backspace', delete: 'Delete',
+  tab: 'Tab', home: 'Home', end: 'End', pageup: 'PageUp', pagedown: 'PageDown',
+};
+
+function parseAccel(acc: string): string[] {
+  if (!acc) return [];
+  return acc.split('+').map(s => s.trim()).filter(Boolean);
+}
+
+function displayKey(part: string): string {
+  return KEY_DISPLAY[part] || part;
+}
+
+function KeybindRecorder({
+  value,
+  onChange,
+  onClear,
+  compact = false,
+}: {
+  value?: string;
+  onChange: (accelerator: string) => void;
+  onClear: () => void;
+  compact?: boolean;
+}) {
+  const [recording, setRecording] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const parts = parseAccel(value || '');
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const key = e.key.toLowerCase();
+    const newParts: string[] = [];
+
+    if (e.ctrlKey || e.metaKey) newParts.push('Ctrl');
+    if (e.altKey) newParts.push('Alt');
+    if (e.shiftKey) newParts.push('Shift');
+
+    if (!['control', 'alt', 'shift', 'meta'].includes(key)) {
+      const mapped = KEY_TO_ACCEL[key];
+      if (mapped) {
+        newParts.push(mapped);
+      } else if (/^f\d+$/.test(key)) {
+        newParts.push(key.toUpperCase());
+      } else if (key.length === 1) {
+        newParts.push(key.toUpperCase());
+      } else {
+        newParts.push(key.charAt(0).toUpperCase() + key.slice(1));
+      }
+    }
+
+    // Need at least one modifier + one key
+    if (newParts.length > 0 && newParts.some(p => !['Ctrl', 'Alt', 'Shift'].includes(p))) {
+      onChange(newParts.join('+'));
+      setRecording(false);
+    }
+  };
+
+  useEffect(() => {
+    if (recording && inputRef.current) inputRef.current.focus();
+  }, [recording]);
+
+  if (recording) {
+    return (
+      <div className="relative">
+        <div className={clsx(
+          "flex items-center justify-center gap-2 rounded-lg border-2 border-primary/50 bg-primary/5 transition-all",
+          compact ? "px-2.5 py-1.5" : "px-3 py-2.5"
+        )}>
+          <Keyboard className={clsx("text-primary animate-pulse", compact ? "w-3 h-3" : "w-3.5 h-3.5")} />
+          <span className={clsx("font-medium text-primary", compact ? "text-[10px]" : "text-[11px]")}>Press keys...</span>
+        </div>
+        <input
+          ref={inputRef}
+          type="text"
+          className="sr-only"
+          onKeyDown={handleKeyDown}
+          onBlur={() => setRecording(false)}
+          readOnly
+        />
+      </div>
+    );
+  }
+
+  if (parts.length > 0) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={() => setRecording(true)}
+          className={clsx(
+            "flex items-center gap-1 rounded-lg bg-theme-hover/60 hover:bg-theme-hover border border-theme/10 transition-all group",
+            compact ? "px-1.5 py-1" : "px-2 py-1.5"
+          )}
+          title="Click to re-record"
+        >
+          {parts.map((p, i) => (
+            <React.Fragment key={`${p}-${i}`}>
+              <span className={clsx(
+                "px-1.5 py-0.5 bg-theme-bg border border-theme/15 rounded font-mono font-semibold text-theme-fg shadow-sm",
+                compact ? "text-[9px]" : "text-[10px]"
+              )}>
+                {displayKey(p)}
+              </span>
+              {i < parts.length - 1 && <span className={clsx("text-theme-muted", compact ? "text-[8px]" : "text-[9px]")}>+</span>}
+            </React.Fragment>
+          ))}
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onClear(); }}
+          className="w-5 h-5 rounded flex items-center justify-center text-theme-muted hover:text-red-500 hover:bg-red-500/10 transition-all"
+          title="Remove keybind"
+        >
+          <X className="w-3 h-3" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={() => setRecording(true)}
+      className={clsx(
+        "flex items-center gap-1.5 rounded-lg border border-dashed border-theme/20 hover:border-primary/40 hover:bg-primary/5 text-theme-muted hover:text-primary transition-all",
+        compact ? "px-2 py-1 text-[9px]" : "px-2.5 py-1.5 text-[10px]"
+      )}
+      title="Add keyboard shortcut"
+    >
+      <Keyboard className={compact ? "w-2.5 h-2.5" : "w-3 h-3"} />
+      <span className="font-medium">Add keybind</span>
+    </button>
+  );
+}
+
+// Compact keybind badge for the grid tiles
+function KeybindBadge({ keybind }: { keybind: string }) {
+  const parts = parseAccel(keybind);
+  if (parts.length === 0) return null;
+  return (
+    <div className="flex items-center gap-0.5 mt-1">
+      {parts.map((p, i) => (
+        <React.Fragment key={`${p}-${i}`}>
+          <span className="px-1 py-px bg-theme-hover/80 border border-theme/10 rounded text-[8px] font-mono font-bold text-theme-muted leading-none">
+            {displayKey(p)}
+          </span>
+          {i < parts.length - 1 && <span className="text-[7px] text-theme-muted">+</span>}
+        </React.Fragment>
+      ))}
+    </div>
+  );
 };
 
 export function QuickShortcutsGrid({ 
@@ -175,6 +354,9 @@ export function QuickShortcutsGrid({
               <span className="text-[11px] font-semibold text-theme-fg truncate w-full text-center leading-tight px-1">
                 {bookmark.name}
               </span>
+              {bookmark.keybind && !filter && (
+                <KeybindBadge keybind={bookmark.keybind} />
+              )}
               {filter && (
                  <span className="text-[9px] text-theme-muted truncate w-full text-center opacity-70">
                    {cfg.label}
@@ -397,7 +579,13 @@ export function BookmarkEditor({
                               placeholder="Name"
                               autoFocus
                             />
-                            <div className="flex justify-end">
+                            <div className="flex items-center justify-between">
+                              <KeybindRecorder
+                                value={bookmark.keybind}
+                                onChange={(accel) => handleUpdate(bookmark.id, { keybind: accel })}
+                                onClear={() => handleUpdate(bookmark.id, { keybind: undefined })}
+                                compact
+                              />
                               <button
                                 onClick={() => setEditingId(null)}
                                 className="px-3 py-1 text-[11px] font-semibold text-primary hover:bg-primary/10 rounded-lg transition-colors"
@@ -410,7 +598,23 @@ export function BookmarkEditor({
                           <>
                             <div className="flex-1 min-w-0">
                               <div className="text-[13px] font-semibold text-theme-fg truncate">{bookmark.name}</div>
-                              <div className="text-[10px] text-theme-muted truncate">{cfg.label}</div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] text-theme-muted truncate">{cfg.label}</span>
+                                {bookmark.keybind && (
+                                  <span className="flex items-center gap-0.5 shrink-0">
+                                    {parseAccel(bookmark.keybind).map((p, i) => (
+                                      <React.Fragment key={`${p}-${i}`}>
+                                        <span className="px-1 py-px bg-theme-hover/80 border border-theme/10 rounded text-[9px] font-mono font-semibold text-theme-muted leading-none">
+                                          {displayKey(p)}
+                                        </span>
+                                        {i < parseAccel(bookmark.keybind!).length - 1 && (
+                                          <span className="text-[8px] text-theme-muted">+</span>
+                                        )}
+                                      </React.Fragment>
+                                    ))}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                             <div className="flex items-center gap-0.5">
                               <button
@@ -707,6 +911,17 @@ export function BookmarkEditor({
                   className="w-full px-3 py-2.5 text-[13px] bg-theme-bg border border-theme/20 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/30 text-theme-fg"
                   placeholder="My Shortcut"
                 />
+              </div>
+
+              {/* Keybind recorder */}
+              <div className="pt-2">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-theme-muted mb-2">Keyboard Shortcut <span className="text-theme-muted/50 normal-case font-normal">(optional)</span></div>
+                <KeybindRecorder
+                  value={newBookmark.keybind}
+                  onChange={(accel) => setNewBookmark({ ...newBookmark, keybind: accel })}
+                  onClear={() => setNewBookmark({ ...newBookmark, keybind: undefined })}
+                />
+                <p className="text-[10px] text-theme-muted mt-1.5 px-1">Press a modifier (Ctrl, Alt, Shift) + a key to set a global hotkey</p>
               </div>
             </div>
           )}

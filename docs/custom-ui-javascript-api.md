@@ -68,7 +68,8 @@ const search = await stuard.callTool('web_search', {
 // AI inference
 const aiResult = await stuard.callTool('ai_inference', {
   prompt: 'Summarize this text',
-  input: 'Long text here...'
+  input: 'Long text here...',
+  mode: 'text' // text | json | embedding
 });
 ```
 

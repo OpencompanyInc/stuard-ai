@@ -43,7 +43,7 @@ export function TextInputWithVariables({
     const search = searchText.toLowerCase();
     const results: Array<{ text: string; label: string; description?: string; category?: string }> = [];
 
-    // Add workflow variables first (they're global)
+    // Add workflow variables first (shared across stuard files in this workflow)
     if (workflowVariables?.length) {
       for (const v of workflowVariables) {
         if (!search || v.name.toLowerCase().includes(search) || 'workflow'.includes(search)) {
@@ -51,7 +51,7 @@ export function TextInputWithVariables({
             text: `{{workflow.${v.name}}}`,
             label: `workflow.${v.name}`,
             description: v.description || `${v.type} variable`,
-            category: 'Workflow Variables',
+            category: 'Workflow Variables (shared)',
           });
         }
       }

@@ -21,7 +21,8 @@ import {
   ViewHorizontalIcon,
   CodeIcon,
   ImageIcon,
-  BoxIcon
+  BoxIcon,
+  ChatBubbleIcon
 } from "@radix-ui/react-icons";
 
 export function getNodeIcon(type: string, tool: string) {
@@ -47,6 +48,8 @@ export function getNodeIcon(type: string, tool: string) {
   if (tool.includes('wait')) return <TimerIcon className="w-4 h-4" />;
   
   // Integrations
+  if (tool.includes('discord')) return <ChatBubbleIcon className="w-4 h-4" />;
+  if (tool.includes('reddit')) return <GlobeIcon className="w-4 h-4" />;
   if (tool.includes('gmail') || tool.includes('mail')) return <EnvelopeClosedIcon className="w-4 h-4" />;
   if (tool.includes('calendar')) return <CalendarIcon className="w-4 h-4" />;
   if (tool.includes('sheet')) return <TableIcon className="w-4 h-4" />;
@@ -62,6 +65,8 @@ export function getNodeIcon(type: string, tool: string) {
 
 export function getNodeColor(type: string, tool: string) {
   if (type === 'trigger') return 'bg-amber-50 border-amber-200 text-amber-900';
+  if (tool.startsWith('discord')) return 'bg-indigo-50 border-indigo-200 text-indigo-900';
+  if (tool.startsWith('reddit')) return 'bg-orange-50 border-orange-200 text-orange-900';
   if (tool.includes('cloud') || tool.startsWith('google') || tool.startsWith('gmail') || tool.startsWith('outlook') || tool.startsWith('docs') || tool.startsWith('drive') || tool.startsWith('sheets')) return 'bg-blue-50 border-blue-200 text-blue-900';
   return 'bg-white border-neutral-200 text-neutral-900';
 }

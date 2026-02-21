@@ -19,6 +19,7 @@ import { createRequire } from 'node:module';
 import type { SIS as SISType } from 'sis-tools';
 import { searchToolsSemanticSupabase, isSupabaseSISEnabled } from '../../tools/sis-supabase';
 import { SIS_RUNTIME_TOOLS } from '../../tools/sis-runtime-tools';
+import { get_tool_schema, execute_tool, search_tools } from '../../tools/meta-tools';
 import { hasClientBridge } from '../../tools/bridge';
 
 const require = createRequire(import.meta.url);
@@ -244,6 +245,10 @@ export const ALL_TOOLS = {
   sis_search_tools: SIS_RUNTIME_TOOLS.sis_search_tools,
   sis_execute_tool: SIS_RUNTIME_TOOLS.sis_execute_tool,
   sis_list_categories: SIS_RUNTIME_TOOLS.sis_list_categories,
+  // Meta-tools for lazy-loading (always in Tier 1)
+  get_tool_schema,
+  execute_tool,
+  search_tools,
 } as const;
 
 const _INTERNAL_SPACE_TOOLS = {
@@ -284,50 +289,32 @@ export const MINIMAL_PARAMOUNT_TOOLS = [
 ] as const;
 
 /**
- * Tier 1 Paramount Tools - ALWAYS loaded at runtime (~35 tools)
- * Only the essential tools for most conversations.
- * Everything else is discoverable via SIS (sis_search_tools → sis_execute_tool).
+ * Tier 1 Paramount Tools - ALWAYS loaded natively (~15 tools)
+ * These get full schemas sent to the LLM. Keep this list small to save tokens.
+ * Everything else is listed as names in the system prompt and accessed via
+ * get_tool_schema + execute_tool (lazy-loading pattern).
  */
 export const TIER_1_PARAMOUNT_TOOLS = [
-  // Orchestration (2)
-  'wait', 'run_sequential',
+  // File Operations (4) — most common across all conversations
+  'read_file', 'write_file', 'list_directory', 'file_edit',
 
-  // File Operations (7)
-  'list_directory', 'read_file', 'write_file', 'create_directory',
-  'file_read', 'file_edit', 'open_file',
+  // System Commands (2) — frequently needed
+  'run_command', 'run_system_command',
 
-  // System Commands (3)
-  'run_command', 'run_system_command', 'run_python_script',
+  // Web (2) — research & scraping
+  'web_search', 'scrape_url',
 
-  // Interactive Terminal (4)
-  'terminal_create', 'terminal_send_input', 'terminal_read', 'terminal_destroy',
+  // Vision (1) — screenshots for computer-use flows
+  'capture_screen',
 
-  // Input/Automation (3)
-  'send_hotkey', 'type_text', 'click_at_coordinates',
+  // Memory (1) — recall past context
+  'search_past_conversations',
 
-  // Vision/Media (2)
-  'analyze_media', 'capture_screen',
-
-  // Web (3)
-  'web_search', 'scrape_url', 'http_request',
-
-  // Memory (2)
-  'search_past_conversations', 'get_conversation_context',
-
-  // Workflows (2)
-  'search_local_workflows', 'run_workflow',
-
-  // Productivity (2)
-  'calendar_crud', 'task_crud',
-
-  // Task Tracking (1)
+  // Task Tracking (1) — multi-step task management
   'agent_todo',
 
-  // Window Management (2)
-  'list_open_windows', 'smart_bring_window_to_foreground',
-
-  // Utils - Common operations without scripts (6)
-  'get_datetime', 'math_eval', 'generate_uuid', 'random_number', 'sleep', 'get_system_info',
+  // Meta-tools for lazy-loading (3) — discover & run any other tool
+  'get_tool_schema', 'execute_tool', 'search_tools',
 ] as const;
 
 const _FFMPEG_TIER_1_TOOLS = [

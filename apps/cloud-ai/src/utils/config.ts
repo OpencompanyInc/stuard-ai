@@ -66,6 +66,14 @@ export const MS_CLIENT_SECRET = clean(process.env.MS_CLIENT_SECRET || process.en
 export const MS_TENANT = clean(process.env.MS_TENANT || 'common');
 export const MS_REDIRECT_PATH = clean(process.env.MS_REDIRECT_PATH || '/integrations/outlook/callback');
 
+export const DISCORD_CLIENT_ID = clean(process.env.DISCORD_CLIENT_ID || '');
+export const DISCORD_CLIENT_SECRET = clean(process.env.DISCORD_CLIENT_SECRET || '');
+export const DISCORD_REDIRECT_PATH = clean(process.env.DISCORD_REDIRECT_PATH || '/integrations/discord/callback');
+
+export const REDDIT_CLIENT_ID = clean(process.env.REDDIT_CLIENT_ID || '');
+export const REDDIT_CLIENT_SECRET = clean(process.env.REDDIT_CLIENT_SECRET || '');
+export const REDDIT_REDIRECT_PATH = clean(process.env.REDDIT_REDIRECT_PATH || '/integrations/reddit/callback');
+
 export const PING_INTERVAL_MS = Number(clean(process.env.CLOUD_WS_PING_INTERVAL_MS || 30000));
 
 export const LOG_DIR = clean(process.env.CLOUD_LOG_DIR || './logs');
@@ -76,6 +84,10 @@ export const TAVILY_API_KEY = clean(process.env.TAVILY_API_KEY || '');
 
 // Dev mode bypasses credit/usage checks for local development
 export const DEV_MODE = process.env.DEV_MODE === '1' || process.env.NODE_ENV === 'development';
+
+// LEGACY: env-based fallback when no DB profile exists.
+// The real sync_accounts preference is read from the user's profile row in Supabase.
+export const SYNC_ACCOUNTS_FALLBACK = process.env.SYNC_ACCOUNTS === '1';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Security Configuration

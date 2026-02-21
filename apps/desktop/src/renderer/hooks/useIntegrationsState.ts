@@ -87,6 +87,8 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
           fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=gmail`, "gmail"),
           fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=sheets`, "google-sheets"),
           fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=docs`, "google-docs"),
+          fetchStatus(`${CLOUD_AI_HTTP}/integrations/discord/status`, "discord"),
+          fetchStatus(`${CLOUD_AI_HTTP}/integrations/reddit/status`, "reddit"),
         ]);
 
         // Update state with server truth (this removes stale localStorage entries)
@@ -120,6 +122,8 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       { slug: "browser", name: "Browser", description: "Web automation and page interaction via browser extension.", category: "Local", homepage: "https://stuard.ai/extension", available: true },
       { slug: "outlook", name: "Outlook", description: "Connect Microsoft Outlook via PKCE to read mail (Mail.Read).", category: "Communication", homepage: "https://learn.microsoft.com/graph/", available: true },
       { slug: "github", name: "GitHub", description: "Read repos and issues.", category: "Development", homepage: "https://github.com/", available: true },
+      { slug: "discord", name: "Discord", description: "Read and send messages, list servers and DMs.", category: "Communication", homepage: "https://discord.com/", available: true },
+      { slug: "reddit", name: "Reddit", description: "Browse, search, post, and comment on Reddit.", category: "Communication", homepage: "https://reddit.com/", available: true },
       { slug: "google-drive", name: "Google Drive", description: "Access and search files.", category: "Files", homepage: "https://drive.google.com/", available: true },
       { slug: "webhooks", name: "Webhooks", description: "Trigger custom workflows via HTTP callbacks.", category: "Automation", homepage: "https://webhook.site/", available: true },
       { slug: "google-calendar", name: "Google Calendar", description: "Manage events and reminders.", category: "Productivity", homepage: "https://calendar.google.com/", available: true },
@@ -495,6 +499,24 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       openExternal(url);
       await pollStatus(`${CLOUD_AI_HTTP}/integrations/github/status`, "github");
       await refreshProfiles('github');
+      return;
+    }
+
+    if (slug === "discord") {
+      const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
+      const url = `${CLOUD_AI_HTTP}/integrations/discord/connect?token=${encodeURIComponent(token)}${profileParam}`;
+      openExternal(url);
+      await pollStatus(`${CLOUD_AI_HTTP}/integrations/discord/status`, "discord");
+      await refreshProfiles('discord');
+      return;
+    }
+
+    if (slug === "reddit") {
+      const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
+      const url = `${CLOUD_AI_HTTP}/integrations/reddit/connect?token=${encodeURIComponent(token)}${profileParam}`;
+      openExternal(url);
+      await pollStatus(`${CLOUD_AI_HTTP}/integrations/reddit/status`, "reddit");
+      await refreshProfiles('reddit');
       return;
     }
 

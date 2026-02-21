@@ -158,7 +158,7 @@ function Row({ label, value, warn, error }: { label: string; value: string; warn
 }
 
 function SyncCard({ icon: Icon, color, name, subtitle, rows }: {
-  icon: any; color: string; name: string; subtitle: string;
+  icon: React.ElementType; color: string; name: string; subtitle: string;
   rows: { label: string; value: string; isStatus?: boolean; warn?: boolean; error?: boolean }[];
 }) {
   const bg = { violet: 'bg-violet-50', blue: 'bg-blue-50', amber: 'bg-amber-50', emerald: 'bg-emerald-50' }[color] || 'bg-gray-50';

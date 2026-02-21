@@ -700,7 +700,7 @@ export const ToolCallItem = ({ evt }: { evt: ToolEvent }) => {
     
     // AI operations
     if (toolName === 'ai_inference') {
-      const hasResponse = result?.text || result?.response || result?.content;
+      const hasResponse = result?.text || result?.response || result?.content || result?.embedding;
       return hasResponse ? 'AI responded' : (ok ? 'Completed' : 'Failed');
     }
     

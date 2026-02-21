@@ -227,6 +227,7 @@ ACCESS OUTPUTS: Use {{stepId.field}} in later node args
   • {{step_1.stdout}}   - script output (run_command, run_python_script)
   • {{step_1.text}}     - AI response text (ai_inference)
   • {{step_1.json}}     - Parsed JSON output (ai_inference with mode: "json")
+  • {{step_1.embedding}}- Vector embedding (ai_inference with mode: "embedding")
   • {{step_1.data}}     - Form data object (custom_ui)
   • {{step_1.action}}   - Button clicked (custom_ui)
   • {{step_1.filePath}} - Saved file path (take_screenshot, capture_media)

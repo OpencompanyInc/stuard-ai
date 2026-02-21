@@ -3,17 +3,21 @@ import { RouterContext } from '../types';
 
 /**
  * Resolve a variable name, auto-prepending 'workflow.' if needed.
- * This allows users to use either 'var1' or 'workflow.var1' for workflow variables.
+ * 
+ * Scoping model:
+ * - workflow.* = shared across all stuard files in the current workflow
+ * - local.* = scoped to the current stuard file only
+ * - No prefix = defaults to workflow scope
  * 
  * Resolution order:
- * 1. If name already starts with 'workflow.', use as-is
+ * 1. If name already starts with 'workflow.' or 'local.', use as-is
  * 2. If exact name exists in store, use it
- * 3. Try with 'workflow.' prefix
+ * 3. Try with 'workflow.' prefix (default scope)
  * 4. Fall back to original name
  */
-function resolveVariableName(name: string): string {
-  // Already has workflow prefix
-  if (name.startsWith('workflow.')) {
+function resolveVariableName(name: string, flowId?: string): string {
+  // Already has prefix
+  if (name.startsWith('workflow.') || name.startsWith('local.')) {
     return name;
   }
 
@@ -22,7 +26,7 @@ function resolveVariableName(name: string): string {
     return name;
   }
 
-  // Try with workflow prefix
+  // Try with workflow prefix (workflow-scoped is the default)
   const workflowName = `workflow.${name}`;
   if (variableStore.has(workflowName)) {
     console.log(`[VARS] Auto-resolved '${name}' → '${workflowName}'`);
@@ -36,15 +40,19 @@ function resolveVariableName(name: string): string {
 /**
  * Resolve variable name for SET operations.
  * For SET, we auto-add 'workflow.' prefix if the variable doesn't exist
- * and there's no explicit prefix, assuming it's a workflow variable.
+ * and there's no explicit prefix — defaults to workflow scope (shared across stuard files).
+ * 
+ * Scoping:
+ * - workflow.* = shared across all stuard files in the current workflow
+ * - local.* = scoped to the current stuard file only
  */
-function resolveVariableNameForSet(name: string): string {
-  // Already has workflow prefix
-  if (name.startsWith('workflow.')) {
+function resolveVariableNameForSet(name: string, scope?: string): string {
+  // Already has explicit prefix
+  if (name.startsWith('workflow.') || name.startsWith('local.')) {
     return name;
   }
 
-  // Check if exact name exists (user may have created a global var)
+  // Check if exact name exists
   if (variableStore.has(name)) {
     return name;
   }
@@ -56,9 +64,11 @@ function resolveVariableNameForSet(name: string): string {
     return workflowName;
   }
 
-  // For new variables without prefix, use original name (global scope)
-  // Users should use 'workflow.varName' for workflow-scoped vars
-  return name;
+  // For new variables, use the specified scope (default: workflow)
+  const effectiveScope = scope === 'local' ? 'local' : 'workflow';
+  const prefixed = `${effectiveScope}.${name}`;
+  console.log(`[VARS] New variable '${name}' created with ${effectiveScope} scope → '${prefixed}'`);
+  return prefixed;
 }
 
 function _truncateForLog(value: any, maxLen = 120): string {
@@ -70,7 +80,8 @@ function _truncateForLog(value: any, maxLen = 120): string {
 export async function execSetVariable(args: any, ctx: RouterContext): Promise<any> {
   const rawName = String(args?.name || '').trim();
   if (!rawName) return { ok: false, error: 'missing_variable_name' };
-  const name = resolveVariableNameForSet(rawName);
+  const scope = args?.scope as string | undefined;
+  const name = resolveVariableNameForSet(rawName, scope);
   const silent = args?.notifyUi === false;
   const entry = setVariable(name, args?.value, args?.type, args?.flowId, silent);
   const logVal = _truncateForLog(entry.value);
@@ -82,7 +93,7 @@ export async function execSetVariable(args: any, ctx: RouterContext): Promise<an
 export async function execGetVariable(args: any, ctx: RouterContext): Promise<any> {
   const rawName = String(args?.name || '').trim();
   if (!rawName) return { ok: false, error: 'missing_variable_name' };
-  const name = resolveVariableName(rawName);
+  const name = resolveVariableName(rawName, args?.flowId);
   const entry = variableStore.get(name);
   if (!entry) {
     const defaultVal = args?.default;
@@ -109,7 +120,7 @@ export async function execGetVariable(args: any, ctx: RouterContext): Promise<an
 export async function execToggleVariable(args: any, ctx: RouterContext): Promise<any> {
   const rawName = String(args?.name || '').trim();
   if (!rawName) return { ok: false, error: 'missing_variable_name' };
-  const name = resolveVariableName(rawName);
+  const name = resolveVariableName(rawName, args?.flowId);
   const current = variableStore.get(name);
   const currentVal = current?.value;
   // If not a boolean, treat falsy as false
@@ -125,7 +136,7 @@ export async function execToggleVariable(args: any, ctx: RouterContext): Promise
 export async function execIncrementVariable(args: any, ctx: RouterContext): Promise<any> {
   const rawName = String(args?.name || '').trim();
   if (!rawName) return { ok: false, error: 'missing_variable_name' };
-  const name = resolveVariableName(rawName);
+  const name = resolveVariableName(rawName, args?.flowId);
   const amount = Number(args?.amount ?? args?.by ?? 1);
   const current = variableStore.get(name);
   const currentNum = typeof current?.value === 'number' ? current.value : 0;
@@ -139,7 +150,7 @@ export async function execIncrementVariable(args: any, ctx: RouterContext): Prom
 export async function execAppendToList(args: any, ctx: RouterContext): Promise<any> {
   const rawName = String(args?.name || '').trim();
   if (!rawName) return { ok: false, error: 'missing_variable_name' };
-  const name = resolveVariableName(rawName);
+  const name = resolveVariableName(rawName, args?.flowId);
   const current = variableStore.get(name);
   const currentList = Array.isArray(current?.value) ? current.value : [];
   const item = args?.item ?? args?.value;
@@ -165,7 +176,7 @@ export async function execListVariables(args: any, ctx: RouterContext): Promise<
 export async function execDeleteVariable(args: any, ctx: RouterContext): Promise<any> {
   const rawName = String(args?.name || '').trim();
   if (!rawName) return { ok: false, error: 'missing_variable_name' };
-  const name = resolveVariableName(rawName);
+  const name = resolveVariableName(rawName, args?.flowId);
   const existed = variableStore.has(name);
   variableStore.delete(name);
   saveVariables();

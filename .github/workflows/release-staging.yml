@@ -23,10 +23,35 @@ env:
   GAR_HOST: ${{ secrets.GCP_REGION }}-docker.pkg.dev
 
 jobs:
+  # 0. CI Checks (Gatekeeper)
+  ci-checks:
+    name: Verify Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm turbo run lint
+      - name: Typecheck
+        run: pnpm turbo run typecheck
+      - name: Build
+        run: pnpm turbo run build
+      - name: Unit Tests
+        run: pnpm turbo run test
+
   # 1. Deploy Cloud AI (Backend) to Cloud Run (Staging)
   deploy-staging-backend:
     name: Cloud AI (Staging)
     runs-on: ubuntu-latest
+    needs: ci-checks
     if: ${{ github.event.inputs.deploy_cloud == 'true' }}
     permissions:
       contents: read
@@ -69,6 +94,7 @@ jobs:
   deploy-staging-website:
     name: Website (Staging)
     runs-on: ubuntu-latest
+    needs: ci-checks
     if: ${{ github.event.inputs.deploy_website == 'true' }}
     steps:
       - uses: actions/checkout@v4
@@ -99,6 +125,7 @@ jobs:
   # 3. Build Desktop App (Staging)
   build-staging-desktop:
     name: Desktop App (Staging - ${{ matrix.os }}${{ matrix.arch && format(' {0}', matrix.arch) || '' }})
+    needs: ci-checks
     if: ${{ github.event.inputs.build_desktop == 'true' }}
     strategy:
       fail-fast: false

@@ -54,11 +54,13 @@ jobs:
           node-version: 20
           cache: 'pnpm'
       - name: Install Dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
       - name: Lint
         run: pnpm turbo run lint
       - name: Typecheck
         run: pnpm turbo run typecheck
+      - name: Build
+        run: pnpm turbo run build
       - name: Unit Tests
         run: pnpm turbo run test
 

@@ -153,9 +153,19 @@ export async function handleGoogleRoutes(req: IncomingMessage, res: ServerRespon
   // Redirect callback
   if (req.method === 'GET' && parsedUrl.pathname === GOOGLE_REDIRECT_PATH) {
     try {
+      // Handle OAuth error responses (e.g. user denied access, redirect_uri mismatch)
+      const oauthError = parsedUrl.searchParams.get('error') || '';
+      if (oauthError) {
+        const oauthErrorDesc = parsedUrl.searchParams.get('error_description') || oauthError;
+        console.warn('[google] OAuth error:', oauthError, oauthErrorDesc);
+        res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=google&message=${encodeURIComponent(oauthErrorDesc)}`, 'Cache-Control': 'no-store' });
+        res.end();
+        return true;
+      }
       const code = parsedUrl.searchParams.get('code') || '';
       const stateRaw = parsedUrl.searchParams.get('state') || '';
       if (!code || !stateRaw) {
+        console.warn('[google] Callback missing code or state. Query:', parsedUrl.search);
         res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=google&message=Missing code or state`, 'Cache-Control': 'no-store' });
         res.end();
         return true;
@@ -234,11 +244,9 @@ export async function handleGoogleRoutes(req: IncomingMessage, res: ServerRespon
         accountEmail = String(userInfo?.email || '') || null;
       } catch {}
 
-      try { await upsertExternalAccount({ userId, provider: 'google', access_token, scopes, refresh_token: refresh_token || null, expires_at, meta: { token_type: tokenBody.token_type || 'Bearer' }, profileLabel, accountEmail }); } catch {}
-      let okSaved = false;
-      try { const acc = await getExternalAccount(userId, 'google', profileLabel); okSaved = !!acc; } catch { okSaved = false; }
-      if (!okSaved) {
-        res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=google&message=${encodeURIComponent('Could not save token. Ensure server is configured.')}`, 'Cache-Control': 'no-store' });
+      try { await upsertExternalAccount({ userId, provider: 'google', access_token, scopes, refresh_token: refresh_token || null, expires_at, meta: { token_type: tokenBody.token_type || 'Bearer' }, profileLabel, accountEmail }); } catch (saveErr: any) {
+        console.error('[google] Failed to save token:', saveErr?.message || saveErr);
+        res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=google&message=${encodeURIComponent('Could not save token: ' + (saveErr?.message || 'database error'))}`, 'Cache-Control': 'no-store' });
         res.end();
         return true;
       }

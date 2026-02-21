@@ -172,6 +172,8 @@ async function runHeadlessTask(
 
   // Move aggregatedText outside try block so it can be accessed in catch for abort handling
   let aggregatedText = '';
+  let lastReasoningFlush = 0;
+  const REASONING_FLUSH_MS = 1500; // Flush accumulated reasoning text every 1.5s
 
   try {
     let finished = false;
@@ -274,8 +276,32 @@ async function runHeadlessTask(
         await flushLogs(logEntry);
       } else if (evType === 'text-delta') {
         const t = (chunk as any)?.payload?.text || (chunk as any)?.text || '';
-        if (typeof t === 'string' && t) aggregatedText += t;
+        if (typeof t === 'string' && t) {
+          aggregatedText += t;
+          // Periodically flush reasoning text so the UI can show chain-of-thought live
+          const now = Date.now();
+          if (now - lastReasoningFlush >= REASONING_FLUSH_MS) {
+            lastReasoningFlush = now;
+            const reasoningSnapshot = aggregatedText.slice(-800); // last 800 chars
+            await flushLogs({
+              type: 'reasoning',
+              text: reasoningSnapshot,
+              total_length: aggregatedText.length,
+              timestamp: now,
+            }, true);
+          }
+        }
       }
+    }
+
+    // Final reasoning flush — send the complete text as a log entry
+    if (aggregatedText.trim()) {
+      await flushLogs({
+        type: 'reasoning_complete',
+        text: aggregatedText.trim(),
+        total_length: aggregatedText.length,
+        timestamp: Date.now(),
+      }, true);
     }
 
     // If for some reason onFinish didn't fire, mark as completed with what we have

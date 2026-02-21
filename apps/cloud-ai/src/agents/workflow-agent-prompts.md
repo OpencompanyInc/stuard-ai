@@ -453,7 +453,7 @@ Pull structured fields from unstructured text. Cheaper than agent_node.
 Output: { ok, data: { name: "John Doe", email: "john@example.com", phone: "+1...", sentiment: "positive" } }
 
 **When to use which:**
-- **ai_inference**: Simple text→text or text→JSON (no tools needed, cheapest)
+- **ai_inference**: Simple text→text, text→JSON, or text→embedding (no tools needed, cheapest)
 - **agent_node**: Complex tasks needing tools, multi-step reasoning, or structured output
 - **agent_decision**: Binary/categorical decisions for workflow branching
 - **agent_extract**: Pull structured data from text (simpler than agent_node JSON mode)

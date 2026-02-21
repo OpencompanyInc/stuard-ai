@@ -1,6 +1,6 @@
 // Types & API helpers for the Ops Console
-
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.stuard.ai';
+// All data queries go through local Next.js API routes → Supabase directly.
+// No external cloud-ai dependency needed.
 
 function getToken() {
   // Use env token first (set in .env.local), fall back to localStorage
@@ -19,34 +19,34 @@ function buildHeaders(extra?: HeadersInit): Record<string, string> {
   return h;
 }
 
-async function apiFetch<T = any>(path: string, opts?: RequestInit): Promise<T | null> {
+async function apiFetch<T = unknown>(path: string, opts?: RequestInit): Promise<T | null> {
   try {
-    const res = await fetch(`${API_URL}${path}`, { ...opts, headers: buildHeaders(opts?.headers) });
+    const res = await fetch(`/api/ops/${path}`, { ...opts, headers: buildHeaders(opts?.headers) });
     if (!res.ok) return null;
     const data = await res.json();
     return data.ok !== false ? data : null;
   } catch { return null; }
 }
 
-export async function fetchAnalytics(days = 30) { return apiFetch(`/v1/ops/analytics?days=${days}`); }
+export async function fetchAnalytics(days = 30) { return apiFetch<AnalyticsData>(`analytics?days=${days}`); }
 export async function fetchUsers(limit = 100, offset = 0, q = '') {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (q) params.set('q', q);
-  return apiFetch(`/v1/ops/users?${params}`);
+  return apiFetch<{ users: UserEntry[]; total: number; planBreakdown: Record<string, number> }>(`users?${params}`);
 }
-export async function fetchRecentActivity(limit = 30) { return apiFetch(`/v1/ops/recent-activity?limit=${limit}`); }
-export async function fetchServerStatus() { return apiFetch('/v1/ops/server-status'); }
-export async function fetchSyncSystems() { return apiFetch('/v1/ops/sync-systems'); }
-export async function fetchDatabaseStats() { return apiFetch('/v1/ops/database-stats'); }
-export async function fetchBetaUsers() { return apiFetch('/v1/ops/beta-users'); }
+export async function fetchRecentActivity(limit = 30) { return apiFetch<{ activities: Activity[] }>(`recent-activity?limit=${limit}`); }
+export async function fetchServerStatus() { return apiFetch<ServerStatusData>('server-status'); }
+export async function fetchSyncSystems() { return apiFetch<{ systems: SyncSystemData }>('sync-systems'); }
+export async function fetchDatabaseStats() { return apiFetch<{ tables: Record<string, number> }>('database-stats'); }
+export async function fetchBetaUsers() { return apiFetch<{ users: BetaUser[] }>('beta-users'); }
 export async function fetchWaitlist(q = '', limit = 50) {
   const params = new URLSearchParams({ limit: String(limit), offset: '0' });
   if (q) params.set('q', q);
-  return apiFetch(`/v1/ops/waitlist?${params}`);
+  return apiFetch<{ entries: WaitlistEntry[]; total: number }>(`waitlist?${params}`);
 }
 
 export async function upsertBetaUser(email: string, access_level: string, notes?: string) {
-  return apiFetch('/v1/ops/beta-users', {
+  return apiFetch('beta-users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, access_level, notes: notes || null }),
@@ -54,11 +54,11 @@ export async function upsertBetaUser(email: string, access_level: string, notes?
 }
 
 export async function deleteBetaUser(email: string) {
-  return apiFetch(`/v1/ops/beta-users/${encodeURIComponent(email)}`, { method: 'DELETE' });
+  return apiFetch(`beta-users/${encodeURIComponent(email)}`, { method: 'DELETE' });
 }
 
 export async function promoteWaitlistUser(email: string, access_level: string) {
-  return apiFetch('/v1/ops/waitlist/promote', {
+  return apiFetch('waitlist/promote', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, access_level, removeFromWaitlist: true }),
@@ -68,14 +68,14 @@ export async function promoteWaitlistUser(email: string, access_level: string) {
 export async function fetchDeployments(channel?: string, limit = 30) {
   const params = new URLSearchParams({ limit: String(limit) });
   if (channel) params.set('channel', channel);
-  return apiFetch(`/v1/ops/deployments?${params}`);
+  return apiFetch<{ deployments: Deployment[]; latestByChannel: Record<string, Deployment> }>(`deployments?${params}`);
 }
 
 export async function recordDeployment(deploy: {
   channel: string; version?: string; git_branch?: string; git_commit_sha?: string;
   git_tag?: string; targets?: Record<string, boolean>; workflow_run_url?: string;
 }) {
-  return apiFetch('/v1/ops/deployments', {
+  return apiFetch('deployments', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(deploy),
@@ -83,7 +83,7 @@ export async function recordDeployment(deploy: {
 }
 
 export async function updateDeploymentStatus(id: string, updates: { status?: string; error_message?: string }) {
-  return apiFetch(`/v1/ops/deployments/${id}`, {
+  return apiFetch(`deployments/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(updates),
@@ -112,7 +112,7 @@ export interface UserEntry {
   conversations: number; tokensLast30d: number; costLast30d: number; requestsLast30d: number;
 }
 
-export interface Activity { type: string; description: string; timestamp: string; meta?: any; }
+export interface Activity { type: string; description: string; timestamp: string; meta?: Record<string, unknown>; }
 
 export interface SyncSystemData {
   sharedSpaces: { status: string; total: number; recentSync: string | null };
@@ -159,7 +159,7 @@ export interface Deployment {
   triggered_by: string | null; targets: Record<string, boolean>;
   workflow_run_url: string | null; workflow_run_id: string | null;
   duration_seconds: number | null; error_message: string | null;
-  metadata: Record<string, any>; started_at: string; completed_at: string | null; created_at: string;
+  metadata: Record<string, unknown>; started_at: string; completed_at: string | null; created_at: string;
 }
 
 // Utility functions

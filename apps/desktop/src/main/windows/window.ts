@@ -594,15 +594,15 @@ export function openOnboardingWindow() {
   }
 
   const WIDTH = 560;
-  const HEIGHT = 640;
+  const HEIGHT = 720;
 
   onboardingWin = new BrowserWindow({
     width: WIDTH,
     height: HEIGHT,
     minWidth: 480,
-    minHeight: 520,
+    minHeight: 600,
     maxWidth: 700,
-    maxHeight: 800,
+    maxHeight: 900,
     show: false, // Show after ready-to-show for smoother appearance
     frame: false,
     transparent: true,

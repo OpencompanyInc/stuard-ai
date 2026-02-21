@@ -5,6 +5,9 @@ create table if not exists public.profiles (
   plan text not null default 'free',
   status text not null default 'active',
   monthly_token_limit integer not null default 100000,
+  sync_accounts boolean not null default false,
+  sync_conversations boolean not null default true,
+  sync_memories boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -36,6 +39,7 @@ create table if not exists public.conversations (
   user_id uuid not null references auth.users(id) on delete cascade,
   model text,
   title text,
+  source text not null default 'stuard',
   status text default 'started',
   created_at timestamptz not null default now()
 );
