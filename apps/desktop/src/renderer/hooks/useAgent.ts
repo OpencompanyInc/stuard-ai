@@ -1904,27 +1904,17 @@ export function useAgent(options?: string | UseAgentOptions) {
     const openedTabId = addTab({ serverId: id, title: 'Chat', messages: [] });
     console.log('[useAgent] Created new tab:', openedTabId);
 
+    const target = customAgentUrl ? customAgentUrl.replace('/ws', '') : 'http://127.0.0.1:8765';
+    let loaded = false;
+
+    // Try local agent first (works offline, no auth required)
     try {
-      const sessionToken = await getValidAccessToken();
-      console.log('[useAgent] Session check:', sessionToken ? 'authenticated' : 'no session');
-      if (!sessionToken) return;
-
-      console.log('[useAgent] Fetching messages for conversation:', id);
-      const { data, error } = await supabase
-        .from('messages')
-        .select('role, content, metadata, created_at')
-        .eq('conversation_id', id)
-        .order('created_at', { ascending: true })
-        .limit(200);
-
-      console.log('[useAgent] Messages query result:', { error, count: data?.length ?? 0 });
-      if (error) {
-        console.error('[useAgent] Messages query error:', error);
-      }
-
-      if (!error && Array.isArray(data)) {
+      console.log('[useAgent] Fetching messages from local agent for conversation:', id);
+      const resp = await fetch(`${target}/memory/conversations/${id}/messages?limit=200`);
+      const json = await resp.json();
+      if (json.ok && Array.isArray(json.messages)) {
         let lastModelLabel: string | undefined;
-        const hist: Message[] = (data as any[]).map((r: any) => {
+        const hist: Message[] = json.messages.map((r: any) => {
           const meta = r.metadata || {};
           try {
             const label = (typeof meta?.modelId === 'string' && meta.modelId.trim())
@@ -1946,29 +1936,88 @@ export function useAgent(options?: string | UseAgentOptions) {
             timestamp: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
           };
         });
-
-        console.log('[useAgent] Loaded', hist.length, 'messages');
+        console.log('[useAgent] Loaded', hist.length, 'messages from local agent');
         setTabs(prev => prev.map(t => t.id === openedTabId ? { ...t, messages: hist, aiState: { ...t.aiState, model: lastModelLabel } } : t));
+        loaded = true;
       }
+    } catch (e) {
+      console.warn('[useAgent] Local agent messages fetch failed, trying Supabase:', e);
+    }
 
+    // Fallback to Supabase if local agent didn't have the conversation
+    if (!loaded) {
       try {
+        const sessionToken = await getValidAccessToken();
+        if (sessionToken) {
+          const { data, error } = await supabase
+            .from('messages')
+            .select('role, content, metadata, created_at')
+            .eq('conversation_id', id)
+            .order('created_at', { ascending: true })
+            .limit(200);
+          if (!error && Array.isArray(data)) {
+            let lastModelLabel: string | undefined;
+            const hist: Message[] = (data as any[]).map((r: any) => {
+              const meta = r.metadata || {};
+              try {
+                const label = (typeof meta?.modelId === 'string' && meta.modelId.trim())
+                  ? meta.modelId.trim()
+                  : (typeof meta?.tier === 'string' && meta.tier.trim())
+                    ? meta.tier.trim()
+                    : undefined;
+                if (label) lastModelLabel = label;
+              } catch { }
+              return {
+                id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                role: (r.role === 'assistant' ? 'assistant' : r.role === 'system' ? 'system' : 'user'),
+                text: String(r.content || ''),
+                reasoning: meta.reasoning,
+                reasoningDuration: meta.reasoningDuration,
+                toolCalls: meta.toolCalls,
+                streamChunks: meta.streamChunks,
+                contextPaths: Array.isArray(meta?.contextPaths) ? meta.contextPaths : undefined,
+                timestamp: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+              };
+            });
+            console.log('[useAgent] Loaded', hist.length, 'messages from Supabase');
+            setTabs(prev => prev.map(t => t.id === openedTabId ? { ...t, messages: hist, aiState: { ...t.aiState, model: lastModelLabel } } : t));
+          }
+        }
+      } catch (e) {
+        console.error('[useAgent] Supabase loadConversation error:', e);
+      }
+    }
+
+    // Load title — try local agent first, then Supabase
+    try {
+      const convResp = await fetch(`${target}/memory/conversations/${id}`);
+      const convJson = await convResp.json();
+      if (convJson.ok && convJson.conversation?.title) {
+        const title = String(convJson.conversation.title).trim();
+        if (title) {
+          setTabs(prev => prev.map(t => t.id === openedTabId ? { ...t, title } : t));
+          return; // Got title from local agent, done
+        }
+      }
+    } catch { }
+    // Fallback title from Supabase
+    try {
+      const sessionToken = await getValidAccessToken();
+      if (sessionToken) {
         const { data: conv } = await supabase
           .from('conversations')
           .select('title')
           .eq('id', id)
           .single();
         const title = (conv as any)?.title;
-        console.log('[useAgent] Conversation title:', title);
         if (typeof title === 'string' && title.trim()) {
           setTabs(prev => prev.map(t => t.id === openedTabId ? { ...t, title: title.trim() } : t));
         }
-      } catch (e) {
-        console.error('[useAgent] Title fetch error:', e);
       }
     } catch (e) {
-      console.error('[useAgent] loadConversation error:', e);
+      console.error('[useAgent] Title fetch error:', e);
     }
-  }, [addTab]);
+  }, [addTab, customAgentUrl]);
 
   useEffect(() => {
     connect();

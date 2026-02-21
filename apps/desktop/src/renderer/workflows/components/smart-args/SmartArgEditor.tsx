@@ -23,6 +23,7 @@ import { CreateTableEditor } from './editors/CreateTableEditor';
 import { SQLQueryBuilder } from './editors/SQLQueryBuilder';
 import { ParallelStepsEditor } from './editors/ParallelStepsEditor';
 import { FilesEditor } from './editors/FilesEditor';
+import { MemoryEditor } from './editors/MemoryEditor';
 import { BooleanToggle } from './editors/BooleanToggle';
 import { CronEditor } from '../CronEditor';
 import { UIBuilderModal } from '../../../ui-builder';
@@ -140,7 +141,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
     );
   }
 
-  const { type, label, description, options, placeholder, itemType, itemOptions, language, suggestFrom, required } = argSchema;
+  const { type, label, description, options, placeholder, itemType, itemOptions, language, suggestFrom, required, allowFreeform } = argSchema;
 
   // Render based on type
   const renderEditor = () => {
@@ -213,6 +214,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
             onChange={onChange}
             options={options}
             placeholder={placeholder}
+            allowFreeform={allowFreeform}
           />
         ) : null;
 
@@ -307,6 +309,16 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
             upstreamNodes={upstreamNodes}
             workflowVariables={workflowVariables}
             argKey={argKey}
+          />
+        );
+
+      case 'memory':
+        return (
+          <MemoryEditor
+            value={value}
+            onChange={onChange}
+            upstreamNodes={upstreamNodes}
+            workflowVariables={workflowVariables}
           />
         );
 

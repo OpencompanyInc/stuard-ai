@@ -111,6 +111,10 @@ export interface DesignerWire {
   loopFanoutMode?: 'wait' | 'parallel';
   /** When set, this wire is a stream wire — the consumer step runs reactively on each chunk */
   stream?: StreamWireConfig;
+  /** When true, this wire is a callNode wire — the target node is invoked on-demand by the
+   *  source custom_ui via stuard.callNode(). It's not part of the normal execution flow;
+   *  it's a "limb" that the UI can extend/retract at will. Rendered as a dashed teal line. */
+  callNode?: boolean;
 }
 
 /** A workflow-level variable that can be referenced by any step */

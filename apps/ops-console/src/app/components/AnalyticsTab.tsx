@@ -19,9 +19,7 @@ export default function AnalyticsTab({ analytics, days, onDaysChange }: {
 }) {
   if (!analytics) return <div className="flex items-center justify-center h-64 text-gray-400">Loading analytics...</div>;
 
-  const { signupTrend, conversationTrend, messageTrend, usageTrend, modelBreakdown, roleBreakdown, totals } = analytics;
-
-  const roleData = Object.entries(roleBreakdown || {}).map(([role, count]) => ({ name: role, value: count }));
+  const { signupTrend, usageTrend, modelBreakdown, totals } = analytics;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -44,7 +42,7 @@ export default function AnalyticsTab({ analytics, days, onDaysChange }: {
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="card p-4"><div className="text-xs text-gray-500 mb-1">Period Signups</div><div className="text-xl font-bold text-gray-900">{totals.periodSignups}</div></div>
-        <div className="card p-4"><div className="text-xs text-gray-500 mb-1">Period Conversations</div><div className="text-xl font-bold text-gray-900">{formatNumber(totals.periodConversations)}</div></div>
+        <div className="card p-4"><div className="text-xs text-gray-500 mb-1">API Requests</div><div className="text-xl font-bold text-gray-900">{formatNumber(totals.totalRequests)}</div></div>
         <div className="card p-4"><div className="text-xs text-gray-500 mb-1">Tokens Used</div><div className="text-xl font-bold text-gray-900">{formatNumber(totals.totalTokens)}</div></div>
         <div className="card p-4"><div className="text-xs text-gray-500 mb-1">API Cost</div><div className="text-xl font-bold text-gray-900">{formatCurrency(totals.totalCost)}</div></div>
       </div>
@@ -64,15 +62,15 @@ export default function AnalyticsTab({ analytics, days, onDaysChange }: {
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="Conversations">
+        <ChartCard title="API Requests">
           <ResponsiveContainer width="100%" height={250}>
-            <AreaChart data={conversationTrend} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-              <defs><linearGradient id="convGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#10B981" stopOpacity={0.2} /><stop offset="100%" stopColor="#10B981" stopOpacity={0} /></linearGradient></defs>
+            <AreaChart data={usageTrend} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+              <defs><linearGradient id="reqGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#10B981" stopOpacity={0.2} /><stop offset="100%" stopColor="#10B981" stopOpacity={0} /></linearGradient></defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94A3B8' }} tickFormatter={shortDate} interval="preserveStartEnd" />
               <YAxis tick={{ fontSize: 10, fill: '#94A3B8' }} width={30} allowDecimals={false} />
               <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #E2E8F0' }} />
-              <Area type="monotone" dataKey="count" name="Conversations" stroke="#10B981" strokeWidth={2} fill="url(#convGrad)" />
+              <Area type="monotone" dataKey="requests" name="Requests" stroke="#10B981" strokeWidth={2} fill="url(#reqGrad)" />
             </AreaChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -129,24 +127,24 @@ export default function AnalyticsTab({ analytics, days, onDaysChange }: {
           )}
         </ChartCard>
 
-        <ChartCard title="Message Roles">
-          {roleData.length === 0 ? (
-            <div className="h-[250px] flex items-center justify-center text-sm text-gray-400">No message data</div>
+        <ChartCard title="Cost by Model">
+          {modelBreakdown.length === 0 ? (
+            <div className="h-[250px] flex items-center justify-center text-sm text-gray-400">No usage data</div>
           ) : (
             <>
               <ResponsiveContainer width="100%" height={250}>
                 <PieChart>
-                  <Pie data={roleData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={3} dataKey="value" label={({ name, percent }: { name: string; percent: number }) => `${name} ${(percent * 100).toFixed(0)}%`}>
-                    {roleData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                  <Pie data={modelBreakdown.slice(0, 8).map(m => ({ name: m.model, value: m.cost }))} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={3} dataKey="value" label={({ name, percent }: { name: string; percent: number }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                    {modelBreakdown.slice(0, 8).map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                   </Pie>
-                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #E2E8F0' }} />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #E2E8F0' }} formatter={(v: number) => formatCurrency(v)} />
                 </PieChart>
               </ResponsiveContainer>
               <div className="flex flex-wrap gap-3 mt-2 justify-center">
-                {roleData.map((r, i) => (
-                  <div key={r.name} className="flex items-center gap-1.5 text-xs text-gray-600">
+                {modelBreakdown.slice(0, 8).map((m, i) => (
+                  <div key={m.model} className="flex items-center gap-1.5 text-xs text-gray-600">
                     <div className="w-2.5 h-2.5 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
-                    {r.name}: {formatNumber(r.value)}
+                    {m.model}: {formatCurrency(m.cost)}
                   </div>
                 ))}
               </div>
@@ -155,15 +153,15 @@ export default function AnalyticsTab({ analytics, days, onDaysChange }: {
         </ChartCard>
       </div>
 
-      {/* Messages trend */}
-      <ChartCard title="Messages per Day">
+      {/* Requests trend */}
+      <ChartCard title="API Requests per Day">
         <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={messageTrend} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+          <BarChart data={usageTrend} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
             <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94A3B8' }} tickFormatter={shortDate} interval="preserveStartEnd" />
             <YAxis tick={{ fontSize: 10, fill: '#94A3B8' }} width={40} allowDecimals={false} />
             <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #E2E8F0' }} />
-            <Bar dataKey="count" name="Messages" fill="#8B5CF6" radius={[4, 4, 0, 0]} />
+            <Bar dataKey="requests" name="Requests" fill="#8B5CF6" radius={[4, 4, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       </ChartCard>

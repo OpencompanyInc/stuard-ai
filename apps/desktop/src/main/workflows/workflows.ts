@@ -382,7 +382,9 @@ export function designerModelToStuardSpec(m: any, triggerId?: string): StuardSpe
 
   const steps = nodes.map((n: any) => {
     const fromId = String(n?.id || '');
-    const outs = wires.filter((w: any) => String(w?.from || '') === fromId);
+    // Filter out callNode wires — they're on-demand dispatches from custom_ui,
+    // not part of the normal execution flow. The engine should not auto-traverse them.
+    const outs = wires.filter((w: any) => String(w?.from || '') === fromId && !(w as any)?.callNode);
     const next = outs.map((w: any) => {
       const to = String(w?.to || '');
       const gRaw = (w as any)?.guard;
@@ -450,6 +452,7 @@ export function designerModelToStuardSpec(m: any, triggerId?: string): StuardSpe
       return edge;
     });
     const step: any = { id: fromId, tool: String(n?.tool || 'noop'), args: n?.args || {}, next };
+    if (n?.label) step.label = String(n.label);
     if (n?.waitForAll === true) {
       step.waitForAll = true;
     }

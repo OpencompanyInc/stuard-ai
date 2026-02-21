@@ -34,6 +34,7 @@ export type StuardEdge = {
 };
 export type StuardStep = {
   id: string;
+  label?: string;
   tool?: string;
   args?: any;
   next?: StuardEdge[];

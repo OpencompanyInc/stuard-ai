@@ -356,40 +356,53 @@ function DashboardApp() {
   };
 
   const fetchData = async () => {
-    if (!session) return;
     setLoading(true);
     try {
-      const userId = session.user.id;
-      const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-      const [p, u, c] = await Promise.all([
-        supabase.from("profiles").select("*").eq("user_id", userId).limit(1),
-        supabase.from("usage_events").select("*").eq("user_id", userId).gte("created_at", monthStart).order("created_at", { ascending: false }).limit(100),
-        supabase.from("conversations").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(20),
-      ]);
-      if (!p.error) {
-        const profileData = (p.data as any[])?.[0] ?? null;
-        setProfile(profileData);
-        // Sync name to local knowledge graph for agent personalization
-        if (profileData?.full_name || profileData?.display_name || profileData?.username) {
-          const name = profileData.full_name || profileData.display_name || profileData.username;
-          try {
-            // Fire and forget sync
-            postJsonPlanner([`${AGENT_HTTP}/v1/knowledge/facts`], {
-              action: 'upsert_core', // Helper alias handled by bridge or direct tool call
-              key: 'name',
-              value: name,
-              source: 'profile_sync'
-            }).catch(() => { });
-          } catch { }
+      // Fetch conversations from local agent (works without sign-in)
+      try {
+        const resp = await fetch(`${AGENT_HTTP}/memory/conversations?limit=20`);
+        const json = await resp.json();
+        if (json.ok && Array.isArray(json.conversations)) {
+          const convs = json.conversations
+            .map((c: any) => ({ ...c, id: c.id || c.conversation_id }))
+            .sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+            .slice(0, 20);
+          setConversations(convs);
         }
+      } catch { }
+
+      // Fetch profile and usage from Supabase if signed in
+      if (session) {
+        const userId = session.user.id;
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+        const [p, u] = await Promise.all([
+          supabase.from("profiles").select("*").eq("user_id", userId).limit(1),
+          supabase.from("usage_events").select("*").eq("user_id", userId).gte("created_at", monthStart).order("created_at", { ascending: false }).limit(100),
+        ]);
+        if (!p.error) {
+          const profileData = (p.data as any[])?.[0] ?? null;
+          setProfile(profileData);
+          // Sync name to local knowledge graph for agent personalization
+          if (profileData?.full_name || profileData?.display_name || profileData?.username) {
+            const name = profileData.full_name || profileData.display_name || profileData.username;
+            try {
+              // Fire and forget sync
+              postJsonPlanner([`${AGENT_HTTP}/v1/knowledge/facts`], {
+                action: 'upsert_core', // Helper alias handled by bridge or direct tool call
+                key: 'name',
+                value: name,
+                source: 'profile_sync'
+              }).catch(() => { });
+            } catch { }
+          }
+        }
+        if (!u.error) setUsage((u.data as any[]) ?? []);
       }
-      if (!u.error) setUsage((u.data as any[]) ?? []);
-      if (!c.error) setConversations((c.data as any[]) ?? []);
       // Reset selection if the selected conversation no longer exists
       try {
         if (selectedConversation) {
-          const exists = (c.data as any[])?.some((it: any) => String(it.id) === String(selectedConversation.id));
+          const exists = conversations.some((it: any) => String(it.id) === String(selectedConversation.id));
           if (!exists) { setSelectedConversation(null); setConvMessages([]); }
         }
       } catch { }
@@ -662,13 +675,25 @@ function DashboardApp() {
   const loadConversationMessages = async (id: string) => {
     setConvLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('messages')
-        .select('role, content, metadata, created_at')
-        .eq('conversation_id', id)
-        .order('created_at', { ascending: true })
-        .limit(500);
-      if (!error && Array.isArray(data)) setConvMessages(data as any[]);
+      // Try local agent first
+      try {
+        const resp = await fetch(`${AGENT_HTTP}/memory/conversations/${id}/messages?limit=500`);
+        const json = await resp.json();
+        if (json.ok && Array.isArray(json.messages)) {
+          setConvMessages(json.messages);
+          return;
+        }
+      } catch { }
+      // Fallback to Supabase
+      if (session) {
+        const { data, error } = await supabase
+          .from('messages')
+          .select('role, content, metadata, created_at')
+          .eq('conversation_id', id)
+          .order('created_at', { ascending: true })
+          .limit(500);
+        if (!error && Array.isArray(data)) setConvMessages(data as any[]);
+      }
     } finally {
       setConvLoading(false);
     }

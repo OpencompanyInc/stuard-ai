@@ -1,0 +1,150 @@
+{
+  "id": "flow_custom_cursor",
+  "name": "Custom Cursor",
+  "version": "1",
+  "autostart": false,
+  "triggers": [
+    {
+      "id": "trig_0",
+      "type": "manual",
+      "label": "Launch Cursor",
+      "args": {},
+      "position": { "x": 60, "y": 300 }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "setup_db",
+      "type": "local.tool",
+      "tool": "db_query",
+      "label": "Setup DB",
+      "args": {
+        "query": "CREATE TABLE IF NOT EXISTS custom_file_embeddings (id TEXT PRIMARY KEY, path TEXT, content TEXT, embedding TEXT)"
+      },
+      "position": { "x": 300, "y": 60 }
+    },
+    {
+      "id": "scan_files",
+      "type": "local.tool",
+      "tool": "run_python_script",
+      "label": "Scan Files",
+      "args": {
+        "code": "import os, json\ndef get_files(root_dir):\n    ignore_dirs = {'node_modules', '.git', 'dist', 'build', '__pycache__', '.next', 'coverage', 'venv', 'env'}\n    ignore_exts = {'.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.mp4', '.mp3', '.wav', '.zip', '.tar', '.gz', '.pdf', '.lock', '.pyc'}\n    result = []\n    for dirpath, dirnames, filenames in os.walk(root_dir):\n        dirnames[:] = [d for d in dirnames if d not in ignore_dirs]\n        for f in filenames:\n            ext = os.path.splitext(f)[1].lower()\n            if ext not in ignore_exts:\n                result.append(os.path.join(dirpath, f).replace('\\\\', '/'))\n    return result\nprint(json.dumps(get_files(r\"{{caller.workspace}}\")))"
+      },
+      "position": { "x": 300, "y": 160 }
+    },
+    {
+      "id": "clear_index",
+      "type": "local.tool",
+      "tool": "db_query",
+      "label": "Clear Old Index",
+      "args": {
+        "query": "DELETE FROM custom_file_embeddings WHERE path LIKE ?",
+        "params": ["{{caller.workspace}}%"]
+      },
+      "position": { "x": 300, "y": 260 }
+    },
+    {
+      "id": "read_chunk",
+      "type": "local.tool",
+      "tool": "read_file",
+      "label": "Read File",
+      "args": {
+        "path": "{{caller.filePath}}"
+      },
+      "position": { "x": 300, "y": 360 }
+    },
+    {
+      "id": "embed_chunk",
+      "type": "local.tool",
+      "tool": "ai_inference",
+      "label": "Embed Chunk",
+      "args": {
+        "prompt": "{{caller.text}}",
+        "mode": "embedding"
+      },
+      "position": { "x": 300, "y": 460 }
+    },
+    {
+      "id": "store_embedding",
+      "type": "local.tool",
+      "tool": "db_query",
+      "label": "Store Embedding",
+      "args": {
+        "query": "INSERT INTO custom_file_embeddings (id, path, content, embedding) VALUES (?, ?, ?, ?)",
+        "params": ["{{caller.id}}", "{{caller.path}}", "{{caller.content}}", "{{caller.embedding}}"]
+      },
+      "position": { "x": 300, "y": 560 }
+    },
+    {
+      "id": "semantic_search",
+      "type": "local.tool",
+      "tool": "ai_inference",
+      "label": "Query Embedding",
+      "args": {
+        "prompt": "{{caller.query}}",
+        "mode": "embedding"
+      },
+      "position": { "x": 600, "y": 160 }
+    },
+    {
+      "id": "fetch_all_embeddings",
+      "type": "local.tool",
+      "tool": "db_query",
+      "label": "Fetch All Embeddings",
+      "args": {
+        "query": "SELECT path, content, embedding FROM custom_file_embeddings"
+      },
+      "position": { "x": 600, "y": 260 }
+    },
+    {
+      "id": "agent_think",
+      "type": "local.tool",
+      "tool": "agent_node",
+      "label": "Agent Think",
+      "args": {
+        "prompt": "{{caller.prompt}}",
+        "context": "{{caller.context}}",
+        "model": "{{caller.model}}",
+        "tools": ["read_file", "file_edit", "run_command", "list_directory"]
+      },
+      "position": { "x": 600, "y": 460 }
+    },
+    {
+      "id": "cursor_ui",
+      "type": "local.tool",
+      "tool": "custom_ui",
+      "label": "Cursor Chat UI",
+      "args": {
+        "component": "function App() {\n  const [workspace, setWorkspace] = useVar('workspace', '');\n  const [model, setModel] = useVar('model', 'balanced');\n  const [messages, setMessages] = useVar('messages', []);\n  const [input, setInput] = useState('');\n  const [isLoading, setIsLoading] = useState(false);\n  const [status, setStatus] = useState('');\n  const [progress, setProgress] = useState(0);\n\n  // ── Index Workspace ──\n  const handleIndex = async () => {\n    if (!workspace) return alert('Enter a workspace path');\n    try {\n      setStatus('Setting up database...');\n      setProgress(5);\n      await stuard.callNode('setup_db');\n\n      setStatus('Scanning files...');\n      setProgress(10);\n      const scanRes = await stuard.callNode('scan_files', { workspace });\n      if (!scanRes.ok) throw new Error('Scan failed');\n      const files = JSON.parse(scanRes.stdout);\n      if (!files.length) { setStatus('No files found.'); return; }\n\n      await stuard.callNode('clear_index', { workspace });\n\n      let done = 0;\n      for (const file of files) {\n        setStatus(`Reading ${file.split('/').pop()}...`);\n        const readRes = await stuard.callNode('read_chunk', { filePath: file });\n        if (!readRes.ok || !readRes.content || readRes.content.length > 100000) { done++; continue; }\n\n        const chunks = readRes.content.match(/.{1,4000}/gs) || [];\n        for (let i = 0; i < chunks.length; i++) {\n          setStatus(`Embedding ${file.split('/').pop()} (${i+1}/${chunks.length})...`);\n          const emb = await stuard.callNode('embed_chunk', { text: chunks[i] });\n          if (emb.ok && emb.embedding) {\n            await stuard.callNode('store_embedding', {\n              id: `${file}_${i}`, path: file, content: chunks[i],\n              embedding: JSON.stringify(emb.embedding)\n            });\n          }\n        }\n        done++;\n        setProgress(10 + Math.floor((done / files.length) * 90));\n      }\n      setStatus('Done!'); setTimeout(() => { setStatus(''); setProgress(0); }, 3000);\n    } catch (err) { setStatus(`Error: ${err.message}`); }\n  };\n\n  // ── Cosine similarity ──\n  const cosine = (a, b) => {\n    let dot = 0, nA = 0, nB = 0;\n    for (let i = 0; i < a.length; i++) { dot += a[i]*b[i]; nA += a[i]*a[i]; nB += b[i]*b[i]; }\n    return dot / (Math.sqrt(nA) * Math.sqrt(nB));\n  };\n\n  // ── Chat ──\n  const handleSend = async () => {\n    if (!input.trim() || isLoading) return;\n    const newMsgs = [...messages, { role: 'user', content: input }];\n    setMessages(newMsgs);\n    setInput('');\n    setIsLoading(true);\n    try {\n      setStatus('Searching codebase...');\n      const qEmb = await stuard.callNode('semantic_search', { query: input });\n      let snippets = '';\n      if (qEmb.ok && qEmb.embedding) {\n        const db = await stuard.callNode('fetch_all_embeddings');\n        if (db.ok && db.results) {\n          const scored = db.results.map(r => ({\n            path: r.path, content: r.content,\n            score: cosine(qEmb.embedding, JSON.parse(r.embedding))\n          })).sort((a,b) => b.score - a.score).slice(0, 5);\n          snippets = scored.map(s => `--- ${s.path} (${(s.score*100).toFixed(1)}%) ---\\n${s.content}`).join('\\n\\n');\n        }\n      }\n      setStatus('Agent thinking...');\n      const res = await stuard.callNode('agent_think', {\n        prompt: `You are an expert AI coding assistant.\\nWorkspace: ${workspace}\\n\\nRelevant code:\\n${snippets}\\n\\nRequest: ${input}`,\n        context: JSON.stringify(newMsgs.slice(0, -1)),\n        model\n      });\n      setMessages([...newMsgs, { role: 'assistant', content: res.ok ? res.text : `Error: ${res.error}` }]);\n    } catch (err) {\n      setMessages([...newMsgs, { role: 'assistant', content: `Error: ${err.message}` }]);\n    } finally { setIsLoading(false); setStatus(''); }\n  };\n\n  return (\n    <div className=\\\"flex h-screen bg-slate-900 text-slate-300 font-sans\\\">\n      <div className=\\\"w-72 bg-slate-950 p-4 flex flex-col border-r border-slate-800\\\">\n        <h1 className=\\\"text-xl font-bold text-white mb-6 flex items-center gap-2\\\"><span className=\\\"text-blue-500\\\">⚡</span> Custom Cursor</h1>\n        <div className=\\\"mb-6\\\">\n          <label className=\\\"block text-xs font-semibold text-slate-500 uppercase mb-2\\\">Workspace</label>\n          <input value={workspace} onChange={e => setWorkspace(e.target.value)} placeholder=\\\"C:/path/to/project\\\" className=\\\"w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm text-white focus:border-blue-500 outline-none\\\" />\n          <button onClick={handleIndex} disabled={!!status} className=\\\"mt-2 w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-sm py-2 rounded\\\">Build Index</button>\n          {status && <div className=\\\"mt-3\\\"><div className=\\\"text-xs text-blue-400 mb-1 truncate\\\">{status}</div>{progress > 0 && <div className=\\\"w-full bg-slate-800 rounded-full h-1.5\\\"><div className=\\\"bg-blue-500 h-1.5 rounded-full transition-all\\\" style={{width:`${progress}%`}} /></div>}</div>}\n        </div>\n        <div className=\\\"mb-6\\\">\n          <label className=\\\"block text-xs font-semibold text-slate-500 uppercase mb-2\\\">Model</label>\n          <select value={model} onChange={e => setModel(e.target.value)} className=\\\"w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm text-white outline-none\\\">\n            <option value=\\\"fast\\\">Fast</option><option value=\\\"balanced\\\">Balanced</option><option value=\\\"smart\\\">Smart</option>\n          </select>\n        </div>\n        <button onClick={() => setMessages([])} className=\\\"mt-auto w-full text-slate-500 hover:text-white text-sm py-2\\\">Clear</button>\n      </div>\n      <div className=\\\"flex-1 flex flex-col\\\">\n        <div className=\\\"flex-1 overflow-y-auto p-6 space-y-6\\\">\n          {messages.length === 0 ? <div className=\\\"h-full flex flex-col items-center justify-center text-slate-500\\\"><div className=\\\"text-4xl mb-4\\\">🧠</div><p>Semantic index + node-routed tools</p></div> : messages.map((m,i) => <div key={i} className={`flex ${m.role==='user'?'justify-end':'justify-start'}`}><div className={`max-w-[80%] rounded-lg p-4 ${m.role==='user'?'bg-blue-600 text-white':'bg-slate-800 text-slate-200 border border-slate-700'}`}><div className=\\\"text-xs opacity-50 mb-1 uppercase\\\">{m.role}</div><div className=\\\"whitespace-pre-wrap font-mono text-sm\\\">{m.content}</div></div></div>)}\n          {isLoading && <div className=\\\"flex justify-start\\\"><div className=\\\"bg-slate-800 border border-slate-700 rounded-lg p-4 text-slate-400 flex items-center gap-2\\\"><div className=\\\"animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full\\\" />{status || 'Thinking...'}</div></div>}\n        </div>\n        <div className=\\\"p-4 border-t border-slate-800\\\">\n          <div className=\\\"relative max-w-4xl mx-auto\\\">\n            <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }} placeholder=\\\"Ask about your codebase...\\\" className=\\\"w-full bg-slate-800 border border-slate-700 rounded-lg pl-4 pr-12 py-3 text-white focus:border-blue-500 outline-none resize-none h-14\\\" />\n            <button onClick={handleSend} disabled={isLoading || !input.trim()} className=\\\"absolute right-2 top-2 bottom-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white rounded px-3 flex items-center\\\">➤</button>\n          </div>\n        </div>\n      </div>\n    </div>\n  );\n}",
+        "blocking": true,
+        "title": "Custom Cursor",
+        "window": {
+          "frameless": true,
+          "backgroundColor": "#1a1a2e",
+          "width": 1000,
+          "height": 700,
+          "borderRadius": 12,
+          "contentPadding": 0,
+          "resizable": false,
+          "alwaysOnTop": true,
+          "position": "center",
+          "animation": { "open": "fade", "close": "fade", "duration": 300 }
+        }
+      },
+      "position": { "x": 600, "y": 600 }
+    }
+  ],
+  "wires": [
+    { "from": "trig_0", "to": "cursor_ui", "guard": "always" },
+    { "from": "cursor_ui", "to": "setup_db", "callNode": true },
+    { "from": "cursor_ui", "to": "scan_files", "callNode": true },
+    { "from": "cursor_ui", "to": "clear_index", "callNode": true },
+    { "from": "cursor_ui", "to": "read_chunk", "callNode": true },
+    { "from": "cursor_ui", "to": "embed_chunk", "callNode": true },
+    { "from": "cursor_ui", "to": "store_embedding", "callNode": true },
+    { "from": "cursor_ui", "to": "semantic_search", "callNode": true },
+    { "from": "cursor_ui", "to": "fetch_all_embeddings", "callNode": true },
+    { "from": "cursor_ui", "to": "agent_think", "callNode": true }
+  ]
+}

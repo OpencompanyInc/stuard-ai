@@ -6,6 +6,7 @@ The enhanced Custom UI system in StuardAI now includes full JavaScript support v
 
 - [Basic Usage](#basic-usage)
 - [Workflow Tool Calling](#workflow-tool-calling)
+- [Node Routing (callNode)](#node-routing-callnode)
 - [File Dialogs](#file-dialogs)
 - [File I/O](#file-io)
 - [Clipboard Operations](#clipboard-operations)
@@ -75,9 +76,76 @@ const aiResult = await stuard.callTool('ai_inference', {
 
 ---
 
+## Node Routing (callNode)
+
+Call sibling nodes in the same workflow by ID or label. This is the **node-routing architecture** — instead of encoding all logic inside one custom_ui component, you decompose the workflow into standalone tool nodes connected by callNode wires.
+
+### `stuard.callNode(nodeId, data)`
+
+**Parameters:**
+- `nodeId` (string): The target node's step ID **or label**
+- `data` (object): Data passed to the node. The node's args use `{{caller.X}}` templates which are replaced with matching keys from this object.
+
+**Returns:** Promise resolving to the tool result
+
+**Node matching priority:**
+1. Exact step ID match (e.g. `"step_abc123"`)
+2. Exact label match, case-insensitive (e.g. `"Read File"` matches `"read file"`)
+3. Normalized label match — whitespace, underscores, hyphens are interchangeable (`"read_file"` matches `"Read File"`, `"read-file"`, `"Read_File"`)
+
+**Example:**
+
+```javascript
+// Call by step ID
+const result = await stuard.callNode('step_abc123', { filePath: '/path/to/file' });
+
+// Call by label (recommended — more readable)
+const result = await stuard.callNode('Read File', { filePath: '/path/to/file' });
+const dbResult = await stuard.callNode('setup_db', {});
+const scanResult = await stuard.callNode('Scan Files', { workspace: '/my/project' });
+```
+
+**Wire setup:** Connect the custom_ui node to each target node with a callNode wire:
+
+```json
+{
+  "wires": [
+    { "from": "my_ui", "to": "read_node", "callNode": true },
+    { "from": "my_ui", "to": "db_node", "callNode": true }
+  ]
+}
+```
+
+- callNode wires render as **dashed teal lines** with a plug icon on the canvas
+- They are **NOT auto-traversed** by the engine — they execute on-demand only
+- The target node **lights up** with animated particles during execution
+
+**Target node args with `{{caller.X}}` templates:**
+
+```json
+{
+  "id": "read_node",
+  "tool": "read_file",
+  "label": "Read File",
+  "args": { "path": "{{caller.filePath}}" }
+}
+```
+
+When called with `stuard.callNode('Read File', { filePath: '/my/file.txt' })`, the `{{caller.filePath}}` template is replaced with `/my/file.txt`.
+
+**callNode vs callTool:**
+| | `callTool` | `callNode` |
+|---|---|---|
+| Visual feedback | None (invisible) | Wire animation + node highlight |
+| Target | Any tool by name | Sibling node by ID or label |
+| Template support | No | `{{caller.X}}` in node args |
+| Canvas visibility | Hidden | Visible — users see which tools run |
+
+---
+
 ## File Dialogs
 
-Native file picker dialogs:
+Native file picker dialogs (no tkinter or Python needed):
 
 ### `stuard.pickFile(options)`
 

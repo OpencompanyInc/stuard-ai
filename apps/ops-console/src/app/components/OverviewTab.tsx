@@ -1,7 +1,7 @@
 'use client';
 
 import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
-import { Users, MessageSquare, Zap, DollarSign, TrendingUp, TrendingDown, Activity, UserPlus, MessagesSquare, Download, Bug, Shield } from 'lucide-react';
+import { Users, Zap, DollarSign, TrendingUp, TrendingDown, Activity, UserPlus, Download, Bug, Shield, BarChart3 } from 'lucide-react';
 import { AnalyticsData, Activity as ActivityItem, SyncSystemData, ServerStatusData, formatTimeAgo, formatNumber, formatCurrency, shortDate } from '../lib/api';
 
 const CHART_COLORS = { blue: '#3B82F6', emerald: '#10B981', purple: '#8B5CF6', amber: '#F59E0B', rose: '#F43F5E' };
@@ -44,10 +44,10 @@ function MiniAreaChart({ data, dataKey, color }: { data: Record<string, unknown>
 }
 
 const ACTIVITY_ICONS: Record<string, React.ElementType> = {
-  conversation: MessagesSquare, signup: UserPlus, feedback: Bug, download: Download, beta: Shield, waitlist: Users,
+  signup: UserPlus, feedback: Bug, download: Download, beta: Shield, waitlist: Users,
 };
 const ACTIVITY_COLORS: Record<string, string> = {
-  conversation: 'bg-blue-50 text-blue-600', signup: 'bg-emerald-50 text-emerald-600', feedback: 'bg-amber-50 text-amber-600',
+  signup: 'bg-emerald-50 text-emerald-600', feedback: 'bg-amber-50 text-amber-600',
   download: 'bg-purple-50 text-purple-600', beta: 'bg-indigo-50 text-indigo-600', waitlist: 'bg-pink-50 text-pink-600',
 };
 
@@ -57,24 +57,23 @@ export default function OverviewTab({ analytics, activities, syncSystems, server
   const t = analytics?.totals;
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      {/* KPIs — operational metrics only (no private data) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard icon={Users} color="blue" label="Total Users" value={formatNumber(t?.users || 0)} sub={`+${t?.periodSignups || 0} this period`} trend={t?.periodSignups ? Math.round((t.periodSignups / Math.max(t.users - t.periodSignups, 1)) * 100) : undefined} />
-        <KPICard icon={MessageSquare} color="emerald" label="Conversations" value={formatNumber(t?.conversations || 0)} sub={`+${t?.periodConversations || 0} this period`} />
-        <KPICard icon={MessagesSquare} color="purple" label="Messages" value={formatNumber(t?.messages || 0)} sub={`+${t?.periodMessages || 0} this period`} />
+        <KPICard icon={BarChart3} color="emerald" label="API Requests" value={formatNumber(t?.totalRequests || 0)} sub="In selected period" />
         <KPICard icon={Zap} color="amber" label="Tokens Used" value={formatNumber(t?.totalTokens || 0)} sub="In selected period" />
         <KPICard icon={DollarSign} color="rose" label="API Cost" value={formatCurrency(t?.totalCost || 0)} sub="In selected period" />
       </div>
 
-      {/* Mini Charts */}
+      {/* Mini Charts — usage metrics only */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="card p-4">
           <div className="text-sm font-semibold text-gray-700 mb-2">User Signups</div>
           <MiniAreaChart data={analytics?.signupTrend || []} dataKey="count" color={CHART_COLORS.blue} />
         </div>
         <div className="card p-4">
-          <div className="text-sm font-semibold text-gray-700 mb-2">Conversations</div>
-          <MiniAreaChart data={analytics?.conversationTrend || []} dataKey="count" color={CHART_COLORS.emerald} />
+          <div className="text-sm font-semibold text-gray-700 mb-2">API Requests</div>
+          <MiniAreaChart data={analytics?.usageTrend || []} dataKey="requests" color={CHART_COLORS.emerald} />
         </div>
         <div className="card p-4">
           <div className="text-sm font-semibold text-gray-700 mb-2">Token Usage</div>
@@ -111,7 +110,7 @@ export default function OverviewTab({ analytics, activities, syncSystems, server
         <div className="space-y-4">
           {serverStatus && (
             <div className="card p-5">
-              <h3 className="text-sm font-semibold text-gray-800 mb-3">Cloud Server</h3>
+              <h3 className="text-sm font-semibold text-gray-800 mb-3">Ops Console (Local)</h3>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between"><span className="text-gray-500">Environment</span><span className="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded">{serverStatus.environment}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Uptime</span><span className="font-medium text-gray-700">{serverStatus.uptime.human}</span></div>
@@ -127,7 +126,6 @@ export default function OverviewTab({ analytics, activities, syncSystems, server
             <div className="space-y-2">
               {[
                 { name: 'Shared Spaces', status: syncSystems?.sharedSpaces?.status },
-                { name: 'Memory Outbox', status: syncSystems?.memoryOutbox?.status },
                 { name: 'Webhooks', status: syncSystems?.webhooks?.status || 'operational' },
                 { name: 'Devices', status: syncSystems?.devices?.status },
                 { name: 'Marketplace', status: syncSystems?.marketplace?.status },

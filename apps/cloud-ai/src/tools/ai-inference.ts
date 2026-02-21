@@ -2,8 +2,9 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { generateText, streamText, embed } from 'ai';
 import { buildProviderModel, buildProviderEmbeddingModel } from '../utils/models';
-import { safeToolWrite, execLocalTool } from './bridge';
+import { safeToolWrite, execLocalTool, hasClientBridge } from './bridge';
 import { writeLog } from '../utils/logger';
+import { buildKnowledgeContext, buildQuickContext } from '../knowledge/retrieval';
 
 /**
  * ai_inference - General purpose AI text/structured inference tool
@@ -101,6 +102,27 @@ export const aiInferenceTool = createTool({
       .optional()
       .default(false)
       .describe('When true, returns a streamId immediately and pushes tokens to the stream in real-time. Connect a stream wire to consume.'),
+    injectMemory: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe('Legacy: When true, injects full memory context. Prefer the `memory` object for per-lens control.'),
+    memory: z.object({
+      enabled: z.boolean().describe('Master toggle for memory injection'),
+      lenses: z.object({
+        identity: z.boolean().optional().default(true).describe('Include user identity context'),
+        directives: z.boolean().optional().default(true).describe('Include user directives/instructions'),
+        bio: z.boolean().optional().default(true).describe('Include user bio'),
+        relatedMemories: z.boolean().optional().default(true).describe('Include relevant past memories'),
+        entities: z.boolean().optional().default(true).describe('Detect and include entity context'),
+      }).optional(),
+      maxFacts: z.number().optional().default(6).describe('Max global search facts to retrieve'),
+      conversationHistory: z.array(z.object({
+        role: z.enum(['user', 'assistant']),
+        content: z.string(),
+      })).optional().describe('Conversation history pairs to inject as context'),
+      customFacts: z.array(z.string()).optional().describe('Custom facts to inject into memory context'),
+    }).optional().describe('Rich memory configuration with per-lens control, conversation history, and custom facts'),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
@@ -121,6 +143,8 @@ export const aiInferenceTool = createTool({
       temperature,
       systemPrompt,
       stream: streamMode = false,
+      injectMemory = false,
+      memory: memoryConfig,
     } = (inputData || {}) as {
       prompt: string;
       input?: string;
@@ -130,6 +154,8 @@ export const aiInferenceTool = createTool({
       temperature: number;
       systemPrompt?: string;
       stream?: boolean;
+      injectMemory?: boolean;
+      memory?: { enabled: boolean; lenses?: Record<string, boolean>; maxFacts?: number; conversationHistory?: { role: string; content: string }[]; customFacts?: string[] };
     };
 
     await safeToolWrite(writer, {
@@ -189,6 +215,79 @@ export const aiInferenceTool = createTool({
       : prompt;
 
     const messages: any[] = [];
+
+    // ── MEMORY INJECTION: fetch user identity, directives, bio, relevant facts ──
+    // Resolve memory config: new `memory` object takes precedence over legacy `injectMemory` boolean
+    const memCfg = memoryConfig?.enabled
+      ? memoryConfig
+      : injectMemory
+        ? { enabled: true, lenses: { identity: true, directives: true, bio: true, relatedMemories: true, entities: true }, maxFacts: 6, conversationHistory: [] as any[], customFacts: [] as string[] }
+        : null;
+
+    let memoryContext = '';
+    if (memCfg?.enabled) {
+      try {
+        const lenses = memCfg.lenses ?? {};
+        writeLog('ai_inference_memory_start', { prompt: prompt.slice(0, 50), lenses });
+        await safeToolWrite(writer, {
+          type: 'tool_event',
+          tool: 'ai_inference',
+          status: 'loading_memory',
+        });
+
+        if (!hasClientBridge()) {
+          try {
+            const quickCtx = await buildQuickContext();
+            if (quickCtx.trim()) {
+              memoryContext = quickCtx.trim();
+            }
+          } catch {}
+        } else {
+          const knowledgeCtx = await buildKnowledgeContext(prompt, {
+            includeIdentity: lenses.identity !== false,
+            includeDirectives: lenses.directives !== false,
+            includeBio: lenses.bio !== false,
+            maxGlobalFacts: memCfg.maxFacts ?? 6,
+            detectEntities: lenses.entities !== false,
+          });
+          if (knowledgeCtx && knowledgeCtx.text.trim()) {
+            memoryContext = knowledgeCtx.text.trim();
+          }
+        }
+
+        if (memoryContext) {
+          messages.push({ role: 'system', content: memoryContext });
+          writeLog('ai_inference_memory_injected', { length: memoryContext.length });
+        }
+
+        // Append custom facts
+        if (Array.isArray(memCfg.customFacts) && memCfg.customFacts.length > 0) {
+          const validFacts = memCfg.customFacts.filter((f: string) => typeof f === 'string' && f.trim());
+          if (validFacts.length > 0) {
+            const factsBlock = '\n\n[CUSTOM FACTS]\n' + validFacts.map((f: string) => `- ${f.trim()}`).join('\n');
+            if (memoryContext) {
+              // Amend the last system message
+              messages[messages.length - 1].content += factsBlock;
+            } else {
+              messages.push({ role: 'system', content: factsBlock.trim() });
+            }
+          }
+        }
+
+        // Inject conversation history as context messages
+        if (Array.isArray(memCfg.conversationHistory) && memCfg.conversationHistory.length > 0) {
+          for (const msg of memCfg.conversationHistory) {
+            if (msg.role && msg.content?.trim()) {
+              messages.push({ role: msg.role as 'user' | 'assistant', content: msg.content.trim() });
+            }
+          }
+        }
+      } catch (memErr: any) {
+        writeLog('ai_inference_memory_error', { error: memErr?.message });
+        // Non-fatal: continue without memory
+      }
+    }
+
     if (systemPrompt) {
       messages.push({ role: 'system', content: systemPrompt });
     }

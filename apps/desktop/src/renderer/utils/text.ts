@@ -28,6 +28,6 @@ export function convertLatexDelims(md: string): string {
 }
 
 export function escapeCurrencyDollars(text: string): string {
-  return text.replace(/\$(\d[\d,]*\.?\d*)/g, '\\$$1');
+  return text.replace(/\$(\d[\d,]*\.?\d*)/g, '\\$$$1');
 }
 

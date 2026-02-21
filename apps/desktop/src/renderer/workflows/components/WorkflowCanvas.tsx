@@ -175,6 +175,9 @@ export function WorkflowCanvas({
             <marker id="ah-stream" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
               <path d="M0,0 L6,2 L0,4" fill="#06b6d4" />
             </marker>
+            <marker id="ah-callnode" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+              <path d="M0,0 L6,2 L0,4" fill="#14b8a6" />
+            </marker>
 
             {/* Animated Gradients */}
             <linearGradient id="flow-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -229,6 +232,7 @@ export function WorkflowCanvas({
             if (!f || !t) return null;
 
             const isStreamWire = !!(w as any).stream;
+            const isCallNodeWire = !!(w as any).callNode;
 
             // Detect if this wire creates an actual cycle (x→y→...→x)
             const isBackEdge = isBackEdgeCycle(w.from, w.to, safeWires);
@@ -374,13 +378,14 @@ export function WorkflowCanvas({
               return checkUpstream(w.from);
             })();
 
-            // Special colors for back edges, loop wires, loop breaks, and stream wires
-            // Orange = continues in loop, Grey = exits loop (loopBreak), Cyan = stream wire
+            // Special colors for back edges, loop wires, loop breaks, stream wires, and callNode wires
+            // Orange = continues in loop, Grey = exits loop (loopBreak), Cyan = stream wire, Teal = callNode wire
             const wireColor = isReconnecting ? '#f59e0b' // Amber for reconnecting wire
               : isSelected ? '#ef4444'
               : isActiveWire ? '#6366f1'
               : isCompletedWire ? '#10b981'
               : isHovered ? '#94a3b8'
+              : isCallNodeWire ? '#14b8a6' // Teal for callNode wires
               : isStreamWire ? '#06b6d4' // Cyan for stream wires
               : isInStreamPipeline ? '#06b6d4' // Cyan for downstream pipeline wires
               : isInsideLoop ? '#f97316' // Orange for wires that continue in loop
@@ -392,6 +397,7 @@ export function WorkflowCanvas({
               : isSelected ? 'url(#ah-selected)'
               : isActiveWire ? 'url(#ah-active)'
               : isCompletedWire ? 'url(#ah-completed)'
+              : isCallNodeWire ? 'url(#ah-callnode)' // Teal marker for callNode wires
               : isStreamWire ? 'url(#ah-stream)' // Cyan marker for stream wires
               : isInStreamPipeline ? 'url(#ah-stream)' // Cyan marker for pipeline wires
               : isInsideLoop ? 'url(#ah-loop-break)' // Reuse orange marker
@@ -427,7 +433,7 @@ export function WorkflowCanvas({
                   d={pathD}
                   stroke={(isStreamWire || isInStreamPipeline) && !isSelected ? '#06b6d4' : wireColor}
                   strokeWidth={isReconnecting ? 3 : isSelected ? 3 : isActiveWire ? 3 : isStreamActive ? 3 : isInStreamPipeline ? 2.5 : isStreamWire ? 2.5 : isHovered ? 2.5 : 2}
-                  strokeDasharray={isReconnecting ? '8 4' : (isStreamWire || isInStreamPipeline) ? '6 4' : undefined}
+                  strokeDasharray={isReconnecting ? '8 4' : isCallNodeWire ? '4 3' : (isStreamWire || isInStreamPipeline) ? '6 4' : undefined}
                   fill="none"
                   markerEnd={markerEnd}
                   className={`transition-all duration-200 ${isActiveWire ? 'drop-shadow-md' : ''} ${isSelected ? 'drop-shadow-md' : ''} ${isReconnecting ? 'drop-shadow-md animate-pulse' : ''} ${(isStreamActive || isInStreamPipeline) ? 'drop-shadow-md stream-wire-active' : isStreamWire ? 'drop-shadow-sm' : ''} ${isBackEdge ? 'stroke-dasharray-none' : ''}`}
@@ -503,6 +509,20 @@ export function WorkflowCanvas({
                       <circle cx="0" cy="0" r="2" fill="#06b6d4" />
                       <path d="M-4 -3 A5 5 0 0 1 -4 3" />
                       <path d="M4 -3 A5 5 0 0 0 4 3" />
+                    </g>
+                  </g>
+                )}
+
+                {/* callNode wire indicator icon (teal plug/socket icon) */}
+                {isCallNodeWire && !isSelected && !isHovered && (
+                  <g transform={`translate(${midX}, ${midY})`}>
+                    <circle r="10" fill="white" stroke="#14b8a6" strokeWidth="1.5" className="drop-shadow-sm" />
+                    {/* Plug icon — vertical prong with socket arc */}
+                    <g stroke="#14b8a6" strokeWidth="1.5" fill="none" strokeLinecap="round">
+                      <line x1="-2" y1="-5" x2="-2" y2="0" />
+                      <line x1="2" y1="-5" x2="2" y2="0" />
+                      <path d="M-4 0 A4 4 0 0 0 4 0" />
+                      <line x1="0" y1="4" x2="0" y2="6" />
                     </g>
                   </g>
                 )}

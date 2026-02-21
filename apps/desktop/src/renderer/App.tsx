@@ -588,15 +588,27 @@ export default function App() {
     let timer: any = null;
     const loadTitle = async () => {
       try {
-        if (!conversationId || !signedIn) { setConversationTitle(null); return; }
-        const { data, error } = await supabase
-          .from('conversations')
-          .select('title')
-          .eq('id', conversationId)
-          .single();
-        if (!error) {
-          const t = (data as any)?.title;
-          setConversationTitle(t && String(t).trim() ? String(t).trim() : null);
+        if (!conversationId) { setConversationTitle(null); return; }
+        // Try local agent first
+        try {
+          const resp = await fetch(`http://127.0.0.1:8765/memory/conversations/${conversationId}`);
+          const json = await resp.json();
+          if (json.ok && json.conversation?.title) {
+            setConversationTitle(String(json.conversation.title).trim() || null);
+            return;
+          }
+        } catch { }
+        // Fallback to Supabase if signed in
+        if (signedIn) {
+          const { data, error } = await supabase
+            .from('conversations')
+            .select('title')
+            .eq('id', conversationId)
+            .single();
+          if (!error) {
+            const t = (data as any)?.title;
+            setConversationTitle(t && String(t).trim() ? String(t).trim() : null);
+          }
         }
       } catch { }
     };
@@ -605,21 +617,39 @@ export default function App() {
     return () => { if (timer) clearTimeout(timer); };
   }, [conversationId, signedIn]);
 
-  // Fetch Conversations
+  // Fetch Conversations from local agent (works offline, no sign-in required)
   const fetchConversations = async () => {
-    if (!signedIn) { setConvList([]); return; }
     setLoadingConvs(true);
     try {
-      const { data, error } = await supabase
-        .from('conversations')
-        .select('id, title, created_at')
-        .neq('source', 'workflow')
-        .order('created_at', { ascending: false })
-        .limit(20);
-      if (!error) setConvList(Array.isArray(data) ? data : []);
-    } finally {
-      setLoadingConvs(false);
+      // Primary: fetch from local agent which stores everything locally
+      const resp = await fetch('http://127.0.0.1:8765/memory/conversations?limit=20');
+      const json = await resp.json();
+      if (json.ok && Array.isArray(json.conversations)) {
+        const convs = json.conversations
+          .filter((c: any) => c.source !== 'workflow')
+          .map((c: any) => ({ id: c.id || c.conversation_id, title: c.title, created_at: c.created_at || c.updated_at }))
+          .sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+          .slice(0, 20);
+        setConvList(convs);
+        setLoadingConvs(false);
+        return;
+      }
+    } catch {
+      // Agent not running, fall through
     }
+    // Fallback: try Supabase if signed in
+    try {
+      if (signedIn) {
+        const { data, error } = await supabase
+          .from('conversations')
+          .select('id, title, created_at')
+          .neq('source', 'workflow')
+          .order('created_at', { ascending: false })
+          .limit(20);
+        if (!error) { setConvList(Array.isArray(data) ? data : []); }
+      }
+    } catch { }
+    setLoadingConvs(false);
   };
   // --- Sidebar & Tabs State ---
   const [internalSidebarOpen, setInternalSidebarOpen] = useState(false);
@@ -627,7 +657,7 @@ export default function App() {
 
   useEffect(() => {
     if (chatMenuOpen) fetchConversations();
-  }, [chatMenuOpen, signedIn]);
+  }, [chatMenuOpen]);
 
   // --- Handlers (memoized to prevent unnecessary re-renders) ---
 

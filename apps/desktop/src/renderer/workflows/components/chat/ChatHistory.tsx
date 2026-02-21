@@ -39,7 +39,7 @@ function toMediaSrc(src: string): string {
 function preprocessMessageContent(content: string): string {
   if (!content) return '';
   // Escape dollar signs used for currency to prevent LaTeX parsing
-  let processed = content.replace(/\$(\d[\d,]*\.?\d*)/g, '\\$$1');
+  let processed = content.replace(/\$(\d[\d,]*\.?\d*)/g, '\\$$$1');
   processed = processed.replace(/<<([^<>]+)>>/g, '![attachment](<$1>)');
 
   // Comprehensive regex for media paths (Windows and Unix)

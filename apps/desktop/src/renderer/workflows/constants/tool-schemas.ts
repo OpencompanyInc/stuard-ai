@@ -9,7 +9,7 @@
  * run: pnpm sync-tool-defs (or manually update TOOL_DEFINITIONS below)
  */
 
-export type ArgType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect' | 'array' | 'object' | 'code' | 'path' | 'hotkey' | 'accelerator' | 'json' | 'cron' | 'files';
+export type ArgType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect' | 'array' | 'object' | 'code' | 'path' | 'hotkey' | 'accelerator' | 'json' | 'cron' | 'files' | 'memory';
 
 export interface ArgOption {
   value: string | number | boolean;
@@ -32,6 +32,8 @@ export interface ArgSchema {
   suggestFrom?: string[];
   advanced?: boolean;
   hidden?: boolean;
+  /** Allow free text input alongside select options — user can pick a preset or type a custom value */
+  allowFreeform?: boolean;
   /** Conditional visibility: only show this arg when another arg has a specific value */
   showWhen?: { field: string; value?: any; values?: any[] };
 }
@@ -185,7 +187,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'web_search', category: 'data', kind: 'cloud', description: 'Search the web using Perplexity AI', argsTemplate: { query: '', max_results: 5, max_tokens_per_page: 1024 }, outputSchema: { results: 'any[]', id: 'string' } },
 
   // --- UI ---
-  { id: 'custom_ui', category: 'ui', kind: 'local', description: 'Display custom overlay UI using React JSX components (offline)', argsTemplate: { id: 'my-panel', title: 'My Custom UI', component: '', css: '', data: {}, window: { width: 400, height: 500, position: 'center', alwaysOnTop: true, frameless: true, borderRadius: 12, resizable: false, draggable: true, backgroundType: 'color', backgroundColor: '#1a1a2e', contentPadding: 24, shadow: { enabled: true, color: '#00000040', blur: 20, spread: 0, x: 0, y: 8 }, animation: { open: 'fade', close: 'fade', duration: 300, easing: 'ease-out' }, invisible: false, translucent: { color: '#1a1a2e', opacity: 0.7, blur: 12 } }, blocking: true }, outputSchema: { ok: 'boolean', action: 'string', data: 'object' } },
+  { id: 'custom_ui', category: 'ui', kind: 'local', description: 'Display custom overlay UI using React JSX components (offline). Component has access to: stuard.callNode(id|label, data) for node-routing to sibling nodes with {{caller.X}} templates and visual wire animations (connect with callNode wires), stuard.callTool(name, args) for invisible tool calls, stuard.pickFile/pickFolder/pickSavePath for native OS file/folder picker dialogs, stuard.readFile/writeFile for file I/O, stuard.copyToClipboard/readClipboard, stuard.notify for system notifications, and useVar(name, default) for reactive workflow variable binding.', argsTemplate: { id: 'my-panel', title: 'My Custom UI', component: '', css: '', data: {}, window: { width: 400, height: 500, position: 'center', alwaysOnTop: true, frameless: true, borderRadius: 12, resizable: false, draggable: true, backgroundType: 'color', backgroundColor: '#1a1a2e', contentPadding: 24, shadow: { enabled: true, color: '#00000040', blur: 20, spread: 0, x: 0, y: 8 }, animation: { open: 'fade', close: 'fade', duration: 300, easing: 'ease-out' }, invisible: false, translucent: { color: '#1a1a2e', opacity: 0.7, blur: 12 } }, blocking: true }, outputSchema: { ok: 'boolean', action: 'string', data: 'object' } },
   { id: 'update_custom_ui', category: 'ui', kind: 'local', description: 'Update existing custom_ui window with new content', argsTemplate: { id: 'my-panel', title: '', html: '', css: '', data: {}, window: {} }, outputSchema: { ok: 'boolean', action: 'string', data: 'object' } },
   { id: 'close_custom_ui', category: 'ui', kind: 'local', description: 'Close a UI window', argsTemplate: { id: '' }, outputSchema: { ok: 'boolean' } },
   { id: 'ask_confirmation', category: 'ui', kind: 'local', description: 'Show a confirmation dialog to the user', argsTemplate: { title: 'Confirm Action', message: '', confirmLabel: 'Confirm', cancelLabel: 'Cancel', variant: 'warning' }, outputSchema: { confirmed: 'boolean' } },
@@ -729,108 +731,156 @@ if (TOOL_SCHEMAS['schedule.cron']) {
   };
 }
 
-// Glob (Find Files) - user-friendly file search
+// Glob (Find Files) - user-friendly file search with pattern presets
+const GLOB_PATTERN_PRESETS: ArgOption[] = [
+  { value: '*.*', label: 'All Files', description: 'Every file in the folder' },
+  { value: '*.txt', label: 'Text Files', description: '.txt files' },
+  { value: '*.pdf', label: 'PDF Documents', description: '.pdf files' },
+  { value: '*.{jpg,jpeg,png,gif,webp}', label: 'Images', description: 'Common image formats' },
+  { value: '*.{mp4,mov,avi,mkv}', label: 'Videos', description: 'Common video formats' },
+  { value: '*.{mp3,wav,flac,ogg}', label: 'Audio', description: 'Common audio formats' },
+  { value: '*.{doc,docx,xlsx,pptx}', label: 'Office Documents', description: 'Word, Excel, PowerPoint' },
+  { value: '*.{js,ts,jsx,tsx}', label: 'JavaScript / TypeScript', description: 'JS and TS source files' },
+  { value: '*.{py}', label: 'Python Files', description: '.py files' },
+  { value: '*.{html,css}', label: 'Web Files', description: 'HTML and CSS files' },
+  { value: '*.{json,yaml,yml,toml}', label: 'Config Files', description: 'JSON, YAML, TOML configs' },
+  { value: '*.log', label: 'Log Files', description: '.log files' },
+  { value: '*.csv', label: 'CSV Files', description: 'Comma-separated data' },
+  { value: '*.zip', label: 'Archives', description: 'ZIP archive files' },
+];
+
 if (TOOL_SCHEMAS['glob']) {
   TOOL_SCHEMAS['glob'].args = {
     pattern: {
-      type: 'string',
-      label: 'File Name Pattern',
-      description: 'What files to look for. Use * as a wildcard (e.g., *.txt = all text files, report* = files starting with "report")',
+      type: 'select',
+      label: 'What to Find',
+      description: 'Pick a file type — or select "Custom" from the menu and type your own pattern using * as wildcard',
       required: true,
-      placeholder: '*.txt, *.pdf, my-file*',
+      options: GLOB_PATTERN_PRESETS,
       default: '*.*',
+      allowFreeform: true,
+      placeholder: 'e.g. *.txt, report*, *.{jpg,png}',
     },
     root: {
       type: 'path',
-      label: 'Search In Folder',
-      description: 'Which folder to search in (leave empty for current directory)',
+      label: 'Look In',
+      description: 'Which folder to search. Leave empty to search the current working directory.',
       placeholder: 'C:/Users/Documents',
     },
     recursive: {
       type: 'boolean',
-      label: 'Include Subfolders',
-      description: 'Also search inside subfolders',
+      label: 'Search Subfolders',
+      description: 'When on, also looks inside all subfolders',
       default: true,
     },
     include_files: {
       type: 'boolean',
       label: 'Show Files',
-      description: 'Include files in results',
+      description: 'Include files in the results',
       default: true,
       advanced: true,
     },
     include_dirs: {
       type: 'boolean',
       label: 'Show Folders',
-      description: 'Include folders in results',
+      description: 'Include folders in the results',
       default: true,
       advanced: true,
     },
     max_results: {
       type: 'number',
       label: 'Max Results',
-      description: 'Maximum number of files to return',
+      description: 'Stop after this many matches',
       default: 100,
       advanced: true,
     },
   };
 }
 
-// Grep (Search In Files) - user-friendly text search
+// Grep (Search In Files) - user-friendly text search with file type presets
+const GREP_FILE_TYPE_PRESETS: ArgOption[] = [
+  { value: '', label: 'All Files', description: 'Search every file' },
+  { value: '*.{js,ts,jsx,tsx}', label: 'JavaScript / TypeScript', description: 'JS and TS source files' },
+  { value: '*.py', label: 'Python', description: 'Python source files' },
+  { value: '*.{html,css}', label: 'Web (HTML/CSS)', description: 'HTML and CSS files' },
+  { value: '*.{json,yaml,yml}', label: 'Config Files', description: 'JSON and YAML configs' },
+  { value: '*.txt', label: 'Text Files', description: '.txt files only' },
+  { value: '*.log', label: 'Log Files', description: '.log files only' },
+  { value: '*.md', label: 'Markdown', description: 'Markdown documentation' },
+  { value: '*.csv', label: 'CSV Data', description: 'CSV spreadsheet data' },
+  { value: '*.{c,cpp,h,hpp}', label: 'C / C++', description: 'C and C++ source files' },
+  { value: '*.{java,kt}', label: 'Java / Kotlin', description: 'Java and Kotlin files' },
+  { value: '*.{rs}', label: 'Rust', description: 'Rust source files' },
+  { value: '*.{go}', label: 'Go', description: 'Go source files' },
+];
+
+const GREP_EXCLUDE_PRESETS: ArgOption[] = [
+  { value: '', label: 'Nothing', description: 'Don\'t skip any files' },
+  { value: '*.min.js', label: 'Minified JS', description: 'Skip minified JavaScript' },
+  { value: '*.map', label: 'Source Maps', description: 'Skip .map files' },
+  { value: '*.min.js,*.map', label: 'Minified + Maps', description: 'Skip minified JS and source maps' },
+  { value: '*.lock,*.sum', label: 'Lock Files', description: 'Skip lock files (package-lock, go.sum)' },
+];
+
 if (TOOL_SCHEMAS['grep']) {
   TOOL_SCHEMAS['grep'].args = {
     path: {
       type: 'path',
       label: 'Search In',
-      description: 'File or folder to search inside',
+      description: 'Pick a file or folder to search inside',
       required: true,
-      placeholder: 'C:/Users/Documents or a specific file',
+      placeholder: 'C:/Users/MyProject or C:/log.txt',
     },
     pattern: {
       type: 'string',
-      label: 'Search Text',
-      description: 'The word or phrase to look for inside files',
+      label: 'Find This Text',
+      description: 'Type the word, phrase, or error message you\'re looking for',
       required: true,
-      placeholder: 'TODO, error, password, etc.',
+      placeholder: 'e.g. TODO, error, password, function main',
     },
     case_sensitive: {
       type: 'boolean',
-      label: 'Match Case',
-      description: 'Only find exact uppercase/lowercase matches',
+      label: 'Exact Case',
+      description: 'When on, "Error" won\'t match "error" — case must match exactly',
       default: false,
     },
     include_glob: {
-      type: 'string',
-      label: 'Only In File Types',
-      description: 'Only search in certain files (e.g., *.txt, *.js). Leave empty to search all files.',
-      placeholder: '*.txt, *.log',
-      advanced: true,
+      type: 'select',
+      label: 'File Types to Search',
+      description: 'Limit search to specific file types. Pick a preset or type a custom pattern.',
+      options: GREP_FILE_TYPE_PRESETS,
+      default: '',
+      allowFreeform: true,
+      placeholder: 'e.g. *.txt, *.js',
     },
     exclude_glob: {
-      type: 'string',
-      label: 'Skip File Types',
-      description: 'Don\'t search in these files (e.g., *.min.js). Leave empty to include everything.',
-      placeholder: '*.min.js, *.map',
+      type: 'select',
+      label: 'File Types to Skip',
+      description: 'Ignore certain files. Pick a preset or type a custom pattern.',
+      options: GREP_EXCLUDE_PRESETS,
+      default: '',
+      allowFreeform: true,
+      placeholder: 'e.g. *.min.js, node_modules/**',
       advanced: true,
     },
     regex: {
       type: 'boolean',
-      label: 'Use Regex',
-      description: 'Treat search text as a regular expression pattern (advanced)',
+      label: 'Regex Mode',
+      description: 'Treat search text as a regular expression (for advanced pattern matching)',
       default: false,
       advanced: true,
     },
     max_results: {
       type: 'number',
-      label: 'Max Results',
-      description: 'Maximum number of matches to return',
+      label: 'Max Matches',
+      description: 'Stop searching after this many matches',
       default: 100,
       advanced: true,
     },
     max_file_size: {
       type: 'number',
       label: 'Max File Size (bytes)',
-      description: 'Skip files larger than this size',
+      description: 'Skip files bigger than this (useful for ignoring huge logs)',
       advanced: true,
     },
   };
@@ -1009,22 +1059,68 @@ if (TOOL_SCHEMAS['analyze_media']?.args?.mode) {
   };
 }
 
-// AI inference: text / json + model dropdown
-if (TOOL_SCHEMAS['ai_inference']?.args?.mode) {
-  TOOL_SCHEMAS['ai_inference'].args.mode = {
-    ...TOOL_SCHEMAS['ai_inference'].args.mode,
-    type: 'select',
-    options: AI_INFERENCE_MODE_OPTIONS,
+// AI inference: full smart-args schema with memory and conditional visibility
+if (TOOL_SCHEMAS['ai_inference']) {
+  TOOL_SCHEMAS['ai_inference'].args = {
+    prompt: {
+      type: 'string',
+      label: 'Prompt',
+      description: 'The instruction or question for the AI. For embedding mode, this is the text to embed.',
+      required: true,
+      placeholder: 'Summarize this text...',
+    },
+    input: {
+      type: 'string',
+      label: 'Input Data',
+      description: 'Optional text to process. Can also reference previous step output: {{step_id.text}}',
+      placeholder: '{{previous_step.text}} or paste text here',
+      showWhen: { field: 'mode', values: ['text', 'json'] },
+    },
+    mode: {
+      type: 'select',
+      label: 'Output Mode',
+      description: 'What the AI should return',
+      options: AI_INFERENCE_MODE_OPTIONS,
+      default: 'text',
+    },
+    model: {
+      type: 'select',
+      label: 'Model',
+      description: 'AI model to use. Embedding mode uses a separate embedding model automatically.',
+      options: MODEL_OPTIONS,
+      default: 'openai/gpt-4.1-mini',
+    },
+    schema: {
+      type: 'json',
+      label: 'Output Schema',
+      description: 'Define the expected JSON output shape. Keys = field names, values = types. Example: {"category": "string", "score": "number", "tags": "string[]"}',
+      showWhen: { field: 'mode', value: 'json' },
+    },
+    memory: {
+      type: 'memory' as ArgType,
+      label: 'Memory',
+      description: 'Configure what the AI remembers about you — identity, preferences, conversation history, and custom facts.',
+      default: { enabled: false, lenses: { identity: true, directives: true, bio: true, relatedMemories: true, entities: true }, maxFacts: 6, conversationHistory: [], customFacts: [] },
+      showWhen: { field: 'mode', values: ['text', 'json'] },
+    },
+    systemPrompt: {
+      type: 'string',
+      label: 'System Prompt',
+      description: 'Custom persona or behavior instructions for the AI (e.g. "You are a helpful data analyst")',
+      placeholder: 'You are a helpful assistant that...',
+      advanced: true,
+      showWhen: { field: 'mode', values: ['text', 'json'] },
+    },
+    temperature: {
+      type: 'number',
+      label: 'Temperature',
+      description: 'Controls creativity. 0 = focused and deterministic, 1+ = more creative and varied.',
+      default: 0.3,
+      advanced: true,
+      showWhen: { field: 'mode', values: ['text', 'json'] },
+    },
   };
-}
-if (TOOL_SCHEMAS['ai_inference']?.args?.model) {
-  TOOL_SCHEMAS['ai_inference'].args.model = {
-    ...TOOL_SCHEMAS['ai_inference'].args.model,
-    type: 'select',
-    label: 'Model',
-    description: 'AI model to use for inference',
-    options: MODEL_OPTIONS,
-  };
+  TOOL_SCHEMAS['ai_inference'].outputs = ['ok', 'text', 'json', 'embedding', 'model', 'streamId', 'error'];
 }
 
 // File edit: replace / delete / add
@@ -1723,17 +1819,18 @@ TOOL_SCHEMAS['agent_node'] = {
       options: AGENT_MAX_STEPS_OPTIONS,
       default: 10,
     },
-    injectMemory: {
-      type: 'boolean',
-      label: 'Inject Memory',
-      description: 'When enabled, the agent knows who the user is (identity, preferences, custom instructions, relevant memories) — just like the main Stuard assistant.',
-      default: false,
+    memory: {
+      type: 'memory' as ArgType,
+      label: 'Memory',
+      description: 'Configure what the agent remembers about you — identity, preferences, conversation history, and custom facts.',
+      default: { enabled: false, lenses: { identity: true, directives: true, bio: true, relatedMemories: true, entities: true }, maxFacts: 6, conversationHistory: [], customFacts: [] },
     },
     outputSchema: {
       type: 'json',
       label: 'Output Schema',
       description: 'For JSON mode: define expected fields. Keys = field names, values = types. Example: {"category": "string", "score": "number"}',
       advanced: true,
+      showWhen: { field: 'outputMode', value: 'json' },
     },
     systemPrompt: {
       type: 'string',

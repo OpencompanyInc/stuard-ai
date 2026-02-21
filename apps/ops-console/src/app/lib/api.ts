@@ -90,36 +90,69 @@ export async function updateDeploymentStatus(id: string, updates: { status?: str
   });
 }
 
+// ── Feedback / Bugs ──
+export async function fetchFeedback(opts?: { type?: string; status?: string; limit?: number; offset?: number }) {
+  const params = new URLSearchParams();
+  if (opts?.type) params.set('type', opts.type);
+  if (opts?.status) params.set('status', opts.status);
+  if (opts?.limit) params.set('limit', String(opts.limit));
+  if (opts?.offset) params.set('offset', String(opts.offset));
+  return apiFetch<FeedbackListResponse>(`feedback?${params}`);
+}
+
+export async function fetchFeedbackItem(id: string) {
+  return apiFetch<{ item: FeedbackEntry; comments: FeedbackComment[] }>(`feedback/${id}`);
+}
+
+export async function createFeedback(fb: { type: 'bug' | 'feature'; title: string; description?: string; priority?: string; reporter_email?: string }) {
+  return apiFetch<{ item: FeedbackEntry }>('feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(fb),
+  });
+}
+
+export async function updateFeedback(id: string, updates: { status?: string; priority?: string; assigned_to?: string | null; title?: string; description?: string }) {
+  return apiFetch<{ item: FeedbackEntry }>(`feedback/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function addFeedbackComment(feedbackId: string, content: string, author?: string) {
+  return apiFetch<{ comment: FeedbackComment }>(`feedback/${feedbackId}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content, author }),
+  });
+}
+
 // Interfaces
 export interface AnalyticsData {
   period: { days: number; since: string };
   signupTrend: { date: string; count: number }[];
-  conversationTrend: { date: string; count: number }[];
-  messageTrend: { date: string; count: number }[];
   usageTrend: { date: string; tokens: number; cost: number; requests: number }[];
   modelBreakdown: { model: string; tokens: number; cost: number; count: number; promptTokens: number; completionTokens: number }[];
-  roleBreakdown: Record<string, number>;
   totals: {
-    users: number; conversations: number; messages: number;
-    periodSignups: number; periodConversations: number; periodMessages: number;
-    totalTokens: number; totalCost: number;
+    users: number;
+    periodSignups: number;
+    totalTokens: number; totalCost: number; totalRequests: number;
   };
 }
 
 export interface UserEntry {
   id: string; email: string; plan: string; status: string;
   monthlyTokenLimit: number; createdAt: string; lastSignIn: string | null;
-  conversations: number; tokensLast30d: number; costLast30d: number; requestsLast30d: number;
+  tokensLast30d: number; costLast30d: number; requestsLast30d: number;
 }
 
 export interface Activity { type: string; description: string; timestamp: string; meta?: Record<string, unknown>; }
 
 export interface SyncSystemData {
   sharedSpaces: { status: string; total: number; recentSync: string | null };
-  memoryOutbox: { status: string; total: number; pending: number; failed: number };
   webhooks: { status: string; total: number; active: number; totalTriggers: number; pendingDeliveries: number };
   devices: { status: string; total: number; online: number; byPlatform: Record<string, number> };
-  conversations: { status: string; total: number; messages: number };
   marketplace: { status: string; workflows: number; totalDownloads: number };
   feedback: { status: string; total: number; openBugs: number; openFeatures: number };
 }
@@ -162,6 +195,27 @@ export interface Deployment {
   metadata: Record<string, unknown>; started_at: string; completed_at: string | null; created_at: string;
 }
 
+export interface FeedbackEntry {
+  id: string; type: 'bug' | 'feature'; status: string; priority: string;
+  title: string; description: string | null;
+  reporter_email: string | null; assigned_to: string | null;
+  created_at: string; updated_at: string | null; resolved_at: string | null;
+  commentCount?: number;
+}
+
+export interface FeedbackComment {
+  id: string; author: string; content: string; created_at: string;
+}
+
+export interface FeedbackStats {
+  total: number; openBugs: number; openFeatures: number; inProgress: number; resolved: number;
+  byPriority: { critical: number; high: number; medium: number; low: number };
+}
+
+export interface FeedbackListResponse {
+  items: FeedbackEntry[]; total: number; limit: number; offset: number; stats: FeedbackStats;
+}
+
 // Utility functions
 export function formatTimeAgo(dateString?: string | null) {
   if (!dateString) return 'Never';
@@ -179,13 +233,15 @@ export function formatDate(dateString?: string | null) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export function formatNumber(n: number) {
+export function formatNumber(n: number | null | undefined) {
+  if (n == null) return '0';
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return n.toLocaleString();
 }
 
-export function formatCurrency(n: number) {
+export function formatCurrency(n: number | null | undefined) {
+  if (n == null) return '$0.00';
   return `$${n.toFixed(2)}`;
 }
 

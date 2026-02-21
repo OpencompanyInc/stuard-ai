@@ -616,7 +616,55 @@ useVar HOOK:
 INTERACTION:
   stuard.submit(data)          // Submit and resolve blocking promise
   stuard.close()               // Close window
-  stuard.callTool(name, args)  // Call a workflow tool
+  stuard.callTool(name, args)  // Call any tool directly (invisible, no visual wire)
+  stuard.callNode(nodeId, data) // Call a SIBLING NODE by ID or LABEL — triggers step events & wire animations
+
+callNode vs callTool:
+  • callTool(name, args) — runs a tool invisibly, no visual feedback in the canvas
+  • callNode(nodeId, data) — routes execution to a named node in the SAME workflow.
+    The node's args can use {{caller.X}} templates which are replaced with data you pass.
+    The node lights up in the canvas with a running → completed animation on the teal wire.
+    This is the NODE-ROUTING ARCHITECTURE pattern (see below).
+
+  NODE MATCHING — callNode resolves targets in priority order:
+    1. Exact step ID match (e.g. "step_abc123")
+    2. Exact label match, case-insensitive (e.g. "Read File" == "read file")
+    3. Normalized label match — whitespace, underscores, hyphens are interchangeable
+       ("read_file" matches "Read File", "read-file", "Read_File")
+    So you can call nodes by their human-readable LABEL, not just cryptic IDs.
+
+  CALLNODE WIRES:
+    { "from": "ui_node_id", "to": "target_node_id", "callNode": true }
+    • Must include callNode: true — without it the engine auto-traverses the wire
+    • Render as dashed teal (#14b8a6) lines with a plug icon on the canvas
+    • Execute ON-DEMAND only when stuard.callNode() is called from the UI
+
+FILE/FOLDER PICKER (native OS dialogs — no tkinter/python needed):
+  const result = await stuard.pickFolder({ title: 'Select Project' });
+  // → { canceled: false, filePaths: ['C:/Users/me/project'] }
+
+  const files = await stuard.pickFile({
+    title: 'Select Images',
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'gif'] }],
+    multiple: true
+  });
+  // → { canceled: false, filePaths: ['C:/img1.png', 'C:/img2.jpg'] }
+
+  const savePath = await stuard.pickSavePath({
+    title: 'Save Report',
+    defaultPath: 'report.pdf',
+    filters: [{ name: 'PDF', extensions: ['pdf'] }]
+  });
+  // → { canceled: false, filePath: 'C:/Downloads/report.pdf' }
+
+FILE I/O (direct read/write from component):
+  const text = await stuard.readFile('/path/to/file.txt');
+  await stuard.writeFile('/path/to/output.txt', content);
+
+CLIPBOARD & NOTIFICATIONS:
+  await stuard.copyToClipboard('text');
+  const text = await stuard.readClipboard();
+  stuard.notify('Title', 'Body text');  // System notification
 
 CRITICAL RULES:
   1. EVERY button MUST have onClick. Use onClick={() => stuard.submit(data)} for submit/done buttons.
@@ -862,6 +910,99 @@ TEMPLATE SOURCES:
 └─────────────────────┴────────────────────────────────────────────────────────┘
 
 ═══════════════════════════════════════════════════════════════════════════════
+NODE-ROUTING ARCHITECTURE — callNode Pattern
+═══════════════════════════════════════════════════════════════════════════════
+
+Instead of encoding ALL tool logic inside one massive custom_ui callTool() block,
+decompose the workflow into STANDALONE visible nodes connected by callNode wires.
+This makes the workflow graph readable — tools are separate legs/arms hanging off the UI.
+
+─── HOW IT WORKS ─────────────────────────────────────────────────────────────
+
+1. Create STANDALONE tool nodes with {{caller.X}} templates in their args:
+     { id: "read_file_node", tool: "read_file", label: "Read File", args: { path: "{{caller.filePath}}" } }
+
+2. Connect the custom_ui to each node with callNode wires:
+     { "from": "my_ui", "to": "read_file_node", "callNode": true }
+   callNode wires render as DASHED TEAL lines with a plug icon.
+   They are NOT auto-traversed by the engine — they are on-demand only.
+
+3. In the custom_ui component, call nodes by ID or LABEL:
+     const result = await stuard.callNode('read_file_node', { filePath: '/path/to/file' });
+     // OR by label (case-insensitive, whitespace/underscore/hyphen agnostic):
+     const result = await stuard.callNode('Read File', { filePath: '/path/to/file' });
+     // {{caller.filePath}} in the node args gets replaced with '/path/to/file'
+
+The called node LIGHTS UP in the workflow canvas with animated particles on the teal wire.
+
+─── NODE MATCHING (callNode target resolution) ──────────────────────────────
+
+callNode resolves the target node in this order:
+  1. Exact step ID match (e.g. "step_abc123")
+  2. Exact label match, case-insensitive (e.g. "Read File" == "read file")
+  3. Normalized label match — whitespace, underscores, hyphens interchangeable
+     ("read_file" matches "Read File", "read-file", "Read_File")
+
+This means you can write readable code like:
+  await stuard.callNode('setup_db', {})
+  await stuard.callNode('Scan Files', { workspace: path })
+  await stuard.callNode('embed_chunk', { text: chunkText })
+
+─── TEMPLATE INTERPOLATION ───────────────────────────────────────────────────
+
+Node args use {{caller.X}} to receive per-call data from the UI:
+  { id: "embed", tool: "ai_inference", args: { prompt: "{{caller.text}}", mode: "embedding" } }
+  → await stuard.callNode('embed', { text: 'hello world' })
+  → arg 'prompt' becomes 'hello world'
+
+You can mix static args with {{caller.X}} templates:
+  args: { query: "{{caller.query}}", db: "static_db_name" }
+
+─── WIRE DEFINITION ──────────────────────────────────────────────────────────
+
+Add callNode wires in the wires array:
+  { "from": "ui_node_id", "to": "target_node_id", "callNode": true }
+
+callNode wires:
+  • Are VISUAL ONLY — the engine does NOT auto-follow them
+  • Execute ON-DEMAND when stuard.callNode() is called from the UI
+  • Render as dashed teal (#14b8a6) lines with a plug/socket icon
+  • Animate (particles) and light up the target node during execution
+
+─── COMPLETE EXAMPLE ─────────────────────────────────────────────────────────
+
+  nodes: [
+    { id: "run_cmd", tool: "run_command", args: { command: "{{caller.cmd}}" }, position: {x:300,y:100} },
+    { id: "read_f",  tool: "read_file",   args: { path:    "{{caller.path}}" }, position: {x:300,y:200} },
+    {
+      id: "my_ui", tool: "custom_ui",
+      args: {
+        component: "function App() {\n  const [out, setOut] = useState('');\n  const runIt = async () => {\n    const r = await stuard.callNode('run_cmd', { cmd: 'dir C:/' });\n    setOut(r.stdout || r.error);\n  };\n  return <div><button onClick={runIt}>Run</button><pre>{out}</pre></div>;\n}",
+        blocking: true
+      },
+      position: {x:600,y:150}
+    }
+  ],
+  wires: [
+    { from: "trig_0", to: "my_ui",  guard: "always" },
+    { from: "my_ui",  to: "run_cmd", callNode: true },
+    { from: "my_ui",  to: "read_f",  callNode: true }
+  ]
+
+─── WHEN TO USE NODE-ROUTING vs callTool ─────────────────────────────────────
+
+  USE callNode (node-routing) when:
+  • The workflow should be visually clear — users can see which tools run
+  • You want animated wire feedback for long operations (indexing, embedding, etc.)
+  • Tools are reusable and may be called multiple times with different args
+  • The operation is heavyweight (AI inference, DB writes, file reads)
+
+  USE callTool when:
+  • Quick utility calls that don't need visual feedback
+  • The tool is truly internal/incidental (logging, variable setting)
+  • You don't want to clutter the canvas
+
+═══════════════════════════════════════════════════════════════════════════════
 CUSTOM UI - Pages System (Multi-Page SPA)
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -870,7 +1011,7 @@ full standalone app with client-side navigation — like a website or desktop ap
 
 KEY BENEFITS:
 • Navigate between pages WITHOUT advancing the workflow step
-• Call tools from ANY page via stuard.callTool() without resolving the step
+• Call tools from ANY page via stuard.callTool() or stuard.callNode() without resolving the step
 • formData persists across all page navigations
 • The step only resolves on explicit submit/close/action
 

@@ -66,6 +66,18 @@ contextBridge.exposeInMainWorld('stuard', {
   },
 
   /**
+   * Execute a sibling node in the workflow by its ID.
+   * Routes work to standalone tool nodes instead of embedding tool calls inline.
+   * The node must exist in the same workflow as this custom_ui window.
+   * @param nodeId - The ID of the node/step to execute
+   * @param data - Optional data to pass as input (merged into the node's args via {{caller.field}} templates)
+   * @returns Promise resolving to the node's execution result
+   */
+  callNode: (nodeId: string, data?: any): Promise<any> => {
+    return ipcRenderer.invoke('stuard:callNode', { nodeId, data: data || {} });
+  },
+
+  /**
    * Run a JavaScript/TypeScript snippet in a sandboxed context
    * @param code - The code to execute
    * @param context - Variables to inject into the execution context
@@ -476,6 +488,7 @@ ipcRenderer.on('stuard:page-change', (_event, info) => {
 contextBridge.exposeInMainWorld('$stuard', {
   // Shorthand for common operations
   tool: (name: string, args?: any) => ipcRenderer.invoke('stuard:callTool', { tool: name, args: args || {} }),
+  node: (nodeId: string, data?: any) => ipcRenderer.invoke('stuard:callNode', { nodeId, data: data || {} }),
   emit: (event: string, data?: any) => ipcRenderer.send('stuard:emit', { event, data }),
   close: (data?: any) => ipcRenderer.send('stuard:close', { data }),
   submit: (data?: any) => ipcRenderer.send('stuard:submit', { data }),

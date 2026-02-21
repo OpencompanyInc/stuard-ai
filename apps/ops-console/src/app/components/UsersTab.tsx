@@ -72,7 +72,6 @@ export default function UsersTab({ users, total, planBreakdown, query, onQueryCh
                 <th className="px-4 py-3">User</th>
                 <th className="px-4 py-3">Plan</th>
                 <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">Conversations</th>
                 <th className="px-4 py-3 text-right">Tokens (30d)</th>
                 <th className="px-4 py-3 text-right">Cost (30d)</th>
                 <th className="px-4 py-3 text-right">Requests (30d)</th>
@@ -92,7 +91,6 @@ export default function UsersTab({ users, total, planBreakdown, query, onQueryCh
                   <td className="px-4 py-3">
                     <span className={`text-xs ${u.status === 'active' ? 'text-emerald-600' : 'text-gray-400'}`}>{u.status}</span>
                   </td>
-                  <td className="px-4 py-3 text-right font-mono text-xs text-gray-700">{u.conversations}</td>
                   <td className="px-4 py-3 text-right font-mono text-xs text-gray-700">{formatNumber(u.tokensLast30d)}</td>
                   <td className="px-4 py-3 text-right font-mono text-xs text-gray-700">{formatCurrency(u.costLast30d)}</td>
                   <td className="px-4 py-3 text-right font-mono text-xs text-gray-700">{u.requestsLast30d}</td>
@@ -100,7 +98,7 @@ export default function UsersTab({ users, total, planBreakdown, query, onQueryCh
                 </tr>
               ))}
               {users.length === 0 && (
-                <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400">No users found</td></tr>
+                <tr><td colSpan={7} className="px-4 py-12 text-center text-gray-400">No users found</td></tr>
               )}
             </tbody>
           </table>

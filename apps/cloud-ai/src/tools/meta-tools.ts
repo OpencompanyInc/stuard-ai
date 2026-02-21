@@ -184,7 +184,68 @@ COMPONENT FIELD:
   - useVar(name, default) — bridges React state to workflow variables. Auto-seeds from data args.
   - stuard.submit(data) — submit data and close (resolves blocking)
   - stuard.close() — close window
-  - stuard.callTool(name, args) — call any workflow tool
+  - stuard.callTool(name, args) — call any workflow tool (invisible, no canvas animation)
+  - stuard.callNode(nodeId, data) — call a SIBLING NODE by ID or label (see NODE-ROUTING below)
+
+NODE-ROUTING ARCHITECTURE (callNode):
+  Instead of encoding all logic inside one custom_ui callTool() block, create STANDALONE
+  tool nodes in the workflow and dispatch to them from the UI via stuard.callNode().
+
+  HOW IT WORKS:
+  1. Create standalone tool nodes with {{caller.X}} templates in their args:
+       { id: "read_node", tool: "read_file", label: "Read File", args: { path: "{{caller.filePath}}" } }
+  2. Connect the custom_ui to each node with callNode wires:
+       { from: "my_ui", to: "read_node", callNode: true }
+     callNode wires render as DASHED TEAL lines with a plug icon.
+     They are NOT auto-traversed by the engine — they execute ON-DEMAND only.
+  3. In the component, call nodes by ID or LABEL:
+       const result = await stuard.callNode('read_node', { filePath: '/path/to/file' });
+       // OR by label (case-insensitive, whitespace/underscore/hyphen agnostic):
+       const result = await stuard.callNode('Read File', { filePath: '/path/to/file' });
+       // {{caller.filePath}} in the node args gets replaced with '/path/to/file'
+
+  The called node LIGHTS UP in the workflow canvas with animated particles on the teal wire.
+
+  NODE MATCHING (callNode resolves targets in this order):
+    1. Exact step ID match (e.g. "step_abc123")
+    2. Exact label match, case-insensitive (e.g. "Read File" == "read file")
+    3. Normalized label match ("read_file" matches "Read File", "read-file", "Read_File")
+
+  callNode vs callTool:
+    • callTool(name, args) — runs a tool INVISIBLY, no visual feedback in the canvas
+    • callNode(nodeId, data) — routes to a named SIBLING NODE in the same workflow.
+      Shows running → completed animation on the teal wire. Uses {{caller.X}} templates.
+
+  WIRE DEFINITION:
+    { "from": "ui_node_id", "to": "target_node_id", "callNode": true }
+    Always include callNode: true — without it the engine auto-traverses the wire.
+
+FILE/FOLDER PICKER (native OS dialogs, no tkinter needed):
+  stuard.pickFile({ title, filters, multiple }) → { canceled, filePaths }
+  stuard.pickFolder({ title, multiple }) → { canceled, filePaths }
+  stuard.pickSavePath({ title, defaultPath, filters }) → { canceled, filePath }
+
+  Example — folder picker:
+    const result = await stuard.pickFolder({ title: 'Select Project' });
+    if (!result.canceled) setWorkspace(result.filePaths[0]);
+
+  Example — file picker with filters:
+    const result = await stuard.pickFile({
+      title: 'Select Image',
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'gif'] }],
+      multiple: false
+    });
+
+FILE I/O (read/write from component, no tool node needed):
+  const text = await stuard.readFile('/path/to/file.txt');
+  await stuard.writeFile('/path/to/output.txt', content);
+
+CLIPBOARD:
+  await stuard.copyToClipboard('text');
+  const text = await stuard.readClipboard();
+
+NOTIFICATIONS:
+  stuard.notify('Title', 'Body text');
 
 CRITICAL RULES:
   1. EVERY button MUST have onClick. Use onClick={() => stuard.submit(data)} for submit/done/action buttons.

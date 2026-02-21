@@ -123,6 +123,8 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     'data',
     'pages',
     'startPage',
+    '__flowSteps',
+    '__stepId',
   ]);
 
   for (const [key, val] of Object.entries(args || {})) {
@@ -250,8 +252,11 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
   }
 
   customUiWindows.set(id, win);
-  windowData.set(id, { data: safeData, flowId, keepOpen, pages, currentPage: startPage });
-  ctx.logFn(`custom_ui: Stored window "${id}" in map (total: ${customUiWindows.size})`);
+  // Store flow spec steps for callNode resolution (node-routing architecture)
+  const flowSpec = args?.__flowSteps ? { steps: args.__flowSteps } : undefined;
+  const stepId = args?.__stepId || undefined;
+  windowData.set(id, { data: safeData, flowId, keepOpen, pages, currentPage: startPage, flowSpec, stepId });
+  ctx.logFn(`custom_ui: Stored window "${id}" in map (total: ${customUiWindows.size})${flowSpec ? ` with ${flowSpec.steps?.length || 0} sibling nodes` : ''}`);
 
   // Generate enhanced HTML
   const htmlContent = generateEnhancedCustomUiHtml({

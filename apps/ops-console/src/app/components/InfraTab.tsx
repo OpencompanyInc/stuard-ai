@@ -67,11 +67,11 @@ export default function InfraTab({ syncSystems, dbStats, serverStatus, onRefresh
             { label: 'Status', value: syncSystems?.sharedSpaces?.status || 'unknown', isStatus: true },
             { label: 'Last Sync', value: formatTimeAgo(syncSystems?.sharedSpaces?.recentSync) },
           ]} />
-        <SyncCard icon={HardDrive} color="blue" name="Memory Outbox" subtitle="Offline Delivery"
+        <SyncCard icon={HardDrive} color="blue" name="Feedback" subtitle="Bugs & Features"
           rows={[
-            { label: 'Total', value: String(syncSystems?.memoryOutbox?.total ?? '—') },
-            { label: 'Pending', value: String(syncSystems?.memoryOutbox?.pending ?? 0), warn: (syncSystems?.memoryOutbox?.pending || 0) > 0 },
-            { label: 'Failed', value: String(syncSystems?.memoryOutbox?.failed ?? 0), error: (syncSystems?.memoryOutbox?.failed || 0) > 0 },
+            { label: 'Total', value: String(syncSystems?.feedback?.total ?? '—') },
+            { label: 'Open Bugs', value: String(syncSystems?.feedback?.openBugs ?? 0), warn: (syncSystems?.feedback?.openBugs || 0) > 0 },
+            { label: 'Open Features', value: String(syncSystems?.feedback?.openFeatures ?? 0) },
           ]} />
         <SyncCard icon={Webhook} color="amber" name="Webhooks" subtitle="Event Triggers"
           rows={[
@@ -92,11 +92,11 @@ export default function InfraTab({ syncSystems, dbStats, serverStatus, onRefresh
         <div className="card p-5">
           <div className="flex items-center gap-3 mb-3">
             <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center"><Database className="w-4 h-4 text-blue-600" /></div>
-            <div><div className="text-sm font-semibold text-gray-800">Conversations</div><div className="text-xs text-gray-500">AI Chat Sessions</div></div>
+            <div><div className="text-sm font-semibold text-gray-800">Shared Spaces</div><div className="text-xs text-gray-500">E2E Encrypted</div></div>
           </div>
           <div className="space-y-1.5">
-            <Row label="Total" value={String(syncSystems?.conversations?.total?.toLocaleString() ?? '—')} />
-            <Row label="Messages" value={String(syncSystems?.conversations?.messages?.toLocaleString() ?? '—')} />
+            <Row label="Total" value={String(syncSystems?.sharedSpaces?.total ?? '—')} />
+            <Row label="Status" value={syncSystems?.sharedSpaces?.status || 'unknown'} />
           </div>
         </div>
         <div className="card p-5">

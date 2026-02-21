@@ -568,16 +568,40 @@ THE `stuard` API (available in component code)
 
 **TOOL CALLING:**
 ```jsx
-const result = await stuard.callTool('get_clipboard_content');
+const result = await stuard.callTool('get_clipboard_content');    // Invisible, no canvas animation
 const search = await stuard.callTool('web_search', { query: 'hello' });
 const aiResult = await stuard.callTool('ai_inference', { prompt: 'Summarize', input: text });
 ```
 
-**FILE DIALOGS:**
+**NODE ROUTING (callNode) — call sibling nodes by ID or label:**
 ```jsx
-const file = await stuard.pickFile({ title: 'Select', filters: [{ name: 'Images', extensions: ['jpg', 'png'] }] });
-const folder = await stuard.pickFolder({ title: 'Select Folder' });
-const savePath = await stuard.pickSavePath({ title: 'Save As', defaultPath: 'out.txt' });
+// Call by step ID:
+const result = await stuard.callNode('step_abc123', { filePath: '/path/to/file' });
+// Call by label (case-insensitive, whitespace/underscore/hyphen agnostic):
+const result = await stuard.callNode('Read File', { filePath: '/path/to/file' });
+const result = await stuard.callNode('setup_db', {});
+const result = await stuard.callNode('Scan Files', { workspace: path });
+```
+callNode dispatches to sibling nodes connected by callNode wires. The target node's
+args use {{caller.X}} templates which are replaced with the data you pass.
+The node lights up in the canvas with animated particles on the teal wire.
+Connect with: { "from": "ui_node_id", "to": "target_node_id", "callNode": true }
+
+Node matching priority:
+  1. Exact step ID match
+  2. Exact label match (case-insensitive)
+  3. Normalized label match (whitespace/underscore/hyphen agnostic)
+
+**FILE/FOLDER PICKER (native OS dialogs — no tkinter/python needed):**
+```jsx
+const file = await stuard.pickFile({ title: 'Select', filters: [{ name: 'Images', extensions: ['jpg', 'png'] }], multiple: false });
+// → { canceled: false, filePaths: ['C:/img.png'] }
+
+const folder = await stuard.pickFolder({ title: 'Select Project', multiple: false });
+// → { canceled: false, filePaths: ['C:/Users/me/project'] }
+
+const savePath = await stuard.pickSavePath({ title: 'Save As', defaultPath: 'out.txt', filters: [{ name: 'Text', extensions: ['txt'] }] });
+// → { canceled: false, filePath: 'C:/Downloads/out.txt' }
 ```
 
 **FILE I/O:** `await stuard.readFile(path)` / `await stuard.writeFile(path, content)`

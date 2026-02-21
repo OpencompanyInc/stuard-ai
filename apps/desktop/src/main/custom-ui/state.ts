@@ -8,6 +8,10 @@ export type CustomUiWindowData = {
   currentPage?: string;
   pages?: Record<string, any>;
   subscribedVars?: Set<string>;
+  /** The parsed workflow spec — stored so callNode can resolve sibling steps */
+  flowSpec?: { steps?: Array<{ id: string; tool?: string; args?: any; [k: string]: any }> };
+  /** The engine step ID of this custom_ui node — used as wireFromId for callNode animations */
+  stepId?: string;
 };
 
 export const customUiWindows = new Map<string, BrowserWindow>();

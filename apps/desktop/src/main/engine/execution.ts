@@ -78,6 +78,15 @@ export async function executeStep(
       // Pass flowId so tools can track which workflow started them
       // (used by custom_ui for stop button, capture_media/streams for cleanup on stop)
       const toolArgs = { ...mergedArgs, flowId: spec.id };
+
+      // For custom_ui nodes, also pass the sibling steps so callNode can resolve
+      // nodes without hitting disk. This enables the node-routing architecture
+      // where the UI dispatches to standalone tool nodes in the graph.
+      if (toolName === 'custom_ui' && Array.isArray(spec.steps)) {
+        toolArgs.__flowSteps = spec.steps.map(s => ({ id: s.id, label: s.label, tool: s.tool, args: s.args }));
+        toolArgs.__stepId = step.id; // The engine step ID, for callNode wire animations
+      }
+
       result = await execTool(toolName, toolArgs, engineCtx);
     }
 

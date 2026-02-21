@@ -19,18 +19,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
   const sp = req.nextUrl.searchParams;
 
   // ── analytics ──
+  // Only track operational/usage data — no private data (conversations, messages, memories)
   if (route === 'analytics') {
     const days = Math.min(90, Math.max(1, Number(sp.get('days') || 30)));
     const since = new Date(Date.now() - days * 86400000).toISOString();
 
-    const [profilesRes, convsRes, usageRes, msgsRes, profilesTotal, convsTotal, msgsTotal] = await Promise.all([
+    const [profilesRes, usageRes, profilesTotal] = await Promise.all([
       supabase.from('profiles').select('created_at').gte('created_at', since),
-      supabase.from('conversations').select('created_at, model').gte('created_at', since),
       supabase.from('usage_events').select('model, prompt_tokens, completion_tokens, total_tokens, cost_usd, created_at').gte('created_at', since),
-      supabase.from('messages').select('created_at, role').gte('created_at', since),
       supabase.from('profiles').select('id', { count: 'exact', head: true }),
-      supabase.from('conversations').select('id', { count: 'exact', head: true }),
-      supabase.from('messages').select('id', { count: 'exact', head: true }),
     ]);
 
     function groupByDay(items: Record<string, string>[], dateField = 'created_at') {
@@ -77,32 +74,21 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
       usageTrend.push({ date: key, tokens: usageByDay[key]?.tokens || 0, cost: usageByDay[key]?.cost || 0, requests: usageByDay[key]?.requests || 0 });
     }
 
-    const roleBreakdown: Record<string, number> = {};
-    for (const m of msgsRes.data || []) {
-      const role = m.role || 'unknown';
-      roleBreakdown[role] = (roleBreakdown[role] || 0) + 1;
-    }
-
     const totalTokens = (usageRes.data || []).reduce((s: number, u: Record<string, number>) => s + (u.total_tokens || 0), 0);
     const totalCost = (usageRes.data || []).reduce((s: number, u: Record<string, number>) => s + (Number(u.cost_usd) || 0), 0);
+    const totalRequests = (usageRes.data || []).length;
 
     return ok({
       period: { days, since },
       signupTrend: groupByDay(profilesRes.data || []),
-      conversationTrend: groupByDay(convsRes.data || []),
-      messageTrend: groupByDay(msgsRes.data || []),
       usageTrend,
       modelBreakdown: Object.entries(modelMap).map(([model, d]) => ({ model, ...d })).sort((a, b) => b.tokens - a.tokens),
-      roleBreakdown,
       totals: {
         users: profilesTotal.count || 0,
-        conversations: convsTotal.count || 0,
-        messages: msgsTotal.count || 0,
         periodSignups: (profilesRes.data || []).length,
-        periodConversations: (convsRes.data || []).length,
-        periodMessages: (msgsRes.data || []).length,
         totalTokens,
         totalCost: Math.round(totalCost * 100) / 100,
+        totalRequests,
       },
     });
   }
@@ -147,10 +133,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
       usageMap[u.user_id].requests += 1;
     }
 
-    const { data: convData } = await supabase.from('conversations').select('user_id');
-    const convMap: Record<string, number> = {};
-    for (const c of convData || []) convMap[c.user_id] = (convMap[c.user_id] || 0) + 1;
-
     let users = (profiles || []).map((p: Record<string, unknown>) => {
       const authInfo = emailMap[p.user_id as string] || { email: '', lastSignIn: null, createdAt: p.created_at };
       const usage = usageMap[p.user_id as string] || { tokens: 0, cost: 0, requests: 0 };
@@ -162,7 +144,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
         monthlyTokenLimit: p.monthly_token_limit,
         createdAt: p.created_at,
         lastSignIn: authInfo.lastSignIn,
-        conversations: convMap[p.user_id as string] || 0,
         tokensLast30d: usage.tokens,
         costLast30d: Math.round(usage.cost * 100) / 100,
         requestsLast30d: usage.requests,
@@ -227,8 +208,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
   // ── database-stats ──
   if (route === 'database-stats') {
     const tables = [
-      'profiles', 'conversations', 'messages', 'devices', 'usage_events',
-      'shared_spaces', 'space_shares', 'memory_outbox',
+      'profiles', 'devices', 'usage_events',
+      'shared_spaces', 'space_shares',
       'webhooks', 'webhook_events', 'webhook_providers', 'webhook_queue',
       'marketplace_workflows', 'marketplace_ratings', 'marketplace_downloads',
       'external_accounts', 'beta_users', 'waitlist', 'feedback', 'feedback_comments',
@@ -246,8 +227,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
   // ── recent-activity ──
   if (route === 'recent-activity') {
     const activityLimit = Math.min(100, Math.max(1, Number(sp.get('limit') || 30)));
-    const [recentConvs, recentProfiles, recentFeedback, recentDownloads, recentBeta, recentWaitlist] = await Promise.all([
-      supabase.from('conversations').select('id, user_id, title, model, created_at').order('created_at', { ascending: false }).limit(15),
+    // Only show operational activity — no private data (conversations, messages, memories)
+    const [recentProfiles, recentFeedback, recentDownloads, recentBeta, recentWaitlist] = await Promise.all([
       supabase.from('profiles').select('user_id, plan, created_at').order('created_at', { ascending: false }).limit(10),
       supabase.from('feedback').select('id, type, status, title, created_at').order('created_at', { ascending: false }).limit(10),
       supabase.from('marketplace_downloads').select('id, workflow_id, created_at').order('created_at', { ascending: false }).limit(10),
@@ -256,7 +237,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
     ]);
 
     const userIds = new Set<string>();
-    for (const c of recentConvs.data || []) userIds.add(c.user_id);
     for (const p of recentProfiles.data || []) userIds.add(p.user_id);
     const emailLookup: Record<string, string> = {};
     if (userIds.size > 0) {
@@ -270,10 +250,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
 
     type Activity = { type: string; description: string; timestamp: string; meta?: Record<string, unknown> };
     const activities: Activity[] = [];
-    for (const c of recentConvs.data || []) {
-      const email = emailLookup[c.user_id] || c.user_id.slice(0, 8);
-      activities.push({ type: 'conversation', description: `${email} started "${c.title || 'Untitled'}"`, timestamp: c.created_at, meta: { model: c.model } });
-    }
     for (const p of recentProfiles.data || []) {
       const email = emailLookup[p.user_id] || p.user_id.slice(0, 8);
       activities.push({ type: 'signup', description: `${email} signed up (${p.plan})`, timestamp: p.created_at });
@@ -289,25 +265,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
 
   // ── sync-systems ──
   if (route === 'sync-systems') {
+    // Only track infrastructure health — no private data (conversations, messages, memories)
     const [
-      sharedSpacesResult, memoryOutboxResult, webhooksResult,
-      webhookQueueResult, devicesResult, conversationsResult,
-      messagesResult, marketplaceResult, feedbackResult,
+      sharedSpacesResult, webhooksResult,
+      webhookQueueResult, devicesResult,
+      marketplaceResult, feedbackResult,
     ] = await Promise.all([
       supabase.from('shared_spaces').select('id, synced_at', { count: 'exact', head: false }).order('synced_at', { ascending: false }).limit(5),
-      supabase.from('memory_outbox').select('id, status, attempts, created_at', { count: 'exact', head: false }),
       supabase.from('webhooks').select('id, is_active, trigger_count', { count: 'exact', head: false }),
       supabase.from('webhook_queue').select('id, status', { count: 'exact', head: false }).eq('status', 'pending'),
       supabase.from('devices').select('id, status, last_seen_at, platform', { count: 'exact', head: false }),
-      supabase.from('conversations').select('id', { count: 'exact', head: true }),
-      supabase.from('messages').select('id', { count: 'exact', head: true }),
       supabase.from('marketplace_workflows').select('id, download_count', { count: 'exact', head: false }),
       supabase.from('feedback').select('id, type, status', { count: 'exact', head: false }),
     ]);
-
-    const memData = memoryOutboxResult.data || [];
-    const pendingOutbox = memData.filter((m: Record<string, string>) => m.status === 'pending').length;
-    const failedOutbox = memData.filter((m: Record<string, string>) => m.status === 'failed').length;
 
     const whData = webhooksResult.data || [];
     const activeWebhooks = whData.filter((w: Record<string, boolean>) => w.is_active).length;
@@ -329,10 +299,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
       timestamp: new Date().toISOString(),
       systems: {
         sharedSpaces: { status: 'operational', total: sharedSpacesResult.count || 0, recentSync: sharedSpacesResult.data?.[0]?.synced_at || null },
-        memoryOutbox: { status: failedOutbox > 10 ? 'degraded' : 'operational', total: memoryOutboxResult.count || 0, pending: pendingOutbox, failed: failedOutbox },
         webhooks: { status: 'operational', total: webhooksResult.count || 0, active: activeWebhooks, totalTriggers, pendingDeliveries: webhookQueueResult.count || 0 },
         devices: { status: 'operational', total: devicesResult.count || 0, online: onlineDevices, byPlatform: platformCounts },
-        conversations: { status: 'operational', total: conversationsResult.count || 0, messages: messagesResult.count || 0 },
         marketplace: { status: 'operational', workflows: marketplaceResult.count || 0, totalDownloads },
         feedback: { status: 'operational', total: feedbackResult.count || 0, openBugs, openFeatures },
       },
@@ -365,6 +333,74 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
       startedAt: new Date(Date.now() - uptimeSec * 1000).toISOString(),
       timestamp: new Date().toISOString(),
     });
+  }
+
+  // ── feedback (list) ──
+  if (route === 'feedback') {
+    const type = sp.get('type') || undefined; // 'bug' | 'feature' | undefined
+    const status = sp.get('status') || undefined; // 'open' | 'in_progress' | 'resolved' | 'closed'
+    const limitRaw = Number(sp.get('limit') || 50);
+    const offsetRaw = Number(sp.get('offset') || 0);
+    const limit = Math.max(1, Math.min(200, Math.floor(limitRaw)));
+    const offset = Math.max(0, Math.floor(offsetRaw));
+
+    let query = supabase
+      .from('feedback')
+      .select('id, type, status, priority, title, description, reporter_email, assigned_to, created_at, updated_at, resolved_at', { count: 'exact' })
+      .order('created_at', { ascending: false });
+
+    if (type) query = query.eq('type', type);
+    if (status) query = query.eq('status', status);
+
+    const { data, error, count } = await query.range(offset, offset + limit - 1);
+    if (error) return err(500, error.message);
+
+    // Stats summary
+    const { data: allFeedback } = await supabase.from('feedback').select('type, status, priority');
+    const stats = {
+      total: allFeedback?.length || 0,
+      openBugs: allFeedback?.filter(f => f.type === 'bug' && f.status === 'open').length || 0,
+      openFeatures: allFeedback?.filter(f => f.type === 'feature' && f.status === 'open').length || 0,
+      inProgress: allFeedback?.filter(f => f.status === 'in_progress').length || 0,
+      resolved: allFeedback?.filter(f => f.status === 'resolved' || f.status === 'closed').length || 0,
+      byPriority: {
+        critical: allFeedback?.filter(f => f.priority === 'critical').length || 0,
+        high: allFeedback?.filter(f => f.priority === 'high').length || 0,
+        medium: allFeedback?.filter(f => f.priority === 'medium').length || 0,
+        low: allFeedback?.filter(f => f.priority === 'low').length || 0,
+      },
+    };
+
+    // Fetch comments count per feedback item
+    const ids = (data || []).map(d => d.id);
+    let commentCounts: Record<string, number> = {};
+    if (ids.length > 0) {
+      const { data: comments } = await supabase.from('feedback_comments').select('feedback_id').in('feedback_id', ids);
+      for (const c of comments || []) commentCounts[c.feedback_id] = (commentCounts[c.feedback_id] || 0) + 1;
+    }
+
+    return ok({
+      items: (data || []).map(d => ({ ...d, commentCount: commentCounts[d.id] || 0 })),
+      total: count || 0,
+      limit,
+      offset,
+      stats,
+    });
+  }
+
+  // ── feedback/:id (single with comments) ──
+  if (slug[0] === 'feedback' && slug[1]) {
+    const feedbackId = slug[1];
+    const { data: item, error } = await supabase.from('feedback').select('*').eq('id', feedbackId).single();
+    if (error) return err(404, 'Feedback item not found');
+
+    const { data: comments } = await supabase
+      .from('feedback_comments')
+      .select('id, author, content, created_at')
+      .eq('feedback_id', feedbackId)
+      .order('created_at', { ascending: true });
+
+    return ok({ item, comments: comments || [] });
   }
 
   return err(404, 'Unknown ops route');
@@ -424,6 +460,43 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
     return ok({ user: betaUser, waitlistEntry, waitlistAction });
   }
 
+  // ── feedback (create) ──
+  if (route === 'feedback') {
+    const { type, title, description, reporter_email, priority } = body;
+    if (!type || !['bug', 'feature'].includes(type)) return err(400, 'type must be bug or feature');
+    if (!title?.trim()) return err(400, 'title_required');
+
+    const { data, error } = await supabase
+      .from('feedback')
+      .insert({
+        type,
+        status: 'open',
+        priority: priority || 'medium',
+        title: title.trim(),
+        description: description || null,
+        reporter_email: reporter_email || null,
+      })
+      .select()
+      .single();
+    if (error) return err(500, error.message);
+    return ok({ item: data }, 201);
+  }
+
+  // ── feedback/:id/comments (add comment) ──
+  if (slug[0] === 'feedback' && slug[1] && slug[2] === 'comments') {
+    const feedbackId = slug[1];
+    const { content, author } = body;
+    if (!content?.trim()) return err(400, 'content_required');
+
+    const { data, error } = await supabase
+      .from('feedback_comments')
+      .insert({ feedback_id: feedbackId, content: content.trim(), author: author || 'ops-console' })
+      .select()
+      .single();
+    if (error) return err(500, error.message);
+    return ok({ comment: data }, 201);
+  }
+
   // ── deployments (record) ──
   if (route === 'deployments') {
     const { channel, version, git_branch, git_commit_sha, git_tag, targets, workflow_run_url, workflow_run_id, metadata } = body;
@@ -480,6 +553,24 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sl
   if (!supabase) return err(500, 'Supabase not configured.');
   const { slug } = await params;
   const body = await req.json().catch(() => ({}));
+
+  // ── feedback/:id (update status, assignment, priority) ──
+  if (slug[0] === 'feedback' && slug[1]) {
+    const feedbackId = slug[1];
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (body.status) {
+      updates.status = body.status;
+      if (['resolved', 'closed'].includes(body.status)) updates.resolved_at = new Date().toISOString();
+    }
+    if (body.priority) updates.priority = body.priority;
+    if (body.assigned_to !== undefined) updates.assigned_to = body.assigned_to;
+    if (body.title) updates.title = body.title;
+    if (body.description !== undefined) updates.description = body.description;
+
+    const { data, error } = await supabase.from('feedback').update(updates).eq('id', feedbackId).select().single();
+    if (error) return err(500, error.message);
+    return ok({ item: data });
+  }
 
   // ── deployments/:id ──
   if (slug[0] === 'deployments' && slug[1]) {

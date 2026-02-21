@@ -47,7 +47,23 @@ Examples:
     tools: z.array(z.string()).optional().describe('Restrict which tools the agent can use. If omitted, agent gets core tools. Use [] for no tools (pure reasoning).'),
     maxSteps: z.coerce.number().int().min(1).max(50).default(10).describe('Maximum tool-use steps before forcing a final answer'),
     timeoutMs: z.coerce.number().int().min(5000).max(600000).default(300000).describe('Timeout in milliseconds (default 5 min)'),
-    injectMemory: z.boolean().optional().default(false).describe('When true, injects the user\'s personal context (identity, preferences, instructions, relevant memories) into the agent — just like the main Stuard assistant. Enable this when the agent needs to know who the user is or follow their custom instructions.'),
+    injectMemory: z.boolean().optional().default(false).describe('Legacy: when true, injects all memory. Use `memory` for granular control.'),
+    memory: z.object({
+      enabled: z.boolean().optional().default(false),
+      lenses: z.object({
+        identity: z.boolean().optional().default(true),
+        directives: z.boolean().optional().default(true),
+        bio: z.boolean().optional().default(true),
+        relatedMemories: z.boolean().optional().default(true),
+        entities: z.boolean().optional().default(true),
+      }).optional(),
+      maxFacts: z.number().optional().default(6),
+      conversationHistory: z.array(z.object({
+        role: z.enum(['user', 'assistant']),
+        content: z.string(),
+      })).optional(),
+      customFacts: z.array(z.string()).optional(),
+    }).optional().describe('Rich memory config: per-lens toggles, conversation history, custom facts.'),
     stream: z.boolean().optional().default(false).describe('When true, returns a streamId immediately and pushes tokens as text chunks to the stream. Connect a stream wire from this step to process tokens in real-time.'),
   }),
   outputSchema: z.object({
@@ -79,6 +95,7 @@ Examples:
       timeoutMs = AGENT_NODE_TIMEOUT_MS,
       stream: streamMode = false,
       injectMemory = false,
+      memory: memoryConfig,
     } = raw as any;
 
     if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
@@ -148,14 +165,23 @@ Examples:
       }
 
       // ── MEMORY INJECTION: fetch user identity, directives, bio, relevant facts ──
+      // Resolve memory config: new `memory` object takes precedence over legacy `injectMemory` boolean
+      const memCfg = memoryConfig?.enabled
+        ? memoryConfig
+        : injectMemory
+          ? { enabled: true, lenses: { identity: true, directives: true, bio: true, relatedMemories: true, entities: true }, maxFacts: 6, conversationHistory: [] as any[], customFacts: [] as string[] }
+          : null;
+
       let memoryContext = '';
-      if (injectMemory) {
+      if (memCfg?.enabled) {
         try {
+          const lenses = memCfg.lenses ?? {};
           const hasBridge = hasClientBridge();
           writeLog('agent_node_memory_start', {
             hasBridge,
             userId,
             prompt: prompt.slice(0, 50),
+            lenses,
           });
           await safeToolWrite(writer, {
             type: 'tool_event',
@@ -164,7 +190,6 @@ Examples:
           });
 
           if (!hasBridge) {
-            // No bridge — try quick context via direct agent connection as fallback
             writeLog('agent_node_memory_no_bridge', { fallback: 'buildQuickContext' });
             try {
               const quickCtx = await buildQuickContext();
@@ -175,11 +200,11 @@ Examples:
             } catch {}
           } else {
             const knowledgeCtx = await buildKnowledgeContext(prompt, {
-              includeIdentity: true,
-              includeDirectives: true,
-              includeBio: true,
-              maxGlobalFacts: 6,
-              detectEntities: true,
+              includeIdentity: lenses.identity !== false,
+              includeDirectives: lenses.directives !== false,
+              includeBio: lenses.bio !== false,
+              maxGlobalFacts: lenses.relatedMemories !== false ? (memCfg.maxFacts ?? 6) : 0,
+              detectEntities: lenses.entities !== false,
             });
             if (knowledgeCtx && knowledgeCtx.text.trim()) {
               memoryContext = knowledgeCtx.text.trim();
@@ -193,6 +218,14 @@ Examples:
               });
             } else {
               writeLog('agent_node_memory_empty', { hasCtx: !!knowledgeCtx });
+            }
+          }
+
+          // Append custom facts
+          if (Array.isArray(memCfg.customFacts) && memCfg.customFacts.length > 0) {
+            const validFacts = memCfg.customFacts.filter((f: string) => typeof f === 'string' && f.trim());
+            if (validFacts.length > 0) {
+              memoryContext += '\n\n[CUSTOM FACTS]\n' + validFacts.map((f: string) => `- ${f.trim()}`).join('\n');
             }
           }
         } catch (memErr: any) {
@@ -222,6 +255,16 @@ Examples:
       if (memoryContext) {
         agentMessages.push({ role: 'system', content: memoryContext });
       }
+
+      // Inject conversation history as context messages
+      if (memCfg && Array.isArray(memCfg.conversationHistory) && memCfg.conversationHistory.length > 0) {
+        for (const msg of memCfg.conversationHistory) {
+          if (msg.role && msg.content?.trim()) {
+            agentMessages.push({ role: msg.role as 'user' | 'assistant', content: msg.content.trim() });
+          }
+        }
+      }
+
       agentMessages.push({ role: 'user', content: userMessage });
 
       // ── STREAM MODE: create stream, run agent in background, return immediately ──
@@ -249,6 +292,7 @@ Examples:
             // Token batching: flush every 50ms or when buffer exceeds threshold
             let tokenBuffer = '';
             let flushTimer: ReturnType<typeof setTimeout> | null = null;
+            let streamToolCallCount = 0;
             const FLUSH_INTERVAL_MS = 50;
             const FLUSH_SIZE_THRESHOLD = 80;
 
@@ -288,6 +332,34 @@ Examples:
                       scheduleFlush();
                     }
                   }
+                } else if (evType === 'tool-call') {
+                  // Emit tool call events during streaming so the UI can show them
+                  streamToolCallCount++;
+                  const payload = (chunk as any).payload;
+                  await flushBuffer(); // flush buffered text before tool call
+                  await execLocalTool('stream_write', {
+                    streamId,
+                    chunk: JSON.stringify({
+                      type: 'tool_call',
+                      toolName: payload?.toolName,
+                      args: payload?.args,
+                      step: streamToolCallCount,
+                    }),
+                    chunkType: 'tool_call',
+                  }).catch(() => {});
+                } else if (evType === 'tool-result') {
+                  // Emit tool result events during streaming
+                  const payload = (chunk as any).payload;
+                  await execLocalTool('stream_write', {
+                    streamId,
+                    chunk: JSON.stringify({
+                      type: 'tool_result',
+                      toolName: payload?.toolName,
+                      result: payload?.result,
+                      step: streamToolCallCount,
+                    }),
+                    chunkType: 'tool_result',
+                  }).catch(() => {});
                 }
               }
               // Final flush of any remaining tokens

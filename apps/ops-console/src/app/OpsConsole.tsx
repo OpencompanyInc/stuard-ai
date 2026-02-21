@@ -3,15 +3,17 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   LayoutDashboard, BarChart3, Users, Rocket, Server, Shield, LogOut,
-  GitBranch, Clock, CheckCircle, AlertCircle, RefreshCw, Lock
+  GitBranch, Clock, CheckCircle, AlertCircle, RefreshCw, Lock, Bug
 } from 'lucide-react';
 import {
   StatusData, AnalyticsData, UserEntry, Activity as ActivityItem,
   SyncSystemData, ServerStatusData, BetaUser, WaitlistEntry, Deployment,
+  FeedbackEntry, FeedbackComment, FeedbackStats,
   fetchAnalytics, fetchUsers, fetchRecentActivity, fetchServerStatus,
   fetchSyncSystems as apiFetchSyncSystems, fetchDatabaseStats, fetchBetaUsers as apiFetchBetaUsers,
   fetchWaitlist as apiFetchWaitlist, upsertBetaUser, deleteBetaUser as apiDeleteBeta,
-  promoteWaitlistUser, fetchDeployments, recordDeployment, formatTimeAgo
+  promoteWaitlistUser, fetchDeployments, recordDeployment, formatTimeAgo,
+  fetchFeedback, fetchFeedbackItem, createFeedback, updateFeedback, addFeedbackComment
 } from './lib/api';
 
 import OverviewTab from './components/OverviewTab';
@@ -20,14 +22,16 @@ import UsersTab from './components/UsersTab';
 import DeployTab from './components/DeployTab';
 import InfraTab from './components/InfraTab';
 import AccessTab from './components/AccessTab';
+import FeedbackTab from './components/FeedbackTab';
 
-type Tab = 'overview' | 'analytics' | 'users' | 'deploy' | 'infra' | 'access';
+type Tab = 'overview' | 'analytics' | 'users' | 'deploy' | 'infra' | 'access' | 'feedback';
 
 const NAV_ITEMS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'analytics', label: 'Analytics', icon: BarChart3 },
   { id: 'users', label: 'Users', icon: Users },
   { id: 'deploy', label: 'Deployments', icon: Rocket },
+  { id: 'feedback', label: 'Feedback & Bugs', icon: Bug },
   { id: 'infra', label: 'Infrastructure', icon: Server },
   { id: 'access', label: 'Access Control', icon: Shield },
 ];
@@ -169,6 +173,17 @@ export default function OpsConsole() {
   const [deploymentsList, setDeploymentsList] = useState<Deployment[]>([]);
   const [latestByChannel, setLatestByChannel] = useState<Record<string, Deployment>>({});
 
+  // Feedback state
+  const [feedbackItems, setFeedbackItems] = useState<FeedbackEntry[]>([]);
+  const [feedbackTotal, setFeedbackTotal] = useState(0);
+  const [feedbackStats, setFeedbackStats] = useState<FeedbackStats | null>(null);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [feedbackFilterType, setFeedbackFilterType] = useState('');
+  const [feedbackFilterStatus, setFeedbackFilterStatus] = useState('');
+  const [feedbackSearch, setFeedbackSearch] = useState('');
+  const [selectedFeedback, setSelectedFeedback] = useState<FeedbackEntry | null>(null);
+  const [selectedFeedbackComments, setSelectedFeedbackComments] = useState<FeedbackComment[]>([]);
+
   const PAGE_SIZE = 50;
 
   // ─── Fetch functions ─────────────────────────────────────────────────────
@@ -238,6 +253,19 @@ export default function OpsConsole() {
     }
   }, []);
 
+  const loadFeedbackData = useCallback(async (type?: string, status?: string) => {
+    setFeedbackLoading(true);
+    const t = type ?? feedbackFilterType;
+    const s = status ?? feedbackFilterStatus;
+    const data = await fetchFeedback({ type: t || undefined, status: s || undefined, limit: 100 });
+    if (data) {
+      setFeedbackItems(data.items || []);
+      setFeedbackTotal(data.total || 0);
+      setFeedbackStats(data.stats || null);
+    }
+    setFeedbackLoading(false);
+  }, [feedbackFilterType, feedbackFilterStatus]);
+
   // ─── Initial load + refresh intervals ────────────────────────────────────
   useEffect(() => {
     loadStatus();
@@ -250,11 +278,12 @@ export default function OpsConsole() {
     loadWaitlist();
     loadUsers();
     loadDeployments();
+    loadFeedbackData();
 
     const fast = setInterval(loadStatus, 8000);
     const slow = setInterval(() => {
       loadAnalytics(); loadActivities(); loadSyncSystems(); loadDbStats();
-      loadServerStatus(); loadBetaUsers(); loadWaitlist(); loadDeployments();
+      loadServerStatus(); loadBetaUsers(); loadWaitlist(); loadDeployments(); loadFeedbackData();
     }, 60000);
 
     return () => { clearInterval(fast); clearInterval(slow); };
@@ -324,6 +353,45 @@ export default function OpsConsole() {
     setLoading(false);
   };
 
+  // ─── Feedback handlers ─────────────────────────────────────────────────
+  const handleFeedbackFilterType = (t: string) => { setFeedbackFilterType(t); loadFeedbackData(t, feedbackFilterStatus); };
+  const handleFeedbackFilterStatus = (s: string) => { setFeedbackFilterStatus(s); loadFeedbackData(feedbackFilterType, s); };
+  const handleFeedbackSearch = () => { loadFeedbackData(); };
+
+  const handleSelectFeedback = async (id: string) => {
+    const data = await fetchFeedbackItem(id);
+    if (data) {
+      setSelectedFeedback(data.item);
+      setSelectedFeedbackComments(data.comments || []);
+    }
+  };
+
+  const handleUpdateFeedbackStatus = async (id: string, status: string) => {
+    const result = await updateFeedback(id, { status });
+    if (result) { setMessage(`Status → ${status}`); await loadFeedbackData(); if (selectedFeedback?.id === id) handleSelectFeedback(id); }
+    else setMessage('Error: Failed to update status');
+  };
+
+  const handleUpdateFeedbackPriority = async (id: string, priority: string) => {
+    const result = await updateFeedback(id, { priority });
+    if (result) { await loadFeedbackData(); if (selectedFeedback?.id === id) handleSelectFeedback(id); }
+    else setMessage('Error: Failed to update priority');
+  };
+
+  const handleAddFeedbackComment = async (feedbackId: string, content: string) => {
+    const result = await addFeedbackComment(feedbackId, content);
+    if (result) handleSelectFeedback(feedbackId);
+    else setMessage('Error: Failed to add comment');
+  };
+
+  const handleCreateFeedback = async (fb: { type: 'bug' | 'feature'; title: string; description?: string; priority?: string }) => {
+    setLoading(true);
+    const result = await createFeedback(fb);
+    if (result) { setMessage('Feedback created'); await loadFeedbackData(); }
+    else setMessage('Error: Failed to create feedback');
+    setLoading(false);
+  };
+
   // ─── Handlers ─────────────────────────────────────────────────────────────
   const handleDaysChange = (d: number) => { setAnalyticsDays(d); loadAnalytics(d); };
   const handleUsersSearch = () => { setUsersPage(0); loadUsers(0, usersQuery); };
@@ -365,7 +433,7 @@ export default function OpsConsole() {
                 <span className="font-mono text-xs text-gray-700">{status.currentBranch}</span>
                 <div className={`w-1.5 h-1.5 rounded-full ml-1 ${status.isClean ? 'bg-emerald-500' : 'bg-amber-500'}`} />
               </div>
-              <button onClick={() => { loadStatus(); loadAnalytics(); loadSyncSystems(); loadDbStats(); loadServerStatus(); }}
+              <button onClick={() => { loadStatus(); loadAnalytics(); loadSyncSystems(); loadDbStats(); loadServerStatus(); loadFeedbackData(); }}
                 className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Refresh All">
                 <RefreshCw className="w-4 h-4" />
               </button>
@@ -399,6 +467,18 @@ export default function OpsConsole() {
             {activeTab === 'deploy' && (
               <DeployTab status={status} onAction={doAction} loading={loading}
                 deployments={deploymentsList} latestByChannel={latestByChannel} onRefreshDeploys={loadDeployments} />
+            )}
+            {activeTab === 'feedback' && (
+              <FeedbackTab
+                items={feedbackItems} stats={feedbackStats} total={feedbackTotal} loading={feedbackLoading}
+                filterType={feedbackFilterType} filterStatus={feedbackFilterStatus} searchQuery={feedbackSearch}
+                onFilterTypeChange={handleFeedbackFilterType} onFilterStatusChange={handleFeedbackFilterStatus}
+                onSearchChange={setFeedbackSearch} onSearch={handleFeedbackSearch}
+                onUpdateStatus={handleUpdateFeedbackStatus} onUpdatePriority={handleUpdateFeedbackPriority}
+                selectedItem={selectedFeedback} selectedComments={selectedFeedbackComments}
+                onSelectItem={handleSelectFeedback} onCloseDetail={() => { setSelectedFeedback(null); setSelectedFeedbackComments([]); }}
+                onAddComment={handleAddFeedbackComment} onCreateFeedback={handleCreateFeedback}
+              />
             )}
             {activeTab === 'infra' && (
               <InfraTab syncSystems={syncSystems} dbStats={dbStats} serverStatus={serverStatus}

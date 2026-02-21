@@ -50,7 +50,7 @@ function preprocessMessageContent(content: string): string {
   if (!content) return '';
   
   // 0. Escape dollar signs used for currency to prevent LaTeX parsing
-  let processed = content.replace(/\$(\d[\d,]*\.?\d*)/g, '\\$$1');
+  let processed = content.replace(/\$(\d[\d,]*\.?\d*)/g, '\\$$$1');
   
   // 1. Replace <<path>> with ![attachment](path)
   processed = processed.replace(/<<([^<>]+)>>/g, '![attachment](<$1>)');
