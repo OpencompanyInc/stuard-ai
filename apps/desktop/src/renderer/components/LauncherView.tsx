@@ -773,8 +773,8 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                   className="w-full bg-transparent outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-semibold min-w-0 resize-none leading-5 py-2 overflow-y-auto custom-scrollbar px-3"
                   placeholder="Just ask Stuard"
                   value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={(e) => {
+                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
+                  onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
                     if ((e.nativeEvent as any)?.isComposing) return;
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();

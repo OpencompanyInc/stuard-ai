@@ -274,7 +274,7 @@ function LauncherItem({ item, index, scrollX, totalItems, isActive, onClick }: L
 
     return (
         <motion.div
-            onClick={(e) => {
+            onClick={() => {
                 onClick();
                 if (isActive) item.action();
             }}

@@ -125,7 +125,7 @@ export default function CommandPalette({ open, onClose, commands, onQueryChange,
             exit={{ opacity: 0, scale: 0.95, y: -20 }}
             transition={{ type: "spring", stiffness: 300, damping: 30 }}
             className="w-[640px] max-w-[90vw] flex flex-col rounded-2xl bg-[#1e1e1e]/90 bg-opacity-90 backdrop-blur-xl border border-white/10 shadow-2xl overflow-hidden font-sans text-white"
-            onClick={e => e.stopPropagation()}
+            onClick={(e: React.MouseEvent<HTMLDivElement>) => e.stopPropagation()}
           >
             {/* Search Input */}
             <div className="relative border-b border-white/10 p-4 shrink-0 flex items-center gap-3">
@@ -134,7 +134,7 @@ export default function CommandPalette({ open, onClose, commands, onQueryChange,
               <input
                 ref={inputRef}
                 value={query}
-                onChange={(e) => { setQuery(e.target.value); setIndex(0); }}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setQuery(e.target.value); setIndex(0); }}
                 placeholder="Type a command, or search workflows..."
                 className="w-full bg-transparent text-lg text-white/90 placeholder:text-white/30 outline-none pl-8 h-8 font-medium"
                 autoFocus

@@ -168,7 +168,7 @@ const Modal: React.FC<{ isOpen: boolean; onClose: () => void; title: string; chi
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 10 }}
         className="bg-theme-card rounded-2xl w-full max-w-md overflow-hidden border border-theme shadow-2xl"
-        onClick={e => e.stopPropagation()}
+        onClick={(e: React.MouseEvent<HTMLDivElement>) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-theme">
           <h3 className="font-semibold text-theme-fg text-[15px]">{title}</h3>

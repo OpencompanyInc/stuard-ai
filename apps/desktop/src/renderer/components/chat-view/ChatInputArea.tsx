@@ -188,8 +188,8 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             )}
             placeholder={showFileNav ? "Type to filter context..." : "Just ask Stuard"}
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
+            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
+            onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
               if ((e.nativeEvent as any)?.isComposing) return;
 
               if (showFileNav && fileNavRef?.current) {

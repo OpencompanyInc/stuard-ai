@@ -1613,7 +1613,7 @@ Search {activeEngine.name}
                   <TextareaAutosize
                     ref={setTextareaRef}
                     value={query}
-                    onChange={(e) => setQuery(e.target.value)}
+                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
                     onKeyDown={handleKeyDown}
                     onPaste={onPaste}
                     onHeightChange={handleHeightChange}
@@ -1752,7 +1752,7 @@ Search {activeEngine.name}
                 ref={setTextareaRef}
                 data-onboarding="input-area"
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={onPaste}
                 placeholder={showFileNav ? "Type to filter context..." : "Just ask Stuard"}

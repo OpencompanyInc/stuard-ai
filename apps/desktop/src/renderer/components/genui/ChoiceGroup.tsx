@@ -54,7 +54,7 @@ export const ChoiceGroup: React.FC<ChoiceGroupProps> = ({
           return (
             <motion.button
               key={opt.id}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                 e.stopPropagation();
                 if (!isDisabled) {
                   onSelect(opt.id);
