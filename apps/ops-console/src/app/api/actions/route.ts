@@ -363,11 +363,11 @@ export async function POST(req: Request) {
 
         if (!workflowResult.ok) {
           return NextResponse.json({ 
-            message: `Pushed ${sourceBranch} to develop, but workflow trigger failed: ${workflowResult.error}. You may need to manually run the workflow.` 
-          });
+            error: `Pushed ${sourceBranch} to develop, but workflow trigger failed: ${workflowResult.error}. You may need to manually run the workflow.` 
+          }, { status: 502 });
         }
 
-        return NextResponse.json({ message: `Shipped ${sourceBranch} to Beta (develop) and triggered CI [${targetLabel}]` });
+        return NextResponse.json({ message: `Shipped ${sourceBranch} to Beta (develop) and triggered release [${targetLabel}]` });
       }
 
       // Legacy preview action: just push current branch
@@ -397,17 +397,18 @@ export async function POST(req: Request) {
           {
             deploy_cloud: String(targets?.cloud ?? true),
             deploy_website: String(targets?.website ?? true),
+            build_desktop: String(targets?.desktop ?? true),
           },
           github
         );
 
         if (!workflowResult.ok) {
           return NextResponse.json({ 
-            message: `Pushed ${current}, but staging workflow trigger failed: ${workflowResult.error}` 
-          });
+            error: `Pushed ${current}, but staging workflow trigger failed: ${workflowResult.error}` 
+          }, { status: 502 });
         }
 
-        return NextResponse.json({ message: `Shipped ${current} to Staging and triggered CI [${targetLabel}]` });
+        return NextResponse.json({ message: `Shipped ${current} to Staging and triggered release [${targetLabel}]` });
       }
 
       // 4. PRODUCTION (main) -----------------------------------------------
@@ -446,11 +447,11 @@ export async function POST(req: Request) {
         
         if (!workflowResult.ok) {
           return NextResponse.json({ 
-            message: `${baseMessage}, but workflow trigger failed: ${workflowResult.error}` 
-          });
+            error: `${baseMessage}, but workflow trigger failed: ${workflowResult.error}` 
+          }, { status: 502 });
         }
 
-        return NextResponse.json({ message: `${baseMessage} and triggered CI [${targetLabel}]` });
+        return NextResponse.json({ message: `${baseMessage} and triggered release [${targetLabel}]` });
       }
 
       default:

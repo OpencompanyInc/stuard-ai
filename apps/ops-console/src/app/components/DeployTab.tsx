@@ -130,9 +130,9 @@ export default function DeployTab({ status, onAction, loading, deployments, late
   };
 
   const handleShipToBeta = async () => {
-    const checksPassed = await onAction('run-checks');
-    if (!checksPassed) return;
-    await new Promise(r => setTimeout(r, 1000));
+    // Skip local checks — the GitHub Actions workflow has its own CI checks gatekeeper.
+    // Running local checks here blocks the actual beta release if they fail,
+    // and adds unnecessary delay when they pass.
     await onAction('ship-to-beta', { targets: betaTargets, sourceBranch: selectedBetaBranch || undefined });
   };
 
