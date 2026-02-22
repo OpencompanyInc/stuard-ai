@@ -55,14 +55,44 @@ jobs:
           cache: 'pnpm'
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
-      - name: Lint
-        run: pnpm turbo run lint
-      - name: Typecheck
-        run: pnpm turbo run typecheck
-      - name: Build
-        run: pnpm turbo run build
-      - name: Unit Tests
-        run: pnpm turbo run test
+      - name: Lint (Cloud)
+        if: ${{ inputs.deploy_cloud }}
+        run: pnpm turbo run lint --filter=@stuardai/cloud-ai
+      - name: Typecheck (Cloud)
+        if: ${{ inputs.deploy_cloud }}
+        run: pnpm turbo run typecheck --filter=@stuardai/cloud-ai
+      - name: Build (Cloud)
+        if: ${{ inputs.deploy_cloud }}
+        run: pnpm turbo run build --filter=@stuardai/cloud-ai
+      - name: Unit Tests (Cloud)
+        if: ${{ inputs.deploy_cloud }}
+        run: pnpm turbo run test --filter=@stuardai/cloud-ai
+
+      - name: Lint (Website)
+        if: ${{ inputs.deploy_website }}
+        run: pnpm turbo run lint --filter=stuard-ai-website
+      - name: Typecheck (Website)
+        if: ${{ inputs.deploy_website }}
+        run: pnpm turbo run typecheck --filter=stuard-ai-website
+      - name: Build (Website)
+        if: ${{ inputs.deploy_website }}
+        run: pnpm turbo run build --filter=stuard-ai-website
+      - name: Unit Tests (Website)
+        if: ${{ inputs.deploy_website }}
+        run: pnpm turbo run test --filter=stuard-ai-website
+
+      - name: Lint (Desktop)
+        if: ${{ inputs.build_desktop }}
+        run: pnpm turbo run lint --filter=@stuardai/desktop
+      - name: Typecheck (Desktop)
+        if: ${{ inputs.build_desktop }}
+        run: pnpm turbo run typecheck --filter=@stuardai/desktop
+      - name: Build (Desktop)
+        if: ${{ inputs.build_desktop }}
+        run: pnpm turbo run build --filter=@stuardai/desktop
+      - name: Unit Tests (Desktop)
+        if: ${{ inputs.build_desktop }}
+        run: pnpm turbo run test --filter=@stuardai/desktop
 
   # ═══════════════════════════════════════════════════════════════════════════
   # Cloud AI Backend Deployment

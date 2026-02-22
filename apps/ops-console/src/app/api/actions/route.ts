@@ -57,6 +57,126 @@ function getGithubConfig() {
   };
 }
 
+type GithubWorkflow = {
+  id: number;
+  name: string;
+  path: string;
+};
+
+async function dispatchWorkflowByIdentifier(opts: {
+  workflow: string;
+  ref: string;
+  inputs: Record<string, string | boolean>;
+  config: { token: string | null; repo: string };
+}): Promise<{ status: number; message: string; details: string }> {
+  const res = await fetch(
+    `https://api.github.com/repos/${opts.config.repo}/actions/workflows/${opts.workflow}/dispatches`,
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${opts.config.token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ref: opts.ref, inputs: opts.inputs }),
+    }
+  );
+
+  const data = await res.json().catch(() => ({} as Record<string, unknown>));
+  const message = typeof data.message === 'string' ? data.message : `GitHub API returned ${res.status}`;
+  const details = [
+    `repo=${opts.config.repo}`,
+    `workflow=${opts.workflow}`,
+    `dispatch_ref=${opts.ref}`,
+    `status=${res.status}`,
+  ].join(', ');
+
+  return { status: res.status, message, details };
+}
+
+function normalizeWorkflowName(input: string): string {
+  return input.trim().toLowerCase();
+}
+
+function workflowFileFromPath(workflowPath: string): string {
+  const slash = workflowPath.lastIndexOf('/');
+  return slash >= 0 ? workflowPath.slice(slash + 1) : workflowPath;
+}
+
+async function listRepoWorkflows(config: { token: string | null; repo: string }): Promise<
+  { ok: true; workflows: GithubWorkflow[] } | { ok: false; error: string }
+> {
+  if (!config.token) {
+    return { ok: false, error: 'GitHub token not configured. Set GITHUB_TOKEN or OPS_GITHUB_TOKEN.' };
+  }
+
+  try {
+    const res = await fetch(`https://api.github.com/repos/${config.repo}/actions/workflows?per_page=100`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${config.token}`,
+        'Accept': 'application/vnd.github.v3+json',
+      },
+    });
+
+    const data = await res.json().catch(() => ({} as Record<string, unknown>));
+    if (!res.ok) {
+      const message = typeof data.message === 'string' ? data.message : `GitHub API returned ${res.status}`;
+      return { ok: false, error: `${message} (repo=${config.repo}, status=${res.status})` };
+    }
+
+    const raw = Array.isArray((data as { workflows?: unknown[] }).workflows)
+      ? ((data as { workflows: unknown[] }).workflows)
+      : [];
+    const workflows: GithubWorkflow[] = raw
+      .map((item) => {
+        const obj = item as Record<string, unknown>;
+        if (typeof obj.id !== 'number' || typeof obj.name !== 'string' || typeof obj.path !== 'string') {
+          return null;
+        }
+        return { id: obj.id, name: obj.name, path: obj.path };
+      })
+      .filter((wf): wf is GithubWorkflow => wf !== null);
+
+    return { ok: true, workflows };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: msg || 'Failed to list workflows' };
+  }
+}
+
+async function resolveWorkflowIdentifier(
+  workflow: string,
+  config: { token: string | null; repo: string }
+): Promise<{ ok: true; id: number; matchedBy: 'id' | 'file' | 'path' | 'name' } | { ok: false; error: string }> {
+  const trimmed = workflow.trim();
+  if (/^\d+$/.test(trimmed)) {
+    return { ok: true, id: Number(trimmed), matchedBy: 'id' };
+  }
+
+  const listed = await listRepoWorkflows(config);
+  if (!listed.ok) {
+    return { ok: false, error: listed.error };
+  }
+
+  const lower = normalizeWorkflowName(trimmed);
+
+  const byFile = listed.workflows.find((wf) => normalizeWorkflowName(workflowFileFromPath(wf.path)) === lower);
+  if (byFile) return { ok: true, id: byFile.id, matchedBy: 'file' };
+
+  const byPath = listed.workflows.find((wf) => normalizeWorkflowName(wf.path) === lower);
+  if (byPath) return { ok: true, id: byPath.id, matchedBy: 'path' };
+
+  const byName = listed.workflows.find((wf) => normalizeWorkflowName(wf.name) === lower);
+  if (byName) return { ok: true, id: byName.id, matchedBy: 'name' };
+
+  const available = listed.workflows.map((wf) => wf.name).slice(0, 8).join(', ');
+  return {
+    ok: false,
+    error: `Workflow '${workflow}' was not found in repo ${config.repo}. Visible workflows: ${available || 'none'}`,
+  };
+}
+
 // GitHub API helper to trigger workflow dispatch
 async function triggerWorkflow(
   workflow: string,
@@ -69,35 +189,62 @@ async function triggerWorkflow(
   }
 
   try {
-    const res = await fetch(
-      `https://api.github.com/repos/${config.repo}/actions/workflows/${workflow}/dispatches`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${config.token}`,
-          'Accept': 'application/vnd.github.v3+json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ ref, inputs }),
-      }
-    );
-
-    if (res.status === 204) {
+    const direct = await dispatchWorkflowByIdentifier({ workflow, ref, inputs, config });
+    if (direct.status === 204) {
       return { ok: true, message: `Triggered ${workflow} on ${ref}` };
     }
-    
-    const data = await res.json().catch(() => ({} as Record<string, unknown>));
-    const message = typeof data.message === 'string' ? data.message : `GitHub API returned ${res.status}`;
-    const details = [
-      `repo=${config.repo}`,
-      `workflow=${workflow}`,
-      `dispatch_ref=${ref}`,
-      `status=${res.status}`,
-    ].join(', ');
-    return { ok: false, error: `${message} (${details})` };
+
+    if (direct.status === 404) {
+      const resolved = await resolveWorkflowIdentifier(workflow, config);
+      if (!resolved.ok) {
+        return { ok: false, error: `${direct.message} (${direct.details}) | ${resolved.error}` };
+      }
+
+      const retry = await dispatchWorkflowByIdentifier({ workflow: String(resolved.id), ref, inputs, config });
+      if (retry.status === 204) {
+        return {
+          ok: true,
+          message: `Triggered ${workflow} on ${ref} (resolved by ${resolved.matchedBy} -> id ${resolved.id})`,
+        };
+      }
+
+      return {
+        ok: false,
+        error: `${retry.message} (${retry.details}, resolved_by=${resolved.matchedBy}, resolved_id=${resolved.id})`,
+      };
+    }
+
+    return { ok: false, error: `${direct.message} (${direct.details})` };
   } catch (e: unknown) {
     return { ok: false, error: (e as Error).message || 'Failed to call GitHub API' };
   }
+}
+
+async function triggerWorkflowWithFallback(
+  candidates: Array<{ workflow: string; ref: string; inputs: Record<string, string | boolean> }>,
+  config: { token: string | null; repo: string }
+): Promise<{ ok: true; message: string; workflow: string } | { ok: false; error: string }> {
+  const errors: string[] = [];
+
+  for (const candidate of candidates) {
+    const result = await triggerWorkflow(candidate.workflow, candidate.ref, candidate.inputs, config);
+    if (result.ok) {
+      return {
+        ok: true,
+        message: result.message || `Triggered ${candidate.workflow} on ${candidate.ref}`,
+        workflow: candidate.workflow,
+      };
+    }
+
+    errors.push(`${candidate.workflow}: ${result.error || 'Unknown error'}`);
+
+    const isNotFound = (result.error || '').includes('status=404') || (result.error || '').includes('Not Found');
+    if (!isNotFound) {
+      break;
+    }
+  }
+
+  return { ok: false, error: errors.join(' | ') || 'Workflow trigger failed' };
 }
 
 function formatTargets(targets?: { website?: boolean; cloud?: boolean; desktop?: boolean }) {
@@ -348,16 +495,42 @@ export async function POST(req: Request) {
           return NextResponse.json({ error: `Failed to push ${sourceBranch} to develop: ${msg}` }, { status: 500 });
         }
 
-        // 3. Trigger workflow on develop (where the YAML lives + now has our code)
-        const workflowResult = await triggerWorkflow(
-          'release-beta.yml',
-          'develop',
-          {
-            ref: 'develop',
-            deploy_cloud: String(targets?.cloud ?? true),
-            deploy_website: String(targets?.website ?? true),
-            build_desktop: String(targets?.desktop ?? true),
-          },
+        // 3. Trigger workflow manually after push with selected targets.
+        //    First try dedicated beta workflow; if missing remotely, fall back to unified release workflow.
+        const workflowResult = await triggerWorkflowWithFallback(
+          [
+            {
+              workflow: 'release-beta.yml',
+              ref: 'develop',
+              inputs: {
+                ref: 'develop',
+                deploy_cloud: Boolean(targets?.cloud ?? true),
+                deploy_website: Boolean(targets?.website ?? true),
+                build_desktop: Boolean(targets?.desktop ?? true),
+              },
+            },
+            {
+              workflow: 'Beta Release (Develop)',
+              ref: 'develop',
+              inputs: {
+                ref: 'develop',
+                deploy_cloud: Boolean(targets?.cloud ?? true),
+                deploy_website: Boolean(targets?.website ?? true),
+                build_desktop: Boolean(targets?.desktop ?? true),
+              },
+            },
+            {
+              workflow: 'release.yml',
+              ref: 'develop',
+              inputs: {
+                environment: 'beta',
+                ref: 'develop',
+                deploy_cloud: Boolean(targets?.cloud ?? true),
+                deploy_website: Boolean(targets?.website ?? true),
+                build_desktop: Boolean(targets?.desktop ?? true),
+              },
+            },
+          ],
           github
         );
 
@@ -367,7 +540,7 @@ export async function POST(req: Request) {
           }, { status: 502 });
         }
 
-        return NextResponse.json({ message: `Shipped ${sourceBranch} to Beta (develop) and triggered release [${targetLabel}]` });
+        return NextResponse.json({ message: `Shipped ${sourceBranch} to Beta (develop) and triggered ${workflowResult.workflow} [${targetLabel}]` });
       }
 
       // Legacy preview action: just push current branch

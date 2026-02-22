@@ -38,14 +38,44 @@ jobs:
           cache: 'pnpm'
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
-      - name: Lint
-        run: pnpm turbo run lint
-      - name: Typecheck
-        run: pnpm turbo run typecheck
-      - name: Build
-        run: pnpm turbo run build
-      - name: Unit Tests
-        run: pnpm turbo run test
+      - name: Lint (Cloud)
+        if: ${{ github.event.inputs.deploy_cloud == 'true' }}
+        run: pnpm turbo run lint --filter=@stuardai/cloud-ai
+      - name: Typecheck (Cloud)
+        if: ${{ github.event.inputs.deploy_cloud == 'true' }}
+        run: pnpm turbo run typecheck --filter=@stuardai/cloud-ai
+      - name: Build (Cloud)
+        if: ${{ github.event.inputs.deploy_cloud == 'true' }}
+        run: pnpm turbo run build --filter=@stuardai/cloud-ai
+      - name: Unit Tests (Cloud)
+        if: ${{ github.event.inputs.deploy_cloud == 'true' }}
+        run: pnpm turbo run test --filter=@stuardai/cloud-ai
+
+      - name: Lint (Website)
+        if: ${{ github.event.inputs.deploy_website == 'true' }}
+        run: pnpm turbo run lint --filter=stuard-ai-website
+      - name: Typecheck (Website)
+        if: ${{ github.event.inputs.deploy_website == 'true' }}
+        run: pnpm turbo run typecheck --filter=stuard-ai-website
+      - name: Build (Website)
+        if: ${{ github.event.inputs.deploy_website == 'true' }}
+        run: pnpm turbo run build --filter=stuard-ai-website
+      - name: Unit Tests (Website)
+        if: ${{ github.event.inputs.deploy_website == 'true' }}
+        run: pnpm turbo run test --filter=stuard-ai-website
+
+      - name: Lint (Desktop)
+        if: ${{ github.event.inputs.build_desktop == 'true' }}
+        run: pnpm turbo run lint --filter=@stuardai/desktop
+      - name: Typecheck (Desktop)
+        if: ${{ github.event.inputs.build_desktop == 'true' }}
+        run: pnpm turbo run typecheck --filter=@stuardai/desktop
+      - name: Build (Desktop)
+        if: ${{ github.event.inputs.build_desktop == 'true' }}
+        run: pnpm turbo run build --filter=@stuardai/desktop
+      - name: Unit Tests (Desktop)
+        if: ${{ github.event.inputs.build_desktop == 'true' }}
+        run: pnpm turbo run test --filter=@stuardai/desktop
 
   # 1. Deploy Cloud AI (Backend) to Cloud Run (Staging)
   deploy-staging-backend:
