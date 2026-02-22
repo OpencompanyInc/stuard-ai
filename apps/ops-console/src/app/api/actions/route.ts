@@ -289,19 +289,27 @@ export async function POST(req: Request) {
         const targetLabel = formatTargets(targets);
         const github = getGithubConfig();
 
-        // Push source branch to remote (no branch switching)
-        const pushResult = await pushOriginWithRetry({ branch: sourceBranch, upstream: false, maxAttempts: 2 });
-        if (!pushResult.ok) {
-          return NextResponse.json({ error: `Failed to push ${sourceBranch}: ${pushResult.error}` }, { status: 500 });
+        // 1. Push source branch to remote first
+        const pushSource = await pushOriginWithRetry({ branch: sourceBranch, upstream: false, maxAttempts: 2 });
+        if (!pushSource.ok) {
+          return NextResponse.json({ error: `Failed to push ${sourceBranch}: ${pushSource.error}` }, { status: 500 });
         }
 
-        // Trigger GitHub Actions workflow on 'develop' (where the YAML lives)
-        // but pass the source branch as inputs.ref so the workflow checks out the right code
+        // 2. Push source branch code TO develop remotely (no local checkout)
+        //    git push origin feature/x:develop --force-with-lease
+        try {
+          await git.raw(['push', 'origin', `${sourceBranch}:develop`, '--force-with-lease']);
+        } catch (pushErr: unknown) {
+          const msg = pushErr instanceof Error ? pushErr.message : String(pushErr);
+          return NextResponse.json({ error: `Failed to push ${sourceBranch} to develop: ${msg}` }, { status: 500 });
+        }
+
+        // 3. Trigger workflow on develop (where the YAML lives + now has our code)
         const workflowResult = await triggerWorkflow(
           'release-beta.yml',
           'develop',
           {
-            ref: sourceBranch,
+            ref: 'develop',
             deploy_cloud: String(targets?.cloud ?? true),
             deploy_website: String(targets?.website ?? true),
             build_desktop: String(targets?.desktop ?? true),
@@ -311,11 +319,11 @@ export async function POST(req: Request) {
 
         if (!workflowResult.ok) {
           return NextResponse.json({ 
-            message: `Pushed ${sourceBranch}, but workflow trigger failed: ${workflowResult.error}. You may need to manually run the workflow.` 
+            message: `Pushed ${sourceBranch} to develop, but workflow trigger failed: ${workflowResult.error}. You may need to manually run the workflow.` 
           });
         }
 
-        return NextResponse.json({ message: `Shipped ${sourceBranch} to Beta and triggered CI [${targetLabel}]` });
+        return NextResponse.json({ message: `Shipped ${sourceBranch} to Beta (develop) and triggered CI [${targetLabel}]` });
       }
 
       // Legacy preview action: just push current branch
