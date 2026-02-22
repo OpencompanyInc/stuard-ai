@@ -13,10 +13,47 @@ function findRepoRoot(startDir: string): string {
   }
 }
 
+function normalizeGithubRepo(input: string | null | undefined): string {
+  const fallback = 'Ifesol-backup/Stuard-AI';
+  const raw = String(input || '').trim();
+  if (!raw) return fallback;
+
+  const cleaned = raw.replace(/\.git$/i, '');
+
+  if (cleaned.startsWith('http://') || cleaned.startsWith('https://')) {
+    try {
+      const url = new URL(cleaned);
+      const pathParts = url.pathname.replace(/^\/+/, '').split('/').filter(Boolean);
+      if (pathParts.length >= 2) {
+        return `${pathParts[0]}/${pathParts[1]}`;
+      }
+    } catch {
+      // fall through to other formats
+    }
+  }
+
+  const sshLike = cleaned.match(/github\.com[:/]([^/]+)\/([^/]+)$/i);
+  if (sshLike) {
+    return `${sshLike[1]}/${sshLike[2]}`;
+  }
+
+  if (/^[^/]+\/[^/]+$/.test(cleaned)) {
+    return cleaned;
+  }
+
+  return fallback;
+}
+
 function getGithubConfig() {
+  const repoRaw = process.env.GITHUB_REPO || process.env.OPS_GITHUB_REPO || 'Ifesol-backup/Stuard-AI';
   return {
-    token: process.env.GITHUB_TOKEN || process.env.OPS_GITHUB_TOKEN || null,
-    repo: process.env.GITHUB_REPO || process.env.OPS_GITHUB_REPO || 'Ifesol-backup/Stuard-AI',
+    token:
+      process.env.GITHUB_TOKEN ||
+      process.env.OPS_GITHUB_TOKEN ||
+      process.env.GH_TOKEN ||
+      process.env.GITHUB_PAT ||
+      null,
+    repo: normalizeGithubRepo(repoRaw),
   };
 }
 
@@ -49,8 +86,15 @@ async function triggerWorkflow(
       return { ok: true, message: `Triggered ${workflow} on ${ref}` };
     }
     
-    const data = await res.json().catch(() => ({}));
-    return { ok: false, error: data.message || `GitHub API returned ${res.status}` };
+    const data = await res.json().catch(() => ({} as Record<string, unknown>));
+    const message = typeof data.message === 'string' ? data.message : `GitHub API returned ${res.status}`;
+    const details = [
+      `repo=${config.repo}`,
+      `workflow=${workflow}`,
+      `dispatch_ref=${ref}`,
+      `status=${res.status}`,
+    ].join(', ');
+    return { ok: false, error: `${message} (${details})` };
   } catch (e: unknown) {
     return { ok: false, error: (e as Error).message || 'Failed to call GitHub API' };
   }
