@@ -295,11 +295,11 @@ export async function POST(req: Request) {
           return NextResponse.json({ error: `Failed to push ${sourceBranch}: ${pushResult.error}` }, { status: 500 });
         }
 
-        // Trigger GitHub Actions workflow directly with the source branch ref
-        // No need to merge into develop — the workflow checks out the specified ref
+        // Trigger GitHub Actions workflow on 'develop' (where the YAML lives)
+        // but pass the source branch as inputs.ref so the workflow checks out the right code
         const workflowResult = await triggerWorkflow(
           'release-beta.yml',
-          sourceBranch,
+          'develop',
           {
             ref: sourceBranch,
             deploy_cloud: String(targets?.cloud ?? true),
@@ -338,10 +338,10 @@ export async function POST(req: Request) {
           return NextResponse.json({ error: `Failed to push ${current}: ${pushResult.error}` }, { status: 500 });
         }
 
-        // Trigger GitHub Actions workflow with selected targets
+        // Trigger workflow on 'staging' (where the YAML lives)
         const workflowResult = await triggerWorkflow(
           'release-staging.yml',
-          current,
+          'staging',
           {
             deploy_cloud: String(targets?.cloud ?? true),
             deploy_website: String(targets?.website ?? true),
@@ -378,10 +378,10 @@ export async function POST(req: Request) {
           await git.pushTags('origin');
         }
 
-        // Trigger GitHub Actions workflow with selected targets
+        // Trigger workflow on 'main' (where the YAML lives)
         const workflowResult = await triggerWorkflow(
           'release-production.yml',
-          current,
+          'main',
           {
             deploy_cloud: String(targets?.cloud ?? true),
             deploy_website: String(targets?.website ?? true),
