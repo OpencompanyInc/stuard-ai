@@ -37,9 +37,9 @@ describe('Variable Tools', () => {
   it('execSetVariable should set a variable', async () => {
     const res = await execSetVariable({ name: 'test', value: 123, type: 'number' }, mockCtx);
     expect(res.ok).toBe(true);
-    expect(res.name).toBe('test');
+    expect(res.name).toBe('workflow.test');
     expect(res.value).toBe(123);
-    expect(variableStore.get('test')).toBeDefined();
+    expect(variableStore.get('workflow.test')).toBeDefined();
   });
 
   it('execGetVariable should return existing variable', async () => {
