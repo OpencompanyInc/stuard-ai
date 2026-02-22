@@ -101,7 +101,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
     const offset = Math.max(0, Math.floor(offsetRaw));
     const q = (sp.get('q') || '').trim().toLowerCase();
 
-    let authUsers: { id: string; email?: string; last_sign_in_at?: string; created_at: string }[] = [];
+    const authUsers: { id: string; email?: string; last_sign_in_at?: string; created_at: string }[] = [];
     try {
       let page = 1;
       let hasMore = true;
@@ -373,7 +373,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
 
     // Fetch comments count per feedback item
     const ids = (data || []).map(d => d.id);
-    let commentCounts: Record<string, number> = {};
+    const commentCounts: Record<string, number> = {};
     if (ids.length > 0) {
       const { data: comments } = await supabase.from('feedback_comments').select('feedback_id').in('feedback_id', ids);
       for (const c of comments || []) commentCounts[c.feedback_id] = (commentCounts[c.feedback_id] || 0) + 1;
