@@ -1,8 +1,24 @@
 import type { CustomUiHtmlOptions } from './types';
 import { getReactRuntime } from './assets/react-runtime';
 import { EXTRA_CSS } from './assets/utility-css';
-import { TAILWIND_PREBUILT_CSS } from './assets/tailwind-prebuilt';
 import { prepareComponentCode } from './jsx-transform';
+
+let tailwindPrebuiltCssCache: string | null = null;
+
+function getTailwindPrebuiltCss(): string {
+  if (tailwindPrebuiltCssCache !== null) {
+    return tailwindPrebuiltCssCache;
+  }
+
+  try {
+    const mod = require('./assets/tailwind-prebuilt') as { TAILWIND_PREBUILT_CSS?: string };
+    tailwindPrebuiltCssCache = typeof mod?.TAILWIND_PREBUILT_CSS === 'string' ? mod.TAILWIND_PREBUILT_CSS : '';
+  } catch {
+    tailwindPrebuiltCssCache = '';
+  }
+
+  return tailwindPrebuiltCssCache;
+}
 
 function escapeHtml(s: string): string {
   return String(s || '')
@@ -304,7 +320,7 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: file:; img-src * data: blob: local-file: file:; media-src * data: blob: local-file: file:; font-src * data:;">
   <title>${escapeHtml(title)}</title>
-  <style>${TAILWIND_PREBUILT_CSS}</style>
+  <style>${getTailwindPrebuiltCss()}</style>
   <style>${EXTRA_CSS}</style>
   <style>${themeCss}\n${css || ''}\n${animationKeyframes}</style>
   <script>${reactRuntime}<\/script>
