@@ -120,9 +120,13 @@ jobs:
         if: ${{ always() }}
         continue-on-error: true
         run: |
-          curl -sf -X POST https://api.stuard.ai/v1/ops/deployments/callback \
+          HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" -X POST https://api.stuard.ai/v1/ops/deployments/callback \
             -H 'Content-Type: application/json' \
-            -d "{\"secret\":\"${{ secrets.DEPLOY_CALLBACK_SECRET }}\",\"channel\":\"beta\",\"status\":\"deploying\",\"workflow_run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+            -d "{\"secret\":\"${{ secrets.DEPLOY_CALLBACK_SECRET }}\",\"channel\":\"beta\",\"status\":\"deploying\",\"workflow_run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" || true)
+          echo "Ops callback (deploying) HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" = "000" ] || [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::warning::Ops callback (deploying) failed with HTTP $HTTP_CODE"
+          fi
 
       - name: Deploy to Cloud Run (Beta)
         run: |
@@ -140,17 +144,25 @@ jobs:
         if: ${{ success() }}
         continue-on-error: true
         run: |
-          curl -sf -X POST https://api.stuard.ai/v1/ops/deployments/callback \
+          HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" -X POST https://api.stuard.ai/v1/ops/deployments/callback \
             -H 'Content-Type: application/json' \
-            -d "{\"secret\":\"${{ secrets.DEPLOY_CALLBACK_SECRET }}\",\"channel\":\"beta\",\"status\":\"deployed\"}"
+            -d "{\"secret\":\"${{ secrets.DEPLOY_CALLBACK_SECRET }}\",\"channel\":\"beta\",\"status\":\"deployed\"}" || true)
+          echo "Ops callback (deployed) HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" = "000" ] || [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::warning::Ops callback (deployed) failed with HTTP $HTTP_CODE"
+          fi
 
       - name: Notify Ops – Failed
         if: ${{ failure() }}
         continue-on-error: true
         run: |
-          curl -sf -X POST https://api.stuard.ai/v1/ops/deployments/callback \
+          HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" -X POST https://api.stuard.ai/v1/ops/deployments/callback \
             -H 'Content-Type: application/json' \
-            -d "{\"secret\":\"${{ secrets.DEPLOY_CALLBACK_SECRET }}\",\"channel\":\"beta\",\"status\":\"failed\",\"error_message\":\"Cloud Run deploy failed\"}"
+            -d "{\"secret\":\"${{ secrets.DEPLOY_CALLBACK_SECRET }}\",\"channel\":\"beta\",\"status\":\"failed\",\"error_message\":\"Cloud Run deploy failed\"}" || true)
+          echo "Ops callback (failed) HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" = "000" ] || [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::warning::Ops callback (failed) failed with HTTP $HTTP_CODE"
+          fi
 
   # 2. Deploy Website (Frontend) to Vercel Preview
   deploy-beta-website:
@@ -258,6 +270,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
       - name: Install Desktop Dependencies
         working-directory: apps/desktop
         run: npm install
