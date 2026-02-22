@@ -580,6 +580,548 @@ export const sheets_read_range = createTool({
   },
 });
 
+// ─── Google Sheets Write/Edit Tools ───
+
+export const sheets_create_spreadsheet = createTool({
+  id: 'sheets_create_spreadsheet',
+  description: 'Create a new Google Sheets spreadsheet with optional initial sheets and data. Returns the spreadsheet ID and URL.',
+  inputSchema: z.object({
+    title: z.string().describe('Spreadsheet title'),
+    sheets: z.array(z.object({
+      title: z.string().describe('Sheet/tab name'),
+      data: z.array(z.array(z.any())).optional().describe('Initial row data (array of rows, each row is array of cell values)'),
+      columnWidths: z.array(z.object({
+        startIndex: z.number(),
+        endIndex: z.number(),
+        width: z.number(),
+      })).optional().describe('Custom column widths in pixels'),
+      frozenRows: z.number().optional().describe('Number of rows to freeze at the top'),
+      frozenColumns: z.number().optional().describe('Number of columns to freeze on the left'),
+    })).optional().describe('Sheets/tabs to create. Defaults to one "Sheet1" if omitted.'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/spreadsheets'], profile);
+    if ((gate as any).ok !== true) return gate;
+    const { title, sheets: sheetDefs } = inputData as any;
+
+    const sheetsPayload: any[] = (sheetDefs || [{ title: 'Sheet1' }]).map((s: any, i: number) => ({
+      properties: {
+        sheetId: i,
+        title: s.title || `Sheet${i + 1}`,
+        gridProperties: {
+          ...(s.frozenRows ? { frozenRowCount: s.frozenRows } : {}),
+          ...(s.frozenColumns ? { frozenColumnCount: s.frozenColumns } : {}),
+        },
+      },
+    }));
+
+    const body: any = {
+      properties: { title },
+      sheets: sheetsPayload,
+    };
+
+    const result = await googleAuthorizedFetch(
+      'https://sheets.googleapis.com/v4/spreadsheets',
+      { method: 'POST', body: JSON.stringify(body) },
+      profile,
+    );
+
+    const spreadsheetId = (result as any)?.spreadsheetId;
+    const spreadsheetUrl = (result as any)?.spreadsheetUrl;
+
+    // Write initial data for each sheet if provided
+    if (sheetDefs && spreadsheetId) {
+      for (const s of sheetDefs) {
+        if (s.data && Array.isArray(s.data) && s.data.length > 0) {
+          await googleAuthorizedFetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(s.title || 'Sheet1')}?valueInputOption=USER_ENTERED`,
+            { method: 'PUT', body: JSON.stringify({ values: s.data }) },
+            profile,
+          );
+        }
+
+        // Apply column widths
+        if (s.columnWidths && Array.isArray(s.columnWidths) && s.columnWidths.length > 0) {
+          const sheetIdx = sheetDefs.indexOf(s);
+          const requests = s.columnWidths.map((cw: any) => ({
+            updateDimensionProperties: {
+              range: {
+                sheetId: sheetIdx,
+                dimension: 'COLUMNS',
+                startIndex: cw.startIndex,
+                endIndex: cw.endIndex,
+              },
+              properties: { pixelSize: cw.width },
+              fields: 'pixelSize',
+            },
+          }));
+          await googleAuthorizedFetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+            { method: 'POST', body: JSON.stringify({ requests }) },
+            profile,
+          );
+        }
+      }
+    }
+
+    return { spreadsheetId, spreadsheetUrl, title };
+  },
+});
+
+export const sheets_write_range = createTool({
+  id: 'sheets_write_range',
+  description: 'Write values to a range in Google Sheets. Overwrites existing data in the range. Use USER_ENTERED to auto-parse numbers, dates, formulas.',
+  inputSchema: z.object({
+    spreadsheetId: z.string(),
+    range: z.string().describe('A1 notation range, e.g. "Sheet1!A1:D10" or "Sheet1!A1"'),
+    values: z.array(z.array(z.any())).describe('2D array of values (rows × columns)'),
+    valueInputOption: z.enum(['RAW', 'USER_ENTERED']).default('USER_ENTERED').describe('RAW = literal values, USER_ENTERED = parse like typing in the UI (formulas, dates, numbers)'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/spreadsheets'], profile);
+    if ((gate as any).ok !== true) return gate;
+    const { spreadsheetId, range, values, valueInputOption } = inputData as any;
+    const data = await googleAuthorizedFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=${encodeURIComponent(valueInputOption || 'USER_ENTERED')}`,
+      { method: 'PUT', body: JSON.stringify({ values }) },
+      profile,
+    );
+    return { updatedRange: (data as any)?.updatedRange, updatedRows: (data as any)?.updatedRows, updatedColumns: (data as any)?.updatedColumns, updatedCells: (data as any)?.updatedCells };
+  },
+});
+
+export const sheets_append_rows = createTool({
+  id: 'sheets_append_rows',
+  description: 'Append rows after the last row with data in a Google Sheets range. Great for adding new records to an existing table.',
+  inputSchema: z.object({
+    spreadsheetId: z.string(),
+    range: z.string().describe('Range to search for a table, e.g. "Sheet1!A:Z" or "Sheet1!A1"'),
+    values: z.array(z.array(z.any())).describe('Rows to append (array of rows)'),
+    valueInputOption: z.enum(['RAW', 'USER_ENTERED']).default('USER_ENTERED'),
+    insertDataOption: z.enum(['OVERWRITE', 'INSERT_ROWS']).default('INSERT_ROWS').describe('INSERT_ROWS adds new rows, OVERWRITE writes over existing blank rows'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/spreadsheets'], profile);
+    if ((gate as any).ok !== true) return gate;
+    const { spreadsheetId, range, values, valueInputOption, insertDataOption } = inputData as any;
+    const params = new URLSearchParams();
+    params.set('valueInputOption', valueInputOption || 'USER_ENTERED');
+    params.set('insertDataOption', insertDataOption || 'INSERT_ROWS');
+    const data = await googleAuthorizedFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}:append?${params.toString()}`,
+      { method: 'POST', body: JSON.stringify({ values }) },
+      profile,
+    );
+    const updates = (data as any)?.updates;
+    return { updatedRange: updates?.updatedRange, updatedRows: updates?.updatedRows, updatedCells: updates?.updatedCells };
+  },
+});
+
+export const sheets_clear_range = createTool({
+  id: 'sheets_clear_range',
+  description: 'Clear values from a range in Google Sheets (keeps formatting, removes data).',
+  inputSchema: z.object({
+    spreadsheetId: z.string(),
+    range: z.string().describe('A1 notation range to clear, e.g. "Sheet1!A2:Z"'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/spreadsheets'], profile);
+    if ((gate as any).ok !== true) return gate;
+    const { spreadsheetId, range } = inputData as any;
+    const data = await googleAuthorizedFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}:clear`,
+      { method: 'POST', body: JSON.stringify({}) },
+      profile,
+    );
+    return { clearedRange: (data as any)?.clearedRange };
+  },
+});
+
+export const sheets_get_spreadsheet = createTool({
+  id: 'sheets_get_spreadsheet',
+  description: 'Get spreadsheet metadata: sheet names, grid dimensions, and properties. Useful to discover available sheets before reading or writing.',
+  inputSchema: z.object({
+    spreadsheetId: z.string(),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/spreadsheets.readonly'], profile);
+    if ((gate as any).ok !== true) return gate;
+    const { spreadsheetId } = inputData as any;
+    const data = await googleAuthorizedFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}?fields=properties,sheets.properties`,
+      undefined,
+      profile,
+    );
+    const sheets = ((data as any)?.sheets || []).map((s: any) => ({
+      sheetId: s.properties?.sheetId,
+      title: s.properties?.title,
+      rowCount: s.properties?.gridProperties?.rowCount,
+      columnCount: s.properties?.gridProperties?.columnCount,
+      frozenRowCount: s.properties?.gridProperties?.frozenRowCount,
+      frozenColumnCount: s.properties?.gridProperties?.frozenColumnCount,
+    }));
+    return { title: (data as any)?.properties?.title, locale: (data as any)?.properties?.locale, spreadsheetUrl: (data as any)?.spreadsheetUrl, sheets };
+  },
+});
+
+export const sheets_add_sheet = createTool({
+  id: 'sheets_add_sheet',
+  description: 'Add a new sheet/tab to an existing spreadsheet.',
+  inputSchema: z.object({
+    spreadsheetId: z.string(),
+    title: z.string().describe('Name for the new sheet/tab'),
+    rowCount: z.number().optional().describe('Initial number of rows (default 1000)'),
+    columnCount: z.number().optional().describe('Initial number of columns (default 26)'),
+    frozenRows: z.number().optional(),
+    frozenColumns: z.number().optional(),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/spreadsheets'], profile);
+    if ((gate as any).ok !== true) return gate;
+    const { spreadsheetId, title, rowCount, columnCount, frozenRows, frozenColumns } = inputData as any;
+    const data = await googleAuthorizedFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          requests: [{
+            addSheet: {
+              properties: {
+                title,
+                gridProperties: {
+                  ...(rowCount ? { rowCount } : {}),
+                  ...(columnCount ? { columnCount } : {}),
+                  ...(frozenRows ? { frozenRowCount: frozenRows } : {}),
+                  ...(frozenColumns ? { frozenColumnCount: frozenColumns } : {}),
+                },
+              },
+            },
+          }],
+        }),
+      },
+      profile,
+    );
+    const reply = (data as any)?.replies?.[0]?.addSheet?.properties;
+    return { sheetId: reply?.sheetId, title: reply?.title };
+  },
+});
+
+export const sheets_format_cells = createTool({
+  id: 'sheets_format_cells',
+  description: 'Format cells in Google Sheets: background color, text formatting, number format, borders, alignment, text wrap. Build appealing spreadsheets with headers, alternating row colors, and professional styling.',
+  inputSchema: z.object({
+    spreadsheetId: z.string(),
+    sheetId: z.number().default(0).describe('Sheet ID (0 for first sheet). Use sheets_get_spreadsheet to find IDs.'),
+    requests: z.array(z.object({
+      type: z.enum([
+        'repeatCell',
+        'mergeCells',
+        'autoResize',
+        'updateBorders',
+        'addConditionalFormatRule',
+        'updateSheetProperties',
+      ]).describe('Format operation type'),
+      range: z.object({
+        startRowIndex: z.number(),
+        endRowIndex: z.number(),
+        startColumnIndex: z.number(),
+        endColumnIndex: z.number(),
+      }).describe('Cell range (0-indexed)'),
+      // repeatCell options
+      backgroundColor: z.object({ red: z.number().min(0).max(1), green: z.number().min(0).max(1), blue: z.number().min(0).max(1), alpha: z.number().min(0).max(1).optional() }).optional(),
+      foregroundColor: z.object({ red: z.number().min(0).max(1), green: z.number().min(0).max(1), blue: z.number().min(0).max(1), alpha: z.number().min(0).max(1).optional() }).optional(),
+      bold: z.boolean().optional(),
+      italic: z.boolean().optional(),
+      strikethrough: z.boolean().optional(),
+      fontSize: z.number().optional(),
+      fontFamily: z.string().optional(),
+      horizontalAlignment: z.enum(['LEFT', 'CENTER', 'RIGHT']).optional(),
+      verticalAlignment: z.enum(['TOP', 'MIDDLE', 'BOTTOM']).optional(),
+      wrapStrategy: z.enum(['OVERFLOW_CELL', 'CLIP', 'WRAP']).optional(),
+      numberFormat: z.object({ type: z.enum(['TEXT', 'NUMBER', 'PERCENT', 'CURRENCY', 'DATE', 'TIME', 'DATE_TIME', 'SCIENTIFIC']), pattern: z.string().optional() }).optional(),
+      // mergeCells
+      mergeType: z.enum(['MERGE_ALL', 'MERGE_COLUMNS', 'MERGE_ROWS']).optional(),
+      // borders
+      borderStyle: z.enum(['DOTTED', 'DASHED', 'SOLID', 'SOLID_MEDIUM', 'SOLID_THICK', 'DOUBLE', 'NONE']).optional(),
+      borderColor: z.object({ red: z.number().min(0).max(1), green: z.number().min(0).max(1), blue: z.number().min(0).max(1) }).optional(),
+      borderSides: z.array(z.enum(['top', 'bottom', 'left', 'right', 'innerHorizontal', 'innerVertical'])).optional().describe('Which borders to apply'),
+    })).describe('Array of formatting operations to apply'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/spreadsheets'], profile);
+    if ((gate as any).ok !== true) return gate;
+    const { spreadsheetId, sheetId, requests: fmtRequests } = inputData as any;
+
+    const batchRequests: any[] = [];
+
+    for (const req of fmtRequests) {
+      const range = {
+        sheetId: sheetId ?? 0,
+        startRowIndex: req.range.startRowIndex,
+        endRowIndex: req.range.endRowIndex,
+        startColumnIndex: req.range.startColumnIndex,
+        endColumnIndex: req.range.endColumnIndex,
+      };
+
+      if (req.type === 'repeatCell') {
+        const cellFormat: any = {};
+        const fields: string[] = [];
+
+        if (req.backgroundColor) {
+          cellFormat.backgroundColor = req.backgroundColor;
+          fields.push('userEnteredFormat.backgroundColor');
+        }
+        if (req.foregroundColor || req.bold !== undefined || req.italic !== undefined || req.strikethrough !== undefined || req.fontSize || req.fontFamily) {
+          cellFormat.textFormat = {};
+          if (req.foregroundColor) { cellFormat.textFormat.foregroundColor = req.foregroundColor; fields.push('userEnteredFormat.textFormat.foregroundColor'); }
+          if (req.bold !== undefined) { cellFormat.textFormat.bold = req.bold; fields.push('userEnteredFormat.textFormat.bold'); }
+          if (req.italic !== undefined) { cellFormat.textFormat.italic = req.italic; fields.push('userEnteredFormat.textFormat.italic'); }
+          if (req.strikethrough !== undefined) { cellFormat.textFormat.strikethrough = req.strikethrough; fields.push('userEnteredFormat.textFormat.strikethrough'); }
+          if (req.fontSize) { cellFormat.textFormat.fontSize = req.fontSize; fields.push('userEnteredFormat.textFormat.fontSize'); }
+          if (req.fontFamily) { cellFormat.textFormat.fontFamily = req.fontFamily; fields.push('userEnteredFormat.textFormat.fontFamily'); }
+        }
+        if (req.horizontalAlignment) { cellFormat.horizontalAlignment = req.horizontalAlignment; fields.push('userEnteredFormat.horizontalAlignment'); }
+        if (req.verticalAlignment) { cellFormat.verticalAlignment = req.verticalAlignment; fields.push('userEnteredFormat.verticalAlignment'); }
+        if (req.wrapStrategy) { cellFormat.wrapStrategy = req.wrapStrategy; fields.push('userEnteredFormat.wrapStrategy'); }
+        if (req.numberFormat) { cellFormat.numberFormat = req.numberFormat; fields.push('userEnteredFormat.numberFormat'); }
+
+        if (fields.length > 0) {
+          batchRequests.push({
+            repeatCell: {
+              range,
+              cell: { userEnteredFormat: cellFormat },
+              fields: fields.join(','),
+            },
+          });
+        }
+      } else if (req.type === 'mergeCells') {
+        batchRequests.push({
+          mergeCells: {
+            range,
+            mergeType: req.mergeType || 'MERGE_ALL',
+          },
+        });
+      } else if (req.type === 'autoResize') {
+        batchRequests.push({
+          autoResizeDimensions: {
+            dimensions: {
+              sheetId: sheetId ?? 0,
+              dimension: 'COLUMNS',
+              startIndex: req.range.startColumnIndex,
+              endIndex: req.range.endColumnIndex,
+            },
+          },
+        });
+      } else if (req.type === 'updateBorders') {
+        const borderSpec = {
+          style: req.borderStyle || 'SOLID',
+          color: req.borderColor || { red: 0, green: 0, blue: 0 },
+        };
+        const sides = req.borderSides || ['top', 'bottom', 'left', 'right'];
+        const borders: any = {};
+        for (const side of sides) borders[side] = borderSpec;
+        batchRequests.push({
+          updateBorders: { range, ...borders },
+        });
+      } else if (req.type === 'updateSheetProperties') {
+        // Can freeze rows/columns
+        const props: any = {};
+        const gridFields: string[] = [];
+        if (req.range.startRowIndex !== undefined) {
+          props.gridProperties = { ...props.gridProperties, frozenRowCount: req.range.startRowIndex };
+          gridFields.push('gridProperties.frozenRowCount');
+        }
+        batchRequests.push({
+          updateSheetProperties: {
+            properties: { sheetId: sheetId ?? 0, ...props },
+            fields: gridFields.join(','),
+          },
+        });
+      }
+    }
+
+    if (batchRequests.length === 0) return { ok: true, message: 'No formatting operations to apply' };
+
+    const data = await googleAuthorizedFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+      { method: 'POST', body: JSON.stringify({ requests: batchRequests }) },
+      profile,
+    );
+    return { ok: true, repliesCount: ((data as any)?.replies || []).length };
+  },
+});
+
+export const sheets_batch_update_values = createTool({
+  id: 'sheets_batch_update_values',
+  description: 'Write values to multiple ranges in a single request. Efficient for updating several areas of a spreadsheet at once.',
+  inputSchema: z.object({
+    spreadsheetId: z.string(),
+    data: z.array(z.object({
+      range: z.string().describe('A1 notation range'),
+      values: z.array(z.array(z.any())),
+    })).describe('Array of range-values pairs to write'),
+    valueInputOption: z.enum(['RAW', 'USER_ENTERED']).default('USER_ENTERED'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/spreadsheets'], profile);
+    if ((gate as any).ok !== true) return gate;
+    const { spreadsheetId, data: rangeData, valueInputOption } = inputData as any;
+    const result = await googleAuthorizedFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values:batchUpdate`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          valueInputOption: valueInputOption || 'USER_ENTERED',
+          data: rangeData,
+        }),
+      },
+      profile,
+    );
+    return {
+      totalUpdatedRows: (result as any)?.totalUpdatedRows,
+      totalUpdatedColumns: (result as any)?.totalUpdatedColumns,
+      totalUpdatedCells: (result as any)?.totalUpdatedCells,
+      totalUpdatedSheets: (result as any)?.totalUpdatedSheets,
+    };
+  },
+});
+
+export const sheets_delete_rows_columns = createTool({
+  id: 'sheets_delete_rows_columns',
+  description: 'Delete rows or columns from a Google Sheet.',
+  inputSchema: z.object({
+    spreadsheetId: z.string(),
+    sheetId: z.number().default(0).describe('Sheet ID (0 for first sheet)'),
+    dimension: z.enum(['ROWS', 'COLUMNS']).describe('Whether to delete rows or columns'),
+    startIndex: z.number().describe('0-based start index (inclusive)'),
+    endIndex: z.number().describe('0-based end index (exclusive)'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/spreadsheets'], profile);
+    if ((gate as any).ok !== true) return gate;
+    const { spreadsheetId, sheetId, dimension, startIndex, endIndex } = inputData as any;
+    const data = await googleAuthorizedFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          requests: [{
+            deleteDimension: {
+              range: {
+                sheetId: sheetId ?? 0,
+                dimension,
+                startIndex,
+                endIndex,
+              },
+            },
+          }],
+        }),
+      },
+      profile,
+    );
+    return { ok: true, deleted: `${dimension} ${startIndex}-${endIndex}` };
+  },
+});
+
+export const sheets_sort_range = createTool({
+  id: 'sheets_sort_range',
+  description: 'Sort a range of data in Google Sheets by one or more columns.',
+  inputSchema: z.object({
+    spreadsheetId: z.string(),
+    sheetId: z.number().default(0),
+    range: z.object({
+      startRowIndex: z.number(),
+      endRowIndex: z.number(),
+      startColumnIndex: z.number(),
+      endColumnIndex: z.number(),
+    }).describe('0-indexed range to sort'),
+    sortSpecs: z.array(z.object({
+      dimensionIndex: z.number().describe('0-indexed column to sort by'),
+      sortOrder: z.enum(['ASCENDING', 'DESCENDING']).default('ASCENDING'),
+    })).describe('Columns to sort by, in priority order'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/spreadsheets'], profile);
+    if ((gate as any).ok !== true) return gate;
+    const { spreadsheetId, sheetId, range, sortSpecs } = inputData as any;
+    const data = await googleAuthorizedFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          requests: [{
+            sortRange: {
+              range: { sheetId: sheetId ?? 0, ...range },
+              sortSpecs,
+            },
+          }],
+        }),
+      },
+      profile,
+    );
+    return { ok: true };
+  },
+});
+
+export const sheets_auto_resize = createTool({
+  id: 'sheets_auto_resize',
+  description: 'Auto-resize columns or rows to fit their content in Google Sheets.',
+  inputSchema: z.object({
+    spreadsheetId: z.string(),
+    sheetId: z.number().default(0),
+    dimension: z.enum(['ROWS', 'COLUMNS']).default('COLUMNS'),
+    startIndex: z.number().default(0).describe('0-based start index'),
+    endIndex: z.number().describe('0-based end index (exclusive)'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/spreadsheets'], profile);
+    if ((gate as any).ok !== true) return gate;
+    const { spreadsheetId, sheetId, dimension, startIndex, endIndex } = inputData as any;
+    const data = await googleAuthorizedFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          requests: [{
+            autoResizeDimensions: {
+              dimensions: {
+                sheetId: sheetId ?? 0,
+                dimension: dimension || 'COLUMNS',
+                startIndex: startIndex ?? 0,
+                endIndex,
+              },
+            },
+          }],
+        }),
+      },
+      profile,
+    );
+    return { ok: true };
+  },
+});
+
 export const docs_get_document = createTool({
   id: 'docs_get_document',
   description: 'Get a Google Docs document metadata and content. Requires documents.readonly.',

@@ -19,6 +19,7 @@ import { WeatherCard } from './WeatherCard';
 import { EmailView } from './EmailView';
 import { AgentTodoList } from './AgentTodoList';
 import { FeedbackForm } from './FeedbackForm';
+import { IntegrationConnect } from './IntegrationConnect';
 import type { DropzoneFile } from './FileDropzone';
 import { GenUIErrorBoundary } from './GenUIErrorBoundary';
 
@@ -333,6 +334,21 @@ export const GenUIContainer: React.FC<GenUIProps> = ({
             onCancel={() => onResult({ submitted: false, cancelled: true })}
             isSubmitted={isCompleted && result?.submitted}
             isCancelled={isCompleted && result?.cancelled}
+          />
+        );
+
+      // === Integrations ===
+      case 'connect_integration':
+      case 'integration_connect':
+      case 'show_integrations':
+        return (
+          <IntegrationConnect
+            title={safeArgs.title}
+            message={safeArgs.message}
+            integrations={safeArgs.integrations || []}
+            connectedSlugs={safeArgs.connectedSlugs}
+            disabled={disabled}
+            onConnect={(slug) => onResult({ action: 'connect', slug })}
           />
         );
 

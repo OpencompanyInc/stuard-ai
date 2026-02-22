@@ -769,7 +769,11 @@ export default function App() {
     // Format the selection as a follow-up message
     let responseText = '';
 
-    if (result?.selectedId) {
+    if (result?.action === 'connect' && result?.slug) {
+      // For integration connect - the IntegrationConnect component handles the actual OAuth flow
+      // Just notify the AI that the user connected
+      responseText = `Connected integration: ${result.slug}`;
+    } else if (result?.selectedId) {
       // For choices
       responseText = `Selected: ${result.selectedId}`;
     } else if (result?.confirmed !== undefined) {

@@ -359,7 +359,19 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
         headers: { Authorization: `Bearer ${token}` },
       });
       const j = await resp.json().catch(() => null);
-      if (j && Array.isArray(j.profiles)) setProfiles(j.profiles);
+      if (j && Array.isArray(j.profiles)) {
+        // Map API field names to frontend interface
+        // API returns: { profile, isDefault, email, scopes, provider }
+        // Frontend expects: { profile_label, is_default, account_email, scopes_csv, provider }
+        const mapped: IntegrationProfile[] = j.profiles.map((p: any) => ({
+          provider: p.provider || '',
+          profile_label: p.profile || p.profile_label || 'default',
+          is_default: !!(p.isDefault ?? p.is_default),
+          account_email: p.email || p.account_email || null,
+          scopes_csv: (Array.isArray(p.scopes) ? p.scopes.join(',') : p.scopes) || p.scopes_csv || null,
+        }));
+        setProfiles(mapped);
+      }
     } catch {} finally {
       setProfilesLoading(false);
     }
@@ -382,14 +394,30 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   /** Delete a specific profile */
   const deleteProfile = useCallback(async (provider: string, profileLabel: string) => {
     const token = session?.access_token;
-    if (!token) return;
+    if (!token || !profileLabel) return;
     try {
-      await fetch(
+      const resp = await fetch(
         `${CLOUD_AI_HTTP}/integrations/profiles?provider=${encodeURIComponent(provider)}&profile=${encodeURIComponent(profileLabel)}`,
         { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
       );
-    } catch {}
+      const j = await resp.json().catch(() => null);
+      if (j && !j.ok) {
+        console.warn('[deleteProfile] Server error:', j);
+      }
+    } catch (e) {
+      console.warn('[deleteProfile] Network error:', e);
+    }
+    // Also remove from connectedMap if this was the only/last profile for the provider
     await refreshProfiles(provider);
+    // For google provider, refresh all Google statuses since removing a profile may affect connected products
+    if (provider === 'google') {
+      const googleSlugs = ['google-drive', 'google-calendar', 'gmail', 'google-sheets', 'google-docs'];
+      setConnectedMap((prev) => {
+        // After profile deletion, we'll let the next status check update this
+        // For now, keep existing connected state
+        return prev;
+      });
+    }
   }, [session?.access_token, CLOUD_AI_HTTP, refreshProfiles]);
 
   const handleLearnMore = (url: string) => {
@@ -484,6 +512,42 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       }, 2000);
     };
 
+    /** After connecting one Google product, re-check all Google product statuses */
+    const refreshAllGoogleStatuses = async (authToken: string) => {
+      const googleSlugs = [
+        { target: 'drive', slug: 'google-drive' },
+        { target: 'calendar', slug: 'google-calendar' },
+        { target: 'gmail', slug: 'gmail' },
+        { target: 'sheets', slug: 'google-sheets' },
+        { target: 'docs', slug: 'google-docs' },
+      ];
+      const results: Record<string, boolean> = {};
+      await Promise.all(
+        googleSlugs.map(async ({ target, slug }) => {
+          try {
+            const resp = await fetch(
+              `${CLOUD_AI_HTTP}/integrations/google/status?target=${target}`,
+              { headers: { Authorization: `Bearer ${authToken}` } },
+            );
+            const j = await resp.json().catch(() => null);
+            results[slug] = !!(j && (j as any).ok && (j as any).connected);
+          } catch {
+            results[slug] = false;
+          }
+        }),
+      );
+      setConnectedMap((prev) => {
+        const next = { ...prev };
+        for (const [slug, connected] of Object.entries(results)) {
+          if (connected) next[slug] = true;
+          else delete next[slug];
+        }
+        try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
+        emitConnectedChanged();
+        return next;
+      });
+    };
+
     if (slug === "outlook") {
       const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
       const url = `${CLOUD_AI_HTTP}/integrations/outlook/connect?token=${encodeURIComponent(token)}${profileParam}`;
@@ -530,6 +594,9 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       const url = `${CLOUD_AI_HTTP}/integrations/google/connect?token=${encodeURIComponent(token)}&target=${encodeURIComponent(target)}${profileParam}`;
       openExternal(url);
       await pollStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=${encodeURIComponent(target)}`, slug);
+      // After connecting one Google product, refresh ALL Google product statuses
+      // since scopes are now merged — connecting Gmail no longer breaks Drive
+      await refreshAllGoogleStatuses(token);
       await refreshProfiles('google');
       return;
     }

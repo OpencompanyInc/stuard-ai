@@ -33,6 +33,9 @@ export { AgentTodoList } from './AgentTodoList';
 // === Feedback ===
 export { FeedbackForm } from './FeedbackForm';
 
+// === Integrations ===
+export { IntegrationConnect } from './IntegrationConnect';
+
 // === Container ===
 export { GenUIContainer } from './GenUIContainer';
 export { GenUIErrorBoundary } from './GenUIErrorBoundary';

@@ -9,6 +9,7 @@
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "clean": "turbo run clean --parallel",
+    "version:bump": "node scripts/version-bump.js",
     "dev:stack": "concurrently -k -n CLOUD,AGENT,DESKTOP,OPS,WEB \"pnpm -F @stuardai/cloud-ai dev\" \"node scripts/run-agent.js\" \"npm --prefix apps/desktop run dev\" \"pnpm -F ops-console dev\" \"pnpm -F stuard-ai-website dev\""
   },
   "devDependencies": {

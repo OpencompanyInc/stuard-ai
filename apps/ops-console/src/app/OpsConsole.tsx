@@ -23,14 +23,16 @@ import DeployTab from './components/DeployTab';
 import InfraTab from './components/InfraTab';
 import AccessTab from './components/AccessTab';
 import FeedbackTab from './components/FeedbackTab';
+import VersionTab from './components/VersionTab';
 
-type Tab = 'overview' | 'analytics' | 'users' | 'deploy' | 'infra' | 'access' | 'feedback';
+type Tab = 'overview' | 'analytics' | 'users' | 'deploy' | 'versions' | 'infra' | 'access' | 'feedback';
 
 const NAV_ITEMS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'analytics', label: 'Analytics', icon: BarChart3 },
   { id: 'users', label: 'Users', icon: Users },
   { id: 'deploy', label: 'Deployments', icon: Rocket },
+  { id: 'versions', label: 'Versions', icon: GitBranch },
   { id: 'feedback', label: 'Feedback & Bugs', icon: Bug },
   { id: 'infra', label: 'Infrastructure', icon: Server },
   { id: 'access', label: 'Access Control', icon: Shield },
@@ -467,6 +469,9 @@ export default function OpsConsole() {
             {activeTab === 'deploy' && (
               <DeployTab status={status} onAction={doAction} loading={loading}
                 deployments={deploymentsList} latestByChannel={latestByChannel} onRefreshDeploys={loadDeployments} />
+            )}
+            {activeTab === 'versions' && (
+              <VersionTab status={status} onAction={doAction} loading={loading} />
             )}
             {activeTab === 'feedback' && (
               <FeedbackTab

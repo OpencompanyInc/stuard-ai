@@ -35,6 +35,8 @@ const GENUI_TOOL_NAMES = new Set([
   // Applications
   'show_email',
   'draft_email',
+  // Integrations
+  'connect_integration',
 ]);
 
 // Tools that should be hidden from the chat UI (internal/silent tools)
@@ -545,6 +547,11 @@ const GENUI_COMPONENT_MAP: Record<string, string> = {
   'todolist': 'agent_todo',
   'todo_list': 'agent_todo',
   'tasks': 'agent_todo',
+  // Integrations
+  'integration': 'connect_integration',
+  'integrations': 'connect_integration',
+  'connect': 'connect_integration',
+  'integration_connect': 'connect_integration',
 };
 
 function extractContentSegments(inputText: string): ContentSegment[] {
@@ -580,7 +587,7 @@ function extractContentSegments(inputText: string): ContentSegment[] {
       end: genuiMatch.index + genuiMatch[0].length,
       component: toolName,
       args,
-      id: `genui-${Date.now()}-${genuiCounter++}`,
+      id: `genui-${genuiMatch.index}-${genuiCounter++}`,
     });
   }
 
@@ -603,7 +610,7 @@ function extractContentSegments(inputText: string): ContentSegment[] {
         end: inputText.length,
         component: toolName,
         args: {},
-        id: `genui-loading-${Date.now()}`,
+        id: `genui-loading-${incompleteStart}`,
         loading: true,
         title,
       });
@@ -1132,7 +1139,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
         end: genuiMatch.index + genuiMatch[0].length,
         component: toolName,
         args,
-        id: `genui-seg-${Date.now()}-${genuiCounter++}`,
+        id: `genui-seg-${genuiMatch.index}-${genuiCounter++}`,
       });
     }
 
@@ -1157,7 +1164,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
           end: text.length,
           component: toolName,
           args: {},
-          id: `genui-loading-${Date.now()}`,
+          id: `genui-loading-${incompleteStart}`,
           loading: true,
           title,
         });

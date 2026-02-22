@@ -10,7 +10,7 @@ import { getHeadlessAgentStatus } from '../tools/get-headless-agent-status';
 import { listHeadlessAgentTasks } from '../tools/list-headless-agent-tasks';
 import { outlook_get_me, outlook_list_messages, outlook_search_messages, outlook_send_mail } from '../tools/outlook-tools';
 import { github_get_me, github_list_repos, github_list_issues, github_create_issue } from '../tools/github-tools';
-import { google_get_userinfo, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, calendar_list_events, calendar_create_event, calendar_delete_event, tasks_list, drive_list_files, sheets_read_range, docs_get_document, docs_create_document, docs_write_text } from '../tools/google-tools';
+import { google_get_userinfo, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, calendar_list_events, calendar_create_event, calendar_delete_event, tasks_list, drive_list_files, sheets_read_range, sheets_create_spreadsheet, sheets_write_range, sheets_append_rows, sheets_clear_range, sheets_get_spreadsheet, sheets_add_sheet, sheets_format_cells, sheets_batch_update_values, sheets_delete_rows_columns, sheets_sort_range, sheets_auto_resize, docs_get_document, docs_create_document, docs_write_text } from '../tools/google-tools';
 import { send_hotkey, list_directory, read_file, write_file, create_directory, move_file, canvas_list, canvas_read, canvas_write, canvas_create, canvas_delete, calendar_crud, task_crud, task_reminders, planner_list_items, capture_media, describe_media_capture_capabilities, run_command, run_system_command, search_local_workflows, import_workflow, run_automation, stop_automation, search_past_conversations, get_conversation_context, agent_decision, agent_extract, glob, grep } from '../tools/device-tools';
 import { web_search } from '../tools/perplexity-tools';
 
@@ -75,6 +75,17 @@ export function getHeadlessAgent(
     tasks_list,
     drive_list_files,
     sheets_read_range,
+    sheets_create_spreadsheet,
+    sheets_write_range,
+    sheets_append_rows,
+    sheets_clear_range,
+    sheets_get_spreadsheet,
+    sheets_add_sheet,
+    sheets_format_cells,
+    sheets_batch_update_values,
+    sheets_delete_rows_columns,
+    sheets_sort_range,
+    sheets_auto_resize,
     docs_get_document,
     docs_create_document,
     docs_write_text,
@@ -160,6 +171,17 @@ export function getHeadlessAgent(
     tools.tasks_list = tasks_list;
     tools.drive_list_files = drive_list_files;
     tools.sheets_read_range = sheets_read_range;
+    tools.sheets_create_spreadsheet = sheets_create_spreadsheet;
+    tools.sheets_write_range = sheets_write_range;
+    tools.sheets_append_rows = sheets_append_rows;
+    tools.sheets_clear_range = sheets_clear_range;
+    tools.sheets_get_spreadsheet = sheets_get_spreadsheet;
+    tools.sheets_add_sheet = sheets_add_sheet;
+    tools.sheets_format_cells = sheets_format_cells;
+    tools.sheets_batch_update_values = sheets_batch_update_values;
+    tools.sheets_delete_rows_columns = sheets_delete_rows_columns;
+    tools.sheets_sort_range = sheets_sort_range;
+    tools.sheets_auto_resize = sheets_auto_resize;
     tools.docs_get_document = docs_get_document;
     tools.docs_create_document = docs_create_document;
     tools.docs_write_text = docs_write_text;

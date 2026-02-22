@@ -73,9 +73,15 @@ export async function handleGoogleRoutes(req: IncomingMessage, res: ServerRespon
 
       const body = JSON.stringify({
         ok: true,
-        connected: (required.length > 0 ? hasScopes : connected),
+        // A Google account is considered connected if the account exists AND
+        // has the required scopes. But `accountConnected` tells the frontend
+        // the account itself is linked (even if this specific product's scopes
+        // haven't been granted yet), avoiding the confusing "disconnected" state.
+        connected: hasScopes,
+        accountConnected: connected,
         hasScopes,
         missingScopes,
+        grantedScopes: Array.isArray(acc?.scopes) ? acc.scopes : [],
         profile: acc?.profile_label || null,
         isDefault: acc?.is_default ?? null,
         email: acc?.account_email || null,
@@ -131,6 +137,9 @@ export async function handleGoogleRoutes(req: IncomingMessage, res: ServerRespon
       authorize.searchParams.set('scope', scopes);
       authorize.searchParams.set('state', state);
       authorize.searchParams.set('access_type', 'offline');
+      // Include previously-granted scopes so reconnecting for a new product
+      // doesn't revoke existing scopes (e.g. Drive when adding Gmail)
+      authorize.searchParams.set('include_granted_scopes', 'true');
 
       // For new non-default profiles, select_account lets the user pick
       // which Google account to link. consent ensures refresh token.
@@ -244,7 +253,23 @@ export async function handleGoogleRoutes(req: IncomingMessage, res: ServerRespon
         accountEmail = String(userInfo?.email || '') || null;
       } catch {}
 
-      try { await upsertExternalAccount({ userId, provider: 'google', access_token, scopes, refresh_token: refresh_token || null, expires_at, meta: { token_type: tokenBody.token_type || 'Bearer' }, profileLabel, accountEmail }); } catch (saveErr: any) {
+      // ─── Merge scopes with existing ones so connecting a new Google product
+      //     doesn't wipe out scopes from previously-connected products ───
+      let mergedScopes = scopes;
+      let finalRefreshToken = refresh_token || null;
+      try {
+        const existing = await getExternalAccount(userId, 'google', profileLabel);
+        if (existing) {
+          const existingScopes = Array.isArray(existing.scopes) ? existing.scopes.map(String) : [];
+          mergedScopes = Array.from(new Set([...existingScopes, ...scopes]));
+          // Preserve the existing refresh token if Google didn't return a new one
+          if (!finalRefreshToken && existing.refresh_token) {
+            finalRefreshToken = existing.refresh_token;
+          }
+        }
+      } catch {}
+
+      try { await upsertExternalAccount({ userId, provider: 'google', access_token, scopes: mergedScopes, refresh_token: finalRefreshToken, expires_at, meta: { token_type: tokenBody.token_type || 'Bearer' }, profileLabel, accountEmail }); } catch (saveErr: any) {
         console.error('[google] Failed to save token:', saveErr?.message || saveErr);
         res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=google&message=${encodeURIComponent('Could not save token: ' + (saveErr?.message || 'database error'))}`, 'Cache-Control': 'no-store' });
         res.end();
