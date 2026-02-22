@@ -283,25 +283,25 @@ export async function POST(req: Request) {
 
       // 2. BETA (develop) ---------------------------------------------------
       case 'ship-to-beta': {
-        const current = await git.revparse(['--abbrev-ref', 'HEAD']);
+        const current = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
         const sourceBranch = String(payload.sourceBranch || payload.branch || current).trim() || current;
         const targets = payload.targets as { website?: boolean; cloud?: boolean; desktop?: boolean } | undefined;
         const targetLabel = formatTargets(targets);
         const github = getGithubConfig();
 
-        // Merge source branch into develop with "ours" strategy to resolve conflicts using dev branch
-        await git.checkout('develop');
-        await git.pull('origin', 'develop');
-        await git.merge([sourceBranch, '--strategy-option', 'ours', '--allow-unrelated-histories']);
-        await git.push('origin', 'develop');
-        await git.checkout(sourceBranch);
+        // Push source branch to remote (no branch switching)
+        const pushResult = await pushOriginWithRetry({ branch: sourceBranch, upstream: false, maxAttempts: 2 });
+        if (!pushResult.ok) {
+          return NextResponse.json({ error: `Failed to push ${sourceBranch}: ${pushResult.error}` }, { status: 500 });
+        }
 
-        // Trigger GitHub Actions workflow with selected targets
+        // Trigger GitHub Actions workflow directly with the source branch ref
+        // No need to merge into develop — the workflow checks out the specified ref
         const workflowResult = await triggerWorkflow(
           'release-beta.yml',
-          'develop',
+          sourceBranch,
           {
-            ref: 'develop',
+            ref: sourceBranch,
             deploy_cloud: String(targets?.cloud ?? true),
             deploy_website: String(targets?.website ?? true),
             build_desktop: String(targets?.desktop ?? true),
@@ -311,11 +311,11 @@ export async function POST(req: Request) {
 
         if (!workflowResult.ok) {
           return NextResponse.json({ 
-            message: `Merged ${sourceBranch} into develop, but workflow trigger failed: ${workflowResult.error}. You may need to manually run the workflow.` 
+            message: `Pushed ${sourceBranch}, but workflow trigger failed: ${workflowResult.error}. You may need to manually run the workflow.` 
           });
         }
 
-        return NextResponse.json({ message: `Merged ${sourceBranch} into develop (Beta) and triggered CI [${targetLabel}]` });
+        return NextResponse.json({ message: `Shipped ${sourceBranch} to Beta and triggered CI [${targetLabel}]` });
       }
 
       // Legacy preview action: just push current branch
@@ -329,24 +329,19 @@ export async function POST(req: Request) {
       case 'ship-to-staging': {
         const targets = payload.targets as { website?: boolean; cloud?: boolean; desktop?: boolean } | undefined;
         const targetLabel = formatTargets(targets);
-        const previous = await git.revparse(['--abbrev-ref', 'HEAD']);
+        const current = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
         const github = getGithubConfig();
 
-        await git.checkout('staging');
-        await git.pull('origin', 'staging');
-        await git.merge(['develop', '--allow-unrelated-histories']);
-        await git.push('origin', 'staging');
-
-        try {
-          await git.checkout(previous);
-        } catch {
-          // ignore
+        // Push current branch to remote (no branch switching)
+        const pushResult = await pushOriginWithRetry({ branch: current, upstream: false, maxAttempts: 2 });
+        if (!pushResult.ok) {
+          return NextResponse.json({ error: `Failed to push ${current}: ${pushResult.error}` }, { status: 500 });
         }
 
         // Trigger GitHub Actions workflow with selected targets
         const workflowResult = await triggerWorkflow(
           'release-staging.yml',
-          'staging',
+          current,
           {
             deploy_cloud: String(targets?.cloud ?? true),
             deploy_website: String(targets?.website ?? true),
@@ -356,11 +351,11 @@ export async function POST(req: Request) {
 
         if (!workflowResult.ok) {
           return NextResponse.json({ 
-            message: `Merged develop into staging, but workflow trigger failed: ${workflowResult.error}` 
+            message: `Pushed ${current}, but staging workflow trigger failed: ${workflowResult.error}` 
           });
         }
 
-        return NextResponse.json({ message: `Merged develop into staging (Release Candidate) and triggered CI [${targetLabel}]` });
+        return NextResponse.json({ message: `Shipped ${current} to Staging and triggered CI [${targetLabel}]` });
       }
 
       // 4. PRODUCTION (main) -----------------------------------------------
@@ -369,29 +364,24 @@ export async function POST(req: Request) {
         const version = String(payload.version || '').trim();
         const targets = payload.targets as { website?: boolean; cloud?: boolean; desktop?: boolean } | undefined;
         const targetLabel = formatTargets(targets);
-        const previous = await git.revparse(['--abbrev-ref', 'HEAD']);
+        const current = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
         const github = getGithubConfig();
 
-        await git.checkout('main');
-        await git.pull('origin', 'main');
-        await git.merge(['staging', '--allow-unrelated-histories']);
-        await git.push('origin', 'main');
+        // Push current branch to remote (no branch switching)
+        const pushResult = await pushOriginWithRetry({ branch: current, upstream: false, maxAttempts: 2 });
+        if (!pushResult.ok) {
+          return NextResponse.json({ error: `Failed to push ${current}: ${pushResult.error}` }, { status: 500 });
+        }
 
         if (version) {
           await git.addTag(version);
           await git.pushTags('origin');
         }
 
-        try {
-          await git.checkout(previous);
-        } catch {
-          // ignore
-        }
-
         // Trigger GitHub Actions workflow with selected targets
         const workflowResult = await triggerWorkflow(
           'release-production.yml',
-          'main',
+          current,
           {
             deploy_cloud: String(targets?.cloud ?? true),
             deploy_website: String(targets?.website ?? true),
@@ -400,7 +390,7 @@ export async function POST(req: Request) {
           github
         );
 
-        const baseMessage = version ? `Released ${version} to production (main)` : 'Released to production (main)';
+        const baseMessage = version ? `Released ${version} to production` : 'Released to production';
         
         if (!workflowResult.ok) {
           return NextResponse.json({ 
