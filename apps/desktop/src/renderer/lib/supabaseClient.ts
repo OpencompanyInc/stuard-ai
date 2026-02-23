@@ -8,3 +8,8 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     detectSessionInUrl: true,
   },
 });
+
+// Expose to window for main process auth token extraction
+if (typeof window !== 'undefined') {
+  (window as any).supabase = supabase;
+}
