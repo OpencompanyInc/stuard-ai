@@ -231,7 +231,7 @@ jobs:
         working-directory: apps/desktop
         run: |
           if [ -n "${{ matrix.arch }}" ]; then
-            npm run build && npm run prepare:agent && npx electron-builder --${{ matrix.arch }}
+            npm run build && npm run obfuscate && npm run prepare:agent && npx electron-builder --${{ matrix.arch }}
           else
             npm run dist
           fi

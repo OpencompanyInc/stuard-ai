@@ -15,12 +15,13 @@
     "build:renderer": "vite build",
     "prepare:agent": "node ./scripts/prepare-agent.cjs",
     "start": "electron .",
-    "pack": "npm run build && npm run prepare:agent && electron-builder --dir",
-    "dist": "npm run build && npm run prepare:agent && electron-builder",
+    "pack": "npm run build && npm run obfuscate && npm run prepare:agent && electron-builder --dir",
+    "dist": "npm run build && npm run obfuscate && npm run prepare:agent && electron-builder",
     "clean": "rimraf dist",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "obfuscate": "javascript-obfuscator ./dist/main --output ./dist/main --compact true --control-flow-flattening true --dead-code-injection true && javascript-obfuscator ./dist/preload --output ./dist/preload --compact true --control-flow-flattening true --dead-code-injection true"
   },
   "dependencies": {
     "@polar-sh/sdk": "^0.42.1",
