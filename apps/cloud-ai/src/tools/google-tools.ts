@@ -180,6 +180,7 @@ export const gmail_send_message = createTool({
     subject: z.string().min(1),
     body: z.string().min(1),
     contentType: z.enum(['text/plain', 'text/html']).default('text/plain'),
+    from: z.string().optional().describe('Sender display name (e.g., "Stuard AI"). If not set, uses email address prefix.'),
     cc: z.array(z.string().email()).optional(),
     bcc: z.array(z.string().email()).optional(),
     attachments: z.array(z.object({
@@ -192,8 +193,9 @@ export const gmail_send_message = createTool({
     const { profile } = inputData as any;
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.send'], profile);
     if ((gate as any).ok !== true) return gate;
-    const { to, subject, body, contentType, cc, bcc, attachments  } = inputData as any;
+    const { to, subject, body, contentType, from, cc, bcc, attachments  } = inputData as any;
     
+    const senderEmail = (gate as any).acc?.account_email || '';
     const boundary = `boundary_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const mime = contentType || 'text/plain';
     
@@ -202,6 +204,14 @@ export const gmail_send_message = createTool({
       `To: ${to.join(', ')}`,
       `Subject: ${subject}`,
     ];
+    if (from && typeof from === 'string' && from.trim()) {
+      const displayName = from.trim();
+      if (senderEmail) {
+        headers.push(`From: "${displayName}" <${senderEmail}>`);
+      } else {
+        headers.push(`From: ${displayName}`);
+      }
+    }
     if (cc?.length) headers.push(`Cc: ${cc.join(', ')}`);
     if (bcc?.length) headers.push(`Bcc: ${bcc.join(', ')}`);
     
@@ -323,17 +333,17 @@ export const gmail_send_message = createTool({
       body: JSON.stringify({ raw }),
     } as any);
     
-    // Build result with attachment details
-    const result: any = { 
+    console.log(`[gmail_send_message] Email sent successfully. Attachments: ${attachmentsIncluded}/${attachmentList.length}`);
+    const returnResult: any = { 
+      ok: true,
       message: data, 
       attachmentsRequested: attachmentList.length,
       attachmentsIncluded: attachmentList.length > 0 ? attachmentsIncluded : 0,
     };
     if (attachmentErrors.length > 0) {
-      result.attachmentErrors = attachmentErrors;
+      returnResult.attachmentErrors = attachmentErrors;
     }
-    console.log(`[gmail_send_message] Email sent successfully. Attachments: ${attachmentsIncluded}/${attachmentList.length}`);
-    return result;
+    return returnResult;
   },
 });
 

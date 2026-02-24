@@ -206,7 +206,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'show_progress', category: 'ui', kind: 'local', description: 'Display a progress bar for long-running tasks', argsTemplate: { progress: 50, label: '', sublabel: '', variant: 'download', status: 'active', color: 'blue' }, outputSchema: { ok: 'boolean' } },
 
   // --- INTEGRATIONS ---
-  { id: 'gmail_send_message', category: 'integrations', kind: 'cloud', description: 'Send an email via Gmail with optional file attachments', argsTemplate: { to: [], subject: '', body: '', contentType: 'text/plain', cc: [], bcc: [], attachments: [] }, outputSchema: { message: 'object', attachmentCount: 'number' } },
+  { id: 'gmail_send_message', category: 'integrations', kind: 'cloud', description: 'Send an email via Gmail with optional file attachments', argsTemplate: { to: [], subject: '', body: '', contentType: 'text/plain', from: '', cc: [], bcc: [], attachments: [] }, outputSchema: { message: 'object', attachmentCount: 'number' } },
   { id: 'gmail_list_messages', category: 'integrations', kind: 'cloud', description: 'List Gmail messages', argsTemplate: { q: '', labelIds: [], maxResults: 10, includeSpamTrash: false }, outputSchema: { items: 'any[]', count: 'number', nextPageToken: 'string' } },
   { id: 'gmail_get_message_brief', category: 'integrations', kind: 'cloud', description: 'Get a Gmail message brief', argsTemplate: { id: '' }, outputSchema: { message: 'object' } },
   { id: 'gmail_get_message_full', category: 'integrations', kind: 'cloud', description: 'Get a Gmail message with full content', argsTemplate: { id: '' }, outputSchema: { message: 'object' } },
@@ -968,6 +968,12 @@ if (TOOL_SCHEMAS['gmail_send_message']) {
       description: 'Carbon copy recipients',
       itemType: 'string',
       placeholder: 'email@example.com',
+    },
+    from: {
+      type: 'string',
+      label: 'From Name',
+      description: 'Sender display name shown to recipients (e.g., "Stuard AI"). Leave empty to use default.',
+      placeholder: 'Stuard AI',
     },
     bcc: {
       type: 'array',

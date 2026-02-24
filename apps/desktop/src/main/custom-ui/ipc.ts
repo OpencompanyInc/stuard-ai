@@ -1,12 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { BrowserWindow, screen, ipcMain, dialog, clipboard, Notification } from 'electron';
+import { BrowserWindow, screen, ipcMain, dialog, clipboard, Notification, app } from 'electron';
 import type { RouterContext } from '../tool-router';
 import { execTool } from '../tools/index';
-import { onVariableChange, variableStore, setVariable, type VariableEntry } from '../workflow-variables';
+import { onVariableChange, variableStore, setVariable, getVariable, type VariableEntry } from '../workflow-variables';
 import { customUiWindows, windowData } from './state';
 import { approvePathForWindow, isPathAllowed, isPathApprovedForWindow } from './security';
 import { emitStepEvent } from '../engine/events';
+import { interpolateForTool } from '../engine/utils';
 
 function varNameMatches(storeKey: string, bindName: string): boolean {
   if (storeKey === bindName) return true;
@@ -245,17 +246,56 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
       // so templates like {{caller.query}} resolve to the data passed by the UI
       const nodeArgs = { ...(targetStep.args || {}) };
 
-      // Simple interpolation of {{caller.X}} templates with the passed data
-      const resolvedArgs: any = {};
-      for (const [k, v] of Object.entries(nodeArgs)) {
-        if (typeof v === 'string') {
-          resolvedArgs[k] = v.replace(/\{\{caller\.(\w+)\}\}/g, (_match: string, field: string) => {
-            return data?.[field] !== undefined ? (typeof data[field] === 'string' ? data[field] : JSON.stringify(data[field])) : '';
-          });
-        } else {
-          resolvedArgs[k] = v;
+      // Build a proper engine-compatible context for template interpolation.
+      // This enables ALL template types (not just {{caller.X}}):
+      //   {{caller.field}}        — data passed from the UI
+      //   {{caller.nested.path}}  — nested caller data
+      //   {{$workspace.data}}     — workspace paths
+      //   {{$vars.myVar}}         — workflow variables
+      //   {{workflow.myVar}}      — workflow variables (alternate syntax)
+      const interpolationCtx: any = {
+        caller: data || {},
+      };
+
+      // Inject $workspace context (same logic as engine/index.ts)
+      try {
+        const { getWorkspaceDir } = require('../workflows/workflows');
+        const wsDir = getWorkspaceDir(winFlowId);
+        if (wsDir) {
+          interpolationCtx.$workspace = {
+            path: wsDir.replace(/\\/g, '/'),
+            data: (wsDir + '/data').replace(/\\/g, '/'),
+            scripts: (wsDir + '/scripts').replace(/\\/g, '/'),
+            assets: (wsDir + '/assets').replace(/\\/g, '/'),
+            id: winFlowId,
+          };
         }
-      }
+      } catch { }
+
+      // Inject $vars and workflow proxies for variable access
+      const varsProxy: any = new Proxy({}, {
+        get(_t: any, prop: any) {
+          if (typeof prop !== 'string') return undefined;
+          const direct = getVariable(prop, undefined);
+          if (direct !== undefined) return direct;
+          return getVariable(`workflow.${prop}`, undefined);
+        },
+      });
+      const workflowProxy: any = new Proxy({}, {
+        get(_t: any, prop: any) {
+          if (typeof prop !== 'string') return undefined;
+          return getVariable(`workflow.${prop}`, undefined);
+        },
+      });
+      interpolationCtx.$vars = varsProxy;
+      interpolationCtx.workflow = workflowProxy;
+
+      // Use the engine's battle-tested interpolation which handles:
+      //  - Nested templates like {{arr[{{i}}]}}
+      //  - Type preservation for single-template values ("{{caller.count}}" → number 5, not string "5")
+      //  - Nested object/array walking
+      //  - JSON stringification for embedded objects
+      const resolvedArgs: any = interpolateForTool(nodeArgs, interpolationCtx, toolName);
 
       // Also pass caller data wholesale so tools have full context
       resolvedArgs.__caller = data;
@@ -340,7 +380,7 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
         if (!keepOpen && !winData?.keepOpen) {
           try {
             w.close();
-          } catch {}
+          } catch { }
           customUiWindows.delete(id);
           windowData.delete(id);
         }
@@ -367,7 +407,7 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
         if (closeActions.includes(action) && !winData?.keepOpen) {
           try {
             w.close();
-          } catch {}
+          } catch { }
           customUiWindows.delete(id);
           windowData.delete(id);
         }
@@ -391,7 +431,7 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
         }
         try {
           w.close();
-        } catch {}
+        } catch { }
         customUiWindows.delete(id);
         windowData.delete(id);
         break;
@@ -489,7 +529,7 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
         if (!win || win.isDestroyed()) {
           clearInterval(pollInterval);
           streamPollers.delete(subscriberId);
-          await execTool('_stream_unsubscribe', { streamId, subscriberId }, ctx).catch(() => {});
+          await execTool('_stream_unsubscribe', { streamId, subscriberId }, ctx).catch(() => { });
           return;
         }
         try {
@@ -667,7 +707,7 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
       if (Notification.isSupported()) {
         new Notification({ title, body: body || '' }).show();
       }
-    } catch {}
+    } catch { }
   });
 
   // Clipboard

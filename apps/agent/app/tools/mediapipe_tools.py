@@ -958,12 +958,14 @@ async def mediapipe_process_video(
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     writer = None
+    temp_output_path = None
     if draw:
         if not output_path:
             output_path = os.path.join(_get_output_dir(), f"mp_video_{uuid.uuid4().hex[:8]}.mp4")
+        temp_output_path = output_path + ".tmp.mp4"
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
+        writer = cv2.VideoWriter(temp_output_path, fourcc, fps, (w, h))
 
     # Build processor based on task
     processor: Any = None
@@ -1083,6 +1085,46 @@ async def mediapipe_process_video(
             writer.release()
         if processor:
             processor.close()
+
+    if draw and writer and output_path and temp_output_path:
+        import subprocess
+        from .ffmpeg import ensure_ffmpeg
+        setup = await ensure_ffmpeg(emit)
+        merged = False
+        if setup.get("ok"):
+            ffmpeg_path = str(setup.get("ffmpegPath"))
+            cmd = [
+                ffmpeg_path,
+                "-y",
+                "-i", temp_output_path,
+                "-i", video_path,
+                "-map", "0:v:0",
+                "-map", "1:a:0?",
+                "-c:v", "copy",
+                "-c:a", "aac",
+                output_path
+            ]
+            try:
+                proc = await asyncio.to_thread(
+                    subprocess.run,
+                    cmd,
+                    capture_output=True,
+                    timeout=300
+                )
+                if proc.returncode == 0:
+                    merged = True
+                    try:
+                        os.remove(temp_output_path)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        
+        if not merged:
+            try:
+                os.replace(temp_output_path, output_path)
+            except Exception:
+                pass
 
     return {
         "ok": True,

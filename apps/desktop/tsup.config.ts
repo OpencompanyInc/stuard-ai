@@ -1,6 +1,6 @@
 import { defineConfig } from "tsup";
 
-export default defineConfig({
+export default defineConfig((options) => ({
   entry: {
     "main/index": "src/main/app.ts",
     "main/custom-ui-preload": "src/main/custom-ui-preload.ts",
@@ -11,11 +11,11 @@ export default defineConfig({
   format: ["cjs"],
   target: "node18",
   platform: "node",
-  minify: false,
+  minify: !options.watch,
   splitting: false,
   clean: false,
   dts: false,
   shims: false,
   skipNodeModulesBundle: true,
   external: ["electron", "electron-updater", "node-pty"],
-});
+}));
