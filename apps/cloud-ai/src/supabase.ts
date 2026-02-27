@@ -823,6 +823,7 @@ export interface CloudEngine {
   health_status: string | null;
   external_ip: string | null;
   agent_version: string | null;
+  vm_secret: string | null;
 }
 
 export interface StorageUsage {
@@ -841,7 +842,7 @@ export interface StorageUsage {
   updated_at: string;
 }
 
-const CLOUD_ENGINE_COLS = 'id, user_id, instance_name, zone, machine_type, disk_size_gb, status, created_at, started_at, stopped_at, deleted_at, last_heartbeat_at, health_status, external_ip, agent_version';
+const CLOUD_ENGINE_COLS = 'id, user_id, instance_name, zone, machine_type, disk_size_gb, status, created_at, started_at, stopped_at, deleted_at, last_heartbeat_at, health_status, external_ip, agent_version, vm_secret';
 const STORAGE_USAGE_COLS = 'id, user_id, hot_storage_gb, cold_storage_bytes, backup_object_name, last_sync_at, storage_plan_id, storage_quota_gb, cold_quota_gb, plan_purchased_at, plan_expires_at, created_at, updated_at';
 
 export async function getCloudEngine(userId: string): Promise<CloudEngine | null> {

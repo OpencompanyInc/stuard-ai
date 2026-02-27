@@ -172,15 +172,16 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
         tierConfig = { machineType, vcpus: customVcpus, memoryGb: customRam, hourlyUsd };
       }
       const provider = getComputeProvider();
-      const { instanceName, zone } = await provider.provisionVM(user.userId, tier, diskSizeGb);
+      const { instanceName, zone, vmSecret } = await provider.provisionVM(user.userId, tier, diskSizeGb);
 
-      // Insert cloud engine record
+      // Insert cloud engine record (including per-VM secret for HMAC auth)
       const engine = await upsertCloudEngine(user.userId, {
         instance_name: instanceName,
         zone,
         machine_type: tierConfig.machineType,
         disk_size_gb: diskSizeGb,
         status: 'provisioning',
+        vm_secret: vmSecret,
       });
 
       // Initialize storage usage record
@@ -206,7 +207,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
         await updateEngineHealth(user.userId, { external_ip: externalIp });
       }
 
-      json(res, 201, { ok: true, engine: { ...engine, status: 'running', external_ip: externalIp } });
+      json(res, 201, { ok: true, engine: { ...engine, status: 'running', external_ip: externalIp, vm_secret: undefined } });
       } finally {
         _activeProvisions.delete(user.userId);
       }

@@ -20,7 +20,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import { verifyToken } from '../supabase';
-import { resolveVMBaseUrl, pingVMAgent, resolveVMAddress, VM_AGENT_PORT } from '../services/vm-command';
+import { resolveVMBaseUrl, resolveVMSecret, pingVMAgent, resolveVMAddress, VM_AGENT_PORT } from '../services/vm-command';
 import { mintVMToken } from '../services/vm-tokens';
 
 // ── Security: allowed VM agent paths (strict allowlist) ─────────────────────
@@ -223,7 +223,8 @@ export async function handleVMRelayRoutes(
     }
 
     const url = `${base}${vmPath}`;
-    const token = mintVMToken(user.userId, 'cloud-ai-relay');
+    const secret = await resolveVMSecret(user.userId);
+    const token = mintVMToken(secret, user.userId, 'cloud-ai-relay');
 
     try {
       const controller = new AbortController();

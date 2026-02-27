@@ -164,7 +164,13 @@ jobs:
             --platform managed \
             --allow-unauthenticated \
             --service-account "${{ secrets.GCP_RUN_SA }}" \
-            --set-env-vars NODE_ENV=${{ steps.env.outputs.NODE_ENV }},CLOUD_PUBLIC_URL=${{ steps.env.outputs.API_URL }},WEBSITE_BASE_URL=${{ steps.env.outputs.WEBSITE_URL }},SUPABASE_URL=${{ secrets.SUPABASE_URL }} \
+            --memory 1Gi \
+            --cpu 2 \
+            --timeout 300 \
+            --concurrency 80 \
+            --min-instances 0 \
+            --max-instances 5 \
+            --set-env-vars NODE_ENV=${{ steps.env.outputs.NODE_ENV }},CLOUD_PUBLIC_URL=${{ steps.env.outputs.API_URL }},WEBSITE_BASE_URL=${{ steps.env.outputs.WEBSITE_URL }},SUPABASE_URL=${{ secrets.SUPABASE_URL }},GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},GCP_ZONE=${{ secrets.GCP_ZONE || 'us-central1-a' }} \
             --set-secrets XAI_API_KEY=XAI_API_KEY:latest,GOOGLE_GENERATIVE_AI_API_KEY=GOOGLE_GENERATIVE_AI_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,SUPABASE_PUBLISHABLE_KEY=SUPABASE_PUBLISHABLE_KEY:latest,SUPABASE_SECRET_KEY=SUPABASE_SECRET_KEY:latest,PERPLEXITY_API_KEY=PERPLEXITY_API_KEY:latest,ASSEMBLYAI_API_KEY=ASSEMBLYAI_API_KEY:latest,OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest
 
       - name: Output Deployment Info

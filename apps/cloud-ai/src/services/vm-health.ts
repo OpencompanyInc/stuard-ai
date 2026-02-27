@@ -109,7 +109,7 @@ async function runHealthCheck(): Promise<void> {
         // Fetch actual metrics from VM agent
         let vmMetrics: DesktopMetrics | null = null;
         try {
-          const metricsResult = await fetchVMMetrics(ip);
+          const metricsResult = await fetchVMMetrics(ip, engine.user_id);
           if (metricsResult.ok && metricsResult.result?.metrics) {
             const m = metricsResult.result.metrics;
             vmMetrics = {

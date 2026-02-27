@@ -129,6 +129,8 @@ export const GCP_KEY_FILE = clean(process.env.GOOGLE_APPLICATION_CREDENTIALS || 
 // VM Agent & Health Monitoring Configuration
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const VM_TOKEN_SECRET = clean(process.env.VM_TOKEN_SECRET || process.env.SUPABASE_SECRET_KEY || 'dev-vm-token-secret');
+// NOTE: VM_TOKEN_SECRET is no longer used globally. Each VM now has its own
+// unique HMAC secret stored in the cloud_engines.vm_secret column.
+// The per-VM secret is generated at provisioning and looked up from the DB.
 export const VM_HEALTH_CHECK_INTERVAL_MS = Number(clean(process.env.VM_HEALTH_CHECK_INTERVAL_MS || 300000)); // 5 min
 export const VM_HEALTH_STALE_THRESHOLD_MS = Number(clean(process.env.VM_HEALTH_STALE_THRESHOLD_MS || 90000)); // 90s

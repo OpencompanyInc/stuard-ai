@@ -5,7 +5,7 @@ import {
   getUserStorageBytes,
 } from './cold-storage';
 import { getStorageUsage, upsertStorageUsage } from '../supabase';
-import { resolveVMAddress, VM_AGENT_PORT } from './vm-command';
+import { resolveVMAddress, resolveVMSecret, VM_AGENT_PORT } from './vm-command';
 import { mintVMToken } from './vm-tokens';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,7 +59,8 @@ export async function syncToCloud(userId: string): Promise<SyncResult> {
     // Tell the VM agent to compress & upload
     const vmIp = await resolveVMAddress(userId);
     if (vmIp) {
-      const token = mintVMToken(userId, 'cloud-ai-sync');
+      const secret = await resolveVMSecret(userId);
+      const token = mintVMToken(secret, userId, 'cloud-ai-sync');
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 5 * 60_000); // 5 min for large uploads
       try {
@@ -126,7 +127,8 @@ export async function restoreFromCloud(userId: string): Promise<RestoreResult> {
     // Tell the VM agent to download & extract
     const vmIp = await resolveVMAddress(userId);
     if (vmIp) {
-      const token = mintVMToken(userId, 'cloud-ai-sync');
+      const secret = await resolveVMSecret(userId);
+      const token = mintVMToken(secret, userId, 'cloud-ai-sync');
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 5 * 60_000);
       try {

@@ -6,10 +6,9 @@ import {
   GCP_VM_NETWORK,
   GCP_VM_SUBNETWORK,
   CLOUD_ENGINE_BUCKET,
-  VM_TOKEN_SECRET,
 } from '../utils/config';
 import { COMPUTE_TIER_CONFIG } from '../pricing';
-import { mintVMToken } from './vm-tokens';
+import { generateVMSecret } from './vm-tokens';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Compute Provider Interface
@@ -18,7 +17,7 @@ import { mintVMToken } from './vm-tokens';
 export type VMStatus = 'running' | 'stopped' | 'staging' | 'terminated' | 'not_found';
 
 export interface IComputeProvider {
-  provisionVM(userId: string, tier: string, diskSizeGb: number): Promise<{ instanceName: string; zone: string }>;
+  provisionVM(userId: string, tier: string, diskSizeGb: number): Promise<{ instanceName: string; zone: string; vmSecret: string }>;
   startVM(instanceName: string, zone: string): Promise<void>;
   stopVM(instanceName: string, zone: string): Promise<void>;
   deleteVM(instanceName: string, zone: string): Promise<void>;
@@ -57,11 +56,14 @@ function mapGceStatus(status: string | null | undefined): VMStatus {
 /** Startup script injected into every VM.
  *  Installs Node.js, downloads the agent, starts systemd service.
  *  The VM agent runs an HTTP server on port 7400 — cloud-ai sends commands via HTTP.
+ *
+ *  @param userId   Owner of this VM.
+ *  @param vmSecret Per-VM unique HMAC secret (used by the agent to verify tokens).
+ *  @param vmToken  Legacy provisioning token (backwards compat).
  */
-function buildStartupScript(userId: string, vmToken?: string): string {
+function buildStartupScript(userId: string, vmSecret: string, vmToken?: string): string {
   const token = vmToken || '';
   const bucket = CLOUD_ENGINE_BUCKET || 'stuard-user-data';
-  const tokenSecret = VM_TOKEN_SECRET || '';
 
   return `#!/bin/bash
 set -eo pipefail
@@ -79,7 +81,7 @@ STUARD_VM=1
 STUARD_USER_ID=${userId}
 STUARD_GCS_BUCKET=${bucket}
 STUARD_VM_TOKEN=${token}
-VM_TOKEN_SECRET=${tokenSecret}
+VM_TOKEN_SECRET=${vmSecret}
 STUARD_VM_ROOT=/home/stuard
 STUARD_AGENT_PORT=7400
 ENVEOF
@@ -333,7 +335,7 @@ export class GCEComputeProvider implements IComputeProvider {
     }
   }
 
-  async provisionVM(userId: string, tier: string, diskSizeGb: number): Promise<{ instanceName: string; zone: string }> {
+  async provisionVM(userId: string, tier: string, diskSizeGb: number): Promise<{ instanceName: string; zone: string; vmSecret: string }> {
     return withProvisionLock(userId, () => this._doProvisionVM(userId, tier, diskSizeGb));
   }
 
@@ -385,13 +387,16 @@ export class GCEComputeProvider implements IComputeProvider {
     }
   }
 
-  private async _doProvisionVM(userId: string, tier: string, diskSizeGb: number): Promise<{ instanceName: string; zone: string }> {
+  private async _doProvisionVM(userId: string, tier: string, diskSizeGb: number): Promise<{ instanceName: string; zone: string; vmSecret: string }> {
     const client = await this.getClient();
     const tierConfig = COMPUTE_TIER_CONFIG[tier];
     if (!tierConfig) throw new Error(`Unknown compute tier: ${tier}`);
 
     const instanceName = buildInstanceName(userId);
     const zone = GCP_ZONE;
+
+    // Generate a unique secret for this VM (never shared with other VMs)
+    const vmSecret = generateVMSecret();
 
     // Ensure GCP VPC firewall rule exists for VM agent port 7400
     await this.ensureFirewallRule();
@@ -432,7 +437,7 @@ export class GCEComputeProvider implements IComputeProvider {
           serviceAccounts,
           metadata: {
             items: [
-              { key: 'startup-script', value: buildStartupScript(userId, mintVMToken(userId, instanceName)) },
+              { key: 'startup-script', value: buildStartupScript(userId, vmSecret) },
               { key: 'stuard-user-id', value: userId },
               { key: 'stuard-tier', value: tier },
             ],
@@ -451,7 +456,7 @@ export class GCEComputeProvider implements IComputeProvider {
     await waitForOperation(operation);
 
     console.log(`[compute:gce] Provisioned VM ${instanceName} (${tierConfig.machineType}, ${diskSizeGb}GB) in ${zone}`);
-    return { instanceName, zone };
+    return { instanceName, zone, vmSecret };
   }
 
   async startVM(instanceName: string, zone: string): Promise<void> {
