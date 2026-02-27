@@ -6,8 +6,8 @@ import { XTerminalPanel } from '../XTerminalPanel';
 import { CanvasPanel } from './CanvasPanel';
 
 interface SidebarViewProps {
-  activeTab: 'spaces' | 'canvas' | 'terminal';
-  onTabChange: (tab: 'spaces' | 'canvas' | 'terminal') => void;
+  activeTab: 'spaces' | 'canvas' | 'terminal' | 'cloud';
+  onTabChange: (tab: 'spaces' | 'canvas' | 'terminal' | 'cloud') => void;
   translucentMode?: boolean;
   onClose?: () => void;
   isExpanded?: boolean;
