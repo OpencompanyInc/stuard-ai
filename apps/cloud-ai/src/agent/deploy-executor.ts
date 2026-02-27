@@ -251,7 +251,7 @@ else
     setInterval(() => {}, 60000);
   "
 fi
-`, 0o755);
+`, { mode: 0o755 });
 
     return runnerPath;
   }
@@ -297,7 +297,7 @@ set -e
 cd "${dir}"
 export $(cat .env 2>/dev/null | xargs)
 ${cmd}
-`, 0o755);
+`, { mode: 0o755 });
 
     return runnerPath;
   }
@@ -343,7 +343,7 @@ set -e
 cd "${dir}"
 export $(cat .env 2>/dev/null | xargs)
 ${startCmd}
-`, 0o755);
+`, { mode: 0o755 });
 
     return runnerPath;
   }

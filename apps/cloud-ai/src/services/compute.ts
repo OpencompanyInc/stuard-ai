@@ -351,7 +351,7 @@ export class GCEComputeProvider implements IComputeProvider {
 
     console.log(`[compute:gce] Provisioning VM ${instanceName} (${tierConfig.machineType}, ${diskSizeGb}GB) in ${zone}...`);
 
-    const [operation] = await withRetry(
+    const [operation] = await withRetry<any[]>(
       () => client.insert({
         project: GCP_PROJECT_ID,
         zone,

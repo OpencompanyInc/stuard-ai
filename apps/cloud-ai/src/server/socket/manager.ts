@@ -113,7 +113,8 @@ export class SocketManager {
       try {
         const userId = (ws as any).__userId;
         if (userId) {
-          sendVMTerminalCommand(userId, kind, msg).catch(() => {});
+          const action = kind.replace('terminal_', '') as 'open' | 'data' | 'resize' | 'close';
+          sendVMTerminalCommand(userId, action, msg).catch(() => {});
         }
       } catch { }
       return;

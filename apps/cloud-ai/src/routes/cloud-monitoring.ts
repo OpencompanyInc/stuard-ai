@@ -72,7 +72,7 @@ export async function handleCloudMonitoringRoutes(req: IncomingMessage, res: Ser
       ok: true,
       health: health ? {
         status: health.healthStatus,
-        lastHeartbeat: health.lastHeartbeat ? new Date(health.lastHeartbeat).toISOString() : null,
+        lastHeartbeat: health.lastPing ? new Date(health.lastPing).toISOString() : null,
         agentVersion: health.agentVersion,
       } : null,
     });

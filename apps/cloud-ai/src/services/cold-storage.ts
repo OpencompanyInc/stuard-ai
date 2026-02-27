@@ -1,5 +1,5 @@
 import { Storage } from '@google-cloud/storage';
-import { Transform } from 'stream';
+import { Readable, Transform } from 'stream';
 import { CLOUD_ENGINE_BUCKET, GCP_KEY_FILE } from '../utils/config';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -91,7 +91,7 @@ export async function generateUserUploadUrl(
 export async function uploadUserFileStream(
   userId: string,
   filename: string,
-  body: NodeJS.ReadableStream,
+  body: Readable,
   contentType = 'application/octet-stream',
   maxBytes = 2 * 1024 * 1024 * 1024,
   /** Optional subfolder path (e.g. "photos/2024") — segments are sanitised individually */
