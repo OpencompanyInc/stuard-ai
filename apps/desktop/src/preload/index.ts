@@ -265,6 +265,8 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   },
   sendStuardsUiEvent: (stuardId: string, event: string, data?: any) => ipcRenderer.invoke('stuards:ui:event', { stuardId, event, data }),
   setScreenCaptureInvisible: (enabled: boolean) => ipcRenderer.invoke('prefs:setScreenCaptureInvisible', enabled),
+  getTimezone: () => ipcRenderer.invoke('prefs:getTimezone'),
+  setTimezone: (tz: string | null) => ipcRenderer.invoke('prefs:setTimezone', tz),
   themeApply: (prefs: any) => ipcRenderer.invoke('prefs:applyTheme', prefs),
   onThemeUpdated: (cb: (data: any) => void) => {
     const handler = (_e: any, data: any) => cb(data);

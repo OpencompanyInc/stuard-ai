@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { authenticateHttpLegacy, sendAuthError } from '../auth/http';
 import { AuthErrorCode } from '../auth';
-import { getSyncPreferences, updateSyncPreferences } from '../supabase';
+import { getSyncPreferences, updateSyncPreferences, migrateLocalAccountsToSupabase, invalidateSyncCache } from '../supabase';
 
 /**
  * GET  /v1/preferences/sync  → read sync preferences
@@ -40,7 +40,17 @@ export async function handlePreferencesRoutes(req: IncomingMessage, res: ServerR
       sync_accounts: typeof payload.sync_accounts === 'boolean' ? payload.sync_accounts : undefined,
       sync_conversations: typeof payload.sync_conversations === 'boolean' ? payload.sync_conversations : undefined,
       sync_memories: typeof payload.sync_memories === 'boolean' ? payload.sync_memories : undefined,
+      sync_integrations: typeof payload.sync_integrations === 'boolean' ? payload.sync_integrations : undefined,
+      timezone: payload.timezone !== undefined ? (typeof payload.timezone === 'string' ? payload.timezone : null) : undefined,
     });
+    // When sync_integrations is newly enabled, migrate local accounts to Supabase
+    if (ok && payload.sync_integrations === true) {
+      migrateLocalAccountsToSupabase(userId).catch(() => {}); // fire-and-forget
+    }
+    // Invalidate the sync cache when sync flags change
+    if (ok && (typeof payload.sync_accounts === 'boolean' || typeof payload.sync_integrations === 'boolean')) {
+      invalidateSyncCache(userId);
+    }
     const body = JSON.stringify({ ok });
     res.writeHead(ok ? 200 : 500, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
     res.end(body);

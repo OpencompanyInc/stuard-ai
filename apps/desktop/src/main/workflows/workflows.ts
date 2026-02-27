@@ -8,6 +8,7 @@ import { handleStuardWebhook, runStuardOnce, stuards_save, StuardSpec, stopStuar
 import { runStuardEngine, EngineContext, stopStuardEngineRuns, isStuardEngineRunning } from "../engine";
 import { prepareForSave, prepareForLoad, isEncrypted } from "../crypto";
 import { setVariable, initializeWorkflowVariables, cleanupWorkflowVariables } from "../workflow-variables";
+import { getTimezone } from "../settings";
 
 let chokidar: any = null;
 try { chokidar = require('chokidar'); } catch { }
@@ -875,6 +876,7 @@ export function startFlowRuntime(id: string) {
         const maxRuns = Number(maxRunsRaw || 0); // 0 or NaN => unlimited
         let count = 0;
         const tId = triggerId; // Capture for closure
+        const userTz = getTimezone(); // User's timezone (auto-detected or manual override)
         const job = nodeCron.schedule(cronExp, () => {
           try {
             count++;
@@ -884,7 +886,7 @@ export function startFlowRuntime(id: string) {
             }
             executeWorkflowFromTrigger(safe, 'schedule.cron', undefined, tId);
           } catch { }
-        });
+        }, { timezone: userTz });
         try { job.start?.(); } catch { }
         rt.cronJobs.push(job);
         started++;

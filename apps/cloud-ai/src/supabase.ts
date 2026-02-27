@@ -25,6 +25,9 @@ let supabaseService: SupabaseClient | null = null;
 if (SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY) {
   supabaseAnon = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, { auth: { persistSession: false } });
 }
+if (SUPABASE_URL && SUPABASE_SECRET_KEY) {
+  supabaseService = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
+}
 
 export async function setConversationTitle(userId: string, conversationId: string, title: string): Promise<void> {
   if (!supabaseService) return;
@@ -91,16 +94,75 @@ export type ExternalAccount = {
   meta?: any;
 };
 
-/** Resolve whether sync_accounts is enabled for this user. */
+/** Resolve whether integration accounts should be synced to Supabase for this user.
+ *  Enabled when either sync_accounts or sync_integrations is true.
+ *  Caches per-user result for 60s to avoid hitting Supabase on every operation.
+ *  Falls back to SYNC_ACCOUNTS_FALLBACK env var when the DB query fails. */
+const _syncCache = new Map<string, { val: boolean; ts: number }>();
+const SYNC_CACHE_TTL = 60_000; // 60 seconds
+
 async function shouldSyncAccounts(userId: string): Promise<boolean> {
-  const prefs = await getSyncPreferences(userId);
-  return prefs.sync_accounts;
+  const now = Date.now();
+  const cached = _syncCache.get(userId);
+  if (cached && (now - cached.ts) < SYNC_CACHE_TTL) return cached.val;
+  try {
+    const prefs = await getSyncPreferences(userId);
+    const result = prefs.sync_accounts || prefs.sync_integrations;
+    _syncCache.set(userId, { val: result, ts: now });
+    return result;
+  } catch {
+    // When the DB query fails, use the env-var fallback and stale cache
+    if (cached) return cached.val;
+    return SYNC_ACCOUNTS_FALLBACK;
+  }
+}
+
+/** Invalidate the sync-accounts cache for a user (e.g. after toggling sync_integrations). */
+export function invalidateSyncCache(userId: string): void {
+  _syncCache.delete(userId);
+}
+
+/**
+ * Migrate all local encrypted accounts to Supabase.
+ * Called when a user enables sync_integrations so existing local tokens carry over.
+ * Idempotent — Supabase upserts by (user_id, provider, profile_label).
+ */
+export async function migrateLocalAccountsToSupabase(userId: string): Promise<{ migrated: number; errors: number }> {
+  let migrated = 0, errors = 0;
+  try {
+    const locals = await localListExternalAccounts(userId);
+    for (const acc of locals) {
+      try {
+        await _supabaseUpsertExternalAccount({
+          userId: acc.user_id,
+          provider: acc.provider,
+          access_token: acc.access_token,
+          scopes: acc.scopes,
+          refresh_token: acc.refresh_token ?? null,
+          expires_at: acc.expires_at ?? null,
+          meta: acc.meta ?? null,
+          profileLabel: acc.profile_label,
+          accountEmail: acc.account_email ?? null,
+          is_default: acc.is_default, // Preserve the local default flag
+        });
+        migrated++;
+      } catch {
+        errors++;
+      }
+    }
+  } catch (e: any) {
+    console.error('[supabase] migrateLocalAccountsToSupabase error:', e?.message || e);
+  }
+  return { migrated, errors };
 }
 
 /**
  * Get a single external account. If profileLabel is provided, fetches that specific
  * profile. Otherwise returns the default profile for the provider.
- * Routes to local store by default; uses Supabase only when sync_accounts is enabled.
+ *
+ * Read strategy:
+ *   sync ON  → try Supabase first, fall back to local if Supabase returns null.
+ *   sync OFF → read from local only.
  */
 export async function getExternalAccount(
   userId: string,
@@ -108,7 +170,11 @@ export async function getExternalAccount(
   profileLabel?: string,
 ): Promise<ExternalAccount | null> {
   if (!(await shouldSyncAccounts(userId))) return localGetExternalAccount(userId, provider, profileLabel);
-  return _supabaseGetExternalAccount(userId, provider, profileLabel);
+  // Primary: Supabase (hot store)
+  const hot = await _supabaseGetExternalAccount(userId, provider, profileLabel);
+  if (hot) return hot;
+  // Fallthrough: local (cold store) — covers Supabase-down and not-yet-migrated data
+  return localGetExternalAccount(userId, provider, profileLabel);
 }
 
 async function _supabaseGetExternalAccount(
@@ -156,13 +222,20 @@ async function _supabaseGetExternalAccount(
 
 /**
  * List all connected profiles for a provider (or all providers if omitted).
+ *
+ * Read strategy:
+ *   sync ON  → try Supabase first, fall back to local if Supabase returns empty.
+ *   sync OFF → read from local only.
  */
 export async function listExternalAccounts(
   userId: string,
   provider?: string,
 ): Promise<ExternalAccount[]> {
   if (!(await shouldSyncAccounts(userId))) return localListExternalAccounts(userId, provider);
-  return _supabaseListExternalAccounts(userId, provider);
+  const hot = await _supabaseListExternalAccounts(userId, provider);
+  if (hot.length > 0) return hot;
+  // Fallthrough: local (cold store)
+  return localListExternalAccounts(userId, provider);
 }
 
 async function _supabaseListExternalAccounts(
@@ -190,14 +263,19 @@ async function _supabaseListExternalAccounts(
 /**
  * Set a profile as the default for its provider. Clears is_default on all
  * other profiles for the same (user_id, provider).
+ * Dual-write: always update local, also update Supabase when sync is on.
  */
 export async function setDefaultExternalAccount(
   userId: string,
   provider: string,
   profileLabel: string,
 ): Promise<boolean> {
-  if (!(await shouldSyncAccounts(userId))) return localSetDefaultExternalAccount(userId, provider, profileLabel);
-  return _supabaseSetDefaultExternalAccount(userId, provider, profileLabel);
+  // Always update local (cold store = source of truth)
+  const localOk = await localSetDefaultExternalAccount(userId, provider, profileLabel);
+  if (await shouldSyncAccounts(userId)) {
+    try { await _supabaseSetDefaultExternalAccount(userId, provider, profileLabel); } catch {}
+  }
+  return localOk;
 }
 
 async function _supabaseSetDefaultExternalAccount(
@@ -229,14 +307,18 @@ async function _supabaseSetDefaultExternalAccount(
 
 /**
  * Delete a specific profile. If it was the default, promote the next one.
+ * Dual-write: always delete from local, also delete from Supabase when sync is on.
  */
 export async function deleteExternalAccount(
   userId: string,
   provider: string,
   profileLabel: string,
 ): Promise<boolean> {
-  if (!(await shouldSyncAccounts(userId))) return localDeleteExternalAccount(userId, provider, profileLabel);
-  return _supabaseDeleteExternalAccount(userId, provider, profileLabel);
+  const localOk = await localDeleteExternalAccount(userId, provider, profileLabel);
+  if (await shouldSyncAccounts(userId)) {
+    try { await _supabaseDeleteExternalAccount(userId, provider, profileLabel); } catch {}
+  }
+  return localOk;
 }
 
 async function _supabaseDeleteExternalAccount(
@@ -279,6 +361,14 @@ async function _supabaseDeleteExternalAccount(
   }
 }
 
+/**
+ * Upsert an external account (OAuth token).
+ *
+ * Write strategy (dual-write):
+ *   Always write to local (cold store = source of truth).
+ *   When sync is on, also write to Supabase (hot store).
+ *   This prevents data loss when Supabase is temporarily unreachable.
+ */
 export async function upsertExternalAccount(input: {
   userId: string;
   provider: string;
@@ -290,8 +380,12 @@ export async function upsertExternalAccount(input: {
   profileLabel?: string;
   accountEmail?: string | null;
 }): Promise<void> {
-  if (!(await shouldSyncAccounts(input.userId))) return localUpsertExternalAccount(input);
-  return _supabaseUpsertExternalAccount(input);
+  // Always write to local first (cold store = source of truth)
+  await localUpsertExternalAccount(input);
+  // Also write to Supabase when sync is enabled
+  if (await shouldSyncAccounts(input.userId)) {
+    try { await _supabaseUpsertExternalAccount(input); } catch {}
+  }
 }
 
 async function _supabaseUpsertExternalAccount(input: {
@@ -304,22 +398,46 @@ async function _supabaseUpsertExternalAccount(input: {
   meta?: any;
   profileLabel?: string;
   accountEmail?: string | null;
+  /** When explicitly provided (e.g., during migration), use this value for is_default. */
+  is_default?: boolean;
 }): Promise<void> {
   if (!supabaseService) return;
   try {
     const profileLabel = input.profileLabel || 'default';
-    // Check if any profile exists for this provider
-    const { data: existing } = await supabaseService
-      .from('external_accounts')
-      .select('profile_label')
-      .eq('user_id', input.userId)
-      .eq('provider', input.provider);
-    const isFirstProfile = !existing || existing.length === 0;
+
+    // Determine is_default: use explicit value if provided, otherwise compute
+    let isDefault: boolean;
+    if (typeof input.is_default === 'boolean') {
+      isDefault = input.is_default;
+    } else {
+      // Check if this exact profile already exists (in which case keep its current is_default)
+      const { data: existingRow } = await supabaseService
+        .from('external_accounts')
+        .select('is_default')
+        .eq('user_id', input.userId)
+        .eq('provider', input.provider)
+        .eq('profile_label', profileLabel)
+        .single();
+      if (existingRow) {
+        // Updating existing row — keep its current is_default
+        isDefault = !!(existingRow as any).is_default;
+      } else {
+        // New row — set as default only if no other profiles exist for this provider
+        const { data: siblings } = await supabaseService
+          .from('external_accounts')
+          .select('profile_label')
+          .eq('user_id', input.userId)
+          .eq('provider', input.provider)
+          .limit(1);
+        isDefault = !siblings || siblings.length === 0;
+      }
+    }
+
     const values: any = {
       user_id: input.userId,
       provider: input.provider,
       profile_label: profileLabel,
-      is_default: isFirstProfile,
+      is_default: isDefault,
       account_email: input.accountEmail ?? null,
       access_token: input.access_token,
       scopes: Array.isArray(input.scopes) ? input.scopes : [],
@@ -328,6 +446,19 @@ async function _supabaseUpsertExternalAccount(input: {
       meta: input.meta ?? null,
       updated_at: new Date().toISOString(),
     };
+
+    // If we're about to set is_default=true, clear any other default first
+    // to avoid violating the partial unique index (idx_external_accounts_one_default)
+    if (isDefault) {
+      await supabaseService
+        .from('external_accounts')
+        .update({ is_default: false, updated_at: new Date().toISOString() })
+        .eq('user_id', input.userId)
+        .eq('provider', input.provider)
+        .eq('is_default', true)
+        .neq('profile_label', profileLabel);
+    }
+
     // Upsert by (user_id, provider, profile_label)
     const { error } = await supabaseService
       .from('external_accounts')
@@ -352,9 +483,6 @@ export async function getExternalAccessToken(
 ): Promise<string | null> {
   const acc = await getExternalAccount(userId, provider, profileLabel);
   return acc?.access_token || null;
-}
-if (SUPABASE_URL && SUPABASE_SECRET_KEY) {
-  supabaseService = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
 }
 
 export async function verifyToken(token: string): Promise<{ userId: string; email?: string } | null> {
@@ -552,9 +680,11 @@ export interface SyncPreferences {
   sync_accounts: boolean;
   sync_conversations: boolean;
   sync_memories: boolean;
+  sync_integrations: boolean;
+  timezone: string | null;
 }
 
-const defaultSyncPrefs: SyncPreferences = { sync_accounts: false, sync_conversations: true, sync_memories: false };
+const defaultSyncPrefs: SyncPreferences = { sync_accounts: false, sync_conversations: true, sync_memories: false, sync_integrations: false, timezone: null };
 
 /** Read sync preferences from the user's profile row. */
 export async function getSyncPreferences(userId: string): Promise<SyncPreferences> {
@@ -562,7 +692,7 @@ export async function getSyncPreferences(userId: string): Promise<SyncPreference
   try {
     const { data, error } = await supabaseService
       .from('profiles')
-      .select('sync_accounts, sync_conversations, sync_memories')
+      .select('sync_accounts, sync_conversations, sync_memories, sync_integrations, timezone')
       .eq('user_id', userId)
       .single();
     if (error || !data) return defaultSyncPrefs;
@@ -570,6 +700,8 @@ export async function getSyncPreferences(userId: string): Promise<SyncPreference
       sync_accounts: !!(data as any).sync_accounts,
       sync_conversations: (data as any).sync_conversations !== false, // default true
       sync_memories: !!(data as any).sync_memories,
+      sync_integrations: !!(data as any).sync_integrations,
+      timezone: (data as any).timezone || null,
     };
   } catch {
     return defaultSyncPrefs;
@@ -584,6 +716,8 @@ export async function updateSyncPreferences(userId: string, prefs: Partial<SyncP
     if (typeof prefs.sync_accounts === 'boolean') updates.sync_accounts = prefs.sync_accounts;
     if (typeof prefs.sync_conversations === 'boolean') updates.sync_conversations = prefs.sync_conversations;
     if (typeof prefs.sync_memories === 'boolean') updates.sync_memories = prefs.sync_memories;
+    if (typeof prefs.sync_integrations === 'boolean') updates.sync_integrations = prefs.sync_integrations;
+    if (prefs.timezone !== undefined) updates.timezone = prefs.timezone; // null clears override
     const { error } = await supabaseService
       .from('profiles')
       .update(updates)

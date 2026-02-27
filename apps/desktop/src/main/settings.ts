@@ -6,6 +6,8 @@ const SETTINGS_FILE = 'user-settings.json';
 
 interface UserSettings {
   globalHotkey?: string;
+  /** IANA timezone override (e.g. 'America/New_York'). null/undefined = use OS default. */
+  timezone?: string | null;
 }
 
 export function getSettingsPath(): string {
@@ -41,4 +43,21 @@ export function getGlobalHotkey(): string {
 
 export function setGlobalHotkey(accelerator: string) {
   saveSettings({ globalHotkey: accelerator });
+}
+
+/**
+ * Get the user's timezone. Falls back to the OS/runtime default.
+ * Returns an IANA timezone string (e.g. 'America/New_York').
+ */
+export function getTimezone(): string {
+  const s = loadSettings();
+  if (s.timezone && typeof s.timezone === 'string') return s.timezone;
+  // Auto-detect from the runtime (Node.js uses the OS timezone)
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { }
+  return 'UTC';
+}
+
+/** Set a manual timezone override. Pass null to revert to auto-detect. */
+export function setTimezone(tz: string | null) {
+  saveSettings({ timezone: tz });
 }

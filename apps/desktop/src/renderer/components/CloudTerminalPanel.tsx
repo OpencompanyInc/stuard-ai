@@ -41,7 +41,7 @@ export const CloudTerminalPanel: React.FC<CloudTerminalPanelProps> = ({ engine, 
     xtermRef.current = term;
     fitRef.current = fit;
 
-    // Connect WS
+    // Connect WS to /terminal endpoint (not /ws — that's the chat handler)
     let disposed = false;
     let disposable: { dispose: () => void } | null = null;
     let resizeDisp: { dispose: () => void } | null = null;
@@ -55,22 +55,29 @@ export const CloudTerminalPanel: React.FC<CloudTerminalPanelProps> = ({ engine, 
       } catch {}
       if (disposed) return;
 
-      const wsUrl = `${CLOUD_AI_WS}/ws?token=${encodeURIComponent(token)}`;
+      // Connect to /terminal — the relay auto-opens a PTY on the VM
+      const wsUrl = `${CLOUD_AI_WS}/terminal?token=${encodeURIComponent(token)}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        setConnected(true);
-        ws.send(JSON.stringify({ kind: 'terminal_open', shell: '/bin/bash' }));
+        // Terminal relay auto-opens the PTY session on connect — no need to send terminal_open
+        term.write('\x1b[90mConnecting to VM terminal...\x1b[0m\r\n');
       };
 
       ws.onmessage = (evt) => {
         try {
           const msg = JSON.parse(evt.data);
-          if (msg.kind === 'terminal_output' && msg.data) {
+          if (msg.type === 'terminal_opened') {
+            setConnected(true);
+            term.write('\x1b[90mConnected.\x1b[0m\r\n');
+          } else if (msg.type === 'terminal_data' && msg.data) {
             term.write(msg.data);
-          } else if (msg.kind === 'terminal_closed') {
-            term.write('\r\n\x1b[90m[Session ended]\x1b[0m\r\n');
+          } else if (msg.type === 'terminal_idle_timeout') {
+            term.write('\r\n\x1b[90m[Session timed out due to inactivity]\x1b[0m\r\n');
+            setConnected(false);
+          } else if (msg.type === 'error') {
+            term.write(`\r\n\x1b[31m[Error: ${msg.error || 'unknown'}]\x1b[0m\r\n`);
             setConnected(false);
           }
         } catch {}
@@ -81,7 +88,7 @@ export const CloudTerminalPanel: React.FC<CloudTerminalPanelProps> = ({ engine, 
 
       disposable = term.onData((data) => {
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ kind: 'terminal_data', data }));
+          ws.send(JSON.stringify({ type: 'terminal_data', data }));
         }
       });
 
@@ -91,7 +98,7 @@ export const CloudTerminalPanel: React.FC<CloudTerminalPanelProps> = ({ engine, 
 
       resizeDisp = term.onResize(({ cols, rows }) => {
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ kind: 'terminal_resize', cols, rows }));
+          ws.send(JSON.stringify({ type: 'terminal_resize', cols, rows }));
         }
       });
     })();

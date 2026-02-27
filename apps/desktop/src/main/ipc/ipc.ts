@@ -13,7 +13,7 @@ import { setupTerminalIpc } from "../terminal";
 import logger from "../utils/logger";
 import * as fs from "fs";
 import { Buffer } from "node:buffer";
-import { getGlobalHotkey, setGlobalHotkey as saveGlobalHotkey } from "../settings";
+import { getGlobalHotkey, setGlobalHotkey as saveGlobalHotkey, getTimezone, setTimezone } from "../settings";
 
 let nodeNotifier: any = null;
 try { nodeNotifier = require('node-notifier'); } catch { }
@@ -571,6 +571,19 @@ export function setupIpc() {
   ipcMain.handle('prefs:setScreenCaptureInvisible', (_e, enabled: boolean) => {
     try {
       setScreenCaptureInvisible(!!enabled);
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+
+  // Timezone
+  ipcMain.handle('prefs:getTimezone', () => {
+    return { ok: true, timezone: getTimezone() };
+  });
+  ipcMain.handle('prefs:setTimezone', (_e, tz: string | null) => {
+    try {
+      setTimezone(typeof tz === 'string' && tz.trim() ? tz.trim() : null);
       return { ok: true };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || 'failed') };

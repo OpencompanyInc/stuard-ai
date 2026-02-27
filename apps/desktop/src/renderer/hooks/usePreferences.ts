@@ -314,6 +314,10 @@ export function usePreferences() {
   const [screenCaptureInvisible, setScreenCaptureInvisibleState] = useState<boolean>(() => getLS<boolean>("screen_capture_invisible", false));
   const [chatModels, setChatModelsState] = useState<ChatModelsConfig>(() => getLS<ChatModelsConfig>('chat_models', DEFAULT_CHAT_MODELS));
   const [chatMode, setChatModeState] = useState<ChatMode>(() => normalizeChatMode(getLS<any>('chat_mode', DEFAULT_CHAT_MODE), getLS<ChatModelsConfig>('chat_models', DEFAULT_CHAT_MODELS)));
+  // Timezone: auto-detect from browser, allow manual override stored in main-process settings
+  const detectedTz = useMemo(() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return 'UTC'; } }, []);
+  const [timezone, setTimezoneState] = useState<string>(() => getLS<string>('timezone', '') || detectedTz);
+  const [timezoneOverride, setTimezoneOverrideState] = useState<boolean>(() => getLS<boolean>('timezone_override', false));
 
   useEffect(() => { setLS("tone", tone); }, [tone]);
   useEffect(() => { setLS("tone_custom", customTone); }, [customTone]);
@@ -331,6 +335,15 @@ export function usePreferences() {
   useEffect(() => { setLS("screen_capture_invisible", screenCaptureInvisible); }, [screenCaptureInvisible]);
   useEffect(() => { setLS('chat_mode', chatMode); }, [chatMode]);
   useEffect(() => { setLS('chat_models', chatModels); }, [chatModels]);
+  useEffect(() => { setLS('timezone', timezone); }, [timezone]);
+  useEffect(() => { setLS('timezone_override', timezoneOverride); }, [timezoneOverride]);
+  // Sync timezone to main process (for cron scheduling) whenever it changes
+  useEffect(() => {
+    try {
+      const tz = timezoneOverride ? timezone : null; // null = auto-detect in main
+      (window as any).stuard?.setTimezone?.(tz);
+    } catch { }
+  }, [timezone, timezoneOverride]);
 
   useEffect(() => {
     try {
@@ -377,6 +390,8 @@ export function usePreferences() {
           if (key === 'screen_capture_invisible') setScreenCaptureInvisibleState(val ?? false);
           if (key === 'chat_models') setChatModelsState(val ?? DEFAULT_CHAT_MODELS);
           if (key === 'chat_mode') setChatModeState(normalizeChatMode(val ?? DEFAULT_CHAT_MODE, getLS<ChatModelsConfig>('chat_models', DEFAULT_CHAT_MODELS)));
+          if (key === 'timezone') setTimezoneState(val || detectedTz);
+          if (key === 'timezone_override') setTimezoneOverrideState(val ?? false);
         } catch { }
       }
     };
@@ -400,6 +415,8 @@ export function usePreferences() {
   const setScreenCaptureInvisible = useCallback((v: boolean) => { setScreenCaptureInvisibleState(v); }, []);
   const setChatMode = useCallback((v: ChatMode) => { setChatModeState(v); }, []);
   const setChatModels = useCallback((v: ChatModelsConfig) => { setChatModelsState(v); }, []);
+  const setTimezone = useCallback((v: string) => { setTimezoneState(v); }, []);
+  const setTimezoneOverride = useCallback((v: boolean) => { setTimezoneOverrideState(v); }, []);
 
   return {
     tone,
@@ -434,5 +451,10 @@ export function usePreferences() {
     setChatMode,
     chatModels,
     setChatModels,
+    timezone,
+    setTimezone,
+    timezoneOverride,
+    setTimezoneOverride,
+    detectedTz,
   };
 }
