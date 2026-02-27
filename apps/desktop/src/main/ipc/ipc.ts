@@ -1,12 +1,13 @@
 
-import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut } from "electron";
+import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut, nativeImage } from "electron";
+import * as path from "path";
 import { selectFiles, selectImages, listDirectory, selectFolder } from "../utils/files";
 import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, getInternalSidebarState, getNotificationWindow, setScreenCaptureInvisible } from "../windows";
 import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_readWorkspaceFileBinary, workflows_writeWorkspaceFile, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir, workflows_renameWorkspaceFile, workflows_moveWorkspaceFile, workflows_createWorkspaceStuard, workflows_readWorkspaceStuard, workflows_saveWorkspaceStuard, workflows_listWorkspaceFunctions } from "../workflows";
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
 import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } from "../integrations/outlook";
-import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, createCheckout, getCustomer, listProducts, openCustomerPortal, purchaseCredits, unifiedTasksService } from "../services";
+import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, createCheckout, getCustomer, listProducts, openCustomerPortal, purchaseCredits, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch } from "../services";
 import { setupSpeechIpc } from "./speech";
 import { setupTerminalIpc } from "../terminal";
 import logger from "../utils/logger";
@@ -484,49 +485,60 @@ export function setupIpc() {
       if (!p) return { ok: false, error: 'invalid_path' };
       const size = options?.size;
 
-      const normalizeCandidate = (s: string) => {
+      // Expand %ENV_VAR% on Windows and strip quotes / trailing ",N" resource index
+      const normalize = (s: string): string => {
         let v = String(s || '').trim();
         if (!v) return '';
         if (process.platform === 'win32') {
           v = v.replace(/%([^%]+)%/g, (_m, name) => {
             const key = String(name || '').trim();
-            if (!key) return _m;
-            return String(process.env[key] ?? _m);
+            return key ? String(process.env[key] ?? _m) : _m;
           });
-
           if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
             v = v.slice(1, -1).trim();
           }
-
           const m = v.match(/^(.*?),\s*\d+$/);
-          if (m && m[1]) return String(m[1]).trim();
+          if (m?.[1]) return m[1].trim();
         }
         return v;
       };
 
-      const candidates: string[] = [p];
-      if (process.platform === 'win32' && p.toLowerCase().endsWith('.lnk')) {
-        try {
-          const link = shell.readShortcutLink(p);
-          const icon = String((link as any)?.icon || '').trim();
-          const target = String((link as any)?.target || '').trim();
-          const iconPath = normalizeCandidate(icon);
-          const targetPath = normalizeCandidate(target);
-          if (iconPath) candidates.unshift(iconPath);
-          if (targetPath) candidates.unshift(targetPath);
-        } catch { }
-      }
+      const cleaned = normalize(p);
+      if (!cleaned) return { ok: false, error: 'invalid_path' };
 
-      for (const cand of candidates) {
-        const c = normalizeCandidate(cand);
-        if (!c) continue;
+      // Squirrel-based apps: if path points to Update.exe, look for the real app exe
+      if (process.platform === 'win32' && cleaned.toLowerCase().endsWith('update.exe')) {
         try {
-          const img = await app.getFileIcon(c, size ? { size } : undefined);
-          if (img && !img.isEmpty()) {
-            return { ok: true, dataUrl: img.toDataURL() };
+          const dir = path.dirname(cleaned);
+          const appDirs = fs.readdirSync(dir).filter((e: string) => e.startsWith('app-')).sort((a: string, b: string) => b.localeCompare(a, undefined, { numeric: true }));
+          if (appDirs.length > 0) {
+            const latestDir = path.join(dir, appDirs[0]);
+            const exes = fs.readdirSync(latestDir).filter((f: string) => f.toLowerCase().endsWith('.exe') && f.toLowerCase() !== 'update.exe' && !f.toLowerCase().includes('squirrel') && !f.toLowerCase().includes('unins'));
+            if (exes.length > 0) {
+              const candidate = path.join(latestDir, exes[0]);
+              const img = await app.getFileIcon(candidate, size ? { size } : undefined);
+              if (img && !img.isEmpty()) return { ok: true, dataUrl: img.toDataURL() };
+            }
           }
         } catch { }
       }
+
+      // .ico / .png / .bmp — read actual image bytes via nativeImage
+      const extLow = cleaned.toLowerCase();
+      if (extLow.endsWith('.ico') || extLow.endsWith('.png') || extLow.endsWith('.bmp')) {
+        try {
+          if (fs.existsSync(cleaned)) {
+            const img = nativeImage.createFromPath(cleaned);
+            if (img && !img.isEmpty()) return { ok: true, dataUrl: img.toDataURL() };
+          }
+        } catch { }
+      }
+
+      // Use Electron's built-in app.getFileIcon() — works for .exe, .app, and any file
+      try {
+        const img = await app.getFileIcon(cleaned, size ? { size } : undefined);
+        if (img && !img.isEmpty()) return { ok: true, dataUrl: img.toDataURL() };
+      } catch { }
 
       return { ok: false, error: 'no_icon' };
     } catch (e: any) {
@@ -841,6 +853,53 @@ export function setupIpc() {
     }
   });
 
+  // ── App Discovery & Unified Search ──
+  ipcMain.handle('apps:list', async (_e, forceRefresh?: boolean) => {
+    try {
+      const apps = await getInstalledApps(forceRefresh ?? false);
+      return { ok: true, apps };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  ipcMain.handle('apps:refresh', async () => {
+    try {
+      await refreshAppCache();
+      const apps = await getInstalledApps();
+      return { ok: true, count: apps.length };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  ipcMain.handle('apps:launch', async (_e, launchTarget: string) => {
+    try {
+      if (!launchTarget) return { ok: false, error: 'No launch target' };
+      if (launchTarget.startsWith('shell:')) {
+        // UWP / shell folder apps
+        await shell.openExternal(launchTarget);
+      } else if (fs.existsSync(launchTarget)) {
+        // Direct executable or .app path
+        await shell.openPath(launchTarget);
+      } else {
+        await shell.openExternal(launchTarget);
+      }
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  ipcMain.handle('search:unified', async (_e, query: string, options?: any) => {
+    try {
+      const results = await unifiedSearch(query, options || {});
+      return { ok: true, results };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
   ipcMain.handle('fileIndex:getPendingCount', async () => {
     try {
       const count = await getPendingCount();
@@ -873,6 +932,8 @@ export function setupIpc() {
       runStartupIndexing().catch((e) => {
         logger.error('[fileIndex:scanAll] Error:', e);
       });
+      // Also refresh app cache in background
+      refreshAppCache().catch(() => {});
       return { ok: true, message: 'Scan started in background' };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };

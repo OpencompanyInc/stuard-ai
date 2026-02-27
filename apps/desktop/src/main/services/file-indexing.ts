@@ -317,8 +317,11 @@ function getDefaultUserFolders(): string[] {
     }
   }
 
-  // OneDrive folders (Windows)
+  // ══════════════════════════════════════════════════════════
+  // WINDOWS-SPECIFIC FOLDERS
+  // ══════════════════════════════════════════════════════════
   if (process.platform === "win32") {
+    // OneDrive folders
     const oneDrivePaths = [
       path.join(homedir, "OneDrive"),
       path.join(homedir, "OneDrive - Personal"),
@@ -329,7 +332,6 @@ function getDefaultUserFolders(): string[] {
     for (const oneDrive of oneDrivePaths) {
       try {
         if (fs.existsSync(oneDrive)) {
-          // Add OneDrive subfolders
           const subFolders = ["Documents", "Desktop", "Pictures"];
           for (const sub of subFolders) {
             const subPath = path.join(oneDrive, sub);
@@ -337,50 +339,48 @@ function getDefaultUserFolders(): string[] {
               folders.push(subPath);
             }
           }
-          // Also add main OneDrive if it has files
           if (!folders.includes(oneDrive)) {
             folders.push(oneDrive);
           }
         }
-      } catch {
-        // Ignore
-      }
+      } catch { /* Ignore */ }
     }
+
+    // NOTE: Start Menu, Program Files, UWP apps, and Scoop are no longer indexed here.
+    // Application discovery is handled by app-discovery.ts using native OS APIs
+    // (Get-StartApps on Windows, mdfind on macOS, XDG .desktop on Linux).
   }
 
-  // iCloud folders (macOS)
+  // ══════════════════════════════════════════════════════════
+  // MACOS-SPECIFIC FOLDERS
+  // ══════════════════════════════════════════════════════════
   if (process.platform === "darwin") {
     const iCloudPath = path.join(homedir, "Library", "Mobile Documents", "com~apple~CloudDocs");
     try {
-      if (fs.existsSync(iCloudPath)) {
-        folders.push(iCloudPath);
-      }
-    } catch {
-      // Ignore
-    }
-    
-    // /Applications
-    folders.push("/Applications");
-    folders.push(path.join(homedir, "Applications"));
+      if (fs.existsSync(iCloudPath)) folders.push(iCloudPath);
+    } catch { /* Ignore */ }
+
+    // NOTE: /Applications directories are no longer indexed here.
+    // Application discovery is handled by app-discovery.ts via mdfind (Spotlight).
   }
 
-  // Windows Start Menu (for Applications)
-  if (process.platform === "win32") {
-    try {
-      const appData = process.env.APPDATA;
-      const programData = process.env.PROGRAMDATA;
-      
-      if (appData) {
-        const userStartMenu = path.join(appData, "Microsoft", "Windows", "Start Menu", "Programs");
-        if (fs.existsSync(userStartMenu)) folders.push(userStartMenu);
-      }
-      
-      if (programData) {
-        const globalStartMenu = path.join(programData, "Microsoft", "Windows", "Start Menu", "Programs");
-        if (fs.existsSync(globalStartMenu)) folders.push(globalStartMenu);
-      }
-    } catch {
-      // Ignore
+  // ══════════════════════════════════════════════════════════
+  // LINUX-SPECIFIC FOLDERS
+  // ══════════════════════════════════════════════════════════
+  if (process.platform === "linux") {
+    // NOTE: .desktop file directories are no longer indexed here.
+    // Application discovery is handled by app-discovery.ts via XDG scanning.
+
+    // Common Linux project paths (keep these — they're user files, not apps)
+    const linuxDirs = [
+      path.join(homedir, "snap"),
+      path.join(homedir, ".local", "bin"),
+      "/opt",
+    ];
+    for (const d of linuxDirs) {
+      try {
+        if (fs.existsSync(d)) folders.push(d);
+      } catch { /* Ignore */ }
     }
   }
 

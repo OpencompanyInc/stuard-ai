@@ -118,6 +118,16 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   openExternal: (url: string) => ipcRenderer.invoke('system:openExternal', url),
   getLinkPreview: (url: string) => ipcRenderer.invoke('system:getLinkPreview', url),
   getFileIcon: (filePath: string, options?: { size?: 'small' | 'normal' | 'large' }) => ipcRenderer.invoke('system:getFileIcon', filePath, options),
+  // App Discovery & Unified Search
+  listApps: (forceRefresh?: boolean) => ipcRenderer.invoke('apps:list', forceRefresh),
+  refreshApps: () => ipcRenderer.invoke('apps:refresh'),
+  launchApp: (launchTarget: string) => ipcRenderer.invoke('apps:launch', launchTarget),
+  unifiedSearch: (query: string, options?: any) => ipcRenderer.invoke('search:unified', query, options),
+  onAppsUpdated: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('apps:updated', handler);
+    return () => { try { ipcRenderer.off('apps:updated', handler); } catch {} };
+  },
   notify: (titleOrConfig: string | any, body?: string) => {
     if (typeof titleOrConfig === 'string') {
       return ipcRenderer.invoke('system:notify', { title: titleOrConfig, body });

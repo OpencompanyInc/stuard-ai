@@ -61,7 +61,7 @@ const QUICK_PRESETS = [
   { name: 'Tasks', type: 'tasks' as const, target: 'todo', icon: ListTodo },
 ];
 
-const getTypeConfig = (type: string) => {
+export const getTypeConfig = (type: string) => {
   return BOOKMARK_TYPES.find(t => t.type === type) || BOOKMARK_TYPES[0];
 };
 
@@ -290,10 +290,10 @@ export function QuickShortcutsGrid({
 
   if (bookmarks.length === 0 && !isEditing && !filter) {
     return (
-      <div className="px-4 py-3">
+      <div className="px-3 py-2">
         <button
           onClick={onAdd}
-          className="w-full flex items-center gap-3 px-3 py-3 rounded-xl border-2 border-dashed border-gray-300/50 hover:border-primary/50 hover:bg-primary/5 transition-all group bg-white/50"
+          className="w-full flex items-center gap-3 px-3 py-3 rounded-xl border-2 border-dashed border-theme/20 hover:border-primary/50 hover:bg-primary/5 transition-all group"
         >
           <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-all">
             <Plus className="w-4 h-4 text-primary" />
@@ -310,12 +310,12 @@ export function QuickShortcutsGrid({
   if (filter && visibleBookmarks.length === 0) return null;
 
   return (
-    <div className="space-y-2 px-2 py-2">
-      <div className="flex items-center justify-between px-2 pb-1">
+    <div className="space-y-1.5 px-2 py-1.5">
+      <div className="flex items-center justify-between px-2 pb-0.5">
         <div className="flex items-center gap-2">
           <Zap className="w-3.5 h-3.5 text-amber-500" />
           <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">
-            {filter ? 'Matching Shortcuts' : 'Quick Shortcuts'}
+            {filter ? 'Matching Shortcuts' : 'Quick Actions'}
           </span>
         </div>
         {!filter && (
@@ -329,7 +329,7 @@ export function QuickShortcutsGrid({
         )}
       </div>
       
-      <div className="grid grid-cols-3 gap-1.5">
+      <div className="grid grid-cols-3 gap-1">
         {visibleBookmarks.map((bookmark) => {
           const cfg = getTypeConfig(bookmark.type);
           const Icon = cfg.icon;
@@ -338,27 +338,27 @@ export function QuickShortcutsGrid({
               key={bookmark.id}
               onClick={() => onExecute(bookmark)}
               className={clsx(
-                "flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group relative overflow-hidden",
+                "flex flex-col items-center gap-1 p-2 rounded-xl transition-all group relative overflow-hidden",
                 "bg-transparent",
-                "hover:bg-theme-hover/30",
-                "active:scale-95"
+                "hover:bg-theme-hover/40",
+                "active:scale-[0.97]"
               )}
               title={bookmark.target}
             >
               <div className={clsx(
-                "w-5 h-5 rounded-md flex items-center justify-center transition-all group-hover:scale-110 shadow-inner",
+                "w-8 h-8 rounded-xl flex items-center justify-center transition-all group-hover:scale-110",
                 bookmark.color ? `bg-${bookmark.color}-500/10 text-${bookmark.color}-500` : `${cfg.bg} ${cfg.color}`
               )}>
-                <Icon className="w-3 h-3" />
+                <Icon className="w-4 h-4" />
               </div>
-              <span className="text-[11px] font-semibold text-theme-fg truncate w-full text-center leading-tight px-1">
+              <span className="text-[10px] font-semibold text-theme-fg truncate w-full text-center leading-tight px-0.5">
                 {bookmark.name}
               </span>
               {bookmark.keybind && !filter && (
                 <KeybindBadge keybind={bookmark.keybind} />
               )}
               {filter && (
-                 <span className="text-[9px] text-theme-muted truncate w-full text-center opacity-70">
+                 <span className="text-[8px] text-theme-muted truncate w-full text-center opacity-70">
                    {cfg.label}
                  </span>
               )}
@@ -371,15 +371,15 @@ export function QuickShortcutsGrid({
           <button
             onClick={onAdd}
             className={clsx(
-              "flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group",
-              "bg-transparent hover:bg-theme-hover/30",
-              "active:scale-95"
+              "flex flex-col items-center gap-1 p-2 rounded-xl transition-all group",
+              "bg-transparent hover:bg-theme-hover/40",
+              "active:scale-[0.97]"
             )}
           >
-            <div className="w-5 h-5 rounded-md bg-theme-hover/50 flex items-center justify-center transition-all group-hover:bg-primary/10 shadow-sm">
-              <Plus className="w-3 h-3 text-theme-muted group-hover:text-primary transition-colors" />
+            <div className="w-8 h-8 rounded-xl bg-theme-hover/40 flex items-center justify-center transition-all group-hover:bg-primary/10">
+              <Plus className="w-4 h-4 text-theme-muted group-hover:text-primary transition-colors" />
             </div>
-            <span className="text-[11px] font-semibold text-theme-muted group-hover:text-primary truncate w-full text-center leading-tight transition-colors">
+            <span className="text-[10px] font-semibold text-theme-muted group-hover:text-primary truncate w-full text-center leading-tight transition-colors">
               Add
             </span>
           </button>
@@ -389,9 +389,9 @@ export function QuickShortcutsGrid({
       {hasMore && (
         <button
           onClick={onEdit}
-          className="w-full py-1.5 text-[10px] font-semibold text-theme-muted hover:text-primary transition-colors text-center"
+          className="w-full py-1 text-[10px] font-semibold text-theme-muted hover:text-primary transition-colors text-center"
         >
-          +{bookmarks.length - maxVisible} more →
+          +{bookmarks.length - maxVisible} more &rarr;
         </button>
       )}
     </div>

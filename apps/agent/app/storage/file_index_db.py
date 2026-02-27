@@ -43,6 +43,8 @@ EXT_TO_KIND: Dict[str, FileKind] = {
     # Applications / Shortcuts
     '.lnk': 'application', '.url': 'application',
     '.exe': 'application', '.msi': 'application', '.app': 'application',
+    '.desktop': 'application', '.appref-ms': 'application',
+    '.cmd': 'application', '.bat': 'application', '.com': 'application',
     # Documents
     '.pdf': 'document', '.txt': 'document', '.md': 'document', '.rtf': 'document',
     '.doc': 'document', '.docx': 'document', '.odt': 'document',
@@ -80,10 +82,24 @@ IGNORE_PATTERNS = frozenset([
     'venv', '.venv', 'env', '.env', 'virtualenv',
     'target', 'build', 'dist', 'out', 'bin', 'obj',
     '.vscode', '.idea', '.vs',
-    'AppData', 'Application Data', 'Local Settings',
+    'Application Data', 'Local Settings',
     '$Recycle.Bin', 'System Volume Information',
     'Thumbs.db', '.DS_Store', 'desktop.ini',
 ])
+
+# Paths inside AppData that we ALLOW (everything else in AppData is skipped)
+APPDATA_ALLOW_PATTERNS = [
+    'microsoft/windows/start menu',
+    'microsoft/windows/recent',
+    'programs',
+]
+
+# Paths that should NEVER be skipped regardless of ignore patterns
+# (these are primary sources for installed application discovery)
+NEVER_SKIP_PATTERNS = [
+    'start menu',
+    'programdata/microsoft/windows',
+]
 
 # Large file extensions to skip content analysis (metadata only)
 METADATA_ONLY_EXTENSIONS = frozenset([
@@ -513,12 +529,27 @@ def get_file_kind(extension: str) -> FileKind:
 def should_skip_path(path: str) -> bool:
     """Check if a path should be skipped based on ignore patterns."""
     normalized = path.replace('\\', '/').lower()
-    allow_appdata = (sys.platform == 'win32') and ('/microsoft/windows/start menu/programs' in normalized)
     parts = path.replace('\\', '/').split('/')
+    
+    # NEVER skip paths that are critical for app discovery (Start Menu, ProgramData, etc.)
+    if sys.platform == 'win32':
+        for allow in NEVER_SKIP_PATTERNS:
+            if allow in normalized:
+                return False
+    
+    # Check if this path is inside an AppData-allowed location
+    is_appdata_allowed = False
+    if sys.platform == 'win32' and 'appdata' in normalized:
+        for allow in APPDATA_ALLOW_PATTERNS:
+            if allow in normalized:
+                is_appdata_allowed = True
+                break
+    
     for part in parts:
         if part in IGNORE_PATTERNS:
-            if allow_appdata and part == 'AppData':
-                continue
+            return True
+        # AppData is only skipped if NOT in an allowed sub-path
+        if part.lower() == 'appdata' and not is_appdata_allowed:
             return True
     return False
 
@@ -847,6 +878,7 @@ def search_fts(query: str, limit: int = 50, kind: Optional[FileKind] = None,
     
     # Pre-process query for better partial matching (prefix search)
     # If user didn't use quotes, we assume they want prefix matching on all terms
+    original_query = query.strip()
     if '"' not in query:
         terms = query.strip().split()
         if terms:
@@ -873,6 +905,7 @@ def search_fts(query: str, limit: int = 50, kind: Optional[FileKind] = None,
     base_sql += " ORDER BY bm25(files_fts) LIMIT ?"
     params.append(limit)
 
+    rows = []
     try:
         with get_conn() as conn:
             rows = conn.execute(base_sql, tuple(params)).fetchall()
@@ -898,7 +931,38 @@ def search_fts(query: str, limit: int = 50, kind: Optional[FileKind] = None,
         else:
             raise
 
-    return [_row_to_file(r) for r in rows]
+    results = [_row_to_file(r) for r in rows]
+    
+    # If FTS returned few results, supplement with LIKE search on filename
+    # This catches cases where FTS tokenization misses partial app names
+    if len(results) < limit and original_query and len(original_query) >= 2:
+        existing_ids = {r.id for r in results}
+        like_sql = """
+            SELECT * FROM indexed_files
+            WHERE status != 'deleted' AND (filename LIKE ? OR path LIKE ?)
+        """
+        like_params: List[Any] = [f'%{original_query}%', f'%{original_query}%']
+        if kind:
+            like_sql += " AND kind = ?"
+            like_params.append(kind)
+        if root_id:
+            like_sql += " AND root_id = ?"
+            like_params.append(root_id)
+        like_sql += " ORDER BY CASE WHEN kind = 'application' THEN 0 WHEN extension IN ('.lnk','.url','.appref-ms','.exe') THEN 0 ELSE 1 END, filename LIMIT ?"
+        like_params.append(limit - len(results))
+        
+        try:
+            with get_conn() as conn:
+                like_rows = conn.execute(like_sql, tuple(like_params)).fetchall()
+            for r in like_rows:
+                f = _row_to_file(r)
+                if f.id not in existing_ids:
+                    results.append(f)
+                    existing_ids.add(f.id)
+        except Exception:
+            pass  # LIKE fallback is best-effort
+    
+    return results
 
 
 def search_vector(query_vector: List[float], limit: int = 20, threshold: float = 0.65,

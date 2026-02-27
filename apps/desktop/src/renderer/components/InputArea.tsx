@@ -396,6 +396,7 @@ const InputArea = forwardRef(function InputArea(
   const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
 
   // File search state for quick actions
+  const [appResults, setAppResults] = useState<any[]>([]);
   const [fileResults, setFileResults] = useState<any[]>([]);
   const [fileSearchMode, setFileSearchMode] = useState<'quick' | 'hybrid'>('quick');
   const [fileLoading, setFileLoading] = useState(false);
@@ -486,14 +487,49 @@ const InputArea = forwardRef(function InputArea(
   }, [localWorkflows, query]);
 
 
-  // Quick file search by filename
+  // Quick file search by filename — uses unified search (apps + files)
   const doQuickFileSearch = useCallback(async (q: string) => {
-    if (!(window as any).desktopAPI?.execTool) return;
+    const api = (window as any).desktopAPI;
+    // Prefer unified search (includes app discovery + fuzzy matching)
+    if (api?.unifiedSearch) {
+      const reqId = ++searchReqIdRef.current;
+      setFileLoading(true);
+      setFileError('');
+      try {
+        const res = await api.unifiedSearch(q, {
+          limit: 12,
+          includeApps: true,
+          includeFiles: true,
+        });
+        if (searchReqIdRef.current !== reqId) return;
+        if (res?.ok && Array.isArray(res.results)) {
+          const apps = res.results.filter((r: any) => r.source === 'app-discovery');
+          const files = res.results.filter((r: any) => r.source !== 'app-discovery');
+          setAppResults(apps);
+          setFileResults(files);
+          setFileSearchMode('quick');
+        } else {
+          setAppResults([]);
+          setFileResults([]);
+          setFileError(String(res?.error || 'Search failed'));
+        }
+      } catch (e: any) {
+        if (searchReqIdRef.current !== reqId) return;
+        setAppResults([]);
+        setFileResults([]);
+        setFileError(String(e?.message || 'Search failed'));
+      } finally {
+        if (searchReqIdRef.current === reqId) setFileLoading(false);
+      }
+      return;
+    }
+    // Fallback to old file-only search
+    if (!api?.execTool) return;
     const reqId = ++searchReqIdRef.current;
     setFileLoading(true);
     setFileError('');
     try {
-      const res = await (window as any).desktopAPI.execTool('file_search', {
+      const res = await api.execTool('file_search', {
         query: q,
         mode: 'quick',
         limit: 6,
@@ -502,14 +538,17 @@ const InputArea = forwardRef(function InputArea(
       if (searchReqIdRef.current !== reqId) return;
       if (res?.ok) {
         setFileResults(Array.isArray(res.results) ? res.results : []);
+        setAppResults([]);
         setFileSearchMode('quick');
       } else {
         setFileResults([]);
+        setAppResults([]);
         setFileError(String(res?.error || 'Search failed'));
       }
     } catch (e: any) {
       if (searchReqIdRef.current !== reqId) return;
       setFileResults([]);
+      setAppResults([]);
       setFileError(String(e?.message || 'Search failed'));
     } finally {
       if (searchReqIdRef.current === reqId) setFileLoading(false);
@@ -574,6 +613,7 @@ const InputArea = forwardRef(function InputArea(
 
     if (q.length < 2) {
       setFileResults([]);
+      setAppResults([]);
       setFileError('');
       setFileLoading(false);
       setFileSemanticLoading(false);
@@ -600,24 +640,50 @@ const InputArea = forwardRef(function InputArea(
     const api = (window as any).desktopAPI;
     if (!api?.getFileIcon) return;
 
-    const paths = Array.from(new Set(
-      (Array.isArray(fileResults) ? fileResults : [])
-        .filter((f: any) => f && String(f.kind || '').toLowerCase() === 'application')
-        .map((f: any) => String(f.path || '').trim())
-        .filter((p: string) => !!p)
-    ));
-    if (paths.length === 0) return;
+    // Build a list of (displayPath, iconSourcePath) pairs for all results that can have icons
+    const iconRequests: { displayPath: string; iconPath: string }[] = [];
+    // App results (from unified search / app-discovery)
+    for (const a of (Array.isArray(appResults) ? appResults : [])) {
+      if (!a) continue;
+      const filePath = String(a.path || '').trim();
+      const iconHint = String(a.iconHint || a.launchTarget || '').trim();
+      if (!filePath) continue;
+      if (iconHint || filePath) {
+        iconRequests.push({ displayPath: filePath, iconPath: iconHint || filePath });
+      }
+    }
+    // File results
+    for (const f of (Array.isArray(fileResults) ? fileResults : [])) {
+      if (!f) continue;
+      const kind = String(f.kind || '').toLowerCase();
+      const filePath = String(f.path || '').trim();
+      if (!filePath) continue;
+      
+      // Fetch icons for applications, executables, and any file with a target_path
+      if (kind === 'application' || kind === 'binary' || f.icon_path || f.target_path ||
+          String(f.extension || '').toLowerCase() === '.exe') {
+        // Let IPC handle .lnk resolution natively, but fallback to indexer's resolved paths if needed
+        const iconPath = String(filePath || f.icon_path || f.target_path).trim();
+        iconRequests.push({ displayPath: filePath, iconPath });
+      }
+    }
+    if (iconRequests.length === 0) return;
 
     const reqId = ++fileIconReqIdRef.current;
     (async () => {
       const updates: Record<string, string> = {};
       await Promise.all(
-        paths.map(async (p: string) => {
-          if (fileIconCacheRef.current[p]) return;
-          const res = await api.getFileIcon(p, { size: 'small' }).catch(() => null);
-          if (fileIconReqIdRef.current !== reqId) return;
-          if (res?.ok && typeof res.dataUrl === 'string' && res.dataUrl) {
-            updates[p] = res.dataUrl;
+        iconRequests.map(async ({ displayPath, iconPath }) => {
+          if (fileIconCacheRef.current[displayPath]) return;
+          // Try the best icon source first, fall back to original path
+          const pathsToTry = iconPath !== displayPath ? [iconPath, displayPath] : [displayPath];
+          for (const p of pathsToTry) {
+            const res = await api.getFileIcon(p, { size: 'normal' }).catch(() => null);
+            if (fileIconReqIdRef.current !== reqId) return;
+            if (res?.ok && typeof res.dataUrl === 'string' && res.dataUrl) {
+              updates[displayPath] = res.dataUrl;
+              return;
+            }
           }
         })
       );
@@ -631,7 +697,20 @@ const InputArea = forwardRef(function InputArea(
       }
       setFileIconDataUrls(prev => ({ ...prev, ...updates }));
     })();
-  }, [fileResults]);
+  }, [fileResults, appResults]);
+
+  // Handle launching an app from search results
+  const handleLaunchApp = useCallback(async (launchTarget: string) => {
+    try {
+      const api = (window as any).desktopAPI;
+      if (api?.launchApp) {
+        await api.launchApp(launchTarget);
+      } else if (api?.execTool) {
+        await api.execTool('open_file', { path: launchTarget });
+      }
+      (window as any).desktopAPI?.hide?.();
+    } catch { }
+  }, []);
 
   // Handle adding a file result as context
   const handleAddFileAsContext = useCallback((file: any) => {
@@ -940,14 +1019,16 @@ const InputArea = forwardRef(function InputArea(
     const attachmentHeight = hasAttachments ? 44 : 0;
     const baseHeight = 156 + miniHeight + attachmentHeight; // 140 + 16 gap + mini output + attachments
     const hasFileResults = fileResults.length > 0;
+    const hasAppResults = appResults.length > 0;
     const fileResultsHeight = hasFileResults ? Math.min(fileResults.length * 60 + 40, 300) : 0;
+    const appResultsHeight = hasAppResults ? Math.min(appResults.length * 56 + 40, 240) : 0;
 
     // Calculate workflows height
     const hasWorkflows = filteredLocalWorkflows.length > 0 || marketplaceResults.length > 0;
     const workflowsHeight = hasWorkflows ? ((filteredLocalWorkflows.length + marketplaceResults.length) * 60 + 40) : 0;
 
     // Cap height to max 450px for scrolling
-    const totalContentHeight = (showWebOptions ? 440 : 380) + fileResultsHeight + workflowsHeight;
+    const totalContentHeight = (showWebOptions ? 440 : 380) + fileResultsHeight + appResultsHeight + workflowsHeight;
     const dropdownHeight = Math.min(totalContentHeight, 450);
 
     const targetHeight = needsDropdown ? baseHeight + dropdownHeight : baseHeight;
@@ -1109,17 +1190,7 @@ const InputArea = forwardRef(function InputArea(
             }}
           >
             <div className="bg-theme-bg rounded-[24px] border border-theme/20 overflow-hidden backdrop-blur-3xl shadow-lg shadow-black/10">
-              <div className="p-3 border-b border-theme/10 bg-theme-bg/70">
-                <div className="flex items-center justify-between">
-                  <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-theme-muted px-1">
-                    Quick Actions
-                  </div>
-                  <div className="text-[10px] text-theme-muted font-semibold bg-theme-active/50 px-2 py-0.5 rounded-full">
-                    {query.length} chars
-                  </div>
-                </div>
-              </div>
-              <div className="p-2 space-y-1 max-h-[380px] overflow-y-auto custom-scrollbar">
+              <div className="p-2 space-y-1.5 max-h-[420px] overflow-y-auto custom-scrollbar">
                 {/* Quick Shortcuts */}
                 <QuickShortcutsGrid
                   bookmarks={bookmarks}
@@ -1129,7 +1200,7 @@ const InputArea = forwardRef(function InputArea(
                   maxVisible={6}
                   filter={query}
                 />
-              {/* Ask Stuard - Primary */}
+                {/* Ask Stuard - Primary */}
                 <button
                   onClick={() => handleSearchOption('chat')}
                   className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl bg-theme-bg border border-theme/10 shadow-sm hover:border-primary/30 hover:shadow-md transition-all group relative overflow-hidden"
@@ -1144,6 +1215,46 @@ const InputArea = forwardRef(function InputArea(
                   </div>
                   <div className="text-[10px] font-bold text-theme-muted bg-theme-hover px-2 py-1 rounded-lg border border-theme/10 group-hover:bg-primary group-hover:text-primary-fg group-hover:border-primary transition-all z-10">Enter</div>
                 </button>
+
+                {/* App Results — always shown FIRST */}
+                {Array.isArray(appResults) && appResults.length > 0 && (
+                  <div className="space-y-1 mb-1">
+                    <div className="px-3 py-1.5 flex items-center gap-2">
+                      <AppWindow className="w-3.5 h-3.5 text-blue-500" />
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">Applications</span>
+                      {fileLoading && <Loader2 className="w-3 h-3 text-theme-muted animate-spin" />}
+                    </div>
+                    <div className="px-1 space-y-1">
+                      {appResults.map((a: any, idx: number) => {
+                        const iconUrl = a?.path ? fileIconDataUrls[String(a.path)] : undefined;
+                        return (
+                          <button
+                            key={String(a.name || idx)}
+                            onClick={() => {
+                              handleLaunchApp(a.launchTarget || a.path);
+                              setQuery('');
+                            }}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-bg/30 border border-blue-500/10 shadow-sm hover:border-blue-500/30 hover:shadow-md transition-all group text-left mb-1"
+                          >
+                            <div className="w-7 h-7 rounded-lg border border-blue-500/20 bg-blue-500/10 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-all">
+                              {iconUrl ? (
+                                <img src={iconUrl} alt="" className="w-5 h-5 object-contain" />
+                              ) : (
+                                <AppWindow className="w-3.5 h-3.5 text-blue-500" />
+                              )}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[13px] font-semibold text-theme-fg group-hover:text-blue-500 truncate transition-colors">
+                                {String(a.name || '')}
+                              </div>
+                            </div>
+                            <PlayCircle className="w-3.5 h-3.5 text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 {/* File Results / Search */}
                 {Array.isArray(fileResults) && fileResults.length > 0 ? (
@@ -1184,12 +1295,20 @@ const InputArea = forwardRef(function InputArea(
                         return (
                           <button
                             key={String(f.id || f.path || idx)}
-                            onClick={() => handleAddFileAsContext(f)}
+                            onClick={() => {
+                              if (kind === 'application') {
+                                (window as any).desktopAPI?.openPath?.(String(f.path));
+                                (window as any).desktopAPI?.hide?.();
+                                setQuery('');
+                              } else {
+                                handleAddFileAsContext(f);
+                              }
+                            }}
                             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-bg/30 border border-theme/10 shadow-sm hover:border-primary/30 hover:shadow-md transition-all group text-left mb-1"
                           >
                             <div className={clsx("w-7 h-7 rounded-lg border border-theme/20 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-all", cfg.bg, cfg.color)}>
                               {iconUrl ? (
-                                <img src={iconUrl} alt="" className="w-3.5 h-3.5 object-contain" />
+                                <img src={iconUrl} alt="" className="w-5 h-5 object-contain" />
                               ) : (
                                 <Icon className="w-3.5 h-3.5" />
                               )}
@@ -1197,17 +1316,23 @@ const InputArea = forwardRef(function InputArea(
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2">
                                 <div className={clsx("text-[13px] font-semibold text-theme-fg truncate transition-colors", cfg.color)}>
-                                  {String(f.filename || f.name || '').trim() || String(f.path || '').split(/[/\\]/).pop() || 'Untitled'}
+                                  {String(f.display_name || f.filename || f.name || '').trim() || String(f.path || '').split(/[/\\]/).pop() || 'Untitled'}
                                 </div>
                                 <div className={clsx("text-[9px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wider opacity-70", cfg.bg, cfg.color)}>
                                   {cfg.label}
                                 </div>
                               </div>
-                              <div className="text-[10px] text-theme-muted truncate font-medium">
-                                {String(f.path || '')}
-                              </div>
+                              {kind !== 'application' && (
+                                <div className="text-[10px] text-theme-muted truncate font-medium">
+                                  {String(f.path || f.target_path || '')}
+                                </div>
+                              )}
                             </div>
-                            <PlusLucide className={clsx("w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity", cfg.color)} />
+                            {kind === 'application' ? (
+                              <PlayCircle className={clsx("w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity", cfg.color)} />
+                            ) : (
+                              <PlusLucide className={clsx("w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity", cfg.color)} />
+                            )}
                           </button>
                         );
                       })}
@@ -1220,126 +1345,126 @@ const InputArea = forwardRef(function InputArea(
                     </button>
                   </div>
                 ) : (
-<button
-onClick={() => handleSearchOption('files')}
-className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl bg-theme-card/50 border border-theme/10 shadow-sm hover:border-primary/30 hover:shadow-md transition-all group"
->
-<div className="w-7 h-7 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 group-hover:scale-110 transition-all ring-1 ring-primary/20 group-hover:ring-primary/50">
-<FolderSearch className="w-3.5 h-3.5 text-primary" />
-</div>
-<div className="flex-1 text-left">
-<div className="text-[12px] font-bold text-theme-fg group-hover:text-primary transition-colors">Search Files</div>
-<div className="text-[9px] text-theme-muted font-semibold">
-{fileLoading || fileSemanticLoading ? 'Searching...' : 'Find apps, docs, folders & more'}
-</div>
-</div>
-<div className="text-[9px] font-bold text-primary-fg bg-theme-hover px-2 py-1 rounded-lg border border-theme/10 group-hover:bg-primary group-hover:text-primary-fg group-hover:border-primary transition-all">@</div>
-</button>
-)}
+                  <button
+                    onClick={() => handleSearchOption('files')}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl bg-theme-card/50 border border-theme/10 shadow-sm hover:border-primary/30 hover:shadow-md transition-all group"
+                  >
+                    <div className="w-7 h-7 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 group-hover:scale-110 transition-all ring-1 ring-primary/20 group-hover:ring-primary/50">
+                      <FolderSearch className="w-3.5 h-3.5 text-primary" />
+                    </div>
+                    <div className="flex-1 text-left">
+                      <div className="text-[12px] font-bold text-theme-fg group-hover:text-primary transition-colors">Search Files</div>
+                      <div className="text-[9px] text-theme-muted font-semibold">
+                        {fileLoading || fileSemanticLoading ? 'Searching...' : 'Find apps, docs, folders & more'}
+                      </div>
+                    </div>
+                    <div className="text-[9px] font-bold text-theme-muted bg-theme-hover px-2 py-1 rounded-lg border border-theme/10 group-hover:bg-primary group-hover:text-primary-fg group-hover:border-primary transition-all">@</div>
+                  </button>
+                )}
 
-{/* Local Workflows & Marketplace */}
-{(filteredLocalWorkflows.length > 0 || marketplaceResults.length > 0) && (
-<div className="space-y-1 mb-1">
-<div className="px-3 py-1.5 flex items-center justify-between">
-<div className="flex items-center gap-2">
-<Zap className="w-3.5 h-3.5 text-amber-500" />
-<span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">Workflows</span>
-{isMarketplaceSearching && <Loader2 className="w-3 h-3 text-primary animate-spin" />}
-</div>
-<div className="text-[10px] text-theme-muted font-semibold">
-Actions
-</div>
-</div>
+                {/* Local Workflows & Marketplace */}
+                {(filteredLocalWorkflows.length > 0 || marketplaceResults.length > 0) && (
+                  <div className="space-y-1 pt-1.5 border-t border-theme/8">
+                    <div className="px-3 py-1.5 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Zap className="w-3.5 h-3.5 text-amber-500" />
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">Workflows</span>
+                        {isMarketplaceSearching && <Loader2 className="w-3 h-3 text-primary animate-spin" />}
+                      </div>
+                      <div className="text-[10px] text-theme-muted font-semibold">
+                        Actions
+                      </div>
+                    </div>
 
-<div className="space-y-1">
-{/* Local */}
-{filteredLocalWorkflows.map(w => (
-<button
-key={w.id}
-onClick={async () => {
-try {
-await window.desktopAPI?.workflowsRun?.(w.id);
-window.desktopAPI?.hide?.();
-(window as any).desktopAPI?.notify?.('Workflow Started', `Running ${w.name}...`);
-} catch (e) {
-console.error(e);
-}
-}}
-className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-card border border-theme/10 shadow-sm hover:border-primary/30 hover:shadow-md transition-all group text-left mb-1"
->
-<div className="w-7 h-7 rounded-lg border border-theme/20 flex items-center justify-center flex-shrink-0 bg-amber-500/10 text-amber-500 group-hover:scale-105 transition-all">
-<Zap className="w-3.5 h-3.5" />
-</div>
-<div className="min-w-0 flex-1">
-<div className="text-[13px] font-semibold text-theme-fg truncate group-hover:text-amber-500 transition-colors">
-{w.name || 'Untitled'}
-</div>
-<div className="text-[10px] text-theme-muted truncate font-medium">
-Run Local Workflow
-</div>
-</div>
-<PlayCircle className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-amber-500" />
-</button>
-))}
+                    <div className="space-y-1">
+                      {/* Local */}
+                      {filteredLocalWorkflows.map(w => (
+                        <button
+                          key={w.id}
+                          onClick={async () => {
+                            try {
+                              await window.desktopAPI?.workflowsRun?.(w.id);
+                              window.desktopAPI?.hide?.();
+                              (window as any).desktopAPI?.notify?.('Workflow Started', `Running ${w.name}...`);
+                            } catch (e) {
+                              console.error(e);
+                            }
+                          }}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-card border border-theme/10 shadow-sm hover:border-amber-500/30 hover:shadow-md transition-all group text-left"
+                        >
+                          <div className="w-7 h-7 rounded-lg border border-theme/20 flex items-center justify-center flex-shrink-0 bg-amber-500/10 text-amber-500 group-hover:scale-105 transition-all">
+                            <Zap className="w-3.5 h-3.5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[13px] font-semibold text-theme-fg truncate group-hover:text-amber-500 transition-colors">
+                              {w.name || 'Untitled'}
+                            </div>
+                            <div className="text-[10px] text-theme-muted truncate font-medium">
+                              Run Local Workflow
+                            </div>
+                          </div>
+                          <PlayCircle className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-amber-500" />
+                        </button>
+                      ))}
 
-{/* Marketplace */}
-{marketplaceResults.map(w => (
-<button
-key={w.slug}
-onClick={() => {
-window.desktopAPI?.openWorkflows?.({ marketplaceSlug: w.slug });
-window.desktopAPI?.hide?.();
-}}
-className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-card border border-theme/10 shadow-sm hover:border-primary/30 hover:shadow-md transition-all group text-left mb-1"
->
-<div className="w-7 h-7 rounded-lg border border-theme/20 flex items-center justify-center flex-shrink-0 bg-indigo-500/10 text-indigo-500 group-hover:scale-105 transition-all">
-<CloudDownload className="w-3.5 h-3.5" />
-</div>
-<div className="min-w-0 flex-1">
-<div className="text-[13px] font-semibold text-theme-fg truncate group-hover:text-indigo-500 transition-colors">
-{w.name}
-</div>
-<div className="text-[10px] text-theme-muted truncate font-medium">
-Marketplace • {w.publisher_name || 'Community'}
-</div>
-</div>
-<Zap className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-indigo-500" />
-</button>
-))}
-</div>
-</div>
-)}
+                      {/* Marketplace */}
+                      {marketplaceResults.map(w => (
+                        <button
+                          key={w.slug}
+                          onClick={() => {
+                            window.desktopAPI?.openWorkflows?.({ marketplaceSlug: w.slug });
+                            window.desktopAPI?.hide?.();
+                          }}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-card border border-theme/10 shadow-sm hover:border-indigo-500/30 hover:shadow-md transition-all group text-left"
+                        >
+                          <div className="w-7 h-7 rounded-lg border border-theme/20 flex items-center justify-center flex-shrink-0 bg-indigo-500/10 text-indigo-500 group-hover:scale-105 transition-all">
+                            <CloudDownload className="w-3.5 h-3.5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[13px] font-semibold text-theme-fg truncate group-hover:text-indigo-500 transition-colors">
+                              {w.name}
+                            </div>
+                            <div className="text-[10px] text-theme-muted truncate font-medium">
+                              Marketplace &bull; {w.publisher_name || 'Community'}
+                            </div>
+                          </div>
+                          <Zap className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-indigo-500" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
-{/* Web Search - Expandable with multiple engines */}
-<div className="rounded-2xl overflow-hidden bg-theme-card border border-theme/10 shadow-sm">
-<div className="flex items-stretch">
-{/* Main Action - Search with Default */}
-<button
-onClick={() => handleSearchOption('web', activeEngine.id)}
-className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-card border border-theme/10 shadow-sm hover:border-primary/30 hover:shadow-md transition-all group text-left mb-1"
->
-<div className={clsx(
-"w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-theme-bg/50 group-hover:scale-110",
-activeEngine.color
-)}>
-{activeEngine.icon}
-</div>
-<div className="flex-1">
-<div className={clsx("text-[13px] font-bold transition-colors group-hover:text-theme-fg", activeEngine.color)}>
-Search {activeEngine.name}
-</div>
-<div className="text-[10px] text-theme-muted font-semibold flex items-center gap-1.5">
-<span>Ctrl + Enter</span>
-<Command className="w-3 h-3 opacity-50" />
-</div>
-</div>
-</button>
+                {/* Web Search - Expandable with multiple engines */}
+                <div className="rounded-2xl overflow-hidden border border-theme/10 pt-1.5 border-t border-theme/8">
+                  <div className="flex items-stretch">
+                    {/* Main Action - Search with Default */}
+                    <button
+                      onClick={() => handleSearchOption('web', activeEngine.id)}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-theme-hover/40 transition-all group text-left rounded-l-xl"
+                    >
+                      <div className={clsx(
+                        "w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-theme-bg/50 group-hover:scale-110",
+                        activeEngine.color
+                      )}>
+                        {activeEngine.icon}
+                      </div>
+                      <div className="flex-1">
+                        <div className={clsx("text-[13px] font-bold transition-colors group-hover:text-theme-fg", activeEngine.color)}>
+                          Search {activeEngine.name}
+                        </div>
+                        <div className="text-[10px] text-theme-muted font-semibold flex items-center gap-1.5">
+                          <span>Ctrl + Enter</span>
+                          <Command className="w-3 h-3 opacity-50" />
+                        </div>
+                      </div>
+                    </button>
 
                     {/* Change Engine Trigger */}
                     <button
                       onClick={(e) => { e.stopPropagation(); setShowWebOptions(!showWebOptions); }}
                       className={clsx(
-                        "w-10 flex items-center justify-center border-l border-theme/10 hover:bg-theme-hover transition-all",
+                        "w-10 flex items-center justify-center border-l border-theme/10 hover:bg-theme-hover transition-all rounded-r-xl",
                         showWebOptions ? "bg-theme-hover/80 text-primary" : "text-theme-muted"
                       )}
                       title="Change Default Search Engine"

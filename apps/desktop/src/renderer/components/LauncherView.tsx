@@ -52,7 +52,7 @@ import type { ChatMode, ChatModelsConfig, ReasoningLevel } from '../hooks/usePre
 import { ModelSelector } from './ModelSelector';
 import { useModelRegistry } from '../hooks/useModelRegistry';
 import { SidebarTabsPanel } from './SidebarTabsPanel';
-import { QuickShortcutsGrid, BookmarkEditor, useBookmarks, type Bookmark } from './QuickShortcuts';
+import { QuickShortcutsGrid, BookmarkEditor, useBookmarks, getTypeConfig, type Bookmark } from './QuickShortcuts';
 
 interface LauncherViewProps {
   query: string;
@@ -198,7 +198,11 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   const { bookmarks, saveBookmarks, executeBookmark } = useBookmarks();
   const [showBookmarkEditor, setShowBookmarkEditor] = useState(false);
 
+  // Discovered apps for quick shortcuts (loaded once on mount)
+  const [discoveredApps, setDiscoveredApps] = useState<any[]>([]);
+
   // File search / indexing state
+  const [appResults, setAppResults] = useState<any[]>([]);
   const [fileResults, setFileResults] = useState<any[]>([]);
   const [fileSearchMode, setFileSearchMode] = useState<'quick' | 'hybrid'>('quick');
   const [fileLoading, setFileLoading] = useState(false);
@@ -233,33 +237,96 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 
   useEffect(() => {
     refreshIndexMeta();
+    // Load discovered apps for quick shortcuts & pre-warm cache
+    const loadApps = async () => {
+      try {
+        const res = await (window as any).desktopAPI?.listApps?.();
+        const apps = res?.apps ?? res;  // IPC returns { ok, apps } wrapper
+        if (Array.isArray(apps) && apps.length > 0) {
+          // Sort apps: prioritize popular/well-known apps, then alphabetical
+          const POPULAR = new Set(['chrome','google chrome','firefox','discord','slack','spotify','visual studio code','code','teams','microsoft teams','telegram','whatsapp','notion','figma','steam','obs studio','obs','postman','terminal','iterm','warp','arc','brave','edge','microsoft edge','safari','zoom','vlc','git bash','github desktop','docker','docker desktop','cursor']);
+          const sorted = [...apps].sort((a: any, b: any) => {
+            const aName = String(a.name || '').toLowerCase();
+            const bName = String(b.name || '').toLowerCase();
+            const aPop = POPULAR.has(aName) ? 1 : 0;
+            const bPop = POPULAR.has(bName) ? 1 : 0;
+            if (aPop !== bPop) return bPop - aPop; // popular first
+            // Prefer apps with icon hints (more likely to show icons)
+            const aIcon = String(a.iconHint || '').trim() ? 1 : 0;
+            const bIcon = String(b.iconHint || '').trim() ? 1 : 0;
+            if (aIcon !== bIcon) return bIcon - aIcon;
+            return aName.localeCompare(bName);
+          });
+          setDiscoveredApps(sorted);
+        }
+      } catch {}
+    };
+    loadApps();
   }, [refreshIndexMeta]);
 
-  const doQuickFileSearch = useCallback(async (q: string, rootId?: string) => {
-    if (!(window as any).desktopAPI?.execTool) return;
+  /** Unified search: hits app-discovery + file index in one call */
+  const doUnifiedSearch = useCallback(async (q: string, rootId?: string) => {
+    const api = (window as any).desktopAPI;
+    if (!api?.unifiedSearch) {
+      // Fallback to old file search if unified search not available
+      if (!api?.execTool) return;
+      const reqId = ++searchReqIdRef.current;
+      setFileLoading(true);
+      setFileError('');
+      try {
+        const res = await api.execTool('file_search', {
+          query: q, mode: 'quick', limit: 6, root_id: rootId || undefined,
+        });
+        if (searchReqIdRef.current !== reqId) return;
+        if (res?.ok) {
+          setFileResults(Array.isArray(res.results) ? res.results : []);
+          setAppResults([]);
+          setFileSearchMode('quick');
+        } else {
+          setFileResults([]);
+          setAppResults([]);
+          setFileError(String(res?.error || 'search_failed'));
+        }
+      } catch (e: any) {
+        if (searchReqIdRef.current !== reqId) return;
+        setFileResults([]);
+        setAppResults([]);
+        setFileError(String(e?.message || 'search_failed'));
+      } finally {
+        if (searchReqIdRef.current === reqId) setFileLoading(false);
+      }
+      return;
+    }
+
     const reqId = ++searchReqIdRef.current;
     setFileLoading(true);
     setFileError('');
     try {
-      const res = await (window as any).desktopAPI.execTool('file_search', {
-        query: q,
-        mode: 'quick',
-        limit: 6,
-        root_id: rootId || undefined,
+      const res = await api.unifiedSearch(q, {
+        limit: 12,
+        rootId: rootId || undefined,
+        includeApps: true,
+        includeFiles: true,
       });
 
       if (searchReqIdRef.current !== reqId) return;
-      if (res?.ok) {
-        setFileResults(Array.isArray(res.results) ? res.results : []);
+      if (res?.ok && Array.isArray(res.results)) {
+        // Split results: apps vs files
+        const apps = res.results.filter((r: any) => r.source === 'app-discovery');
+        const files = res.results.filter((r: any) => r.source !== 'app-discovery');
+        setAppResults(apps);
+        setFileResults(files);
         setFileSearchMode('quick');
       } else {
+        setAppResults([]);
         setFileResults([]);
-        setFileError(String(res?.error || 'file_search_failed'));
+        setFileError(String(res?.error || 'search_failed'));
       }
     } catch (e: any) {
       if (searchReqIdRef.current !== reqId) return;
+      setAppResults([]);
       setFileResults([]);
-      setFileError(String(e?.message || 'file_search_failed'));
+      setFileError(String(e?.message || 'search_failed'));
     } finally {
       if (searchReqIdRef.current === reqId) setFileLoading(false);
     }
@@ -318,6 +385,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
     }
 
     if (q.length < 2) {
+      setAppResults([]);
       setFileResults([]);
       setFileError('');
       setFileLoading(false);
@@ -326,8 +394,8 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
     }
 
     searchDebounceRef.current = setTimeout(() => {
-      doQuickFileSearch(q, selectedRootId || undefined);
-    }, 150);
+      doUnifiedSearch(q, selectedRootId || undefined);
+    }, 120);
 
     semanticDebounceRef.current = setTimeout(() => {
       doSemanticRefine(q, selectedRootId || undefined);
@@ -337,30 +405,53 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
       if (semanticDebounceRef.current) clearTimeout(semanticDebounceRef.current);
     };
-  }, [query, selectedRootId, doQuickFileSearch, doSemanticRefine]);
+  }, [query, selectedRootId, doUnifiedSearch, doSemanticRefine]);
 
   useEffect(() => {
     const api = (window as any).desktopAPI;
     if (!api?.getFileIcon) return;
 
-    const paths = Array.from(new Set(
-      (Array.isArray(fileResults) ? fileResults : [])
-        .filter((f: any) => f && String(f.kind || '').toLowerCase() === 'application')
-        .map((f: any) => String(f.path || '').trim())
-        .filter((p: string) => !!p)
-    ));
-    if (paths.length === 0) return;
+    // Build icon requests for applications, exes, and files with resolved targets
+    const iconRequests: { displayPath: string; iconPath: string }[] = [];
+    // Include app results (from app-discovery)
+    for (const a of (Array.isArray(appResults) ? appResults : [])) {
+      if (!a) continue;
+      const filePath = String(a.path || '').trim();
+      const iconHint = String(a.iconHint || a.launchTarget || '').trim();
+      if (!filePath) continue;
+      if (iconHint || filePath) {
+        iconRequests.push({ displayPath: filePath, iconPath: iconHint || filePath });
+      }
+    }
+    // Include file results
+    for (const f of (Array.isArray(fileResults) ? fileResults : [])) {
+      if (!f) continue;
+      const kind = String(f.kind || '').toLowerCase();
+      const filePath = String(f.path || '').trim();
+      if (!filePath) continue;
+      
+      if (kind === 'application' || kind === 'binary' || f.icon_path || f.target_path ||
+          String(f.extension || '').toLowerCase() === '.exe') {
+        const iconPath = String(filePath || f.icon_path || f.target_path).trim();
+        iconRequests.push({ displayPath: filePath, iconPath });
+      }
+    }
+    if (iconRequests.length === 0) return;
 
     const reqId = ++fileIconReqIdRef.current;
     (async () => {
       const updates: Record<string, string> = {};
       await Promise.all(
-        paths.map(async (p: string) => {
-          if (fileIconCacheRef.current[p]) return;
-          const res = await api.getFileIcon(p, { size: 'small' }).catch(() => null);
-          if (fileIconReqIdRef.current !== reqId) return;
-          if (res?.ok && typeof res.dataUrl === 'string' && res.dataUrl) {
-            updates[p] = res.dataUrl;
+        iconRequests.map(async ({ displayPath, iconPath }) => {
+          if (fileIconCacheRef.current[displayPath]) return;
+          const pathsToTry = iconPath !== displayPath ? [iconPath, displayPath] : [displayPath];
+          for (const p of pathsToTry) {
+            const res = await api.getFileIcon(p, { size: 'normal' }).catch(() => null);
+            if (fileIconReqIdRef.current !== reqId) return;
+            if (res?.ok && typeof res.dataUrl === 'string' && res.dataUrl) {
+              updates[displayPath] = res.dataUrl;
+              return;
+            }
           }
         })
       );
@@ -374,12 +465,52 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
       }
       setFileIconDataUrls(prev => ({ ...prev, ...updates }));
     })();
-  }, [fileResults]);
+  }, [fileResults, appResults]);
+
+  // Resolve icons for discovered apps shown in quick shortcuts
+  useEffect(() => {
+    const api = (window as any).desktopAPI;
+    if (!api?.getFileIcon || discoveredApps.length === 0) return;
+
+    (async () => {
+      const updates: Record<string, string> = {};
+      await Promise.all(
+        discoveredApps.slice(0, 8).map(async (da: any) => {
+          const key = String(da.id || '');
+          if (!key || fileIconCacheRef.current[key]) return;
+          const iconPath = String(da.iconHint || da.launchTarget || da.id || '').trim();
+          if (!iconPath) return;
+          try {
+            const res = await api.getFileIcon(iconPath, { size: 'normal' });
+            if (res?.ok && typeof res.dataUrl === 'string' && res.dataUrl) {
+              updates[key] = res.dataUrl;
+            }
+          } catch {}
+        })
+      );
+
+      const keys = Object.keys(updates);
+      if (keys.length === 0) return;
+      for (const k of keys) fileIconCacheRef.current[k] = updates[k];
+      setFileIconDataUrls(prev => ({ ...prev, ...updates }));
+    })();
+  }, [discoveredApps]);
 
   const handleOpenIndexedFile = useCallback(async (path: string) => {
     try {
       if (!(window as any).desktopAPI?.execTool) return;
       await (window as any).desktopAPI.execTool('open_file', { path });
+    } catch { }
+  }, []);
+
+  const handleLaunchApp = useCallback(async (launchTarget: string) => {
+    try {
+      const api = (window as any).desktopAPI;
+      if (api?.launchApp) {
+        await api.launchApp(launchTarget);
+      } else if (api?.execTool) {
+        await api.execTool('open_file', { path: launchTarget });
+      }
     } catch { }
   }, []);
 
@@ -405,7 +536,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
     : (statusText || 'Ready');
 
   const hasQuery = String(query || '').trim().length >= 2;
-  const showResults = hasQuery && (filteredCommands.length > 0 || fileResults.length > 0);
+  const showResults = hasQuery && (filteredCommands.length > 0 || fileResults.length > 0 || appResults.length > 0);
 
   const getFileKindConfig = (k: string) => {
     switch (k) {
@@ -726,7 +857,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 
               {/* Results */}
               {showResults && (
-                <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-4 min-h-0">
+                <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-3 min-h-0">
                   <button onClick={onSend} className="w-full flex items-center gap-4 px-4 py-3 rounded-2xl hover:bg-theme-hover transition-all group border border-transparent hover:border-theme/30 relative overflow-hidden bg-theme-bg">
                     <div className="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity" />
                     <div className="w-7 h-7 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 group-hover:scale-110 transition-all ring-1 ring-primary/20 group-hover:ring-primary/50 z-10">
@@ -739,21 +870,62 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                     <div className="text-[10px] font-bold text-theme-muted bg-theme-hover px-2.5 py-1.5 rounded-lg border border-theme/10 group-hover:bg-primary group-hover:text-primary-fg group-hover:border-primary transition-all z-10">Enter</div>
                   </button>
 
+                  {/* Apps — always first */}
+                  {appResults.length > 0 && (
+                    <div className="bg-theme-bg/30 rounded-2xl border border-theme/20 p-4 shadow-sm">
+                      <div className="flex items-center gap-2 mb-3">
+                        <AppWindow className="w-4 h-4 text-blue-500" />
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">Applications</span>
+                        {fileLoading && <Loader2 className="w-3 h-3 text-theme-muted animate-spin" />}
+                      </div>
+                      <div className="space-y-1">
+                        {appResults.map((a: any) => {
+                          const iconUrl = a?.path ? fileIconDataUrls[String(a.path)] : undefined;
+                          return (
+                            <button key={a.path || a.name} onClick={() => handleLaunchApp(a.launchTarget || a.path)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-theme-hover transition-all group/app text-left border border-transparent hover:border-blue-500/30">
+                              <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-blue-500/10 text-blue-500 border border-theme/20">
+                                {iconUrl ? (
+                                  <img src={iconUrl} alt="" className="w-5 h-5 object-contain" />
+                                ) : (
+                                  <AppWindow className="w-3.5 h-3.5" />
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="text-[13px] font-semibold text-theme-fg truncate group-hover/app:text-blue-500 transition-colors">{a.display_name || a.name}</div>
+                              </div>
+                              <span className="text-[9px] font-bold text-blue-500/60 bg-blue-500/8 px-1.5 py-0.5 rounded-md uppercase">App</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Files — after apps */}
                   {fileResults.length > 0 && (
                     <div className="bg-theme-bg/30 rounded-2xl border border-theme/20 p-4 shadow-sm">
                       <div className="flex items-center gap-2 mb-3">
                         <FolderSearch className="w-4 h-4 text-emerald-500" />
-                        <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">Files Found</span>
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">Files</span>
+                        {fileSemanticLoading && <Sparkles className="w-3 h-3 text-amber-500 animate-pulse" />}
                       </div>
                       <div className="space-y-1">
                         {fileResults.map((f: any) => {
                           const cfg = getFileKindConfig(String(f.kind || 'other').toLowerCase());
+                          const iconUrl = f?.path ? fileIconDataUrls[String(f.path)] : undefined;
                           return (
                             <button key={f.path} onClick={() => handleOpenIndexedFile(f.path)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-theme-hover transition-all group/file text-left border border-transparent hover:border-theme/30">
                               <div className={clsx("w-7 h-7 rounded-lg flex items-center justify-center border border-theme/20", cfg.bg, cfg.color)}>
-                                <cfg.icon className="w-3.5 h-3.5" />
+                                {iconUrl ? (
+                                  <img src={iconUrl} alt="" className="w-5 h-5 object-contain" />
+                                ) : (
+                                  <cfg.icon className="w-3.5 h-3.5" />
+                                )}
                               </div>
-                              <div className="min-w-0 flex-1 text-[13px] font-semibold text-theme-fg truncate">{f.filename || f.path}</div>
+                              <div className="min-w-0 flex-1">
+                                <div className="text-[13px] font-semibold text-theme-fg truncate">{f.display_name || f.filename || f.path}</div>
+                              </div>
+                              <span className={clsx("text-[9px] font-bold px-1.5 py-0.5 rounded-md uppercase", cfg.color, cfg.bg)}>{cfg.label}</span>
                             </button>
                           );
                         })}
@@ -767,6 +939,53 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 
           {/* Bottom Input Area - Integrated into the single card */}
           <div className="shrink-0 w-full max-w-3xl mx-auto mt-auto px-4 pb-4">
+            {/* Compact-mode quick shortcuts row — apps first, then bookmarks */}
+            {overlayMode === 'compact' && !showResults && (discoveredApps.length > 0 || bookmarks.length > 0) && (
+              <div className="flex items-center gap-1.5 mb-2 overflow-x-auto scrollbar-none">
+                {/* Discovered apps — always shown first */}
+                {discoveredApps.slice(0, 4).map((da: any) => {
+                  const iconUrl = fileIconDataUrls[String(da.id || '')];
+                  return (
+                    <button
+                      key={da.id}
+                      onClick={() => handleLaunchApp(da.launchTarget || da.id)}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-blue-500/8 hover:bg-blue-500/15 border border-blue-500/15 hover:border-blue-500/30 transition-all shrink-0 group"
+                      title={da.name}
+                    >
+                      {iconUrl ? (
+                        <img src={iconUrl} alt="" className="w-3.5 h-3.5 object-contain" />
+                      ) : (
+                        <AppWindow className="w-3.5 h-3.5 text-blue-500" />
+                      )}
+                      <span className="text-[11px] font-semibold text-blue-500/80 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate max-w-[80px]">{da.name}</span>
+                    </button>
+                  );
+                })}
+                {/* Bookmarks fill remaining slots */}
+                {bookmarks.slice(0, Math.max(0, 5 - Math.min(discoveredApps.length, 4))).map((bm) => {
+                  const cfg = getTypeConfig(bm.type);
+                  const Icon = cfg.icon;
+                  return (
+                    <button
+                      key={bm.id}
+                      onClick={() => executeBookmark(bm)}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-theme-hover/30 hover:bg-theme-hover/70 border border-theme/10 hover:border-theme/30 transition-all shrink-0 group"
+                      title={bm.target}
+                    >
+                      <Icon className={clsx("w-3.5 h-3.5", cfg.color)} />
+                      <span className="text-[11px] font-semibold text-theme-muted group-hover:text-theme-fg transition-colors truncate max-w-[80px]">{bm.name}</span>
+                    </button>
+                  );
+                })}
+                <button
+                  onClick={() => setShowBookmarkEditor(true)}
+                  className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-theme-hover/20 hover:bg-theme-hover/50 border border-dashed border-theme/15 hover:border-primary/40 transition-all shrink-0"
+                  title="Edit shortcuts"
+                >
+                  <Plus className="w-3 h-3 text-theme-muted" />
+                </button>
+              </div>
+            )}
             <div className="flex items-center gap-2 bg-theme-hover/50 rounded-[24px] p-1.5 pr-2 focus-within:ring-2 focus-within:ring-primary/10 transition-all border border-theme/5">
               <div className="flex-1 relative rounded-xl transition-all flex items-center">
                 <TextareaAutosize

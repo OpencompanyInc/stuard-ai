@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import { initEnv } from "./env";
 import { createWindow, registerGlobalShortcuts, createTray, showWindow, openNotificationWindow } from "./windows/index";
 import { setupIpc } from "./ipc/index";
-import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, startBrowserExtensionServer } from "./services/index";
+import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, startBrowserExtensionServer, refreshAppCache } from "./services/index";
 import { startLocalWebhookServer, workflows_autostart } from "./workflows/index";
 import { stuards_autostart } from "./stuards";
 import { initCustomUiIpc } from "./tools/index";
@@ -344,6 +344,11 @@ try {
       logger.error("Background file indexing failed:", e);
     }
   }, 5000); // 5 second delay to let agent fully start
+
+  // Discover installed applications immediately (no agent dependency)
+  refreshAppCache().catch((e) => {
+    logger.warn("Background app discovery failed:", e);
+  });
 });
 
 app.on("browser-window-focus", () => {

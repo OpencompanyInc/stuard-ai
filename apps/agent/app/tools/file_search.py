@@ -14,9 +14,72 @@ Search modes:
 from __future__ import annotations
 
 import os
+import sys
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..storage import file_index_db as db
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LNK / APP RESOLUTION (Windows)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _resolve_lnk_target(lnk_path: str) -> Optional[str]:
+    """
+    Read a Windows .lnk shortcut and return the target exe path.
+    Uses the binary .lnk format parsing (no COM needed).
+    """
+    if sys.platform != 'win32':
+        return None
+    try:
+        with open(lnk_path, 'rb') as f:
+            data = f.read(2048)  # .lnk header + link-info is within first 2KB
+        # Validate magic: 4C 00 00 00 + CLSID
+        if len(data) < 76 or data[:4] != b'\x4c\x00\x00\x00':
+            return None
+        flags = int.from_bytes(data[20:24], 'little')
+        has_link_target = flags & 0x01
+        has_link_info = flags & 0x02
+        offset = 76
+        # Skip link target ID list
+        if has_link_target:
+            if offset + 2 > len(data):
+                return None
+            id_list_size = int.from_bytes(data[offset:offset+2], 'little')
+            offset += 2 + id_list_size
+        # Parse link info
+        if has_link_info and offset + 4 <= len(data):
+            link_info_size = int.from_bytes(data[offset:offset+4], 'little')
+            link_info = data[offset:offset+link_info_size]
+            if len(link_info) >= 28:
+                local_base_offset = int.from_bytes(link_info[16:20], 'little')
+                if local_base_offset > 0 and local_base_offset < len(link_info):
+                    # Read null-terminated string
+                    end = link_info.index(b'\x00', local_base_offset) if b'\x00' in link_info[local_base_offset:] else len(link_info)
+                    target = link_info[local_base_offset:end].decode('ascii', errors='replace').strip()
+                    if target and os.path.splitext(target)[1].lower() in ('.exe', '.cmd', '.bat', '.com', '.msc'):
+                        return target
+        return None
+    except Exception:
+        return None
+
+
+def _get_app_display_name(filename: str, path: str) -> str:
+    """
+    Get a clean display name for an application from its filename/path.
+    E.g. 'Discord.lnk' -> 'Discord', 'Visual Studio Code.lnk' -> 'Visual Studio Code'
+    """
+    name = filename
+    # Remove extension
+    base, ext = os.path.splitext(name)
+    if ext.lower() in ('.lnk', '.url', '.exe', '.appref-ms', '.desktop'):
+        name = base
+    # Clean up common suffixes
+    for suffix in [' - Shortcut', ' (2)', ' - Copy']:
+        if name.endswith(suffix):
+            name = name[:-len(suffix)]
+    return name.strip()
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SEARCH UTILITIES
@@ -24,12 +87,17 @@ from ..storage import file_index_db as db
 
 def format_file_result(f: db.IndexedFile, score: float = 0.0, match_type: str = 'fts') -> Dict[str, Any]:
     """Format a file result for API response."""
-    return {
+    # .lnk files are ALWAYS applications regardless of what kind the DB says
+    effective_kind = f.kind
+    if f.extension.lower() in ('.lnk', '.url', '.appref-ms'):
+        effective_kind = 'application'
+
+    result: Dict[str, Any] = {
         "id": f.id,
         "path": f.path,
         "filename": f.filename,
         "extension": f.extension,
-        "kind": f.kind,
+        "kind": effective_kind,
         "size": f.size,
         "summary": f.summary,
         "keywords": f.keywords,
@@ -37,8 +105,59 @@ def format_file_result(f: db.IndexedFile, score: float = 0.0, match_type: str = 
         "indexed_at": f.indexed_at,
         "score": round(score, 4),
         "match_type": match_type,
-        "is_folder": f.kind == 'folder',  # Explicit flag for UI
+        "is_folder": effective_kind == 'folder',
     }
+    
+    # For application-type files, resolve friendly display name and target
+    if effective_kind == 'application':
+        result["display_name"] = _get_app_display_name(f.filename, f.path)
+        
+        # Resolve .lnk target to the actual executable
+        if f.extension.lower() == '.lnk':
+            target = _resolve_lnk_target(f.path)
+            if target:
+                result["target_path"] = target
+            # icon_path = the .lnk itself so Electron uses shell.readShortcutLink
+            # which properly extracts the icon from the shortcut metadata
+            result["icon_path"] = f.path
+    
+    return result
+
+
+def _deduplicate_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    De-duplicate search results, preferring:
+    1. .lnk shortcuts from Start Menu (installed apps) over raw .exe  
+    2. Higher-scored results over lower ones
+    3. Results with target_path (resolved) over unresolved ones
+    """
+    seen_names: Dict[str, int] = {}  # display_name.lower() -> index in output
+    output: List[Dict[str, Any]] = []
+    
+    for r in results:
+        if r.get('kind') == 'application':
+            display = str(r.get('display_name') or r.get('filename', '')).lower()
+            # Normalize: "discord.exe" and "Discord" should deduplicate
+            display_clean = re.sub(r'\.(exe|lnk|url|msi|appref-ms)$', '', display).strip()
+            
+            if display_clean in seen_names:
+                idx = seen_names[display_clean]
+                existing = output[idx]
+                # Prefer the one from Start Menu (has .lnk), or higher score
+                is_start_menu = 'start menu' in str(r.get('path', '')).lower()
+                existing_is_start_menu = 'start menu' in str(existing.get('path', '')).lower()
+                
+                if is_start_menu and not existing_is_start_menu:
+                    output[idx] = r  # Replace with Start Menu version
+                elif r.get('score', 0) > existing.get('score', 0) and not existing_is_start_menu:
+                    output[idx] = r
+                continue
+            
+            seen_names[display_clean] = len(output)
+        
+        output.append(r)
+    
+    return output
 
 
 def format_folder_result(f: db.FolderSummary, score: float = 0.0) -> Dict[str, Any]:
@@ -54,6 +173,49 @@ def format_folder_result(f: db.FolderSummary, score: float = 0.0) -> Dict[str, A
         "score": round(score, 4),
         "type": "folder",
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SCORING / RANKING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _boost_application_score(f: db.IndexedFile, query: str, base_score: float) -> float:
+    """
+    Aggressively boost application scores so installed apps always rank above
+    random folders/files. Mimics Windows Search behaviour where typing "discord"
+    returns the Discord app as the #1 result.
+    
+    .lnk files get an extra bump because they represent Start Menu shortcuts
+    (i.e. "installed applications") which is what the user typically wants.
+    """
+    # .lnk / .url / .appref-ms are always treated as applications for scoring
+    ext = f.extension.lower()
+    is_app = f.kind == 'application' or ext in ('.lnk', '.url', '.appref-ms')
+    if not is_app:
+        return base_score
+
+    q = query.lower()
+    name_lower = f.filename.lower()
+    # Strip extension for cleaner matching  
+    name_base = os.path.splitext(name_lower)[0]
+
+    # .lnk from Start Menu gets an extra bump (these are "installed apps")
+    lnk_bonus = 0.15 if ext == '.lnk' else 0.0
+
+    # Exact name match (discord == discord.lnk) → highest boost
+    if name_base == q:
+        return max(base_score, 2.0) + lnk_bonus
+    # Name starts with query
+    if name_base.startswith(q):
+        return max(base_score + 0.8, 1.5) + lnk_bonus
+    # Query contained in name
+    if q in name_base:
+        return max(base_score + 0.5, 1.2) + lnk_bonus
+    # Query in path (e.g., path contains "discord" folder)
+    if q in f.path.lower():
+        return max(base_score + 0.3, 1.0) + lnk_bonus
+    # Generic application boost (any app result gets a small bump)
+    return max(base_score + 0.15, base_score) + lnk_bonus
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -90,9 +252,11 @@ async def search_files(args: Dict[str, Any]) -> Dict[str, Any]:
     if mode == "quick" or (mode == "hybrid" and not vector):
         # FTS-only search
         if query:
-            fts_results = db.search_fts(query, limit=limit, kind=kind, root_id=root_id)
+            # Search with extra capacity for deduplication
+            fts_results = db.search_fts(query, limit=limit * 3, kind=kind, root_id=root_id)
             for i, f in enumerate(fts_results):
                 score = 1.0 - (i / max(len(fts_results), 1))
+                score = _boost_application_score(f, query, score)
                 results.append(format_file_result(f, score, 'fts'))
     
     elif mode == "semantic":
@@ -100,28 +264,47 @@ async def search_files(args: Dict[str, Any]) -> Dict[str, Any]:
         if not vector:
             return {"ok": False, "error": "Vector required for semantic search"}
         
-        vec_results = db.search_vector(vector, limit=limit, kind=kind, root_id=root_id)
+        vec_results = db.search_vector(vector, limit=limit * 2, kind=kind, root_id=root_id)
         for f, score in vec_results:
             results.append(format_file_result(f, score, 'vector'))
     
     else:  # hybrid
         if query and vector:
             hybrid_results = db.hybrid_search(
-                query, vector, limit=limit, kind=kind, root_id=root_id
+                query, vector, limit=limit * 2, kind=kind, root_id=root_id
             )
             for f, score, match_type in hybrid_results:
+                score = _boost_application_score(f, query, score)
                 results.append(format_file_result(f, score, match_type))
         elif query:
             # Fall back to FTS if no vector
-            fts_results = db.search_fts(query, limit=limit, kind=kind, root_id=root_id)
+            fts_results = db.search_fts(query, limit=limit * 3, kind=kind, root_id=root_id)
             for i, f in enumerate(fts_results):
                 score = 1.0 - (i / max(len(fts_results), 1))
+                score = _boost_application_score(f, query, score)
                 results.append(format_file_result(f, score, 'fts'))
         elif vector:
             # Vector only
-            vec_results = db.search_vector(vector, limit=limit, kind=kind, root_id=root_id)
+            vec_results = db.search_vector(vector, limit=limit * 2, kind=kind, root_id=root_id)
             for f, score in vec_results:
                 results.append(format_file_result(f, score, 'vector'))
+    
+    # Sort: applications first (kind priority), then by score descending
+    # This ensures apps always appear above folders/files when scores are close
+    # Within applications, .lnk (Start Menu shortcuts) sort above .exe
+    KIND_PRIORITY = {'application': 0, 'folder': 2, 'document': 3, 'code': 3}
+    EXT_PRIORITY = {'.lnk': 0, '.url': 0, '.appref-ms': 0, '.exe': 1, '.msi': 2}
+    results.sort(key=lambda r: (
+        KIND_PRIORITY.get(r.get('kind', 'other'), 5),
+        EXT_PRIORITY.get(str(r.get('extension', '')).lower(), 3),
+        -r.get('score', 0)
+    ))
+    
+    # De-duplicate (e.g., Discord.lnk vs Discord.exe)
+    results = _deduplicate_results(results)
+    
+    # Trim to limit
+    results = results[:limit]
     
     return {
         "ok": True,
