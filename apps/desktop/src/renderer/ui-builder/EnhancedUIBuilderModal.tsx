@@ -804,6 +804,7 @@ export function EnhancedUIBuilderModal({
   const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>('properties');
   const [draggedComponent, setDraggedComponent] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [pendingAdd, setPendingAdd] = useState<{ id: string; dropPoint?: { clientX: number; clientY: number } } | null>(null);
   const [paletteCategory, setPaletteCategory] = useState<string>('basic');
   const [showAddPageInput, setShowAddPageInput] = useState(false);
   const [newPageName, setNewPageName] = useState('');
@@ -1063,6 +1064,14 @@ export function EnhancedUIBuilderModal({
     if (template) {
       userMadeVisualEditsRef.current = true;
       needsSyncRef.current = true;
+
+      // If in React component mode, transition to HTML mode first, then schedule insertion
+      if (transformedComponentJs) {
+        setPendingAdd({ id: componentId, dropPoint });
+        setTransformedComponentJs('');
+        return;
+      }
+
       if (canvasRef.current) {
         if (dropPoint) {
           canvasRef.current.insertHtmlAtPoint(template.html, dropPoint);
@@ -1073,7 +1082,33 @@ export function EnhancedUIBuilderModal({
         updateCurrentHtml((getCurrentHtml() || '').trim() ? getCurrentHtml() + '\n' + template.html : template.html);
       }
     }
-  }, [getCurrentHtml, updateCurrentHtml]);
+  }, [getCurrentHtml, updateCurrentHtml, transformedComponentJs]);
+
+  // Process pending component add after iframe refreshes from React→HTML mode transition
+  useEffect(() => {
+    if (!pendingAdd) return;
+
+    const handleMessage = (e: MessageEvent) => {
+      if (e.data.type === 'ready') {
+        const pending = pendingAdd;
+        setPendingAdd(null);
+        const template = COMPONENT_TEMPLATES.find(c => c.id === pending.id);
+        if (template && canvasRef.current) {
+          // Small delay to ensure iframe DOM is fully initialized
+          setTimeout(() => {
+            if (pending.dropPoint) {
+              canvasRef.current?.insertHtmlAtPoint(template.html, pending.dropPoint);
+            } else {
+              canvasRef.current?.appendHtml(template.html);
+            }
+          }, 100);
+        }
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [pendingAdd]);
 
   // Drag handlers
   const handleDragStart = useCallback((e: React.DragEvent, componentId: string) => {

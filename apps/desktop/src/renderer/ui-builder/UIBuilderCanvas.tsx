@@ -979,7 +979,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       )}
 
       {/* Empty state */}
-      {!html && (
+      {!html && !js && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
           <div className="text-center text-slate-400 bg-white/80 px-6 py-4 rounded-xl">
             <div className="text-lg font-medium mb-1">Empty Canvas</div>
