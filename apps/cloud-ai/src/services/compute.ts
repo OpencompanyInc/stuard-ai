@@ -6,6 +6,7 @@ import {
   GCP_VM_NETWORK,
   GCP_VM_SUBNETWORK,
   CLOUD_ENGINE_BUCKET,
+  VM_TOKEN_SECRET,
 } from '../utils/config';
 import { COMPUTE_TIER_CONFIG } from '../pricing';
 import { mintVMToken } from './vm-tokens';
@@ -60,6 +61,7 @@ function mapGceStatus(status: string | null | undefined): VMStatus {
 function buildStartupScript(userId: string, vmToken?: string): string {
   const token = vmToken || '';
   const bucket = CLOUD_ENGINE_BUCKET || 'stuard-user-data';
+  const tokenSecret = VM_TOKEN_SECRET || '';
 
   return `#!/bin/bash
 set -eo pipefail
@@ -77,6 +79,7 @@ STUARD_VM=1
 STUARD_USER_ID=${userId}
 STUARD_GCS_BUCKET=${bucket}
 STUARD_VM_TOKEN=${token}
+VM_TOKEN_SECRET=${tokenSecret}
 STUARD_VM_ROOT=/home/stuard
 STUARD_AGENT_PORT=7400
 ENVEOF
@@ -266,6 +269,7 @@ async function waitForOperation(operation: any): Promise<void> {
 
 export class GCEComputeProvider implements IComputeProvider {
   private client: any = null; // @google-cloud/compute InstancesClient
+  private firewallEnsured = false; // Only create firewall rule once per process lifetime
 
   private async getClient() {
     if (this.client) return this.client;
@@ -273,6 +277,60 @@ export class GCEComputeProvider implements IComputeProvider {
     const { InstancesClient } = await import('@google-cloud/compute');
     this.client = new InstancesClient();
     return this.client;
+  }
+
+  /**
+   * Ensure a GCP VPC firewall rule exists allowing TCP:7400 to stuard-vm tagged instances.
+   * This is idempotent — if the rule already exists, it's a no-op.
+   * Without this, the VPC default-deny blocks all inbound traffic to port 7400.
+   */
+  private async ensureFirewallRule(): Promise<void> {
+    if (this.firewallEnsured) return;
+
+    const RULE_NAME = 'allow-stuard-vm-agent';
+    try {
+      const { FirewallsClient } = await import('@google-cloud/compute');
+      const firewallsClient = new FirewallsClient();
+
+      // Check if rule already exists
+      try {
+        await firewallsClient.get({ project: GCP_PROJECT_ID, firewall: RULE_NAME });
+        this.firewallEnsured = true;
+        console.log(`[compute:gce] Firewall rule '${RULE_NAME}' already exists`);
+        return;
+      } catch (err: any) {
+        // 404 = doesn't exist, create it
+        if (err?.code !== 404 && !err?.message?.includes('not found')) {
+          console.warn(`[compute:gce] Firewall check failed (non-fatal): ${err?.message}`);
+          this.firewallEnsured = true; // Don't retry on unexpected errors
+          return;
+        }
+      }
+
+      // Create firewall rule allowing TCP:7400 from cloud-ai server IP range
+      // In production, this should be restricted to the cloud-ai server's IP
+      // For now, allow from any source (VM agent has its own auth)
+      console.log(`[compute:gce] Creating firewall rule '${RULE_NAME}' for port 7400...`);
+      const [operation] = await firewallsClient.insert({
+        project: GCP_PROJECT_ID,
+        firewallResource: {
+          name: RULE_NAME,
+          description: 'Allow cloud-ai to reach VM agent HTTP server on port 7400',
+          network: GCP_VM_NETWORK.startsWith('global/') ? `projects/${GCP_PROJECT_ID}/${GCP_VM_NETWORK}` : GCP_VM_NETWORK,
+          direction: 'INGRESS',
+          priority: 1000,
+          allowed: [{ IPProtocol: 'tcp', ports: ['7400'] }],
+          targetTags: ['stuard-vm'],
+          sourceRanges: ['0.0.0.0/0'], // VM agent authenticates requests via token
+        },
+      });
+      await waitForOperation(operation);
+      this.firewallEnsured = true;
+      console.log(`[compute:gce] Firewall rule '${RULE_NAME}' created successfully`);
+    } catch (err: any) {
+      console.warn(`[compute:gce] Firewall rule creation failed (non-fatal): ${err?.message}`);
+      this.firewallEnsured = true; // Don't block provisioning
+    }
   }
 
   async provisionVM(userId: string, tier: string, diskSizeGb: number): Promise<{ instanceName: string; zone: string }> {
@@ -334,6 +392,9 @@ export class GCEComputeProvider implements IComputeProvider {
 
     const instanceName = buildInstanceName(userId);
     const zone = GCP_ZONE;
+
+    // Ensure GCP VPC firewall rule exists for VM agent port 7400
+    await this.ensureFirewallRule();
 
     // Pre-flight: clean up orphaned VMs and wait for pending operations
     await this.cleanupOrphanedVMs(client, userId, zone);

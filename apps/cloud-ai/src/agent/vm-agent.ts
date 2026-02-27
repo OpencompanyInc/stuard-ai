@@ -19,7 +19,7 @@
 
 import http from 'http';
 import { randomUUID } from 'crypto';
-import { createHmac } from 'crypto';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { collectMetrics, initMetrics } from './metrics-collector';
 import { ShellExecutor } from './shell-executor';
 import { DeployExecutor } from './deploy-executor';
@@ -43,14 +43,55 @@ const deployExecutor = new DeployExecutor();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth — verify HMAC bearer token on each request
+//
+// cloud-ai mints tokens with format: base64url(payload).base64url(hmac)
+// where the HMAC key is VM_TOKEN_SECRET (shared between cloud-ai and VM).
+// The original VM_TOKEN injected at provisioning is also accepted for
+// backwards compatibility (e.g. startup health pings).
 // ─────────────────────────────────────────────────────────────────────────────
 
 function verifyBearerToken(authHeader: string | undefined): boolean {
   if (!VM_TOKEN) return true; // dev mode — no token required
   const token = (authHeader || '').replace(/^Bearer\s+/i, '').trim();
   if (!token) return false;
-  // Accept exact token match (HMAC tokens from cloud-ai)
-  return token === VM_TOKEN;
+
+  // 1. Accept exact match against the provisioned token (backwards compat)
+  if (token === VM_TOKEN) return true;
+
+  // 2. Verify HMAC-signed token from cloud-ai (format: payload.signature)
+  try {
+    const dotIdx = token.indexOf('.');
+    if (dotIdx < 1) return false;
+
+    const encodedPayload = token.slice(0, dotIdx);
+    const signature = token.slice(dotIdx + 1);
+
+    // Derive the same HMAC secret cloud-ai uses (VM_TOKEN_SECRET / SUPABASE_SECRET_KEY)
+    // At provisioning, VM_TOKEN was minted with the same secret, so we can
+    // extract the secret from the original VM_TOKEN and re-verify.
+    // However, the simplest approach: use VM_TOKEN as the HMAC secret itself
+    // OR accept if the payload contains our userId and isn't expired.
+    const raw = Buffer.from(encodedPayload, 'base64url').toString('utf-8');
+    const payload = JSON.parse(raw) as { userId?: string; exp?: number; iat?: number };
+
+    // Verify it's for this user OR a system-level caller (e.g. health monitor)
+    const SYSTEM_CALLERS = new Set(['cloud-ai-monitor', 'cloud-ai-system']);
+    if (payload.userId !== USER_ID && !SYSTEM_CALLERS.has(payload.userId || '')) return false;
+
+    // Check expiry
+    if (payload.exp && payload.exp < Date.now()) return false;
+
+    // Verify HMAC signature using the shared VM_TOKEN_SECRET
+    // cloud-ai uses VM_TOKEN_SECRET from config; the VM gets it via env
+    const vmTokenSecret = process.env.VM_TOKEN_SECRET || VM_TOKEN;
+    const expectedSig = createHmac('sha256', vmTokenSecret).update(encodedPayload).digest('base64url');
+    const sigBuf = Buffer.from(signature, 'base64url');
+    const expectedBuf = Buffer.from(expectedSig, 'base64url');
+    if (sigBuf.length !== expectedBuf.length) return false;
+    return timingSafeEqual(sigBuf, expectedBuf);
+  } catch {
+    return false;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

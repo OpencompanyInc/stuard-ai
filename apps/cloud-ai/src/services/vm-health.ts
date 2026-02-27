@@ -14,16 +14,27 @@ import {
   insertMetricsBatch,
   type VMMetrics,
 } from '../supabase';
-import { pingVMAgent } from './vm-command';
+import { pingVMAgent, fetchVMMetrics } from './vm-command';
 import { getComputeProvider } from './compute';
 import { writeLog } from '../utils/logger';
+
+/** Desktop-friendly metrics format (field names match what the desktop UI expects). */
+export interface DesktopMetrics {
+  cpu: number;
+  ram_used: number;    // bytes
+  ram_total: number;   // bytes
+  disk_used: number;   // bytes
+  disk_total: number;  // bytes
+  net_rx: number;      // bytes
+  net_tx: number;      // bytes
+}
 
 interface HealthEntry {
   userId: string;
   lastPing: number;
   healthStatus: 'healthy' | 'unhealthy' | 'unreachable' | 'unknown';
   agentVersion: string;
-  metrics: VMMetrics | null;
+  metrics: DesktopMetrics | null;
 }
 
 // In-memory health state per user
@@ -44,7 +55,7 @@ export function getHealthStatus(userId: string): HealthEntry | null {
   return healthMap.get(userId) || null;
 }
 
-export function getLatestMetrics(userId: string): VMMetrics | null {
+export function getLatestMetrics(userId: string): DesktopMetrics | null {
   return healthMap.get(userId)?.metrics || null;
 }
 
@@ -94,12 +105,46 @@ async function runHealthCheck(): Promise<void> {
 
       if (pingResult.ok) {
         const agentData = pingResult.result || {};
+
+        // Fetch actual metrics from VM agent
+        let vmMetrics: DesktopMetrics | null = null;
+        try {
+          const metricsResult = await fetchVMMetrics(ip);
+          if (metricsResult.ok && metricsResult.result?.metrics) {
+            const m = metricsResult.result.metrics;
+            vmMetrics = {
+              cpu: m.cpu_percent ?? 0,
+              ram_used: (m.memory_used_mb ?? 0) * 1024 * 1024, // convert MB → bytes
+              ram_total: (m.memory_total_mb ?? 0) * 1024 * 1024,
+              disk_used: (m.disk_used_gb ?? 0) * 1024 * 1024 * 1024, // convert GB → bytes
+              disk_total: (m.disk_total_gb ?? 0) * 1024 * 1024 * 1024,
+              net_rx: m.network_rx_bytes ?? 0,
+              net_tx: m.network_tx_bytes ?? 0,
+            };
+            // Buffer for DB flush (convert to DB schema format)
+            metricsBuffer.push({
+              user_id: engine.user_id,
+              cpu_percent: m.cpu_percent ?? 0,
+              memory_percent: m.memory_percent ?? 0,
+              memory_used_mb: m.memory_used_mb ?? 0,
+              memory_total_mb: m.memory_total_mb ?? 0,
+              disk_percent: m.disk_percent ?? 0,
+              disk_used_gb: m.disk_used_gb ?? 0,
+              disk_total_gb: m.disk_total_gb ?? 0,
+              network_rx_bytes: m.network_rx_bytes ?? 0,
+              network_tx_bytes: m.network_tx_bytes ?? 0,
+            });
+          }
+        } catch {
+          // Non-fatal — metrics are best-effort
+        }
+
         healthMap.set(engine.user_id, {
           userId: engine.user_id,
           lastPing: now,
           healthStatus: 'healthy',
           agentVersion: agentData.agentVersion || '',
-          metrics: null, // metrics fetched separately if needed
+          metrics: vmMetrics,
         });
         await updateEngineHealth(engine.user_id, {
           last_heartbeat_at: new Date(now).toISOString(),

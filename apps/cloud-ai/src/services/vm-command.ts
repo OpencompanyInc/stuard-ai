@@ -187,3 +187,34 @@ export async function pingVMAgent(ip: string, timeoutMs = 10_000): Promise<Comma
   }
 }
 
+/**
+ * Fetch real-time metrics from a VM agent's /metrics endpoint.
+ * Requires auth token (unlike /health).
+ */
+export async function fetchVMMetrics(ip: string, timeoutMs = 10_000): Promise<CommandResult> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    // Mint a token using a known userId — the VM agent will verify the HMAC
+    // signature but accept 'cloud-ai-monitor' as a system-level caller
+    const token = mintVMToken('cloud-ai-monitor', 'health-monitor');
+
+    const resp = await fetch(`http://${ip}:${VM_AGENT_PORT}/metrics`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+      signal: controller.signal,
+    });
+
+    clearTimeout(timer);
+
+    if (!resp.ok) return { ok: false, error: `http_${resp.status}` };
+    const data = await resp.json() as any;
+    return { ok: true, result: data };
+  } catch (e: any) {
+    if (e?.name === 'AbortError') return { ok: false, error: 'metrics_timeout' };
+    return { ok: false, error: e?.message || 'metrics_fetch_failed' };
+  }
+}
+

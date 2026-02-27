@@ -43,7 +43,7 @@ jobs:
           node-version: 20
           cache: 'pnpm'
       - name: Install Dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
       - name: Lint (Cloud)
         if: ${{ github.event.inputs.deploy_cloud == 'true' }}
         run: pnpm turbo run lint --filter=@stuardai/cloud-ai

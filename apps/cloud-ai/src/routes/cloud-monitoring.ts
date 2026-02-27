@@ -7,6 +7,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { verifyToken, getMetricsHistory } from '../supabase';
 import { getLatestMetrics, getHealthStatus } from '../services/vm-health';
+import { sendVMCommand } from '../services/vm-command';
 
 function json(res: ServerResponse, status: number, body: any): void {
   const payload = JSON.stringify(body);
@@ -50,9 +51,29 @@ export async function handleCloudMonitoringRoutes(req: IncomingMessage, res: Ser
   const user = await authenticate(req, res);
   if (!user) return true;
 
-  // GET /v1/cloud-engine/metrics — Latest metrics from health monitor
+  // GET /v1/cloud-engine/metrics — Latest metrics from health monitor, falls back to live VM query
   if (path === '/v1/cloud-engine/metrics') {
-    const metrics = getLatestMetrics(user.userId);
+    let metrics = getLatestMetrics(user.userId);
+
+    // If the health monitor hasn't cached metrics yet, fetch live from VM
+    if (!metrics) {
+      try {
+        const vmResult = await sendVMCommand(user.userId, 'metrics', {});
+        if (vmResult.ok && vmResult.result) {
+          const m = vmResult.result;
+          metrics = {
+            cpu: m.cpu_percent ?? 0,
+            ram_used: (m.memory_used_mb ?? 0) * 1024 * 1024,
+            ram_total: (m.memory_total_mb ?? 0) * 1024 * 1024,
+            disk_used: (m.disk_used_gb ?? 0) * 1024 * 1024 * 1024,
+            disk_total: (m.disk_total_gb ?? 0) * 1024 * 1024 * 1024,
+            net_rx: m.network_rx_bytes ?? 0,
+            net_tx: m.network_tx_bytes ?? 0,
+          };
+        }
+      } catch { /* non-fatal — return null */ }
+    }
+
     json(res, 200, { ok: true, metrics: metrics || null });
     return true;
   }
