@@ -47,6 +47,38 @@ export const USAGE_COST_PERCENTAGE = 0.65;
  */
 export const MINI_MODEL_OUTPUT_COST_THRESHOLD = 1.0;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Compute Tier & Storage Pricing
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const COMPUTE_TIER_CONFIG: Record<string, { machineType: string; vcpus: number; memoryGb: number; hourlyUsd: number }> = {
+  starter: { machineType: 'e2-small',      vcpus: 1, memoryGb: 2,  hourlyUsd: 0.017 },
+  basic:   { machineType: 'e2-standard-2', vcpus: 2, memoryGb: 8,  hourlyUsd: 0.067 },
+  pro:     { machineType: 'e2-standard-4', vcpus: 4, memoryGb: 16, hourlyUsd: 0.134 },
+  power:   { machineType: 'e2-standard-8', vcpus: 8, memoryGb: 32, hourlyUsd: 0.268 },
+};
+
+export const STORAGE_PRICING = {
+  hotPerGbMonthUsd: 0.10,   // pd-balanced persistent disk
+  coldPerGbMonthUsd: 0.02,  // GCS standard class
+};
+
+/** Estimate compute cost in credits for a given tier over `hours` hours. */
+export function estimateComputeCostCredits(tier: string, hours: number): number {
+  const config = COMPUTE_TIER_CONFIG[tier];
+  if (!config) return 0;
+  return creditsFromUsd(config.hourlyUsd * hours);
+}
+
+/** Estimate storage cost in credits for hot (GB) + cold (bytes) over `hours` hours. */
+export function estimateStorageCostCredits(hotGb: number, coldBytes: number, hours: number): number {
+  const hoursPerMonth = 730;
+  const coldGb = coldBytes / (1024 * 1024 * 1024);
+  const hotUsd = (hotGb * STORAGE_PRICING.hotPerGbMonthUsd / hoursPerMonth) * hours;
+  const coldUsd = (coldGb * STORAGE_PRICING.coldPerGbMonthUsd / hoursPerMonth) * hours;
+  return creditsFromUsd(hotUsd + coldUsd);
+}
+
 function envNumber(key: string, def: number) {
   const v = process.env[key];
   if (!v) return def;

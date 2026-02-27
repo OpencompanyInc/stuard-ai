@@ -19,6 +19,7 @@ export default function DashboardLayout({
 
     const navigation = [
         { name: 'Overview', href: '/dashboard', icon: HomeIcon },
+        { name: 'Cloud Engine', href: '/dashboard/cloud', icon: CloudIcon },
         { name: 'Billing & Plans', href: '/dashboard/billing', icon: CreditCardIcon },
         { name: 'Settings', href: '/dashboard/settings', icon: SettingsIcon },
     ];
@@ -26,10 +27,10 @@ export default function DashboardLayout({
     const isActive = (path: string) => pathname === path;
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50 flex">
+        <div className="min-h-screen flex bg-transparent">
             {/* Sidebar for Desktop */}
-            <aside className="hidden md:flex w-64 flex-col bg-white border-r border-gray-200 fixed inset-y-0 z-50">
-                <div className="flex items-center h-16 px-6 border-b border-gray-100">
+            <aside className="hidden md:flex w-64 flex-col glass-nav fixed inset-y-0 z-50">
+                <div className="flex items-center h-16 px-6 border-b border-black/5">
                     <Link href="/" className="flex items-center gap-2 group">
                         <div className="h-8 w-8 bg-gradient-to-br from-blue-600 to-violet-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20 group-hover:shadow-blue-500/30 transition-all duration-300">
                             <span className="text-white font-bold text-lg">S</span>
@@ -59,7 +60,7 @@ export default function DashboardLayout({
                     })}
                 </nav>
 
-                <div className="p-4 border-t border-gray-100">
+                <div className="p-4 border-t border-black/5">
                     <Link href="/download" className="block w-full">
                         <div className="p-4 rounded-xl bg-gradient-to-br from-gray-900 to-gray-800 text-white shadow-lg shadow-gray-900/10 group cursor-pointer hover:shadow-gray-900/20 transition-all">
                             <div className="flex items-center gap-3 mb-2">
@@ -76,7 +77,7 @@ export default function DashboardLayout({
                     </Link>
                 </div>
 
-                <div className="p-4 border-t border-gray-100">
+                <div className="p-4 border-t border-black/5">
                     <div className="flex items-center gap-3 px-2">
                         <div className="w-8 h-8 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold">
                             {displayUser.email?.[0]?.toUpperCase() || 'U'}
@@ -92,7 +93,7 @@ export default function DashboardLayout({
             </aside>
 
             {/* Mobile Header */}
-            <div className="md:hidden fixed top-0 left-0 right-0 z-50 bg-white border-b border-gray-200 px-4 h-16 flex items-center justify-between">
+            <div className="md:hidden fixed top-0 left-0 right-0 z-50 glass-nav px-4 h-16 flex items-center justify-between">
                 <Link href="/" className="font-bold text-xl text-gray-900">Stuard</Link>
                 <button
                     onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -128,9 +129,9 @@ export default function DashboardLayout({
             )}
 
             {/* Main Content */}
-            <main className="flex-1 md:ml-64 pt-16 md:pt-0 min-h-screen transition-all duration-300 ease-in-out">
+            <main className="flex-1 md:ml-64 pt-16 md:pt-0 min-h-screen transition-all duration-300 ease-in-out relative z-10">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 md:py-12">
-                    <div className="rounded-3xl border border-white/70 bg-white/70 shadow-xl shadow-blue-100/40 backdrop-blur-sm p-6 md:p-10">
+                    <div className="rounded-3xl border border-black/5 bg-white/60 shadow-sm backdrop-blur-xl p-6 md:p-10">
                         {children}
                     </div>
                 </div>
@@ -148,6 +149,9 @@ function CreditCardIcon({ className }: { className?: string }) {
 }
 function SettingsIcon({ className }: { className?: string }) {
     return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>;
+}
+function CloudIcon({ className }: { className?: string }) {
+    return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z" /></svg>;
 }
 function DesktopIcon({ className }: { className?: string }) {
     return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>;

@@ -29,6 +29,10 @@ import { normalizeUsage } from './utils/usage';
 import { getAgentForQuery } from './agents/stuard/index';
 
 
+import { startVMHealthMonitor } from './services/vm-health';
+import { registerConnection, getDesktopWs } from './services/vm-bridge';
+import { verifyVMToken } from './services/vm-tokens';
+
 // Configuration moved to utils/config
 
 type TierChoice = 'auto' | ModelChoice;
@@ -87,7 +91,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, PATCH, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Filename, X-File-Path',
       'Access-Control-Max-Age': '600',
     });
     res.end();
@@ -122,6 +126,7 @@ const pingTimer = setInterval(() => {
 server.on('close', () => { try { clearInterval(pingTimer); } catch { } });
 
 import { handleSpeechConnection } from './routes/speech';
+import { handleTerminalConnection } from './routes/terminal-relay';
 
 server.on('upgrade', (req, socket, head) => {
   const url = req.url || '';
@@ -132,6 +137,10 @@ server.on('upgrade', (req, socket, head) => {
   } else if (url === '/speech' || url.startsWith('/speech?')) {
     wss.handleUpgrade(req, socket, head, (ws) => {
       handleSpeechConnection(ws, req);
+    });
+  } else if (url === '/terminal' || url.startsWith('/terminal?')) {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      handleTerminalConnection(ws, req);
     });
   } else {
     socket.destroy();
@@ -153,6 +162,14 @@ server.listen(PORT, () => {
         .catch((e) => console.warn('[cloud-ai] Tool embeddings sync failed', e));
     }
   } catch { }
+
+  // Start VM health monitoring
+  try {
+    startVMHealthMonitor();
+    console.log('[cloud-ai] VM health monitor started');
+  } catch (e) {
+    console.warn('[cloud-ai] VM health monitor failed to start:', e);
+  }
 });
 
 // Increase HTTP keep-alive and headers timeouts to be friendly to long-lived WS
@@ -337,6 +354,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
       return;
     }
 
+    // Unknown types → error
     if (kind !== 'chat') {
       send(ws, { type: 'error', message: `unknown type: ${kind}` });
       return;
@@ -421,6 +439,12 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             if (delivered > 0) {
               writeLog('queued_webhooks_delivered', { userId: authUser.userId, count: delivered });
             }
+          } catch { }
+
+          // Register this WS as a desktop connection so VM agent relay works
+          try {
+            const ct = (ws as any).__clientType || 'desktop';
+            if (ct !== 'vm-agent') registerConnection(ws, authUser.userId, 'desktop');
           } catch { }
         }
 

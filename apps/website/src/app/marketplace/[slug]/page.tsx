@@ -64,14 +64,14 @@ async function getWorkflow(slug: string): Promise<Workflow | null> {
   }
 }
 
-export async function generateMetadata({ 
-  params 
-}: { 
-  params: Promise<{ slug: string }> 
+export async function generateMetadata({
+  params
+}: {
+  params: Promise<{ slug: string }>
 }): Promise<Metadata> {
   const { slug } = await params;
   const workflow = await getWorkflow(slug);
-  
+
   if (!workflow) {
     return {
       title: 'Workflow Not Found',
@@ -80,15 +80,18 @@ export async function generateMetadata({
   }
 
   const categoryInfo = CATEGORIES[workflow.category] || CATEGORIES.general;
-  const title = `${workflow.name} - Free ${categoryInfo.name} Workflow`;
-  const description = workflow.description.length > 155 
-    ? workflow.description.slice(0, 152) + '...'
-    : workflow.description;
+  const title = `Download ${workflow.name} - Free ${categoryInfo.name} Published Workflow | Stuard AI`;
+  const description = `Download Stuard AI to install ${workflow.name}. A free published workflow for ${categoryInfo.name}. ` + (workflow.description.length > 100
+    ? workflow.description.slice(0, 97) + '...'
+    : workflow.description);
 
   return {
     title,
     description,
     keywords: [
+      'published workflow',
+      'download stuard ai',
+      'marketplace',
       workflow.name,
       `${workflow.category} automation`,
       'workflow template',
@@ -123,7 +126,7 @@ export async function generateMetadata({
 function StarRating({ rating, count }: { rating: number; count: number }) {
   const fullStars = Math.floor(rating);
   const hasHalfStar = rating - fullStars >= 0.5;
-  
+
   return (
     <div className="flex items-center gap-2">
       <div className="flex items-center">
@@ -148,10 +151,10 @@ function formatDate(dateString: string): string {
   });
 }
 
-export default async function WorkflowDetailPage({ 
-  params 
-}: { 
-  params: Promise<{ slug: string }> 
+export default async function WorkflowDetailPage({
+  params
+}: {
+  params: Promise<{ slug: string }>
 }) {
   const { slug } = await params;
   const workflow = await getWorkflow(slug);
@@ -331,7 +334,7 @@ export default async function WorkflowDetailPage({
                 <div className="text-center">
                   <h2 className="text-2xl font-bold mb-3">Get this workflow</h2>
                   <p className="text-blue-100 mb-6 max-w-md mx-auto">
-                    Install Stuard AI on your desktop and add this workflow with one click. 
+                    Install Stuard AI on your desktop and add this workflow with one click.
                     It&apos;s free!
                   </p>
                   <div className="flex flex-wrap justify-center gap-4">
@@ -397,7 +400,7 @@ export default async function WorkflowDetailPage({
                   <h2 className="text-xl font-bold text-gray-900">
                     More {categoryInfo.name} Workflows
                   </h2>
-                  <Link 
+                  <Link
                     href={`/marketplace?category=${workflow.category}`}
                     className="text-blue-600 hover:text-blue-700 text-sm font-medium"
                   >

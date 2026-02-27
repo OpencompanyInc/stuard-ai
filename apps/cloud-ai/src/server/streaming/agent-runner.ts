@@ -68,7 +68,7 @@ export function abortAgent(ws: WebSocket): boolean {
   return false;
 }
 
-export async function runAgent(ws: WebSocket, message: AgentMessage): Promise<{ text: string } | null> {
+export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: WebSocket): Promise<{ text: string } | null> {
   const agentType = message.agent || 'stuard';
   let model = normalizeTier(message.model);
   const integrations = message.integrations || [];
@@ -102,7 +102,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage): Promise<{ 
     send(ws, { type: 'progress', event: 'model', data: { tier: model, modelId: chosenModelId } });
   } catch {}
 
-  await withClientBridge(ws, async () => {
+  await withClientBridge(bridgeWs || ws, async () => {
     let fullText = '';
     let usage: any = null;
     

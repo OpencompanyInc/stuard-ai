@@ -15,6 +15,8 @@ import { SettingsView } from "./components/SettingsView";
 import { IntegrationsView } from "./components/IntegrationsView";
 import { MemoriesView } from "./components/MemoriesView";
 import { TasksView } from "./components/TasksView";
+import { CloudEngineDashboard } from "./components/CloudEngineDashboard";
+import { StorageView } from "./components/StorageView";
 import {
   LayoutDashboard,
   Clock,
@@ -26,7 +28,9 @@ import {
   RefreshCw,
   Archive,
   User,
-  ListTodo
+  ListTodo,
+  Cloud,
+  HardDrive
 } from "lucide-react";
 import { clsx } from 'clsx';
 import 'katex/dist/katex.min.css';
@@ -163,7 +167,7 @@ function DashboardApp() {
     try {
       const params = new URLSearchParams(window.location.search);
       const initialTab = params.get('tab');
-      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'memories', 'automations', 'integrations', 'settings'].includes(initialTab)) {
+      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'memories', 'automations', 'integrations', 'settings', 'cloud', 'storage'].includes(initialTab)) {
         return initialTab;
       }
     } catch { }
@@ -916,6 +920,10 @@ function DashboardApp() {
             <SidebarItem id="memories" label="Memories" icon={Archive} current={tab} onClick={setTab} />
             <SidebarItem id="automations" label="Automations" icon={Zap} current={tab} onClick={setTab} />
 
+            <div className="text-[10px] font-black text-theme-muted uppercase tracking-[0.2em] px-4 mt-6 mb-2 opacity-40">Cloud</div>
+            <SidebarItem id="cloud" label="Cloud Engine" icon={Cloud} current={tab} onClick={setTab} />
+            <SidebarItem id="storage" label="Storage" icon={HardDrive} current={tab} onClick={setTab} />
+
             <div className="text-[10px] font-black text-theme-muted uppercase tracking-[0.2em] px-4 mt-6 mb-2 opacity-40">System</div>
             <SidebarItem id="integrations" label="Integrations" icon={Link} current={tab} onClick={setTab} />
             <SidebarItem id="settings" label="Settings" icon={Settings} current={tab} onClick={setTab} />
@@ -1096,6 +1104,14 @@ function DashboardApp() {
                               stuardsLoading={stuardsLoading}
                               loadStuards={loadStuards}
                             />
+                          )}
+
+                          {tab === 'cloud' && (
+                            <CloudEngineDashboard />
+                          )}
+
+                          {tab === 'storage' && (
+                            <StorageView />
                           )}
 
                           {tab === 'integrations' && userEmail && (

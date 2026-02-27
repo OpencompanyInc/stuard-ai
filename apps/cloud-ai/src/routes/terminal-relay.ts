@@ -1,0 +1,125 @@
+/**
+ * Terminal WebSocket Relay
+ *
+ * When a desktop client connects to ws://<cloud-ai>/terminal?token=<jwt>,
+ * cloud-ai authenticates, opens a terminal session on the VM agent via HTTP,
+ * then polls /terminal/read for output and relays back over the WebSocket.
+ *
+ * This is only used for the duration of a terminal session — no persistent
+ * connection is maintained outside of active use.
+ *
+ * Flow:
+ *   Desktop ←WS→ cloud-ai ←HTTP→ VM agent (port 7400)
+ */
+
+import type { IncomingMessage } from 'http';
+import { WebSocket } from 'ws';
+import { verifyToken } from '../supabase';
+import { sendVMTerminalCommand } from '../services/vm-command';
+import { writeLog } from '../utils/logger';
+
+const POLL_INTERVAL_MS = 100;    // poll VM for output every 100ms
+const MAX_IDLE_MS = 10 * 60_000; // close after 10 min idle
+
+export async function handleTerminalConnection(ws: WebSocket, req: IncomingMessage) {
+  // Authenticate from query param
+  const url = new URL(req.url || '/', 'http://localhost');
+  const token = url.searchParams.get('token') || '';
+
+  const user = token ? await verifyToken(token) : null;
+  if (!user || !user.userId) {
+    ws.send(JSON.stringify({ type: 'error', error: 'unauthorized' }));
+    ws.close(4001, 'unauthorized');
+    return;
+  }
+
+  const userId = user.userId;
+  let terminalId: string | null = null;
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let lastActivity = Date.now();
+
+  writeLog('terminal_relay_open', { userId });
+
+  // Open terminal on VM
+  try {
+    const result = await sendVMTerminalCommand(userId, 'open', {
+      rows: 24,
+      cols: 80,
+    });
+    if (!result.ok) {
+      ws.send(JSON.stringify({ type: 'error', error: result.error || 'terminal_open_failed' }));
+      ws.close(4002, 'terminal_open_failed');
+      return;
+    }
+    terminalId = result.result?.terminalId || result.result?.id || 'default';
+    ws.send(JSON.stringify({ type: 'terminal_opened', terminalId }));
+  } catch (e: any) {
+    ws.send(JSON.stringify({ type: 'error', error: e?.message || 'terminal_open_exception' }));
+    ws.close(4002, 'terminal_open_exception');
+    return;
+  }
+
+  // Poll VM for terminal output
+  pollTimer = setInterval(async () => {
+    if (ws.readyState !== WebSocket.OPEN) return;
+
+    // Check idle timeout
+    if (Date.now() - lastActivity > MAX_IDLE_MS) {
+      ws.send(JSON.stringify({ type: 'terminal_idle_timeout' }));
+      cleanup();
+      ws.close(4003, 'idle_timeout');
+      return;
+    }
+
+    try {
+      const result = await sendVMTerminalCommand(userId, 'read', { terminalId });
+      if (result.ok && result.result?.data) {
+        ws.send(JSON.stringify({ type: 'terminal_data', data: result.result.data }));
+      }
+    } catch { /* ignore poll errors */ }
+  }, POLL_INTERVAL_MS);
+
+  // Handle incoming messages from desktop
+  ws.on('message', async (buf) => {
+    lastActivity = Date.now();
+
+    let msg: any;
+    try {
+      msg = JSON.parse(Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf));
+    } catch { return; }
+
+    const kind = String(msg?.type || '').toLowerCase();
+
+    if (kind === 'terminal_data' && msg.data) {
+      // Forward keystrokes to VM
+      await sendVMTerminalCommand(userId, 'data', {
+        terminalId,
+        data: msg.data,
+      }).catch(() => {});
+    } else if (kind === 'terminal_resize' && msg.rows && msg.cols) {
+      await sendVMTerminalCommand(userId, 'resize', {
+        terminalId,
+        rows: msg.rows,
+        cols: msg.cols,
+      }).catch(() => {});
+    } else if (kind === 'terminal_close') {
+      cleanup();
+      ws.close(1000, 'user_closed');
+    }
+  });
+
+  function cleanup() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+    // Close terminal on VM (fire-and-forget)
+    if (terminalId) {
+      sendVMTerminalCommand(userId, 'close', { terminalId }).catch(() => {});
+    }
+    writeLog('terminal_relay_close', { userId, terminalId });
+  }
+
+  ws.on('close', () => cleanup());
+  ws.on('error', () => cleanup());
+}

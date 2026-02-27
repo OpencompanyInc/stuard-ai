@@ -152,7 +152,7 @@ export default function BillingPage() {
             <div id="plans">
                 <h2 className="text-xl font-bold text-gray-900 mb-6">Choose your monthly amount</h2>
                 <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-6">
-                    <Card className="border border-gray-200">
+                    <Card className="border border-black/5 shadow-sm bg-white/80 backdrop-blur-md">
                         <CardHeader>
                             <CardTitle className="text-lg">Pick your price</CardTitle>
                             <CardDescription>Pay what you want. Minimum $5. Credits roll over for 30 days.</CardDescription>
@@ -206,7 +206,7 @@ export default function BillingPage() {
                         </CardContent>
                     </Card>
 
-                    <Card className="border border-gray-200">
+                    <Card className="border border-black/5 shadow-sm bg-white/80 backdrop-blur-md">
                         <CardHeader>
                             <CardTitle className="text-lg">Estimated credits</CardTitle>
                             <CardDescription>Based on your chosen amount.</CardDescription>
@@ -228,8 +228,7 @@ export default function BillingPage() {
                                 </div>
                             </div>
                             <Button
-                                className="w-full"
-                                variant="primary"
+                                className="w-full gradient-primary text-white font-bold border-0 shadow-sm"
                                 disabled={!user || loading || isManaging}
                                 onClick={handleCheckout}
                             >

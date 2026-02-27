@@ -114,8 +114,8 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
         source: 'task',
         priority: t.priority,
         taskId: t.id,
-        subTodosTotal: t.subTodos?.length || 0,
-        subTodosCompleted: t.subTodos?.filter((s: any) => s.completed).length || 0,
+        subTodosTotal: t.subTodos?.length || t.subTodosTotal || 0,
+        subTodosCompleted: t.subTodos?.filter((s: any) => s.completed).length || t.subTodosCompleted || 0,
       }));
   }, [tasks]);
 
@@ -179,53 +179,61 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
         }
       } catch { }
     }
-    if (Array.isArray(calendarDays) && calendarDays.length > 0) {
-      const dayMap: Record<string, any[]> = {};
+    // ALWAYS build dayMap
+    const dayMap: Record<string, any[]> = {};
+    if (Array.isArray(calendarDays)) {
       for (const d of calendarDays) {
         if (d && d.date) {
           const combined = [...(d.blocks || []), ...(tasksByDate[d.date] || [])];
           dayMap[d.date] = combined;
         }
       }
-      let base: Date | null = null;
-      try {
-        if (calendarRefDate) {
-          base = new Date(calendarRefDate.getFullYear(), calendarRefDate.getMonth(), 1);
-        } else if (calendarRange && calendarRange.start) {
-          const s = new Date(calendarRange.start);
-          if (!isNaN(s.getTime())) base = new Date(s.getFullYear(), s.getMonth(), 1);
-        }
-      } catch { }
-      if (!base) {
-        const now = new Date();
-        base = new Date(now.getFullYear(), now.getMonth(), 1);
-      }
-      const start = new Date(base);
-      start.setDate(start.getDate() - start.getDay());
-      const weeks = [];
-      const today = new Date();
-      for (let w = 0; w < 6; w++) {
-        const row = [];
-        for (let d = 0; d < 7; d++) {
-          const cur = new Date(start);
-          cur.setDate(start.getDate() + w * 7 + d);
-          const y = cur.getFullYear();
-          const m = String(cur.getMonth() + 1).padStart(2, '0');
-          const day = String(cur.getDate()).padStart(2, '0');
-          const iso = `${y}-${m}-${day}`;
-          row.push({
-            date: iso,
-            blocks: dayMap[iso] || [],
-            isCurrentMonth: cur.getFullYear() === base.getFullYear() && cur.getMonth() === base.getMonth(),
-            isToday: cur.getFullYear() === today.getFullYear() && cur.getMonth() === today.getMonth() && cur.getDate() === today.getDate(),
-          });
-        }
-        weeks.push(row);
-      }
-      return weeks;
     }
-    return [];
-  }, [calendarView, calendarRange, calendarDays, calendarRefDate]);
+
+    // Ensure any dates that only have tasks are also in dayMap
+    for (const dateIso in tasksByDate) {
+      if (!dayMap[dateIso]) {
+        dayMap[dateIso] = tasksByDate[dateIso];
+      }
+    }
+
+    let base: Date | null = null;
+    try {
+      if (calendarRefDate) {
+        base = new Date(calendarRefDate.getFullYear(), calendarRefDate.getMonth(), 1);
+      } else if (calendarRange && calendarRange.start) {
+        const s = new Date(calendarRange.start);
+        if (!isNaN(s.getTime())) base = new Date(s.getFullYear(), s.getMonth(), 1);
+      }
+    } catch { }
+    if (!base) {
+      const now = new Date();
+      base = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+    const start = new Date(base);
+    start.setDate(start.getDate() - start.getDay());
+    const weeks = [];
+    const today = new Date();
+    for (let w = 0; w < 6; w++) {
+      const row = [];
+      for (let d = 0; d < 7; d++) {
+        const cur = new Date(start);
+        cur.setDate(start.getDate() + w * 7 + d);
+        const y = cur.getFullYear();
+        const m = String(cur.getMonth() + 1).padStart(2, '0');
+        const day = String(cur.getDate()).padStart(2, '0');
+        const iso = `${y}-${m}-${day}`;
+        row.push({
+          date: iso,
+          blocks: dayMap[iso] || [],
+          isCurrentMonth: cur.getFullYear() === base.getFullYear() && cur.getMonth() === base.getMonth(),
+          isToday: cur.getFullYear() === today.getFullYear() && cur.getMonth() === today.getMonth() && cur.getDate() === today.getDate(),
+        });
+      }
+      weeks.push(row);
+    }
+    return weeks;
+  }, [calendarView, calendarRange, calendarDays, calendarRefDate, taskBlocks]);
 
   const handleTimelineDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -521,12 +529,12 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
                           </span>
                           <div className="w-full space-y-0.5 overflow-hidden flex-1 min-h-0">
                             {day.blocks.slice(0, 2).map((b: any) => (
-                              <div 
-                                key={b.id} 
+                              <div
+                                key={b.id}
                                 className={clsx(
                                   "w-full text-[8px] px-1.5 py-0.5 rounded truncate text-left pointer-events-none font-semibold flex items-center gap-1",
-                                  b.source === 'task' 
-                                    ? "bg-emerald-500/15 text-emerald-600 border border-emerald-500/20" 
+                                  b.source === 'task'
+                                    ? "bg-emerald-500/15 text-emerald-600 border border-emerald-500/20"
                                     : "bg-theme-hover text-theme-fg border border-theme"
                                 )}
                               >

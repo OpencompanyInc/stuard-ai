@@ -4,9 +4,11 @@ import { Suspense } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 export const metadata: Metadata = {
-  title: 'Workflow Marketplace - Free AI Automation Templates',
-  description: 'Discover free workflow automations and AI tools built by the Stuard AI community. Browse templates for productivity, data processing, integrations, and more. One-click install to your desktop.',
+  title: 'Workflow Marketplace - Download Stuard AI & Published Workflows',
+  description: 'Download Stuard AI and discover free published workflows, automation templates, and AI tools built by the community. One-click install to your desktop.',
   keywords: [
+    'published workflow',
+    'download stuard ai',
     'workflow marketplace',
     'automation templates',
     'AI workflows',
@@ -21,15 +23,15 @@ export const metadata: Metadata = {
     'no-code automation',
   ],
   openGraph: {
-    title: 'Stuard AI Workflow Marketplace - Free Automation Templates',
-    description: 'Discover free workflow automations and AI tools built by the community. One-click install.',
+    title: 'Download Stuard AI - Workflow Marketplace & Published Workflows',
+    description: 'Download Stuard AI to access free published workflow automations and AI tools built by the community. One-click install.',
     type: 'website',
     url: 'https://stuard.ai/marketplace',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Stuard AI Workflow Marketplace',
-    description: 'Discover free workflow automations and AI tools built by the community.',
+    title: 'Download Stuard AI Workflow Marketplace',
+    description: 'Download Stuard AI to access free published workflow automations and AI tools built by the community.',
   },
   alternates: {
     canonical: 'https://stuard.ai/marketplace',
@@ -110,9 +112,9 @@ async function getWorkflows(category?: string, query?: string): Promise<Workflow
 
 function WorkflowCard({ workflow }: { workflow: Workflow }) {
   const categoryInfo = CATEGORIES.find(c => c.id === workflow.category);
-  
+
   return (
-    <Link 
+    <Link
       href={`/marketplace/${workflow.slug}`}
       className="group block bg-white rounded-xl border border-gray-200 p-5 hover:border-blue-300 hover:shadow-lg transition-all duration-200"
     >
@@ -129,7 +131,7 @@ function WorkflowCard({ workflow }: { workflow: Workflow }) {
           </p>
         </div>
       </div>
-      
+
       <div className="mt-4 flex items-center justify-between text-sm">
         <div className="flex items-center gap-3 text-gray-500">
           {workflow.rating_count > 0 && (
@@ -146,7 +148,7 @@ function WorkflowCard({ workflow }: { workflow: Workflow }) {
           by {workflow.publisher_name}
         </span>
       </div>
-      
+
       {workflow.tags?.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1">
           {workflow.tags.slice(0, 3).map(tag => (
@@ -167,8 +169,8 @@ function WorkflowGrid({ workflows }: { workflows: Workflow[] }) {
         <div className="text-6xl mb-4">📭</div>
         <h3 className="text-xl font-semibold text-gray-900 mb-2">No workflows yet</h3>
         <p className="text-gray-600 mb-6">Be the first to publish a workflow to the marketplace!</p>
-        <Link 
-          href="/download" 
+        <Link
+          href="/download"
           className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
         >
           Download Stuard AI
@@ -278,7 +280,7 @@ export default async function MarketplacePage({
               Workflow Marketplace
             </h1>
             <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
-              Discover free automation workflows built by the community. 
+              Discover free automation workflows built by the community.
               One-click install to your desktop.
             </p>
 
@@ -292,7 +294,7 @@ export default async function MarketplacePage({
                   placeholder="Search workflows... (e.g., 'email automation', 'screenshot tool')"
                   className="w-full px-5 py-4 pr-12 text-lg border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm"
                 />
-                <button 
+                <button
                   type="submit"
                   className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-gray-500 hover:text-blue-600"
                 >
@@ -328,11 +330,10 @@ export default async function MarketplacePage({
             <div className="flex flex-wrap gap-2 justify-center">
               <Link
                 href="/marketplace"
-                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                  !selectedCategory 
-                    ? 'bg-blue-600 text-white' 
+                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${!selectedCategory
+                    ? 'bg-blue-600 text-white'
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
+                  }`}
               >
                 All
               </Link>
@@ -340,11 +341,10 @@ export default async function MarketplacePage({
                 <Link
                   key={cat.id}
                   href={`/marketplace?category=${cat.id}`}
-                  className={`px-4 py-2 rounded-full text-sm font-medium transition-colors flex items-center gap-1 ${
-                    selectedCategory === cat.id 
-                      ? 'bg-blue-600 text-white' 
+                  className={`px-4 py-2 rounded-full text-sm font-medium transition-colors flex items-center gap-1 ${selectedCategory === cat.id
+                      ? 'bg-blue-600 text-white'
                       : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
+                    }`}
                 >
                   <span>{cat.icon}</span>
                   <span>{cat.name}</span>
@@ -363,7 +363,7 @@ export default async function MarketplacePage({
                 {selectedCategory && ` in ${CATEGORIES.find(c => c.id === selectedCategory)?.name}`}
               </p>
             )}
-            
+
             <Suspense fallback={
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {[...Array(6)].map((_, i) => (

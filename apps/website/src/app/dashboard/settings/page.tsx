@@ -48,7 +48,7 @@ export default function SettingsPage() {
             </div>
 
             {/* Profile Section */}
-            <Card>
+            <Card className="border border-black/5 shadow-sm bg-white/80 backdrop-blur-md">
                 <CardHeader>
                     <CardTitle>Profile</CardTitle>
                     <CardDescription>Your personal account information.</CardDescription>
@@ -70,13 +70,13 @@ export default function SettingsPage() {
                     </div>
 
                     <div className="pt-2">
-                        <Button variant="outline">Change Password</Button>
+                        <Button variant="outline" className="font-semibold text-gray-700 hover:text-gray-900">Change Password</Button>
                     </div>
                 </CardContent>
             </Card>
 
             {/* Notifications */}
-            <Card>
+            <Card className="border border-black/5 shadow-sm bg-white/80 backdrop-blur-md">
                 <CardHeader>
                     <CardTitle>Notifications</CardTitle>
                     <CardDescription>Choose how you want to be notified about agent activities.</CardDescription>
@@ -107,6 +107,7 @@ export default function SettingsPage() {
                                     className="w-full md:w-64"
                                 />
                                 <Button
+                                    className="gradient-primary border-0 font-bold text-white shadow-sm"
                                     disabled={!phoneNumber || phoneNumber === userData?.phoneNumber || loading}
                                     onClick={handlePhoneSave}
                                 >

@@ -104,3 +104,31 @@ export const PUBLIC_TOOLS_ALLOWLIST = new Set(
 
 // Whether to require auth for all tool executions (default: true in production)
 export const REQUIRE_TOOL_AUTH = process.env.REQUIRE_TOOL_AUTH !== '0' && IS_PRODUCTION;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cloud Engine / GCP Configuration
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const GCP_PROJECT_ID = clean(process.env.GCP_PROJECT_ID || '');
+export const GCP_ZONE = clean(process.env.GCP_ZONE || 'us-central1-a');
+export const CLOUD_ENGINE_BUCKET = clean(process.env.CLOUD_ENGINE_BUCKET || 'stuard-user-data');
+export const COMPUTE_BILLING_INTERVAL_MS = Number(clean(process.env.COMPUTE_BILLING_INTERVAL_MS || 3600000));
+
+// GCE VM configuration
+export const GCP_VM_IMAGE = clean(process.env.GCP_VM_IMAGE || 'projects/debian-cloud/global/images/family/debian-12');
+export const GCP_VM_SERVICE_ACCOUNT = clean(process.env.GCP_VM_SERVICE_ACCOUNT || ''); // empty = use default Compute SA
+export const GCP_VM_NETWORK = clean(process.env.GCP_VM_NETWORK || 'global/networks/default');
+export const GCP_VM_SUBNETWORK = clean(process.env.GCP_VM_SUBNETWORK || ''); // e.g. 'regions/us-central1/subnetworks/default'
+export const GCP_VM_STARTUP_SCRIPT = clean(process.env.GCP_VM_STARTUP_SCRIPT || ''); // path or inline startup script
+
+// Service account key file — set GOOGLE_APPLICATION_CREDENTIALS env var for GCE + GCS auth
+// Alternatively deploy on GCE/Cloud Run with an attached service account (no key file needed)
+export const GCP_KEY_FILE = clean(process.env.GOOGLE_APPLICATION_CREDENTIALS || '');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VM Agent & Health Monitoring Configuration
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const VM_TOKEN_SECRET = clean(process.env.VM_TOKEN_SECRET || process.env.SUPABASE_SECRET_KEY || 'dev-vm-token-secret');
+export const VM_HEALTH_CHECK_INTERVAL_MS = Number(clean(process.env.VM_HEALTH_CHECK_INTERVAL_MS || 300000)); // 5 min
+export const VM_HEALTH_STALE_THRESHOLD_MS = Number(clean(process.env.VM_HEALTH_STALE_THRESHOLD_MS || 90000)); // 90s

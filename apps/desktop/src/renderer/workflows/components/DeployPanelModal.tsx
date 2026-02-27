@@ -4,9 +4,11 @@
 import React from "react";
 import { 
   Rocket, X, Check, Download, Upload, Play, Square, RefreshCw,
-  Clock, Keyboard, FolderOpen, Link2, Zap, CircleDot
+  Clock, Keyboard, FolderOpen, Link2, Zap, CircleDot, Cloud,
+  Server, Loader2, CheckCircle2, AlertCircle, ChevronRight
 } from "lucide-react";
 import type { DesignerModel, DesignerTrigger } from "../types";
+import type { CloudVM, CloudDeployState } from "../hooks/useWorkflowDeploy";
 
 interface DeployPanelModalProps {
   model: DesignerModel;
@@ -16,6 +18,15 @@ interface DeployPanelModalProps {
   onUndeploy: () => void;
   onExport: () => void;
   onPublish: () => void;
+  // Cloud deploy props
+  cloudVMs: CloudVM[];
+  selectedVM: string | null;
+  onSelectVM: (vmId: string) => void;
+  cloudDeployState: CloudDeployState;
+  cloudDeployError: string | null;
+  cloudDeployId: string | null;
+  onDeployToCloud: (vmId?: string) => void;
+  onResetCloudDeploy: () => void;
 }
 
 // Helper to get trigger display info
@@ -58,10 +69,13 @@ function getTriggerInfo(trigger: DesignerTrigger): { icon: React.ReactNode; labe
 }
 
 export function DeployPanelModal({ 
-  model, deployStatus, onClose, onDeploy, onUndeploy, onExport, onPublish 
+  model, deployStatus, onClose, onDeploy, onUndeploy, onExport, onPublish,
+  cloudVMs, selectedVM, onSelectVM, cloudDeployState, cloudDeployError, cloudDeployId, onDeployToCloud, onResetCloudDeploy,
 }: DeployPanelModalProps) {
   const isDeployed = deployStatus?.deployed;
   const triggerCount = model.triggers?.length || 0;
+  const runningVMs = cloudVMs.filter((vm) => vm.status === 'running');
+  const hasRunningVM = runningVMs.length > 0;
 
   return (
     <div 
@@ -201,6 +215,156 @@ export function DeployPanelModal({
                 <Rocket className="w-4 h-4 group-hover:-translate-y-0.5 group-hover:translate-x-0.5 transition-transform" />
                 <span>Deploy Workflow</span>
               </button>
+            )}
+          </div>
+          {/* Cloud Deploy Section */}
+          <div className="pt-1">
+            <div className="flex items-center gap-2 mb-3">
+              <Cloud className="w-4 h-4 text-sky-500" />
+              <span className="text-sm font-medium text-slate-700">Deploy to Cloud VM</span>
+              {hasRunningVM && (
+                <span className="ml-auto text-[10px] font-bold uppercase tracking-wider text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                  {runningVMs.length} Online
+                </span>
+              )}
+            </div>
+
+            {/* VM selector */}
+            {cloudVMs.length === 0 ? (
+              <div className="rounded-xl border-2 border-dashed border-slate-200 p-4 text-center">
+                <Server className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                <p className="text-sm text-slate-500 font-medium">No Cloud VMs found</p>
+                <p className="text-xs text-slate-400 mt-1">Set up a Cloud Engine in Settings to deploy workflows to the cloud</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {cloudVMs.map((vm) => {
+                  const isSelected = selectedVM === vm.id;
+                  const isRunning = vm.status === 'running';
+                  return (
+                    <button
+                      key={vm.id}
+                      onClick={() => onSelectVM(vm.id)}
+                      disabled={!isRunning}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border-2 text-left transition-all ${
+                        isSelected && isRunning
+                          ? 'border-sky-300 bg-sky-50 shadow-sm shadow-sky-100'
+                          : isRunning
+                            ? 'border-slate-200 bg-white hover:border-sky-200 hover:bg-sky-50/50'
+                            : 'border-slate-100 bg-slate-50 opacity-60 cursor-not-allowed'
+                      }`}
+                    >
+                      {/* Status dot */}
+                      <div className="relative">
+                        <Server className={`w-5 h-5 ${isRunning ? 'text-sky-500' : 'text-slate-300'}`} />
+                        <span className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white ${
+                          isRunning ? 'bg-emerald-500' : vm.status === 'provisioning' ? 'bg-amber-400' : 'bg-slate-300'
+                        }`}>
+                          {isRunning && <span className="absolute inset-0 bg-emerald-400 rounded-full animate-ping" />}
+                        </span>
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-slate-800 truncate">{vm.instance_name || 'Cloud Engine'}</span>
+                          <span className={`px-1.5 py-0.5 text-[10px] font-bold uppercase rounded ${
+                            isRunning ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                          }`}>
+                            {vm.status}
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-400 mt-0.5 flex items-center gap-2">
+                          <span>{vm.tier}</span>
+                          <span className="text-slate-200">•</span>
+                          <span>{vm.zone}</span>
+                          {vm.external_ip && (
+                            <>
+                              <span className="text-slate-200">•</span>
+                              <span>{vm.external_ip}</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Selection indicator */}
+                      {isSelected && isRunning && (
+                        <CheckCircle2 className="w-5 h-5 text-sky-500 flex-shrink-0" />
+                      )}
+                      {!isSelected && isRunning && (
+                        <div className="w-5 h-5 rounded-full border-2 border-slate-200 flex-shrink-0" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Cloud Deploy Button */}
+            {hasRunningVM && (
+              <div className="mt-3">
+                {cloudDeployState === 'idle' && (
+                  <button
+                    onClick={() => onDeployToCloud(selectedVM || undefined)}
+                    disabled={!selectedVM}
+                    className={`group w-full flex items-center justify-center gap-2.5 px-4 py-3 text-sm font-medium rounded-xl transition-all ${
+                      selectedVM
+                        ? 'text-white bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 shadow-lg shadow-sky-200 hover:shadow-xl hover:shadow-sky-300 hover:-translate-y-0.5'
+                        : 'text-slate-400 bg-slate-100 cursor-not-allowed'
+                    }`}
+                  >
+                    <Cloud className="w-4 h-4" />
+                    <span>Deploy to Cloud VM</span>
+                    <ChevronRight className="w-3.5 h-3.5 opacity-60 group-hover:translate-x-0.5 transition-transform" />
+                  </button>
+                )}
+
+                {cloudDeployState === 'deploying' && (
+                  <div className="flex items-center justify-center gap-3 px-4 py-3 rounded-xl bg-sky-50 border border-sky-200">
+                    <Loader2 className="w-4 h-4 text-sky-500 animate-spin" />
+                    <span className="text-sm font-medium text-sky-700">Deploying to cloud...</span>
+                  </div>
+                )}
+
+                {cloudDeployState === 'success' && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-200">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                      <div className="flex-1">
+                        <span className="text-sm font-medium text-emerald-700">Deployed successfully!</span>
+                        {cloudDeployId && (
+                          <p className="text-xs text-emerald-500 mt-0.5 font-mono">{cloudDeployId.slice(0, 8)}...</p>
+                        )}
+                      </div>
+                      <button
+                        onClick={onResetCloudDeploy}
+                        className="text-xs text-emerald-600 hover:text-emerald-800 font-medium"
+                      >
+                        Done
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {cloudDeployState === 'error' && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-red-50 border border-red-200">
+                      <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm font-medium text-red-700">Deploy failed</span>
+                        {cloudDeployError && (
+                          <p className="text-xs text-red-500 mt-0.5 truncate">{cloudDeployError}</p>
+                        )}
+                      </div>
+                      <button
+                        onClick={onResetCloudDeploy}
+                        className="text-xs text-red-600 hover:text-red-800 font-medium flex-shrink-0"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>

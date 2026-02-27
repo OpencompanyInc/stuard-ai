@@ -109,14 +109,14 @@ export default function LoginPage() {
         </div>
 
         {/* Right Form Side */}
-        <div className="flex items-center justify-center p-6 lg:p-12 bg-gray-50/50">
+        <div className="flex items-center justify-center p-6 lg:p-12 bg-transparent relative z-10">
           <div className="max-w-md w-full">
             <div className="text-center lg:text-left mb-8">
               <h1 className="text-3xl font-bold text-gray-900 mb-2">Welcome back</h1>
               <p className="text-gray-600">Enter your details to access your workspace.</p>
             </div>
 
-            <Card className="border-none shadow-none bg-transparent lg:bg-white lg:shadow-xl lg:border lg:border-gray-100">
+            <Card className="border-none shadow-none bg-transparent lg:bg-white/80 lg:backdrop-blur-xl lg:shadow-sm lg:border lg:border-black/5 lg:rounded-3xl">
               <CardContent className="p-0 lg:p-6">
                 {/* Error Message */}
                 {error && (
@@ -197,7 +197,7 @@ export default function LoginPage() {
                     <label htmlFor="rememberMe" className="ml-2 text-sm text-gray-600">Remember me for 30 days</label>
                   </div>
 
-                  <Button type="submit" disabled={isSubmitting} className="w-full" size="lg">
+                  <Button type="submit" disabled={isSubmitting} className="w-full gradient-primary text-white font-bold border-0 shadow-sm" size="lg">
                     {isSubmitting ? 'Signing In...' : 'Sign In'}
                   </Button>
                 </form>

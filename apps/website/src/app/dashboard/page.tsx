@@ -43,19 +43,19 @@ export default function DashboardPage() {
 
                 const [{ data: usageEvents }, { data: profile }, { count: workflowCount }] = await Promise.all([
                     supabase
-                    .from('usage_events')
-                    .select('cost_usd, created_at, model')
-                    .eq('user_id', user!.id)
-                    .gte('created_at', startOfMonth),
+                        .from('usage_events')
+                        .select('cost_usd, created_at, model')
+                        .eq('user_id', user!.id)
+                        .gte('created_at', startOfMonth),
                     supabase
-                    .from('profiles')
-                    .select('monthly_token_limit')
-                    .eq('id', user!.id)
-                    .single(),
+                        .from('profiles')
+                        .select('monthly_token_limit')
+                        .eq('id', user!.id)
+                        .single(),
                     supabase
-                    .from('conversations')
-                    .select('*', { count: 'exact', head: true })
-                    .eq('user_id', user!.id)
+                        .from('conversations')
+                        .select('*', { count: 'exact', head: true })
+                        .eq('user_id', user!.id)
                 ]);
 
                 const usageList = (usageEvents || []) as UsageEvent[];
@@ -129,7 +129,7 @@ export default function DashboardPage() {
                         <Button variant="outline" className="bg-white">Download App</Button>
                     </Link>
                     <Link href="/dashboard/billing">
-                        <Button>Manage Plan</Button>
+                        <Button className="gradient-primary border-0 rounded-lg text-white font-bold px-6">Manage Plan</Button>
                     </Link>
                 </div>
             </div>
@@ -137,7 +137,7 @@ export default function DashboardPage() {
             {/* Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {/* Plan Card */}
-                <Card className="border-none shadow-md overflow-hidden relative group hover:shadow-lg transition-all">
+                <Card className="border border-black/5 shadow-sm bg-white/80 backdrop-blur-md overflow-hidden relative group hover:shadow-md transition-all">
                     <div className={`absolute top-0 left-0 w-1.5 h-full ${planColor}`} />
                     <CardHeader className="pb-2">
                         <CardTitle className="text-sm font-medium text-gray-500 uppercase tracking-wider">Current Plan</CardTitle>
@@ -149,7 +149,7 @@ export default function DashboardPage() {
                 </Card>
 
                 {/* Credits Card */}
-                <Card className="border-none shadow-md overflow-hidden relative group hover:shadow-lg transition-all">
+                <Card className="border border-black/5 shadow-sm bg-white/80 backdrop-blur-md overflow-hidden relative group hover:shadow-md transition-all">
                     <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-500" />
                     <CardHeader className="pb-2">
                         <CardTitle className="text-sm font-medium text-gray-500 uppercase tracking-wider">Credits Used</CardTitle>
@@ -160,13 +160,13 @@ export default function DashboardPage() {
                         </div>
                         <p className="text-sm text-gray-400">of {stats.creditsLimit.toLocaleString()} monthly limit</p>
                         <div className="mt-4 h-2 w-full rounded-full bg-gray-100">
-                            <div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500" style={{ width: `${usagePercent}%` }} />
+                            <div className="h-full rounded-full gradient-primary" style={{ width: `${usagePercent}%` }} />
                         </div>
                     </CardContent>
                 </Card>
 
                 {/* Automations Card */}
-                <Card className="border-none shadow-md overflow-hidden relative group hover:shadow-lg transition-all">
+                <Card className="border border-black/5 shadow-sm bg-white/80 backdrop-blur-md overflow-hidden relative group hover:shadow-md transition-all">
                     <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-500" />
                     <CardHeader className="pb-2">
                         <CardTitle className="text-sm font-medium text-gray-500 uppercase tracking-wider">Total Conversations</CardTitle>
@@ -186,7 +186,7 @@ export default function DashboardPage() {
                         <h2 className="text-xl font-bold text-gray-900">Usage Analytics</h2>
                         <span className="text-sm text-gray-400">Last {DAYS_RANGE} days</span>
                     </div>
-                    <Card className="border-gray-200 bg-white/80 shadow-sm">
+                    <Card className="border-black/5 bg-white/80 backdrop-blur-md shadow-sm">
                         <CardContent className="pt-6">
                             <div className="flex items-end gap-2 h-40">
                                 {stats.usageSeries.map((point) => (
@@ -221,7 +221,7 @@ export default function DashboardPage() {
                 {/* Quick Actions / Getting Started */}
                 <div className="space-y-6">
                     <h2 className="text-xl font-bold text-gray-900">Recent Activity</h2>
-                    <Card className="border-gray-200 bg-white shadow-sm min-h-[200px]">
+                    <Card className="border-black/5 bg-white/80 backdrop-blur-md shadow-sm min-h-[200px]">
                         {stats.recentActivity.length > 0 ? (
                             <div className="divide-y divide-gray-100">
                                 {stats.recentActivity.map((item, i) => (

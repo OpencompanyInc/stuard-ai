@@ -8,6 +8,7 @@ import {
 import { DeployPanelModal } from "../components/DeployPanelModal";
 import { ImportJsonModal } from "../components/ImportJsonModal";
 import type { DesignerModel } from "../types";
+import type { CloudVM, CloudDeployState } from "../hooks/useWorkflowDeploy";
 import type { WorkflowContextMenu } from "./types";
 import { WorkflowContextMenuOverlay } from "./WorkflowContextMenu";
 import type { MarketplaceUpdate } from "../../utils/cloud";
@@ -35,6 +36,15 @@ interface WorkflowOverlaysProps {
   onUndeploy: () => void;
   onExport: () => void;
   onOpenPublish: () => void;
+  // Cloud deploy
+  cloudVMs: CloudVM[];
+  selectedVM: string | null;
+  onSelectVM: (vmId: string) => void;
+  cloudDeployState: CloudDeployState;
+  cloudDeployError: string | null;
+  cloudDeployId: string | null;
+  onDeployToCloud: (vmId?: string) => void;
+  onResetCloudDeploy: () => void;
   showImport: boolean;
   importJson: string;
   setImportJson: (value: string) => void;
@@ -80,6 +90,14 @@ export function WorkflowOverlays({
   onUndeploy,
   onExport,
   onOpenPublish,
+  cloudVMs,
+  selectedVM,
+  onSelectVM,
+  cloudDeployState,
+  cloudDeployError,
+  cloudDeployId,
+  onDeployToCloud,
+  onResetCloudDeploy,
   showImport,
   importJson,
   setImportJson,
@@ -130,6 +148,14 @@ export function WorkflowOverlays({
           onUndeploy={onUndeploy}
           onExport={onExport}
           onPublish={onOpenPublish}
+          cloudVMs={cloudVMs}
+          selectedVM={selectedVM}
+          onSelectVM={onSelectVM}
+          cloudDeployState={cloudDeployState}
+          cloudDeployError={cloudDeployError}
+          cloudDeployId={cloudDeployId}
+          onDeployToCloud={onDeployToCloud}
+          onResetCloudDeploy={onResetCloudDeploy}
         />
       )}
 

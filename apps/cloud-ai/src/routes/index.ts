@@ -21,6 +21,15 @@ import { handleSharedSpacesRoutes } from './shared-spaces';
 import { handleMCPRoutes } from './mcp';
 import { handleFileIndexRoutes } from './file-index';
 import { handlePreferencesRoutes } from './preferences';
+import { handleCloudEngineRoutes } from './cloud-engine';
+import { handleCloudStorageRoutes } from './cloud-storage';
+import { handleStorageRoutes } from './storage';
+import { handleCloudFilesRoutes } from './cloud-files';
+import { handleCloudMonitoringRoutes } from './cloud-monitoring';
+import { handleCloudSnapshotsRoutes } from './cloud-snapshots';
+import { handleCloudDeploysRoutes } from './cloud-deploys';
+import { handleCloudAdminRoutes } from './cloud-admin';
+import { handleVMRelayRoutes } from './vm-relay';
 
 export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   if (await handleWebhooks(req, res, parsedUrl)) return true;
@@ -45,5 +54,14 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleMCPRoutes(req, res, parsedUrl)) return true;
   if (await handleFileIndexRoutes(req, res, parsedUrl)) return true;
   if (await handlePreferencesRoutes(req, res, parsedUrl)) return true;
+  if (await handleCloudEngineRoutes(req, res, parsedUrl)) return true;
+  if (await handleCloudStorageRoutes(req, res, parsedUrl)) return true;
+  if (await handleStorageRoutes(req, res, parsedUrl)) return true;
+  if (await handleCloudFilesRoutes(req, res, parsedUrl)) return true;
+  if (await handleCloudMonitoringRoutes(req, res, parsedUrl)) return true;
+  if (await handleCloudSnapshotsRoutes(req, res, parsedUrl)) return true;
+  if (await handleCloudDeploysRoutes(req, res, parsedUrl)) return true;
+  if (await handleCloudAdminRoutes(req, res, parsedUrl)) return true;
+  if (await handleVMRelayRoutes(req, res, parsedUrl)) return true;
   return false;
 }

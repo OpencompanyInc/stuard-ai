@@ -404,6 +404,14 @@ function WorkflowsApp() {
     deploy,
     undeploy,
     exportWorkflow,
+    cloudVMs,
+    selectedVM,
+    setSelectedVM,
+    cloudDeployState,
+    cloudDeployError,
+    cloudDeployId,
+    deployToCloud,
+    resetCloudDeploy,
   } = useWorkflowDeploy({ selectedId, model });
 
   // Get manual triggers from the model
@@ -840,6 +848,14 @@ function WorkflowsApp() {
           onUndeploy={() => {}}
           onExport={() => {}}
           onOpenPublish={() => {}}
+          cloudVMs={[]}
+          selectedVM={null}
+          onSelectVM={() => {}}
+          cloudDeployState={'idle'}
+          cloudDeployError={null}
+          cloudDeployId={null}
+          onDeployToCloud={() => {}}
+          onResetCloudDeploy={() => {}}
           showImport={showImport}
           importJson={importJson}
           setImportJson={setImportJson}
@@ -1031,6 +1047,14 @@ function WorkflowsApp() {
         onUndeploy={undeploy}
         onExport={exportWorkflow}
         onOpenPublish={() => setShowPublish(true)}
+        cloudVMs={cloudVMs}
+        selectedVM={selectedVM}
+        onSelectVM={setSelectedVM}
+        cloudDeployState={cloudDeployState}
+        cloudDeployError={cloudDeployError}
+        cloudDeployId={cloudDeployId}
+        onDeployToCloud={deployToCloud}
+        onResetCloudDeploy={resetCloudDeploy}
         showImport={showImport}
         importJson={importJson}
         setImportJson={setImportJson}

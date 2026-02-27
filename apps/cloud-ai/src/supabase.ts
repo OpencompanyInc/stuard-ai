@@ -529,6 +529,23 @@ export function hasSupabase(): boolean {
   return !!supabaseAnon && !!supabaseService;
 }
 
+/**
+ * Admin / service-role Supabase client for server-side operations
+ * (deploy-manager, cloud-engine ops, etc.).
+ * Returns null when Supabase credentials are not configured (local dev).
+ */
+export function getSupabaseAdmin(): SupabaseClient | null {
+  return supabaseService;
+}
+
+/** Alias kept for backwards-compat with deploy-manager & other services */
+export const supabaseAdmin = {
+  from: (...args: Parameters<SupabaseClient['from']>) => {
+    if (!supabaseService) throw new Error('Supabase service client not initialised (missing SUPABASE_URL / SUPABASE_SECRET_KEY)');
+    return supabaseService.from(...args);
+  },
+};
+
 // ── Sync Preferences ────────────────────────────────────────────────────────
 
 export interface SyncPreferences {
@@ -786,4 +803,491 @@ export async function setConversationTitleIfEmpty(userId: string, conversationId
         .eq('user_id', userId);
     }
   } catch {}
+}
+
+// ── Cloud Engine DB Helpers ──────────────────────────────────────────────────
+
+export interface CloudEngine {
+  id: string;
+  user_id: string;
+  instance_name: string;
+  zone: string;
+  machine_type: string;
+  disk_size_gb: number;
+  status: string;
+  created_at: string;
+  started_at: string | null;
+  stopped_at: string | null;
+  deleted_at: string | null;
+  last_heartbeat_at: string | null;
+  health_status: string | null;
+  external_ip: string | null;
+  agent_version: string | null;
+}
+
+export interface StorageUsage {
+  id: string;
+  user_id: string;
+  hot_storage_gb: number;
+  cold_storage_bytes: number;
+  backup_object_name: string | null;
+  last_sync_at: string | null;
+  storage_plan_id: string;
+  storage_quota_gb: number;
+  cold_quota_gb: number;
+  plan_purchased_at: string | null;
+  plan_expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+const CLOUD_ENGINE_COLS = 'id, user_id, instance_name, zone, machine_type, disk_size_gb, status, created_at, started_at, stopped_at, deleted_at, last_heartbeat_at, health_status, external_ip, agent_version';
+const STORAGE_USAGE_COLS = 'id, user_id, hot_storage_gb, cold_storage_bytes, backup_object_name, last_sync_at, storage_plan_id, storage_quota_gb, cold_quota_gb, plan_purchased_at, plan_expires_at, created_at, updated_at';
+
+export async function getCloudEngine(userId: string): Promise<CloudEngine | null> {
+  if (!supabaseService) return null;
+  try {
+    const { data, error } = await supabaseService
+      .from('cloud_engines')
+      .select(CLOUD_ENGINE_COLS)
+      .eq('user_id', userId)
+      .neq('status', 'deleted')
+      .single();
+    if (error || !data) return null;
+    return data as any;
+  } catch {
+    return null;
+  }
+}
+
+export async function upsertCloudEngine(userId: string, values: Partial<CloudEngine>): Promise<CloudEngine | null> {
+  if (!supabaseService) return null;
+  try {
+    const row = { user_id: userId, ...values };
+    const { data, error } = await supabaseService
+      .from('cloud_engines')
+      .upsert(row, { onConflict: 'user_id' })
+      .select(CLOUD_ENGINE_COLS)
+      .single();
+    if (error) {
+      console.error('[supabase] upsertCloudEngine error:', error.message);
+      return null;
+    }
+    return data as any;
+  } catch {
+    return null;
+  }
+}
+
+export async function updateCloudEngineStatus(
+  userId: string,
+  status: string,
+  expectedStatus?: string,
+  timestamps?: { started_at?: string; stopped_at?: string; deleted_at?: string },
+): Promise<boolean> {
+  if (!supabaseService) return false;
+  try {
+    const updates: any = { status, ...timestamps };
+    let query = supabaseService
+      .from('cloud_engines')
+      .update(updates)
+      .eq('user_id', userId);
+    if (expectedStatus) {
+      query = query.eq('status', expectedStatus);
+    }
+    const { error, count } = await query;
+    if (error) {
+      console.error('[supabase] updateCloudEngineStatus error:', error.message);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteCloudEngine(userId: string): Promise<void> {
+  if (!supabaseService) return;
+  try {
+    await supabaseService
+      .from('cloud_engines')
+      .update({ status: 'deleted', deleted_at: new Date().toISOString() })
+      .eq('user_id', userId);
+  } catch {}
+}
+
+export async function getStorageUsage(userId: string): Promise<StorageUsage | null> {
+  if (!supabaseService) return null;
+  try {
+    const { data, error } = await supabaseService
+      .from('storage_usage')
+      .select(STORAGE_USAGE_COLS)
+      .eq('user_id', userId)
+      .single();
+    if (error || !data) return null;
+    return data as any;
+  } catch {
+    return null;
+  }
+}
+
+export async function upsertStorageUsage(userId: string, values: Partial<StorageUsage>): Promise<void> {
+  if (!supabaseService) return;
+  try {
+    const row = {
+      user_id: userId,
+      updated_at: new Date().toISOString(),
+      ...values,
+    };
+    const { error } = await supabaseService
+      .from('storage_usage')
+      .upsert(row, { onConflict: 'user_id' });
+    if (error) {
+      console.error('[supabase] upsertStorageUsage error:', error.message);
+    }
+  } catch {}
+}
+
+export async function insertBillingEvent(
+  userId: string,
+  eventType: 'compute' | 'hot_storage' | 'cold_storage' | 'storage_purchase',
+  creditsDeducted: number,
+  details: any,
+  billingHour?: Date,
+): Promise<void> {
+  if (!supabaseService) return;
+  try {
+    const { error } = await supabaseService
+      .from('compute_billing_events')
+      .upsert({
+        user_id: userId,
+        event_type: eventType,
+        credits_deducted: creditsDeducted,
+        details,
+        billing_hour: (billingHour || new Date()).toISOString(),
+      }, { onConflict: 'user_id,event_type,billing_hour' });
+    if (error) {
+      console.error('[supabase] insertBillingEvent error:', error.message);
+    }
+  } catch {}
+}
+
+export async function insertStoragePurchase(
+  userId: string,
+  planId: string,
+  previousPlanId: string | null,
+  creditsCharged: number,
+  action: 'purchase' | 'upgrade' | 'downgrade',
+): Promise<void> {
+  if (!supabaseService) return;
+  try {
+    const { error } = await supabaseService
+      .from('storage_purchases')
+      .insert({
+        user_id: userId,
+        plan_id: planId,
+        previous_plan_id: previousPlanId,
+        credits_charged: creditsCharged,
+        action,
+      });
+    if (error) {
+      console.error('[supabase] insertStoragePurchase error:', error.message);
+    }
+  } catch {}
+}
+
+export async function getActiveCloudEngines(): Promise<CloudEngine[]> {
+  if (!supabaseService) return [];
+  try {
+    const { data, error } = await supabaseService
+      .from('cloud_engines')
+      .select(CLOUD_ENGINE_COLS)
+      .neq('status', 'deleted');
+    if (error || !data) return [];
+    return data as any[];
+  } catch {
+    return [];
+  }
+}
+
+// ── Cloud Engine V2: Snapshots ───────────────────────────────────────────────
+
+export interface VMSnapshot {
+  id: string;
+  user_id: string;
+  name: string;
+  description: string | null;
+  status: string;
+  size_bytes: number;
+  gcs_object_name: string | null;
+  created_at: string;
+  completed_at: string | null;
+  deleted_at: string | null;
+}
+
+const SNAPSHOT_COLS = 'id, user_id, name, description, status, size_bytes, gcs_object_name, created_at, completed_at, deleted_at';
+
+export async function createSnapshot(userId: string, name: string, description?: string): Promise<VMSnapshot | null> {
+  if (!supabaseService) return null;
+  try {
+    const { data, error } = await supabaseService
+      .from('vm_snapshots')
+      .insert({ user_id: userId, name, description: description || null, status: 'creating' })
+      .select(SNAPSHOT_COLS)
+      .single();
+    if (error || !data) return null;
+    return data as any;
+  } catch { return null; }
+}
+
+export async function getSnapshots(userId: string): Promise<VMSnapshot[]> {
+  if (!supabaseService) return [];
+  try {
+    const { data, error } = await supabaseService
+      .from('vm_snapshots')
+      .select(SNAPSHOT_COLS)
+      .eq('user_id', userId)
+      .neq('status', 'deleted')
+      .order('created_at', { ascending: false });
+    if (error || !data) return [];
+    return data as any[];
+  } catch { return []; }
+}
+
+export async function getSnapshot(userId: string, snapshotId: string): Promise<VMSnapshot | null> {
+  if (!supabaseService) return null;
+  try {
+    const { data, error } = await supabaseService
+      .from('vm_snapshots')
+      .select(SNAPSHOT_COLS)
+      .eq('id', snapshotId)
+      .eq('user_id', userId)
+      .single();
+    if (error || !data) return null;
+    return data as any;
+  } catch { return null; }
+}
+
+export async function updateSnapshotStatus(
+  snapshotId: string,
+  status: string,
+  extra?: { size_bytes?: number; gcs_object_name?: string; completed_at?: string; deleted_at?: string },
+): Promise<boolean> {
+  if (!supabaseService) return false;
+  try {
+    const updates: any = { status, ...extra };
+    const { error } = await supabaseService
+      .from('vm_snapshots')
+      .update(updates)
+      .eq('id', snapshotId);
+    return !error;
+  } catch { return false; }
+}
+
+export async function deleteSnapshot(snapshotId: string): Promise<boolean> {
+  if (!supabaseService) return false;
+  try {
+    const { error } = await supabaseService
+      .from('vm_snapshots')
+      .update({ status: 'deleted', deleted_at: new Date().toISOString() })
+      .eq('id', snapshotId);
+    return !error;
+  } catch { return false; }
+}
+
+// ── Cloud Engine V2: Metrics History ─────────────────────────────────────────
+
+export interface VMMetrics {
+  cpu_percent: number;
+  memory_percent: number;
+  memory_used_mb: number;
+  memory_total_mb: number;
+  disk_percent: number;
+  disk_used_gb: number;
+  disk_total_gb: number;
+  network_rx_bytes: number;
+  network_tx_bytes: number;
+}
+
+export async function insertMetrics(userId: string, metrics: VMMetrics): Promise<void> {
+  if (!supabaseService) return;
+  try {
+    await supabaseService
+      .from('vm_metrics_history')
+      .insert({ user_id: userId, ...metrics });
+  } catch {}
+}
+
+export async function insertMetricsBatch(rows: Array<{ user_id: string } & VMMetrics>): Promise<void> {
+  if (!supabaseService || rows.length === 0) return;
+  try {
+    await supabaseService.from('vm_metrics_history').insert(rows);
+  } catch {}
+}
+
+export async function getMetricsHistory(userId: string, hours = 24): Promise<Array<VMMetrics & { sampled_at: string }>> {
+  if (!supabaseService) return [];
+  try {
+    const since = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+    const { data, error } = await supabaseService
+      .from('vm_metrics_history')
+      .select('cpu_percent, memory_percent, memory_used_mb, memory_total_mb, disk_percent, disk_used_gb, disk_total_gb, network_rx_bytes, network_tx_bytes, sampled_at')
+      .eq('user_id', userId)
+      .gte('sampled_at', since)
+      .order('sampled_at', { ascending: true });
+    if (error || !data) return [];
+    return data as any[];
+  } catch { return []; }
+}
+
+// ── Cloud Engine V2: Terminal Sessions ───────────────────────────────────────
+
+export interface TerminalSession {
+  id: string;
+  user_id: string;
+  session_name: string;
+  status: string;
+  cols: number;
+  rows: number;
+  created_at: string;
+  closed_at: string | null;
+}
+
+export async function createTerminalSession(userId: string, name?: string, cols = 80, rows = 24): Promise<TerminalSession | null> {
+  if (!supabaseService) return null;
+  try {
+    const { data, error } = await supabaseService
+      .from('terminal_sessions')
+      .insert({ user_id: userId, session_name: name || 'default', cols, rows })
+      .select('*')
+      .single();
+    if (error || !data) return null;
+    return data as any;
+  } catch { return null; }
+}
+
+export async function closeTerminalSession(sessionId: string): Promise<boolean> {
+  if (!supabaseService) return false;
+  try {
+    const { error } = await supabaseService
+      .from('terminal_sessions')
+      .update({ status: 'closed', closed_at: new Date().toISOString() })
+      .eq('id', sessionId);
+    return !error;
+  } catch { return false; }
+}
+
+export async function getActiveTerminalSessions(userId: string): Promise<TerminalSession[]> {
+  if (!supabaseService) return [];
+  try {
+    const { data, error } = await supabaseService
+      .from('terminal_sessions')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false });
+    if (error || !data) return [];
+    return data as any[];
+  } catch { return []; }
+}
+
+// ── Cloud Engine V2: Health & Aggregates ─────────────────────────────────────
+
+export async function updateEngineHealth(
+  userId: string,
+  health: { last_heartbeat_at?: string; health_status?: string; external_ip?: string; agent_version?: string },
+): Promise<boolean> {
+  if (!supabaseService) return false;
+  try {
+    const { error } = await supabaseService
+      .from('cloud_engines')
+      .update(health)
+      .eq('user_id', userId);
+    return !error;
+  } catch { return false; }
+}
+
+export async function getCloudEngineSummary(): Promise<{
+  total: number; running: number; stopped: number; provisioning: number;
+  healthy: number; unhealthy: number; unreachable: number;
+}> {
+  if (!supabaseService) return { total: 0, running: 0, stopped: 0, provisioning: 0, healthy: 0, unhealthy: 0, unreachable: 0 };
+  try {
+    const { data, error } = await supabaseService
+      .from('cloud_engines')
+      .select('status, health_status')
+      .neq('status', 'deleted');
+    if (error || !data) return { total: 0, running: 0, stopped: 0, provisioning: 0, healthy: 0, unhealthy: 0, unreachable: 0 };
+    const rows = data as any[];
+    return {
+      total: rows.length,
+      running: rows.filter(r => r.status === 'running').length,
+      stopped: rows.filter(r => r.status === 'stopped').length,
+      provisioning: rows.filter(r => r.status === 'provisioning' || r.status === 'starting').length,
+      healthy: rows.filter(r => r.health_status === 'healthy').length,
+      unhealthy: rows.filter(r => r.health_status === 'unhealthy').length,
+      unreachable: rows.filter(r => r.health_status === 'unreachable').length,
+    };
+  } catch {
+    return { total: 0, running: 0, stopped: 0, provisioning: 0, healthy: 0, unhealthy: 0, unreachable: 0 };
+  }
+}
+
+export async function getTotalBilling(monthStart?: Date): Promise<{
+  total_credits: number;
+  compute_credits: number;
+  hot_storage_credits: number;
+  cold_storage_credits: number;
+}> {
+  if (!supabaseService) return { total_credits: 0, compute_credits: 0, hot_storage_credits: 0, cold_storage_credits: 0 };
+  try {
+    const since = (monthStart || new Date(new Date().getFullYear(), new Date().getMonth(), 1)).toISOString();
+    const { data, error } = await supabaseService
+      .from('compute_billing_events')
+      .select('event_type, credits_deducted')
+      .gte('created_at', since);
+    if (error || !data) return { total_credits: 0, compute_credits: 0, hot_storage_credits: 0, cold_storage_credits: 0 };
+    const rows = data as any[];
+    let compute = 0, hot = 0, cold = 0;
+    for (const r of rows) {
+      const c = Number(r.credits_deducted) || 0;
+      if (r.event_type === 'compute') compute += c;
+      else if (r.event_type === 'hot_storage') hot += c;
+      else if (r.event_type === 'cold_storage') cold += c;
+    }
+    return { total_credits: compute + hot + cold, compute_credits: compute, hot_storage_credits: hot, cold_storage_credits: cold };
+  } catch {
+    return { total_credits: 0, compute_credits: 0, hot_storage_credits: 0, cold_storage_credits: 0 };
+  }
+}
+
+export async function getAggregateMetrics(): Promise<{ avg_cpu: number; avg_memory: number; total_disk_gb: number }> {
+  if (!supabaseService) return { avg_cpu: 0, avg_memory: 0, total_disk_gb: 0 };
+  try {
+    // Get latest metric for each active engine
+    const engines = await getActiveCloudEngines();
+    if (engines.length === 0) return { avg_cpu: 0, avg_memory: 0, total_disk_gb: 0 };
+    const since = new Date(Date.now() - 10 * 60 * 1000).toISOString(); // last 10 min
+    const { data, error } = await supabaseService
+      .from('vm_metrics_history')
+      .select('user_id, cpu_percent, memory_percent, disk_total_gb, sampled_at')
+      .gte('sampled_at', since)
+      .order('sampled_at', { ascending: false });
+    if (error || !data || data.length === 0) return { avg_cpu: 0, avg_memory: 0, total_disk_gb: 0 };
+    // Deduplicate: one metric per user (latest)
+    const seen = new Set<string>();
+    const latest: any[] = [];
+    for (const row of data as any[]) {
+      if (!seen.has(row.user_id)) {
+        seen.add(row.user_id);
+        latest.push(row);
+      }
+    }
+    const avgCpu = latest.reduce((s, r) => s + Number(r.cpu_percent), 0) / latest.length;
+    const avgMem = latest.reduce((s, r) => s + Number(r.memory_percent), 0) / latest.length;
+    const totalDisk = latest.reduce((s, r) => s + Number(r.disk_total_gb), 0);
+    return { avg_cpu: Math.round(avgCpu * 100) / 100, avg_memory: Math.round(avgMem * 100) / 100, total_disk_gb: Math.round(totalDisk * 100) / 100 };
+  } catch {
+    return { avg_cpu: 0, avg_memory: 0, total_disk_gb: 0 };
+  }
 }

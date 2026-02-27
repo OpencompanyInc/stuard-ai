@@ -10,10 +10,10 @@ function SidebarApp() {
   
   // Parse URL params for initial tab and expanded state
   const urlParams = new URLSearchParams(window.location.search);
-  const initialTab = (urlParams.get('tab') as 'spaces' | 'canvas' | 'terminal') || 'spaces';
+  const initialTab = (urlParams.get('tab') as 'spaces' | 'canvas' | 'terminal' | 'cloud') || 'spaces';
   const initialExpanded = urlParams.get('expanded') === 'true';
   
-  const [activeTab, setActiveTab] = useState<'spaces' | 'canvas' | 'terminal'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'spaces' | 'canvas' | 'terminal' | 'cloud'>(initialTab);
   const [isExpanded, setIsExpanded] = useState(initialExpanded);
   const [selectedItem, setSelectedItem] = useState<{ type: 'space' | 'canvas'; id: string } | null>(null);
 

@@ -7,6 +7,9 @@ import { normalizeMessages } from '../../utils/messages';
 import { verifyToken, checkAccess, incrementDailyRequestCounter, createConversation, addUserMessage, addAssistantMessage } from '../../supabase';
 import { runAgent, abortAgent } from '../streaming/agent-runner';
 import { PING_INTERVAL_MS } from '../../utils/config';
+import { registerConnection, getDesktopWs, type ClientType } from '../../services/vm-bridge';
+import { sendVMTerminalCommand } from '../../services/vm-command';
+import { verifyVMToken } from '../../services/vm-tokens';
 
 // State maps
 const wsAlive = new WeakMap<WebSocket, boolean>();
@@ -97,11 +100,22 @@ export class SocketManager {
       return;
     }
 
-    const kind = String(msg?.type || '').toLowerCase();
+    const kind = String(msg?.type || msg?.kind || '').toLowerCase();
 
     // Bridge passthrough: tool events/results coming from the client
     if (kind === 'tool_event' || kind === 'tool_result') {
       try { handleClientToolMessage(ws, msg); } catch { }
+      return;
+    }
+
+    // ── User Terminal Messages → forward to VM via HTTP ─────────────────────
+    if (kind === 'terminal_open' || kind === 'terminal_data' || kind === 'terminal_resize' || kind === 'terminal_close') {
+      try {
+        const userId = (ws as any).__userId;
+        if (userId) {
+          sendVMTerminalCommand(userId, kind, msg).catch(() => {});
+        }
+      } catch { }
       return;
     }
 
@@ -155,6 +169,12 @@ export class SocketManager {
       }
 
       if (authUser) {
+        // Register connection for VM ↔ Desktop relay
+        const clientType = (ws as any).__clientType as string | undefined;
+        if (clientType === 'desktop' || clientType === 'vm-agent') {
+          registerConnection(ws, authUser.userId, clientType as ClientType);
+        }
+
         const access = await checkAccess(authUser.userId);
         if (!access.allowed) {
           this.send(ws, { type: 'error', message: access.reason || 'access_denied', data: { plan: access.plan, limit: access.limit, used: access.used } });
@@ -219,7 +239,27 @@ export class SocketManager {
       };
 
       try {
-        const result = await runAgent(ws, agentConfig as any);
+        // Route VM-triggered agents through the user's desktop bridge
+        const isVmAgent = (ws as any).__clientType === 'vm-agent';
+        let result: { text: string } | null;
+
+        if (isVmAgent && userId) {
+          const desktopWs = getDesktopWs(userId);
+          if (!desktopWs) {
+            this.send(ws, {
+              type: 'error',
+              message: 'desktop_offline',
+              detail: 'Stuard desktop app must be running for device tools.',
+            });
+            wsIsRunning.set(ws, false);
+            this.processNextInQueue(ws);
+            return;
+          }
+          result = await runAgent(ws, agentConfig as any, desktopWs);
+        } else {
+          result = await runAgent(ws, agentConfig as any);
+        }
+
         // Store assistant response
         if (userId && conversationId && result?.text) {
           await addAssistantMessage(userId, conversationId, result.text, {
