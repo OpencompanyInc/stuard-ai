@@ -61,9 +61,9 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
       </button>
 
       {open && (
-        <div className="absolute z-50 w-full mt-2 bg-white/[0.04] border border-white/[0.04] rounded-xl shadow-xl max-h-72 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+        <div className="absolute z-50 w-full mt-2 bg-white/[0.04] border border-white/[0.04] rounded-xl shadow-2xl shadow-black/50 max-h-72 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
           {showSearchInput && (
-            <div className="p-2 border-b border-white/[0.04] bg-slate-50/50">
+            <div className="p-2 border-b border-white/[0.04] bg-white/[0.04]">
               <input
                 type="text"
                 value={search}
@@ -85,7 +85,7 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
             {showCustomOption && (
               <button
                 onClick={() => { onChange(searchTrimmed); setOpen(false); setSearch(''); }}
-                className="w-full px-3 py-2 text-left text-sm rounded-lg flex items-center gap-2 transition-colors mb-0.5 text-indigo-600 bg-indigo-50/50 hover:bg-indigo-50"
+                className="w-full px-3 py-2 text-left text-sm rounded-lg flex items-center gap-2 transition-colors mb-0.5 text-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/200/10"
               >
                 <span className="font-medium">Use:</span> {searchTrimmed}
               </button>
@@ -95,7 +95,7 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
                 key={String(opt.value)}
                 onClick={() => { onChange(opt.value); setOpen(false); setSearch(''); }}
                 className={`w-full px-3 py-2 text-left text-sm rounded-lg flex items-center justify-between gap-2 transition-colors mb-0.5 ${opt.value == value
-                  ? 'bg-indigo-50 text-indigo-700 font-medium'
+                  ? 'bg-indigo-500/10 text-indigo-400 font-medium'
                   : 'text-white/80 hover:bg-white/[0.06]'
                   }`}
               >
@@ -105,7 +105,7 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
                     <div className="text-xs text-white/40 font-normal">{opt.description}</div>
                   )}
                 </div>
-                {opt.value == value && <Check className="w-4 h-4 text-indigo-600" />}
+                {opt.value == value && <Check className="w-4 h-4 text-indigo-400" />}
               </button>
             ))}
             {filteredOptions.length === 0 && (

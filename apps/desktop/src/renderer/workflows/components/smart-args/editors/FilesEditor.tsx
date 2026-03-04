@@ -111,7 +111,7 @@ export function FilesEditor({ value, onChange }: FilesEditorProps) {
                       autoFocus
                       defaultValue={file.filename || ''}
                       placeholder={displayName}
-                      className="w-full px-2 py-1 text-sm border border-indigo-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                      className="w-full px-2 py-1 text-sm border border-indigo-500/40 rounded focus:outline-none focus:ring-1 focus:ring-indigo-400"
                       onBlur={(e) => handleUpdateFilename(index, e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
@@ -140,7 +140,7 @@ export function FilesEditor({ value, onChange }: FilesEditorProps) {
                 <button
                   type="button"
                   onClick={() => handleRemove(index)}
-                  className="p-1 text-white/40 hover:text-red-500 hover:bg-red-50 rounded transition-colors opacity-0 group-hover:opacity-100"
+                  className="p-1 text-white/40 hover:text-red-500 hover:bg-red-500/10 rounded transition-colors opacity-0 group-hover:opacity-100"
                   title="Remove attachment"
                 >
                   <X className="w-4 h-4" />
@@ -155,7 +155,7 @@ export function FilesEditor({ value, onChange }: FilesEditorProps) {
       <button
         type="button"
         onClick={handleAddFiles}
-        className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-white/[0.12] rounded-xl text-white/50 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50/50 transition-all group"
+        className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-white/[0.12] rounded-xl text-white/50 hover:border-indigo-400 hover:text-indigo-400 hover:bg-indigo-500/200/10 transition-all group"
       >
         <Paperclip className="w-4 h-4 group-hover:scale-110 transition-transform" />
         <span className="text-sm font-medium">

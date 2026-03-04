@@ -218,7 +218,7 @@ export function JsonEditor({ value, onChange, label, upstreamNodes, workflowVari
               <p className="text-sm text-white/50 mb-3">No data yet</p>
               <button
                 onClick={addPair}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors"
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-indigo-400 bg-indigo-500/10 rounded-lg hover:bg-indigo-500/200/20 transition-colors"
               >
                 <Plus className="w-4 h-4" />
                 Add Field
@@ -259,8 +259,8 @@ export function JsonEditor({ value, onChange, label, upstreamNodes, workflowVari
                           onClick={() => updatePair(i, 'value', 'true')}
                           className={`flex-1 py-2 px-3 text-xs font-medium rounded-lg transition-all ${
                             pair.value === true 
-                              ? 'bg-emerald-500 text-white' 
-                              : 'bg-white/[0.04] border border-white/[0.08] text-white/70 hover:bg-emerald-50'
+                              ? 'bg-emerald-500/100 text-white' 
+                              : 'bg-white/[0.04] border border-white/[0.08] text-white/70 hover:bg-emerald-500/10'
                           }`}
                         >
                           Yes
@@ -269,7 +269,7 @@ export function JsonEditor({ value, onChange, label, upstreamNodes, workflowVari
                           onClick={() => updatePair(i, 'value', 'false')}
                           className={`flex-1 py-2 px-3 text-xs font-medium rounded-lg transition-all ${
                             pair.value === false 
-                              ? 'bg-slate-500 text-white' 
+                              ? 'bg-white/[0.04]0 text-white' 
                               : 'bg-white/[0.04] border border-white/[0.08] text-white/70 hover:bg-white/[0.1]'
                           }`}
                         >
@@ -295,7 +295,7 @@ export function JsonEditor({ value, onChange, label, upstreamNodes, workflowVari
                         {(upstreamNodes?.length || workflowVariables?.length) ? (
                           <button
                             onClick={() => setActiveVarPicker(activeVarPicker === i ? null : i)}
-                            className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-white/40 hover:text-indigo-400 hover:bg-indigo-500/200/10 transition-colors"
                             title="Insert Variable"
                           >
                             <Variable className="w-3.5 h-3.5" />
@@ -304,7 +304,7 @@ export function JsonEditor({ value, onChange, label, upstreamNodes, workflowVari
                         
                         {/* Variable Picker Dropdown */}
                         {activeVarPicker === i && (
-                          <div className="absolute z-50 right-0 top-full mt-1 w-64 bg-white/[0.04] border border-white/[0.08] rounded-xl shadow-xl max-h-48 overflow-y-auto animate-in fade-in slide-in-from-top-2">
+                          <div className="absolute z-50 right-0 top-full mt-1 w-64 bg-white/[0.04] border border-white/[0.08] rounded-xl shadow-2xl shadow-black/50 max-h-48 overflow-y-auto animate-in fade-in slide-in-from-top-2">
                             <div className="px-2 py-1.5 bg-white/[0.06] border-b border-white/[0.04] text-[10px] font-bold text-white/40 uppercase tracking-wider flex items-center gap-1 sticky top-0">
                               <Variable className="w-3 h-3" />
                               Insert Variable
@@ -317,7 +317,7 @@ export function JsonEditor({ value, onChange, label, upstreamNodes, workflowVari
                                     updatePair(i, 'value', s.text);
                                     setActiveVarPicker(null);
                                   }}
-                                  className="w-full px-2 py-1.5 text-left text-xs flex items-center gap-2 hover:bg-indigo-50 rounded-lg transition-colors"
+                                  className="w-full px-2 py-1.5 text-left text-xs flex items-center gap-2 hover:bg-indigo-500/200/10 rounded-lg transition-colors"
                                 >
                                   <code className="px-1.5 py-0.5 rounded bg-white/[0.06] border border-white/[0.08] text-white/70 font-mono text-[10px]">
                                     {s.label}
@@ -340,7 +340,7 @@ export function JsonEditor({ value, onChange, label, upstreamNodes, workflowVari
                   {/* Remove Button */}
                   <button
                     onClick={() => removePair(i)}
-                    className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                    className="p-2 text-white/40 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -349,7 +349,7 @@ export function JsonEditor({ value, onChange, label, upstreamNodes, workflowVari
 
               <button
                 onClick={addPair}
-                className="w-full py-2.5 border border-dashed border-white/[0.08] rounded-xl text-xs font-semibold text-white/50 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all flex items-center justify-center gap-2"
+                className="w-full py-2.5 border border-dashed border-white/[0.08] rounded-xl text-xs font-semibold text-white/50 hover:text-indigo-400 hover:border-indigo-500/40 hover:bg-indigo-500/200/10 transition-all flex items-center justify-center gap-2"
               >
                 <Plus className="w-4 h-4" />
                 Add Field

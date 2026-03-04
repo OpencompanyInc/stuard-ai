@@ -116,7 +116,7 @@ export function ParallelStepsEditor({
               <div
                 key={i}
                 className={`border rounded-xl transition-all ${isExpanded
-                  ? 'border-indigo-200 bg-indigo-500/10 shadow-sm'
+                  ? 'border-indigo-500/30 bg-indigo-500/100/10 shadow-sm'
                   : 'border-white/[0.08] bg-white/[0.04] hover:border-white/[0.12]'
                   }`}
               >
@@ -144,7 +144,7 @@ export function ParallelStepsEditor({
                   </div>
 
                   {/* Step Number */}
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${isExpanded ? 'bg-indigo-500 text-white' : 'bg-white/[0.06] text-white/50'}`}>
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${isExpanded ? 'bg-indigo-500/100 text-white' : 'bg-white/[0.06] text-white/50'}`}>
                     {i + 1}
                   </div>
 
@@ -164,7 +164,7 @@ export function ParallelStepsEditor({
                   {/* Delete Button */}
                   <button
                     onClick={(e) => { e.stopPropagation(); removeStep(i); }}
-                    className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                    className="p-1.5 text-white/40 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -252,7 +252,7 @@ export function ParallelStepsEditor({
 
       {/* Add Step Button / Tool Picker */}
       {showToolPicker ? (
-        <div className="border border-indigo-200 rounded-xl bg-white/[0.04] shadow-lg overflow-hidden">
+        <div className="border border-indigo-500/30 rounded-xl bg-white/[0.04] shadow-lg overflow-hidden">
           <div className="p-2 border-b border-white/[0.04]">
             <input
               type="text"
@@ -275,7 +275,7 @@ export function ParallelStepsEditor({
                     <button
                       key={tool.id}
                       onClick={() => addStep(tool.id, tool.args)}
-                      className="w-full px-3 py-2 text-left text-sm hover:bg-indigo-50 flex items-center gap-2 transition-colors"
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-indigo-500/200/10 flex items-center gap-2 transition-colors"
                     >
                       <Play className="w-3.5 h-3.5 text-indigo-400" />
                       <span className="font-medium text-white/80">{tool.label}</span>
@@ -303,9 +303,9 @@ export function ParallelStepsEditor({
       ) : (
         <button
           onClick={() => setShowToolPicker(true)}
-          className="w-full py-3 border-2 border-dashed border-white/[0.08] rounded-xl text-sm font-medium text-white/50 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/30 transition-all flex items-center justify-center gap-2 group"
+          className="w-full py-3 border-2 border-dashed border-white/[0.08] rounded-xl text-sm font-medium text-white/50 hover:text-indigo-400 hover:border-indigo-500/40 hover:bg-indigo-500/200/10 transition-all flex items-center justify-center gap-2 group"
         >
-          <div className="w-7 h-7 rounded-full bg-white/[0.06] group-hover:bg-indigo-100 flex items-center justify-center transition-colors">
+          <div className="w-7 h-7 rounded-full bg-white/[0.06] group-hover:bg-indigo-500/200/20 flex items-center justify-center transition-colors">
             <Plus className="w-4 h-4" />
           </div>
           Add {isParallel ? 'Parallel' : 'Sequential'} Step

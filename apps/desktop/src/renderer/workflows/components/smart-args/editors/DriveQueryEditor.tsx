@@ -66,13 +66,13 @@ export function DriveQueryEditor({ value, onChange }: DriveQueryEditorProps) {
       <div className="flex items-center gap-2 bg-white/[0.06] p-1 rounded-lg w-fit">
         <button
           onClick={() => setMode('visual')}
-          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${mode === 'visual' ? 'bg-white/[0.04] text-indigo-600 shadow-sm' : 'text-white/50 hover:text-white/80'}`}
+          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${mode === 'visual' ? 'bg-white/[0.04] text-indigo-400 shadow-sm' : 'text-white/50 hover:text-white/80'}`}
         >
           Visual Builder
         </button>
         <button
           onClick={() => setMode('raw')}
-          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${mode === 'raw' ? 'bg-white/[0.04] text-indigo-600 shadow-sm' : 'text-white/50 hover:text-white/80'}`}
+          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${mode === 'raw' ? 'bg-white/[0.04] text-indigo-400 shadow-sm' : 'text-white/50 hover:text-white/80'}`}
         >
           Raw Query
         </button>
@@ -127,7 +127,7 @@ export function DriveQueryEditor({ value, onChange }: DriveQueryEditorProps) {
                   key={opt}
                   onClick={() => setTrashed(opt)}
                   className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${trashed === opt
-                    ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                    ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400'
                     : 'bg-white/[0.04] border-white/[0.08] text-white/70 hover:bg-white/[0.06]'
                     }`}
                 >

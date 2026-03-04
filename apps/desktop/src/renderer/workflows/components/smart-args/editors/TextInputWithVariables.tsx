@@ -226,7 +226,7 @@ export function TextInputWithVariables({
           {((upstreamNodes && upstreamNodes.length > 0) || (workflowVariables && workflowVariables.length > 0)) && (
             <button
               onClick={triggerSuggestions}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-white/40 hover:text-indigo-400 hover:bg-indigo-500/200/10 transition-colors"
               title="Insert Variable"
             >
               <Plus className="w-4 h-4" />
@@ -237,7 +237,7 @@ export function TextInputWithVariables({
 
       {/* Suggestions dropdown */}
       {showSuggestions && (
-        <div className="absolute z-50 w-full mt-2 bg-black/80 backdrop-blur-2xl border border-white/[0.08] rounded-xl shadow-xl max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150">
+        <div className="absolute z-50 w-full mt-2 bg-black/80 backdrop-blur-2xl border border-white/[0.08] rounded-xl shadow-2xl shadow-black/50 max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150">
           <div className="px-3 py-2 bg-white/[0.04] border-b border-white/[0.08] text-[10px] font-bold text-white/50 uppercase tracking-wider flex items-center gap-1.5 sticky top-0">
             <Variable className="w-3 h-3" />
             Pick a Variable
@@ -247,10 +247,10 @@ export function TextInputWithVariables({
               <button
                 key={s.text}
                 onClick={() => insertSuggestion(s.text)}
-                className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 transition-all rounded-lg mb-0.5 ${i === selectedIndex ? 'bg-indigo-500/20 text-indigo-400 shadow-sm' : 'text-white/60 hover:bg-white/[0.06]'
+                className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 transition-all rounded-lg mb-0.5 ${i === selectedIndex ? 'bg-indigo-500/100/20 text-indigo-400 shadow-sm' : 'text-white/60 hover:bg-white/[0.06]'
                   }`}
               >
-                <code className={`px-1.5 py-0.5 rounded text-xs font-mono border ${i === selectedIndex ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-300' : 'bg-white/[0.04] border-white/[0.08] text-white/50'
+                <code className={`px-1.5 py-0.5 rounded text-xs font-mono border ${i === selectedIndex ? 'bg-indigo-500/100/10 border-indigo-500/30 text-indigo-300' : 'bg-white/[0.04] border-white/[0.08] text-white/50'
                   }`}>
                   {s.label}
                 </code>

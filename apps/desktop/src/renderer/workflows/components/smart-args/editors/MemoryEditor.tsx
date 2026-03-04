@@ -115,13 +115,13 @@ function LensToggle({
       onClick={() => onChange(!checked)}
       className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-left transition-all ${
         checked
-          ? 'bg-indigo-50/70 border border-indigo-200/60'
+          ? 'bg-indigo-500/10 border border-indigo-500/30'
           : 'bg-white/[0.06] border border-slate-200/60 opacity-60 hover:opacity-80'
       }`}
     >
       <div
         className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-          checked ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-200 text-white/40'
+          checked ? 'bg-indigo-500/20 text-indigo-400' : 'bg-slate-200 text-white/40'
         }`}
       >
         <Icon className="w-4 h-4" />
@@ -132,7 +132,7 @@ function LensToggle({
       </div>
       <div
         className={`w-9 h-5 rounded-full transition-colors relative shrink-0 ${
-          checked ? 'bg-indigo-500' : 'bg-slate-300'
+          checked ? 'bg-indigo-500/100' : 'bg-slate-300'
         }`}
       >
         <div
@@ -186,8 +186,8 @@ function ConversationHistoryEditor({
       {pairs.map((pair, pi) => (
         <div key={pi} className="relative rounded-xl border border-white/[0.08] bg-white/[0.04] overflow-hidden">
           {/* User message */}
-          <div className="flex items-start gap-2 p-2.5 bg-indigo-50/40 border-b border-white/[0.04]">
-            <div className="w-6 h-6 rounded-md bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0 mt-0.5">
+          <div className="flex items-start gap-2 p-2.5 bg-indigo-500/10 border-b border-white/[0.04]">
+            <div className="w-6 h-6 rounded-md bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0 mt-0.5">
               <User className="w-3.5 h-3.5" />
             </div>
             <div className="flex-1">
@@ -221,7 +221,7 @@ function ConversationHistoryEditor({
           <button
             type="button"
             onClick={() => removePair(pair.startIdx)}
-            className="absolute top-2 right-2 p-1 rounded-md text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+            className="absolute top-2 right-2 p-1 rounded-md text-white/40 hover:text-red-500 hover:bg-red-500/10 transition-colors"
             title="Remove this exchange"
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -232,7 +232,7 @@ function ConversationHistoryEditor({
       <button
         type="button"
         onClick={addPair}
-        className="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl border border-dashed border-white/[0.12] text-white/50 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/30 transition-all text-sm font-medium"
+        className="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl border border-dashed border-white/[0.12] text-white/50 hover:text-indigo-400 hover:border-indigo-500/40 hover:bg-indigo-500/200/10 transition-all text-sm font-medium"
       >
         <Plus className="w-4 h-4" />
         Add conversation exchange
@@ -279,7 +279,7 @@ function CustomFactsEditor({
           <button
             type="button"
             onClick={() => removeFact(i)}
-            className="p-1.5 rounded-md text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors mt-0.5"
+            className="p-1.5 rounded-md text-white/40 hover:text-red-500 hover:bg-red-500/10 transition-colors mt-0.5"
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
@@ -288,7 +288,7 @@ function CustomFactsEditor({
       <button
         type="button"
         onClick={addFact}
-        className="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl border border-dashed border-white/[0.12] text-white/50 hover:text-amber-600 hover:border-amber-300 hover:bg-amber-50/30 transition-all text-sm font-medium"
+        className="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl border border-dashed border-white/[0.12] text-white/50 hover:text-amber-600 hover:border-amber-300 hover:bg-amber-500/10 transition-all text-sm font-medium"
       >
         <Plus className="w-4 h-4" />
         Add custom fact
@@ -356,7 +356,7 @@ export function MemoryEditor({ value, onChange, upstreamNodes, workflowVariables
           onClick={useVariableMode ? switchToVisualMode : undefined}
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded-l-lg text-xs font-medium transition-all border ${
             !useVariableMode
-              ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+              ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400'
               : 'bg-white/[0.04] border-white/[0.08] text-white/50 hover:bg-white/[0.06]'
           }`}
         >
@@ -422,19 +422,19 @@ export function MemoryEditor({ value, onChange, upstreamNodes, workflowVariables
             onClick={() => update({ enabled: !config.enabled })}
             className={`flex items-center gap-3 w-full px-4 py-3 rounded-xl transition-all ${
               config.enabled
-                ? 'bg-gradient-to-r from-indigo-50 to-violet-50 border border-indigo-200 shadow-sm'
+                ? 'bg-gradient-to-r from-indigo-50 to-violet-50 border border-indigo-500/30 shadow-sm'
                 : 'bg-white/[0.06] border border-white/[0.08] hover:border-white/[0.12]'
             }`}
           >
             <div
               className={`w-9 h-9 rounded-xl flex items-center justify-center ${
-                config.enabled ? 'bg-indigo-500 text-white shadow-md shadow-indigo-200' : 'bg-slate-200 text-white/40'
+                config.enabled ? 'bg-indigo-500/100 text-white shadow-md shadow-indigo-200' : 'bg-slate-200 text-white/40'
               }`}
             >
               <Brain className="w-5 h-5" />
             </div>
             <div className="flex-1 text-left">
-              <div className={`text-sm font-semibold ${config.enabled ? 'text-indigo-700' : 'text-white/70'}`}>
+              <div className={`text-sm font-semibold ${config.enabled ? 'text-indigo-400' : 'text-white/70'}`}>
                 Memory {config.enabled ? 'Active' : 'Off'}
               </div>
               <div className="text-xs text-white/40">
@@ -445,7 +445,7 @@ export function MemoryEditor({ value, onChange, upstreamNodes, workflowVariables
             </div>
             <div
               className={`w-11 h-6 rounded-full transition-colors relative ${
-                config.enabled ? 'bg-indigo-500' : 'bg-slate-300'
+                config.enabled ? 'bg-indigo-500/100' : 'bg-slate-300'
               }`}
             >
               <div
@@ -513,7 +513,7 @@ export function MemoryEditor({ value, onChange, upstreamNodes, workflowVariables
                 <MessageSquare className="w-4 h-4 text-white/40" />
                 <span className="text-sm font-medium text-white/80">Conversation History</span>
                 {config.conversationHistory.length > 0 && (
-                  <span className="text-xs bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded-full ml-auto">
+                  <span className="text-xs bg-indigo-500/20 text-indigo-400 px-1.5 py-0.5 rounded-full ml-auto">
                     {Math.floor(config.conversationHistory.length / 2)} exchange{config.conversationHistory.length > 2 ? 's' : ''}
                   </span>
                 )}

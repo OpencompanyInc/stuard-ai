@@ -139,7 +139,7 @@ export function AcceleratorEditor({ value, onChange }: AcceleratorEditorProps) {
                     <span className="px-2.5 py-1 bg-white/[0.06] border border-white/[0.08] rounded-lg font-medium text-white/80 text-xs shadow-sm">
                       {displayPart(p)}
                     </span>
-                    {i < parts.length - 1 && <span className="text-slate-300 text-xs">+</span>}
+                    {i < parts.length - 1 && <span className="text-white/40 text-xs">+</span>}
                   </React.Fragment>
                 ))}
               </div>
@@ -153,7 +153,7 @@ export function AcceleratorEditor({ value, onChange }: AcceleratorEditorProps) {
           {parts.length > 0 && (
             <button
               onClick={() => { setParts([]); onChange(''); }}
-              className="p-3 text-white/40 hover:text-red-500 hover:bg-red-50 border border-white/[0.08] rounded-xl transition-all"
+              className="p-3 text-white/40 hover:text-red-500 hover:bg-red-500/10 border border-white/[0.08] rounded-xl transition-all"
               title="Clear"
             >
               <RotateCcw className="w-4 h-4" />

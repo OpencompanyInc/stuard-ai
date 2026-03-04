@@ -135,7 +135,7 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
           {visibleChips.map(opt => (
             <span
               key={String(opt.value)}
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-100 group/chip"
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-indigo-500/10 text-indigo-400 rounded-lg border border-indigo-500/20 group/chip"
             >
               {opt.label}
               <button
@@ -164,9 +164,9 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute z-50 w-full mt-2 bg-white/[0.04] border border-white/[0.04] rounded-xl shadow-xl max-h-80 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+        <div className="absolute z-50 w-full mt-2 bg-white/[0.04] border border-white/[0.04] rounded-xl shadow-2xl shadow-black/50 max-h-80 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
           {/* Search + bulk actions */}
-          <div className="p-2.5 border-b border-white/[0.04] bg-slate-50/50 space-y-2">
+          <div className="p-2.5 border-b border-white/[0.04] bg-white/[0.04] space-y-2">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/40" />
               <input
@@ -183,7 +183,7 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
                 <button
                   type="button"
                   onClick={selectAll}
-                  className="px-3 py-1.5 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
+                  className="px-3 py-1.5 text-xs font-medium text-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/200/20 rounded-lg transition-colors"
                 >
                   Select All
                 </button>
@@ -212,16 +212,16 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
                   <button
                     type="button"
                     onClick={() => selectGroup(groupName)}
-                    className="w-full px-3 py-1.5 text-left text-[11px] font-bold uppercase tracking-wider text-white/40 hover:text-indigo-600 hover:bg-indigo-50/50 flex items-center gap-2 transition-colors sticky top-0 bg-white/95 backdrop-blur-sm"
+                    className="w-full px-3 py-1.5 text-left text-[11px] font-bold uppercase tracking-wider text-white/40 hover:text-indigo-400 hover:bg-indigo-500/200/10 flex items-center gap-2 transition-colors sticky top-0 bg-black/60 backdrop-blur-xl"
                   >
                     <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
-                      allGroupSelected ? 'bg-indigo-600 border-indigo-600' : someGroupSelected ? 'bg-indigo-100 border-indigo-300' : 'border-white/[0.12]'
+                      allGroupSelected ? 'bg-indigo-600 border-indigo-600' : someGroupSelected ? 'bg-indigo-500/20 border-indigo-500/40' : 'border-white/[0.12]'
                     }`}>
                       {allGroupSelected && <Check className="w-2.5 h-2.5 text-white" />}
-                      {someGroupSelected && !allGroupSelected && <div className="w-1.5 h-1.5 bg-indigo-500 rounded-sm" />}
+                      {someGroupSelected && !allGroupSelected && <div className="w-1.5 h-1.5 bg-indigo-500/100 rounded-sm" />}
                     </div>
                     {groupName}
-                    <span className="text-[10px] font-normal normal-case text-slate-300 ml-auto">
+                    <span className="text-[10px] font-normal normal-case text-white/40 ml-auto">
                       {groupOpts.filter(o => selected.has(String(o.value))).length}/{groupOpts.length}
                     </span>
                   </button>
@@ -234,7 +234,7 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
                         type="button"
                         onClick={() => toggle(opt.value)}
                         className={`w-full px-3 py-1.5 pl-7 text-left text-sm rounded-lg flex items-center gap-2 transition-colors mb-0.5 ${
-                          isSelected ? 'bg-indigo-50/70 text-indigo-700' : 'text-white/70 hover:bg-white/[0.06]'
+                          isSelected ? 'bg-indigo-500/10 text-indigo-400' : 'text-white/70 hover:bg-white/[0.06]'
                         }`}
                       >
                         <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${

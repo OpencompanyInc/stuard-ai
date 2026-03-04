@@ -95,7 +95,7 @@ export function ArrayEditor({
           <p className="text-sm text-white/50 mb-3">No {getItemLabel()}s added yet</p>
           <button
             onClick={addItem}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors"
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-indigo-400 bg-indigo-500/10 rounded-lg hover:bg-indigo-500/200/20 transition-colors"
           >
             <Plus className="w-4 h-4" />
             Add {getItemLabel()}
@@ -141,7 +141,7 @@ export function ArrayEditor({
                           }
                         } catch {}
                       }}
-                      className="px-3 py-2 bg-white/[0.04] border border-white/[0.08] rounded-lg text-white/50 hover:text-indigo-600 hover:border-indigo-300 transition-colors shrink-0"
+                      className="px-3 py-2 bg-white/[0.04] border border-white/[0.08] rounded-lg text-white/50 hover:text-indigo-400 hover:border-indigo-500/40 transition-colors shrink-0"
                       title="Browse files"
                     >
                       <FolderOpen className="w-4 h-4" />
@@ -170,7 +170,7 @@ export function ArrayEditor({
               {/* Remove button */}
               <button
                 onClick={() => removeItem(i)}
-                className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                className="p-2 text-white/40 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
                 title="Remove"
               >
                 <Trash2 className="w-4 h-4" />
@@ -180,7 +180,7 @@ export function ArrayEditor({
 
           <button
             onClick={addItem}
-            className="w-full py-2.5 border border-dashed border-white/[0.08] rounded-xl text-xs font-semibold text-white/50 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all flex items-center justify-center gap-2"
+            className="w-full py-2.5 border border-dashed border-white/[0.08] rounded-xl text-xs font-semibold text-white/50 hover:text-indigo-400 hover:border-indigo-500/40 hover:bg-indigo-500/200/10 transition-all flex items-center justify-center gap-2"
           >
             <Plus className="w-4 h-4" />
             Add {getItemLabel()}

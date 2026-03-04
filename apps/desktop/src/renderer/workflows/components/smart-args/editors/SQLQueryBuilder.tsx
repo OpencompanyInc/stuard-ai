@@ -141,7 +141,7 @@ function InlineSelect({ value, onChange, options, className }: {
         <ChevronDown className={`w-3 h-3 text-white/40 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
-        <div className="absolute z-50 left-0 mt-1 min-w-[160px] bg-white/[0.04] border border-white/[0.04] rounded-xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+        <div className="absolute z-50 left-0 mt-1 min-w-[160px] bg-white/[0.04] border border-white/[0.04] rounded-xl shadow-2xl shadow-black/50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
           <div className="p-1 max-h-48 overflow-y-auto">
             {options.map(opt => (
               <button
@@ -149,11 +149,11 @@ function InlineSelect({ value, onChange, options, className }: {
                 type="button"
                 onClick={() => { onChange(opt.value); setOpen(false); }}
                 className={`w-full px-3 py-1.5 text-left text-xs rounded-lg flex items-center justify-between gap-2 transition-colors mb-0.5 ${
-                  opt.value === value ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-white/80 hover:bg-white/[0.06]'
+                  opt.value === value ? 'bg-indigo-500/10 text-indigo-400 font-medium' : 'text-white/80 hover:bg-white/[0.06]'
                 }`}
               >
                 {opt.label}
-                {opt.value === value && <Check className="w-3.5 h-3.5 text-indigo-600 shrink-0" />}
+                {opt.value === value && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
               </button>
             ))}
           </div>
@@ -243,10 +243,10 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
         {ACTIONS.map(a => {
           const isActive = action === a.value;
           const colorMap: Record<string, string> = {
-            indigo: isActive ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : '',
-            emerald: isActive ? 'bg-emerald-50 border-emerald-200 text-emerald-700 shadow-sm' : '',
-            amber: isActive ? 'bg-amber-50 border-amber-200 text-amber-700 shadow-sm' : '',
-            red: isActive ? 'bg-red-50 border-red-200 text-red-700 shadow-sm' : '',
+            indigo: isActive ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400 shadow-sm' : '',
+            emerald: isActive ? 'bg-emerald-500/10 border-emerald-200 text-emerald-700 shadow-sm' : '',
+            amber: isActive ? 'bg-amber-500/10 border-amber-200 text-amber-700 shadow-sm' : '',
+            red: isActive ? 'bg-red-500/10 border-red-200 text-red-700 shadow-sm' : '',
           };
           return (
             <button
@@ -317,7 +317,7 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
                     placeholder="field name"
                     className="flex-1 min-w-0 px-2 py-1 text-sm border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 bg-white/[0.06] font-medium"
                   />
-                  <span className="text-slate-300 text-sm">=</span>
+                  <span className="text-white/40 text-sm">=</span>
                   <input
                     type="text"
                     value={v.value}
@@ -329,7 +329,7 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
                     type="button"
                     onClick={() => removeValue(i)}
                     disabled={values.length <= 1}
-                    className="p-1 text-slate-300 hover:text-red-500 disabled:opacity-30 transition-colors shrink-0"
+                    className="p-1 text-white/40 hover:text-red-500 disabled:opacity-30 transition-colors shrink-0"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -338,7 +338,7 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
               <button
                 type="button"
                 onClick={addValue}
-                className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-[11px] font-medium text-white/50 hover:text-indigo-600 bg-white/[0.04] hover:bg-indigo-50 border border-dashed border-white/[0.12] hover:border-indigo-300 rounded-lg transition-all"
+                className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-[11px] font-medium text-white/50 hover:text-indigo-400 bg-white/[0.04] hover:bg-indigo-500/200/10 border border-dashed border-white/[0.12] hover:border-indigo-500/40 rounded-lg transition-all"
               >
                 <Plus className="w-3 h-3" />
                 Add field
@@ -382,7 +382,7 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
                     <button
                       type="button"
                       onClick={() => removeFilter(i)}
-                      className="p-1 text-slate-300 hover:text-red-500 transition-colors shrink-0"
+                      className="p-1 text-white/40 hover:text-red-500 transition-colors shrink-0"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -393,7 +393,7 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
             <button
               type="button"
               onClick={addFilter}
-              className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-[11px] font-medium text-white/50 hover:text-indigo-600 bg-white/[0.04] hover:bg-indigo-50 border border-dashed border-white/[0.12] hover:border-indigo-300 rounded-lg transition-all"
+              className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-[11px] font-medium text-white/50 hover:text-indigo-400 bg-white/[0.04] hover:bg-indigo-500/200/10 border border-dashed border-white/[0.12] hover:border-indigo-500/40 rounded-lg transition-all"
             >
               <Plus className="w-3 h-3" />
               Add condition

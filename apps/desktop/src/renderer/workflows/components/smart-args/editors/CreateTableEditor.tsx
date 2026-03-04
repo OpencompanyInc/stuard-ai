@@ -102,7 +102,7 @@ function ColumnTypeSelect({ value, onChange }: { value: string; onChange: (v: st
       </button>
 
       {open && (
-        <div className="absolute z-50 right-0 mt-1.5 w-56 bg-white/[0.04] border border-white/[0.04] rounded-xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+        <div className="absolute z-50 right-0 mt-1.5 w-56 bg-white/[0.04] border border-white/[0.04] rounded-xl shadow-2xl shadow-black/50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
           <div className="p-1">
             {COLUMN_TYPES.map(opt => (
               <button
@@ -111,7 +111,7 @@ function ColumnTypeSelect({ value, onChange }: { value: string; onChange: (v: st
                 onClick={() => { onChange(opt.value); setOpen(false); }}
                 className={`w-full px-3 py-2 text-left text-sm rounded-lg flex items-center justify-between gap-2 transition-colors mb-0.5 ${
                   opt.value === value
-                    ? 'bg-indigo-50 text-indigo-700 font-medium'
+                    ? 'bg-indigo-500/10 text-indigo-400 font-medium'
                     : 'text-white/80 hover:bg-white/[0.06]'
                 }`}
               >
@@ -119,7 +119,7 @@ function ColumnTypeSelect({ value, onChange }: { value: string; onChange: (v: st
                   <div className="font-medium">{opt.label}</div>
                   <div className="text-[11px] text-white/40 font-normal">{opt.description}</div>
                 </div>
-                {opt.value === value && <Check className="w-4 h-4 text-indigo-600 shrink-0" />}
+                {opt.value === value && <Check className="w-4 h-4 text-indigo-400 shrink-0" />}
               </button>
             ))}
           </div>
@@ -192,7 +192,7 @@ export function CreateTableEditor({ value, onChange }: CreateTableEditorProps) {
               key={i}
               className="flex items-center gap-2 p-2.5 bg-white/[0.06] rounded-xl border border-white/[0.08] group hover:border-white/[0.12] transition-colors"
             >
-              <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+              <GripVertical className="w-3.5 h-3.5 text-white/40 shrink-0" />
 
               {/* Column Name */}
               <input
@@ -216,7 +216,7 @@ export function CreateTableEditor({ value, onChange }: CreateTableEditorProps) {
                 title={col.primaryKey ? 'Primary key (unique ID)' : 'Set as primary key'}
                 className={`shrink-0 px-2 py-1 text-[10px] font-semibold rounded-md border transition-all ${
                   col.primaryKey
-                    ? 'bg-amber-50 border-amber-200 text-amber-700'
+                    ? 'bg-amber-500/10 border-amber-200 text-amber-700'
                     : 'bg-white/[0.04] border-white/[0.08] text-white/40 hover:text-white/70 hover:border-white/[0.12]'
                 }`}
               >
@@ -242,7 +242,7 @@ export function CreateTableEditor({ value, onChange }: CreateTableEditorProps) {
                 type="button"
                 onClick={() => removeColumn(i)}
                 disabled={columns.length <= 1}
-                className="shrink-0 p-1 text-slate-300 hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                className="shrink-0 p-1 text-white/40 hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                 title="Remove column"
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -255,7 +255,7 @@ export function CreateTableEditor({ value, onChange }: CreateTableEditorProps) {
         <button
           type="button"
           onClick={addColumn}
-          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-white/50 hover:text-indigo-600 bg-white/[0.04] hover:bg-indigo-50 border border-dashed border-white/[0.12] hover:border-indigo-300 rounded-xl transition-all"
+          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-white/50 hover:text-indigo-400 bg-white/[0.04] hover:bg-indigo-500/200/10 border border-dashed border-white/[0.12] hover:border-indigo-500/40 rounded-xl transition-all"
         >
           <Plus className="w-3.5 h-3.5" />
           Add Column

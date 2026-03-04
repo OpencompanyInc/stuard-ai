@@ -18,7 +18,7 @@ export function BooleanToggle({ value, onChange, yesLabel = 'Yes', noLabel = 'No
         onClick={() => onChange(true)}
         className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
           value 
-            ? 'bg-emerald-500 text-white shadow-sm' 
+            ? 'bg-emerald-500/100 text-white shadow-sm' 
             : 'text-white/50 hover:text-white/80 hover:bg-slate-200'
         }`}
       >
