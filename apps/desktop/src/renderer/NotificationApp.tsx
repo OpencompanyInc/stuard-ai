@@ -3,74 +3,84 @@ import { NotificationProvider, useNotification, NotificationConfig } from './com
 
 // Component to handle IPC events and show notifications
 const NotificationListener = () => {
-    const { show, update } = useNotification();
+    const { show, update, dismiss } = useNotification();
 
     useEffect(() => {
         // Listen for show-notification events from Main process
         const removeListener = (window as any).desktopAPI?.onShowNotification?.((config: NotificationConfig) => {
-            // Logic to recreate functions if we had an event bus (omitted for now)
             show(config);
         });
 
-        // Expose demo for testing directly in this window
-        (window as any).runNotificationDemo = () => {
-            console.log('Running Notification Demo (Overlay Window)...');
+        // Listen for proactive progress stages (visualizer toast)
+        const PROGRESS_ID = 'proactive-progress';
+        const removeProgress = (window as any).desktopAPI?.onProactiveProgress?.((data: any) => {
+            const { stage, label, progress, detail } = data;
 
-            // 1. Success
-            show({
-                title: 'System Online',
-                message: 'Notification system is working perfectly.',
-                variant: 'success',
-                sound: true
-            });
-
-            // 2. Info with Progress
-            setTimeout(() => {
-                const id = show({
-                    title: 'Processing Data',
-                    message: 'Analyzing local files...',
-                    variant: 'info',
-                    progress: 0,
-                    duration: 0
-                });
-
-                let p = 0;
-                const interval = setInterval(() => {
-                    p += 10;
-                    if (p > 100) {
-                        clearInterval(interval);
-                        update(id, { title: 'Processing Complete', progress: 100, duration: 3000, variant: 'success' });
-                    } else {
-                        update(id, { progress: p });
-                    }
-                }, 200);
-            }, 1000);
-
-            // 3. Image
-            setTimeout(() => {
+            if (stage === 'complete' || stage === 'failed') {
                 show({
-                    title: 'Screenshot Saved',
-                    message: 'Saved to capture.png',
-                    variant: 'info',
-                    image: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=200&auto=format&fit=crop',
+                    id: PROGRESS_ID,
+                    title: '✦ Stuard Waking Up',
+                    message: detail ? `${label}\n${detail}` : label,
+                    variant: stage === 'failed' ? 'error' : 'success',
+                    position: 'top-right',
+                    duration: 12000,
+                    dismissible: true,
+                    progress: 100,
                 });
-            }, 4000);
-        };
-
-        // Auto-run demo on mount for immediate feedback
-        /*
-        setTimeout(() => {
-            if ((window as any).runNotificationDemo) {
-                (window as any).runNotificationDemo();
+                return;
             }
-        }, 1500);
-        */
+
+            show({
+                id: PROGRESS_ID,
+                title: '✦ Stuard Waking Up',
+                message: detail ? `${label}\n${detail}` : label,
+                variant: 'neutral',
+                position: 'top-right',
+                duration: 0,
+                dismissible: true,
+                progress,
+            });
+        });
+
+        // Listen for proactive check-in notifications (with reply support)
+        const removeProactive = (window as any).desktopAPI?.onProactiveCheckin?.((data: any) => {
+            const { wakeUpId, agentMessage, screenshotUsed, tasksCompleted } = data;
+
+            dismiss(PROGRESS_ID);
+
+            show({
+                title: '✦ Stuard Check-in',
+                message: agentMessage,
+                variant: 'info',
+                position: 'top-right',
+                duration: 0,
+                dismissible: true,
+                sound: true,
+                input: {
+                    placeholder: 'Reply to Stuard...',
+                    submitText: 'Send',
+                    onSubmit: (value: string) => {
+                        (window as any).desktopAPI?.proactiveReply?.({ wakeUpId, text: value });
+                    },
+                },
+                actions: [
+                    {
+                        label: 'Open Chat',
+                        variant: 'primary',
+                        onClick: () => {
+                            (window as any).desktopAPI?.openDashboard?.({ tab: 'proactive' });
+                        },
+                    },
+                ],
+            });
+        });
 
         return () => {
             removeListener && removeListener();
-            delete (window as any).runNotificationDemo;
+            removeProgress && removeProgress();
+            removeProactive && removeProactive();
         };
-    }, [show, update]);
+    }, [show, update, dismiss]);
 
     return null;
 };

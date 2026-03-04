@@ -121,11 +121,25 @@ export function handleSpeechConnection(ws: WebSocket, req: IncomingMessage) {
           // turn_is_formatted just means punctuation was applied - NOT that the turn ended.
           if (msgType === 'Turn') {
             const transcript = msg.transcript || '';
-            const isFinal = Boolean(msg.turn_is_final);
+            // Log raw fields once per session to diagnose final-detection
+            if (!((aaiWs as any).__loggedFields)) {
+              (aaiWs as any).__loggedFields = true;
+              const keys = Object.keys(msg).filter(k => k !== 'transcript' && k !== 'words');
+              console.log('[speech-proxy] AAI Turn fields:', keys, JSON.stringify(
+                Object.fromEntries(keys.map(k => [k, msg[k]]))
+              ));
+            }
+            // v3 uses end_of_turn; older SDKs may use turn_is_final / is_final.
+            // MUST use || (not ??): fields present-but-false must fall through.
+            const isFinal = Boolean(
+              msg.end_of_turn || msg.turn_is_final || msg.is_final || msg.final
+            );
+            const turnOrder = typeof msg.turn_order === 'number' ? msg.turn_order : undefined;
             send(ws, {
               type: 'transcript',
               text: transcript,
               is_final: isFinal,
+              turn_order: turnOrder,
             });
           } else if (msgType === 'Begin' || msgType === 'SessionBegins') {
             // Optional: could notify client that upstream session began

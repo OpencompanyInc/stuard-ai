@@ -28,7 +28,7 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
             "w-[320px] h-full flex flex-col rounded-l-2xl overflow-hidden border-r border-theme/5",
             translucentMode ? "bg-theme-bg/30 backdrop-blur-3xl" : "bg-theme-sidebar"
         )}
-        style={{ transition: 'transform 150ms ease-out, opacity 150ms ease-out' }}
+            style={{ transition: 'transform 150ms ease-out, opacity 150ms ease-out' }}
         >
             {/* Sidebar Header / Tabs */}
             <div className="flex items-center justify-between px-2 py-2 border-b border-theme/10 shrink-0">
@@ -38,7 +38,7 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
                         className={clsx(
                             "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition-all",
                             activeTab === 'spaces'
-                                ? "bg-theme-card text-primary shadow-sm"
+                                ? "bg-theme-card text-white shadow-sm"
                                 : "text-theme-muted hover:text-theme-fg"
                         )}
                     >
@@ -50,7 +50,7 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
                         className={clsx(
                             "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition-all",
                             activeTab === 'canvas'
-                                ? "bg-theme-card text-primary shadow-sm"
+                                ? "bg-theme-card text-white shadow-sm"
                                 : "text-theme-muted hover:text-theme-fg"
                         )}
                     >
@@ -62,7 +62,7 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
                         className={clsx(
                             "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition-all",
                             activeTab === 'terminal'
-                                ? "bg-theme-card text-primary shadow-sm"
+                                ? "bg-theme-card text-white shadow-sm"
                                 : "text-theme-muted hover:text-theme-fg"
                         )}
                     >

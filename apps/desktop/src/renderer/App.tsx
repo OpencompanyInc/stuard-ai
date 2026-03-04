@@ -176,7 +176,7 @@ export default function App() {
   const {
     messages, state, ai, currentResponse, currentReasoning, currentToolCalls, currentStreamChunks,
     sendMessage, stopGeneration, conversationId, newChat, loadConversation, deleteConversation,
-    subscribeProgress, queueDepth, queuedMessages, respondToApproval, lastError, execLocalTool, submitToolOutput,
+    subscribeProgress, queueDepth, queuedMessages, cancelQueuedMessage, respondToApproval, lastError, execLocalTool, submitToolOutput,
     tabs, activeTabId, addTab, closeTab, switchTab,
     chatMode, setChatMode, chatModels, setChatModels,
     pendingMemories, confirmPendingMemory, rejectPendingMemory,
@@ -591,7 +591,7 @@ export default function App() {
         if (!conversationId) { setConversationTitle(null); return; }
         // Try local agent first
         try {
-          const resp = await fetch(`http://127.0.0.1:8765/memory/conversations/${conversationId}`);
+          const resp = await fetch(`http://127.0.0.1:8765/v1/memory/conversations/${conversationId}`);
           const json = await resp.json();
           if (json.ok && json.conversation?.title) {
             setConversationTitle(String(json.conversation.title).trim() || null);
@@ -622,7 +622,7 @@ export default function App() {
     setLoadingConvs(true);
     try {
       // Primary: fetch from local agent which stores everything locally
-      const resp = await fetch('http://127.0.0.1:8765/memory/conversations?limit=20');
+      const resp = await fetch('http://127.0.0.1:8765/v1/memory/conversations?limit=20');
       const json = await resp.json();
       if (json.ok && Array.isArray(json.conversations)) {
         const convs = json.conversations
@@ -811,8 +811,17 @@ export default function App() {
   useEffect(() => {
     if (isRecording) {
       const base = baseQueryRef.current;
-      const tSpacer = (transcript && /[a-z0-9]$/i.test(transcript) && /^[a-z0-9]/i.test(interimTranscript)) ? ' ' : '';
-      const fullText = transcript + tSpacer + interimTranscript;
+      const t = (transcript || '').trim();
+      const i = (interimTranscript || '').trim();
+      const fullText = (() => {
+        if (!t) return i;
+        if (!i) return t;
+        if (t === i) return t;
+        // Avoid duplicate overlap when interim repeats committed words.
+        if (i.startsWith(t) || i.includes(t)) return i;
+        if (t.endsWith(i) || t.endsWith(` ${i}`)) return t;
+        return `${t} ${i}`.trim();
+      })();
       const spacer = (base && /[a-z0-9]$/i.test(base) && /^[a-z0-9]/i.test(fullText)) ? ' ' : (base ? ' ' : '');
       const full = base + spacer + fullText;
       setQuery(full);
@@ -1378,6 +1387,7 @@ export default function App() {
                     onDrop={handleDrop}
                     queueDepth={queueDepth}
                     queuedMessages={queuedMessages}
+                    onCancelQueuedMessage={cancelQueuedMessage}
                     query={query}
                     setQuery={setQuery}
                     onSend={handleSend}
@@ -1464,6 +1474,7 @@ export default function App() {
                 connectionStatus={connectionStatus}
                 queueDepth={queueDepth}
                 queuedMessages={queuedMessages}
+                onCancelQueuedMessage={cancelQueuedMessage}
                 isRecording={isRecording}
                 onMicClick={handleMicClick}
                 contextPaths={contextPaths}

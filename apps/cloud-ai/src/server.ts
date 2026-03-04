@@ -2,6 +2,7 @@ import 'dotenv/config';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { getWorkflowAgent, WORKFLOW_SYSTEM_PROMPT } from './agents/workflow-agent';
+import { getSkillAgent, SKILL_SYSTEM_PROMPT, setSessionSkill, clearSessionSkill } from './agents/skill-agent';
 import { setSessionWorkflow, clearSessionWorkflow } from './tools/workflow';
 import { withClientBridge, handleClientToolMessage } from './tools/bridge';
 import { routeModel, type ModelChoice } from './router/model-router';
@@ -12,11 +13,13 @@ import { buildProviderModel } from './utils/models';
 import { randomUUID } from 'crypto';
 import { generateText } from 'ai';
 import { openai } from '@ai-sdk/openai';
+import { google } from '@ai-sdk/google';
 import { handleHttpRoutes } from './routes';
 import { PORT, ENABLE_ROUTING, REQUIRE_AUTH, MAX_STEPS_CAP, DEFAULT_MAX_STEPS, PING_INTERVAL_MS } from './utils/config';
 import { writeLog } from './utils/logger';
-import { sanitizeToolEvent, sanitizeSteps } from './utils/sanitize';
-import { normalizeMessages, contentToText, buildAttachmentParts } from './utils/messages';
+import { sanitizeToolEvent, sanitizeSteps, redactSensitiveData, sanitizeToolResult } from './utils/sanitize';
+import { normalizeMessages, contentToText, buildAttachmentParts, dataStringToBuffer } from './utils/messages';
+import { modelSupportsMultimodal } from './routes/models';
 import { buildKnowledgeContext } from './knowledge/retrieval';
 import { ensureToolEmbeddings } from './tools/meta-tools';
 import * as memoryService from './memory/conversations';
@@ -30,8 +33,9 @@ import { getAgentForQuery } from './agents/stuard/index';
 
 
 import { startVMHealthMonitor } from './services/vm-health';
-import { registerConnection, getDesktopWs } from './services/vm-bridge';
+import { registerConnection, getDesktopWs, getConnectionInfo } from './services/vm-bridge';
 import { verifyVMToken } from './services/vm-tokens';
+import { handleDesktopRelayResult } from './routes/desktop-tool-relay';
 
 // Configuration moved to utils/config
 
@@ -73,6 +77,76 @@ function isSISMetaTool(toolName: string): boolean {
     toolName === 'sis_list_categories' ||
     toolName === 'search_past_conversations' ||
     toolName === 'segment_search';
+}
+
+type IncomingSkillStep = {
+  id: string;
+  type: string;
+  label: string;
+  content: string;
+  toolName?: string;
+};
+
+type IncomingSkill = {
+  id: string;
+  name: string;
+  description: string;
+  trigger: string;
+  steps: IncomingSkillStep[];
+  icon?: string;
+  color?: string;
+  isActive?: boolean;
+};
+
+function sanitizeIncomingSkills(rawSkills: any): IncomingSkill[] {
+  if (!Array.isArray(rawSkills)) return [];
+  const MAX_SKILLS = 30;
+  const MAX_STEPS = 40;
+  const trim = (value: unknown, maxLen: number = 4000): string => {
+    const out = String(value ?? '').trim();
+    return out.length > maxLen ? out.slice(0, maxLen) : out;
+  };
+
+  return rawSkills
+    .slice(0, MAX_SKILLS)
+    .map((raw): IncomingSkill | null => {
+      if (!raw || typeof raw !== 'object') return null;
+      const id = trim(raw.id, 256);
+      const name = trim(raw.name, 256);
+      if (!id || !name) return null;
+
+      const steps = Array.isArray(raw.steps)
+        ? raw.steps
+          .slice(0, MAX_STEPS)
+          .map((step: any): IncomingSkillStep | null => {
+            if (!step || typeof step !== 'object') return null;
+            const stepId = trim(step.id, 256);
+            const type = trim(step.type, 64) || 'prompt';
+            if (!stepId || !type) return null;
+            const toolName = trim(step.toolName, 256);
+            return {
+              id: stepId,
+              type,
+              label: trim(step.label, 256),
+              content: trim(step.content, 4000),
+              ...(toolName ? { toolName } : {}),
+            };
+          })
+          .filter((s: IncomingSkillStep | null): s is IncomingSkillStep => !!s)
+        : [];
+
+      return {
+        id,
+        name,
+        description: trim(raw.description, 4000),
+        trigger: trim(raw.trigger, 2000),
+        steps,
+        icon: trim(raw.icon, 64) || undefined,
+        color: trim(raw.color, 64) || undefined,
+        isActive: !!raw.isActive,
+      };
+    })
+    .filter((s: IncomingSkill | null): s is IncomingSkill => !!s);
 }
 
 // Sanitizers moved to utils/sanitize
@@ -244,23 +318,25 @@ wss.on('connection', (ws: WebSocket, req: any) => {
   writeLog('ws_connected');
   try { wsAlive.set(ws, true); } catch { }
   try { ws.on('pong', () => { try { wsAlive.set(ws, true); } catch { } }); } catch { }
-  try { ws.on('close', () => {
-    writeLog('ws_disconnected');
-    // Clean up all abort controllers for this connection to prevent leaks
-    try {
-      const m = wsAbortControllers.get(ws);
-      if (m) {
-        for (const [, controller] of m) { try { controller.abort(); } catch { } }
-        m.clear();
-        wsAbortControllers.delete(ws);
-      }
-    } catch { }
-    // Clear conversation history reference
-    try { conversations.delete(ws); } catch { }
-    try { wsConversations.delete(ws); } catch { }
-    try { anonResources.delete(ws); } catch { }
-    try { anonThreads.delete(ws); } catch { }
-  }); } catch { }
+  try {
+    ws.on('close', () => {
+      writeLog('ws_disconnected');
+      // Clean up all abort controllers for this connection to prevent leaks
+      try {
+        const m = wsAbortControllers.get(ws);
+        if (m) {
+          for (const [, controller] of m) { try { controller.abort(); } catch { } }
+          m.clear();
+          wsAbortControllers.delete(ws);
+        }
+      } catch { }
+      // Clear conversation history reference
+      try { conversations.delete(ws); } catch { }
+      try { wsConversations.delete(ws); } catch { }
+      try { anonResources.delete(ws); } catch { }
+      try { anonThreads.delete(ws); } catch { }
+    });
+  } catch { }
 
   ws.on('message', async (buf: WebSocket.RawData) => {
     let msg: any;
@@ -275,6 +351,13 @@ wss.on('connection', (ws: WebSocket, req: any) => {
     // Bridge passthrough: tool events/results coming from the client to resolve pending execLocalTool
     if (kind === 'tool_event' || kind === 'tool_result') {
       try { handleClientToolMessage(ws, msg); } catch { }
+      // Also check if this is a result for a VM→desktop relay request
+      if (kind === 'tool_result') {
+        try {
+          const connInfo = getConnectionInfo(ws);
+          if (connInfo?.userId) handleDesktopRelayResult(connInfo.userId, msg);
+        } catch { }
+      }
       return;
     }
     // Handle stop/abort request to cancel ongoing stream
@@ -320,7 +403,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         const { getTool } = await import('./tools/tool-registry');
         const { initToolRegistry } = await import('./tools/meta-tools');
         // Ensure tools are registered
-        try { initToolRegistry(); } catch {}
+        try { initToolRegistry(); } catch { }
 
         const tool = getTool(toolName);
         if (!tool || typeof (tool as any).execute !== 'function') {
@@ -337,7 +420,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               if (authResult?.success && authResult.userId) {
                 secrets.userId = authResult.userId;
               }
-            } catch {}
+            } catch { }
           }
 
           const result = await withClientBridge(ws, async () => {
@@ -379,6 +462,16 @@ wss.on('connection', (ws: WebSocket, req: any) => {
 
     const secretBag: any = { ...(secrets || {}) };
 
+    // Store active skills in bridge secrets so get_skill_info can return full step details.
+    let activeSkillsFromContext: IncomingSkill[] = [];
+    try {
+      const incomingCtx: any = (msg as any)?.context || {};
+      activeSkillsFromContext = sanitizeIncomingSkills(incomingCtx?.skills);
+      if (activeSkillsFromContext.length > 0) {
+        secretBag.__skills = activeSkillsFromContext;
+      }
+    } catch { }
+
     // Run EVERYTHING in background (don't await) to allow parallel processing across tabs
     // This moves auth, routing, and agent setup into the non-blocking bridge context
     withClientBridge(ws, async () => {
@@ -407,8 +500,9 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         const authResult = accessToken ? await verifyAccessToken(accessToken) : null;
         authUser = authResult?.success ? { userId: authResult.userId!, email: authResult.email } : null;
 
-        // Update secretBag with userId if authenticated
+        // Update secretBag with userId and accessToken if authenticated
         if (authUser?.userId) secretBag.userId = authUser.userId;
+        if (accessToken) secretBag.accessToken = accessToken;
 
         if (REQUIRE_AUTH && !authUser) {
           // Provide specific error codes for client-side handling
@@ -511,6 +605,15 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           }
         }
 
+        // Merge desktop-reported integrations (browser_use, ollama, telnyx, etc.)
+        // outside auth gate so local desktop tools work even when user isn't signed in.
+        const clientIntegrations = Array.isArray((msg as any)?.clientIntegrations)
+          ? (msg as any).clientIntegrations.filter((v: any) => typeof v === 'string')
+          : [];
+        for (const ci of clientIntegrations) {
+          if (!enabledIntegrations.includes(ci)) enabledIntegrations.push(ci);
+        }
+
         // Get conversation history for this connection
         const history = conversations.get(ws) || [];
 
@@ -553,15 +656,27 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           ctxMode === 'workflow_architect' ||
           ctxMode === 'workflow';
 
-        const agentType =
+        const inferredSkill =
+          clientType === 'skill_ui' ||
+          ctxMode === 'skill_architect' ||
+          ctxMode === 'skill';
+
+        const agentType: 'workflow' | 'skill' | 'stuard' =
           rawAgentLower === 'workflow' ||
             rawAgentLower === 'workflow_agent' ||
             rawAgentLower === 'workflow-architect' ||
             rawAgentLower === 'workflow_architect'
             ? 'workflow'
-            : inferredWorkflow
-              ? 'workflow'
-              : 'stuard';
+            : rawAgentLower === 'skill' ||
+              rawAgentLower === 'skill_agent' ||
+              rawAgentLower === 'skill-architect' ||
+              rawAgentLower === 'skill_architect'
+              ? 'skill'
+              : inferredWorkflow
+                ? 'workflow'
+                : inferredSkill
+                  ? 'skill'
+                  : 'stuard';
 
         const workflowModelId = agentType === 'workflow'
           ? (
@@ -571,7 +686,18 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           )
           : undefined;
 
-        const modelLabel = agentType === 'workflow' ? (workflowModelId || 'google/gemini-3-pro-preview') : (chosenModelId || routedTier);
+        const skillModelIdForLabel = agentType === 'skill'
+          ? (
+            (typeof (msg as any)?.modelId === 'string' && String((msg as any).modelId).trim())
+              ? String((msg as any).modelId).trim()
+              : (process.env.WORKFLOW_MODEL_ID || 'google/gemini-3-pro-preview')
+          )
+          : undefined;
+        const modelLabel = agentType === 'workflow'
+          ? (workflowModelId || 'google/gemini-3-pro-preview')
+          : agentType === 'skill'
+            ? (skillModelIdForLabel || 'google/gemini-3-pro-preview')
+            : (chosenModelId || routedTier);
 
         const incomingCtxForMeta: any = (msg as any)?.context || {};
         const contextPathsForMeta = Array.isArray(incomingCtxForMeta?.paths) ? incomingCtxForMeta.paths : undefined;
@@ -664,6 +790,88 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           } catch (e: any) {
             console.error('[cloud-ai] Failed to get workflow agent:', e.message);
             send(ws, { type: 'error', message: 'Workflow agent unavailable: ' + e.message }, requestId);
+            return;
+          }
+        } else if (agentType === 'skill') {
+          try {
+            const skillModelId =
+              (typeof (msg as any)?.modelId === 'string' && String((msg as any).modelId).trim())
+                ? String((msg as any).modelId).trim()
+                : (process.env.WORKFLOW_MODEL_ID || 'google/gemini-3-pro-preview');
+            agent = getSkillAgent(skillModelId);
+            console.log('[cloud-ai] Using skill agent', { rawAgent, clientType, ctxMode, modelId: skillModelId });
+
+            // Pre-store skill in session for modify_skill tool
+            clearSessionSkill();
+            const incomingCtx = (msg as any)?.context || {};
+            const directSkill = incomingCtx?.skill;
+            let sessionLoaded = false;
+            if (directSkill && typeof directSkill === 'object' && !Array.isArray(directSkill)) {
+              setSessionSkill(directSkill);
+              sessionLoaded = true;
+              console.log('[cloud-ai] Pre-stored skill from context:', { id: directSkill.id, name: directSkill.name, steps: directSkill.steps?.length });
+            }
+
+            // Fallback: Extract skill JSON from system context message
+            if (!sessionLoaded) {
+              const skillMsg = providedMessages?.find((m: any) =>
+                m?.role === 'system' &&
+                typeof m?.content === 'string' &&
+                m.content.includes('CURRENT SKILL')
+              );
+              if (skillMsg && typeof skillMsg.content === 'string') {
+                const content = skillMsg.content;
+                const marker = content.indexOf('CURRENT SKILL');
+                if (marker >= 0) {
+                  const jsonStart = content.indexOf('{', marker);
+                  if (jsonStart >= 0) {
+                    let depth = 0;
+                    let jsonEnd = -1;
+                    let inString = false;
+                    let escaped = false;
+                    for (let i = jsonStart; i < content.length; i++) {
+                      const ch = content[i];
+                      if (escaped) {
+                        escaped = false;
+                        continue;
+                      }
+                      if (ch === '\\' && inString) {
+                        escaped = true;
+                        continue;
+                      }
+                      if (ch === '"') {
+                        inString = !inString;
+                        continue;
+                      }
+                      if (inString) continue;
+                      if (ch === '{') depth++;
+                      else if (ch === '}') {
+                        depth--;
+                        if (depth === 0) {
+                          jsonEnd = i + 1;
+                          break;
+                        }
+                      }
+                    }
+                    if (jsonEnd > jsonStart) {
+                      const jsonStr = content.slice(jsonStart, jsonEnd);
+                      try {
+                        const skillJson = JSON.parse(jsonStr);
+                        if (skillJson && (skillJson.id || skillJson.name || skillJson.steps)) {
+                          setSessionSkill(skillJson);
+                          console.log('[cloud-ai] Pre-stored skill in session:', { id: skillJson.id, name: skillJson.name, steps: skillJson.steps?.length });
+                        }
+                      } catch (parseErr) {
+                        console.warn('[cloud-ai] Failed to parse skill JSON:', parseErr);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          } catch (e: any) {
+            console.error('[cloud-ai] Failed to get skill agent:', e.message);
+            send(ws, { type: 'error', message: 'Skill agent unavailable: ' + e.message }, requestId);
             return;
           }
         } else {
@@ -768,19 +976,86 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           mimeType: img?.mimeType || 'image/png',
           data: img?.data, // base64
         }));
-        const attachmentParts = buildAttachmentParts([...attachments, ...imageAttachments]);
-        if (attachmentParts.length > 0) {
-          let idx = -1;
-          for (let i = inputMessages.length - 1; i >= 0; i--) {
-            const r = inputMessages[i]?.role;
-            if (r === 'user') { idx = i; break; }
-          }
-          if (idx >= 0) {
-            const c = inputMessages[idx]?.content;
-            const baseParts = Array.isArray(c) ? c : [{ type: 'text', text: typeof c === 'string' ? c : '' }];
-            inputMessages[idx] = { ...inputMessages[idx], content: [...baseParts, ...attachmentParts] };
+        const allAttachments = [...attachments, ...imageAttachments];
+
+        if (allAttachments.length > 0) {
+          // Check if the chosen model supports multimodal input
+          const isMultimodal = chosenModelId ? await modelSupportsMultimodal(chosenModelId) : true;
+
+          if (isMultimodal) {
+            // Model supports multimodal — attach directly as content parts
+            const attachmentParts = buildAttachmentParts(allAttachments);
+            if (attachmentParts.length > 0) {
+              let idx = -1;
+              for (let i = inputMessages.length - 1; i >= 0; i--) {
+                const r = inputMessages[i]?.role;
+                if (r === 'user') { idx = i; break; }
+              }
+              if (idx >= 0) {
+                const c = inputMessages[idx]?.content;
+                const baseParts = Array.isArray(c) ? c : [{ type: 'text', text: typeof c === 'string' ? c : '' }];
+                inputMessages[idx] = { ...inputMessages[idx], content: [...baseParts, ...attachmentParts] };
+              } else {
+                inputMessages.push({ role: 'user', content: [{ type: 'text', text: prompt || 'Attached files' }, ...attachmentParts] });
+              }
+            }
           } else {
-            inputMessages.push({ role: 'user', content: [{ type: 'text', text: prompt || 'Attached files' }, ...attachmentParts] });
+            // Model does NOT support multimodal — pre-analyze with Gemini and inject as text
+            try {
+              send(ws, { type: 'progress', event: 'status', data: { text: 'Analyzing attached media...' } }, requestId);
+
+              const mediaParts: any[] = [{ type: 'text', text: `Analyze the following ${allAttachments.length} file(s) in detail. For images describe what you see. For PDFs/documents extract key content. For audio/video describe the content. Provide a thorough analysis.` }];
+              for (const a of allAttachments) {
+                const dataStr = typeof a?.data === 'string' ? a.data : '';
+                const mimeType = typeof a?.mimeType === 'string' ? a.mimeType : 'application/octet-stream';
+                if (!dataStr) continue;
+                const { buffer, mediaTypeHint } = dataStringToBuffer(dataStr);
+                const mt = mimeType || mediaTypeHint || 'application/octet-stream';
+                if (buffer && buffer.length > 0) {
+                  mediaParts.push({ type: 'file', data: buffer, mediaType: mt });
+                }
+              }
+
+              const analysisResult = await generateText({
+                model: google('gemini-2.5-flash') as any,
+                messages: [{ role: 'user' as const, content: mediaParts }],
+                temperature: 0.2,
+              });
+
+              const analysisText = analysisResult.text?.trim() || 'Unable to analyze the attached media.';
+              const fileNames = allAttachments.map((a: any) => a?.name || 'file').join(', ');
+              const injectedText = `\n\n[Attached files analyzed: ${fileNames}]\n\n${analysisText}`;
+
+              // Inject the analysis text into the last user message
+              let idx = -1;
+              for (let i = inputMessages.length - 1; i >= 0; i--) {
+                if (inputMessages[i]?.role === 'user') { idx = i; break; }
+              }
+              if (idx >= 0) {
+                const c = inputMessages[idx]?.content;
+                const existingText = typeof c === 'string' ? c : (Array.isArray(c) ? c.filter((p: any) => p?.type === 'text').map((p: any) => p.text).join('\n') : '');
+                inputMessages[idx] = { ...inputMessages[idx], content: existingText + injectedText };
+              } else {
+                inputMessages.push({ role: 'user', content: (prompt || 'Attached files') + injectedText });
+              }
+            } catch (analyzeErr) {
+              console.error('[cloud-ai] Failed to pre-analyze attachments for non-multimodal model:', analyzeErr);
+              // Fallback: still try sending as multimodal parts (might fail, but better than losing data)
+              const attachmentParts = buildAttachmentParts(allAttachments);
+              if (attachmentParts.length > 0) {
+                let idx = -1;
+                for (let i = inputMessages.length - 1; i >= 0; i--) {
+                  if (inputMessages[i]?.role === 'user') { idx = i; break; }
+                }
+                if (idx >= 0) {
+                  const c = inputMessages[idx]?.content;
+                  const baseParts = Array.isArray(c) ? c : [{ type: 'text', text: typeof c === 'string' ? c : '' }];
+                  inputMessages[idx] = { ...inputMessages[idx], content: [...baseParts, ...attachmentParts] };
+                } else {
+                  inputMessages.push({ role: 'user', content: [{ type: 'text', text: prompt || 'Attached files' }, ...attachmentParts] });
+                }
+              }
+            }
           }
         }
         // Track whether the model produced any text deltas or invoked tools
@@ -808,7 +1083,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         // Determine maxSteps for this run (per-message override -> env/default), with a safety cap
         // Workflow agent needs more steps for tool discovery and testing
         const reqMaxStepsRaw = (msg as any)?.maxSteps ?? (msg as any)?.limits?.maxSteps;
-        let maxSteps = agentType === 'workflow' ? 60 : DEFAULT_MAX_STEPS;
+        let maxSteps = (agentType === 'workflow' || agentType === 'skill') ? 60 : DEFAULT_MAX_STEPS;
         try {
           const n = Number(reqMaxStepsRaw);
           if (!isNaN(n) && n > 0) maxSteps = Math.min(n, MAX_STEPS_CAP);
@@ -853,6 +1128,28 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           if (contextParts.length > 0) {
             inputMessages = [{ role: 'system', content: contextParts.join(' | ') }, ...inputMessages];
           }
+
+          // Inject active skills into system prompt
+          if (activeSkillsFromContext.length > 0) {
+            const skillLines = activeSkillsFromContext.map((s) => {
+              const tools = s.steps
+                .map((step) => String(step.toolName || '').trim())
+                .filter(Boolean);
+              const uniqueTools = Array.from(new Set(tools)).slice(0, 5);
+              const toolsSuffix = uniqueTools.length > 0 ? ` | tools: ${uniqueTools.join(', ')}` : '';
+              return `• ${s.name} — ${s.description} (trigger: ${s.trigger}) | steps: ${s.steps.length}${toolsSuffix}`;
+            }).join('\n');
+            const skillsBlock = `[ACTIVE SKILLS]
+The user has configured these reusable skills.
+Treat each skill as guidance (a playbook), not a strict script.
+When a request matches a skill, do this:
+1) Call get_skill_info with skill_name (or skill_id) to load the full skill.
+2) Use the returned steps as recommended order and tool-calling guidance.
+3) Adapt step order/tool usage when context requires it, while staying aligned with the skill intent.
+4) Keep the user informed as you progress.
+${skillLines}`;
+            inputMessages = [{ role: 'system', content: skillsBlock }, ...inputMessages];
+          }
         } catch { }
 
         // Inject hidden state context (terminals, subagents, recent tool results) - NOT rendered in UI
@@ -864,7 +1161,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         } catch { }
 
         // Retrieve knowledge context and similar conversations, inject into messages
-        if (agentType !== 'workflow') {
+        if (agentType !== 'workflow' && agentType !== 'skill') {
           // ─── Parallel knowledge + memory retrieval ───────────────────
           // When SIS_PARALLEL_EMBEDDINGS=1, reuse the shared embedding
           // so knowledge and memory search run in parallel without
@@ -1079,7 +1376,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               finalText = aggregatedText.trim();
             }
             writeLog('stream_finish', { finishReason, usage: normalizedUsage, textLength: finalText.length, sawToolCall, sawAnyTextDelta });
-            
+
             // ── Persist tool calls + results in history so the LLM remembers what it did ──
             const completedToolCalls = Array.from(toolCallsMap.values()).filter(tc => tc.status === 'completed');
             if (completedToolCalls.length > 0) {
@@ -1110,7 +1407,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             if (finalText) {
               history.push({ role: 'assistant', content: finalText });
             }
-            
+
             // Auto-compact: summarize older messages, truncate large tool results
             // This runs asynchronously — fire-and-forget since we already have the final text
             compactHistory(history).then(() => {
@@ -1212,7 +1509,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
           },
         };
 
-        if (agentType !== 'workflow') {
+        if (agentType !== 'workflow' && agentType !== 'skill') {
           streamOptions.memory = { resource, thread };
         }
 
@@ -1319,15 +1616,16 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                     const toolName = (chunk as any)?.payload?.toolName || 'tool';
                     const toolCallId = (chunk as any)?.payload?.toolCallId || `tc-${Date.now()}`;
                     const toolArgs = (chunk as any)?.payload?.args;
+                    const safeToolArgs = redactSensitiveData(toolArgs);
 
                     // Track tool call
-                    const toolCall = { id: toolCallId, tool: toolName, status: 'called', args: toolArgs, timestamp: Date.now() };
+                    const toolCall = { id: toolCallId, tool: toolName, status: 'called', args: safeToolArgs, timestamp: Date.now() };
                     toolCallsMap.set(toolCallId, toolCall);
                     streamChunks.push({ type: 'tool', tool: { ...toolCall } });
 
                     // Only send to UI if not a SIS meta-tool
                     if (!isSISMetaTool(toolName)) {
-                      send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolName, status: 'called', toolCallId, args: toolArgs } }, requestId);
+                      send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolName, status: 'called', toolCallId, args: safeToolArgs } }, requestId);
                     }
                     writeLog('tool_call', { name: toolName });
                     handledChunk = true;
@@ -1339,17 +1637,18 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                     const toolName = (chunk as any)?.payload?.toolName || 'tool';
                     const toolCallId = (chunk as any)?.payload?.toolCallId || '';
                     const toolResult = (chunk as any)?.payload?.result;
+                    const safeToolResult = sanitizeToolResult(toolResult);
 
                     // Update tool call with result
                     const existingCall = toolCallsMap.get(toolCallId);
                     if (existingCall) {
                       existingCall.status = 'completed';
-                      existingCall.result = toolResult;
+                      existingCall.result = safeToolResult;
                       // Update in streamChunks
                       for (const sc of streamChunks) {
                         if (sc.type === 'tool' && sc.tool.id === toolCallId) {
                           sc.tool.status = 'completed';
-                          sc.tool.result = toolResult;
+                          sc.tool.result = safeToolResult;
                           break;
                         }
                       }
@@ -1357,27 +1656,25 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
 
                     // Only send to UI if not a SIS meta-tool
                     if (!isSISMetaTool(toolName)) {
-                      send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolName, status: 'completed', toolCallId, result: toolResult } }, requestId);
+                      send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolName, status: 'completed', toolCallId, result: safeToolResult } }, requestId);
                     }
                     handledChunk = true;
                     break;
                   }
 
                   case 'finish': {
+                    // The finish event contains the COMPLETE response text.
+                    // Only use it as a fallback if no text-delta events were received,
+                    // otherwise we'd duplicate the already-streamed content.
                     const text =
                       (chunk as any)?.payload?.text ||
                       (chunk as any)?.payload?.response?.text ||
                       (chunk as any)?.text ||
                       '';
-                    if (typeof text === 'string' && text) {
+                    if (typeof text === 'string' && text && !sawAnyTextDelta) {
                       sawAnyTextDelta = true;
-                      aggregatedText += text;
-                      const lastChunk = streamChunks[streamChunks.length - 1];
-                      if (lastChunk?.type === 'text') {
-                        lastChunk.content += text;
-                      } else {
-                        streamChunks.push({ type: 'text', content: text });
-                      }
+                      aggregatedText = text;
+                      streamChunks.push({ type: 'text', content: text });
                     }
                     handledChunk = true;
                     break;
@@ -1423,18 +1720,19 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                 const toolCall = (chunk as any)?.toolCall;
                 if (toolCall?.name) {
                   sawToolCall = true;
-                  console.log(`[cloud-ai] Tool called: ${toolCall.name}`, toolCall.args);
+                  const safeToolArgs = redactSensitiveData(toolCall.args);
+                  console.log(`[cloud-ai] Tool called: ${toolCall.name}`, safeToolArgs);
 
                   // Only send to UI if not a SIS meta-tool
                   if (!isSISMetaTool(toolCall.name)) {
-                    send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolCall.name, status: 'called', args: toolCall.args } }, requestId);
+                    send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolCall.name, status: 'called', args: safeToolArgs } }, requestId);
                   }
                   writeLog('tool_call', { name: toolCall.name });
                 }
                 const toolResult = (chunk as any)?.toolResult;
                 if (toolResult) {
                   sawToolCall = true;
-                  console.log(`[cloud-ai] Tool result:`, toolResult);
+                  console.log(`[cloud-ai] Tool result:`, sanitizeToolResult(toolResult));
                 }
               }
             } catch (e) {
@@ -1500,7 +1798,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
         }
 
         // Check if we broke out of the loop due to abort
-        if (abortController?.signal.aborted) {
+        if (abortController?.signal.aborted && !didSendFinal) {
           console.log('[cloud-ai] Stream aborted by user (loop break)');
           didSendFinal = true;
           try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
@@ -1540,7 +1838,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
           let finalText = aggregatedText ? aggregatedText.trim() : '';
           let emptyOutput = !finalText && !sawAnyTextDelta && !sawToolCall;
 
-          if (emptyOutput && agentType === 'workflow' && typeof (agent as any)?.generate === 'function') {
+          if (emptyOutput && (agentType === 'workflow' || agentType === 'skill') && typeof (agent as any)?.generate === 'function') {
             try {
               const genRes: any = await (agent as any).generate(inputMessages);
               const genText = String(genRes?.text || '').trim();
@@ -1584,30 +1882,33 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
         // Handle abort errors specifically
         if (e?.name === 'AbortError' || abortController?.signal.aborted) {
           console.log('[cloud-ai] Stream aborted by user');
-          const partialText = aggregatedText ? aggregatedText.trim() : '';
+          if (!didSendFinal) {
+            didSendFinal = true;
+            const partialText = aggregatedText ? aggregatedText.trim() : '';
 
-          // Persist partial work on abort
-          if (authUser && conversationId && partialText) {
-            try {
-              const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
-              const metadata = {
-                mode: requestedMode, tier: routedTier, modelId: chosenModelId,
-                toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
-                streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
-                finishReason: 'aborted',
-              };
-              await addAssistantMessage(authUser.userId, conversationId, partialText, metadata);
-            } catch { }
+            // Persist partial work on abort
+            if (authUser && conversationId && partialText) {
+              try {
+                const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
+                const metadata = {
+                  mode: requestedMode, tier: routedTier, modelId: chosenModelId,
+                  toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
+                  streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+                  finishReason: 'aborted',
+                };
+                await addAssistantMessage(authUser.userId, conversationId, partialText, metadata);
+              } catch { }
+            }
+
+            send(ws, {
+              type: 'final',
+              origin: 'cloud-ai',
+              model: chosenModelId || routedTier,
+              conversationId,
+              result: { text: partialText || '(Stopped)', steps: [], finishReason: 'aborted' },
+              aborted: true
+            }, requestId);
           }
-
-          send(ws, {
-            type: 'final',
-            origin: 'cloud-ai',
-            model: chosenModelId || routedTier,
-            conversationId,
-            result: { text: partialText || '(Stopped)', steps: [], finishReason: 'aborted' },
-            aborted: true
-          }, requestId);
           return;
         }
 
@@ -1653,34 +1954,38 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
 
           const finalText = `Tool call failed: ${errMsg}. Please retry.`;
 
-          // Persist partial work on tool parse error
-          if (authUser && conversationId) {
-            try {
-              const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
-              const metadata = {
-                mode: requestedMode, tier: routedTier, modelId: chosenModelId,
-                toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
-                streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
-                finishReason: 'error',
-              };
-              await addAssistantMessage(authUser.userId, conversationId, finalText, metadata);
-            } catch { }
-          }
+          // Persist partial work on tool parse error (only if not already persisted)
+          if (!didSendFinal) {
+            didSendFinal = true;
+            if (authUser && conversationId) {
+              try {
+                const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
+                const metadata = {
+                  mode: requestedMode, tier: routedTier, modelId: chosenModelId,
+                  toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
+                  streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+                  finishReason: 'error',
+                };
+                await addAssistantMessage(authUser.userId, conversationId, finalText, metadata);
+              } catch { }
+            }
 
-          send(
-            ws,
-            {
-              type: 'final',
-              origin: 'cloud-ai',
-              result: { text: finalText, steps: [], finishReason: 'error' },
-            },
-            requestId
-          );
+            send(
+              ws,
+              {
+                type: 'final',
+                origin: 'cloud-ai',
+                result: { text: finalText, steps: [], finishReason: 'error' },
+              },
+              requestId
+            );
+          }
           return;
         }
 
-        // Persist partial work on generic errors too
-        if (authUser && conversationId) {
+        // Persist partial work on generic errors too (only if not already persisted)
+        if (!didSendFinal && authUser && conversationId) {
+          didSendFinal = true;
           try {
             const errorText = aggregatedText ? aggregatedText.trim() : `Error: ${e?.message || String(e)}`;
             const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));

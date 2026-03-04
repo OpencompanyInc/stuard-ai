@@ -191,6 +191,34 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'reddit_create_post': { kind: 'cloud' },
   'reddit_comment': { kind: 'cloud' },
 
+  // Ollama (Local AI models)
+  'ollama_status': { kind: 'electron' },
+  'ollama_start': { kind: 'electron' },
+  'ollama_chat': { kind: 'electron' },
+  'ollama_generate': { kind: 'electron' },
+  'ollama_vision': { kind: 'electron' },
+  'ollama_embeddings': { kind: 'electron' },
+  'ollama_models': { kind: 'electron' },
+
+  // Browser Use (AI browser automation)
+  'browser_use_setup': { kind: 'electron' },
+  'browser_use_install': { kind: 'electron' },
+  'browser_use_start': { kind: 'electron' },
+  'browser_use_uninstall': { kind: 'electron' },
+  'browser_use_stop': { kind: 'electron' },
+  'browser_use_status': { kind: 'electron' },
+  'browser_use_configure': { kind: 'electron' },
+  'browser_use_task': { kind: 'electron' },
+  'browser_use_navigate': { kind: 'electron' },
+  'browser_use_click': { kind: 'electron' },
+  'browser_use_type': { kind: 'electron' },
+  'browser_use_press_key': { kind: 'electron' },
+  'browser_use_screenshot': { kind: 'electron' },
+  'browser_use_content': { kind: 'electron' },
+  'browser_use_scroll': { kind: 'electron' },
+  'browser_use_tabs': { kind: 'electron' },
+  'browser_use_cookies': { kind: 'electron' },
+
   // Embeddings (cloud-side, requires OpenAI API)
   'embed_text': { kind: 'cloud' },
   'vector_similarity': { kind: 'cloud' },

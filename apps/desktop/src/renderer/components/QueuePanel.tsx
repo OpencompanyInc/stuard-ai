@@ -1,5 +1,6 @@
 import type React from "react";
-import { useEffect, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Clock, MoreHorizontal, X } from "lucide-react";
 
 interface QueuedMessage {
   id: string;
@@ -10,85 +11,86 @@ interface QueuedMessage {
 interface QueuePanelProps {
   messages: QueuedMessage[];
   queueDepth: number;
+  onCancelMessage?: (id: string) => void;
 }
 
-export default function QueuePanel({ messages, queueDepth }: QueuePanelProps) {
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    if (queueDepth > 0) {
-      setVisible(true);
-    } else {
-      // Delay hiding to allow exit animation
-      const timer = setTimeout(() => setVisible(false), 300);
-      return () => clearTimeout(timer);
-    }
-  }, [queueDepth]);
-
-  if (!visible && queueDepth === 0) return null;
-
+export default function QueuePanel({ messages, queueDepth, onCancelMessage }: QueuePanelProps) {
   return (
-    <div
-      className={`absolute bottom-full left-2 right-2 mb-1 transition-all duration-300 ease-out z-[60] ${
-        queueDepth > 0 ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
-      }`}
-      style={{ maxHeight: '72px' }}
-    >
-      <div className="rounded-xl border border-theme/20 bg-theme-card/80 backdrop-blur-md shadow-xl overflow-hidden">
-        {/* Header */}
-        <div className="px-3 py-2 flex items-center gap-2 text-theme-fg">
-          <div className="w-2 h-2 rounded-full bg-primary animate-pulse shadow-sm shadow-primary/20" />
-          <span className="text-[11px] font-black uppercase tracking-widest text-primary">Queued {queueDepth}</span>
-          <span className="text-[11px] text-theme-muted">•</span>
-          <span className="text-[11px] truncate font-bold text-theme-muted" title={messages[0]?.text || ''}>
-            {(messages[0]?.text || '').length > 60
-              ? (messages[0]?.text || '').slice(0, 60) + '…'
-              : (messages[0]?.text || '')}
-          </span>
-          {queueDepth > 1 && (
-            <span className="ml-auto text-[10px] text-theme-muted font-black uppercase tracking-widest bg-theme-hover/50 px-1.5 py-0.5 rounded">+{queueDepth - 1} more</span>
-          )}
-        </div>
-
-        {/* Footer with progress indicator */}
-        {queueDepth > 0 && (
-          <div className="h-0.5 w-full bg-theme-hover relative overflow-hidden">
-            <div className="absolute inset-0 bg-primary/30 w-1/3 animate-[progressSlide_2s_infinite_linear]" />
-          </div>
+    <div className="absolute bottom-full left-2 right-2 mb-2 z-[60] flex flex-col gap-1.5 pointer-events-none">
+      <AnimatePresence mode="popLayout">
+        {messages.slice(0, 3).map((msg, index) => {
+          const isFirst = index === 0;
+          return (
+            <motion.div
+              key={msg.id}
+              layout
+              initial={{ opacity: 0, y: 10, scale: 0.95 }}
+              animate={{ 
+                opacity: isFirst ? 1 : 0.6, 
+                y: 0, 
+                scale: 1,
+              }}
+              exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
+              className={`rounded-xl border backdrop-blur-md overflow-hidden flex items-center px-3 py-2.5 gap-3 shadow-lg pointer-events-auto group ${
+                isFirst 
+                  ? 'bg-theme-card/95 border-primary/30 ring-1 ring-primary/10' 
+                  : 'bg-theme-card/60 border-theme/10 scale-[0.98] origin-bottom'
+              }`}
+            >
+              <div className="relative flex items-center justify-center shrink-0">
+                <Clock className={`w-4 h-4 ${isFirst ? 'text-primary' : 'text-theme-muted'}`} />
+                {isFirst && (
+                  <motion.div 
+                    animate={{ rotate: 360 }} 
+                    transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+                    className="absolute inset-0 rounded-full border border-primary border-t-transparent opacity-50"
+                  />
+                )}
+              </div>
+              
+              <div className="flex-1 min-w-0 flex flex-col">
+                <span className={`text-sm font-medium truncate ${isFirst ? 'text-theme-fg' : 'text-theme-muted'}`}>
+                  {msg.text || 'Empty message'}
+                </span>
+              </div>
+              
+              {isFirst && (
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-[10px] uppercase tracking-widest font-bold text-primary flex items-center gap-1">
+                    Up Next
+                  </span>
+                </div>
+              )}
+              
+              {onCancelMessage && (
+                <button
+                  onClick={() => onCancelMessage(msg.id)}
+                  className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center hover:bg-red-500/20 text-theme-muted hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                  title="Remove from queue"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </motion.div>
+          );
+        })}
+      </AnimatePresence>
+      
+      <AnimatePresence>
+        {messages.length > 3 && (
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            className="flex justify-center mt-1"
+          >
+            <span className="text-[10px] text-theme-muted font-bold tracking-wider uppercase bg-theme-card/80 px-3 py-1 rounded-full border border-theme/10 backdrop-blur-md shadow-sm flex items-center gap-1 pointer-events-auto">
+              <MoreHorizontal className="w-3 h-3" />
+              {messages.length - 3} more
+            </span>
+          </motion.div>
         )}
-      </div>
-
-      <style>{`
-        @keyframes slideIn {
-          from {
-            opacity: 0;
-            transform: translateX(-8px);
-          }
-          to {
-            opacity: 1;
-            transform: translateX(0);
-          }
-        }
-
-        @keyframes progressSlide {
-          0% {
-            transform: translateX(-100%);
-          }
-          50% {
-            transform: translateX(250%);
-          }
-          100% {
-            transform: translateX(-100%);
-          }
-        }
-
-        .line-clamp-2 {
-          display: -webkit-box;
-          -webkit-line-clamp: 2;
-          -webkit-box-orient: vertical;
-          overflow: hidden;
-        }
-      `}</style>
+      </AnimatePresence>
     </div>
   );
 }

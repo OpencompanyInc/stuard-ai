@@ -56,6 +56,8 @@ const TRIGGER_ALIASES: Record<string, string> = {
   'hotkey': 'hotkey',
   'schedule': 'schedule.cron',
   'file': 'fs.watch',
+  'gmail': 'gmail.new_email',
+  'drive': 'drive.new_file',
   'manual': 'manual',
 };
 
@@ -100,46 +102,48 @@ function indent(str: string, spaces: number): string {
 export function generateSimpleDsl(model: DesignerModel): string {
   const lines: string[] = [];
   const wires = Array.isArray((model as any)?.wires) ? (model as any).wires : [];
-  
+
   // Header
   lines.push(`workflow "${model.name || 'Untitled'}"`);
-  
+
   // Triggers
   if (model.triggers.length > 0) {
     lines.push('');
     for (const t of model.triggers) {
       const alias = REVERSE_TRIGGER_ALIASES[t.type] || t.type;
       let triggerLine = `trigger: ${alias}`;
-      
+
       if (t.type === 'hotkey' && t.args?.accelerator) {
         triggerLine += ` "${t.args.accelerator}"`;
       } else if (t.type === 'schedule.cron' && t.args?.cron) {
         triggerLine += ` "${t.args.cron}"`;
       } else if (t.type === 'fs.watch' && t.args?.path) {
         triggerLine += ` "${t.args.path}"`;
+      } else if ((t.type === 'gmail.new_email' || t.type === 'drive.new_file') && t.args?.profile) {
+        triggerLine += ` "${t.args.profile}"`;
       }
-      
+
       if (t.label && t.label !== alias && t.label !== t.type) {
         triggerLine += ` as "${t.label}"`;
       }
-      
+
       lines.push(triggerLine);
     }
   }
-  
+
   // Steps
   if (model.nodes.length > 0) {
     lines.push('');
     lines.push('steps:');
-    
+
     const order = getExecutionOrder(model.nodes, wires);
-    
+
     for (const node of order) {
       const stepLines = formatStep(node);
       lines.push(stepLines);
     }
   }
-  
+
   // Wires summary (for non-linear flows)
   const nonLinearWires = findNonLinearWires(model);
   if (nonLinearWires.length > 0) {
@@ -149,7 +153,7 @@ export function generateSimpleDsl(model: DesignerModel): string {
       lines.push(`# ${w.from} -> ${w.to}${w.guard && w.guard !== 'always' ? ` [${w.guard}]` : ''}`);
     }
   }
-  
+
   return lines.join('\n');
 }
 
@@ -158,17 +162,17 @@ function formatStep(node: DesignerNode): string {
   const alias = REVERSE_TOOL_ALIASES[tool] || tool;
   const args = node.args || {};
   const argKeys = Object.keys(args).filter(k => args[k] !== undefined && args[k] !== '');
-  
+
   // Label comment
-  const labelComment = node.label && node.label !== tool && node.label !== alias 
-    ? `  # ${node.label}` 
+  const labelComment = node.label && node.label !== tool && node.label !== alias
+    ? `  # ${node.label}`
     : '';
-  
+
   // No args
   if (argKeys.length === 0) {
     return `  - ${alias}${labelComment}`;
   }
-  
+
   // Check if any arg is complex
   if (hasComplexArgs(args)) {
     // Use YAML-like block format
@@ -192,7 +196,7 @@ function formatStep(node: DesignerNode): string {
     }
     return lines.join('\n');
   }
-  
+
   // Simple args - inline format
   // Single simple arg shortcut
   if (argKeys.length === 1) {
@@ -202,7 +206,7 @@ function formatStep(node: DesignerNode): string {
       return `  - ${alias} ${formatValue(val)}${labelComment}`;
     }
   }
-  
+
   // Multiple simple args
   const argParts = argKeys.map(k => `${k}=${formatValue(args[k])}`).join(' ');
   return `  - ${alias} ${argParts}${labelComment}`;
@@ -211,39 +215,39 @@ function formatStep(node: DesignerNode): string {
 function getExecutionOrder(nodes: DesignerNode[], wires: DesignerWire[]): DesignerNode[] {
   if (nodes.length === 0) return [];
   const safeWires = Array.isArray(wires) ? wires : [];
-  
+
   const inbound = new Set(safeWires.map(w => w.to));
   const startNodes = nodes.filter(n => !inbound.has(n.id));
-  
+
   const visited = new Set<string>();
   const order: DesignerNode[] = [];
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
-  
+
   const outgoing = new Map<string, string[]>();
   for (const wire of safeWires) {
     if (!outgoing.has(wire.from)) outgoing.set(wire.from, []);
     outgoing.get(wire.from)!.push(wire.to);
   }
-  
+
   const queue = startNodes.length > 0 ? [...startNodes] : [nodes[0]];
-  
+
   while (queue.length > 0) {
     const node = queue.shift()!;
     if (visited.has(node.id)) continue;
     visited.add(node.id);
     order.push(node);
-    
+
     for (const childId of outgoing.get(node.id) || []) {
       const child = nodeMap.get(childId);
       if (child && !visited.has(childId)) queue.push(child);
     }
   }
-  
+
   // Add any disconnected nodes
   for (const node of nodes) {
     if (!visited.has(node.id)) order.push(node);
   }
-  
+
   return order;
 }
 
@@ -254,7 +258,7 @@ function findNonLinearWires(model: DesignerModel): DesignerWire[] {
   for (const w of wires) {
     outCount.set(w.from, (outCount.get(w.from) || 0) + 1);
   }
-  
+
   return wires.filter((w: any) => {
     // Branching (multiple outputs from same node)
     if ((outCount.get(w.from) || 0) > 1) return true;
@@ -271,7 +275,7 @@ function findNonLinearWires(model: DesignerModel): DesignerWire[] {
 export function generateQuickFormat(model: DesignerModel): string {
   const parts: string[] = [];
   const wires = Array.isArray((model as any)?.wires) ? (model as any).wires : [];
-  
+
   // Name + trigger
   let header = `workflow "${model.name}"`;
   if (model.triggers.length > 0) {
@@ -284,19 +288,19 @@ export function generateQuickFormat(model: DesignerModel): string {
     }
   }
   parts.push(header);
-  
+
   // Steps as chain (only for simple workflows)
   if (model.nodes.length > 0 && model.nodes.length <= 5) {
     const order = getExecutionOrder(model.nodes, wires);
     const hasComplex = order.some(n => hasComplexArgs(n.args || {}));
-    
+
     if (!hasComplex) {
       const stepParts = order.map(node => {
         const tool = node.tool || 'noop';
         const alias = REVERSE_TOOL_ALIASES[tool] || tool;
         const args = node.args || {};
         const keys = Object.keys(args).filter(k => args[k]);
-        
+
         if (keys.length === 0) return alias;
         if (keys.length === 1) {
           const v = args[keys[0]];
@@ -305,12 +309,12 @@ export function generateQuickFormat(model: DesignerModel): string {
         }
         return alias;
       });
-      
+
       parts.push(stepParts.join(' -> '));
       return parts.join('\n');
     }
   }
-  
+
   // Fallback: indicate complexity
   parts.push(`# ${model.nodes.length} steps (use Simple DSL for full view)`);
   return parts.join('\n');
@@ -322,28 +326,28 @@ export function generateQuickFormat(model: DesignerModel): string {
 
 export function parseSimpleDsl(dsl: string): DesignerModel {
   const lines = dsl.split('\n');
-  
+
   let name = 'Workflow';
   const triggers: DesignerTrigger[] = [];
   const nodes: DesignerNode[] = [];
   const wires: DesignerWire[] = [];
-  
+
   let i = 0;
   let currentStep: { tool: string; args: Record<string, any>; label?: string } | null = null;
   let multilineKey: string | null = null;
   let multilineBuffer: string[] = [];
   let multilineIndent = 0;
-  
+
   while (i < lines.length) {
     const line = lines[i];
     const trimmed = line.trim();
-    
+
     // Skip empty lines and comments
     if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('//')) {
       i++;
       continue;
     }
-    
+
     // Handle multiline value
     if (multilineKey && currentStep) {
       const lineIndent = line.search(/\S/);
@@ -362,12 +366,12 @@ export function parseSimpleDsl(dsl: string): DesignerModel {
         multilineBuffer = [];
       }
     }
-    
+
     // Workflow name
     const workflowMatch = trimmed.match(/^workflow\s+["'](.+?)["']/i);
     if (workflowMatch) {
       name = workflowMatch[1];
-      
+
       // Inline trigger
       const inlineTrigger = trimmed.match(/on\s+(\w+)(?:\s+["'](.+?)["'])?/i);
       if (inlineTrigger) {
@@ -376,7 +380,7 @@ export function parseSimpleDsl(dsl: string): DesignerModel {
       i++;
       continue;
     }
-    
+
     // Trigger
     const triggerMatch = trimmed.match(/^trigger:\s*(\w+)(?:\s+["'](.+?)["'])?/i);
     if (triggerMatch) {
@@ -384,13 +388,13 @@ export function parseSimpleDsl(dsl: string): DesignerModel {
       i++;
       continue;
     }
-    
+
     // Steps section
     if (trimmed === 'steps:') {
       i++;
       continue;
     }
-    
+
     // Step line
     const stepMatch = trimmed.match(/^-\s*(\w+)(?::?\s*(.*))?$/);
     if (stepMatch) {
@@ -398,31 +402,31 @@ export function parseSimpleDsl(dsl: string): DesignerModel {
       if (currentStep) {
         nodes.push(createNode(currentStep, nodes.length));
       }
-      
+
       const tool = stepMatch[1];
       const rest = stepMatch[2]?.trim() || '';
-      
+
       currentStep = {
         tool: TOOL_ALIASES[tool] || tool,
         args: {},
       };
-      
+
       // Parse inline args
       if (rest && !rest.endsWith(':')) {
         parseInlineArgs(rest, currentStep);
       }
-      
+
       i++;
       continue;
     }
-    
+
     // Arg line (under a step)
     if (currentStep && line.match(/^\s+\w+:/)) {
       const argMatch = trimmed.match(/^(\w+):\s*(.*)$/);
       if (argMatch) {
         const key = argMatch[1];
         const val = argMatch[2];
-        
+
         if (val === '|') {
           // Start multiline
           multilineKey = key;
@@ -442,7 +446,7 @@ export function parseSimpleDsl(dsl: string): DesignerModel {
       i++;
       continue;
     }
-    
+
     // One-liner format: tool -> tool -> tool
     if (trimmed.includes(' -> ')) {
       const parts = trimmed.split(' -> ').map(p => p.trim());
@@ -462,20 +466,20 @@ export function parseSimpleDsl(dsl: string): DesignerModel {
       i++;
       continue;
     }
-    
+
     i++;
   }
-  
+
   // Save last step
   if (currentStep) {
     nodes.push(createNode(currentStep, nodes.length));
   }
-  
+
   // Default trigger if none
   if (triggers.length === 0) {
     triggers.push(createTrigger('manual', undefined, 0));
   }
-  
+
   // Create wires
   // Trigger -> first node
   if (nodes.length > 0) {
@@ -483,12 +487,12 @@ export function parseSimpleDsl(dsl: string): DesignerModel {
       wires.push({ from: t.id, to: nodes[0].id });
     }
   }
-  
+
   // Chain nodes
   for (let j = 0; j < nodes.length - 1; j++) {
     wires.push({ from: nodes[j].id, to: nodes[j + 1].id });
   }
-  
+
   return {
     id: name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_-]/g, ''),
     name,
@@ -502,11 +506,20 @@ export function parseSimpleDsl(dsl: string): DesignerModel {
 function createTrigger(type: string, value: string | undefined, index: number): DesignerTrigger {
   const normalizedType = TRIGGER_ALIASES[type.toLowerCase()] || type;
   const args: Record<string, any> = {};
-  
+
   if (normalizedType === 'hotkey' && value) args.accelerator = value;
   if (normalizedType === 'schedule.cron' && value) args.cron = value;
   if (normalizedType === 'fs.watch' && value) args.path = value;
-  
+  if (normalizedType === 'gmail.new_email') {
+    args.profile = value || 'default';
+    args.labelIds = ['INBOX'];
+  }
+  if (normalizedType === 'drive.new_file') {
+    args.profile = value || 'default';
+    args.onlyNew = true;
+    args.includeFolders = false;
+  }
+
   return {
     id: `trigger_${index}`,
     type: normalizedType,
@@ -535,14 +548,14 @@ function parseInlineArgs(rest: string, step: { tool: string; args: Record<string
     step.args[key] = simpleQuoted[1];
     return;
   }
-  
+
   // Check for label: # label
   const labelMatch = rest.match(/#\s*(.+)$/);
   if (labelMatch) {
     step.label = labelMatch[1].trim();
     rest = rest.replace(/#\s*.+$/, '').trim();
   }
-  
+
   // Parse key=value pairs
   const kvPattern = /(\w+)=(?:"([^"]+)"|'([^']+)'|(\S+))/g;
   let match;
@@ -560,7 +573,8 @@ function parseInlineArgs(rest: string, step: { tool: string; args: Record<string
 function getDefaultArgKey(tool: string): string {
   if (['log'].includes(tool)) return 'message';
   if (['type_text'].includes(tool)) return 'text';
-  if (['analyze_current_screen', 'analyze_image', 'analyze_media'].includes(tool)) return 'prompt';
+  if (['analyze_current_screen', 'analyze_image'].includes(tool)) return 'prompt';
+  if (['analyze_media'].includes(tool)) return 'task';
   if (['read_file', 'write_file'].includes(tool)) return 'path';
   if (['run_command'].includes(tool)) return 'cmd';
   if (['wait'].includes(tool)) return 'ms';

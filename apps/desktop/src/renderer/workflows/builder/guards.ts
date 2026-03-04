@@ -121,6 +121,109 @@ export function guardToString(guard: any): string {
   }
 }
 
+/**
+ * Generate a short wire label for a guard condition.
+ * Boolean-style guards → "True" / "False"
+ * Comparison guards → compact expression like "score > 5"
+ * Returns null when no guard or 'always'.
+ */
+export function guardToShortLabel(guard: any, rightOnly?: boolean, useBool?: boolean): { text: string; positive: boolean } | null {
+  if (!guard || guard === 'always') return null;
+
+  if (typeof guard === 'string') {
+    if (guard === 'always' || guard === 'true') return null;
+    if (guard === 'never' || guard === 'false') return { text: 'False', positive: false };
+    if (guard.startsWith('!')) return { text: 'False', positive: false };
+    const cmpMatch = guard.match(/^(.+?)\s*(==|!=|>=|<=|>|<)\s*(.+)$/);
+    if (cmpMatch) {
+      if (useBool) return { text: cmpMatch[2] === '==' ? 'True' : 'False', positive: cmpMatch[2] === '==' };
+      const rv = cmpMatch[3].trim();
+      if (rightOnly) return { text: rv, positive: true };
+      const left = cmpMatch[1].includes('.') ? cmpMatch[1].split('.').pop()! : cmpMatch[1];
+      const text = `${left.trim()} ${cmpMatch[2]} ${rv}`;
+      return { text: text.length > 20 ? text.slice(0, 18) + '..' : text, positive: true };
+    }
+    return { text: 'True', positive: true };
+  }
+
+  if (typeof guard !== 'object') return null;
+  if ('if' in guard) return guardToShortLabel(guard.if, rightOnly, useBool);
+  if ('ai' in guard) return { text: 'AI', positive: true };
+
+  const op = Object.keys(guard)[0];
+  const val = guard[op];
+
+  // Negation → False
+  if (op === '!' || op === 'not') return { text: 'False', positive: false };
+
+  // Bare var reference → boolean truthy check
+  if (op === 'var') return { text: 'True', positive: true };
+
+  // == true / == false → boolean
+  if (op === '==' && val[1] === true) return { text: 'True', positive: true };
+  if (op === '==' && val[1] === false) return { text: 'False', positive: false };
+  if (op === '!=' && val[1] === true) return { text: 'False', positive: false };
+  if (op === '!=' && val[1] === false) return { text: 'True', positive: true };
+
+  // Boolean pair: same left & right, opposite == / !=
+  if (useBool && (op === '==' || op === '!=')) {
+    return { text: op === '==' ? 'True' : 'False', positive: op === '==' };
+  }
+
+  // Comparison operators → show expression or just right value
+  if (['==', '!=', '>', '>=', '<', '<=', 'in'].includes(op)) {
+    const right = shortVal(val[1]);
+    if (rightOnly) return { text: right, positive: true };
+    const left = shortVar(val[0]);
+    const text = `${left} ${op} ${right}`;
+    return { text: text.length > 20 ? text.slice(0, 18) + '..' : text, positive: true };
+  }
+
+  // and / or → show compact
+  if (op === 'and' || op === 'or') {
+    const s = guardToString(guard);
+    return { text: s.length > 20 ? s.slice(0, 18) + '..' : s, positive: true };
+  }
+
+  return { text: 'True', positive: true };
+}
+
+/**
+ * Extract { left, op, right } from a guard comparison (for sibling detection).
+ */
+export function guardExtractComparison(guard: any): { left: string; op: string; right: string } | null {
+  if (!guard || guard === 'always') return null;
+  if (typeof guard === 'string') {
+    const m = guard.match(/^(.+?)\s*(==|!=|>=|<=|>|<)\s*(.+)$/);
+    return m ? { left: m[1].trim(), op: m[2], right: m[3].trim() } : null;
+  }
+  if (typeof guard !== 'object') return null;
+  if ('if' in guard) return guardExtractComparison(guard.if);
+  const op = Object.keys(guard)[0];
+  const val = guard[op];
+  if (['==', '!=', '>', '>=', '<', '<=', 'in'].includes(op) && val[1] !== true && val[1] !== false) {
+    return { left: shortVar(val[0]), op, right: shortVal(val[1]) };
+  }
+  return null;
+}
+
+/** Extract short variable name from a JSONLogic value */
+function shortVar(v: any): string {
+  if (v && typeof v === 'object' && 'var' in v) {
+    const name: string = typeof v.var === 'string' ? v.var : v.var[0];
+    return name.includes('.') ? name.split('.').pop()! : name;
+  }
+  return shortVal(v);
+}
+
+/** Format a value compactly */
+function shortVal(v: any): string {
+  if (typeof v === 'string') return `"${v}"`;
+  if (typeof v === 'boolean' || typeof v === 'number') return String(v);
+  if (Array.isArray(v)) return `[${v.map(shortVal).join(',')}]`;
+  return String(v);
+}
+
 function formatValue(v: any): string {
   if (typeof v === 'string') return `"${v}"`;
   if (Array.isArray(v)) return `[${v.map(formatValue).join(', ')}]`;

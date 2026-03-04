@@ -74,6 +74,11 @@ export const REDDIT_CLIENT_ID = clean(process.env.REDDIT_CLIENT_ID || '');
 export const REDDIT_CLIENT_SECRET = clean(process.env.REDDIT_CLIENT_SECRET || '');
 export const REDDIT_REDIRECT_PATH = clean(process.env.REDDIT_REDIRECT_PATH || '/integrations/reddit/callback');
 
+export const TELNYX_API_KEY = clean(process.env.TELNYX_API_KEY || '');
+export const TELNYX_FROM_NUMBER = clean(process.env.TELNYX_FROM_NUMBER || '');
+export const TELNYX_MESSAGING_PROFILE_ID = clean(process.env.TELNYX_MESSAGING_PROFILE_ID || '');
+export const TELNYX_SIP_CONNECTION_ID = clean(process.env.TELNYX_SIP_CONNECTION_ID || '');
+
 export const PING_INTERVAL_MS = Number(clean(process.env.CLOUD_WS_PING_INTERVAL_MS || 30000));
 
 export const LOG_DIR = clean(process.env.CLOUD_LOG_DIR || './logs');

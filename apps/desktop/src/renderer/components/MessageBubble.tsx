@@ -307,7 +307,7 @@ const InlineReasoningBlock: React.FC<{
               ref={contentRef}
               className="mt-1.5 pl-3 border-l-2 border-violet-200/60 max-h-36 overflow-y-auto custom-scrollbar"
             >
-              <div className="text-[12px] text-neutral-400 leading-relaxed whitespace-pre-wrap font-light">
+              <div className="text-[12px] text-neutral-400 leading-relaxed py-1 prose prose-sm max-w-none prose-p:my-1 prose-headings:text-neutral-300 prose-headings:font-bold prose-headings:text-xs prose-code:text-primary prose-code:bg-theme-hover prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[10px] prose-strong:text-neutral-300 prose-ul:my-1 prose-ol:my-1 prose-li:my-0">
                 <ReactMarkdown
                   remarkPlugins={[remarkMath, remarkGfm]}
                   rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
@@ -992,7 +992,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
         .filter((c) => c !== null && c !== undefined)
         .every((c) => typeof c === 'string' && String(c).trim().length === 0);
       if (isEmpty) return null;
-      return <p className="mb-2 last:mb-0 leading-[1.7] text-theme-fg/95 [&:where(li_&)]:mb-1" {...props}>{children}</p>;
+      return <p className="mb-4 last:mb-0 leading-[1.7] text-theme-fg/95 [&:where(li_&)]:mb-1" {...props}>{children}</p>;
     },
     // Image rendering - supports local paths and web URLs
     img: ({ node, src, alt, ...props }: any) => {
@@ -1036,39 +1036,48 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
         >{children}</a>
       );
     },
-    ul: (props: any) => <ul className="list-disc pl-6 mb-3 space-y-1.5 marker:text-theme/60 marker:text-sm" {...props} />,
-    ol: (props: any) => <ol className="list-decimal pl-6 mb-3 space-y-1.5 marker:text-theme/60 marker:text-sm marker:font-semibold" {...props} />,
+    ul: (props: any) => <ul className="list-disc pl-6 mb-4 space-y-1.5 marker:text-theme/60 marker:text-sm" {...props} />,
+    ol: (props: any) => <ol className="list-decimal pl-6 mb-4 space-y-1.5 marker:text-theme/60 marker:text-sm marker:font-semibold" {...props} />,
     li: (props: any) => <li className="leading-[1.7] text-theme-fg/95 pl-1" {...props} />,
     blockquote: (props: any) => (
-      <blockquote className="border-l-4 border-indigo-500/40 pl-4 my-3 py-2 bg-gradient-to-r from-indigo-500/10 to-transparent rounded-r-lg" {...props}>
+      <blockquote className="border-l-4 border-indigo-500/40 pl-4 my-4 py-2 bg-gradient-to-r from-indigo-500/10 to-transparent rounded-r-lg" {...props}>
         <span className="text-theme-muted/90 italic leading-[1.7]">{props.children}</span>
       </blockquote>
     ),
-    h1: (props: any) => <h1 className="text-lg font-bold mb-3 mt-4 first:mt-0 tracking-tight text-theme-fg border-b border-theme/10 pb-2" {...props} />,
-    h2: (props: any) => <h2 className="text-base font-bold mb-2.5 mt-3.5 first:mt-0 tracking-tight text-theme-fg" {...props} />,
-    h3: (props: any) => <h3 className="text-sm font-bold mb-2 mt-3 first:mt-0 text-theme-fg/95" {...props} />,
-    h4: (props: any) => <h4 className="text-sm font-semibold mb-1.5 mt-2.5 first:mt-0 text-theme-fg/90" {...props} />,
-    h5: (props: any) => <h5 className="text-xs font-semibold mb-1 mt-2 first:mt-0 text-theme-fg/85 uppercase tracking-wide" {...props} />,
-    h6: (props: any) => <h6 className="text-xs font-medium mb-1 mt-2 first:mt-0 text-theme-muted/80 uppercase tracking-wide" {...props} />,
+    h1: (props: any) => <h1 className="text-2xl font-bold mb-4 mt-6 first:mt-0 tracking-tight text-theme-fg border-b border-theme/10 pb-2" {...props} />,
+    h2: (props: any) => <h2 className="text-xl font-bold mb-3 mt-5 first:mt-0 tracking-tight text-theme-fg border-b border-theme/10 pb-1" {...props} />,
+    h3: (props: any) => <h3 className="text-lg font-bold mb-2.5 mt-4 first:mt-0 text-theme-fg/95" {...props} />,
+    h4: (props: any) => <h4 className="text-base font-semibold mb-2 mt-3 first:mt-0 text-theme-fg/90" {...props} />,
+    h5: (props: any) => <h5 className="text-sm font-semibold mb-1.5 mt-2.5 first:mt-0 text-theme-fg/85" {...props} />,
+    h6: (props: any) => <h6 className="text-xs font-semibold mb-1 mt-2.5 first:mt-0 text-theme-muted/80 uppercase tracking-wide" {...props} />,
     strong: (props: any) => <strong className="font-bold text-theme-fg" {...props} />,
     em: (props: any) => <em className="italic text-theme-fg/95" {...props} />,
-    code: ({ inline, className, children, ...props }: any) => {
-      // If it's an inline code block, render simplified version
-      if (inline) {
-        return <code className="bg-gradient-to-br from-slate-700/80 to-slate-800/80 text-slate-100 rounded-md px-2 py-0.5 font-mono text-[85%] align-middle font-semibold border border-slate-600/30 shadow-sm" {...props}>{children}</code>;
+    pre: ({ children, ...props }: any) => {
+      // Handle block code wrapped in <pre>
+      // children is the <code> element
+      let childProps: any = {};
+      let codeContent = children;
+      if (React.isValidElement(children)) {
+        childProps = children.props || {};
+        codeContent = childProps.children;
+      } else if (Array.isArray(children) && children.length === 1 && React.isValidElement(children[0])) {
+        childProps = children[0].props || {};
+        codeContent = childProps.children;
       }
-      // Block-level code (handled here instead of 'pre' to allow custom styling)
+
+      const className = childProps.className || '';
+      const language = className.replace('language-', '') || 'code';
       return (
-        <div className="my-4 rounded-xl overflow-hidden bg-gradient-to-br from-slate-900/95 to-slate-800/95 border border-slate-700/50 shadow-xl w-full max-w-full group/codeblock grid">
-          <div className="bg-slate-800/50 px-4 py-2 border-b border-slate-700/50 flex items-center justify-between select-none">
-            <span className="text-xs text-slate-400 font-mono font-bold uppercase tracking-wider">{className?.replace('language-', '') || 'code'}</span>
+        <div className="my-4 rounded-xl overflow-hidden bg-white border border-slate-200 shadow-sm w-full max-w-full group/codeblock flex flex-col">
+          <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 flex items-center justify-between select-none">
+            <span className="text-xs text-slate-500 font-mono font-bold uppercase tracking-wider">{language}</span>
             <div className="flex items-center gap-3">
               <button
                 onClick={() => {
-                  const code = String(children).replace(/\n$/, '');
+                  const code = String(codeContent).replace(/\n$/, '');
                   navigator.clipboard.writeText(code);
                 }}
-                className="flex items-center gap-1.5 px-2 py-1 hover:bg-white/10 rounded-md transition-colors text-slate-400 hover:text-white text-[10px] font-medium uppercase tracking-wider"
+                className="flex items-center gap-1.5 px-2 py-1 hover:bg-slate-200 rounded-md transition-colors text-slate-500 hover:text-slate-700 text-[10px] font-medium uppercase tracking-wider"
                 title="Copy code"
               >
                 <Copy className="w-3 h-3" />
@@ -1077,19 +1086,22 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
             </div>
           </div>
           <div className="relative w-full overflow-hidden">
-            <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4 w-full">
+            <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4 w-full bg-white">
               <code
-                className={clsx(className, "font-mono text-[13px] inline-block min-w-full leading-[1.7] text-slate-100 whitespace-pre tab-4")}
-                {...props}
+                className={clsx(className, "font-mono text-[13px] inline-block min-w-full leading-[1.7] text-slate-800 whitespace-pre tab-4")}
+                {...childProps}
               >
-                {children}
+                {codeContent}
               </code>
             </div>
           </div>
         </div>
       );
     },
-    pre: ({ children }: any) => <>{children}</>,
+        code: ({ className, children, ...props }: any) => {
+          // Inline code
+          return <code className="bg-slate-100 border border-slate-200 text-slate-800 rounded-md px-[6px] py-[2px] font-mono text-[0.85em] font-medium align-middle" {...props}>{children}</code>;
+        },
     table: (props: any) => (
       <div className="overflow-x-auto my-3 rounded-xl border border-theme/20 shadow-sm">
         <table className="min-w-full divide-y divide-theme/15 text-sm" {...props} />

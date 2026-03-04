@@ -95,14 +95,14 @@ function ColumnTypeSelect({ value, onChange }: { value: string; onChange: (v: st
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg bg-white hover:bg-slate-50 hover:border-slate-300 transition-all cursor-pointer"
+        className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm border border-white/[0.08] rounded-lg bg-white/[0.04] hover:bg-white/[0.06] hover:border-white/[0.12] transition-all cursor-pointer"
       >
-        <span className="text-slate-700 font-medium whitespace-nowrap">{selected?.label || 'Text'}</span>
-        <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <span className="text-white/80 font-medium whitespace-nowrap">{selected?.label || 'Text'}</span>
+        <ChevronDown className={`w-3.5 h-3.5 text-white/40 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (
-        <div className="absolute z-50 right-0 mt-1.5 w-56 bg-white border border-slate-100 rounded-xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+        <div className="absolute z-50 right-0 mt-1.5 w-56 bg-white/[0.04] border border-white/[0.04] rounded-xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
           <div className="p-1">
             {COLUMN_TYPES.map(opt => (
               <button
@@ -112,12 +112,12 @@ function ColumnTypeSelect({ value, onChange }: { value: string; onChange: (v: st
                 className={`w-full px-3 py-2 text-left text-sm rounded-lg flex items-center justify-between gap-2 transition-colors mb-0.5 ${
                   opt.value === value
                     ? 'bg-indigo-50 text-indigo-700 font-medium'
-                    : 'text-slate-700 hover:bg-slate-50'
+                    : 'text-white/80 hover:bg-white/[0.06]'
                 }`}
               >
                 <div>
                   <div className="font-medium">{opt.label}</div>
-                  <div className="text-[11px] text-slate-400 font-normal">{opt.description}</div>
+                  <div className="text-[11px] text-white/40 font-normal">{opt.description}</div>
                 </div>
                 {opt.value === value && <Check className="w-4 h-4 text-indigo-600 shrink-0" />}
               </button>
@@ -169,28 +169,28 @@ export function CreateTableEditor({ value, onChange }: CreateTableEditorProps) {
     <div className="space-y-4">
       {/* Table Name */}
       <div className="space-y-1.5">
-        <label className="text-xs font-medium text-slate-600">Table Name</label>
+        <label className="text-xs font-medium text-white/70">Table Name</label>
         <input
           type="text"
           value={tableName}
           onChange={e => setTableName(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
           placeholder="my_table"
-          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 bg-white font-medium"
+          className="w-full px-3 py-2 text-sm border border-white/[0.08] rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 bg-white/[0.04] font-medium"
         />
       </div>
 
       {/* Columns */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
-          <label className="text-xs font-medium text-slate-600">Columns</label>
-          <span className="text-[10px] text-slate-400">{columns.length} column{columns.length !== 1 ? 's' : ''}</span>
+          <label className="text-xs font-medium text-white/70">Columns</label>
+          <span className="text-[10px] text-white/40">{columns.length} column{columns.length !== 1 ? 's' : ''}</span>
         </div>
 
         <div className="space-y-2">
           {columns.map((col, i) => (
             <div
               key={i}
-              className="flex items-center gap-2 p-2.5 bg-slate-50 rounded-xl border border-slate-200 group hover:border-slate-300 transition-colors"
+              className="flex items-center gap-2 p-2.5 bg-white/[0.06] rounded-xl border border-white/[0.08] group hover:border-white/[0.12] transition-colors"
             >
               <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />
 
@@ -200,7 +200,7 @@ export function CreateTableEditor({ value, onChange }: CreateTableEditorProps) {
                 value={col.name}
                 onChange={e => updateColumn(i, { name: e.target.value.replace(/[^a-zA-Z0-9_]/g, '') })}
                 placeholder="column_name"
-                className="flex-1 min-w-0 px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 bg-white font-mono"
+                className="flex-1 min-w-0 px-2.5 py-1.5 text-sm border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 bg-white/[0.04] font-mono"
               />
 
               {/* Column Type - Custom dropdown */}
@@ -217,7 +217,7 @@ export function CreateTableEditor({ value, onChange }: CreateTableEditorProps) {
                 className={`shrink-0 px-2 py-1 text-[10px] font-semibold rounded-md border transition-all ${
                   col.primaryKey
                     ? 'bg-amber-50 border-amber-200 text-amber-700'
-                    : 'bg-white border-slate-200 text-slate-400 hover:text-slate-600 hover:border-slate-300'
+                    : 'bg-white/[0.04] border-white/[0.08] text-white/40 hover:text-white/70 hover:border-white/[0.12]'
                 }`}
               >
                 ID
@@ -231,7 +231,7 @@ export function CreateTableEditor({ value, onChange }: CreateTableEditorProps) {
                 className={`shrink-0 px-2 py-1 text-[10px] font-semibold rounded-md border transition-all ${
                   col.notNull
                     ? 'bg-blue-50 border-blue-200 text-blue-700'
-                    : 'bg-white border-slate-200 text-slate-400 hover:text-slate-600 hover:border-slate-300'
+                    : 'bg-white/[0.04] border-white/[0.08] text-white/40 hover:text-white/70 hover:border-white/[0.12]'
                 }`}
               >
                 {col.notNull ? 'Required' : 'Optional'}
@@ -255,7 +255,7 @@ export function CreateTableEditor({ value, onChange }: CreateTableEditorProps) {
         <button
           type="button"
           onClick={addColumn}
-          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-500 hover:text-indigo-600 bg-white hover:bg-indigo-50 border border-dashed border-slate-300 hover:border-indigo-300 rounded-xl transition-all"
+          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-white/50 hover:text-indigo-600 bg-white/[0.04] hover:bg-indigo-50 border border-dashed border-white/[0.12] hover:border-indigo-300 rounded-xl transition-all"
         >
           <Plus className="w-3.5 h-3.5" />
           Add Column
@@ -267,12 +267,12 @@ export function CreateTableEditor({ value, onChange }: CreateTableEditorProps) {
         <button
           type="button"
           onClick={() => setShowRaw(!showRaw)}
-          className="text-[11px] text-slate-400 hover:text-indigo-500 transition-colors"
+          className="text-[11px] text-white/40 hover:text-indigo-500 transition-colors"
         >
           {showRaw ? 'Hide' : 'Show'} generated SQL
         </button>
         {showRaw && (
-          <code className="block mt-1.5 p-2.5 bg-slate-50 rounded-xl border border-slate-200 text-[11px] font-mono text-slate-600 whitespace-pre leading-relaxed">
+          <code className="block mt-1.5 p-2.5 bg-white/[0.06] rounded-xl border border-white/[0.08] text-[11px] font-mono text-white/70 whitespace-pre leading-relaxed">
             {buildSQL(tableName, columns) || '-- define a table name and at least one column'}
           </code>
         )}
@@ -280,3 +280,4 @@ export function CreateTableEditor({ value, onChange }: CreateTableEditorProps) {
     </div>
   );
 }
+

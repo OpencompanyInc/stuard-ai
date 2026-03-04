@@ -47,6 +47,8 @@ export function useSpeechToText(cloudUrl?: string) {
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const serverReadyRef = useRef<boolean>(false);
   const accumulatedTranscriptRef = useRef<string>('');
+  const lastInterimRef = useRef<string>('');
+  const currentTurnOrderRef = useRef<number>(-1);
 
   // Build WebSocket URL for speech endpoint from cloud HTTP URL
   // Convert https://api.stuard.ai -> wss://api.stuard.ai/speech
@@ -62,16 +64,75 @@ export function useSpeechToText(cloudUrl?: string) {
   };
   const TARGET_URL = buildSpeechUrl();
 
+  const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+  // Strip to lowercase alphanumeric words for fuzzy comparison
+  const alphaWords = (s: string) =>
+    s.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+
+  const firstNWords = (s: string, n: number) =>
+    alphaWords(s).split(' ').slice(0, n).join(' ');
+
+  const mergeTranscriptText = (prevRaw: string, nextRaw: string) => {
+    const prev = normalize(prevRaw);
+    const next = normalize(nextRaw);
+    if (!next) return prev;
+    if (!prev) return next;
+    if (prev === next) return prev;
+    // Case-insensitive overlap checks
+    const prevAlpha = alphaWords(prev);
+    const nextAlpha = alphaWords(next);
+    if (prevAlpha === nextAlpha) return next;
+    if (nextAlpha.startsWith(prevAlpha) || nextAlpha.includes(prevAlpha)) return next;
+    if (prevAlpha.endsWith(nextAlpha)) return prev;
+    return `${prev} ${next}`;
+  };
+
+  // Detect whether a new interim represents the same turn being
+  // reformatted (punctuation/capitalization added) vs a genuinely
+  // new turn after a speech pause.
+  const isSameTurn = (prev: string, next: string) => {
+    const pf = firstNWords(prev, 3);
+    const nf = firstNWords(next, 3);
+    if (!pf || !nf) return false;
+    // Same first words → same turn (just reformatted or still growing)
+    if (pf === nf || nf.startsWith(pf) || pf.startsWith(nf)) return true;
+    // Growing text within same turn
+    const pa = alphaWords(prev);
+    const na = alphaWords(next);
+    if (na.startsWith(pa) || pa.startsWith(na)) return true;
+    return false;
+  };
+
+  const commitSegment = useCallback((text: string) => {
+    const merged = mergeTranscriptText(accumulatedTranscriptRef.current, text);
+    accumulatedTranscriptRef.current = merged;
+    setTranscript(merged);
+    setInterimTranscript('');
+    lastInterimRef.current = '';
+  }, []);
+
 // Clear transcript state (useful after sending a message)
   const clearTranscript = useCallback(() => {
     setTranscript('');
     setInterimTranscript('');
     accumulatedTranscriptRef.current = '';
+    lastInterimRef.current = '';
+    currentTurnOrderRef.current = -1;
   }, []);
 
   const stopRecording = useCallback(() => {
     setIsRecording(false);
     serverReadyRef.current = false;
+
+    // Commit any remaining interim text so the last phrase isn't lost
+    if (lastInterimRef.current) {
+      const merged = mergeTranscriptText(accumulatedTranscriptRef.current, lastInterimRef.current);
+      accumulatedTranscriptRef.current = merged;
+      setTranscript(merged);
+      setInterimTranscript('');
+      lastInterimRef.current = '';
+    }
     
     // Stop audio tracks
     if (streamRef.current) {
@@ -118,6 +179,11 @@ export function useSpeechToText(cloudUrl?: string) {
   const startRecording = useCallback(async () => {
     setError(null);
     serverReadyRef.current = false;
+    accumulatedTranscriptRef.current = '';
+    lastInterimRef.current = '';
+    currentTurnOrderRef.current = -1;
+    setTranscript('');
+    setInterimTranscript('');
 
     try {
       // 1. Get Auth Token
@@ -141,17 +207,32 @@ ws.onmessage = (event) => {
           if (msg.type === 'ready') {
             console.log('[useSpeechToText] Server ready');
             serverReadyRef.current = true;
-            accumulatedTranscriptRef.current = '';
           } else if (msg.type === 'transcript') {
+            const text = typeof msg.text === 'string' ? msg.text : '';
+            const turnOrder = typeof msg.turn_order === 'number' ? msg.turn_order : -1;
+
+            // When turn_order advances, the previous turn ended —
+            // commit whatever we had for it before starting the new one.
+            if (turnOrder >= 0 && turnOrder !== currentTurnOrderRef.current) {
+              if (currentTurnOrderRef.current >= 0 && lastInterimRef.current) {
+                commitSegment(lastInterimRef.current);
+              }
+              currentTurnOrderRef.current = turnOrder;
+            }
+
             if (msg.is_final) {
-              const text = msg.text || '';
-              const prev = accumulatedTranscriptRef.current;
-              const spacer = (prev && /[a-z0-9]$/i.test(prev) && /^[a-z0-9]/i.test(text)) ? ' ' : (prev ? ' ' : '');
-              accumulatedTranscriptRef.current = prev + spacer + text;
-              setTranscript(accumulatedTranscriptRef.current);
-              setInterimTranscript('');
+              commitSegment(text);
             } else {
-              setInterimTranscript(msg.text || '');
+              // Content-based fallback: if turn_order didn't fire and
+              // the new interim looks like a genuinely different phrase,
+              // commit the previous phrase before replacing it.
+              const prev = normalize(lastInterimRef.current);
+              const next = normalize(text);
+              if (prev && next && !isSameTurn(prev, next)) {
+                commitSegment(prev);
+              }
+              lastInterimRef.current = text;
+              setInterimTranscript(text);
             }
           } else if (msg.type === 'error') {
             console.error('[useSpeechToText] Server error:', msg.message);
@@ -238,7 +319,7 @@ ws.onmessage = (event) => {
       setError(err.message || 'Failed to start recording');
       stopRecording();
     }
-  }, [TARGET_URL, stopRecording]);
+  }, [TARGET_URL, stopRecording, commitSegment]);
 
   useEffect(() => {
     return () => {

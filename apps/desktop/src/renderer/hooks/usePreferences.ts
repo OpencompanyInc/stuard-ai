@@ -37,6 +37,7 @@ export interface ModelMeta {
   providerId?: string;
   logoUrl?: string;
   isReasoning: boolean;
+  supportsMultimodal?: boolean;
   contextWindow?: number;
   category: 'fast' | 'balanced' | 'smart' | 'research';
 }
@@ -56,6 +57,7 @@ export const ALL_CHAT_MODEL_IDS: string[] = [
   'google/gemini-3-flash-preview',
   'google/gemini-2.5-flash',
   'google/gemini-2.5-flash-lite',
+  'google/gemini-3.1-flash-lite-preview',
   'google/gemini-2.5-pro',
   'google/gemini-3.1-pro-preview',
   'google/gemini-3-pro-preview',
@@ -122,6 +124,7 @@ const CONTEXT_WINDOWS: Record<string, number> = {
   'google/gemini-3-flash-preview': 1000000,
   'google/gemini-2.5-pro': 2000000,
   'google/gemini-2.5-flash': 1000000,
+  'google/gemini-3.1-flash-lite-preview': 1000000,
   'openai/gpt-5': 128000,
   'openai/gpt-5-pro': 128000,
   'openai/gpt-5.1': 128000,
@@ -166,6 +169,7 @@ const MODEL_CATEGORIES: Record<string, 'fast' | 'balanced' | 'smart' | 'research
   'google/gemini-3-flash-preview': 'fast',
   'google/gemini-2.5-flash': 'fast',
   'google/gemini-2.5-flash-lite': 'fast',
+  'google/gemini-3.1-flash-lite-preview': 'fast',
   'google/gemini-2.5-pro': 'smart',
   'google/gemini-3.1-pro-preview': 'smart',
   'google/gemini-3-pro-preview': 'smart',

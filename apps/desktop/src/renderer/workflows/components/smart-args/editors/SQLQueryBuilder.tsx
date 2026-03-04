@@ -135,13 +135,13 @@ function InlineSelect({ value, onChange, options, className }: {
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1 px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white hover:bg-slate-50 hover:border-slate-300 transition-all cursor-pointer whitespace-nowrap font-medium text-slate-600"
+        className="flex items-center gap-1 px-2 py-1.5 text-xs border border-white/[0.08] rounded-lg bg-white/[0.04] hover:bg-white/[0.06] hover:border-white/[0.12] transition-all cursor-pointer whitespace-nowrap font-medium text-white/70"
       >
         {selected?.label || value}
-        <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`w-3 h-3 text-white/40 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
-        <div className="absolute z-50 left-0 mt-1 min-w-[160px] bg-white border border-slate-100 rounded-xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+        <div className="absolute z-50 left-0 mt-1 min-w-[160px] bg-white/[0.04] border border-white/[0.04] rounded-xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
           <div className="p-1 max-h-48 overflow-y-auto">
             {options.map(opt => (
               <button
@@ -149,7 +149,7 @@ function InlineSelect({ value, onChange, options, className }: {
                 type="button"
                 onClick={() => { onChange(opt.value); setOpen(false); }}
                 className={`w-full px-3 py-1.5 text-left text-xs rounded-lg flex items-center justify-between gap-2 transition-colors mb-0.5 ${
-                  opt.value === value ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-700 hover:bg-slate-50'
+                  opt.value === value ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-white/80 hover:bg-white/[0.06]'
                 }`}
               >
                 {opt.label}
@@ -256,13 +256,13 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
               className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border transition-all text-left ${
                 isActive
                   ? colorMap[a.color]
-                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300'
+                  : 'bg-white/[0.04] border-white/[0.08] text-white/70 hover:bg-white/[0.06] hover:border-white/[0.12]'
               }`}
             >
-              <div className={`shrink-0 ${isActive ? '' : 'text-slate-400'}`}>{a.icon}</div>
+              <div className={`shrink-0 ${isActive ? '' : 'text-white/40'}`}>{a.icon}</div>
               <div>
                 <div className="text-xs font-semibold leading-tight">{a.label}</div>
-                <div className={`text-[10px] leading-tight mt-0.5 ${isActive ? 'opacity-70' : 'text-slate-400'}`}>{a.description}</div>
+                <div className={`text-[10px] leading-tight mt-0.5 ${isActive ? 'opacity-70' : 'text-white/40'}`}>{a.description}</div>
               </div>
             </button>
           );
@@ -270,16 +270,16 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
       </div>
 
       {/* Main Form */}
-      <div className="space-y-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
+      <div className="space-y-3 p-3 bg-white/[0.06] rounded-xl border border-white/[0.08]">
         {/* Table Name */}
         <div className="space-y-1">
-          <label className="text-xs font-medium text-slate-600">Table name</label>
+          <label className="text-xs font-medium text-white/70">Table name</label>
           <input
             type="text"
             value={table}
             onChange={e => setTable(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
             placeholder="e.g. customers, products, orders"
-            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 bg-white font-medium"
+            className="w-full px-3 py-2 text-sm border border-white/[0.08] rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 bg-white/[0.04] font-medium"
           />
         </div>
 
@@ -287,15 +287,15 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
         {action === 'find' && (
           <>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-600">
-                Which fields to show <span className="text-slate-400 font-normal">(leave as * for all)</span>
+              <label className="text-xs font-medium text-white/70">
+                Which fields to show <span className="text-white/40 font-normal">(leave as * for all)</span>
               </label>
               <input
                 type="text"
                 value={fields}
                 onChange={e => setFields(e.target.value)}
                 placeholder="* (everything)"
-                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 bg-white"
+                className="w-full px-3 py-2 text-sm border border-white/[0.08] rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 bg-white/[0.04]"
               />
             </div>
           </>
@@ -304,18 +304,18 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
         {/* ADD / EDIT: Field-Value Pairs */}
         {(action === 'add' || action === 'update') && (
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-slate-600">
+            <label className="text-xs font-medium text-white/70">
               {action === 'add' ? 'Data to add' : 'Fields to change'}
             </label>
             <div className="space-y-1.5">
               {values.map((v, i) => (
-                <div key={i} className="flex items-center gap-1.5 p-2 bg-white rounded-lg border border-slate-200">
+                <div key={i} className="flex items-center gap-1.5 p-2 bg-white/[0.04] rounded-lg border border-white/[0.08]">
                   <input
                     type="text"
                     value={v.field}
                     onChange={e => updateValue(i, { field: e.target.value.replace(/[^a-zA-Z0-9_]/g, '') })}
                     placeholder="field name"
-                    className="flex-1 min-w-0 px-2 py-1 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 bg-slate-50 font-medium"
+                    className="flex-1 min-w-0 px-2 py-1 text-sm border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 bg-white/[0.06] font-medium"
                   />
                   <span className="text-slate-300 text-sm">=</span>
                   <input
@@ -323,7 +323,7 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
                     value={v.value}
                     onChange={e => updateValue(i, { value: e.target.value })}
                     placeholder="value"
-                    className="flex-1 min-w-0 px-2 py-1 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 bg-slate-50"
+                    className="flex-1 min-w-0 px-2 py-1 text-sm border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 bg-white/[0.06]"
                   />
                   <button
                     type="button"
@@ -338,7 +338,7 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
               <button
                 type="button"
                 onClick={addValue}
-                className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-[11px] font-medium text-slate-500 hover:text-indigo-600 bg-white hover:bg-indigo-50 border border-dashed border-slate-300 hover:border-indigo-300 rounded-lg transition-all"
+                className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-[11px] font-medium text-white/50 hover:text-indigo-600 bg-white/[0.04] hover:bg-indigo-50 border border-dashed border-white/[0.12] hover:border-indigo-300 rounded-lg transition-all"
               >
                 <Plus className="w-3 h-3" />
                 Add field
@@ -350,19 +350,19 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
         {/* Filters (for find, edit, remove) */}
         {(action === 'find' || action === 'update' || action === 'remove') && (
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-slate-600">
-              Only where... <span className="text-slate-400 font-normal">(optional — narrow down which rows)</span>
+            <label className="text-xs font-medium text-white/70">
+              Only where... <span className="text-white/40 font-normal">(optional — narrow down which rows)</span>
             </label>
             {filters.length > 0 && (
               <div className="space-y-1.5">
                 {filters.map((f, i) => (
-                  <div key={i} className="flex items-center gap-1.5 p-2 bg-white rounded-lg border border-slate-200">
+                  <div key={i} className="flex items-center gap-1.5 p-2 bg-white/[0.04] rounded-lg border border-white/[0.08]">
                     <input
                       type="text"
                       value={f.field}
                       onChange={e => updateFilter(i, { field: e.target.value.replace(/[^a-zA-Z0-9_]/g, '') })}
                       placeholder="field"
-                      className="flex-1 min-w-0 px-2 py-1 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 bg-slate-50 font-medium"
+                      className="flex-1 min-w-0 px-2 py-1 text-sm border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 bg-white/[0.06] font-medium"
                     />
                     <InlineSelect
                       value={f.op}
@@ -376,7 +376,7 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
                         value={f.value}
                         onChange={e => updateFilter(i, { value: e.target.value })}
                         placeholder="value"
-                        className="flex-1 min-w-0 px-2 py-1 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 bg-slate-50"
+                        className="flex-1 min-w-0 px-2 py-1 text-sm border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 bg-white/[0.06]"
                       />
                     )}
                     <button
@@ -393,7 +393,7 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
             <button
               type="button"
               onClick={addFilter}
-              className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-[11px] font-medium text-slate-500 hover:text-indigo-600 bg-white hover:bg-indigo-50 border border-dashed border-slate-300 hover:border-indigo-300 rounded-lg transition-all"
+              className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-[11px] font-medium text-white/50 hover:text-indigo-600 bg-white/[0.04] hover:bg-indigo-50 border border-dashed border-white/[0.12] hover:border-indigo-300 rounded-lg transition-all"
             >
               <Plus className="w-3 h-3" />
               Add condition
@@ -405,7 +405,7 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
         {action === 'find' && (
           <div className="flex gap-2">
             <div className="flex-1 space-y-1">
-              <label className="text-xs font-medium text-slate-600 flex items-center gap-1">
+              <label className="text-xs font-medium text-white/70 flex items-center gap-1">
                 <ArrowUpDown className="w-3 h-3" />
                 Sort by
               </label>
@@ -415,7 +415,7 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
                   value={sortField}
                   onChange={e => setSortField(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
                   placeholder="field name"
-                  className="flex-1 min-w-0 px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 bg-white"
+                  className="flex-1 min-w-0 px-2.5 py-1.5 text-sm border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 bg-white/[0.04]"
                 />
                 {sortField.trim() && (
                   <InlineSelect
@@ -428,13 +428,13 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
               </div>
             </div>
             <div className="w-20 space-y-1">
-              <label className="text-xs font-medium text-slate-600">Max rows</label>
+              <label className="text-xs font-medium text-white/70">Max rows</label>
               <input
                 type="number"
                 value={limit}
                 onChange={e => setLimit(Math.max(1, parseInt(e.target.value) || 100))}
                 min={1}
-                className="w-full px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 bg-white"
+                className="w-full px-2.5 py-1.5 text-sm border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 bg-white/[0.04]"
               />
             </div>
           </div>
@@ -443,3 +443,4 @@ export function SQLQueryBuilder({ value, onChange }: TableQueryEditorProps) {
     </div>
   );
 }
+

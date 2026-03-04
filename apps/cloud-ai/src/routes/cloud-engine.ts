@@ -263,13 +263,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       // Transition: stopped → starting
       await updateCloudEngineStatus(user.userId, 'starting', 'stopped');
 
-      // Restore from cold storage
-      const restoreResult = await restoreFromCloud(user.userId);
-      if (!restoreResult.success) {
-        console.warn('[cloud-engine] Restore failed, starting without restore:', restoreResult.error);
-      }
-
-      // Start VM
+      // Start VM FIRST - it needs to be running before we can restore
       const provider = getComputeProvider();
       await provider.startVM(engine.instance_name, engine.zone);
 
@@ -281,6 +275,32 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
           await updateEngineHealth(user.userId, { external_ip: externalIp, health_status: 'unknown' });
         }
       } catch { /* non-fatal */ }
+
+      // Wait for VM agent to be reachable before restoring (max 60s)
+      let vmReady = false;
+      for (let i = 0; i < 12; i++) {
+        try {
+          const pingResp = await fetch(`http://${externalIp}:7400/health`, { 
+            signal: AbortSignal.timeout(5000) 
+          });
+          if (pingResp.ok) {
+            vmReady = true;
+            break;
+          }
+        } catch { /* retry */ }
+        await new Promise(r => setTimeout(r, 5000));
+      }
+
+      // Restore from cold storage AFTER VM is running
+      let restoreResult: { success: boolean; error?: string } = { success: false, error: 'vm_not_ready' };
+      if (vmReady) {
+        restoreResult = await restoreFromCloud(user.userId);
+        if (!restoreResult.success) {
+          console.warn('[cloud-engine] Restore failed:', restoreResult.error);
+        }
+      } else {
+        console.warn('[cloud-engine] VM not ready for restore, skipping');
+      }
 
       // Transition: starting → running
       await updateCloudEngineStatus(user.userId, 'running', 'starting', {

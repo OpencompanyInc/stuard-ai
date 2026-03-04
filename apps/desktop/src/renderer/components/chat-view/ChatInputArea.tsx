@@ -1,8 +1,8 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useCallback } from 'react';
 import { clsx } from 'clsx';
 import TextareaAutosize from 'react-textarea-autosize';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { Image, File, X, Plus, Mic, Square } from 'lucide-react';
+import { Image, File, X, Plus, Mic, Square, Upload } from 'lucide-react';
 import QueuePanel from '../QueuePanel';
 import { CheckpointManager } from '../CheckpointManager';
 import { ModelSelector } from '../ModelSelector';
@@ -25,6 +25,7 @@ interface ChatInputAreaProps {
   onDrop?: (e: React.DragEvent<HTMLDivElement>) => void;
   queueDepth?: number;
   queuedMessages?: any[];
+  onCancelQueuedMessage?: (id: string) => void;
   statusText?: string;
   connectionStatus?: 'connected' | 'connecting' | 'disconnected' | 'error';
   displayModelName: string;
@@ -53,6 +54,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   onDrop,
   queueDepth = 0,
   queuedMessages = [],
+  onCancelQueuedMessage,
   statusText = 'Online',
   connectionStatus = 'connected',
   displayModelName,
@@ -65,19 +67,50 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   onReasoningLevelChange,
   fileNavRef,
 }) => {
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragCounter = useRef(0);
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current++;
+    if (dragCounter.current === 1) setIsDragOver(true);
+  }, []);
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current--;
+    if (dragCounter.current <= 0) { dragCounter.current = 0; setIsDragOver(false); }
+  }, []);
+  const handleDropWrapped = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    dragCounter.current = 0;
+    setIsDragOver(false);
+    onDrop?.(e);
+  }, [onDrop]);
+
   return (
     <div
       className={clsx(
         "rounded-[28px] p-1 flex flex-col gap-1 shrink-0 relative transition-all duration-300",
         translucentMode
           ? "bg-theme-bg backdrop-blur-xl"
-          : "bg-theme-card"
+          : "bg-theme-card",
+        isDragOver && "ring-2 ring-primary/50 ring-offset-1"
       )}
       onDragOver={(e) => { e.preventDefault(); try { e.dataTransfer.dropEffect = 'copy'; } catch { } }}
-      onDrop={onDrop}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDropWrapped}
     >
+      {/* Drop overlay */}
+      {isDragOver && (
+        <div className="absolute inset-0 z-50 rounded-[28px] bg-primary/10 border-2 border-dashed border-primary/40 flex items-center justify-center pointer-events-none animate-in fade-in duration-150">
+          <div className="flex items-center gap-2 text-primary font-semibold text-sm">
+            <Upload className="w-5 h-5" />
+            <span>Drop files, images, or PDFs here</span>
+          </div>
+        </div>
+      )}
       {queueDepth > 0 && (
-        <QueuePanel messages={queuedMessages as any} queueDepth={queueDepth} />
+        <QueuePanel messages={queuedMessages as any} queueDepth={queueDepth} onCancelMessage={onCancelQueuedMessage} />
       )}
 
       {attachments.length > 0 && (

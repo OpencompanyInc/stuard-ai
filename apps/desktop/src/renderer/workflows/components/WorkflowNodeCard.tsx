@@ -14,6 +14,8 @@ export const STREAM_CAPABLE_TOOLS = new Set([
   'capture_media',
   'capture_screen',
   'capture_system_audio',
+  'ollama_chat',
+  'ollama_generate',
 ]);
 
 /** Tools that always produce a streamId (no toggle needed) */
@@ -59,7 +61,28 @@ interface WorkflowNodeProps {
   onStreamConnect?: () => void;
 }
 
-export function WorkflowNode({ 
+const DARK_CATEGORY_COLORS: Record<string, { bg: string; border: string; text: string }> = {
+  slate: { bg: 'bg-slate-800/50', border: 'border-slate-500', text: 'text-white/40' },
+  amber: { bg: 'bg-amber-900/30', border: 'border-amber-500', text: 'text-amber-400' },
+  purple: { bg: 'bg-purple-900/30', border: 'border-purple-500', text: 'text-purple-400' },
+  blue: { bg: 'bg-blue-900/30', border: 'border-blue-500', text: 'text-blue-400' },
+  green: { bg: 'bg-green-900/30', border: 'border-green-500', text: 'text-green-400' },
+  pink: { bg: 'bg-pink-900/30', border: 'border-pink-500', text: 'text-pink-400' },
+  orange: { bg: 'bg-orange-900/30', border: 'border-orange-500', text: 'text-orange-400' },
+  yellow: { bg: 'bg-yellow-900/30', border: 'border-yellow-500', text: 'text-yellow-400' },
+  cyan: { bg: 'bg-cyan-900/30', border: 'border-cyan-500', text: 'text-cyan-400' },
+  violet: { bg: 'bg-violet-900/30', border: 'border-violet-500', text: 'text-violet-400' },
+  indigo: { bg: 'bg-indigo-900/30', border: 'border-indigo-500', text: 'text-indigo-400' },
+  emerald: { bg: 'bg-emerald-900/30', border: 'border-emerald-500', text: 'text-emerald-400' },
+  fuchsia: { bg: 'bg-fuchsia-900/30', border: 'border-fuchsia-500', text: 'text-fuchsia-400' },
+  teal: { bg: 'bg-teal-900/30', border: 'border-teal-500', text: 'text-teal-400' },
+  sky: { bg: 'bg-sky-900/30', border: 'border-sky-500', text: 'text-sky-400' },
+  rose: { bg: 'bg-rose-900/30', border: 'border-rose-500', text: 'text-rose-400' },
+  red: { bg: 'bg-red-900/30', border: 'border-red-500', text: 'text-red-400' },
+  lime: { bg: 'bg-lime-900/30', border: 'border-lime-500', text: 'text-lime-400' },
+};
+
+export function WorkflowNode({
   node, isTrigger, selected, multiSelected, connecting, reconnectTarget, executionStatus,
   hasStreamOut, hasStreamIn, connectingStreamFrom,
   onSelect, onMouseDown, onContextMenu, onConnect, onStreamConnect
@@ -68,21 +91,20 @@ export function WorkflowNode({
   const Icon = getToolIcon(tool, isTrigger);
   const colorKey = getToolColor(tool, isTrigger);
   const styles = CATEGORY_COLORS[colorKey] || CATEGORY_COLORS.slate;
+  const darkStyles = DARK_CATEGORY_COLORS[colorKey] || DARK_CATEGORY_COLORS.slate;
 
   const nodeArgs = ('args' in node ? (node as any).args : undefined) || {};
   const isStreamProducer = STREAM_ALWAYS_TOOLS.has(tool) || (STREAM_CAPABLE_TOOLS.has(tool) && (nodeArgs.stream === true || nodeArgs.mode === 'stream'));
-  
+
   const getStatusClasses = () => {
-    if (executionStatus === 'running') return 'border-emerald-500 ring-4 ring-emerald-100/50 shadow-[0_8px_30px_rgb(16,185,129,0.2)] scale-[1.02] z-10';
+    if (executionStatus === 'running') return 'border-emerald-500 ring-4 ring-emerald-500/20 shadow-[0_8px_30px_rgb(16,185,129,0.2)] scale-[1.02] z-10';
     if (executionStatus === 'completed') return 'border-emerald-500/50 shadow-md';
-    if (executionStatus === 'error') return 'border-red-500 ring-4 ring-red-100/50 shadow-[0_8px_30px_rgb(239,68,68,0.2)] z-10';
-    if (selected) return 'border-blue-500 ring-4 ring-blue-100/50 shadow-[0_8px_30px_rgb(59,130,246,0.15)] translate-y-[-2px] z-10';
-    if (multiSelected) return 'border-blue-400 ring-2 ring-blue-100/60 shadow-[0_4px_20px_rgb(59,130,246,0.12)] z-10';
-    if (connecting) return 'border-dashed border-blue-300 bg-blue-50/30 shadow-none';
-    if (reconnectTarget) return 'border-amber-400 ring-4 ring-amber-100/50 shadow-[0_8px_30px_rgb(245,158,11,0.2)] cursor-pointer z-10 animate-pulse';
-    
-    // Default state using category color
-    return `${styles.border} shadow-sm hover:shadow-[0_4px_20px_-12px_rgba(0,0,0,0.1)] hover:-translate-y-0.5`;
+    if (executionStatus === 'error') return 'border-red-500 ring-4 ring-red-500/20 shadow-[0_8px_30px_rgb(239,68,68,0.2)] z-10';
+    if (selected) return 'border-blue-500 ring-4 ring-blue-500/20 shadow-[0_8px_30px_rgb(59,130,246,0.15)] translate-y-[-2px] z-10';
+    if (multiSelected) return 'border-blue-400 ring-2 ring-blue-400/20 shadow-[0_4px_20px_rgb(59,130,246,0.12)] z-10';
+    if (connecting) return 'border-dashed border-blue-500/40 bg-blue-500/5 shadow-none';
+    if (reconnectTarget) return 'border-amber-400 ring-4 ring-amber-400/20 shadow-[0_8px_30px_rgb(245,158,11,0.2)] cursor-pointer z-10 animate-pulse';
+    return `${darkStyles.border} shadow-sm hover:shadow-md hover:-translate-y-0.5`;
   };
 
   const getStatusIcon = () => {
@@ -90,22 +112,22 @@ export function WorkflowNode({
       case 'running': return <Play className="w-3 h-3 text-white fill-current animate-pulse" />;
       case 'completed': return <Check className="w-3.5 h-3.5 text-white" />;
       case 'error': return <X className="w-3.5 h-3.5 text-white" />;
-      default: return <Icon className={`w-4 h-4 ${styles.text}`} />;
+      default: return <Icon className={`w-4 h-4 ${darkStyles.text}`} />;
     }
   };
 
   const getStatusBg = () => {
     switch (executionStatus) {
-      case 'running': return 'bg-emerald-500 shadow-emerald-200';
-      case 'completed': return 'bg-emerald-500 shadow-emerald-200';
-      case 'error': return 'bg-red-500 shadow-red-200';
-      default: return `${styles.bg} ${styles.border}`;
+      case 'running': return 'bg-emerald-500';
+      case 'completed': return 'bg-emerald-500';
+      case 'error': return 'bg-red-500';
+      default: return `${darkStyles.bg} ${darkStyles.border} border`;
     }
   };
 
   return (
     <div
-      className={`absolute w-64 rounded-2xl border bg-white transition-all duration-200 select-none flex flex-col overflow-visible group ${getStatusClasses()}`}
+      className={`absolute w-64 rounded-[20px] border-2 bg-black transition-all duration-200 select-none flex flex-col overflow-visible group ${getStatusClasses()}`}
       style={{ left: node.position.x, top: node.position.y }}
       onClick={e => { e.stopPropagation(); onSelect(e); }}
       onMouseDown={e => { e.stopPropagation(); onMouseDown(e); }}
@@ -117,55 +139,54 @@ export function WorkflowNode({
         }
       }}
     >
-      {/* Inner container — clips content to rounded corners while outer stays overflow-visible for ports */}
-      <div className="rounded-2xl overflow-hidden flex flex-col flex-1">
+      <div className="rounded-[20px] overflow-hidden flex flex-col flex-1">
         {/* Header */}
-        <div className="px-3 py-2.5 flex items-center gap-3 bg-white border-b border-slate-50">
-          <div className={`w-8 h-8 rounded-xl shrink-0 transition-colors duration-300 flex items-center justify-center border shadow-sm ${getStatusBg()}`}>
+        <div className="px-3 py-2.5 flex items-center gap-3 border-b border-white/[0.04]">
+          <div className={`w-8 h-8 rounded-xl shrink-0 transition-colors duration-300 flex items-center justify-center shadow-sm ${getStatusBg()}`}>
             {getStatusIcon()}
           </div>
-          
+
           <div className="flex-1 min-w-0">
-            <div className="text-xs font-bold text-slate-700 truncate leading-tight">
+            <div className="text-xs font-bold text-white/90 truncate leading-tight">
               {node.label || tool}
             </div>
-            <div className={`text-[10px] truncate font-medium mt-0.5 opacity-60 ${styles.text}`}>
+            <div className={`text-[10px] truncate font-medium mt-0.5 opacity-70 ${darkStyles.text}`}>
               {tool}
             </div>
           </div>
         </div>
 
         {/* Body */}
-        <div className="px-3 py-2 space-y-1.5 bg-slate-50/30 flex-1">
+        <div className="px-3 py-2 space-y-1.5 flex-1">
           {Object.keys(node.args || {}).length > 0 ? (
             <div className="space-y-1">
               {Object.entries(node.args || {}).slice(0, 3).map(([k, v]) => (
-                <div key={k} className="flex items-center gap-2 text-[10px] bg-white/50 px-2 py-1 rounded border border-slate-100">
-                  <span className="text-slate-400 font-medium truncate max-w-[70px] flex-shrink-0" title={k}>{k}</span>
-                  <span className="text-slate-600 truncate flex-1 font-mono">
+                <div key={k} className="flex items-center gap-2 text-[10px] bg-white/[0.03] px-2 py-1 rounded-lg border border-white/[0.06]">
+                  <span className="text-white/35 font-medium truncate max-w-[70px] flex-shrink-0" title={k}>{k}</span>
+                  <span className="text-white/60 truncate flex-1 font-mono">
                     {formatArgPreview(v)}
                   </span>
                 </div>
               ))}
               {Object.keys(node.args || {}).length > 3 && (
-                <div className="text-[9px] text-slate-400 font-medium pl-1 flex items-center gap-1 pt-0.5">
+                <div className="text-[9px] text-white/25 font-medium pl-1 flex items-center gap-1 pt-0.5">
                   <MoreHorizontal className="w-3 h-3" />
                   {Object.keys(node.args || {}).length - 3} more
                 </div>
               )}
             </div>
           ) : (
-            <div className="text-[10px] text-slate-400 italic px-1 py-0.5 opacity-50">No configuration</div>
+            <div className="text-[10px] text-white/20 italic px-1 py-0.5">No configuration</div>
           )}
         </div>
       </div>
 
       {/* Action Handle - Connect (control wire, right side) */}
-      <div 
-className={`absolute -right-3.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full border-4 border-white shadow-sm flex items-center justify-center cursor-crosshair transition-all duration-200 z-20
-          ${connecting 
-            ? 'bg-blue-600 scale-110' 
-            : `bg-slate-100 text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-blue-500 hover:text-white hover:scale-110 ${styles.hover}`
+      <div
+        className={`absolute -right-3.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full border-4 border-black shadow-sm flex items-center justify-center cursor-crosshair transition-all duration-200 z-20
+          ${connecting
+            ? 'bg-blue-600 scale-110'
+            : 'bg-slate-700 text-white/40 opacity-0 group-hover:opacity-100 hover:bg-blue-500 hover:text-white hover:scale-110'
           }`}
         onClick={e => { e.stopPropagation(); onConnect(); }}
         title="Connect"
@@ -175,18 +196,18 @@ className={`absolute -right-3.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bo
 
       {/* Input Handle (visual only, left side) */}
       {!isTrigger && (
-        <div className={`absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border-2 border-white shadow-sm ${styles.bg} ${styles.border}`} />
+        <div className={`absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border-2 border-black shadow-sm ${darkStyles.bg}`} />
       )}
 
-      {/* Stream Output Port (bottom center) — shown for stream producers or when a stream wire is connected out */}
+      {/* Stream Output Port */}
       {(isStreamProducer || hasStreamOut) && (
         <div
-          className={`absolute -bottom-3.5 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full border-4 border-white shadow-sm flex items-center justify-center cursor-crosshair transition-all duration-200 z-20
+          className={`absolute -bottom-3.5 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full border-4 border-black shadow-sm flex items-center justify-center cursor-crosshair transition-all duration-200 z-20
             ${connectingStreamFrom === node.id
               ? 'bg-cyan-500 scale-110'
               : hasStreamOut
-                ? 'bg-cyan-100 text-cyan-600 border-cyan-200 hover:bg-cyan-500 hover:text-white hover:scale-110'
-                : 'bg-cyan-50 text-cyan-400 opacity-0 group-hover:opacity-100 hover:bg-cyan-500 hover:text-white hover:scale-110'
+                ? 'bg-cyan-900/60 text-cyan-400 hover:bg-cyan-500 hover:text-white hover:scale-110'
+                : 'bg-cyan-900/30 text-cyan-500/50 opacity-0 group-hover:opacity-100 hover:bg-cyan-500 hover:text-white hover:scale-110'
             }`}
           onClick={e => { e.stopPropagation(); onStreamConnect?.(); }}
           title="Stream output — drag to connect stream wire"
@@ -195,22 +216,15 @@ className={`absolute -right-3.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bo
         </div>
       )}
 
-      {/* Stream Input Ports (top + bottom center) — shown when a stream wire is connected in
-          U-shape routing enters from bottom when source is above/same level, top when source is below */}
+      {/* Stream Input Ports */}
       {hasStreamIn && (
         <>
-          <div
-            className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 rounded-full border-2 border-white shadow-sm bg-cyan-200 border-cyan-300"
-            title="Stream input"
-          />
-          <div
-            className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 rounded-full border-2 border-white shadow-sm bg-cyan-200 border-cyan-300"
-            title="Stream input"
-          />
+          <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 rounded-full border-2 border-black shadow-sm bg-cyan-800 border-cyan-600" title="Stream input" />
+          <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 rounded-full border-2 border-black shadow-sm bg-cyan-800 border-cyan-600" title="Stream input" />
         </>
       )}
 
-      {/* Stream badge — small indicator when node is a stream producer */}
+      {/* Stream badge */}
       {isStreamProducer && !hasStreamOut && (
         <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-cyan-500 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-30" title="Stream producer">
           <Radio className="w-2.5 h-2.5 text-white" />
@@ -219,3 +233,4 @@ className={`absolute -right-3.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bo
     </div>
   );
 }
+

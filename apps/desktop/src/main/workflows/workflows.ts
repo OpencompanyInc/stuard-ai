@@ -277,7 +277,114 @@ function parseAccelerator(accel: string): { modifiers: Set<string>; key: string 
   return { modifiers, key };
 }
 
-export type FlowRuntime = { id: string; fsWatchers: any[]; cronJobs: any[]; hotkeys: string[]; intervals: any[]; procs: Array<ChildProcess | null>; lastOutlookCalendarStamp?: string };
+let cachedRendererToken: { token?: string; expiresAt: number } = { token: undefined, expiresAt: 0 };
+
+async function getRendererAccessToken(forceRefresh = false): Promise<string | undefined> {
+  const now = Date.now();
+  if (!forceRefresh && cachedRendererToken.token && cachedRendererToken.expiresAt > now) {
+    return cachedRendererToken.token;
+  }
+
+  try {
+    const allWindows = BrowserWindow.getAllWindows();
+    for (const bw of allWindows) {
+      if (bw.isDestroyed() || !bw.webContents) continue;
+      try {
+        const token = await bw.webContents.executeJavaScript(
+          `(async () => { try { const sb = window.__supabase || window.supabase; if (!sb?.auth) return null; const { data } = await sb.auth.getSession(); return data?.session?.access_token || null; } catch { return null; } })()`,
+          true
+        );
+        if (token && typeof token === 'string') {
+          cachedRendererToken = { token, expiresAt: now + 15_000 };
+          return token;
+        }
+      } catch { }
+    }
+  } catch { }
+
+  cachedRendererToken = { token: undefined, expiresAt: now + 3_000 };
+  return undefined;
+}
+
+function getCloudAiHttpBase(): string {
+  return String(
+    process.env.CLOUD_AI_HTTP ||
+    process.env.CLOUD_PUBLIC_URL ||
+    process.env.CLOUD_AI_URL ||
+    'http://localhost:8082'
+  ).trim().replace(/\/+$/, '');
+}
+
+async function registerGoogleNativeTrigger(
+  flowId: string,
+  triggerId: string,
+  type: 'gmail.new_email' | 'drive.new_file',
+  args: any
+) {
+  try {
+    const token = await getRendererAccessToken();
+    if (!token) {
+      logFlow(flowId, `Google trigger '${type}' not registered (missing auth session)`);
+      return { ok: false, error: 'missing_access_token' };
+    }
+    const base = getCloudAiHttpBase();
+    const resp = await net.fetch(`${base}/integrations/google/native-triggers/register`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ workflowId: flowId, triggerId, type, args: args || {} }),
+    });
+    const out: any = await resp.json().catch(() => ({}));
+    if (!resp.ok || !out?.ok) {
+      const err = String(out?.error || `http_${resp.status}`);
+      logFlow(flowId, `Google trigger '${type}' registration failed: ${err}`);
+      return { ok: false, error: err };
+    }
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'register_failed') };
+  }
+}
+
+async function unregisterGoogleNativeTrigger(
+  flowId: string,
+  triggerId: string,
+  type: 'gmail.new_email' | 'drive.new_file'
+) {
+  try {
+    const token = await getRendererAccessToken();
+    if (!token) return { ok: false, error: 'missing_access_token' };
+    const base = getCloudAiHttpBase();
+    const resp = await net.fetch(`${base}/integrations/google/native-triggers/unregister`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ workflowId: flowId, triggerId, type }),
+    });
+    const out: any = await resp.json().catch(() => ({}));
+    if (!resp.ok || !out?.ok) {
+      return { ok: false, error: String(out?.error || `http_${resp.status}`) };
+    }
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'unregister_failed') };
+  }
+}
+
+export type FlowRuntime = {
+  id: string;
+  fsWatchers: any[];
+  cronJobs: any[];
+  hotkeys: string[];
+  intervals: any[];
+  procs: Array<ChildProcess | null>;
+  googleNativeTriggers: Array<{ type: 'gmail.new_email' | 'drive.new_file'; triggerId: string }>;
+  lastOutlookCalendarStamp?: string;
+};
 
 const flowRuntimes = new Map<string, FlowRuntime>();
 // Map of flowId -> triggerId for webhook-enabled flows
@@ -649,25 +756,9 @@ export async function executeWorkflowFromTrigger(flowId: string, origin: string,
       return;
     }
 
-    // Build engine context — retrieve accessToken from any visible renderer window
+    // Build engine context
     const stuardsDir = path.join(app.getPath('userData'), 'stuards');
-    let triggerAccessToken: string | undefined;
-    try {
-      const allWindows = BrowserWindow.getAllWindows();
-      for (const bw of allWindows) {
-        if (bw.isDestroyed() || !bw.webContents) continue;
-        try {
-          const token = await bw.webContents.executeJavaScript(
-            `(async () => { try { const sb = window.__supabase || window.supabase; if (!sb?.auth) return null; const { data } = await sb.auth.getSession(); return data?.session?.access_token || null; } catch { return null; } })()`,
-            true
-          );
-          if (token && typeof token === 'string') {
-            triggerAccessToken = token;
-            break;
-          }
-        } catch {}
-      }
-    } catch {}
+    const triggerAccessToken = await getRendererAccessToken();
 
     const engineCtx: EngineContext = {
       stuardsDir,
@@ -837,7 +928,15 @@ export function startFlowRuntime(id: string) {
   const safe = safeFlowId(id);
   const model = readWorkflowModel(safe);
   const triggers = Array.isArray(model?.triggers) ? model.triggers : [];
-  const rt: FlowRuntime = { id: safe, fsWatchers: [], cronJobs: [], hotkeys: [], intervals: [], procs: [] };
+  const rt: FlowRuntime = {
+    id: safe,
+    fsWatchers: [],
+    cronJobs: [],
+    hotkeys: [],
+    intervals: [],
+    procs: [],
+    googleNativeTriggers: [],
+  };
 
   // Initialize workflow variables before starting any triggers
   // This ensures variables are available when triggers fire
@@ -1050,6 +1149,19 @@ export function startFlowRuntime(id: string) {
           console.error('[Workflows] Failed to register keystroke trigger:', e);
         }
       }
+    } else if (type === 'gmail.new_email' || type === 'drive.new_file') {
+      const nativeType: 'gmail.new_email' | 'drive.new_file' = type;
+      const tId = triggerId;
+      rt.googleNativeTriggers.push({ type: nativeType, triggerId: tId });
+      started++;
+      // Register native Google watch trigger in cloud-ai (push-based, no polling).
+      void registerGoogleNativeTrigger(safe, tId, nativeType, args).then((result) => {
+        if (!result?.ok) {
+          logFlow(safe, `Google native trigger '${nativeType}' registration failed: ${result?.error || 'unknown_error'}`);
+        } else {
+          logFlow(safe, `Google native trigger '${nativeType}' registered`);
+        }
+      });
     } else if (type === 'outlook.calendar.poll') {
       const sec = Math.max(10, Number(args?.intervalSec || 60));
       const tId = triggerId; // Capture for closure
@@ -1107,6 +1219,12 @@ export function stopFlowRuntime(id: string) {
     stopKeystrokeHook();
   } catch { }
   try { for (const t of rt.intervals) { try { clearInterval(t as any); } catch { } } } catch { }
+  try {
+    for (const g of rt.googleNativeTriggers || []) {
+      if (!g?.triggerId) continue;
+      void unregisterGoogleNativeTrigger(safe, g.triggerId, g.type);
+    }
+  } catch { }
   try { for (const p of rt.procs) { try { if (p && !p.killed) { if (process.platform === 'win32') { try { process.kill((p as any).pid); } catch { } } else { try { p.kill('SIGTERM'); } catch { } } } } catch { } } } catch { }
   webhookEnabledFlows.delete(safe);
   cloudWebhookEnabledFlows.delete(safe);

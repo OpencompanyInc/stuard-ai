@@ -1,5 +1,6 @@
 import { WebSocket } from 'ws';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { sanitizeToolEvent, redactSensitiveData } from '../utils/sanitize';
 
 const AGENT_WS = process.env.AGENT_WS || 'ws://127.0.0.1:8765/ws';
 const AGENT_WS_MAX_PAYLOAD = Number(process.env.AGENT_WS_MAX_PAYLOAD || 268435456);
@@ -94,12 +95,7 @@ export function handleClientToolMessage(ws: WebSocket, msg: any) {
     // Skip writing to stream for silent tool calls
     if (pend.silent) return;
     try {
-      const safe: any = { ...msg };
-      if (safe?.result && typeof safe.result === 'object') {
-        const r = { ...(safe.result as any) };
-        if (typeof r.data === 'string') { r.bytes = r.data.length; delete r.data; }
-        safe.result = r;
-      }
+      const safe: any = sanitizeToolEvent(msg);
       (async () => {
         try { await __queueWriterWrite(pend.writer, { type: 'tool_event', tool: pend.tool, status: msg.status, ...safe }); } catch {}
       })();
@@ -130,6 +126,7 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
       return args;
     }
   })();
+  const eventArgs = redactSensitiveData(sendArgs);
   // In-band bridge if we are inside an active client WS context
   const useBridge = !forceDirect && store?.ws && store.ws.readyState === WebSocket.OPEN;
   if (useBridge) {
@@ -149,7 +146,7 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
       if (!silent) {
         try {
           (async () => {
-            try { await __queueWriterWrite(writer, { type: 'tool_event', tool, status: 'called', id, args: sendArgs }); } catch {}
+            try { await __queueWriterWrite(writer, { type: 'tool_event', tool, status: 'called', id, args: eventArgs }); } catch {}
           })();
         } catch {}
       }
@@ -192,15 +189,7 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
 
         if (mtype === 'tool_event' && msg.id === id) {
           try {
-            const safeMsg: any = { ...msg };
-            if (safeMsg?.result && typeof safeMsg.result === 'object') {
-              const r = { ...(safeMsg.result as any) };
-              if (typeof r.data === 'string') {
-                r.bytes = r.data.length;
-                delete r.data;
-              }
-              safeMsg.result = r;
-            }
+            const safeMsg: any = sanitizeToolEvent(msg);
             await __queueWriterWrite(writer, { type: 'tool_event', tool, status: msg.status, ...safeMsg });
           } catch {}
         }

@@ -162,8 +162,8 @@ function BoardApp() {
                   h3: (props: any) => <h3 className="text-[14px] font-medium mb-1.5 tracking-[0.01em] text-white" {...props} />,
                   code: ({inline, className, children, ...props}: any) => (
                     inline
-                      ? <code className="bg-white/10 rounded-md px-1 font-mono text-[12.5px] text-white" {...props}>{children}</code>
-                      : <pre className="bg-white/5 rounded-lg p-2 overflow-auto custom-scrollbar border border-white/10"><code className={className ? className + ' font-mono text-[12.5px] text-white' : 'font-mono text-[12.5px] text-white'} {...props}>{children}</code></pre>
+                      ? <code className="bg-slate-100 text-slate-800 px-[6px] py-[2px] rounded-md text-[85%] font-mono font-medium border border-slate-200 shadow-sm align-middle" {...props}>{children}</code>
+                      : <pre className="block p-3 rounded-lg bg-white border border-slate-200 shadow-sm overflow-x-auto font-mono whitespace-pre tab-4 leading-[1.7] my-2"><code className={className ? className + ' font-mono text-[12px] text-slate-800' : 'font-mono text-[12px] text-slate-800'} {...props}>{children}</code></pre>
                   ),
                 }}
               >

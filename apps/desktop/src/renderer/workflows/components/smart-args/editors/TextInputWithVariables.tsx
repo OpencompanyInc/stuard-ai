@@ -197,7 +197,7 @@ export function TextInputWithVariables({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const baseClass = "w-full px-4 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 transition-all bg-white shadow-sm placeholder:text-slate-300";
+  const baseClass = "w-full px-4 py-2.5 text-sm border border-white/[0.08] rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all bg-black/20 text-white/80 shadow-sm placeholder:text-white/30";
 
   return (
     <div ref={containerRef} className="relative group">
@@ -237,8 +237,8 @@ export function TextInputWithVariables({
 
       {/* Suggestions dropdown */}
       {showSuggestions && (
-        <div className="absolute z-50 w-full mt-2 bg-white border border-slate-100 rounded-xl shadow-xl max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150">
-          <div className="px-3 py-2 bg-slate-50 border-b border-slate-100 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 sticky top-0">
+        <div className="absolute z-50 w-full mt-2 bg-black/80 backdrop-blur-2xl border border-white/[0.08] rounded-xl shadow-xl max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150">
+          <div className="px-3 py-2 bg-white/[0.04] border-b border-white/[0.08] text-[10px] font-bold text-white/50 uppercase tracking-wider flex items-center gap-1.5 sticky top-0">
             <Variable className="w-3 h-3" />
             Pick a Variable
           </div>
@@ -247,20 +247,20 @@ export function TextInputWithVariables({
               <button
                 key={s.text}
                 onClick={() => insertSuggestion(s.text)}
-                className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 transition-all rounded-lg mb-0.5 ${i === selectedIndex ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-50'
+                className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 transition-all rounded-lg mb-0.5 ${i === selectedIndex ? 'bg-indigo-500/20 text-indigo-400 shadow-sm' : 'text-white/60 hover:bg-white/[0.06]'
                   }`}
               >
-                <code className={`px-1.5 py-0.5 rounded text-xs font-mono border ${i === selectedIndex ? 'bg-white border-indigo-100 text-indigo-600' : 'bg-slate-100 border-slate-200 text-slate-500'
+                <code className={`px-1.5 py-0.5 rounded text-xs font-mono border ${i === selectedIndex ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-300' : 'bg-white/[0.04] border-white/[0.08] text-white/50'
                   }`}>
                   {s.label}
                 </code>
                 {s.description && (
-                  <span className="text-xs opacity-60 truncate ml-auto">{s.description}</span>
+                  <span className="text-xs opacity-60 truncate ml-auto text-white/40">{s.description}</span>
                 )}
               </button>
             ))}
             {suggestions.length === 0 && (
-              <div className="px-3 py-4 text-sm text-slate-400 text-center">No variables found</div>
+              <div className="px-3 py-4 text-sm text-white/40 text-center">No variables found</div>
             )}
           </div>
         </div>

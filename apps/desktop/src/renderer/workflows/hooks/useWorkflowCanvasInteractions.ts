@@ -31,6 +31,7 @@ export function useWorkflowCanvasInteractions({
   const [multiDragOffsets, setMultiDragOffsets] = useState<Map<string, { ox: number; oy: number }> | null>(null);
   const [alignmentGuides, setAlignmentGuides] = useState<AlignmentGuide[]>([]);
   const isMarqueeRef = useRef(false);
+  const justFinishedMarqueeRef = useRef(false);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -228,6 +229,7 @@ export function useWorkflowCanvasInteractions({
   const handleCanvasMouseUp = useCallback(() => {
     if (isMarqueeRef.current) {
       isMarqueeRef.current = false;
+      justFinishedMarqueeRef.current = true;
       setSelectionBox(null);
       return;
     }
@@ -308,6 +310,12 @@ export function useWorkflowCanvasInteractions({
   }, [model]);
 
   const clearCanvasSelection = useCallback(() => {
+    // Skip clearing if a marquee drag just finished — the click event
+    // fires right after mouseUp and would wipe out the selection
+    if (justFinishedMarqueeRef.current) {
+      justFinishedMarqueeRef.current = false;
+      return;
+    }
     setSelectedNodeId("");
     setSelectedNodeIds(new Set());
     setConnectingFrom("");

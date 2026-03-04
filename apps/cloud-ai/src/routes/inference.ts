@@ -33,6 +33,18 @@ async function validateAuth(req: IncomingMessage): Promise<{ userId: string | nu
   return { userId: null, isAuthed: false };
 }
 
+async function validateStrictBearerAuth(req: IncomingMessage): Promise<boolean> {
+  const auth = req.headers.authorization || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  if (!token) return false;
+  try {
+    const user = await verifyToken(token);
+    return !!user?.userId;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Gets CORS origin header based on request and configuration.
  */
@@ -81,6 +93,118 @@ function writeJson(res: ServerResponse, status: number, obj: any, corsOrigin: st
   } catch {
     try { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{"ok":false,"error":"internal"}'); } catch {}
   }
+}
+
+function normalizeOpenAIContentToText(content: any): string {
+  if (typeof content === 'string') return content;
+  if (content == null) return '';
+
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const item of content) {
+      if (typeof item === 'string') {
+        parts.push(item);
+        continue;
+      }
+      if (!item || typeof item !== 'object') continue;
+      const t = String((item as any).type || '').toLowerCase();
+      if ((t === 'text' || t === 'input_text' || t === 'output_text') && typeof (item as any).text === 'string') {
+        parts.push((item as any).text);
+        continue;
+      }
+      if (typeof (item as any).text === 'string') {
+        parts.push((item as any).text);
+        continue;
+      }
+      if (typeof (item as any).input === 'string') {
+        parts.push((item as any).input);
+        continue;
+      }
+      try {
+        parts.push(JSON.stringify(item));
+      } catch {}
+    }
+    return parts.filter(Boolean).join('\n');
+  }
+
+  if (typeof content === 'object') {
+    if (typeof (content as any).text === 'string') return (content as any).text;
+    if (typeof (content as any).input === 'string') return (content as any).input;
+    try {
+      return JSON.stringify(content);
+    } catch {
+      return String(content);
+    }
+  }
+
+  return String(content);
+}
+
+function shouldNormalizeJsonOutput(messages: Array<{ role: string; content: string }>): boolean {
+  const tail = messages.slice(-3).map((m) => m.content.toLowerCase()).join('\n');
+  return (
+    tail.includes('valid json') ||
+    tail.includes('json object') ||
+    tail.includes('output only the json') ||
+    tail.includes('respond with json') ||
+    tail.includes('schema')
+  );
+}
+
+function tryNormalizeJsonLikeText(text: string): string {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return trimmed;
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = (fenced?.[1] || trimmed).trim();
+
+  try {
+    const parsed = JSON.parse(candidate);
+    return typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
+  } catch {}
+
+  const firstObj = candidate.indexOf('{');
+  const lastObj = candidate.lastIndexOf('}');
+  if (firstObj >= 0 && lastObj > firstObj) {
+    const objSlice = candidate.slice(firstObj, lastObj + 1);
+    try {
+      const parsed = JSON.parse(objSlice);
+      return JSON.stringify(parsed);
+    } catch {}
+  }
+
+  return candidate;
+}
+
+function buildProxyModelCandidates(requestedModelId: string): string[] {
+  const raw = String(requestedModelId || '').trim();
+  const modelId = raw.includes('/') ? raw : `google/${raw || 'gemini-3-flash-preview'}`;
+  const lower = modelId.toLowerCase();
+  const out: string[] = [modelId];
+
+  if (lower.startsWith('google/')) {
+    out.push('google/gemini-2.5-flash', 'openai/gpt-4.1-mini', 'openai/gpt-4o-mini');
+  } else if (lower.startsWith('openai/')) {
+    out.push('openai/gpt-4.1-mini', 'openai/gpt-4o-mini', 'google/gemini-2.5-flash');
+  } else {
+    out.push('openai/gpt-4.1-mini', 'openai/gpt-4o-mini', 'google/gemini-2.5-flash');
+  }
+
+  const seen = new Set<string>();
+  return out.filter((id) => {
+    const key = id.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function summarizeModelError(e: any): string {
+  const statusCode = Number((e as any)?.statusCode || (e as any)?.cause?.statusCode || 0);
+  const msg = String((e as any)?.message || '').slice(0, 220);
+  const reason = String((e as any)?.reason || '').slice(0, 80);
+  if (statusCode) return `status=${statusCode}${reason ? ` reason=${reason}` : ''}${msg ? ` msg=${msg}` : ''}`;
+  return `${reason || 'error'}${msg ? ` msg=${msg}` : ''}`;
 }
 
 function pickModelProvider() {
@@ -245,7 +369,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         // Use Gemini for multimodal analysis (default fast; allow explicit 3.1 pro selection)
         const model = requestedModel === 'gemini-3.1-pro-preview' || requestedModel === '3.1'
           ? google('gemini-3.1-pro-preview')
-          : google('gemini-2.5-flash');
+          : google('gemini-3.1-flash-lite-preview');
         
         // Build content parts in the correct format for AI SDK
         // Must use 'mimeType' and keep data as base64 string
@@ -585,6 +709,108 @@ Filename: ${filename}`;
     } catch (e: any) {
       console.error('[inference] ai/summarize-file error:', e);
       writeJson(res, 500, { ok: false, error: e?.message || 'summarize_failed' }, corsOrigin);
+      return true;
+    }
+  }
+
+  // ─── OpenAI-compatible /v1/chat/completions proxy ─────────────────────────
+  // Used by the browser-use Python agent to call LLMs through our cloud
+  // without leaking API keys to user machines.
+  if (req.method === 'POST' && path === '/v1/chat/completions') {
+    try {
+      // Strict auth for cloud LLM proxy.
+      // We do not allow development-mode bypass on this endpoint.
+      const isAuthed = await validateStrictBearerAuth(req);
+      if (!isAuthed) {
+        writeJson(res, 401, { error: { message: 'unauthorized', type: 'auth_error' } }, corsOrigin);
+        return true;
+      }
+
+      const body = await readJsonBody(req);
+      const messages = Array.isArray(body?.messages) ? body.messages : [];
+      const modelRaw = String(body?.model || 'gemini-3-flash-preview').trim();
+      const temperature = typeof body?.temperature === 'number' ? body.temperature : 0.3;
+
+      if (messages.length === 0) {
+        writeJson(res, 400, { error: { message: 'messages is required', type: 'invalid_request_error' } }, corsOrigin);
+        return true;
+      }
+
+      const { buildProviderModel } = await import('../utils/models');
+      const modelCandidates = buildProxyModelCandidates(modelRaw);
+
+      const normalizedMessages: Array<{ role: string; content: string }> = messages.map((m: any) => ({
+        role: String(m?.role || 'user'),
+        content: normalizeOpenAIContentToText(m?.content),
+      }));
+      const nonEmptyMessages = normalizedMessages.filter((m) => m.content.trim().length > 0);
+      if (nonEmptyMessages.length === 0) {
+        writeJson(res, 400, { error: { message: 'messages content is empty', type: 'invalid_request_error' } }, corsOrigin);
+        return true;
+      }
+      const totalChars = nonEmptyMessages.reduce((sum, m) => sum + m.content.length, 0);
+      if (totalChars > 400_000) {
+        writeJson(res, 400, { error: { message: 'messages too large', type: 'invalid_request_error' } }, corsOrigin);
+        return true;
+      }
+
+      const proxyMessages = nonEmptyMessages.map((m) => {
+        const role = m.role === 'system' || m.role === 'assistant' || m.role === 'tool' ? m.role : 'user';
+        return { role, content: m.content } as any;
+      });
+      const hasSupportedModel = modelCandidates.some((id) => !!buildProviderModel(id));
+      if (!hasSupportedModel) {
+        writeJson(res, 400, { error: { message: `unsupported model: ${modelCandidates[0]}`, type: 'invalid_request_error' } }, corsOrigin);
+        return true;
+      }
+
+      let result: any = null;
+      let usedModelId = '';
+      let lastError: any = null;
+      for (const candidateId of modelCandidates) {
+        const model = buildProviderModel(candidateId);
+        if (!model) continue;
+        try {
+          result = await generateText({
+            model: model as any,
+            messages: proxyMessages,
+            temperature,
+          });
+          usedModelId = candidateId;
+          break;
+        } catch (e: any) {
+          lastError = e;
+          console.warn(`[inference] chat proxy model failed (${candidateId}): ${summarizeModelError(e)}`);
+        }
+      }
+      if (!result) throw lastError || new Error('no_available_model');
+
+      const wantsJson = shouldNormalizeJsonOutput(nonEmptyMessages);
+      const rawText = result.text?.trim() || '';
+      const text = wantsJson ? tryNormalizeJsonLikeText(rawText) : rawText;
+      const usage = result.usage || {};
+
+      // Return OpenAI-compatible format
+      writeJson(res, 200, {
+        id: `chatcmpl-${Date.now()}`,
+        object: 'chat.completion',
+        created: Math.floor(Date.now() / 1000),
+        model: usedModelId || modelCandidates[0],
+        choices: [{
+          index: 0,
+          message: { role: 'assistant', content: text },
+          finish_reason: 'stop',
+        }],
+        usage: {
+          prompt_tokens: (usage as any)?.promptTokens || 0,
+          completion_tokens: (usage as any)?.completionTokens || 0,
+          total_tokens: ((usage as any)?.promptTokens || 0) + ((usage as any)?.completionTokens || 0),
+        },
+      }, corsOrigin);
+      return true;
+    } catch (e: any) {
+      console.error(`[inference] v1/chat/completions error: ${summarizeModelError(e)}`);
+      writeJson(res, 500, { error: { message: 'internal_error', type: 'server_error' } }, corsOrigin);
       return true;
     }
   }

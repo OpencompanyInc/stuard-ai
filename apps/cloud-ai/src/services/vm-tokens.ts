@@ -64,6 +64,56 @@ export function mintVMToken(secret: string, userId: string, instanceName: string
  * @param secret  The per-VM HMAC secret.
  * Returns null if the token is invalid or expired.
  */
+/**
+ * Verify an incoming request from a VM agent or VM engine.
+ *
+ * Security flow:
+ *   1. VM mints token using its local VM_TOKEN_SECRET
+ *   2. VM sends: Authorization: Bearer <token> + X-VM-User-Id: <userId>
+ *   3. Cloud-ai extracts userId from header
+ *   4. Cloud-ai looks up per-VM secret from cloud_engines DB
+ *   5. Cloud-ai verifies token HMAC against that secret
+ *   6. If valid → userId is trusted (server resolved, not client-provided)
+ *
+ * This means: NO user tokens (Supabase JWTs) ever exist on the VM.
+ * A compromised VM only has its own HMAC secret, scoped to that single VM.
+ *
+ * @returns { userId } if valid, null if authentication fails.
+ */
+export async function verifyVMAuthFromRequest(
+  authHeader: string | undefined,
+  vmUserIdHeader: string | undefined,
+): Promise<{ userId: string } | null> {
+  if (!authHeader || !vmUserIdHeader) return null;
+
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  const claimedUserId = vmUserIdHeader.trim();
+  if (!token || !claimedUserId) return null;
+
+  try {
+    // Lazy import to avoid circular dependency at module load time
+    const { resolveVMSecret } = await import('./vm-command');
+    const secret = await resolveVMSecret(claimedUserId);
+
+    // If we only got the dev fallback secret and there's no real VM, reject
+    if (!secret || secret === 'dev-vm-token-secret') {
+      // Allow in dev mode only
+      if (!process.env.DEV_VM_URL) return null;
+    }
+
+    const payload = verifyVMToken(token, secret);
+    if (!payload) return null;
+
+    // Extra check: the userId in the token payload must match the claimed userId
+    // (prevents a VM from claiming to be a different user)
+    if (payload.userId !== claimedUserId) return null;
+
+    return { userId: claimedUserId };
+  } catch {
+    return null;
+  }
+}
+
 export function verifyVMToken(token: string, secret: string): VMTokenPayload | null {
   try {
     const [encodedPayload, signature] = token.split('.');

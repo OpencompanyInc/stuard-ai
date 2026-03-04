@@ -89,36 +89,36 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
   }, [searchQuery, paletteCategories]);
 
   return (
-    <div className="flex flex-col h-full bg-[#fdfdfd] border-r border-slate-100" data-onboarding="node-palette">
+    <div className="flex flex-col h-full bg-transparent border-r border-white/[0.08]" data-onboarding="node-palette">
       {/* Header */}
-      <div className="h-14 px-4 py-2 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
-        <div className="flex items-center gap-2.5 text-sm font-bold text-slate-800">
-          <div className="p-1.5 bg-indigo-50 rounded-lg text-indigo-600">
+      <div className="h-14 px-4 py-2 border-b border-white/[0.08] flex items-center justify-between shrink-0 bg-transparent">
+        <div className="flex items-center gap-2.5 text-sm font-bold text-white">
+          <div className="p-1.5 bg-indigo-500/20 rounded-lg text-indigo-400">
             <Box className="w-4 h-4" />
           </div>
           <span>Toolbox</span>
         </div>
-        <div className="flex items-center gap-2 text-xs font-medium text-slate-500 bg-slate-50 px-2 py-1 rounded-md border border-slate-100">
+        <div className="flex items-center gap-2 text-xs font-medium text-white/50 bg-white/[0.04] px-2 py-1 rounded-md border border-white/[0.06]">
           <span>{filteredCategories.reduce((acc, cat) => acc + cat.items.length, 0)}</span>
-          <span className="text-slate-400">tools</span>
+          <span className="text-white/40">tools</span>
         </div>
       </div>
 
       {/* Search */}
       <div className="relative group px-4 py-3">
-<input
+        <input
           ref={searchInputRef}
           type="text"
           placeholder="Search tools..."
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
-          className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 hover:bg-white focus:bg-white border border-slate-200 focus:border-indigo-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-100 transition-all placeholder:text-slate-400 text-slate-700 font-medium"
+          className="w-full pl-9 pr-3 py-2 text-xs bg-white/[0.04] hover:bg-white/[0.06] focus:bg-white/[0.08] border border-white/[0.08] focus:border-indigo-500/50 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all placeholder:text-white/40 text-white/90 font-medium"
         />
-        <Search className="absolute left-7 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 w-3.5 h-3.5 transition-colors" />
+        <Search className="absolute left-7 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-indigo-400 w-3.5 h-3.5 transition-colors" />
         {searchQuery && (
           <button
             onClick={() => setSearchQuery('')}
-            className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-200 transition-all"
+            className="absolute right-6 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70 p-0.5 rounded-full hover:bg-white/[0.08] transition-all"
           >
             <X className="w-3 h-3" />
           </button>
@@ -127,14 +127,14 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
 
       {/* Locked Banner */}
       {disabled && (
-        <div className="mx-3 mb-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+        <div className="mx-3 mb-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center text-amber-600 shrink-0">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
               <Lock className="w-4 h-4" />
             </div>
             <div>
-              <div className="text-xs font-semibold text-amber-900">Locked Workflow</div>
-              <div className="text-[10px] text-amber-700/70 leading-relaxed mt-0.5">
+              <div className="text-xs font-semibold text-amber-500">Locked Workflow</div>
+              <div className="text-[10px] text-amber-400/70 leading-relaxed mt-0.5">
                 This workflow can't be modified. Wait for updates from the publisher.
               </div>
             </div>
@@ -153,27 +153,27 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
             <div key={cat.id} className="rounded-xl overflow-hidden transition-all duration-300">
               <button
                 onClick={() => toggleCategory(cat.id)}
-                className={`w-full px-3 py-2.5 flex items-center justify-between text-left transition-all select-none group border border-transparent ${isExpanded ? 'bg-white shadow-sm border-slate-100 mb-1 rounded-xl' : 'hover:bg-slate-50 rounded-xl'
+                className={`w-full px-3 py-2.5 flex items-center justify-between text-left transition-all select-none group border border-transparent ${isExpanded ? 'bg-white/[0.04] shadow-sm border-white/[0.06] mb-1 rounded-xl' : 'hover:bg-white/[0.02] rounded-xl'
                   }`}
               >
                 <div className="flex items-center gap-3">
-                  <div className={`p-1.5 rounded-lg transition-colors ${isExpanded ? `${styles.bg} ${styles.text}` : 'bg-slate-100 text-slate-400 group-hover:text-slate-600'
+                  <div className={`p-1.5 rounded-lg transition-colors ${isExpanded ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/40 group-hover:text-white/70'
                     }`}>
                     <Icon className="w-4 h-4" />
                   </div>
-                  <span className={`text-xs font-bold transition-colors ${isExpanded ? 'text-slate-800' : 'text-slate-600 group-hover:text-slate-800'
+                  <span className={`text-xs font-bold transition-colors ${isExpanded ? 'text-white' : 'text-white/70 group-hover:text-white'
                     }`}>
                     {cat.label}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   {!isExpanded && (
-                    <span className="text-[10px] font-medium text-slate-300 bg-slate-50 px-1.5 py-0.5 rounded-md min-w-[1.5em] text-center">
+                    <span className="text-[10px] font-medium text-white/40 bg-white/[0.04] px-1.5 py-0.5 rounded-md min-w-[1.5em] text-center">
                       {cat.items.length}
                     </span>
                   )}
                   <ChevronRight
-                    className={`w-3.5 h-3.5 text-slate-300 group-hover:text-slate-500 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}
+                    className={`w-3.5 h-3.5 text-white/30 group-hover:text-white/60 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}
                   />
                 </div>
               </button>
@@ -189,24 +189,24 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
                         key={`${item.t}-${i}`}
                         draggable={!disabled}
                         onDragStart={e => !disabled && onDragStart(e, dragData)}
-                        className={`flex items-center gap-3 px-3 py-2 bg-white border border-slate-100 rounded-lg transition-all group/item relative overflow-hidden ${disabled
+                        className={`flex items-center gap-3 px-3 py-2 bg-transparent border border-white/[0.04] rounded-lg transition-all group/item relative overflow-hidden ${disabled
                           ? 'opacity-50 cursor-not-allowed'
-                          : `cursor-grab hover:border-${cat.color}-200 hover:shadow-sm hover:translate-x-1 active:cursor-grabbing`
+                          : `cursor-grab hover:bg-white/[0.04] hover:border-white/[0.1] hover:shadow-sm hover:translate-x-1 active:cursor-grabbing`
                           }`}
                       >
                         {/* Hover accent strip */}
-                        <div className={`absolute left-0 top-0 bottom-0 w-1 ${styles.bg} opacity-0 ${!disabled && 'group-hover/item:opacity-100'} transition-opacity`} />
+                        <div className={`absolute left-0 top-0 bottom-0 w-1 bg-white/20 opacity-0 ${!disabled && 'group-hover/item:opacity-100'} transition-opacity`} />
 
-                        <div className={`p-1.5 rounded-md text-slate-400 ${!disabled && `group-hover/item:${styles.text} group-hover/item:${styles.bg}`} transition-colors`}>
+                        <div className={`p-1.5 rounded-md text-white/40 ${!disabled && `group-hover/item:text-white group-hover/item:bg-white/10`} transition-colors`}>
                           <ItemIcon className="w-3.5 h-3.5" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className={`text-xs font-semibold truncate ${disabled ? 'text-slate-500' : 'text-slate-700 group-hover/item:text-slate-900'}`}>
+                          <div className={`text-xs font-semibold truncate ${disabled ? 'text-white/40' : 'text-white/70 group-hover/item:text-white/90'}`}>
                             {item.label}
                           </div>
                         </div>
                         {!disabled && (
-                          <GripVertical className="w-3 h-3 text-slate-200 group-hover/item:text-slate-400 opacity-0 group-hover/item:opacity-100 transition-all" />
+                          <GripVertical className="w-3 h-3 text-white/20 group-hover/item:text-white/50 opacity-0 group-hover/item:opacity-100 transition-all" />
                         )}
                       </div>
                     );
@@ -219,14 +219,14 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
 
         {filteredCategories.length === 0 && (
           <div className="py-12 text-center">
-            <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-3 text-slate-300 border border-slate-100">
+            <div className="w-12 h-12 bg-white/[0.02] rounded-2xl flex items-center justify-center mx-auto mb-3 text-white/30 border border-white/[0.04]">
               <Search className="w-5 h-5" />
             </div>
-            <p className="text-xs font-bold text-slate-600">No tools found</p>
-            <p className="text-[10px] text-slate-400 mt-1">Try searching for something else</p>
+            <p className="text-xs font-bold text-white/60">No tools found</p>
+            <p className="text-[10px] text-white/40 mt-1">Try searching for something else</p>
           </div>
         )}
-</div>
+      </div>
     </div>
   );
 });

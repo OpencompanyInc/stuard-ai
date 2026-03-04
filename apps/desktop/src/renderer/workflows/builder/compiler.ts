@@ -216,6 +216,10 @@ function generateBuilderCode(model: DesignerModel): string {
       lines.push(`  .onWebhook()`);
     } else if (type === 'webhook.cloud') {
       lines.push(`  .onWebhook(true)`);
+    } else if (type === 'gmail.new_email') {
+      lines.push(`  .onGmailNewEmail(${JSON.stringify(trigger.args || {})})`);
+    } else if (type === 'drive.new_file') {
+      lines.push(`  .onDriveNewFile(${JSON.stringify(trigger.args || {})})`);
     } else if (type === 'fs.watch' && trigger.args?.path) {
       lines.push(`  .onFileChange("${trigger.args.path}"${trigger.args.pattern ? `, "${trigger.args.pattern}"` : ''})`);
     } else {
@@ -262,6 +266,10 @@ function generateSimpleFormat(model: DesignerModel): string {
       lines.push(`trigger: schedule "${trigger.args.cron}"`);
     } else if (trigger.type === 'webhook.local') {
       lines.push(`trigger: webhook`);
+    } else if (trigger.type === 'gmail.new_email') {
+      lines.push(`trigger: gmail.new_email`);
+    } else if (trigger.type === 'drive.new_file') {
+      lines.push(`trigger: drive.new_file`);
     } else if (trigger.type === 'manual') {
       lines.push(`trigger: manual`);
     } else {

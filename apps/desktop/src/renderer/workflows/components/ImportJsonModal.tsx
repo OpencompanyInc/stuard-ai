@@ -30,10 +30,10 @@ export function ImportJsonModal({
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-2xl w-[600px] max-w-[90vw] p-5">
+      <div className="bg-white/[0.04] rounded-xl shadow-2xl w-[600px] max-w-[90vw] p-5">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold text-slate-900">Import Workflow</h3>
-          <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded"><X className="w-4 h-4" /></button>
+          <h3 className="font-semibold text-white">Import Workflow</h3>
+          <button onClick={onClose} className="p-1 hover:bg-white/[0.1] rounded"><X className="w-4 h-4" /></button>
         </div>
         
         {/* File Picker */}
@@ -47,11 +47,11 @@ export function ImportJsonModal({
           />
           <button 
             onClick={() => document.getElementById('workflow-file-input')?.click()}
-            className="w-full px-4 py-6 border-2 border-dashed border-slate-300 rounded-lg text-slate-500 hover:border-violet-400 hover:text-violet-600 hover:bg-violet-50 transition-colors flex flex-col items-center gap-2"
+            className="w-full px-4 py-6 border-2 border-dashed border-white/[0.12] rounded-lg text-white/50 hover:border-violet-400 hover:text-violet-600 hover:bg-violet-50 transition-colors flex flex-col items-center gap-2"
           >
             <Folder className="w-6 h-6" />
             <span className="font-medium">Choose .json or .stuard file</span>
-            <span className="text-xs text-slate-400">or paste JSON below</span>
+            <span className="text-xs text-white/40">or paste JSON below</span>
           </button>
         </div>
         
@@ -69,7 +69,7 @@ export function ImportJsonModal({
           </button>
         </div>
         
-        <div className="h-64 mb-3 border border-slate-200 rounded-xl overflow-hidden">
+        <div className="h-64 mb-3 border border-white/[0.08] rounded-xl overflow-hidden">
           <RichCodeEditor
             value={importJson}
             onChange={setImportJson}
@@ -81,10 +81,11 @@ export function ImportJsonModal({
 
         {importErr && <div className="text-red-600 text-sm mb-3 px-1">{importErr}</div>}
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">Cancel</button>
+          <button onClick={onClose} className="px-4 py-2 text-sm text-white/70 hover:bg-white/[0.1] rounded-lg">Cancel</button>
           <button onClick={onImport} className="px-4 py-2 text-sm bg-violet-600 text-white rounded-lg hover:bg-violet-700 shadow-sm">Import</button>
         </div>
       </div>
     </div>
   );
 }
+

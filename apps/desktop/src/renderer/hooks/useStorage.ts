@@ -123,9 +123,13 @@ export function useStorage() {
           lastSyncAt: data.lastSyncAt,
         });
         setError(null);
+      } else {
+        console.warn('[useStorage] fetchInfo failed:', data.error);
+        setError(data.error || 'Could not load storage info');
       }
-    } catch {
-      setError('Could not load storage info');
+    } catch (e: any) {
+      console.error('[useStorage] fetchInfo exception:', e?.message);
+      setError('Could not connect to storage service');
     }
   }, []);
 
@@ -306,17 +310,25 @@ export function useStorage() {
   // ── Sync ─────────────────────────────────────────────────────────────────
   const syncToCloud = useCallback(async () => {
     setSyncing(true);
+    setError(null);
     try {
+      console.log('[useStorage] Starting sync to cloud...');
       const data = await cloudFetch('/v1/storage/sync', {
         method: 'POST',
         body: JSON.stringify({ direction: 'upload' }),
       });
       if (data.ok) {
+        console.log('[useStorage] Sync to cloud successful');
         await fetchSyncStatus();
         await fetchInfo();
+      } else {
+        console.warn('[useStorage] Sync to cloud failed:', data.error);
+        setError(data.error || 'Sync to cloud failed');
       }
       return data;
     } catch (e: any) {
+      console.error('[useStorage] Sync to cloud exception:', e?.message);
+      setError('Could not sync to cloud');
       return { ok: false, error: e?.message };
     } finally {
       setSyncing(false);
@@ -325,21 +337,30 @@ export function useStorage() {
 
   const syncFromCloud = useCallback(async () => {
     setSyncing(true);
+    setError(null);
     try {
+      console.log('[useStorage] Starting sync from cloud...');
       const data = await cloudFetch('/v1/storage/sync', {
         method: 'POST',
         body: JSON.stringify({ direction: 'download' }),
       });
       if (data.ok) {
+        console.log('[useStorage] Sync from cloud successful');
         await fetchSyncStatus();
+        await fetchInfo();
+      } else {
+        console.warn('[useStorage] Sync from cloud failed:', data.error);
+        setError(data.error || 'Sync from cloud failed');
       }
       return data;
     } catch (e: any) {
+      console.error('[useStorage] Sync from cloud exception:', e?.message);
+      setError('Could not sync from cloud');
       return { ok: false, error: e?.message };
     } finally {
       setSyncing(false);
     }
-  }, [fetchSyncStatus]);
+  }, [fetchSyncStatus, fetchInfo]);
 
   // ── Clear Upload Queue ───────────────────────────────────────────────────
   const clearUploadQueue = useCallback(() => {
@@ -349,13 +370,50 @@ export function useStorage() {
   // ── Initial Load ─────────────────────────────────────────────────────────
   const refresh = useCallback(async () => {
     setLoading(true);
-    await Promise.all([fetchPlans(), fetchInfo(), fetchQuota(), fetchSyncStatus()]);
+    setError(null);
+    try {
+      await Promise.all([fetchPlans(), fetchInfo(), fetchQuota(), fetchSyncStatus()]);
+    } catch (e: any) {
+      console.error('[useStorage] refresh failed:', e?.message);
+      setError('Could not load storage data');
+    }
     setLoading(false);
   }, [fetchPlans, fetchInfo, fetchQuota, fetchSyncStatus]);
 
+  // Initial load
   useEffect(() => {
     refresh();
   }, []);
+
+  // Periodic refresh every 60 seconds when tab is visible
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval> | null = null;
+    
+    const startRefresh = () => {
+      interval = setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          fetchInfo();
+          fetchSyncStatus();
+        }
+      }, 60_000);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        // Refresh immediately when tab becomes visible
+        fetchInfo();
+        fetchSyncStatus();
+      }
+    };
+
+    startRefresh();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      if (interval) clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [fetchInfo, fetchSyncStatus]);
 
   return {
     // State

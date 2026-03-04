@@ -69,42 +69,52 @@ export function useWorkflowOperations({ refresh }: UseWorkflowOperationsProps) {
     const safe = `flow_${Math.random().toString(36).slice(2, 10)}`;
     const skeleton: DesignerModel = {
       id: safe,
-      name: "New Flow",
+      name: "Hello World Starter",
       version: "1",
       triggers: [{ id: `trig_0`, type: 'manual', label: 'Manual Trigger', args: {}, position: { x: 60, y: 50 } }],
       nodes: [
         {
-          id: `step_notify`,
+          id: `step_welcome`,
           type: 'local.tool',
           tool: 'send_notification',
-          label: 'Say Hello',
-          args: { title: 'Stuard AI', body: 'Your automation is running!', severity: 'info' },
+          label: 'Show Welcome Notification',
+          args: { title: 'Hello from Stuard', body: 'Your first workflow is running.', severity: 'success' },
           fallbackTo: '',
           position: { x: 60, y: 190 }
         },
         {
-          id: `step_screenshot`,
+          id: `step_now`,
           type: 'local.tool',
-          tool: 'take_screenshot',
-          label: 'Take Screenshot',
-          args: {},
+          tool: 'get_datetime',
+          label: 'Get Current Time',
+          args: { format: 'YYYY-MM-DD HH:mm:ss' },
           fallbackTo: '',
           position: { x: 60, y: 330 }
         },
         {
-          id: `step_done`,
+          id: `step_clipboard`,
           type: 'local.tool',
-          tool: 'log',
-          label: 'Done',
-          args: { message: 'Screenshot saved to: {{step_screenshot.filePath}}' },
+          tool: 'set_clipboard_content',
+          label: 'Copy Hello Message',
+          args: { text: 'Hello World from Stuard! Ran at {{step_now.formatted}}' },
           fallbackTo: '',
           position: { x: 60, y: 470 }
+        },
+        {
+          id: `step_log`,
+          type: 'local.tool',
+          tool: 'log',
+          label: 'Log Completion',
+          args: { message: 'Done! Message copied to clipboard at {{step_now.formatted}}' },
+          fallbackTo: '',
+          position: { x: 60, y: 610 }
         }
       ],
       wires: [
-        { from: 'trig_0', to: 'step_notify' },
-        { from: 'step_notify', to: 'step_screenshot' },
-        { from: 'step_screenshot', to: 'step_done' }
+        { from: 'trig_0', to: 'step_welcome' },
+        { from: 'step_welcome', to: 'step_now' },
+        { from: 'step_now', to: 'step_clipboard' },
+        { from: 'step_clipboard', to: 'step_log' }
       ],
     };
     try {

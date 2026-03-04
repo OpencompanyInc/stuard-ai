@@ -51,7 +51,7 @@ export interface ToolSchema {
 // TOOL DEFINITIONS (synced from cloud-ai/src/tools/definitions.ts)
 // ============================================================================
 
-type ToolCategory = 'core' | 'system' | 'input' | 'ui' | 'vision' | 'data' | 'integrations' | 'flow' | 'utils';
+type ToolCategory = 'core' | 'system' | 'input' | 'ui' | 'vision' | 'data' | 'integrations' | 'flow' | 'utils' | 'ollama';
 
 interface ToolDefinition {
   id: string;
@@ -178,6 +178,14 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'mediapipe_holistic', category: 'vision', kind: 'local', description: 'Detect pose + hands + face in one pass using MediaPipe Holistic. Accepts file path or base64 data URL.', argsTemplate: { imagePath: '', imageData: '', outputFormat: 'base64', outputPath: '', drawLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 }, outputSchema: { ok: 'boolean', pose: 'any', leftHand: 'any', rightHand: 'any', face: 'any', outputPath: 'string', outputDataUrl: 'string' } },
   { id: 'mediapipe_process_video', category: 'vision', kind: 'local', description: 'Process video frames with MediaPipe (pose/hands/face/holistic)', argsTemplate: { videoPath: '', outputPath: '', task: 'pose', drawLandmarks: true, maxFrames: 0, sampleEveryN: 1, minDetectionConfidence: 0.5 }, outputSchema: { ok: 'boolean', frameCount: 'number', processedFrames: 'number', framesWithDetection: 'number', outputPath: 'string', frameLandmarks: 'any[]' } },
 
+  // --- OLLAMA (Local AI) ---
+  { id: 'ollama_status', category: 'ollama', kind: 'local', description: 'Check if Ollama is running locally and list available models', argsTemplate: {}, outputSchema: { ok: 'boolean', available: 'boolean', host: 'string', modelCount: 'number', models: 'any[]', runningCount: 'number', running: 'any[]', error: 'string' } },
+  { id: 'ollama_chat', category: 'ollama', kind: 'local', description: 'Multi-turn chat with a local LLM via Ollama. Supports system prompts, temperature, JSON mode, streaming, thinking (reasoning models), and tool calling.', argsTemplate: { model: 'llama3.2', messages: [{ role: 'user', content: '' }], system: '', stream: false, think: false, tools: [], temperature: 0.7, num_predict: 2048, json_mode: false }, outputSchema: { ok: 'boolean', model: 'string', message: 'object', text: 'string', thinking: 'string', toolCalls: 'any[]', streamed: 'boolean', streamId: 'string', totalDuration: 'number', evalCount: 'number', error: 'string' } },
+  { id: 'ollama_generate', category: 'ollama', kind: 'local', description: 'Single-prompt text completion with a local LLM. Simpler than chat for one-shot tasks. Supports thinking mode for reasoning models.', argsTemplate: { model: 'llama3.2', prompt: '', system: '', stream: false, think: false, temperature: 0.7, num_predict: 2048, json_mode: false }, outputSchema: { ok: 'boolean', model: 'string', text: 'string', thinking: 'string', streamed: 'boolean', streamId: 'string', totalDuration: 'number', evalCount: 'number', error: 'string' } },
+  { id: 'ollama_vision', category: 'ollama', kind: 'local', description: 'Analyze images using a local multimodal model (e.g. llava). Reads local files — no cloud upload.', argsTemplate: { model: 'llava', prompt: 'Describe this image in detail.', imagePath: '', temperature: 0.7, num_predict: 2048 }, outputSchema: { ok: 'boolean', model: 'string', text: 'string', totalDuration: 'number', imageCount: 'number', error: 'string' } },
+  { id: 'ollama_embeddings', category: 'ollama', kind: 'local', description: 'Generate vector embeddings using a local model for semantic search and RAG.', argsTemplate: { model: 'nomic-embed-text', input: '' }, outputSchema: { ok: 'boolean', model: 'string', embeddings: 'any[]', dimensions: 'number', count: 'number', error: 'string' } },
+  { id: 'ollama_models', category: 'ollama', kind: 'local', description: 'Manage local Ollama models: list, pull, delete, show details, see running, or copy.', argsTemplate: { action: 'list', model: '' }, outputSchema: { ok: 'boolean', action: 'string', models: 'any[]', count: 'number', model: 'string', status: 'string', deleted: 'boolean', error: 'string' } },
+
   { id: 'text_to_speech', category: 'vision', kind: 'cloud', description: 'Convert text to speech audio using ElevenLabs TTS with language support', argsTemplate: { text: '', voice_id: 'JBFqnCBsd6RMkjVDRZzb', model_id: 'eleven_multilingual_v2', language_code: '', speed: 1.0, format: 'mp3', save: true, play: false, outputPath: '' }, outputSchema: { ok: 'boolean', filePath: 'string', format: 'string', voice_id: 'string', textLength: 'number', played: 'boolean', error: 'string' } },
   { id: 'list_tts_voices', category: 'vision', kind: 'cloud', description: 'List all available ElevenLabs text-to-speech voices', argsTemplate: {}, outputSchema: { ok: 'boolean', voices: 'any[]' } },
   { id: 'get_tts_models', category: 'vision', kind: 'cloud', description: 'List available ElevenLabs TTS models', argsTemplate: {}, outputSchema: { ok: 'boolean', models: 'any[]' } },
@@ -223,6 +231,10 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'docs_create_document', category: 'integrations', kind: 'cloud', description: 'Create a new Google Doc', argsTemplate: { title: '' }, outputSchema: { document: 'object' } },
   { id: 'docs_write_text', category: 'integrations', kind: 'cloud', description: 'Write text to a Google Doc', argsTemplate: { documentId: '', text: '' }, outputSchema: { result: 'object' } },
   { id: 'tasks_list', category: 'integrations', kind: 'cloud', description: 'List Google Tasks', argsTemplate: { tasklist: '', maxResults: 10 }, outputSchema: { items: 'any[]', count: 'number' } },
+  // Telnyx (SMS / Voice — verified number only)
+  { id: 'telnyx_send_sms', category: 'integrations', kind: 'cloud', description: 'Send an SMS to the user\'s verified phone number', argsTemplate: { message: '' }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
+  { id: 'telnyx_make_call', category: 'integrations', kind: 'cloud', description: 'Call the user\'s verified phone and speak a message via TTS', argsTemplate: { message: '', voice: 'female' }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', error: 'string' } },
+  { id: 'telnyx_phone_status', category: 'integrations', kind: 'cloud', description: 'Check if the user has a verified phone number', argsTemplate: {}, outputSchema: { ok: 'boolean', verified: 'boolean', phone: 'string', error: 'string' } },
   // Discord
   { id: 'discord_list_guilds', category: 'integrations', kind: 'cloud', description: 'List Discord servers the user is in', argsTemplate: {}, outputSchema: { guilds: 'any[]', count: 'number' } },
   { id: 'discord_list_channels', category: 'integrations', kind: 'cloud', description: 'List text channels in a Discord server', argsTemplate: { guild_id: '' }, outputSchema: { channels: 'any[]', count: 'number' } },
@@ -309,6 +321,8 @@ const TRIGGER_DEFINITIONS = [
   { type: 'function', description: 'Function trigger - allows this workflow to be called from other workflows with input parameters', argsTemplate: {}, inputParams: [] },
   { type: 'webhook.local', description: 'Local webhook trigger', argsTemplate: {} },
   { type: 'webhook.cloud', description: 'Cloud webhook trigger', argsTemplate: {} },
+  { type: 'gmail.new_email', description: 'Native Gmail push trigger for new emails (Google watch/PubSub)', argsTemplate: { profile: 'default', labelIds: ['INBOX'] } },
+  { type: 'drive.new_file', description: 'Native Google Drive push trigger for newly uploaded files', argsTemplate: { profile: 'default', onlyNew: true, includeFolders: false } },
   { type: 'schedule.cron', description: 'Cron schedule trigger', argsTemplate: { cron: '* * * * *' } },
   { type: 'hotkey', description: 'Global hotkey trigger. Enable hold to fire on both press and release.', argsTemplate: { accelerator: 'Ctrl+Alt+K', passthrough: false, hold: false } },
   { type: 'hotkey.release', description: 'Fires only when the key is released. Pair with a hotkey trigger for hold-to-record patterns.', argsTemplate: { accelerator: 'Ctrl+Alt+K' } },
@@ -452,6 +466,50 @@ const STREAM_KIND_OPTIONS: ArgOption[] = [
   { value: 'bytes', label: 'Bytes', description: 'Raw byte data' },
   { value: 'json', label: 'JSON', description: 'Structured JSON chunks' },
   { value: 'text', label: 'Text', description: 'Plain text chunks' },
+];
+
+// Ollama model options - common models users can select
+const OLLAMA_CHAT_MODEL_OPTIONS: ArgOption[] = [
+  { value: 'llama3.2', label: 'Llama 3.2 (3B)', description: 'Meta Llama 3.2 — fast, good quality', group: 'Chat' },
+  { value: 'llama3.2:1b', label: 'Llama 3.2 (1B)', description: 'Smallest Llama — very fast', group: 'Chat' },
+  { value: 'llama3.3', label: 'Llama 3.3 (70B)', description: 'Large Llama — highest quality', group: 'Chat' },
+  { value: 'mistral', label: 'Mistral (7B)', description: 'Mistral AI — fast and capable', group: 'Chat' },
+  { value: 'mixtral', label: 'Mixtral (8x7B)', description: 'Mixture of experts — powerful', group: 'Chat' },
+  { value: 'gemma2', label: 'Gemma 2 (9B)', description: 'Google Gemma 2 — balanced', group: 'Chat' },
+  { value: 'gemma2:2b', label: 'Gemma 2 (2B)', description: 'Google Gemma 2 — lightweight', group: 'Chat' },
+  { value: 'qwen2.5', label: 'Qwen 2.5 (7B)', description: 'Alibaba Qwen — multilingual', group: 'Chat' },
+  { value: 'phi3', label: 'Phi-3 (3.8B)', description: 'Microsoft Phi-3 — compact powerhouse', group: 'Chat' },
+  { value: 'deepseek-r1', label: 'DeepSeek R1', description: 'Reasoning model — shows thinking process', group: 'Reasoning' },
+  { value: 'deepseek-r1:7b', label: 'DeepSeek R1 (7B)', description: 'Smaller reasoning model', group: 'Reasoning' },
+  { value: 'deepseek-r1:1.5b', label: 'DeepSeek R1 (1.5B)', description: 'Tiny reasoning model — fast', group: 'Reasoning' },
+  { value: 'qwq', label: 'QwQ (32B)', description: 'Alibaba reasoning model', group: 'Reasoning' },
+  { value: 'deepseek-coder-v2', label: 'DeepSeek Coder V2', description: 'Coding specialist', group: 'Code' },
+  { value: 'codellama', label: 'Code Llama (7B)', description: 'Meta coding model', group: 'Code' },
+  { value: 'starcoder2', label: 'StarCoder 2 (3B)', description: 'BigCode coding model', group: 'Code' },
+];
+
+const OLLAMA_VISION_MODEL_OPTIONS: ArgOption[] = [
+  { value: 'llava', label: 'LLaVA (7B)', description: 'Vision-language model — image understanding', group: 'Vision' },
+  { value: 'llava:13b', label: 'LLaVA (13B)', description: 'Larger LLaVA — better quality', group: 'Vision' },
+  { value: 'llava-llama3', label: 'LLaVA-Llama3', description: 'LLaVA with Llama 3 backend', group: 'Vision' },
+  { value: 'bakllava', label: 'BakLLaVA', description: 'Improved LLaVA variant', group: 'Vision' },
+  { value: 'moondream', label: 'Moondream (1.8B)', description: 'Tiny but capable vision model', group: 'Vision' },
+];
+
+const OLLAMA_EMBEDDING_MODEL_OPTIONS: ArgOption[] = [
+  { value: 'nomic-embed-text', label: 'Nomic Embed Text', description: 'High quality text embeddings (768d)', group: 'Embedding' },
+  { value: 'mxbai-embed-large', label: 'MixedBread Large', description: 'Large embedding model (1024d)', group: 'Embedding' },
+  { value: 'all-minilm', label: 'All-MiniLM (384d)', description: 'Fast, compact embeddings', group: 'Embedding' },
+  { value: 'snowflake-arctic-embed', label: 'Snowflake Arctic', description: 'Snowflake embedding model', group: 'Embedding' },
+];
+
+const OLLAMA_MODEL_ACTION_OPTIONS: ArgOption[] = [
+  { value: 'list', label: 'List Models', description: 'Show all downloaded models' },
+  { value: 'pull', label: 'Pull / Download', description: 'Download a model from Ollama library' },
+  { value: 'delete', label: 'Delete', description: 'Remove a model from disk' },
+  { value: 'show', label: 'Show Details', description: 'Get model info and parameters' },
+  { value: 'running', label: 'List Running', description: 'Show currently loaded models' },
+  { value: 'copy', label: 'Copy / Rename', description: 'Duplicate a model with a new name' },
 ];
 
 // Note: STREAM_API_METHOD_OPTIONS and STREAM_TRANSFORM_TYPE_OPTIONS removed
@@ -925,6 +983,70 @@ if (TOOL_SCHEMAS['fs.watch']) {
     },
   };
   TOOL_SCHEMAS['fs.watch'].outputs = ['filePath', 'eventType', 'stats'];
+}
+
+// Gmail native push trigger (no polling)
+if (TOOL_SCHEMAS['gmail.new_email']) {
+  TOOL_SCHEMAS['gmail.new_email'].args = {
+    profile: {
+      type: 'string',
+      label: 'Google Profile',
+      description: 'Connected Google profile label to use (default, work, personal, etc.)',
+      default: 'default',
+      placeholder: 'default',
+    },
+    labelIds: {
+      type: 'array',
+      label: 'Label IDs',
+      description: 'Gmail labels to watch. Default is INBOX.',
+      default: ['INBOX'],
+      itemType: 'string',
+      itemOptions: [
+        { value: 'INBOX', label: 'Inbox', description: 'Primary inbox messages' },
+        { value: 'IMPORTANT', label: 'Important', description: 'Important messages' },
+        { value: 'UNREAD', label: 'Unread', description: 'Unread messages' },
+      ],
+    },
+    labelFilterBehavior: {
+      type: 'select',
+      label: 'Label Filter Mode',
+      description: 'How label filters are interpreted by Gmail watch',
+      default: 'INCLUDE',
+      options: [
+        { value: 'INCLUDE', label: 'Include', description: 'Only trigger when labels match' },
+        { value: 'EXCLUDE', label: 'Exclude', description: 'Trigger for everything except matching labels' },
+      ],
+      advanced: true,
+    },
+  };
+  TOOL_SCHEMAS['gmail.new_email'].outputs = ['messageId', 'message', 'historyId', 'emailAddress', 'profile'];
+}
+
+// Google Drive native push trigger (no polling)
+if (TOOL_SCHEMAS['drive.new_file']) {
+  TOOL_SCHEMAS['drive.new_file'].args = {
+    profile: {
+      type: 'string',
+      label: 'Google Profile',
+      description: 'Connected Google profile label to use (default, work, personal, etc.)',
+      default: 'default',
+      placeholder: 'default',
+    },
+    onlyNew: {
+      type: 'boolean',
+      label: 'Only New Uploads',
+      description: 'When on, trigger only for newly created files (not edits)',
+      default: true,
+    },
+    includeFolders: {
+      type: 'boolean',
+      label: 'Include Folders',
+      description: 'Also trigger when new folders are created in Drive',
+      default: false,
+      advanced: true,
+    },
+  };
+  TOOL_SCHEMAS['drive.new_file'].outputs = ['fileId', 'file', 'changeTime', 'profile'];
 }
 
 // Gmail Send Message - Enhanced email composition
@@ -1424,10 +1546,13 @@ if (TOOL_SCHEMAS['analyze_media']) {
     placeholder: 'Summarize this media',
   };
   TOOL_SCHEMAS['analyze_media'].args.sources = {
-    type: 'json',
+    type: 'array',
     label: 'Media Sources',
-    description: 'Array of media files: [{"path": "C:/video.mp4"}, {"path": "C:/audio.wav"}]',
+    description: 'Add the media files to analyze. You can use template variables like {{step_N.filePath}} to reference outputs from previous steps.',
+    itemType: 'object' as ArgType,
+    required: true,
   };
+  TOOL_SCHEMAS['analyze_media'].outputs = ['ok', 'summary'];
 }
 
 // ============================================================================
@@ -2017,6 +2142,247 @@ for (const toolId of ['capture_media', 'capture_screen']) {
       description: 'Stream video frames as base64 data URLs. Connect a stream wire to the next step. Access each frame via {{stepId.chunk}} or {{stepId.text}}. Example: set imageData to {{capture.chunk}} in mediapipe, or set value to {{capture.chunk}} in set_variable.',
     };
   }
+}
+
+// ============================================================================
+// OLLAMA TOOLS — User-friendly local AI model integration
+// ============================================================================
+
+// ollama_status — no args needed, just check status
+if (TOOL_SCHEMAS['ollama_status']) {
+  TOOL_SCHEMAS['ollama_status'].label = 'Check Ollama Status';
+  TOOL_SCHEMAS['ollama_status'].description = 'Check if Ollama is running locally and list available models. No configuration needed.';
+}
+
+// ollama_chat — multi-turn conversation
+if (TOOL_SCHEMAS['ollama_chat']) {
+  TOOL_SCHEMAS['ollama_chat'].label = 'Ollama Chat';
+  TOOL_SCHEMAS['ollama_chat'].args = {
+    model: {
+      type: 'select',
+      label: 'Model',
+      description: 'Which local model to use. Pick from common models or type a custom model name.',
+      options: OLLAMA_CHAT_MODEL_OPTIONS,
+      default: 'llama3.2',
+      required: true,
+      allowFreeform: true,
+      placeholder: 'e.g. llama3.2, mistral, gemma2',
+    },
+    messages: {
+      type: 'array',
+      label: 'Messages',
+      description: 'Conversation history. Each message has a role (user/assistant/system) and content.',
+      itemType: 'object',
+      required: true,
+    },
+    system: {
+      type: 'string',
+      label: 'System Prompt',
+      description: 'Instructions that guide the AI\'s behavior (e.g. "You are a helpful coding assistant").',
+      placeholder: 'You are a helpful assistant...',
+    },
+    stream: {
+      type: 'boolean',
+      label: 'Stream Response',
+      description: 'Stream tokens as they generate. Connect a stream wire to process chunks in real-time.',
+      default: false,
+    },
+    think: {
+      type: 'boolean',
+      label: 'Enable Thinking',
+      description: 'For reasoning models (deepseek-r1, qwq). Shows the model\'s reasoning process separately from the answer.',
+      default: false,
+    },
+    tools: {
+      type: 'array',
+      label: 'Tools (Function Calling)',
+      description: 'Define functions the model can call. Works with: qwen3, llama3.2, mistral, mixtral. Format: [{type:"function", function:{name, description, parameters}}]',
+      itemType: 'object',
+      advanced: true,
+    },
+    json_mode: {
+      type: 'boolean',
+      label: 'JSON Mode',
+      description: 'Force the model to output valid JSON. Useful for structured data extraction.',
+      default: false,
+    },
+    temperature: {
+      type: 'number',
+      label: 'Temperature',
+      description: 'Creativity level (0.0 = deterministic, 1.0 = creative, 2.0 = wild). Default: 0.7',
+      default: 0.7,
+      advanced: true,
+    },
+    num_predict: {
+      type: 'number',
+      label: 'Max Tokens',
+      description: 'Maximum tokens to generate. -1 for unlimited, or set a limit like 2048.',
+      default: 2048,
+      advanced: true,
+    },
+  };
+}
+
+// ollama_generate — single-prompt completion
+if (TOOL_SCHEMAS['ollama_generate']) {
+  TOOL_SCHEMAS['ollama_generate'].label = 'Ollama Generate';
+  TOOL_SCHEMAS['ollama_generate'].args = {
+    model: {
+      type: 'select',
+      label: 'Model',
+      description: 'Which local model to use. Pick from common models or type a custom model name.',
+      options: OLLAMA_CHAT_MODEL_OPTIONS,
+      default: 'llama3.2',
+      required: true,
+      allowFreeform: true,
+      placeholder: 'e.g. llama3.2, mistral, gemma2',
+    },
+    prompt: {
+      type: 'string',
+      label: 'Prompt',
+      description: 'What you want the AI to generate or complete.',
+      required: true,
+      placeholder: 'Write a short story about...',
+    },
+    system: {
+      type: 'string',
+      label: 'System Prompt',
+      description: 'Instructions that guide the AI\'s behavior.',
+      placeholder: 'You are a creative writer...',
+    },
+    stream: {
+      type: 'boolean',
+      label: 'Stream Response',
+      description: 'Stream tokens as they generate. Connect a stream wire to process chunks in real-time.',
+      default: false,
+    },
+    think: {
+      type: 'boolean',
+      label: 'Enable Thinking',
+      description: 'For reasoning models (deepseek-r1, qwq). Shows the model\'s reasoning process separately from the answer.',
+      default: false,
+    },
+    json_mode: {
+      type: 'boolean',
+      label: 'JSON Mode',
+      description: 'Force the model to output valid JSON.',
+      default: false,
+    },
+    temperature: {
+      type: 'number',
+      label: 'Temperature',
+      description: 'Creativity level (0.0 = focused, 1.0 = creative). Default: 0.7',
+      default: 0.7,
+      advanced: true,
+    },
+    num_predict: {
+      type: 'number',
+      label: 'Max Tokens',
+      description: 'Maximum tokens to generate. -1 for unlimited.',
+      default: 2048,
+      advanced: true,
+    },
+  };
+}
+
+// ollama_vision — image analysis
+if (TOOL_SCHEMAS['ollama_vision']) {
+  TOOL_SCHEMAS['ollama_vision'].label = 'Ollama Vision';
+  TOOL_SCHEMAS['ollama_vision'].args = {
+    model: {
+      type: 'select',
+      label: 'Vision Model',
+      description: 'Which multimodal model to use for image understanding.',
+      options: OLLAMA_VISION_MODEL_OPTIONS,
+      default: 'llava',
+      required: true,
+      allowFreeform: true,
+      placeholder: 'e.g. llava, moondream',
+    },
+    imagePath: {
+      type: 'path',
+      label: 'Image File',
+      description: 'Path to the image file to analyze. Stays local — no cloud upload.',
+      required: true,
+      placeholder: 'C:/photos/image.jpg',
+    },
+    prompt: {
+      type: 'string',
+      label: 'Question / Prompt',
+      description: 'What to ask about the image.',
+      default: 'Describe this image in detail.',
+      placeholder: 'What objects are in this image?',
+    },
+    temperature: {
+      type: 'number',
+      label: 'Temperature',
+      description: 'Creativity level for the response.',
+      default: 0.7,
+      advanced: true,
+    },
+    num_predict: {
+      type: 'number',
+      label: 'Max Tokens',
+      description: 'Maximum tokens in the response.',
+      default: 2048,
+      advanced: true,
+    },
+  };
+}
+
+// ollama_embeddings — vector embeddings
+if (TOOL_SCHEMAS['ollama_embeddings']) {
+  TOOL_SCHEMAS['ollama_embeddings'].label = 'Ollama Embeddings';
+  TOOL_SCHEMAS['ollama_embeddings'].args = {
+    model: {
+      type: 'select',
+      label: 'Embedding Model',
+      description: 'Which model to use for generating embeddings.',
+      options: OLLAMA_EMBEDDING_MODEL_OPTIONS,
+      default: 'nomic-embed-text',
+      required: true,
+      allowFreeform: true,
+      placeholder: 'e.g. nomic-embed-text, all-minilm',
+    },
+    input: {
+      type: 'string',
+      label: 'Text to Embed',
+      description: 'The text to convert into a vector embedding for similarity search or RAG.',
+      required: true,
+      placeholder: 'Enter text to generate embeddings for...',
+    },
+  };
+}
+
+// ollama_models — model management
+if (TOOL_SCHEMAS['ollama_models']) {
+  TOOL_SCHEMAS['ollama_models'].label = 'Manage Ollama Models';
+  TOOL_SCHEMAS['ollama_models'].args = {
+    action: {
+      type: 'select',
+      label: 'Action',
+      description: 'What to do with models.',
+      options: OLLAMA_MODEL_ACTION_OPTIONS,
+      default: 'list',
+      required: true,
+    },
+    model: {
+      type: 'select',
+      label: 'Model Name',
+      description: 'Which model to pull, delete, show, or copy. Not needed for "list" or "running".',
+      options: [...OLLAMA_CHAT_MODEL_OPTIONS, ...OLLAMA_VISION_MODEL_OPTIONS, ...OLLAMA_EMBEDDING_MODEL_OPTIONS],
+      allowFreeform: true,
+      placeholder: 'e.g. llama3.2, llava, nomic-embed-text',
+      showWhen: { field: 'action', values: ['pull', 'delete', 'show', 'copy'] },
+    },
+    destination: {
+      type: 'string',
+      label: 'New Name (for Copy)',
+      description: 'The new name when copying a model.',
+      placeholder: 'my-custom-model',
+      showWhen: { field: 'action', value: 'copy' },
+    },
+  };
 }
 
 export { TOOL_SCHEMAS };

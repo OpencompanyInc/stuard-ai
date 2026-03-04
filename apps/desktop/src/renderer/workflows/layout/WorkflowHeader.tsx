@@ -1,5 +1,6 @@
-import { BookOpen, ChevronDown, ChevronLeft, Code, FolderOpen, Layout, Lock, Play, Redo2, Rocket, Save, Settings, Sparkles, Square, Undo2, Zap } from "lucide-react";
+import { BookOpen, ChevronDown, Home, Code, FolderOpen, Layout, Lock, Play, Redo2, Rocket, Save, Settings, Sparkles, Square, Undo2, Zap } from "lucide-react";
 import type { DesignerModel, DesignerTrigger } from "../types";
+import type { RightPanel } from "./types";
 
 interface DeployStatus {
   deployed: boolean;
@@ -18,10 +19,10 @@ interface WorkflowHeaderProps {
   showRunMenu: boolean;
   setShowRunMenu: (open: boolean) => void;
   deployStatus: DeployStatus | null;
-  viewMode: "ai" | "manual";
-  rightPanel: "none" | "inspector" | "code" | "ai" | "docs";
+  viewMode: "ai" | "manual" | "none";
+  rightPanel: RightPanel;
   showWorkspace: boolean;
-  onSetViewMode: (mode: "ai" | "manual") => void;
+  onSetViewMode: (mode: "ai" | "manual" | "none") => void;
   onToggleInspector: () => void;
   onToggleDocs: () => void;
   onToggleCode: () => void;
@@ -63,113 +64,87 @@ export function WorkflowHeader({
   onClose,
 }: WorkflowHeaderProps) {
   return (
-    <div className="drag h-11 bg-white border-b border-slate-200 flex items-center px-3 shrink-0 justify-between z-30 relative">
-      <div className="flex items-center gap-4 min-w-0">
-        <div className="flex items-center gap-2 select-none shrink-0">
-          <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-sky-600 rounded-md flex items-center justify-center text-white">
-            <Zap className="w-3 h-3 fill-current" />
-          </div>
-          <span className="text-[13px] font-bold text-slate-800 tracking-tight font-stuard">Studio</span>
-        </div>
-
-        <div className="h-4 w-px bg-slate-200" />
-
-        {model && (
-          <div className="flex items-center gap-2 no-drag min-w-0">
-            {onClose && (
+    <div className="absolute top-6 left-6 right-6 flex items-center justify-between z-30 pointer-events-none">
+      <div className="flex items-center gap-4 min-w-0 pointer-events-auto">
+        <div className="flex items-center gap-2 bg-white/[0.06] backdrop-blur-2xl border border-white/[0.1] rounded-full shadow-lg px-2 py-1.5">
+          <div className="flex items-center gap-2 select-none shrink-0 pl-1 pr-2">
+            {onClose ? (
               <button
                 onClick={onClose}
-                className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
-                title="Back to workflows"
+                className="flex items-center justify-center p-1 rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+                title="Home"
               >
-                <ChevronLeft className="w-4 h-4" />
+                <Home className="w-4 h-4" />
               </button>
-            )}
-            <span className="text-[13px] font-medium text-slate-700 truncate">{model.name || selectedId}</span>
-            {dirty && (
-              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" title="Unsaved changes" />
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className="flex items-center gap-2 no-drag shrink-0">
-        {model ? (
-          <>
-            {model.locked && (
-              <div className="flex items-center gap-1 px-2 py-1 bg-amber-50 border border-amber-200 rounded-md text-amber-700 text-[11px] font-medium">
-                <Lock className="w-3 h-3" /> Locked
+            ) : (
+              <div className="flex items-center justify-center p-1 text-white/60">
+                <Home className="w-4 h-4" />
               </div>
             )}
+            <div className="h-4 w-px bg-white/10 mx-1" />
+            <span className="text-[13px] font-bold text-white/90 tracking-tight">{model?.name || selectedId || 'Workflow'}</span>
+          </div>
 
-            {/* Mode toggle */}
-            <div className="flex bg-slate-100 p-0.5 rounded-lg">
-              <button
-                onClick={() => !model.locked && onSetViewMode("ai")}
-                disabled={model.locked}
-                title={model.locked ? "Not available for locked workflows" : "Design with AI"}
-                className={`px-3 py-1 rounded-md text-[11px] font-medium transition-all flex items-center gap-1.5 ${
-                  model.locked ? "text-slate-300 cursor-not-allowed"
-                    : viewMode === "ai" ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                }`}
-              >
-                <Sparkles className="w-3 h-3" /> Design
-              </button>
-              <button
-                onClick={() => onSetViewMode("manual")}
-                className={`px-3 py-1 rounded-md text-[11px] font-medium transition-all flex items-center gap-1.5 ${
-                  viewMode === "manual" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                }`}
-              >
-                <Layout className="w-3 h-3" /> Build
-              </button>
-            </div>
+          {model && dirty && (
+            <>
+              <div className="h-4 w-px bg-white/10 mx-1" />
+              <div className="flex items-center gap-2 no-drag min-w-0 pr-2">
+                <div className="flex items-center gap-1.5 px-2 py-1 bg-white/[0.04] rounded-full border border-white/[0.06]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse shrink-0" title="Unsaved changes" />
+                  <span className="text-[10px] font-medium text-amber-500/80">Unsaved</span>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
 
-            <div className="h-4 w-px bg-slate-200" />
-
+      <div className="flex items-center gap-2 no-drag shrink-0 pointer-events-auto">
+        {model && (
+          <div className="flex items-center gap-2 bg-white/[0.06] backdrop-blur-2xl border border-white/[0.1] rounded-full shadow-lg p-1.5">
             {/* Undo/Redo/Save */}
-            <div className="flex items-center gap-0.5">
-              <button onClick={onUndo} disabled={!canUndo || model.locked} className={`p-1.5 rounded-md transition-all ${canUndo && !model.locked ? "text-slate-600 hover:bg-slate-100" : "text-slate-300"}`} title="Undo">
+            <div className="flex items-center gap-0.5 px-1">
+              <button onClick={onUndo} disabled={!canUndo || model.locked} className={`p-1.5 rounded-full transition-all ${canUndo && !model.locked ? "text-white/60 hover:bg-white/10 hover:text-white" : "text-white/20"}`} title="Undo">
                 <Undo2 className="w-3.5 h-3.5" />
               </button>
-              <button onClick={onRedo} disabled={!canRedo || model.locked} className={`p-1.5 rounded-md transition-all ${canRedo && !model.locked ? "text-slate-600 hover:bg-slate-100" : "text-slate-300"}`} title="Redo">
+              <button onClick={onRedo} disabled={!canRedo || model.locked} className={`p-1.5 rounded-full transition-all ${canRedo && !model.locked ? "text-white/60 hover:bg-white/10 hover:text-white" : "text-white/20"}`} title="Redo">
                 <Redo2 className="w-3.5 h-3.5" />
               </button>
-              <button onClick={onSave} disabled={!dirty} className={`p-1.5 rounded-md transition-all ${dirty ? "text-slate-600 hover:bg-slate-100" : "text-slate-300"}`} title="Save">
+              <button onClick={onSave} disabled={!dirty} className={`p-1.5 rounded-full transition-all ${dirty ? "text-white/60 hover:bg-white/10 hover:text-white" : "text-white/20"}`} title="Save">
                 <Save className="w-3.5 h-3.5" />
               </button>
             </div>
 
-            <div className="h-4 w-px bg-slate-200" />
+            <div className="h-4 w-px bg-white/10 mx-1" />
 
             {/* Run / Stop */}
             {isRunning ? (
-              <button onClick={onStop} className="px-2.5 py-1 bg-red-500 hover:bg-red-600 text-white rounded-md flex items-center gap-1.5 text-[11px] font-medium transition-all">
+              <button onClick={onStop} className="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-full flex items-center gap-1.5 text-[11px] font-medium transition-all border border-red-500/20">
                 <Square className="w-3 h-3 fill-current" /> Stop
               </button>
             ) : manualTriggers.length > 1 ? (
               <div className="relative">
                 <div className="flex">
-                  <button onClick={() => onRun()} className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-l-md flex items-center gap-1.5 text-[11px] font-medium transition-all">
+                  <button onClick={() => onRun()} className="px-3 py-1.5 hover:bg-white/10 text-white rounded-l-full flex items-center gap-1.5 text-[11px] font-medium transition-all border border-transparent hover:border-white/10">
                     <Play className="w-3 h-3 fill-current" /> Run
                   </button>
-                  <button onClick={() => setShowRunMenu(!showRunMenu)} className="px-1 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-r-md border-l border-emerald-500 transition-all">
+                  <button onClick={() => setShowRunMenu(!showRunMenu)} className="px-1.5 py-1.5 hover:bg-white/10 text-white rounded-r-full border-l border-white/10 transition-all border border-transparent hover:border-white/10">
                     <ChevronDown className="w-3 h-3" />
                   </button>
                 </div>
                 {showRunMenu && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setShowRunMenu(false)} />
-                    <div className="absolute right-0 top-full mt-1 z-50 bg-white rounded-lg shadow-lg border border-slate-200 py-1 min-w-[170px]">
-                      <div className="px-3 py-1 text-[10px] font-medium text-slate-400 uppercase tracking-wider">Triggers</div>
+                    <div className="absolute right-0 top-full mt-2 z-50 bg-white/[0.08] backdrop-blur-2xl rounded-2xl shadow-2xl border border-white/[0.1] py-1 min-w-[170px] overflow-hidden">
+                      <div className="px-3 py-2 text-[10px] font-medium text-white/40 uppercase tracking-wider border-b border-white/[0.04] mb-1">Triggers</div>
                       {manualTriggers.map((trigger) => (
-                        <button key={trigger.id} onClick={() => onRun(trigger.id)} className="w-full px-3 py-1.5 text-left text-[12px] text-slate-700 hover:bg-slate-50 flex items-center gap-2">
-                          <Play className="w-3 h-3 text-emerald-500" /> {trigger.label || trigger.id}
+                        <button key={trigger.id} onClick={() => onRun(trigger.id)} className="w-full px-4 py-2 text-left text-[12px] text-white/80 hover:bg-white/10 flex items-center gap-2 transition-colors">
+                          <Play className="w-3 h-3 text-emerald-400" /> {trigger.label || trigger.id}
                         </button>
                       ))}
-                      <div className="border-t border-slate-100 mt-0.5 pt-0.5">
-                        <button onClick={() => onRun()} className="w-full px-3 py-1.5 text-left text-[12px] text-slate-700 hover:bg-slate-50 flex items-center gap-2">
-                          <Zap className="w-3 h-3 text-indigo-500" /> Run All
+                      <div className="border-t border-white/[0.04] mt-1 pt-1">
+                        <button onClick={() => onRun()} className="w-full px-4 py-2 text-left text-[12px] text-white/80 hover:bg-white/10 flex items-center gap-2 transition-colors">
+                          <Zap className="w-3 h-3 text-indigo-400" /> Run All
                         </button>
                       </div>
                     </div>
@@ -177,7 +152,7 @@ export function WorkflowHeader({
                 )}
               </div>
             ) : (
-              <button onClick={() => onRun()} className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md flex items-center gap-1.5 text-[11px] font-medium transition-all">
+              <button onClick={() => onRun()} className="px-3 py-1.5 hover:bg-white/10 text-white rounded-full flex items-center gap-1.5 text-[11px] font-medium transition-all border border-transparent hover:border-white/10">
                 <Play className="w-3 h-3 fill-current" /> Run
               </button>
             )}
@@ -185,59 +160,16 @@ export function WorkflowHeader({
             {/* Deploy */}
             <button
               onClick={onToggleDeployPanel}
-              className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-md transition-all border ${
-                deployStatus?.deployed
-                  ? "bg-slate-800 text-white border-slate-800 hover:bg-slate-700"
-                  : "bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:text-blue-600"
-              }`}
+              className={`flex items-center gap-1.5 px-4 py-1.5 text-[11px] font-semibold rounded-full transition-all ${deployStatus?.deployed
+                ? "border border-emerald-500 text-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20"
+                : "shadow-md bg-blue-600 text-white hover:bg-blue-500 hover:shadow-blue-500/20"
+                }`}
             >
               <Rocket className="w-3 h-3" />
               {deployStatus?.deployed ? "Live" : "Deploy"}
-              {deployStatus?.running && <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />}
+              {deployStatus?.running && <span className={`w-1.5 h-1.5 rounded-full animate-pulse ml-0.5 ${deployStatus.deployed ? 'bg-emerald-500' : 'bg-white/80'}`} />}
             </button>
-
-            <div className="h-4 w-px bg-slate-200" />
-
-            {/* Panel toggles */}
-            <div className="flex items-center gap-0.5">
-              <button
-                onClick={onToggleWorkspace}
-                className={`p-1.5 rounded-md transition-colors ${showWorkspace ? "bg-amber-50 text-amber-600" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50"}`}
-                title="Workspace"
-              >
-                <FolderOpen className="w-3.5 h-3.5" />
-              </button>
-              <button
-                onClick={onToggleDocs}
-                className={`p-1.5 rounded-md transition-colors ${rightPanel === "docs" ? "bg-indigo-50 text-indigo-600" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50"}`}
-                title="Docs"
-              >
-                <BookOpen className="w-3.5 h-3.5" />
-              </button>
-              {viewMode === "manual" && (
-                <>
-                  <button
-                    onClick={onToggleInspector}
-                    disabled={model.locked}
-                    className={`p-1.5 rounded-md transition-colors ${model.locked ? "text-slate-300" : rightPanel === "inspector" ? "bg-blue-50 text-blue-600" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50"}`}
-                    title="Details"
-                  >
-                    <Settings className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={onToggleCode}
-                    disabled={model.locked}
-                    className={`p-1.5 rounded-md transition-colors ${model.locked ? "text-slate-300" : rightPanel === "code" ? "bg-blue-50 text-blue-600" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50"}`}
-                    title="JSON"
-                  >
-                    <Code className="w-3.5 h-3.5" />
-                  </button>
-                </>
-              )}
-            </div>
-          </>
-        ) : (
-          <div className="text-[11px] text-slate-400 font-medium">Select a workflow</div>
+          </div>
         )}
       </div>
     </div>

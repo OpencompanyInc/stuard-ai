@@ -12,6 +12,7 @@ import fs from 'fs';
 import path from 'path';
 import https from 'https';
 import http from 'http';
+import { VMWorkflowEngine } from './vm-engine';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -51,16 +52,37 @@ const RESTART_DELAY_MS = 3_000;
 const MAX_LOG_SIZE = 2 * 1024 * 1024; // 2 MB tail limit
 const DOWNLOAD_TIMEOUT_MS = 60_000;
 
+/** Env vars that must NEVER leak into deploy child processes or logs */
+const SENSITIVE_ENV_KEYS = new Set([
+  'VM_TOKEN_SECRET',
+  'STUARD_VM_TOKEN',
+  'GOOGLE_APPLICATION_CREDENTIALS',
+  'GCP_KEY_FILE',
+]);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Deploy Executor
 // ─────────────────────────────────────────────────────────────────────────────
 
 export class DeployExecutor extends EventEmitter {
   private running = new Map<string, RunningDeploy>();
+  private engine = new VMWorkflowEngine();
 
   constructor() {
     super();
     fs.mkdirSync(DEPLOY_ROOT, { recursive: true });
+
+    // Forward engine events
+    this.engine.on('log', (data: any) => {
+      const { deployId, message } = data;
+      this.emit('log', deployId, message);
+    });
+    this.engine.on('step', (data: any) => {
+      this.emit('step', data.deployId, data);
+    });
+    this.engine.on('flow', (data: any) => {
+      this.emit('flow', data.deployId, data);
+    });
   }
 
   /**
@@ -81,12 +103,14 @@ export class DeployExecutor extends EventEmitter {
     const bundle = JSON.parse(fs.readFileSync(bundlePath, 'utf-8'));
     const payload = bundle.payload;
 
-    // Write the deployable content based on kind
+    // ── Workflow deployments use the real engine (not a shell stub) ──
+    if (config.kind === 'workflow') {
+      return this.startWorkflowEngine(config, deployDir, payload, logFile);
+    }
+
+    // ── Script / Project deployments still use shell runners ──
     let entrypoint: string;
     switch (config.kind) {
-      case 'workflow':
-        entrypoint = await this.prepareWorkflow(deployDir, payload, config.envVars);
-        break;
       case 'script':
         entrypoint = await this.prepareScript(deployDir, payload, config.envVars);
         break;
@@ -107,8 +131,13 @@ export class DeployExecutor extends EventEmitter {
    * Stop a running deployment.
    */
   stop(deployId: string): boolean {
+    // Stop engine-managed workflow
+    if (this.engine.isRunning(deployId)) {
+      this.engine.stop(deployId);
+    }
+
     const deploy = this.running.get(deployId);
-    if (!deploy) return false;
+    if (!deploy) return this.engine.isRunning(deployId) ? false : true;
 
     deploy.autoRestart = false; // prevent restart
     deploy.status = 'stopped';
@@ -190,71 +219,131 @@ export class DeployExecutor extends EventEmitter {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Preparation — write files + install deps per deploy kind
+  // Workflow Engine Execution (replaces shell stub for workflows)
   // ─────────────────────────────────────────────────────────────────────────
 
-  private async prepareWorkflow(dir: string, payload: any, envVars: Record<string, string>): Promise<string> {
-    // Write workflow JSON
-    fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify(payload, null, 2));
+  private async startWorkflowEngine(
+    config: DeployConfig,
+    deployDir: string,
+    payload: any,
+    logFile: string,
+  ): Promise<{ pid: number | null; dir: string }> {
+    // Write workflow JSON + env file
+    fs.writeFileSync(path.join(deployDir, 'workflow.json'), JSON.stringify(payload, null, 2));
+    this.writeEnvFile(deployDir, config.envVars);
 
-    // If workflow has requirements (Python deps), install them
+    // Install Python deps if needed
     if (payload.requirements) {
-      const reqPath = path.join(dir, 'requirements.txt');
+      const reqPath = path.join(deployDir, 'requirements.txt');
       fs.writeFileSync(reqPath, payload.requirements);
       try {
-        execFileSync('pip3', ['install', '-r', reqPath, '--quiet'], { cwd: dir, timeout: 120_000, stdio: 'pipe' });
+        execFileSync('pip3', ['install', '-r', reqPath, '--quiet'], { cwd: deployDir, timeout: 120_000, stdio: 'pipe' });
       } catch (e: any) {
-        this.appendLog(dir, `[deploy] Warning: pip install failed: ${e.message}`);
+        this.appendLog(deployDir, `[deploy] Warning: pip install failed: ${e.message}`);
       }
     }
 
-    // If workflow has embedded scripts, write them
+    // Write embedded scripts if any
     if (payload.scripts && typeof payload.scripts === 'object') {
       for (const [filename, content] of Object.entries(payload.scripts)) {
-        const scriptPath = path.join(dir, filename);
+        const scriptPath = path.join(deployDir, filename);
         fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
         fs.writeFileSync(scriptPath, String(content));
-        // Make executable if .sh or .py
         if (filename.endsWith('.sh') || filename.endsWith('.py')) {
           fs.chmodSync(scriptPath, 0o755);
         }
       }
     }
 
-    // Write env file
-    this.writeEnvFile(dir, envVars);
+    // Create workspace subdirs
+    for (const sub of ['data', 'scripts', 'assets']) {
+      fs.mkdirSync(path.join(deployDir, sub), { recursive: true });
+    }
 
-    // Create runner script that the workflow engine will execute
-    const runnerPath = path.join(dir, '_runner.sh');
-    fs.writeFileSync(runnerPath, `#!/bin/bash
-set -e
-cd "${dir}"
-export $(cat .env 2>/dev/null | xargs)
+    // Track as running deploy (pid = null since engine is in-process)
+    const deploy: RunningDeploy = {
+      id: config.deployId,
+      kind: 'workflow',
+      name: config.name,
+      process: null,
+      pid: null,
+      autoRestart: config.autoRestart,
+      restartCount: 0,
+      maxRestarts: MAX_RESTARTS,
+      logFile,
+      dir: deployDir,
+      status: 'running',
+    };
+    this.running.set(config.deployId, deploy);
 
-# If there's a node-based workflow runner, use it; otherwise just cat the workflow
-if command -v stuard-workflow-runner &>/dev/null; then
-  stuard-workflow-runner workflow.json
-elif [ -f package.json ]; then
-  npm start
-else
-  echo "[workflow] Running workflow steps..."
-  node -e "
-    const wf = require('./workflow.json');
-    console.log('[workflow] Name:', wf.name);
-    console.log('[workflow] Steps:', wf.steps?.length || 0);
-    console.log('[workflow] Mode:', wf.mode || 'auto');
-    wf.steps?.forEach((s, i) => {
-      console.log('[workflow] Step ' + (i+1) + ':', s.id, '→', s.uses);
-    });
-    console.log('[workflow] Workflow loaded successfully. Waiting for triggers...');
-    // Keep alive for scheduled/manual workflows
-    setInterval(() => {}, 60000);
-  "
-fi
-`, { mode: 0o755 });
+    // Determine Cloud AI URL — the engine calls cloud tools via this
+    const cloudAiUrl = process.env.CLOUD_AI_URL
+      || process.env.CLOUD_PUBLIC_URL
+      || 'http://localhost:8082';
 
-    return runnerPath;
+    // Agent WS URL — Python agent on VM for local tools (if running)
+    const agentWsUrl = process.env.AGENT_WS_URL
+      || process.env.AGENT_WS
+      || 'ws://127.0.0.1:8765/ws';
+
+    // VM HMAC auth — userId is set during provisioning (cloud_engines table),
+    // vmTokenSecret is the per-VM secret. NO user Supabase tokens on the VM.
+    const userId = process.env.STUARD_USER_ID || '';
+    const vmTokenSecret = process.env.VM_TOKEN_SECRET || '';
+
+    if (!userId || !vmTokenSecret) {
+      this.appendLog(deployDir, `[engine] WARNING: Missing STUARD_USER_ID or VM_TOKEN_SECRET — cloud/desktop tools will fail auth`);
+    }
+
+    this.appendLog(deployDir, `[engine] Starting workflow "${config.name}" with real engine`);
+    this.appendLog(deployDir, `[engine] Cloud AI: ${cloudAiUrl}`);
+
+    // Run the workflow engine (async — fire and forget, logs stream to file)
+    const runWorkflow = async () => {
+      try {
+        const result = await this.engine.run(
+          config.deployId,
+          payload,
+          deployDir,
+          {
+            cloudAiUrl,
+            agentWsUrl,
+            userId,
+            vmTokenSecret,
+          },
+        );
+
+        this.appendLog(deployDir, `[engine] Workflow finished: ok=${result.ok}${result.error ? ' error=' + result.error : ''}`);
+        deploy.status = result.ok ? 'stopped' : 'failed';
+        this.emit('status', config.deployId, deploy.status);
+      } catch (e: any) {
+        this.appendLog(deployDir, `[engine] Workflow crashed: ${e.message}`);
+        deploy.status = 'failed';
+        this.emit('status', config.deployId, 'failed');
+
+        // Auto-restart if configured
+        if (deploy.autoRestart && deploy.restartCount < deploy.maxRestarts) {
+          deploy.restartCount++;
+          this.appendLog(deployDir, `[engine] Auto-restarting (attempt ${deploy.restartCount}/${deploy.maxRestarts})...`);
+          setTimeout(() => {
+            if (this.running.has(config.deployId) && deploy.status !== 'stopped') {
+              deploy.status = 'running';
+              runWorkflow();
+            }
+          }, RESTART_DELAY_MS);
+        }
+      }
+    };
+
+    // Start async (don't await — caller gets back immediately with deploy info)
+    runWorkflow();
+
+    return { pid: null, dir: deployDir };
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Preparation — write files + install deps per deploy kind
+  // ─────────────────────────────────────────────────────────────────────────
 
   private async prepareScript(dir: string, payload: any, envVars: Record<string, string>): Promise<string> {
     const content = typeof payload === 'string' ? payload : (payload.content || payload.code || JSON.stringify(payload));
@@ -295,7 +384,11 @@ fi
     fs.writeFileSync(runnerPath, `#!/bin/bash
 set -e
 cd "${dir}"
-export $(cat .env 2>/dev/null | xargs)
+if [ -f .env ]; then
+  set -a
+  source .env 2>/dev/null
+  set +a
+fi
 ${cmd}
 `, { mode: 0o755 });
 
@@ -341,7 +434,11 @@ ${cmd}
     fs.writeFileSync(runnerPath, `#!/bin/bash
 set -e
 cd "${dir}"
-export $(cat .env 2>/dev/null | xargs)
+if [ -f .env ]; then
+  set -a
+  source .env 2>/dev/null
+  set +a
+fi
 ${startCmd}
 `, { mode: 0o755 });
 
@@ -366,8 +463,13 @@ ${startCmd}
     const timestamp = new Date().toISOString();
     logStream.write(`\n[${timestamp}] Starting deployment: ${name} (${kind})\n`);
 
+    // Build env — strip sensitive secrets so they can't leak into logs
+    const safeBaseEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (v != null && !SENSITIVE_ENV_KEYS.has(k)) safeBaseEnv[k] = v;
+    }
     const env = {
-      ...process.env,
+      ...safeBaseEnv,
       ...envVars,
       STUARD_DEPLOY_ID: deployId,
       STUARD_DEPLOY_KIND: kind,
@@ -499,6 +601,7 @@ ${startCmd}
    * Gracefully stop all running deployments.
    */
   stopAll(): void {
+    this.engine.stopAll();
     for (const [id] of this.running) {
       this.stop(id);
     }

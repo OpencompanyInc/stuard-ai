@@ -131,6 +131,11 @@ export function useModelRegistry() {
       isReasoning: typeof fallbackById.get(m.id)?.isReasoning === "boolean"
         ? !!fallbackById.get(m.id)?.isReasoning
         : !!m.reasoning,
+      supportsMultimodal: Array.isArray(m.modalities?.input) && (
+        m.modalities.input.includes('image') ||
+        m.modalities.input.includes('audio') ||
+        m.modalities.input.includes('video')
+      ),
       contextWindow: fallbackById.get(m.id)?.contextWindow ?? m.limit?.context,
       category: fallbackById.get(m.id)?.category || ((m.tier as any) || (m.reasoning ? "smart" : "balanced")),
     }));

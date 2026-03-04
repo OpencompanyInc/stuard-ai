@@ -53,7 +53,7 @@ function langIcon(lang: string) {
     case 'python': return <Code2 className="w-3.5 h-3.5 text-yellow-500" />;
     case 'javascript': case 'typescript': return <Code2 className="w-3.5 h-3.5 text-blue-400" />;
     case 'json': return <Braces className="w-3.5 h-3.5 text-emerald-500" />;
-    default: return <FileText className="w-3.5 h-3.5 text-slate-400" />;
+    default: return <FileText className="w-3.5 h-3.5 text-white/40" />;
   }
 }
 
@@ -328,3 +328,4 @@ export function WorkspaceFileEditor({ flowId, filePath, fileName }: WorkspaceFil
     </div>
   );
 }
+

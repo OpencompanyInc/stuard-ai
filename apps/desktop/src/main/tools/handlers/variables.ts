@@ -3,12 +3,12 @@ import { RouterContext } from '../types';
 
 /**
  * Resolve a variable name, auto-prepending 'workflow.' if needed.
- * 
+ *
  * Scoping model:
  * - workflow.* = shared across all stuard files in the current workflow
  * - local.* = scoped to the current stuard file only
  * - No prefix = defaults to workflow scope
- * 
+ *
  * Resolution order:
  * 1. If name already starts with 'workflow.' or 'local.', use as-is
  * 2. If exact name exists in store, use it
@@ -41,7 +41,7 @@ function resolveVariableName(name: string, flowId?: string): string {
  * Resolve variable name for SET operations.
  * For SET, we auto-add 'workflow.' prefix if the variable doesn't exist
  * and there's no explicit prefix — defaults to workflow scope (shared across stuard files).
- * 
+ *
  * Scoping:
  * - workflow.* = shared across all stuard files in the current workflow
  * - local.* = scoped to the current stuard file only

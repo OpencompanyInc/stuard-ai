@@ -215,28 +215,56 @@ export function usePlannerData(accessToken?: string | null): UsePlannerDataResul
   };
 
   const fetchCalendarEvents = async (): Promise<CalendarEvent[]> => {
-    if (!accessToken) return [];
+    const allEvents: CalendarEvent[] = [];
+
+    // Fetch Google Calendar events (cloud)
+    if (accessToken) {
+      try {
+        const res = await fetch(`${CLOUD_AI_HTTP}/v1/calendar/events?view=week`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (res.ok) {
+          const j = await res.json();
+          if (j?.ok && Array.isArray(j.blocks)) {
+            for (const b of j.blocks) {
+              allEvents.push({
+                id: b.id,
+                title: b.title || '(No Title)',
+                start: b.start,
+                end: b.end,
+                allDay: b.allDay,
+                source: b.source || 'google',
+              });
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // Fetch offline/local calendar events (always works)
     try {
-      const res = await fetch(`${CLOUD_AI_HTTP}/v1/calendar/events?view=week`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (!res.ok) {
-        setError(`Calendar fetch failed (${res.status})`);
-        return [];
-      }
-      const j = await res.json();
-      if (j?.ok && Array.isArray(j.blocks)) {
-        return j.blocks.map((b: any) => ({
-          id: b.id,
-          title: b.title || '(No Title)',
-          start: b.start,
-          end: b.end,
-          allDay: b.allDay,
-          source: b.source || 'google',
-        }));
+      const now = new Date();
+      const weekStart = new Date(now);
+      weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+      weekStart.setHours(0, 0, 0, 0);
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekEnd.getDate() + 7);
+      const res = await (window as any).desktopAPI?.offlineCalendarGetBlocks?.(weekStart.toISOString(), weekEnd.toISOString());
+      if (res?.ok && Array.isArray(res.blocks)) {
+        for (const b of res.blocks) {
+          allEvents.push({
+            id: b.id,
+            title: b.title || '(No Title)',
+            start: b.start,
+            end: b.end,
+            allDay: b.allDay,
+            source: 'local',
+          });
+        }
       }
     } catch {}
-    return [];
+
+    return allEvents;
   };
 
   const fetchUnifiedTasks = async (): Promise<PlannerTask[]> => {

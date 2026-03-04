@@ -46,10 +46,10 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="absolute top-1.5 right-1.5 p-1 rounded bg-slate-200/80 hover:bg-slate-300/80 text-slate-500 hover:text-slate-700 transition-all opacity-0 group-hover:opacity-100"
+      className="absolute top-1.5 right-1.5 p-1 rounded bg-white/[0.08] hover:bg-white/[0.12] text-white/50 hover:text-white/80 transition-all opacity-0 group-hover:opacity-100"
       title="Copy"
     >
-      {copied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+      {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
     </button>
   );
 }
@@ -60,19 +60,19 @@ function RenderContent({ item }: { item: DocContent }) {
   switch (item.type) {
     case "text":
       return (
-        <p className="text-[12px] leading-relaxed text-slate-600 whitespace-pre-line">
+        <p className="text-[12px] leading-relaxed text-white/70 whitespace-pre-line">
           {renderInlineCode(item.value)}
         </p>
       );
     case "heading":
-      return <h4 className="text-[12px] font-bold text-slate-800 mt-3 mb-1">{item.value}</h4>;
+      return <h4 className="text-[12px] font-bold text-white/90 mt-3 mb-1">{item.value}</h4>;
     case "code":
       return (
         <div className="relative group my-1.5">
           {item.label && (
-            <div className="text-[10px] font-medium text-slate-400 uppercase tracking-wider mb-0.5">{item.label}</div>
+            <div className="text-[10px] font-medium text-white/40 uppercase tracking-wider mb-0.5">{item.label}</div>
           )}
-          <pre className="bg-slate-900 text-slate-200 rounded-lg p-3 text-[11px] leading-relaxed overflow-x-auto font-mono">
+          <pre className="bg-black/40 border border-white/[0.08] text-white/80 rounded-lg p-3 text-[11px] leading-relaxed overflow-x-auto font-mono">
             <code>{item.value}</code>
           </pre>
           <CopyButton text={item.value} />
@@ -80,20 +80,20 @@ function RenderContent({ item }: { item: DocContent }) {
       );
     case "table":
       return (
-        <div className="my-1.5 overflow-x-auto rounded-lg border border-slate-200">
+        <div className="my-1.5 overflow-x-auto rounded-lg border border-white/[0.08]">
           <table className="w-full text-[11px]">
             <thead>
-              <tr className="bg-slate-50 border-b border-slate-200">
+              <tr className="bg-white/[0.04] border-b border-white/[0.08]">
                 {item.headers.map((h, i) => (
-                  <th key={i} className="px-2.5 py-1.5 text-left font-semibold text-slate-700">{h}</th>
+                  <th key={i} className="px-2.5 py-1.5 text-left font-semibold text-white/80">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {item.rows.map((row, ri) => (
-                <tr key={ri} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
+                <tr key={ri} className="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02]">
                   {row.map((cell, ci) => (
-                    <td key={ci} className="px-2.5 py-1.5 text-slate-600 font-mono">{renderInlineCode(cell)}</td>
+                    <td key={ci} className="px-2.5 py-1.5 text-white/60 font-mono">{renderInlineCode(cell)}</td>
                   ))}
                 </tr>
               ))}
@@ -103,16 +103,16 @@ function RenderContent({ item }: { item: DocContent }) {
       );
     case "tip":
       return (
-        <div className="my-1.5 flex gap-2 p-2.5 rounded-lg bg-emerald-50 border border-emerald-200">
-          <span className="text-emerald-500 text-[11px] mt-0.5 shrink-0">💡</span>
-          <span className="text-[11px] text-emerald-800 leading-relaxed">{renderInlineCode(item.value)}</span>
+        <div className="my-1.5 flex gap-2 p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+          <span className="text-emerald-400 text-[11px] mt-0.5 shrink-0">💡</span>
+          <span className="text-[11px] text-emerald-300 leading-relaxed">{renderInlineCode(item.value)}</span>
         </div>
       );
     case "warning":
       return (
-        <div className="my-1.5 flex gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200">
-          <span className="text-amber-500 text-[11px] mt-0.5 shrink-0">⚠️</span>
-          <span className="text-[11px] text-amber-800 leading-relaxed">{renderInlineCode(item.value)}</span>
+        <div className="my-1.5 flex gap-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+          <span className="text-amber-400 text-[11px] mt-0.5 shrink-0">⚠️</span>
+          <span className="text-[11px] text-amber-300 leading-relaxed">{renderInlineCode(item.value)}</span>
         </div>
       );
     default:
@@ -125,7 +125,7 @@ function renderInlineCode(text: string): React.ReactNode {
   return parts.map((part, i) => {
     if (part.startsWith("`") && part.endsWith("`")) {
       return (
-        <code key={i} className="px-1 py-0.5 bg-slate-100 text-indigo-700 rounded text-[10.5px] font-mono">
+        <code key={i} className="px-1 py-0.5 bg-white/[0.06] border border-white/[0.08] text-indigo-300 rounded text-[10.5px] font-mono">
           {part.slice(1, -1)}
         </code>
       );
@@ -222,6 +222,8 @@ const DOCS: DocSection[] = [
             ["`schedule.cron`", "Cron schedule", "`cron` (e.g. `0 9 * * *`)"],
             ["`webhook.local`", "HTTP POST to local URL", "Auto-generated URL"],
             ["`webhook.cloud`", "HTTP POST to cloud URL", "Auto-generated URL"],
+            ["`gmail.new_email`", "Native Gmail push trigger (Google watch)", "`profile`, `labelIds?`"],
+            ["`drive.new_file`", "Native Drive push trigger (Google watch)", "`profile`, `onlyNew?`, `includeFolders?`"],
             ["`fs.watch`", "File/folder changes", "`path`, `pattern`, `recursive?`"],
             ["`function`", "Callable by other workflows", "`inputParams?`"],
             ["`app_start`", "Runs when Stuard starts", "None"],
@@ -840,45 +842,45 @@ export function WorkflowDocsPanel({ onClose }: WorkflowDocsPanelProps) {
     amber: { bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200", light: "bg-amber-100", dot: "bg-amber-500" },
     blue: { bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200", light: "bg-blue-100", dot: "bg-blue-500" },
     purple: { bg: "bg-purple-50", text: "text-purple-700", border: "border-purple-200", light: "bg-purple-100", dot: "bg-purple-500" },
-    teal: { bg: "bg-teal-50", text: "text-teal-700", border: "border-teal-200", light: "bg-teal-100", dot: "bg-teal-500" },
-    orange: { bg: "bg-orange-50", text: "text-orange-700", border: "border-orange-200", light: "bg-orange-100", dot: "bg-orange-500" },
-    violet: { bg: "bg-violet-50", text: "text-violet-700", border: "border-violet-200", light: "bg-violet-100", dot: "bg-violet-500" },
-    emerald: { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200", light: "bg-emerald-100", dot: "bg-emerald-500" },
-    slate: { bg: "bg-slate-50", text: "text-slate-700", border: "border-slate-200", light: "bg-slate-100", dot: "bg-slate-500" },
-    cyan: { bg: "bg-cyan-50", text: "text-cyan-700", border: "border-cyan-200", light: "bg-cyan-100", dot: "bg-cyan-500" },
-    rose: { bg: "bg-rose-50", text: "text-rose-700", border: "border-rose-200", light: "bg-rose-100", dot: "bg-rose-500" },
+    teal: { bg: "bg-teal-500/10", text: "text-teal-400", border: "border-teal-500/20", light: "bg-teal-500/20", dot: "bg-teal-400" },
+    orange: { bg: "bg-orange-500/10", text: "text-orange-400", border: "border-orange-500/20", light: "bg-orange-500/20", dot: "bg-orange-400" },
+    violet: { bg: "bg-violet-500/10", text: "text-violet-400", border: "border-violet-500/20", light: "bg-violet-500/20", dot: "bg-violet-400" },
+    emerald: { bg: "bg-emerald-500/10", text: "text-emerald-400", border: "border-emerald-500/20", light: "bg-emerald-500/20", dot: "bg-emerald-400" },
+    slate: { bg: "bg-white/[0.04]", text: "text-white/60", border: "border-white/[0.08]", light: "bg-white/[0.08]", dot: "bg-white/40" },
+    cyan: { bg: "bg-cyan-500/10", text: "text-cyan-400", border: "border-cyan-500/20", light: "bg-cyan-500/20", dot: "bg-cyan-400" },
+    rose: { bg: "bg-rose-500/10", text: "text-rose-400", border: "border-rose-500/20", light: "bg-rose-500/20", dot: "bg-rose-400" },
   };
   const c = (color: string) => colorMap[color] || colorMap.slate;
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="flex flex-col h-full bg-transparent text-white/90">
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200 shrink-0 bg-gradient-to-r from-blue-50 to-indigo-50">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.08] shrink-0 bg-white/[0.02]">
         <div className="flex items-center gap-2">
-          <BookOpen className="w-4 h-4 text-indigo-600" />
-          <span className="text-[13px] font-bold text-slate-800">Docs</span>
-          <span className="text-[10px] text-slate-400 font-medium">{allEntries.length} topics</span>
+          <BookOpen className="w-4 h-4 text-indigo-400" />
+          <span className="text-[13px] font-bold text-white/90">Docs</span>
+          <span className="text-[10px] text-white/40 font-medium">{allEntries.length} topics</span>
         </div>
-        <button onClick={onClose} className="p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors">
+        <button onClick={onClose} className="p-1 rounded-md text-white/40 hover:text-white/80 hover:bg-white/[0.04] transition-colors">
           <X className="w-4 h-4" />
         </button>
       </div>
 
       {/* Search */}
-      <div className="px-3 py-2 border-b border-slate-100 shrink-0">
+      <div className="px-3 py-2 border-b border-white/[0.08] shrink-0 bg-black/20">
         <div className="relative">
-          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-white/40" />
           <input
             ref={searchRef}
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search docs... (templates, loops, custom_ui...)"
-            className="w-full pl-8 pr-8 py-1.5 text-[12px] bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-300 focus:ring-1 focus:ring-indigo-200 placeholder:text-slate-400"
+            className="w-full pl-8 pr-8 py-1.5 text-[12px] bg-white/[0.04] border border-white/[0.08] rounded-lg focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/30 placeholder:text-white/30 text-white/80"
           />
           {search && (
             <button
               onClick={() => setSearch("")}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-white/40 hover:text-white/80"
             >
               <X className="w-3 h-3" />
             </button>
@@ -891,14 +893,14 @@ export function WorkflowDocsPanel({ onClose }: WorkflowDocsPanelProps) {
         {/* Search Results Mode */}
         {searchResults ? (
           <div className="p-2">
-            <div className="text-[10px] font-medium text-slate-400 uppercase tracking-wider px-1 mb-1.5">
+            <div className="text-[10px] font-medium text-white/40 uppercase tracking-wider px-1 mb-1.5">
               {searchResults.length} result{searchResults.length !== 1 ? "s" : ""}
             </div>
             {searchResults.length === 0 ? (
               <div className="text-center py-8">
-                <Search className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                <p className="text-[12px] text-slate-400">No results for "{search}"</p>
-                <p className="text-[11px] text-slate-300 mt-1">Try: templates, loops, custom_ui, guards, variables</p>
+                <Search className="w-8 h-8 text-white/30 mx-auto mb-2" />
+                <p className="text-[12px] text-white/40">No results for "{search}"</p>
+                <p className="text-[11px] text-white/30 mt-1">Try: templates, loops, custom_ui, guards, variables</p>
               </div>
             ) : (
               searchResults.map(entry => (
@@ -909,16 +911,16 @@ export function WorkflowDocsPanel({ onClose }: WorkflowDocsPanelProps) {
                     selectEntry(entry.id);
                     setSearch("");
                   }}
-                  className={`w-full text-left p-2 rounded-lg mb-1 border transition-all hover:shadow-sm ${c(entry.sectionColor).bg} ${c(entry.sectionColor).border} hover:brightness-95`}
+                  className={`w-full text-left p-2 rounded-lg mb-1 border transition-all hover:bg-white/[0.04] ${c(entry.sectionColor).bg} ${c(entry.sectionColor).border}`}
                 >
                   <div className="flex items-center gap-1.5">
                     <span className={`w-1.5 h-1.5 rounded-full ${c(entry.sectionColor).dot}`} />
-                    <span className="text-[11px] font-semibold text-slate-800">{entry.title}</span>
+                    <span className="text-[11px] font-semibold text-white/90">{entry.title}</span>
                     <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${c(entry.sectionColor).light} ${c(entry.sectionColor).text}`}>
                       {entry.sectionTitle}
                     </span>
                   </div>
-                  <p className="text-[10.5px] text-slate-500 mt-0.5 ml-3">{entry.summary}</p>
+                  <p className="text-[10.5px] text-white/50 mt-0.5 ml-3">{entry.summary}</p>
                 </button>
               ))
             )}
@@ -934,18 +936,18 @@ export function WorkflowDocsPanel({ onClose }: WorkflowDocsPanelProps) {
                   <button
                     onClick={() => toggleSection(section.id)}
                     className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all ${
-                      isExpanded ? `${c(section.color).bg} ${c(section.color).border} border` : "hover:bg-slate-50"
+                      isExpanded ? `${c(section.color).bg} ${c(section.color).border} border` : "hover:bg-white/[0.04]"
                     }`}
                   >
                     {isExpanded ?
-                      <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" /> :
-                      <ChevronRight className="w-3 h-3 text-slate-400 shrink-0" />
+                      <ChevronDown className="w-3 h-3 text-white/40 shrink-0" /> :
+                      <ChevronRight className="w-3 h-3 text-white/40 shrink-0" />
                     }
-                    <Icon className={`w-3.5 h-3.5 ${isExpanded ? c(section.color).text : "text-slate-500"}`} />
-                    <span className={`text-[12px] font-semibold ${isExpanded ? c(section.color).text : "text-slate-700"}`}>
+                    <Icon className={`w-3.5 h-3.5 ${isExpanded ? c(section.color).text : "text-white/50"}`} />
+                    <span className={`text-[12px] font-semibold ${isExpanded ? c(section.color).text : "text-white/70"}`}>
                       {section.title}
                     </span>
-                    <span className="text-[10px] text-slate-400 ml-auto">{section.entries.length}</span>
+                    <span className="text-[10px] text-white/40 ml-auto">{section.entries.length}</span>
                   </button>
 
                   {isExpanded && (
@@ -959,7 +961,7 @@ export function WorkflowDocsPanel({ onClose }: WorkflowDocsPanelProps) {
                               className={`w-full text-left px-2.5 py-1.5 rounded-md transition-all ${
                                 isActive
                                   ? `${c(section.color).light} ${c(section.color).text}`
-                                  : "hover:bg-slate-50 text-slate-600"
+                                  : "hover:bg-white/[0.04] text-white/60 hover:text-white/80"
                               }`}
                             >
                               <div className="flex items-center gap-1.5">
@@ -967,22 +969,22 @@ export function WorkflowDocsPanel({ onClose }: WorkflowDocsPanelProps) {
                                 <span className="text-[11.5px] font-medium">{entry.title}</span>
                               </div>
                               {!isActive && (
-                                <p className="text-[10px] text-slate-400 mt-0.5 ml-4 line-clamp-1">{entry.summary}</p>
+                                <p className="text-[10px] text-white/40 mt-0.5 ml-4 line-clamp-1">{entry.summary}</p>
                               )}
                             </button>
 
                             {isActive && (
-                              <div className="mx-1 mb-2 p-3 bg-white rounded-lg border border-slate-200 shadow-sm space-y-1.5">
-                                <p className="text-[11px] text-slate-500 italic mb-2">{entry.summary}</p>
+                              <div className="mx-1 mb-2 p-3 bg-black/20 rounded-lg border border-white/[0.08] shadow-sm space-y-1.5">
+                                <p className="text-[11px] text-white/50 italic mb-2">{entry.summary}</p>
                                 {entry.content.map((item, i) => (
                                   <RenderContent key={i} item={item} />
                                 ))}
-                                <div className="flex flex-wrap gap-1 pt-2 border-t border-slate-100 mt-2">
+                                <div className="flex flex-wrap gap-1 pt-2 border-t border-white/[0.08] mt-2">
                                   {entry.tags.map(tag => (
                                     <button
                                       key={tag}
                                       onClick={() => setSearch(tag)}
-                                      className="px-1.5 py-0.5 text-[9px] bg-slate-50 text-slate-500 rounded-full hover:bg-indigo-50 hover:text-indigo-600 transition-colors"
+                                      className="px-1.5 py-0.5 text-[9px] bg-white/[0.04] text-white/50 rounded-full hover:bg-indigo-500/20 hover:text-indigo-400 transition-colors"
                                     >
                                       {tag}
                                     </button>
@@ -1003,13 +1005,13 @@ export function WorkflowDocsPanel({ onClose }: WorkflowDocsPanelProps) {
       </div>
 
       {/* Footer with quick links */}
-      <div className="px-3 py-2 border-t border-slate-100 shrink-0 bg-slate-50/50">
+      <div className="px-3 py-2 border-t border-white/[0.08] shrink-0 bg-white/[0.02]">
         <div className="flex flex-wrap gap-1">
           {["{{templates}}", "triggers", "guards", "loops", "custom_ui", "variables", "tools"].map(q => (
             <button
               key={q}
               onClick={() => setSearch(q === "{{templates}}" ? "template" : q)}
-              className="px-2 py-0.5 text-[10px] bg-white border border-slate-200 text-slate-600 rounded-full hover:border-indigo-300 hover:text-indigo-600 transition-colors font-medium"
+              className="px-2 py-0.5 text-[10px] bg-white/[0.04] border border-white/[0.08] text-white/60 rounded-full hover:border-indigo-500/30 hover:text-indigo-400 transition-colors font-medium"
             >
               {q}
             </button>

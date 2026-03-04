@@ -5,38 +5,70 @@
 import type { DesignerWire } from '../types';
 
 /**
- * Check if a wire from→to creates an actual cycle in the directed graph.
- * A wire is a "back edge" only if there is a directed path from `to` back to `from`
- * through other wires (i.e., the wire closes a loop: from → to → ... → from).
+ * Check if a specific wire (from→to) is a TRUE back edge in the directed graph.
  *
- * This replaces the old index-based detection which falsely flagged convergence
- * (two branches merging at one node) as loops.
+ * Uses DFS coloring to correctly identify only the single edge per cycle that
+ * "goes backwards" — i.e., the edge that, when removed, would break the cycle.
+ *
+ * The old BFS approach ("can we reach `from` by following forward from `to`?")
+ * incorrectly flagged ALL edges in a cycle as back edges. This caused forward
+ * wires like A→B→C to be rendered as loop-back overhead paths when a loop wire
+ * C→A existed.
+ *
+ * DFS coloring: WHITE = unvisited, GRAY = in current DFS path, BLACK = finished.
+ * A back edge is one that points from a node to a GRAY ancestor (still on the path).
  */
 export function isBackEdge(
   from: string,
   to: string,
   wires: DesignerWire[]
 ): boolean {
-  // BFS from `to` following outgoing wires. If we reach `from`, it's a cycle.
-  const visited = new Set<string>();
-  const queue: string[] = [to];
+  // If this wire has explicit .loop config, it's always a back edge
+  const thisWire = wires.find(w => w.from === from && w.to === to);
+  if (thisWire && (thisWire as any).loop) return true;
 
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    if (current === from) return true;
-    if (visited.has(current)) continue;
-    visited.add(current);
-
-    for (const w of wires) {
-      // Follow outgoing wires from current node, but skip the wire we're testing
-      // (we don't want to immediately loop back via the same edge)
-      if (w.from === current && !(w.from === from && w.to === to)) {
-        if (!visited.has(w.to)) {
-          queue.push(w.to);
-        }
-      }
-    }
+  // Build adjacency list and collect all nodes
+  const adj = new Map<string, string[]>();
+  const allNodes = new Set<string>();
+  for (const w of wires) {
+    allNodes.add(w.from);
+    allNodes.add(w.to);
+    if (!adj.has(w.from)) adj.set(w.from, []);
+    adj.get(w.from)!.push(w.to);
   }
 
-  return false;
+  // DFS-based back-edge detection
+  const WHITE = 0, GRAY = 1, BLACK = 2;
+  const color = new Map<string, number>();
+  for (const n of allNodes) color.set(n, WHITE);
+
+  const backEdges = new Set<string>(); // "from|to" keys
+
+  function dfs(u: string) {
+    color.set(u, GRAY);
+    for (const v of (adj.get(u) || [])) {
+      if (color.get(v) === GRAY) {
+        // v is an ancestor of u in the DFS tree → u→v is a back edge
+        backEdges.add(`${u}|${v}`);
+      } else if (color.get(v) === WHITE) {
+        dfs(v);
+      }
+    }
+    color.set(u, BLACK);
+  }
+
+  // Start DFS from root nodes (no incoming edges) first for consistent ordering
+  const hasIncoming = new Set<string>();
+  for (const w of wires) hasIncoming.add(w.to);
+  const roots = [...allNodes].filter(n => !hasIncoming.has(n));
+
+  for (const root of roots) {
+    if (color.get(root) === WHITE) dfs(root);
+  }
+  // Handle any remaining unvisited nodes (fully cyclic subgraphs)
+  for (const n of allNodes) {
+    if (color.get(n) === WHITE) dfs(n);
+  }
+
+  return backEdges.has(`${from}|${to}`);
 }

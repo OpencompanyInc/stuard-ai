@@ -58,9 +58,27 @@ export async function syncToCloud(userId: string): Promise<SyncResult> {
 
     // Tell the VM agent to compress & upload
     const vmIp = await resolveVMAddress(userId);
-    if (vmIp) {
-      const secret = await resolveVMSecret(userId);
-      const token = mintVMToken(secret, userId, 'cloud-ai-sync');
+    if (!vmIp) {
+      console.warn(`[sync-engine] No VM IP found for user ${userId}, skipping sync`);
+      return { success: false, objectName, bytes: 0, error: 'no_vm_ip' };
+    }
+
+    const secret = await resolveVMSecret(userId);
+    if (!secret) {
+      console.warn(`[sync-engine] No VM secret found for user ${userId}`);
+      return { success: false, objectName, bytes: 0, error: 'no_vm_secret' };
+    }
+
+    const token = mintVMToken(secret, userId, 'cloud-ai-sync');
+    
+    // Retry logic - try up to 3 times with exponential backoff
+    let lastError = '';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 1000));
+        console.log(`[sync-engine] Retry attempt ${attempt + 1} for sync upload`);
+      }
+      
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 5 * 60_000); // 5 min for large uploads
       try {
@@ -74,30 +92,34 @@ export async function syncToCloud(userId: string): Promise<SyncResult> {
           signal: controller.signal,
         });
         clearTimeout(timer);
-        if (!resp.ok) {
-          const body = await resp.text().catch(() => '');
-          console.error(`[sync-engine] VM upload failed (${resp.status}): ${body}`);
-          return { success: false, objectName, bytes: 0, error: `vm_upload_http_${resp.status}` };
+        
+        if (resp.ok) {
+          // Success - verify bytes and update DB
+          const bytes = await getUserStorageBytes(userId);
+          await upsertStorageUsage(userId, {
+            backup_object_name: objectName,
+            cold_storage_bytes: bytes,
+            last_sync_at: new Date().toISOString(),
+          });
+          console.log(`[sync-engine] Upload sync complete for user ${userId}: ${bytes} bytes`);
+          return { success: true, objectName, bytes };
         }
+        
+        const body = await resp.text().catch(() => '');
+        lastError = `vm_upload_http_${resp.status}: ${body}`;
+        console.error(`[sync-engine] VM upload failed (${resp.status}): ${body}`);
       } catch (e: any) {
         clearTimeout(timer);
         if (e?.name === 'AbortError') {
-          return { success: false, objectName, bytes: 0, error: 'vm_upload_timeout' };
+          lastError = 'vm_upload_timeout';
+        } else {
+          lastError = e?.message || 'unknown_error';
         }
-        throw e;
+        console.error(`[sync-engine] Sync attempt ${attempt + 1} failed:`, lastError);
       }
     }
 
-    // Verify bytes uploaded and update DB
-    const bytes = await getUserStorageBytes(userId);
-    await upsertStorageUsage(userId, {
-      backup_object_name: objectName,
-      cold_storage_bytes: bytes,
-      last_sync_at: new Date().toISOString(),
-    });
-
-    console.log(`[sync-engine] Upload sync complete for user ${userId}: ${bytes} bytes`);
-    return { success: true, objectName, bytes };
+    return { success: false, objectName, bytes: 0, error: lastError || 'sync_failed_after_retries' };
   } catch (err: any) {
     console.error(`[sync-engine] syncToCloud failed for user ${userId}:`, err?.message);
     return { success: false, objectName, bytes: 0, error: err?.message || 'sync_failed' };
@@ -121,14 +143,45 @@ export async function restoreFromCloud(userId: string): Promise<RestoreResult> {
   const objectName = getBackupObjectName(userId);
 
   try {
-    const { downloadUrl } = await generateUserDownloadUrl(userId, objectName);
+    // Check if backup exists first
+    let downloadUrl: string;
+    try {
+      const result = await generateUserDownloadUrl(userId, objectName);
+      downloadUrl = result.downloadUrl;
+    } catch (e: any) {
+      // No backup exists yet - this is OK for first-time users
+      if (e?.message?.includes('not found') || e?.code === 404) {
+        console.log(`[sync-engine] No backup found for user ${userId}, skipping restore`);
+        return { success: true, objectName, error: 'no_backup_exists' };
+      }
+      throw e;
+    }
+
     console.log(`[sync-engine] Initiating restore for user ${userId}`);
 
     // Tell the VM agent to download & extract
     const vmIp = await resolveVMAddress(userId);
-    if (vmIp) {
-      const secret = await resolveVMSecret(userId);
-      const token = mintVMToken(secret, userId, 'cloud-ai-sync');
+    if (!vmIp) {
+      console.warn(`[sync-engine] No VM IP found for user ${userId}`);
+      return { success: false, objectName, error: 'no_vm_ip' };
+    }
+
+    const secret = await resolveVMSecret(userId);
+    if (!secret) {
+      console.warn(`[sync-engine] No VM secret found for user ${userId}`);
+      return { success: false, objectName, error: 'no_vm_secret' };
+    }
+
+    const token = mintVMToken(secret, userId, 'cloud-ai-sync');
+
+    // Retry logic - try up to 3 times with exponential backoff
+    let lastError = '';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 1000));
+        console.log(`[sync-engine] Retry attempt ${attempt + 1} for restore`);
+      }
+
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 5 * 60_000);
       try {
@@ -142,22 +195,27 @@ export async function restoreFromCloud(userId: string): Promise<RestoreResult> {
           signal: controller.signal,
         });
         clearTimeout(timer);
-        if (!resp.ok) {
-          const body = await resp.text().catch(() => '');
-          console.error(`[sync-engine] VM restore failed (${resp.status}): ${body}`);
-          return { success: false, objectName, error: `vm_restore_http_${resp.status}` };
+        
+        if (resp.ok) {
+          console.log(`[sync-engine] Restore complete for user ${userId}`);
+          return { success: true, objectName, downloadUrl };
         }
+        
+        const body = await resp.text().catch(() => '');
+        lastError = `vm_restore_http_${resp.status}: ${body}`;
+        console.error(`[sync-engine] VM restore failed (${resp.status}): ${body}`);
       } catch (e: any) {
         clearTimeout(timer);
         if (e?.name === 'AbortError') {
-          return { success: false, objectName, error: 'vm_restore_timeout' };
+          lastError = 'vm_restore_timeout';
+        } else {
+          lastError = e?.message || 'unknown_error';
         }
-        throw e;
+        console.error(`[sync-engine] Restore attempt ${attempt + 1} failed:`, lastError);
       }
     }
 
-    console.log(`[sync-engine] Restore complete for user ${userId}`);
-    return { success: true, objectName, downloadUrl };
+    return { success: false, objectName, error: lastError || 'restore_failed_after_retries' };
   } catch (err: any) {
     console.error(`[sync-engine] restoreFromCloud failed for user ${userId}:`, err?.message);
     return { success: false, objectName, error: err?.message || 'restore_failed' };

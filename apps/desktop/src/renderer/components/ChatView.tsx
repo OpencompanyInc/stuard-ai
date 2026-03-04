@@ -51,6 +51,7 @@ interface ChatViewProps {
   // Queue
   queueDepth?: number;
   queuedMessages?: any[];
+  onCancelQueuedMessage?: (id: string) => void;
 
   // History Props
   conversations: any[];
@@ -173,6 +174,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   onDrop,
   queueDepth = 0,
   queuedMessages = [],
+  onCancelQueuedMessage,
   translucentMode = false,
 
   // Internal Sidebar
@@ -542,6 +544,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               onDrop={onDrop}
               queueDepth={queueDepth}
               queuedMessages={queuedMessages}
+              onCancelQueuedMessage={onCancelQueuedMessage}
               statusText={statusText}
               connectionStatus={connectionStatus}
               displayModelName={displayModelName}
@@ -715,6 +718,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               onDrop={onDrop}
               queueDepth={queueDepth}
               queuedMessages={queuedMessages}
+              onCancelQueuedMessage={onCancelQueuedMessage}
               statusText={statusText}
               connectionStatus={connectionStatus}
               displayModelName={displayModelName}

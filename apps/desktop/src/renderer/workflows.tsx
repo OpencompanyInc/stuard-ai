@@ -8,6 +8,7 @@ import { PostHogProvider } from 'posthog-js/react';
 import { initPostHog, posthog } from './lib/posthog';
 import { supabase } from './lib/supabaseClient';
 import { getValidAccessToken } from './auth/authManager';
+import { Sparkles, Wrench, FolderOpen, FileCode, BookOpen, Settings, Terminal } from 'lucide-react';
 import "./styles.css";
 import "./scrollbar.css";
 
@@ -46,9 +47,9 @@ function WorkflowsApp() {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const isUndoingRef = useRef(false);
 
-  const [viewMode, setViewMode] = useState<'ai' | 'manual'>('ai');
+  const [viewMode, setViewMode] = useState<'ai' | 'manual' | 'none'>('ai');
   const [rightPanel, setRightPanel] = useState<RightPanel>('none');
-  
+
   const chatInputRef = useRef<ChatInputRef>(null);
   const toolPaletteRef = useRef<ToolPaletteRef>(null);
   const {
@@ -327,6 +328,8 @@ function WorkflowsApp() {
       setModel(loadedModel);
       setDirty(false);
       setSelectedNodeId("");
+      setSelectedNodeIds(new Set());
+      setSelectedWireIndex(null);
       chat.setMessages([]);
       // Reset undo/redo history for new workflow
       setHistory([]);
@@ -599,50 +602,74 @@ function WorkflowsApp() {
 
   // No longer auto-load first workflow - launcher screen handles selection
 
+  const applyAutoLayoutToModel = useCallback((inputModel: DesignerModel): DesignerModel => {
+    const result = calculateAutoLayout(inputModel.triggers, inputModel.nodes, inputModel.wires);
+    const newTriggers = inputModel.triggers.map(t => {
+      const pos = result.triggers.find(r => r.id === t.id);
+      return pos ? { ...t, position: pos.position } : t;
+    });
+    const newNodes = inputModel.nodes.map(n => {
+      const pos = result.nodes.find(r => r.id === n.id);
+      return pos ? { ...n, position: pos.position } : n;
+    });
+    return { ...inputModel, triggers: newTriggers, nodes: newNodes };
+  }, []);
+
   const create = async () => {
     const safe = `flow_${Math.random().toString(36).slice(2, 10)}`;
     const skeleton: DesignerModel = {
       id: safe,
-      name: "New Flow",
+      name: "Hello World Starter",
       version: "1",
       triggers: [{ id: `trig_0`, type: 'manual', label: 'Manual Trigger', args: {}, position: { x: 60, y: 50 } }],
       nodes: [
         {
-          id: `step_notify`,
+          id: `step_welcome`,
           type: 'local.tool',
           tool: 'send_notification',
-          label: 'Say Hello',
-          args: { title: 'Stuard AI', body: 'Your automation is running!', severity: 'info' },
+          label: 'Show Welcome Notification',
+          args: { title: 'Hello from Stuard', body: 'Your first workflow is running.', severity: 'success' },
           fallbackTo: '',
           position: { x: 60, y: 190 }
         },
         {
-          id: `step_screenshot`,
+          id: `step_now`,
           type: 'local.tool',
-          tool: 'take_screenshot',
-          label: 'Take Screenshot',
-          args: {},
+          tool: 'get_datetime',
+          label: 'Get Current Time',
+          args: { format: 'YYYY-MM-DD HH:mm:ss' },
           fallbackTo: '',
           position: { x: 60, y: 330 }
         },
         {
-          id: `step_done`,
+          id: `step_clipboard`,
           type: 'local.tool',
-          tool: 'log',
-          label: 'Done',
-          args: { message: 'Screenshot saved to: {{step_screenshot.filePath}}' },
+          tool: 'set_clipboard_content',
+          label: 'Copy Hello Message',
+          args: { text: 'Hello World from Stuard! Ran at {{step_now.formatted}}' },
           fallbackTo: '',
           position: { x: 60, y: 470 }
+        },
+        {
+          id: `step_log`,
+          type: 'local.tool',
+          tool: 'log',
+          label: 'Log Completion',
+          args: { message: 'Done! Message copied to clipboard at {{step_now.formatted}}' },
+          fallbackTo: '',
+          position: { x: 60, y: 610 }
         }
       ],
       wires: [
-        { from: 'trig_0', to: 'step_notify' },
-        { from: 'step_notify', to: 'step_screenshot' },
-        { from: 'step_screenshot', to: 'step_done' }
+        { from: 'trig_0', to: 'step_welcome' },
+        { from: 'step_welcome', to: 'step_now' },
+        { from: 'step_now', to: 'step_clipboard' },
+        { from: 'step_clipboard', to: 'step_log' }
       ],
     };
+    const arrangedSkeleton = applyAutoLayoutToModel(skeleton);
     try {
-      const res = await (window as any).desktopAPI?.workflowsSave?.(safe, JSON.stringify(skeleton, null, 2));
+      const res = await (window as any).desktopAPI?.workflowsSave?.(safe, JSON.stringify(arrangedSkeleton, null, 2));
       if (res?.ok) {
         await refresh();
         await load(safe);
@@ -737,17 +764,8 @@ function WorkflowsApp() {
   // Auto-organize layout
   const autoOrganize = useCallback(() => {
     if (!model) return;
-    const result = calculateAutoLayout(model.triggers, model.nodes, model.wires);
-    const newTriggers = model.triggers.map(t => {
-      const pos = result.triggers.find(r => r.id === t.id);
-      return pos ? { ...t, position: pos.position } : t;
-    });
-    const newNodes = model.nodes.map(n => {
-      const pos = result.nodes.find(r => r.id === n.id);
-      return pos ? { ...n, position: pos.position } : n;
-    });
-    updateModel({ ...model, triggers: newTriggers, nodes: newNodes });
-  }, [model, updateModel]);
+    updateModel(applyAutoLayoutToModel(model));
+  }, [model, updateModel, applyAutoLayoutToModel]);
 
   // Handle mouse wheel zoom on canvas
   const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -808,7 +826,7 @@ function WorkflowsApp() {
   // When no workflow is selected, show the launcher
   if (!selectedId || !model) {
     return (
-      <div className="h-screen w-screen flex flex-col bg-white overflow-hidden text-slate-900 font-sans">
+      <div className="h-screen w-screen flex flex-col bg-black overflow-hidden text-slate-200 font-sans">
         <WorkflowLauncher
           items={items}
           loading={loading}
@@ -829,33 +847,33 @@ function WorkflowsApp() {
           contextMenu={null}
           model={null as any}
           selectedNodeIds={new Set()}
-          onCloseContextMenu={() => {}}
-          onRunStep={() => {}}
-          onRunFromHere={() => {}}
-          onDuplicateNode={() => {}}
-          onDeleteNode={() => {}}
-          onStartReconnect={() => {}}
-          onEditWire={() => {}}
-          onDeleteWire={() => {}}
-          onAutoOrganize={() => {}}
-          onZoomReset={() => {}}
-          onZoomIn={() => {}}
-          onZoomOut={() => {}}
+          onCloseContextMenu={() => { }}
+          onRunStep={() => { }}
+          onRunFromHere={() => { }}
+          onDuplicateNode={() => { }}
+          onDeleteNode={() => { }}
+          onStartReconnect={() => { }}
+          onEditWire={() => { }}
+          onDeleteWire={() => { }}
+          onAutoOrganize={() => { }}
+          onZoomReset={() => { }}
+          onZoomIn={() => { }}
+          onZoomOut={() => { }}
           showDeployPanel={false}
           deployStatus={null}
-          onCloseDeployPanel={() => {}}
-          onDeploy={() => {}}
-          onUndeploy={() => {}}
-          onExport={() => {}}
-          onOpenPublish={() => {}}
+          onCloseDeployPanel={() => { }}
+          onDeploy={() => { }}
+          onUndeploy={() => { }}
+          onExport={() => { }}
+          onOpenPublish={() => { }}
           cloudVMs={[]}
           selectedVM={null}
-          onSelectVM={() => {}}
+          onSelectVM={() => { }}
           cloudDeployState={'idle'}
           cloudDeployError={null}
           cloudDeployId={null}
-          onDeployToCloud={() => {}}
-          onResetCloudDeploy={() => {}}
+          onDeployToCloud={() => { }}
+          onResetCloudDeploy={() => { }}
           showImport={showImport}
           importJson={importJson}
           setImportJson={setImportJson}
@@ -864,25 +882,102 @@ function WorkflowsApp() {
           onOpenMarketplaceFromImport={() => { setShowImport(false); setShowMarketplace(true); }}
           onImportJson={importJsonWorkflow}
           showPublish={false}
-          onClosePublish={() => {}}
+          onClosePublish={() => { }}
           showMarketplace={showMarketplace}
           marketplaceSlug={marketplaceSlug}
           onCloseMarketplace={() => { setShowMarketplace(false); setMarketplaceSlug(undefined); }}
           onImportMarketplace={importFromMarketplace}
           showMyPublished={false}
-          onCloseMyPublished={() => {}}
-          onOpenPublishFromMyPublished={() => {}}
+          onCloseMyPublished={() => { }}
+          onOpenPublishFromMyPublished={() => { }}
           pendingUpdate={null}
           currentUpdateWorkflowName=""
-          onClosePendingUpdate={() => {}}
-          onApplyPendingUpdate={async () => {}}
+          onClosePendingUpdate={() => { }}
+          onApplyPendingUpdate={async () => { }}
         />
       </div>
     );
   }
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-white overflow-hidden text-slate-900 font-sans">
+    <div className="h-screen w-screen relative bg-black overflow-hidden text-slate-200 font-sans">
+      <div className="absolute inset-0">
+        {/* Main Content Area */}
+        <WorkflowMainContent
+          selectedId={selectedId}
+          model={model}
+          loading={loading}
+          viewMode={viewMode}
+          onSetViewMode={setViewMode}
+          aiLeftWidth={aiLeftWidth}
+          onStartResizeAiLeft={startResizeAiLeft}
+          onResetAiLeftWidth={() => setAiLeftWidth(350)}
+          manualRightWidth={manualRightWidth}
+          onStartResizeManualRight={startResizeManualRight}
+          onResetManualRightWidth={() => setManualRightWidth(320)}
+          rightPanel={rightPanel}
+          onSetRightPanel={setRightPanel}
+          showWorkspace={showWorkspace}
+          workspaceInfo={workspaceInfo}
+          errors={errors}
+          selectedNodeId={selectedNodeId}
+          selectedNodeIds={selectedNodeIds}
+          connectingFrom={connectingFrom}
+          reconnecting={reconnecting}
+          executionState={executionState}
+          size={size}
+          canvasRef={canvasRef}
+          alignmentGuides={alignmentGuides}
+          zoom={zoom}
+          selectedWireIndex={selectedWireIndex}
+          selectionBox={selectionBox}
+          activeTab={activeTab}
+          openTabs={openTabs}
+          logs={logs}
+          workflowChatModelId={workflowChatModelId}
+          chat={chat}
+          onApplyModel={applyModel}
+          onSetWorkflowChatModelId={setWorkflowChatModelId}
+          onSetActiveTab={setActiveTab}
+          onCloseFileTab={closeFileTab}
+          onClearLogs={() => setLogs([])}
+          onCanvasMouseDown={handleCanvasMouseDown}
+          onWheel={handleWheel}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          onZoomReset={zoomReset}
+          onAutoOrganize={autoOrganize}
+          onDragOver={handleCanvasDragOver}
+          onDrop={handleDrop}
+          onMouseMove={handleMM}
+          onMouseUp={handleCanvasMouseUp}
+          onMouseLeave={handleCanvasMouseLeave}
+          onCanvasClick={clearCanvasSelection}
+          onNodeSelect={handleNodeSelectWithPanel}
+          onNodeMouseDown={handleNodeMD}
+          onNodeContextMenu={handleNodeContextMenu}
+          onNodeConnect={handleConnectWithFocus}
+          onWireSelect={handleWireSelect}
+          onWireDelete={handleWireDelete}
+          onWireContextMenu={handleWireContextMenu}
+          onWireReconnect={startReconnect}
+          onCanvasContextMenu={handleCanvasContextMenu}
+          onSetSelectedWireIndex={setSelectedWireIndex}
+          onUpdateModel={updateModel}
+          onDeleteNode={delNode}
+          onStartReconnect={startReconnect}
+          onRefreshWorkspace={() => refreshWorkspace()}
+          onCloseWorkspace={() => setShowWorkspace(false)}
+          onOpenFile={openFileTab}
+          onOpenStuard={openStuardCanvas}
+          chatInputRef={chatInputRef}
+          toolPaletteRef={toolPaletteRef}
+          breadcrumbs={breadcrumbPath}
+          currentSubPath={currentSubPath}
+          onNavigateBack={navigateBack}
+        />
+      </div>
+
       <WorkflowHeader
         model={model}
         selectedId={selectedId}
@@ -926,100 +1021,125 @@ function WorkflowsApp() {
         }}
       />
 
-      <div className="flex-1 flex min-h-0 relative">
-        {/* Workspace folder sidebar - shown when a workflow is open */}
-        {showWorkspace && (
-          <div className="w-[260px] bg-white border-r border-slate-200/80 flex flex-col h-full shrink-0 z-20">
-            <PanelErrorBoundary name="Workspace">
-              <WorkspaceExplorer
-                flowId={selectedId}
-                workspaceInfo={workspaceInfo}
-                variables={model?.variables}
-                onRefresh={() => refreshWorkspace()}
-                onClose={() => setShowWorkspace(false)}
-                onOpenFile={openFileTab}
-                onOpenStuard={openStuardCanvas}
-              />
-            </PanelErrorBoundary>
-          </div>
-        )}
+      {/* Floating Right Sidebar Menu */}
+      {model && (
+        <div
+          className="absolute right-4 top-1/2 -translate-y-1/2 z-40 flex flex-col items-center justify-center bg-white/[0.06] backdrop-blur-2xl border-white/[0.1] shadow-2xl pointer-events-auto"
+          style={{ width: 52, minHeight: 340, gap: 16, borderRadius: 20, padding: 8, borderWidth: 0.4, borderStyle: 'solid' }}
+        >
+          <button
+            onClick={() => {
+              if (viewMode === 'ai') {
+                setViewMode('none');
+                setRightPanel('none');
+              } else {
+                setViewMode('ai');
+                setRightPanel('ai');
+              }
+            }}
+            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${viewMode === 'ai' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/10 hover:text-white/80'}`}
+            title="Design with AI"
+          >
+            <Sparkles className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => {
+              if (viewMode === 'manual') {
+                setViewMode('none');
+                setRightPanel('none');
+              } else {
+                setViewMode('manual');
+                setRightPanel('none');
+              }
+            }}
+            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${viewMode === 'manual' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/10 hover:text-white/80'}`}
+            title="Manual Build"
+          >
+            <Wrench className="w-5 h-5" />
+          </button>
 
-        {/* Main Content Area */}
-        <WorkflowMainContent
-          selectedId={selectedId}
-          model={model}
-          loading={loading}
-          viewMode={viewMode}
-          aiLeftWidth={aiLeftWidth}
-          onStartResizeAiLeft={startResizeAiLeft}
-          onResetAiLeftWidth={() => setAiLeftWidth(350)}
-          manualRightWidth={manualRightWidth}
-          onStartResizeManualRight={startResizeManualRight}
-          onResetManualRightWidth={() => setManualRightWidth(320)}
-          rightPanel={rightPanel}
-          onSetRightPanel={setRightPanel}
-          showWorkspace={false}
-          workspaceInfo={workspaceInfo}
-          errors={errors}
-          selectedNodeId={selectedNodeId}
-          selectedNodeIds={selectedNodeIds}
-          connectingFrom={connectingFrom}
-          reconnecting={reconnecting}
-          executionState={executionState}
-          size={size}
-          canvasRef={canvasRef}
-          alignmentGuides={alignmentGuides}
-          zoom={zoom}
-          selectedWireIndex={selectedWireIndex}
-          selectionBox={selectionBox}
-          activeTab={activeTab}
-          openTabs={openTabs}
-          logs={logs}
-          showLogs={showLogs}
-          workflowChatModelId={workflowChatModelId}
-          chat={chat}
-          onApplyModel={applyModel}
-          onSetWorkflowChatModelId={setWorkflowChatModelId}
-          onSetActiveTab={setActiveTab}
-          onCloseFileTab={closeFileTab}
-          onToggleLogs={() => setShowLogs(!showLogs)}
-          onClearLogs={() => setLogs([])}
-          onCanvasMouseDown={handleCanvasMouseDown}
-          onWheel={handleWheel}
-          onZoomIn={zoomIn}
-          onZoomOut={zoomOut}
-          onZoomReset={zoomReset}
-          onAutoOrganize={autoOrganize}
-          onDragOver={handleCanvasDragOver}
-          onDrop={handleDrop}
-          onMouseMove={handleMM}
-          onMouseUp={handleCanvasMouseUp}
-          onMouseLeave={handleCanvasMouseLeave}
-          onCanvasClick={clearCanvasSelection}
-          onNodeSelect={handleNodeSelectWithPanel}
-          onNodeMouseDown={handleNodeMD}
-          onNodeContextMenu={handleNodeContextMenu}
-          onNodeConnect={handleConnectWithFocus}
-          onWireSelect={handleWireSelect}
-          onWireDelete={handleWireDelete}
-          onWireContextMenu={handleWireContextMenu}
-          onWireReconnect={startReconnect}
-          onCanvasContextMenu={handleCanvasContextMenu}
-          onSetSelectedWireIndex={setSelectedWireIndex}
-          onUpdateModel={updateModel}
-          onDeleteNode={delNode}
-          onStartReconnect={startReconnect}
-          onRefreshWorkspace={() => refreshWorkspace()}
-          onCloseWorkspace={() => setShowWorkspace(false)}
-          onOpenFile={openFileTab}
-          onOpenStuard={openStuardCanvas}
-          chatInputRef={chatInputRef}
-          toolPaletteRef={toolPaletteRef}
-          breadcrumbs={breadcrumbPath}
-          currentSubPath={currentSubPath}
-          onNavigateBack={navigateBack}
-        />
-      </div>
+          <div className="w-6 h-[1.5px] bg-white/[0.15] shrink-0 rounded-full" />
+
+          <button
+            onClick={() => {
+              if (!model?.locked) {
+                setRightPanel((p) => {
+                  const next = p === 'logs' ? 'none' : 'logs';
+                  if (next !== 'none') setShowWorkspace(false);
+                  return next;
+                });
+              }
+            }}
+            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${rightPanel === 'logs' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/10 hover:text-white/80'}`}
+            title="Execution Logs"
+          >
+            <Terminal className="w-5 h-5" />
+          </button>
+
+          <button
+            onClick={() => {
+              setShowWorkspace((p) => {
+                const next = !p;
+                if (next) {
+                  refreshWorkspace();
+                  setRightPanel('none');
+                }
+                return next;
+              });
+            }}
+            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${showWorkspace ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/10 hover:text-white/80'}`}
+            title="Workspace"
+          >
+            <FolderOpen className="w-5 h-5" />
+          </button>
+
+          <div className="w-6 h-[1.5px] bg-white/[0.15] shrink-0 rounded-full" />
+
+          <button
+            onClick={() => {
+              if (!model?.locked) {
+                setRightPanel((p) => {
+                  const next = p === 'code' ? 'none' : 'code';
+                  if (next !== 'none') setShowWorkspace(false);
+                  return next;
+                });
+              }
+            }}
+            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${rightPanel === 'code' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/10 hover:text-white/80'}`}
+            title="JSON Code"
+          >
+            <FileCode className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => {
+              setRightPanel((p) => {
+                const next = p === 'docs' ? 'none' : 'docs';
+                if (next !== 'none') setShowWorkspace(false);
+                return next;
+              });
+            }}
+            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${rightPanel === 'docs' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/10 hover:text-white/80'}`}
+            title="Documentation"
+          >
+            <BookOpen className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => {
+              if (!model?.locked) {
+                setRightPanel((p) => {
+                  const next = p === 'inspector' ? 'none' : 'inspector';
+                  if (next !== 'none') setShowWorkspace(false);
+                  return next;
+                });
+              }
+            }}
+            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${rightPanel === 'inspector' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/10 hover:text-white/80'}`}
+            title="Inspector Settings"
+          >
+            <Settings className="w-5 h-5" />
+          </button>
+        </div>
+      )}
 
       <WorkflowOverlays
         contextMenu={contextMenu}

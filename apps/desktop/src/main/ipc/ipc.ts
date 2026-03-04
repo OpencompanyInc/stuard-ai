@@ -14,6 +14,7 @@ import logger from "../utils/logger";
 import * as fs from "fs";
 import { Buffer } from "node:buffer";
 import { getGlobalHotkey, setGlobalHotkey as saveGlobalHotkey, getTimezone, setTimezone } from "../settings";
+import { skills_list, skills_get, skills_save, skills_delete, skills_toggle, loadSkills, type Skill } from "../skills";
 
 let nodeNotifier: any = null;
 try { nodeNotifier = require('node-notifier'); } catch { }
@@ -663,6 +664,14 @@ export function setupIpc() {
   ipcMain.handle('workflows:saveWorkspaceStuard', (_e, id: string, subPath: string, content: string) => workflows_saveWorkspaceStuard(id, subPath, content));
   ipcMain.handle('workflows:listWorkspaceFunctions', (_e, id: string) => workflows_listWorkspaceFunctions(id));
 
+  // Skills
+  loadSkills();
+  ipcMain.handle('skills:list', () => skills_list());
+  ipcMain.handle('skills:get', (_e, id: string) => skills_get(id));
+  ipcMain.handle('skills:save', (_e, skill: Skill) => skills_save(skill));
+  ipcMain.handle('skills:delete', (_e, id: string) => skills_delete(id));
+  ipcMain.handle('skills:toggle', (_e, id: string) => skills_toggle(id));
+
   // Python Environment Management
   ipcMain.handle('python:status', async () => {
     return await execLocalTool('python_status', {});
@@ -1184,6 +1193,70 @@ export function setupIpc() {
   ipcMain.handle('unified-tasks:delete-agent-assignment', (_e, taskId: string, assignmentId: string) => unifiedTasksService.deleteAgentAssignment(taskId, assignmentId));
   ipcMain.handle('unified-tasks:get-pending-assignments', () => unifiedTasksService.getPendingAssignments());
   ipcMain.handle('unified-tasks:get-calendar-items', () => unifiedTasksService.getCalendarItems());
+
+  // ==========================================
+  // PROACTIVE AGENT SYSTEM
+  // ==========================================
+  const { proactiveService } = require('../services/proactive-service');
+  const { triggerManualWakeUp } = require('../services/proactive-scheduler');
+  const { TOOL_REGISTRY } = require('../tools/registry');
+
+  ipcMain.handle('proactive:getConfig', () => proactiveService.getConfig());
+  ipcMain.handle('proactive:updateConfig', (_e: any, updates: any) => {
+    const result = proactiveService.updateConfig(updates);
+    // If enabled state or interval changed, broadcast so the scheduler picks it up immediately
+    if ('enabled' in updates || 'interval' in updates) {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send('proactive-update', { type: 'config-changed', config: result.config });
+        }
+      }
+    }
+    return result;
+  });
+  ipcMain.handle('proactive:listTasks', () => proactiveService.listTasks());
+  ipcMain.handle('proactive:addTask', (_e: any, task: any) => proactiveService.addTask(task));
+  ipcMain.handle('proactive:updateTask', (_e: any, taskId: string, updates: any) => proactiveService.updateTask(taskId, updates));
+  ipcMain.handle('proactive:deleteTask', (_e: any, taskId: string) => proactiveService.deleteTask(taskId));
+  ipcMain.handle('proactive:getWakeUpLog', (_e: any, limit?: number) => proactiveService.getWakeUpLog(limit));
+  ipcMain.handle('proactive:triggerNow', () => triggerManualWakeUp());
+  ipcMain.handle('proactive:getAvailableTools', () => {
+    return { ok: true, tools: Object.keys(TOOL_REGISTRY) };
+  });
+  ipcMain.handle('proactive:submitResult', (_e: any, payload: any) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send('proactive-result-relay', payload);
+      }
+    }
+    return { ok: true };
+  });
+  ipcMain.handle('proactive:isRunning', () => {
+    const { isProactiveSchedulerRunning } = require('../services/proactive-scheduler');
+    return { ok: true, running: isProactiveSchedulerRunning() };
+  });
+
+  ipcMain.handle('proactive:reply', async (_e: any, payload: { wakeUpId: string; text: string }) => {
+    try {
+      const { handleProactiveReply } = require('../services/proactive-scheduler');
+      return await handleProactiveReply(payload.wakeUpId, payload.text);
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  // ==========================================
+  // OFFLINE CALENDAR EVENTS
+  // ==========================================
+  const { offlineCalendarService } = require('../services/offline-calendar');
+
+  ipcMain.handle('offline-calendar:list', () => offlineCalendarService.list());
+  ipcMain.handle('offline-calendar:get', (_e: any, eventId: string) => offlineCalendarService.get(eventId));
+  ipcMain.handle('offline-calendar:add', (_e: any, eventData: any) => offlineCalendarService.add(eventData));
+  ipcMain.handle('offline-calendar:update', (_e: any, eventData: any) => offlineCalendarService.update(eventData));
+  ipcMain.handle('offline-calendar:delete', (_e: any, eventId: string) => offlineCalendarService.delete(eventId));
+  ipcMain.handle('offline-calendar:get-for-range', (_e: any, startIso: string, endIso: string) => offlineCalendarService.getForRange(startIso, endIso));
+  ipcMain.handle('offline-calendar:get-calendar-blocks', (_e: any, startIso: string, endIso: string) => offlineCalendarService.getCalendarBlocks(startIso, endIso));
 
   // Legacy User To-Do List (for backwards compatibility)
   const todosPath = () => {

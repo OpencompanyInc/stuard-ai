@@ -100,7 +100,7 @@ export function FilesEditor({ value, onChange }: FilesEditorProps) {
             return (
               <div
                 key={index}
-                className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg group hover:bg-slate-100 transition-colors"
+                className="flex items-center gap-2 px-3 py-2 bg-white/[0.06] border border-white/[0.08] rounded-lg group hover:bg-white/[0.1] transition-colors"
               >
                 <span className="text-lg shrink-0">{getFileIcon(ext)}</span>
                 
@@ -127,10 +127,10 @@ export function FilesEditor({ value, onChange }: FilesEditorProps) {
                       onClick={() => setEditingFilename(index)}
                       title="Click to rename attachment"
                     >
-                      <p className="text-sm font-medium text-slate-700 truncate">
+                      <p className="text-sm font-medium text-white/80 truncate">
                         {displayName}
                       </p>
-                      <p className="text-[10px] text-slate-400 truncate">
+                      <p className="text-[10px] text-white/40 truncate">
                         {file.path}
                       </p>
                     </div>
@@ -140,7 +140,7 @@ export function FilesEditor({ value, onChange }: FilesEditorProps) {
                 <button
                   type="button"
                   onClick={() => handleRemove(index)}
-                  className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors opacity-0 group-hover:opacity-100"
+                  className="p-1 text-white/40 hover:text-red-500 hover:bg-red-50 rounded transition-colors opacity-0 group-hover:opacity-100"
                   title="Remove attachment"
                 >
                   <X className="w-4 h-4" />
@@ -155,7 +155,7 @@ export function FilesEditor({ value, onChange }: FilesEditorProps) {
       <button
         type="button"
         onClick={handleAddFiles}
-        className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-slate-300 rounded-xl text-slate-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50/50 transition-all group"
+        className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-white/[0.12] rounded-xl text-white/50 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50/50 transition-all group"
       >
         <Paperclip className="w-4 h-4 group-hover:scale-110 transition-transform" />
         <span className="text-sm font-medium">
@@ -165,10 +165,11 @@ export function FilesEditor({ value, onChange }: FilesEditorProps) {
 
       {/* Help Text */}
       {files.length > 0 && (
-        <p className="text-[10px] text-slate-400 text-center">
+        <p className="text-[10px] text-white/40 text-center">
           {files.length} file{files.length !== 1 ? 's' : ''} attached • Click filename to rename
         </p>
       )}
     </div>
   );
 }
+

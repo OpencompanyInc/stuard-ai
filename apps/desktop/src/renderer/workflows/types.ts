@@ -121,6 +121,8 @@ export interface DesignerWire {
 export interface WorkflowVariable {
   name: string;
   type: 'string' | 'number' | 'boolean' | 'json' | 'list';
+  /** Scope: 'workflow' = shared across all stuard files, 'local' = scoped to a single stuard file. Default: 'workflow' */
+  scope?: 'workflow' | 'local';
   defaultValue: any;
   description?: string;
   /** When true, variable value persists across workflow restarts. When false (default), resets to defaultValue on deploy/start */

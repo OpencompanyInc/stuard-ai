@@ -158,6 +158,31 @@ declare global {
       // File Icons
       getFileIcon: (filePath: string, options?: { size?: 'small' | 'normal' | 'large' }) => Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
 
+      // Skills
+      skillsList: () => Promise<{ ok: boolean; skills?: Array<{ id: string; name: string; description: string; icon: string; color: string; trigger: string; steps: Array<{ id: string; type: string; label: string; content: string; toolName?: string }>; isActive: boolean; createdAt: string; updatedAt: string }> }>;
+      skillsGet: (id: string) => Promise<{ ok: boolean; skill?: any; error?: string }>;
+      skillsSave: (skill: any) => Promise<{ ok: boolean; error?: string }>;
+      skillsDelete: (id: string) => Promise<{ ok: boolean; error?: string }>;
+      skillsToggle: (id: string) => Promise<{ ok: boolean; isActive?: boolean; error?: string }>;
+
+      // Proactive Agent System
+      proactiveGetConfig: () => Promise<{ ok: boolean; config?: any; error?: string }>;
+      proactiveUpdateConfig: (updates: any) => Promise<{ ok: boolean; config?: any; error?: string }>;
+      proactiveListTasks: () => Promise<{ ok: boolean; tasks?: any[]; error?: string }>;
+      proactiveAddTask: (task: any) => Promise<{ ok: boolean; task?: any; tasks?: any[]; error?: string }>;
+      proactiveUpdateTask: (taskId: string, updates: any) => Promise<{ ok: boolean; task?: any; tasks?: any[]; error?: string }>;
+      proactiveDeleteTask: (taskId: string) => Promise<{ ok: boolean; tasks?: any[]; error?: string }>;
+      proactiveGetWakeUpLog: (limit?: number) => Promise<{ ok: boolean; logs?: any[]; error?: string }>;
+      proactiveTriggerNow: () => Promise<{ ok: boolean; error?: string }>;
+      proactiveGetAvailableTools: () => Promise<{ ok: boolean; tools?: string[]; error?: string }>;
+      proactiveSubmitResult: (payload: any) => Promise<{ ok: boolean; error?: string }>;
+      proactiveIsRunning: () => Promise<{ ok: boolean; running?: boolean }>;
+      onProactiveUpdate: (cb: (data: any) => void) => () => void;
+      onProactiveWakeUp: (cb: (data: any) => void) => () => void;
+      onProactiveProgress: (cb: (data: any) => void) => () => void;
+      onProactiveCheckin: (cb: (data: any) => void) => () => void;
+      proactiveReply: (payload: { wakeUpId: string; text: string }) => Promise<{ ok: boolean; error?: string }>;
+
       // Global Hotkey
       setGlobalHotkey: (accelerator: string) => Promise<{ ok: boolean; error?: string }>;
       getGlobalHotkey: () => Promise<{ ok: boolean; hotkey?: string }>;

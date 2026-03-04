@@ -88,11 +88,11 @@ export function ArrayEditor({
   return (
     <div className="space-y-2">
       {items.length === 0 ? (
-        <div className="text-center py-6 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-          <div className="w-10 h-10 mx-auto mb-3 rounded-full bg-slate-100 flex items-center justify-center">
-            {isPathArray ? <FileText className="w-5 h-5 text-slate-400" /> : <Plus className="w-5 h-5 text-slate-400" />}
+        <div className="text-center py-6 bg-white/[0.06] rounded-xl border border-dashed border-white/[0.08]">
+          <div className="w-10 h-10 mx-auto mb-3 rounded-full bg-white/[0.06] flex items-center justify-center">
+            {isPathArray ? <FileText className="w-5 h-5 text-white/40" /> : <Plus className="w-5 h-5 text-white/40" />}
           </div>
-          <p className="text-sm text-slate-500 mb-3">No {getItemLabel()}s added yet</p>
+          <p className="text-sm text-white/50 mb-3">No {getItemLabel()}s added yet</p>
           <button
             onClick={addItem}
             className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors"
@@ -104,9 +104,9 @@ export function ArrayEditor({
       ) : (
         <>
           {items.map((item, i) => (
-            <div key={i} className="flex gap-2 items-center group p-2 bg-slate-50 rounded-xl border border-slate-100 hover:border-slate-200 transition-colors">
+            <div key={i} className="flex gap-2 items-center group p-2 bg-white/[0.06] rounded-xl border border-white/[0.04] hover:border-white/[0.08] transition-colors">
               {/* Index indicator */}
-              <div className="w-6 h-6 rounded-lg bg-slate-200 flex items-center justify-center text-xs font-medium text-slate-500 shrink-0">
+              <div className="w-6 h-6 rounded-lg bg-slate-200 flex items-center justify-center text-xs font-medium text-white/50 shrink-0">
                 {i + 1}
               </div>
               
@@ -141,7 +141,7 @@ export function ArrayEditor({
                           }
                         } catch {}
                       }}
-                      className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-500 hover:text-indigo-600 hover:border-indigo-300 transition-colors shrink-0"
+                      className="px-3 py-2 bg-white/[0.04] border border-white/[0.08] rounded-lg text-white/50 hover:text-indigo-600 hover:border-indigo-300 transition-colors shrink-0"
                       title="Browse files"
                     >
                       <FolderOpen className="w-4 h-4" />
@@ -153,7 +153,7 @@ export function ArrayEditor({
                     onChange={e => {
                       try { updateItem(i, JSON.parse(e.target.value)); } catch { /* ignore */ }
                     }}
-                    className="w-full px-3 py-2 text-xs font-mono bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 resize-none"
+                    className="w-full px-3 py-2 text-xs font-mono bg-white/[0.04] border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 resize-none"
                     rows={3}
                   />
                 ) : (
@@ -180,7 +180,7 @@ export function ArrayEditor({
 
           <button
             onClick={addItem}
-            className="w-full py-2.5 border border-dashed border-slate-200 rounded-xl text-xs font-semibold text-slate-500 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all flex items-center justify-center gap-2"
+            className="w-full py-2.5 border border-dashed border-white/[0.08] rounded-xl text-xs font-semibold text-white/50 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all flex items-center justify-center gap-2"
           >
             <Plus className="w-4 h-4" />
             Add {getItemLabel()}
@@ -190,3 +190,4 @@ export function ArrayEditor({
     </div>
   );
 }
+

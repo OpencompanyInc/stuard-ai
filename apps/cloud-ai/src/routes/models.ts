@@ -222,6 +222,22 @@ async function fetchRegistry(): Promise<RegistryResponse> {
   return registry;
 }
 
+/**
+ * Check if a model supports multimodal (image/audio/video) input.
+ * Uses the cached registry; returns true by default if unknown (safe fallback: attempt multimodal).
+ */
+export async function modelSupportsMultimodal(modelId: string): Promise<boolean> {
+  try {
+    const registry = await fetchRegistry();
+    const model = registry.models.find(m => m.id === modelId);
+    if (!model) return true; // unknown model — assume multimodal to avoid losing data
+    const inputMods = Array.isArray(model.modalities?.input) ? model.modalities.input : [];
+    return inputMods.includes('image') || inputMods.includes('audio') || inputMods.includes('video');
+  } catch {
+    return true; // on error assume multimodal
+  }
+}
+
 async function handleModelsRegistry(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   const path = String(parsedUrl.pathname || '');
   if (req.method === 'GET' && path === '/v1/models') {

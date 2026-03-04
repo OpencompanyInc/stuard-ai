@@ -6,6 +6,7 @@ import {
   GCP_VM_NETWORK,
   GCP_VM_SUBNETWORK,
   CLOUD_ENGINE_BUCKET,
+  CLOUD_PUBLIC_URL,
 } from '../utils/config';
 import { COMPUTE_TIER_CONFIG } from '../pricing';
 import { generateVMSecret } from './vm-tokens';
@@ -64,6 +65,8 @@ function mapGceStatus(status: string | null | undefined): VMStatus {
 function buildStartupScript(userId: string, vmSecret: string, vmToken?: string): string {
   const token = vmToken || '';
   const bucket = CLOUD_ENGINE_BUCKET || 'stuard-user-data';
+  // Cloud-ai URL — the VM engine calls cloud tools + desktop relay via this
+  const cloudAiUrl = CLOUD_PUBLIC_URL || 'https://api.stuard.ai';
 
   return `#!/bin/bash
 set -eo pipefail
@@ -82,6 +85,7 @@ STUARD_USER_ID=${userId}
 STUARD_GCS_BUCKET=${bucket}
 STUARD_VM_TOKEN=${token}
 VM_TOKEN_SECRET=${vmSecret}
+CLOUD_AI_URL=${cloudAiUrl}
 STUARD_VM_ROOT=/home/stuard
 STUARD_AGENT_PORT=7400
 ENVEOF
@@ -100,7 +104,7 @@ else
 fi
 
 # Install node-pty native dependency (needed for terminal PTY support)
-apt-get install -y -q build-essential python3 2>/dev/null || true
+apt-get install -y -q build-essential python3 python3-pip python3-venv 2>/dev/null || true
 npm install -g node-pty 2>/dev/null || echo "[stuard] node-pty global install skipped (will try local)"
 
 # ── 4. Download VM agent bundle from GCS ────────────────────────────────────
@@ -131,16 +135,108 @@ fi
 # Also install node-pty locally in /opt/stuard for the agent
 cd /opt/stuard
 npm init -y 2>/dev/null || true
-npm install node-pty 2>/dev/null || echo "[stuard] Warning: node-pty install failed (terminal may not work)"
+npm install node-pty ws 2>/dev/null || echo "[stuard] Warning: node-pty install failed (terminal may not work)"
 cd /
 
+# ── 4b. Download & install Python agent (local tool provider) ───────────────
+PYAGENT_GCS="gs://${bucket}/agent/stuard-python-agent.tar.gz"
+PYAGENT_PATH="/opt/stuard/python-agent"
+
+echo "[stuard] Downloading Python agent from $PYAGENT_GCS..."
+mkdir -p "$PYAGENT_PATH"
+if gsutil cp "$PYAGENT_GCS" /tmp/stuard-python-agent.tar.gz 2>/dev/null; then
+  tar -xzf /tmp/stuard-python-agent.tar.gz -C "$PYAGENT_PATH" --strip-components=1
+  rm -f /tmp/stuard-python-agent.tar.gz
+  echo "[stuard] Python agent extracted to $PYAGENT_PATH"
+
+  # Create virtual environment and install requirements
+  if [ -f "$PYAGENT_PATH/requirements-vm.txt" ]; then
+    echo "[stuard] Installing Python agent dependencies (VM-slim)..."
+    python3 -m venv "$PYAGENT_PATH/venv"
+    "$PYAGENT_PATH/venv/bin/pip" install --quiet --no-cache-dir -r "$PYAGENT_PATH/requirements-vm.txt" 2>&1 | tail -5
+  elif [ -f "$PYAGENT_PATH/requirements.txt" ]; then
+    echo "[stuard] Installing Python agent dependencies..."
+    python3 -m venv "$PYAGENT_PATH/venv"
+    "$PYAGENT_PATH/venv/bin/pip" install --quiet --no-cache-dir -r "$PYAGENT_PATH/requirements.txt" 2>&1 | tail -5
+  fi
+  echo "[stuard] Python agent ready"
+else
+  PYAGENT_URL="https://storage.googleapis.com/${bucket}/agent/stuard-python-agent.tar.gz"
+  if curl -fsSL -o /tmp/stuard-python-agent.tar.gz "$PYAGENT_URL" 2>/dev/null; then
+    tar -xzf /tmp/stuard-python-agent.tar.gz -C "$PYAGENT_PATH" --strip-components=1
+    rm -f /tmp/stuard-python-agent.tar.gz
+    if [ -f "$PYAGENT_PATH/requirements-vm.txt" ]; then
+      python3 -m venv "$PYAGENT_PATH/venv"
+      "$PYAGENT_PATH/venv/bin/pip" install --quiet --no-cache-dir -r "$PYAGENT_PATH/requirements-vm.txt" 2>&1 | tail -5
+    fi
+    echo "[stuard] Python agent ready (via HTTP)"
+  else
+    echo "[stuard] Warning: Python agent not available — some tools will be limited"
+  fi
+fi
+
 # Set ownership — agent runs as stuard, not root
-chown -R stuard:stuard /opt/stuard
+chown -R stuard:stuard /opt/stuard /home/stuard
 
-# ── 5. Open firewall for agent HTTP server (port 7400) ──────────────────────
+# ── 4c. Security hardening ──────────────────────────────────────────────────
+
+# Lock down env file — only stuard can read (contains VM_TOKEN_SECRET)
+chmod 600 /opt/stuard/env
+chown stuard:stuard /opt/stuard/env
+
+# Prevent stuard user from modifying the agent binary or env file
+chattr +i /opt/stuard/vm-agent-bundle.js 2>/dev/null || true
+
+# Restrict home directory — no world-readable access
+chmod 750 /home/stuard
+
+# Disable sudo for stuard (belt-and-suspenders — user shouldn't be in sudoers)
+grep -q '^stuard' /etc/sudoers 2>/dev/null && sed -i '/^stuard/d' /etc/sudoers 2>/dev/null || true
+
+# ── 5. Firewall — only allow agent port (7400) from external, lock down rest ─
+# Drop metadata server access from stuard user (prevent SSRF to GCE metadata)
+iptables -A OUTPUT -m owner --uid-owner stuard -d 169.254.169.254 -j DROP 2>/dev/null || true
+# Allow agent port from cloud-ai
 iptables -I INPUT -p tcp --dport 7400 -j ACCEPT 2>/dev/null || true
+# Python agent WS (8765) should only be accessible from localhost
+iptables -A INPUT -p tcp --dport 8765 ! -s 127.0.0.1 -j DROP 2>/dev/null || true
 
-# ── 6. Create systemd service ───────────────────────────────────────────────
+# ── 6. Create systemd services ───────────────────────────────────────────────
+
+# Python agent service (provides local tools via WebSocket on port 8765)
+if [ -d /opt/stuard/python-agent ] && [ -f /opt/stuard/python-agent/vm_main.py ]; then
+cat > /etc/systemd/system/stuard-python-agent.service <<'PYEOF'
+[Unit]
+Description=Stuard Python Agent (local tool provider)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/stuard/env
+Environment=STUARD_AGENT_MODE=vm
+Environment=STUARD_WS_HOST=127.0.0.1
+Environment=STUARD_WS_PORT=8765
+ExecStart=/opt/stuard/python-agent/venv/bin/python vm_main.py
+WorkingDirectory=/opt/stuard/python-agent
+User=stuard
+Group=stuard
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=stuard-python
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target
+PYEOF
+fi
+
+# Node.js VM agent service (HTTP server on port 7400)
 cat > /etc/systemd/system/stuard-agent.service <<'SVCEOF'
 [Unit]
 Description=Stuard VM Agent (HTTP server)
@@ -168,8 +264,19 @@ MemoryMax=512M
 WantedBy=multi-user.target
 SVCEOF
 
-# ── 7. Start the agent ──────────────────────────────────────────────────────
+# ── 7. Start services ────────────────────────────────────────────────────────
 systemctl daemon-reload
+
+# Start Python agent first (provides local tools on ws://127.0.0.1:8765)
+if [ -f /etc/systemd/system/stuard-python-agent.service ]; then
+  systemctl enable stuard-python-agent
+  systemctl start stuard-python-agent
+  echo "[stuard] Python agent started on ws://127.0.0.1:8765"
+  # Give it a moment to bind the port
+  sleep 2
+fi
+
+# Start Node.js VM agent (provides HTTP API on port 7400)
 systemctl enable stuard-agent
 systemctl start stuard-agent
 

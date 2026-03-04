@@ -17,6 +17,7 @@ import { MemoriesView } from "./components/MemoriesView";
 import { TasksView } from "./components/TasksView";
 import { CloudEngineDashboard } from "./components/CloudEngineDashboard";
 import { StorageView } from "./components/StorageView";
+import { ProactiveView } from "./components/ProactiveView";
 import {
   LayoutDashboard,
   Clock,
@@ -30,7 +31,8 @@ import {
   User,
   ListTodo,
   Cloud,
-  HardDrive
+  HardDrive,
+  Sparkles
 } from "lucide-react";
 import { clsx } from 'clsx';
 import 'katex/dist/katex.min.css';
@@ -167,7 +169,7 @@ function DashboardApp() {
     try {
       const params = new URLSearchParams(window.location.search);
       const initialTab = params.get('tab');
-      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'memories', 'automations', 'integrations', 'settings', 'cloud', 'storage'].includes(initialTab)) {
+      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'proactive', 'memories', 'automations', 'integrations', 'settings', 'cloud', 'storage'].includes(initialTab)) {
         return initialTab;
       }
     } catch { }
@@ -222,6 +224,17 @@ function DashboardApp() {
     refreshFfmpegStatus,
     refreshMediapipeStatus,
     refreshBrowserStatus,
+    ollamaStatus,
+    ollamaChecking,
+    refreshOllamaStatus,
+    startOllama,
+    browserUseStatus,
+    browserUseChecking,
+    browserUseSetupProgress,
+    refreshBrowserUseStatus,
+    setupBrowserUse,
+    stopBrowserUse,
+    uninstallBrowserUse,
     setupPython,
     installPython,
     runPython,
@@ -231,6 +244,13 @@ function DashboardApp() {
     refreshProfiles,
     setDefaultProfile,
     deleteProfile,
+    // telnyx
+    telnyxPhone,
+    telnyxVerifying,
+    telnyxRequestCode,
+    telnyxVerifyCode,
+    telnyxDisconnect,
+    refreshTelnyxStatus,
   } = useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP });
 
   // Local automations (Deployed Stuards)
@@ -364,7 +384,7 @@ function DashboardApp() {
     try {
       // Fetch conversations from local agent (works without sign-in)
       try {
-        const resp = await fetch(`${AGENT_HTTP}/memory/conversations?limit=20`);
+        const resp = await fetch(`${AGENT_HTTP}/v1/memory/conversations?limit=20`);
         const json = await resp.json();
         if (json.ok && Array.isArray(json.conversations)) {
           const convs = json.conversations
@@ -429,7 +449,7 @@ function DashboardApp() {
     try {
       // 1. Delete from local agent
       try {
-        await fetch(`${AGENT_HTTP}/memory/conversations/${id}`, {
+        await fetch(`${AGENT_HTTP}/v1/memory/conversations/${id}`, {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' }
         });
@@ -505,6 +525,7 @@ function DashboardApp() {
     setPlannerLoading(true);
     try {
       await loadUnifiedTasks();
+      // Offline calendar events are loaded in the calendar effect
     } finally {
       setPlannerLoading(false);
     }
@@ -519,56 +540,94 @@ function DashboardApp() {
   useEffect(() => {
     (async () => {
       if (tab !== 'planner') return;
-      const accessToken = session?.access_token;
-      if (!accessToken) {
-        setCalendarBlocks([]);
-        setCalendarRange(null);
-        setCalendarError('Cloud calendar unavailable (not signed in).');
-        return;
-      }
+
+      // Always compute a reasonable range for the current month view
+      const computeMonthRange = () => {
+        const base = new Date(calendarRefDate.getFullYear(), calendarRefDate.getMonth(), 1);
+        const start = new Date(base);
+        start.setDate(start.getDate() - start.getDay()); // Rewind to Sunday
+        const end = new Date(start);
+        end.setDate(end.getDate() + 42); // 6 weeks
+        return { start: start.toISOString(), end: end.toISOString() };
+      };
+
       setCalendarLoading(true);
       setCalendarError(null);
-      try {
-        const view = 'month';
-        const dateIso = calendarRefDate.toISOString();
-        const resp = await fetch(`${CLOUD_AI_HTTP}/v1/calendar/events?view=${encodeURIComponent(view)}&date=${encodeURIComponent(dateIso)}`, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
-        const j = await resp.json().catch(() => null);
-        if (!j || (j as any).ok !== true) {
-          const err = (j as any)?.error || 'failed';
-          if (err === 'google_not_connected') {
-            setCalendarError('Connect Google Calendar in Integrations to see events.');
-          } else if (err === 'missing_scopes') {
-            setCalendarError('Grant calendar access in Google integration to see events.');
-          } else if (err === 'unauthorized') {
-            setCalendarError('Session expired. Please sign in again.');
+
+      let cloudBlocks: any[] = [];
+      let cloudRange: { start: string; end: string } | null = null;
+      let cloudError: string | null = null;
+
+      // Try loading cloud/Google Calendar events
+      const accessToken = session?.access_token;
+      if (accessToken) {
+        try {
+          const view = 'month';
+          const dateIso = calendarRefDate.toISOString();
+          const resp = await fetch(`${CLOUD_AI_HTTP}/v1/calendar/events?view=${encodeURIComponent(view)}&date=${encodeURIComponent(dateIso)}`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          const j = await resp.json().catch(() => null);
+          if (j && (j as any).ok === true) {
+            cloudBlocks = Array.isArray((j as any).blocks) ? (j as any).blocks : [];
+            const r = (j as any).range;
+            if (r && typeof r === 'object') {
+              cloudRange = { start: String(r.start || ''), end: String(r.end || '') };
+            }
           } else {
-            setCalendarError((j as any)?.message || 'Cloud calendar unavailable.');
+            const err = (j as any)?.error || 'failed';
+            if (err === 'google_not_connected') {
+              cloudError = 'Connect Google Calendar in Integrations to also see Google events.';
+            } else if (err === 'missing_scopes') {
+              cloudError = 'Grant calendar access in Google integration to see Google events.';
+            } else if (err === 'unauthorized') {
+              cloudError = 'Session expired — Google Calendar sync paused.';
+            } else {
+              cloudError = null; // Don't show generic cloud errors, just use offline
+            }
           }
-          setCalendarBlocks([]);
-          setCalendarRange(null);
-          return;
+        } catch {
+          cloudError = null; // Silently fall back to offline
         }
-        const blocks = Array.isArray((j as any).blocks) ? (j as any).blocks : [];
-        setCalendarBlocks(blocks);
-        const r = (j as any).range;
-        if (r && typeof r === 'object') {
-          setCalendarRange({ start: String(r.start || ''), end: String(r.end || '') });
-        } else {
-          setCalendarRange(null);
-        }
-        setSelectedBlockId((prev) => {
-          if (prev && blocks.find((b: any) => String(b.id) === String(prev))) return prev;
-          return null;
-        });
-      } catch {
-        setCalendarError('Cloud calendar unavailable.');
-        setCalendarBlocks([]);
-        setCalendarRange(null);
-      } finally {
-        setCalendarLoading(false);
       }
+
+      // Load offline/local calendar events
+      let offlineBlocks: any[] = [];
+      try {
+        const monthRange = cloudRange || computeMonthRange();
+        const res = await (window as any).desktopAPI?.offlineCalendarGetBlocks?.(monthRange.start, monthRange.end);
+        if (res?.ok && Array.isArray(res.blocks)) {
+          offlineBlocks = res.blocks;
+        }
+      } catch (e) {
+        console.warn('Failed to load offline calendar:', e);
+      }
+
+      // Merge cloud + offline blocks
+      const allBlocks = [...cloudBlocks, ...offlineBlocks];
+      setCalendarBlocks(allBlocks);
+
+      // Use cloud range if available, otherwise compute from current month
+      setCalendarRange(cloudRange || computeMonthRange());
+
+      // Only show error if there are no blocks at all and there's a meaningful message
+      if (cloudError && allBlocks.length === 0) {
+        setCalendarError(cloudError);
+      } else if (cloudError) {
+        // Show as info note, not blocking error
+        setCalendarError(cloudError);
+      } else if (!accessToken && allBlocks.length === 0) {
+        setCalendarError(null); // No error - offline mode is fine
+      } else {
+        setCalendarError(null);
+      }
+
+      setSelectedBlockId((prev) => {
+        if (prev && allBlocks.find((b: any) => String(b.id) === String(prev))) return prev;
+        return null;
+      });
+
+      setCalendarLoading(false);
     })();
   }, [tab, calendarView, session?.access_token, calendarReloadToken, calendarRefDate]);
 
@@ -681,7 +740,7 @@ function DashboardApp() {
     try {
       // Try local agent first
       try {
-        const resp = await fetch(`${AGENT_HTTP}/memory/conversations/${id}/messages?limit=500`);
+        const resp = await fetch(`${AGENT_HTTP}/v1/memory/conversations/${id}/messages?limit=500`);
         const json = await resp.json();
         if (json.ok && Array.isArray(json.messages)) {
           setConvMessages(json.messages);
@@ -917,6 +976,7 @@ function DashboardApp() {
             <SidebarItem id="tasks" label="Tasks" icon={ListTodo} current={tab} onClick={setTab} />
 
             <div className="text-[10px] font-black text-theme-muted uppercase tracking-[0.2em] px-4 mt-6 mb-2 opacity-40">Intelligence</div>
+            <SidebarItem id="proactive" label="Proactive" icon={Sparkles} current={tab} onClick={setTab} />
             <SidebarItem id="memories" label="Memories" icon={Archive} current={tab} onClick={setTab} />
             <SidebarItem id="automations" label="Automations" icon={Zap} current={tab} onClick={setTab} />
 
@@ -1067,6 +1127,10 @@ function DashboardApp() {
                             <TasksView />
                           )}
 
+                          {tab === 'proactive' && (
+                            <ProactiveView />
+                          )}
+
                           {tab === 'settings' && userEmail && (
                             <SettingsView
                               themeMode={themeMode}
@@ -1152,11 +1216,27 @@ function DashboardApp() {
                                 installPython={installPython}
                                 runPython={runPython}
                                 browserStatus={browserStatus}
+                                ollamaStatus={ollamaStatus}
+                                ollamaChecking={ollamaChecking}
+                                refreshOllamaStatus={refreshOllamaStatus}
+                                startOllama={startOllama}
                                 profiles={profiles}
                                 profilesLoading={profilesLoading}
                                 refreshProfiles={refreshProfiles}
                                 setDefaultProfile={setDefaultProfile}
                                 deleteProfile={deleteProfile}
+                                telnyxPhone={telnyxPhone}
+                                telnyxVerifying={telnyxVerifying}
+                                telnyxRequestCode={telnyxRequestCode}
+                                telnyxVerifyCode={telnyxVerifyCode}
+                                telnyxDisconnect={telnyxDisconnect}
+                                browserUseStatus={browserUseStatus}
+                                browserUseChecking={browserUseChecking}
+                                browserUseSetupProgress={browserUseSetupProgress}
+                                refreshBrowserUseStatus={refreshBrowserUseStatus}
+                                setupBrowserUse={setupBrowserUse}
+                                stopBrowserUse={stopBrowserUse}
+                                uninstallBrowserUse={uninstallBrowserUse}
                               />
                             </>
                           )}

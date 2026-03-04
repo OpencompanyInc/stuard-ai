@@ -25,6 +25,7 @@ interface ModelSelectorProps {
   className?: string;
   side?: 'top' | 'bottom';
   align?: 'start' | 'center' | 'end';
+  variant?: 'default' | 'glass';
 }
 
 const PROVIDER_FALLBACK_ICONS: Record<string, React.ReactNode> = {
@@ -77,7 +78,8 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   onReasoningLevelChange,
   className,
   side = 'top',
-  align = 'start'
+  align = 'start',
+  variant = 'default'
 }) => {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -216,8 +218,10 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={clsx(
-          "flex items-center gap-1.5 px-2 py-1.5 rounded-xl transition-all cursor-pointer outline-none group border border-transparent hover:bg-black/5",
-          open ? "bg-black/5" : "bg-transparent",
+          "flex items-center gap-1.5 px-2 py-1.5 rounded-xl transition-all cursor-pointer outline-none group border",
+          variant === 'glass' 
+            ? clsx("border-white/[0.08] hover:bg-white/[0.06]", open ? "bg-white/[0.06]" : "bg-transparent")
+            : clsx("border-transparent hover:bg-black/5", open ? "bg-black/5" : "bg-transparent"),
           className
         )}
       >
@@ -230,22 +234,25 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             />
           ) : (
             selectedModel ? (
-              PROVIDER_FALLBACK_ICONS[selectedModel.provider] || <Cpu className="w-3.5 h-3.5 text-neutral-500" />
+              PROVIDER_FALLBACK_ICONS[selectedModel.provider] || <Cpu className={clsx("w-3.5 h-3.5", variant === 'glass' ? "text-white/50" : "text-neutral-500")} />
             ) : (
-              <Sparkles className="w-3.5 h-3.5 text-blue-600 fill-blue-600/20" />
+              <Sparkles className={clsx("w-3.5 h-3.5", variant === 'glass' ? "text-white/80" : "text-blue-600 fill-blue-600/20")} />
             )
           )}
         </div>
         <div className="flex flex-col items-start min-w-0">
           <div className="flex items-center gap-1 min-w-0">
-            <span className="text-[12px] font-semibold text-neutral-600 truncate max-w-[80px] leading-none group-hover:text-neutral-900">
+            <span className={clsx(
+              "text-[12px] font-semibold truncate max-w-[80px] leading-none",
+              variant === 'glass' ? "text-white/80 group-hover:text-white" : "text-neutral-600 group-hover:text-neutral-900"
+            )}>
               {selectedModelName}
             </span>
             {reasoningLevel !== 'high' && (
               <span className={clsx(
                 "text-[8px] font-bold uppercase tracking-wider px-1 py-0.5 rounded leading-none",
                 reasoningLevel === 'none'
-                  ? "text-theme-muted bg-theme-hover"
+                  ? (variant === 'glass' ? "text-white/40 bg-white/10" : "text-theme-muted bg-theme-hover")
                   : "text-purple-500 bg-purple-500/10"
               )}>
                 {reasoningLevel === 'none' ? 'Off' : reasoningLevel === 'low' ? 'L' : 'M'}
@@ -253,24 +260,32 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             )}
           </div>
         </div>
-        <ChevronDown className={clsx("w-3 h-3 text-neutral-400/70 transition-transform duration-300 ml-0.5", open && "rotate-180")} />
+        <ChevronDown className={clsx("w-3 h-3 transition-transform duration-300 ml-0.5", open && "rotate-180", variant === 'glass' ? "text-white/40 group-hover:text-white/60" : "text-neutral-400/70")} />
       </button>
 
       {open && (
         <div
           className={clsx(
-            "absolute z-[10005] w-[400px] bg-theme-card/95 backdrop-blur-xl rounded-[24px] border border-theme/20 shadow-2xl overflow-hidden flex flex-col max-h-[520px] animate-in fade-in zoom-in-95 duration-200",
+            "absolute z-[10005] w-[400px] rounded-[24px] shadow-2xl overflow-hidden flex flex-col max-h-[520px] animate-in fade-in zoom-in-95 duration-200",
+            variant === 'glass' 
+              ? "bg-black/60 backdrop-blur-3xl border border-white/[0.1] text-white" 
+              : "bg-theme-card/95 backdrop-blur-xl border border-theme/20",
             side === 'top' ? 'bottom-full mb-4' : 'top-full mt-4',
             align === 'end' ? 'right-0' : align === 'center' ? 'left-1/2 -translate-x-1/2' : 'left-0'
           )}
         >
           {/* Header with Search */}
-          <div className="p-3 bg-theme-bg/50 border-b border-theme/10 flex items-center">
+          <div className={clsx("p-3 flex items-center border-b", variant === 'glass' ? "bg-white/[0.02] border-white/[0.08]" : "bg-theme-bg/50 border-theme/10")}>
             <div className="relative flex-1">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-theme-muted" />
+              <Search className={clsx("absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4", variant === 'glass' ? "text-white/40" : "text-theme-muted")} />
               <input
                 ref={inputRef}
-                className="w-full pl-11 pr-4 py-2 bg-theme-hover/50 rounded-xl text-[14px] text-theme-fg placeholder:text-theme-muted outline-none shadow-sm ring-1 ring-theme/5 focus:ring-2 focus:ring-primary/20 transition-all border-none font-medium"
+                className={clsx(
+                  "w-full pl-11 pr-4 py-2 rounded-xl text-[14px] outline-none shadow-sm transition-all border-none font-medium",
+                  variant === 'glass' 
+                    ? "bg-white/[0.06] text-white placeholder:text-white/40 focus:ring-2 focus:ring-white/20" 
+                    : "bg-theme-hover/50 text-theme-fg placeholder:text-theme-muted ring-1 ring-theme/5 focus:ring-2 focus:ring-primary/20"
+                )}
                 placeholder="Search any model..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -312,19 +327,24 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                     data-index={0}
                     className={clsx(
                       "w-full flex items-center gap-3 p-2 rounded-xl transition-all text-left border border-transparent",
-                      activeIndex === 0 ? "bg-primary text-primary-fg shadow-lg scale-[1.02] z-10" :
-                      selectedModelId === 'auto' ? "bg-primary/10 text-primary border-primary/20" : "hover:bg-theme-hover text-theme-fg"
+                      activeIndex === 0 
+                        ? (variant === 'glass' ? "bg-white/20 text-white shadow-lg scale-[1.02] z-10" : "bg-primary text-primary-fg shadow-lg scale-[1.02] z-10") :
+                      selectedModelId === 'auto' 
+                        ? (variant === 'glass' ? "bg-white/10 text-white border-white/20" : "bg-primary/10 text-primary border-primary/20") 
+                        : (variant === 'glass' ? "hover:bg-white/[0.06] text-white/80" : "hover:bg-theme-hover text-theme-fg")
                     )}
                   >
                     <div className={clsx(
                       "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-all shadow-sm",
-                      activeIndex === 0 ? "bg-white/20" : "bg-primary/10"
+                      activeIndex === 0 
+                        ? (variant === 'glass' ? "bg-white/30" : "bg-white/20") 
+                        : (variant === 'glass' ? "bg-white/10" : "bg-primary/10")
                     )}>
-                      <Sparkles className={clsx("w-4 h-4", activeIndex === 0 ? "text-white" : "text-primary")} />
+                      <Sparkles className={clsx("w-4 h-4", activeIndex === 0 ? "text-white" : (variant === 'glass' ? "text-white/80" : "text-primary"))} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="text-[13px] font-bold">Automatic Routing</div>
-                      <div className={clsx("text-[10px] font-medium", activeIndex === 0 ? "text-primary-fg/80" : "text-theme-muted")}>Best model for each task</div>
+                      <div className={clsx("text-[10px] font-medium", activeIndex === 0 ? "text-white/80" : (variant === 'glass' ? "text-white/50" : "text-theme-muted"))}>Best model for each task</div>
                     </div>
                     {selectedModelId === 'auto' && <Check className="w-4 h-4" />}
                   </button>
@@ -348,6 +368,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                           index={idx}
                           onClick={() => handleSelect(model.id)}
                           compact
+                          variant={variant}
                         />
                       );
                     })}
@@ -372,6 +393,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                           index={idx}
                           onClick={() => handleSelect(model.id)}
                           compact
+                          variant={variant}
                         />
                       );
                     })}
@@ -396,6 +418,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                           index={idx}
                           onClick={() => handleSelect(model.id)}
                           compact
+                          variant={variant}
                         />
                       );
                     })}
@@ -420,6 +443,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                           index={idx}
                           onClick={() => handleSelect(model.id)}
                           compact
+                          variant={variant}
                         />
                       );
                     })}
@@ -499,9 +523,10 @@ interface ModelItemProps {
   onClick: () => void;
   shortcut?: string;
   compact?: boolean;
+  variant?: 'default' | 'glass';
 }
 
-const ModelItem: React.FC<ModelItemProps> = ({ model, isActive, isSelected, index, onClick, shortcut, compact }) => {
+const ModelItem: React.FC<ModelItemProps> = ({ model, isActive, isSelected, index, onClick, shortcut, compact, variant = 'default' }) => {
   return (
     <button
       data-index={index}
@@ -509,15 +534,20 @@ const ModelItem: React.FC<ModelItemProps> = ({ model, isActive, isSelected, inde
       className={clsx(
         'w-full flex items-center justify-between rounded-2xl text-left transition-all group relative border border-transparent',
         compact ? 'p-2' : 'p-3',
-        isActive ? 'bg-primary text-primary-fg shadow-xl scale-[1.02] z-10' : 
-        isSelected ? 'bg-primary/10 text-theme-fg border-primary/20' : 'hover:bg-theme-hover text-theme-fg hover:scale-[1.01]'
+        isActive 
+          ? (variant === 'glass' ? 'bg-white/20 text-white shadow-xl scale-[1.02] z-10' : 'bg-primary text-primary-fg shadow-xl scale-[1.02] z-10') : 
+        isSelected 
+          ? (variant === 'glass' ? 'bg-white/10 text-white border-white/20' : 'bg-primary/10 text-theme-fg border-primary/20') 
+          : (variant === 'glass' ? 'hover:bg-white/[0.06] text-white/80 hover:scale-[1.01]' : 'hover:bg-theme-hover text-theme-fg hover:scale-[1.01]')
       )}
     >
       <div className="flex items-center gap-3 min-w-0">
         <div className={clsx(
           "rounded-xl flex items-center justify-center flex-shrink-0 transition-all shadow-sm",
           compact ? "w-8 h-8" : "w-10 h-10",
-          isActive ? "bg-white/20 rotate-3" : "bg-theme-bg border border-theme/10 group-hover:-rotate-3"
+          isActive 
+            ? "bg-white/20 rotate-3" 
+            : (variant === 'glass' ? "bg-black/20 border border-white/[0.08] group-hover:-rotate-3" : "bg-theme-bg border border-theme/10 group-hover:-rotate-3")
         )}>
           {model.logoUrl ? (
             <img
@@ -546,7 +576,9 @@ const ModelItem: React.FC<ModelItemProps> = ({ model, isActive, isSelected, inde
           </div>
           <div className={clsx(
             "text-[10px] mt-1 font-bold truncate uppercase tracking-tighter opacity-70",
-            isActive ? "text-primary-fg/80" : "text-theme-muted"
+            isActive 
+              ? (variant === 'glass' ? "text-white/80" : "text-primary-fg/80") 
+              : (variant === 'glass' ? "text-white/50" : "text-theme-muted")
           )}>
             {model.provider} {model.contextWindow && `• ${Math.round(model.contextWindow/1000)}k`}
           </div>
@@ -557,9 +589,11 @@ const ModelItem: React.FC<ModelItemProps> = ({ model, isActive, isSelected, inde
           <div className={clsx(
             "rounded-full flex items-center justify-center",
             compact ? "w-4 h-4" : "w-5 h-5",
-            isActive ? "bg-white/20" : "bg-primary shadow-sm shadow-primary/30"
+            isActive 
+              ? "bg-white/20" 
+              : (variant === 'glass' ? "bg-white/10 shadow-sm" : "bg-primary shadow-sm shadow-primary/30")
           )}>
-            <Check className={clsx(compact ? "w-2.5 h-2.5" : "w-3 h-3", isActive ? "text-white" : "text-primary-fg")} />
+            <Check className={clsx(compact ? "w-2.5 h-2.5" : "w-3 h-3", isActive ? "text-white" : (variant === 'glass' ? "text-white" : "text-primary-fg"))} />
           </div>
         ) : (
           <ChevronRight className={clsx(

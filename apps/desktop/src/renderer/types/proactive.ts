@@ -1,0 +1,107 @@
+export type ScheduleInterval = '10m' | '15m' | '30m' | '1h' | '2h' | 'random' | 'manual';
+export type ExecutionTarget = 'local' | 'cloud';
+export type ProactiveModelMode = 'auto' | 'fast' | 'balanced' | 'smart';
+
+export interface ProactiveContextPermissions {
+  screenshot: boolean;
+  systemAudio: boolean;
+  micAudio: boolean;
+}
+
+export type NotificationChannel = 'app' | 'sms' | 'call';
+
+export interface ProactiveConfig {
+  enabled: boolean;
+  interval: ScheduleInterval;
+  executionTarget: ExecutionTarget;
+  modelMode: ProactiveModelMode;
+  modelId?: string;
+  instructions: string;
+  contextPermissions: ProactiveContextPermissions;
+  allowedTools: string[];
+  notificationChannels: NotificationChannel[];
+  lastWakeUpAt?: string | null;
+  nextWakeUpAt?: string | null;
+}
+
+export type ProactiveTaskStatus = 'queued' | 'in_progress' | 'completed' | 'failed';
+
+export interface ProactiveTask {
+  id: string;
+  title: string;
+  instructions: string;
+  status: ProactiveTaskStatus;
+  result?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProactiveWakeUpLog {
+  id: string;
+  startedAt: string;
+  completedAt?: string | null;
+  status: 'running' | 'completed' | 'failed';
+  contextUsed: string[];
+  tasksProcessed: string[];
+  agentMessage?: string;
+}
+
+export interface ProactiveData {
+  config: ProactiveConfig;
+  tasks: ProactiveTask[];
+  wakeUpLog: ProactiveWakeUpLog[];
+}
+
+export const DEFAULT_PROACTIVE_CONFIG: ProactiveConfig = {
+  enabled: false,
+  interval: '30m',
+  executionTarget: 'local',
+  modelMode: 'balanced',
+  modelId: '',
+  instructions: '',
+  contextPermissions: {
+    screenshot: false,
+    systemAudio: false,
+    micAudio: false,
+  },
+  allowedTools: [],
+  notificationChannels: ['app'],
+};
+
+export const NOTIFICATION_CHANNEL_LABELS: Record<NotificationChannel, { label: string; description: string }> = {
+  app: { label: 'In-App', description: 'Desktop notification popup' },
+  sms: { label: 'SMS', description: 'Text message to verified phone' },
+  call: { label: 'Phone Call', description: 'Voice call with TTS message' },
+};
+
+export const EXECUTION_TARGET_LABELS: Record<ExecutionTarget, { label: string; description: string }> = {
+  local: { label: 'Local Agent', description: 'Runs on your machine' },
+  cloud: { label: 'Cloud VM', description: 'Runs on your cloud engine' },
+};
+
+export const PROACTIVE_MODEL_MODE_LABELS: Record<ProactiveModelMode, { label: string; description: string }> = {
+  auto: { label: 'Auto', description: 'Route model automatically' },
+  fast: { label: 'Fast', description: 'Lower latency responses' },
+  balanced: { label: 'Balanced', description: 'Good speed and quality' },
+  smart: { label: 'Smart', description: 'Best reasoning quality' },
+};
+
+export const SCHEDULE_LABELS: Record<ScheduleInterval, string> = {
+  '10m': 'Every 10 minutes',
+  '15m': 'Every 15 minutes',
+  '30m': 'Every 30 minutes',
+  '1h': 'Every hour',
+  '2h': 'Every 2 hours',
+  'random': 'Random check-ins',
+  'manual': 'Manual only',
+};
+
+export const INTERVAL_MS: Record<ScheduleInterval, number> = {
+  '10m': 10 * 60_000,
+  '15m': 15 * 60_000,
+  '30m': 30 * 60_000,
+  '1h': 60 * 60_000,
+  '2h': 2 * 60 * 60_000,
+  'random': 0,
+  'manual': 0,
+};

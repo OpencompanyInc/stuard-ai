@@ -92,7 +92,26 @@ export type ExternalAccount = {
   refresh_token?: string | null;
   expires_at?: string | null;
   meta?: any;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
+
+function toMs(v?: string | null): number {
+  if (!v) return 0;
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : 0;
+}
+
+function accountRecency(acc?: ExternalAccount | null): number {
+  if (!acc) return 0;
+  return Math.max(toMs(acc.updated_at), toMs(acc.created_at));
+}
+
+function chooseFresherAccount(preferredOnTie: ExternalAccount, other: ExternalAccount): ExternalAccount {
+  const preferredTs = accountRecency(preferredOnTie);
+  const otherTs = accountRecency(other);
+  return preferredTs >= otherTs ? preferredOnTie : other;
+}
 
 /** Resolve whether integration accounts should be synced to Supabase for this user.
  *  Enabled when either sync_accounts or sync_integrations is true.
@@ -161,7 +180,8 @@ export async function migrateLocalAccountsToSupabase(userId: string): Promise<{ 
  * profile. Otherwise returns the default profile for the provider.
  *
  * Read strategy:
- *   sync ON  → try Supabase first, fall back to local if Supabase returns null.
+ *   sync ON  → read both Supabase + local, then use the freshest record
+ *              (local wins ties as source-of-truth).
  *   sync OFF → read from local only.
  */
 export async function getExternalAccount(
@@ -169,12 +189,13 @@ export async function getExternalAccount(
   provider: string,
   profileLabel?: string,
 ): Promise<ExternalAccount | null> {
-  if (!(await shouldSyncAccounts(userId))) return localGetExternalAccount(userId, provider, profileLabel);
-  // Primary: Supabase (hot store)
+  const local = await localGetExternalAccount(userId, provider, profileLabel);
+  if (!(await shouldSyncAccounts(userId))) return local;
+
   const hot = await _supabaseGetExternalAccount(userId, provider, profileLabel);
-  if (hot) return hot;
-  // Fallthrough: local (cold store) — covers Supabase-down and not-yet-migrated data
-  return localGetExternalAccount(userId, provider, profileLabel);
+  if (!hot) return local;
+  if (!local) return hot;
+  return chooseFresherAccount(local, hot);
 }
 
 async function _supabaseGetExternalAccount(
@@ -184,7 +205,7 @@ async function _supabaseGetExternalAccount(
 ): Promise<ExternalAccount | null> {
   if (!supabaseService) return null;
   try {
-    const cols = 'id, user_id, provider, profile_label, is_default, account_email, scopes, access_token, refresh_token, expires_at, meta';
+    const cols = 'id, user_id, provider, profile_label, is_default, account_email, scopes, access_token, refresh_token, expires_at, meta, created_at, updated_at';
     if (profileLabel) {
       const { data, error } = await supabaseService
         .from('external_accounts')
@@ -224,7 +245,7 @@ async function _supabaseGetExternalAccount(
  * List all connected profiles for a provider (or all providers if omitted).
  *
  * Read strategy:
- *   sync ON  → try Supabase first, fall back to local if Supabase returns empty.
+ *   sync ON  → merge Supabase + local, preferring fresher local records on conflicts.
  *   sync OFF → read from local only.
  */
 export async function listExternalAccounts(
@@ -232,10 +253,35 @@ export async function listExternalAccounts(
   provider?: string,
 ): Promise<ExternalAccount[]> {
   if (!(await shouldSyncAccounts(userId))) return localListExternalAccounts(userId, provider);
-  const hot = await _supabaseListExternalAccounts(userId, provider);
-  if (hot.length > 0) return hot;
-  // Fallthrough: local (cold store)
-  return localListExternalAccounts(userId, provider);
+  const [hot, local] = await Promise.all([
+    _supabaseListExternalAccounts(userId, provider),
+    localListExternalAccounts(userId, provider),
+  ]);
+
+  if (hot.length === 0) return local;
+  if (local.length === 0) return hot;
+
+  const merged = new Map<string, ExternalAccount>();
+
+  for (const acc of hot) {
+    const key = `${acc.provider}::${acc.profile_label}`;
+    merged.set(key, acc);
+  }
+
+  for (const acc of local) {
+    const key = `${acc.provider}::${acc.profile_label}`;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, acc);
+      continue;
+    }
+    merged.set(key, chooseFresherAccount(acc, existing));
+  }
+
+  return Array.from(merged.values()).sort((a, b) => {
+    if (a.is_default !== b.is_default) return a.is_default ? -1 : 1;
+    return toMs(a.created_at) - toMs(b.created_at);
+  });
 }
 
 async function _supabaseListExternalAccounts(
@@ -244,7 +290,7 @@ async function _supabaseListExternalAccounts(
 ): Promise<ExternalAccount[]> {
   if (!supabaseService) return [];
   try {
-    const cols = 'id, user_id, provider, profile_label, is_default, account_email, scopes, access_token, refresh_token, expires_at, meta';
+    const cols = 'id, user_id, provider, profile_label, is_default, account_email, scopes, access_token, refresh_token, expires_at, meta, created_at, updated_at';
     let q = supabaseService
       .from('external_accounts')
       .select(cols)
@@ -1052,22 +1098,35 @@ export async function deleteCloudEngine(userId: string): Promise<void> {
 }
 
 export async function getStorageUsage(userId: string): Promise<StorageUsage | null> {
-  if (!supabaseService) return null;
+  if (!supabaseService) {
+    console.warn('[supabase] getStorageUsage: supabaseService not initialized');
+    return null;
+  }
   try {
     const { data, error } = await supabaseService
       .from('storage_usage')
       .select(STORAGE_USAGE_COLS)
       .eq('user_id', userId)
       .single();
-    if (error || !data) return null;
+    if (error) {
+      // PGRST116 = no rows found - this is normal for new users
+      if (error.code !== 'PGRST116') {
+        console.error('[supabase] getStorageUsage error:', error.message, error.code);
+      }
+      return null;
+    }
     return data as any;
-  } catch {
+  } catch (e: any) {
+    console.error('[supabase] getStorageUsage exception:', e?.message);
     return null;
   }
 }
 
-export async function upsertStorageUsage(userId: string, values: Partial<StorageUsage>): Promise<void> {
-  if (!supabaseService) return;
+export async function upsertStorageUsage(userId: string, values: Partial<StorageUsage>): Promise<boolean> {
+  if (!supabaseService) {
+    console.warn('[supabase] upsertStorageUsage: supabaseService not initialized');
+    return false;
+  }
   try {
     const row = {
       user_id: userId,
@@ -1078,9 +1137,14 @@ export async function upsertStorageUsage(userId: string, values: Partial<Storage
       .from('storage_usage')
       .upsert(row, { onConflict: 'user_id' });
     if (error) {
-      console.error('[supabase] upsertStorageUsage error:', error.message);
+      console.error('[supabase] upsertStorageUsage error:', error.message, error.code, error.details);
+      return false;
     }
-  } catch {}
+    return true;
+  } catch (e: any) {
+    console.error('[supabase] upsertStorageUsage exception:', e?.message);
+    return false;
+  }
 }
 
 export async function insertBillingEvent(

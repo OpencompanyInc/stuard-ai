@@ -1,6 +1,5 @@
 import React from "react";
 import { WorkflowCanvas } from "../components/WorkflowCanvas";
-import { WorkflowLogs } from "../components/WorkflowLogs";
 import { WorkspaceFileEditor } from "../components/WorkspaceFileEditor";
 import type { DesignerModel } from "../types";
 import type { ExecutionState, OpenFileTab } from "./types";
@@ -22,8 +21,6 @@ interface WorkflowCanvasPaneProps {
   selectionBox: { startX: number; startY: number; endX: number; endY: number } | null;
   activeTab: string;
   openTabs: OpenFileTab[];
-  logs: Array<{ ts: string; msg: string }>;
-  showLogs: boolean;
   floatingContent?: React.ReactNode;
   onSetActiveTab: (tab: string) => void;
   onCloseFileTab: (filePath: string) => void;
@@ -33,9 +30,6 @@ interface WorkflowCanvasPaneProps {
   currentSubPath?: string | null;
   /** Navigate back to parent workflow */
   onNavigateBack?: () => void;
-  onToggleLogs: () => void;
-  onClearLogs: () => void;
-  onSendLogsToChat: (text: string) => void;
   onCanvasMouseDown: (e: React.MouseEvent) => void;
   onWheel: (e: React.WheelEvent) => void;
   onZoomIn: () => void;
@@ -75,14 +69,9 @@ export function WorkflowCanvasPane({
   selectionBox,
   activeTab,
   openTabs,
-  logs,
-  showLogs,
   floatingContent,
   onSetActiveTab,
   onCloseFileTab,
-  onToggleLogs,
-  onClearLogs,
-  onSendLogsToChat,
   onCanvasMouseDown,
   onWheel,
   onZoomIn,
@@ -112,15 +101,18 @@ export function WorkflowCanvasPane({
 
   return (
     <div className="flex-1 flex flex-col min-h-0 min-w-0 relative">
-      <WorkflowTabs
-        openTabs={openTabs}
-        activeTab={activeTab}
-        onSetActiveTab={onSetActiveTab}
-        onCloseFileTab={onCloseFileTab}
-        breadcrumbs={breadcrumbs}
-        currentSubPath={currentSubPath}
-        onNavigateBack={onNavigateBack}
-      />
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20">
+        <WorkflowTabs
+          openTabs={openTabs}
+          activeTab={activeTab}
+          onSetActiveTab={onSetActiveTab}
+          onCloseFileTab={onCloseFileTab}
+          breadcrumbs={breadcrumbs}
+          currentSubPath={currentSubPath}
+          onNavigateBack={onNavigateBack}
+          modelName={model.name || selectedId}
+        />
+      </div>
 
       <div className="flex-1 relative h-full" style={{ display: activeTab === "canvas" ? "block" : "none" }}>
         <WorkflowCanvas
@@ -172,14 +164,6 @@ export function WorkflowCanvasPane({
       )}
 
       {floatingContent}
-
-      <WorkflowLogs
-        logs={logs}
-        isOpen={showLogs}
-        onToggle={onToggleLogs}
-        onClear={onClearLogs}
-        onSendToChat={onSendLogsToChat}
-      />
     </div>
   );
 }

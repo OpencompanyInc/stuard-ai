@@ -212,6 +212,12 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   workflowsReadWorkspaceStuard: (id: string, subPath: string) => ipcRenderer.invoke('workflows:readWorkspaceStuard', id, subPath),
   workflowsSaveWorkspaceStuard: (id: string, subPath: string, content: string) => ipcRenderer.invoke('workflows:saveWorkspaceStuard', id, subPath, content),
   workflowsListWorkspaceFunctions: (id: string) => ipcRenderer.invoke('workflows:listWorkspaceFunctions', id),
+  // Skills
+  skillsList: () => ipcRenderer.invoke('skills:list'),
+  skillsGet: (id: string) => ipcRenderer.invoke('skills:get', id),
+  skillsSave: (skill: any) => ipcRenderer.invoke('skills:save', skill),
+  skillsDelete: (id: string) => ipcRenderer.invoke('skills:delete', id),
+  skillsToggle: (id: string) => ipcRenderer.invoke('skills:toggle', id),
   onWorkflowsLog: (cb: (data: any) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('workflows:log', handler);
@@ -262,6 +268,11 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('stuards:ui:close', handler);
     return () => { try { ipcRenderer.off('stuards:ui:close', handler); } catch { } };
+  },
+  onReminderTriggered: (cb: (data: { title: string; body: string; timestamp: number }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('reminder-triggered', handler);
+    return () => { try { ipcRenderer.off('reminder-triggered', handler); } catch { } };
   },
   sendStuardsUiEvent: (stuardId: string, event: string, data?: any) => ipcRenderer.invoke('stuards:ui:event', { stuardId, event, data }),
   setScreenCaptureInvisible: (enabled: boolean) => ipcRenderer.invoke('prefs:setScreenCaptureInvisible', enabled),
@@ -416,6 +427,29 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   bookmarksExecute: (bookmark: any) => ipcRenderer.invoke('bookmarks:execute', bookmark),
   selectFolder: (options?: { title?: string; multiple?: boolean }) => ipcRenderer.invoke('files:selectFolder', options),
 
+  // Proactive Agent System
+  proactiveGetConfig: () => ipcRenderer.invoke('proactive:getConfig'),
+  proactiveUpdateConfig: (updates: any) => ipcRenderer.invoke('proactive:updateConfig', updates),
+  proactiveListTasks: () => ipcRenderer.invoke('proactive:listTasks'),
+  proactiveAddTask: (task: any) => ipcRenderer.invoke('proactive:addTask', task),
+  proactiveUpdateTask: (taskId: string, updates: any) => ipcRenderer.invoke('proactive:updateTask', taskId, updates),
+  proactiveDeleteTask: (taskId: string) => ipcRenderer.invoke('proactive:deleteTask', taskId),
+  proactiveGetWakeUpLog: (limit?: number) => ipcRenderer.invoke('proactive:getWakeUpLog', limit),
+  proactiveTriggerNow: () => ipcRenderer.invoke('proactive:triggerNow'),
+  proactiveGetAvailableTools: () => ipcRenderer.invoke('proactive:getAvailableTools'),
+  proactiveSubmitResult: (payload: any) => ipcRenderer.invoke('proactive:submitResult', payload),
+  proactiveIsRunning: () => ipcRenderer.invoke('proactive:isRunning'),
+  onProactiveUpdate: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('proactive-update', handler);
+    return () => { try { ipcRenderer.off('proactive-update', handler); } catch { } };
+  },
+  onProactiveWakeUp: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('proactive-wakeup', handler);
+    return () => { try { ipcRenderer.off('proactive-wakeup', handler); } catch { } };
+  },
+
   // Unified Tasks System
   unifiedTasksList: () => ipcRenderer.invoke('unified-tasks:list'),
   unifiedTasksGet: (taskId: string) => ipcRenderer.invoke('unified-tasks:get', taskId),
@@ -436,6 +470,15 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   unifiedTasksDeleteReminder: (taskId: string, reminderId: string) => ipcRenderer.invoke('unified-tasks:delete-agent-assignment', taskId, reminderId),
   unifiedTasksGetPendingAssignments: () => ipcRenderer.invoke('unified-tasks:get-pending-assignments'),
   unifiedTasksGetCalendarItems: () => ipcRenderer.invoke('unified-tasks:get-calendar-items'),
+
+  // Offline Calendar Events (works without internet)
+  offlineCalendarList: () => ipcRenderer.invoke('offline-calendar:list'),
+  offlineCalendarGet: (eventId: string) => ipcRenderer.invoke('offline-calendar:get', eventId),
+  offlineCalendarAdd: (eventData: any) => ipcRenderer.invoke('offline-calendar:add', eventData),
+  offlineCalendarUpdate: (eventData: any) => ipcRenderer.invoke('offline-calendar:update', eventData),
+  offlineCalendarDelete: (eventId: string) => ipcRenderer.invoke('offline-calendar:delete', eventId),
+  offlineCalendarGetForRange: (startIso: string, endIso: string) => ipcRenderer.invoke('offline-calendar:get-for-range', startIso, endIso),
+  offlineCalendarGetBlocks: (startIso: string, endIso: string) => ipcRenderer.invoke('offline-calendar:get-calendar-blocks', startIso, endIso),
 
   // Legacy User To-Do List (for backwards compatibility)
   todosList: () => ipcRenderer.invoke('todos:list'),
@@ -463,5 +506,16 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('notification:show', handler);
     return () => { try { ipcRenderer.off('notification:show', handler); } catch { } };
   },
+  onProactiveProgress: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('proactive-progress', handler);
+    return () => { try { ipcRenderer.off('proactive-progress', handler); } catch { } };
+  },
+  onProactiveCheckin: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('proactive-checkin', handler);
+    return () => { try { ipcRenderer.off('proactive-checkin', handler); } catch { } };
+  },
+  proactiveReply: (payload: { wakeUpId: string; text: string }) => ipcRenderer.invoke('proactive:reply', payload),
   setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => ipcRenderer.send('window:ignore-mouse-events', ignore, options),
 });

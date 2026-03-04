@@ -38,6 +38,30 @@ interface UseWorkflowChatProps {
   workspaceInfo?: WorkspaceInfoForChat | null;
 }
 
+function toFriendlyChatError(err: any): string {
+  const rawCode = String(err?.code || err?.error || '').toLowerCase();
+  const rawMessage = String(err?.message || err || '').trim();
+  const combined = `${rawCode} ${rawMessage}`.toLowerCase();
+
+  if (combined.includes('unauthorized') || rawCode === 'unauthorized') {
+    return 'unauthorized - please sign in first.';
+  }
+  if (combined.includes('unknown_tool') || combined.includes('unknown tool') || combined.includes('tool not found')) {
+    return 'the AI tried to use a tool that is not available in this environment.';
+  }
+  if (combined.includes('invalid_json') || combined.includes('tool call') && combined.includes('json')) {
+    return 'the AI generated an invalid tool call payload. Please retry your request.';
+  }
+  if (combined.includes('timeout') || combined.includes('timed out')) {
+    return 'the request timed out before completion. Please try again.';
+  }
+  if (rawCode === 'network_error' || combined.includes('websocket') || combined.includes('network') || combined.includes('fetch failed')) {
+    return 'unable to reach the AI service right now. Please check your connection and retry.';
+  }
+
+  return rawMessage || 'something went wrong while processing your request.';
+}
+
 export function useWorkflowChat({
   model,
   onApplyModel,
@@ -257,6 +281,7 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
       abortedRef.current = false;
       await new Promise<void>((resolve, reject) => {
         let done = false;
+        let malformedEventCount = 0;
         let ws: WebSocket;
         try {
           ws = new WebSocket(wsUrl);
@@ -333,7 +358,11 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
               if (id && tool) {
                 (async () => {
                   try {
-                    let result: any = { ok: false, error: 'unknown_tool' };
+                    let result: any = {
+                      ok: false,
+                      error: 'unknown_tool',
+                      message: `Tool "${String(tool)}" is not available in this chat context.`
+                    };
 
                     // Handle simple client-side tools directly
                     if (tool === 'get_local_time') {
@@ -349,9 +378,18 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
                     } else {
                       // Delegate to main process via desktopAPI
                       if ((window as any).desktopAPI?.execTool) {
-                        result = await (window as any).desktopAPI.execTool(tool, args);
+                        const execResult = await (window as any).desktopAPI.execTool(tool, args);
+                        result = execResult ?? {
+                          ok: false,
+                          error: 'tool_execution_failed',
+                          message: `Tool "${String(tool)}" returned no response.`
+                        };
                       } else {
-                        result = { ok: false, error: 'desktopAPI not available' };
+                        result = {
+                          ok: false,
+                          error: 'bridge_unavailable',
+                          message: 'Desktop bridge is unavailable, so local tools cannot run.'
+                        };
                       }
                     }
 
@@ -365,7 +403,11 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
                       ws.send(JSON.stringify({
                         type: 'tool_result',
                         id,
-                        result: { ok: false, error: String(err?.message || err) }
+                        result: {
+                          ok: false,
+                          error: 'tool_execution_failed',
+                          message: String(err?.message || err),
+                        }
                       }));
                     }
                   }
@@ -563,15 +605,38 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
               reject(new Error(msg.message || 'stream_error'));
             }
           } catch (err) {
-            if (!done) {
-              done = true;
-              try { ws.close(); } catch { }
-              reject(err);
+            console.warn('[useWorkflowChat] Ignoring malformed WS event:', err);
+            malformedEventCount += 1;
+            if (malformedEventCount <= 1) {
+              currentItems.push({
+                type: 'text',
+                content: '\n\n⚠️ Received an unexpected response chunk, continuing...\n',
+              });
+              setStreamItems([...currentItems]);
             }
           }
         };
-        ws.onerror = () => { if (!done) { done = true; try { ws.close(); } catch { } reject(new Error('WebSocket error')); } };
-        ws.onclose = () => { if (!done) { done = true; resolve(); } };
+        ws.onerror = () => {
+          if (!done) {
+            done = true;
+            try { ws.close(); } catch { }
+            const e: any = new Error('WebSocket error');
+            e.code = 'network_error';
+            reject(e);
+          }
+        };
+        ws.onclose = () => {
+          if (!done) {
+            done = true;
+            if (abortedRef.current) {
+              resolve();
+              return;
+            }
+            const e: any = new Error('WebSocket closed unexpectedly');
+            e.code = 'network_error';
+            reject(e);
+          }
+        };
       });
 
       // Finish
@@ -602,8 +667,7 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
       }]);
 
     } catch (e: any) {
-      const rawMsg = e?.message || 'Unknown error';
-      const friendly = rawMsg === 'unauthorized' ? 'Error: unauthorized – please sign in first.' : `Error: ${rawMsg}`;
+      const friendly = `Error: ${toFriendlyChatError(e)}`;
       // Preserve accumulated tool events and reasoning so users see what the AI did before failing
       setMessages(prev => [...prev, {
         role: 'assistant',

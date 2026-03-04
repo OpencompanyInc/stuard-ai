@@ -2,12 +2,13 @@
 import { WebSocket } from 'ws';
 import { getAgent as getStuardAgent } from '../../agents/stuard-agent';
 import { getWorkflowAgent, WORKFLOW_SYSTEM_PROMPT } from '../../agents/workflow-agent';
+import { getSkillAgent, SKILL_SYSTEM_PROMPT, clearSessionSkill, setSessionSkill } from '../../agents/skill-agent';
 import { withClientBridge } from '../../tools/bridge';
 import { routeModel, ModelChoice } from '../../router/model-router';
 import { writeLog } from '../../utils/logger';
 import { normalizeUsage } from '../../utils/usage';
 
-type AgentType = 'stuard' | 'workflow';
+type AgentType = 'stuard' | 'workflow' | 'skill';
 
 interface AgentMessage {
   text: string;
@@ -51,7 +52,7 @@ function pickDefaultModelId(modelConfig: any, tier: ModelChoice): string | undef
 }
 
 function send(ws: WebSocket, data: unknown) {
-  try { ws.send(JSON.stringify(data)); } catch {}
+  try { ws.send(JSON.stringify(data)); } catch { }
 }
 
 // Store active abort controllers by WebSocket
@@ -77,11 +78,11 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
   const userId = message.userId;
   const conversationId = message.conversationId;
   let resultText = '';
-  
+
   // Create abort controller for this request
   const abortController = new AbortController();
   activeControllers.set(ws, abortController);
-  
+
   // 1. Auto-Routing Logic
   if (model === 'auto') {
     const routingResult = await routeModel({
@@ -100,22 +101,34 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
   // Notify UI of final model decision (tier + optional concrete provider modelId)
   try {
     send(ws, { type: 'progress', event: 'model', data: { tier: model, modelId: chosenModelId } });
-  } catch {}
+  } catch { }
 
   await withClientBridge(bridgeWs || ws, async () => {
     let fullText = '';
     let usage: any = null;
-    
+
     try {
       // Select agent based on type
+      if (agentType === 'skill') {
+        try {
+          clearSessionSkill();
+          const incomingSkill = message?.context?.skill;
+          if (incomingSkill && typeof incomingSkill === 'object' && !Array.isArray(incomingSkill)) {
+            setSessionSkill(incomingSkill);
+          }
+        } catch { }
+      }
+
       const agent = agentType === 'workflow'
         ? getWorkflowAgent(chosenModelId)
-        : getStuardAgent(model as ModelChoice, undefined, integrations, {}, chosenModelId);
+        : agentType === 'skill'
+          ? getSkillAgent(chosenModelId)
+          : getStuardAgent(model as ModelChoice, undefined, integrations, {}, chosenModelId);
 
       // Build context prefix for paths
       let contextPrefix = '';
       if (context.paths && context.paths.length > 0) {
-        const pathsList = context.paths.map(p => 
+        const pathsList = context.paths.map(p =>
           `- ${p.isDirectory ? '[DIR]' : '[FILE]'} ${p.path}`
         ).join('\n');
         contextPrefix = `[Context: The user has provided these local file/folder paths for reference]\n${pathsList}\n\n`;
@@ -129,10 +142,16 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
           if (agentType === 'workflow') {
             return [{ role: 'system', content: WORKFLOW_SYSTEM_PROMPT }, ...base];
           }
+          if (agentType === 'skill') {
+            return [{ role: 'system', content: SKILL_SYSTEM_PROMPT }, ...base];
+          }
           return base;
         }
         if (agentType === 'workflow') {
           return [{ role: 'system', content: WORKFLOW_SYSTEM_PROMPT }, { role: 'user', content: userContent }];
+        }
+        if (agentType === 'skill') {
+          return [{ role: 'system', content: SKILL_SYSTEM_PROMPT }, { role: 'user', content: userContent }];
         }
         return userContent;
       })();
@@ -142,7 +161,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
 
       // Build stream options
       // Workflow agent needs more steps for tool discovery and testing
-      const maxToolSteps = agentType === 'workflow' ? 60 : 40;
+      const maxToolSteps = (agentType === 'workflow' || agentType === 'skill') ? 60 : 40;
       const streamOptions: any = {
         maxSteps: maxToolSteps,
         abortSignal: abortController.signal,
@@ -209,10 +228,10 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
 
       // Get stream result from Mastra
       const streamResult: any = await agent.stream(input, streamOptions);
-      
+
       // Try to get the async iterable - Mastra uses fullStream
       const stream = streamResult?.fullStream || streamResult;
-      
+
       // Check if it's actually iterable
       if (stream && typeof stream[Symbol.asyncIterator] === 'function') {
         // Stream is async iterable - process chunks
@@ -253,7 +272,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       if (!fullText && streamResult?.text) {
         fullText = streamResult.text;
       }
-      
+
       // Get usage from stream result if not set
       if (!usage && streamResult?.usage) {
         usage = normalizeUsage(streamResult.usage);
@@ -282,10 +301,10 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       // Handle abort specifically
       if (error.name === 'AbortError' || abortController.signal.aborted) {
         console.log('[AgentRunner] Stream aborted by user');
-        send(ws, { 
-          type: 'final', 
+        send(ws, {
+          type: 'final',
           result: { text: fullText || '(Stopped)', response: fullText || '(Stopped)' },
-          aborted: true 
+          aborted: true
         });
         resultText = fullText || '(Stopped)';
       } else {
@@ -307,7 +326,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
               message: errMsg,
               inputChars: typeof (error as any).input === 'string' ? (error as any).input.length : undefined,
             });
-          } catch {}
+          } catch { }
 
           try {
             send(ws, {
@@ -322,7 +341,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
                 inputPreview,
               }
             });
-          } catch {}
+          } catch { }
 
           const finalText = `Tool call failed: ${errMsg}. Please retry.`;
           send(ws, { type: 'final', result: { text: finalText, response: finalText } });
@@ -478,11 +497,11 @@ function handleStreamChunk(ws: WebSocket, chunk: any): string {
       case 'step-start':
         send(ws, { type: 'progress', event: 'start', data: { stepId: chunk.payload?.stepId } });
         break;
-      
+
       case 'finish':
         // Don't send final here - we'll send it after the loop
         break;
-        
+
       default:
         // Handle plain string chunks
         if (typeof chunk === 'string' && chunk) {

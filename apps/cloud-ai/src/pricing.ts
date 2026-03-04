@@ -107,13 +107,13 @@ export function getDefaultModelForCategory(category: ModelCategory): string {
   const models = ALL_MODELS.filter(m => m.category === category);
   if (models.length > 0) {
     // Return the first one or a specific preferred one
-    if (category === 'fast') return 'google/gemini-3-flash-preview';
+    if (category === 'fast') return 'google/gemini-3.1-flash-lite-preview';
     if (category === 'balanced') return 'xai/grok-4-1-fast';
     if (category === 'smart') return 'google/gemini-2.5-pro';
     if (category === 'research') return 'perplexity/sonar-pro';
     return models[0].id;
   }
-  return 'google/gemini-3-flash-preview'; // Ultimate fallback
+  return 'google/gemini-3.1-flash-lite-preview'; // Ultimate fallback
 }
 
 export function priceForModel(modelId: string): Price {

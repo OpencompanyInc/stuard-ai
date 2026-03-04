@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Search, Link2, RefreshCw, Box, Globe, Plus, Star, Trash2, Users, ChevronDown, ChevronUp, Terminal, Film, ScanFace, Mail, Github, HardDrive, Webhook, Calendar, Table, FileText, CheckCircle2, AlertCircle, ArrowUpRight, Download, ArrowRight, Loader2, Shield, X } from "lucide-react";
+import { Search, Link2, RefreshCw, Box, Globe, Plus, Star, Trash2, Users, ChevronDown, ChevronUp, Terminal, Film, ScanFace, Mail, Github, HardDrive, Webhook, Calendar, Table, FileText, CheckCircle2, AlertCircle, ArrowUpRight, Download, ArrowRight, Loader2, Shield, X, Bot, Phone, MessageSquare } from "lucide-react";
 import { clsx } from 'clsx';
 
 interface IntegrationProfile {
@@ -46,11 +46,27 @@ interface IntegrationsViewProps {
   installPython: () => Promise<void> | void;
   runPython: () => Promise<void> | void;
   browserStatus: { connected: boolean; clients: number };
+  ollamaStatus: any;
+  ollamaChecking: boolean;
+  refreshOllamaStatus: () => Promise<void> | void;
+  startOllama: () => Promise<void> | void;
   profiles: IntegrationProfile[];
   profilesLoading: boolean;
   refreshProfiles: (provider?: string) => Promise<void> | void;
   setDefaultProfile: (provider: string, profileLabel: string) => Promise<void> | void;
   deleteProfile: (provider: string, profileLabel: string) => Promise<void> | void;
+  telnyxPhone: string | null;
+  telnyxVerifying: boolean;
+  telnyxRequestCode: (phone: string) => Promise<{ ok: boolean; error?: string }>;
+  telnyxVerifyCode: (code: string) => Promise<{ ok: boolean; phone?: string; error?: string }>;
+  telnyxDisconnect: () => Promise<void>;
+  browserUseStatus?: any;
+  browserUseChecking?: boolean;
+  browserUseSetupProgress?: string | null;
+  refreshBrowserUseStatus?: () => Promise<void> | void;
+  setupBrowserUse?: () => Promise<void> | void;
+  stopBrowserUse?: () => Promise<void> | void;
+  uninstallBrowserUse?: () => Promise<void> | void;
 }
 
 /** Map integration slug → backend provider name */
@@ -78,7 +94,9 @@ function getIntegrationIcon(slug: string, size = "w-5 h-5") {
     case 'python': return <Terminal className={size} />;
     case 'ffmpeg': return <Film className={size} />;
     case 'mediapipe': return <ScanFace className={size} />;
+    case 'ollama': return <Bot className={size} />;
     case 'browser': return <Globe className={size} />;
+    case 'browser-use': return <Globe className={size} />;
     case 'outlook': return <Mail className={size} />;
     case 'github': return <Github className={size} />;
     case 'discord': return <Users className={size} />;
@@ -89,6 +107,7 @@ function getIntegrationIcon(slug: string, size = "w-5 h-5") {
     case 'gmail': return <Mail className={size} />;
     case 'google-sheets': return <Table className={size} />;
     case 'google-docs': return <FileText className={size} />;
+    case 'telnyx': return <Phone className={size} />;
     default: return <Box className={size} />;
   }
 }
@@ -380,6 +399,184 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
   );
 };
 
+// ─── Telnyx Phone Verification Card ─────────────────────────────────────────
+
+interface TelnyxPhoneCardProps {
+  isConnected: boolean;
+  phone: string | null;
+  verifying: boolean;
+  requestCode: (phone: string) => Promise<{ ok: boolean; error?: string }>;
+  verifyCode: (code: string) => Promise<{ ok: boolean; phone?: string; error?: string }>;
+  disconnect: () => Promise<void>;
+}
+
+const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
+  isConnected, phone, verifying, requestCode, verifyCode, disconnect,
+}) => {
+  const [step, setStep] = useState<'idle' | 'enter-phone' | 'enter-code'>('idle');
+  const [phoneInput, setPhoneInput] = useState('');
+  const [codeInput, setCodeInput] = useState('');
+  const [error, setError] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const handleRequestCode = async () => {
+    setError('');
+    setSending(true);
+    const result = await requestCode(phoneInput);
+    setSending(false);
+    if (result.ok) {
+      setStep('enter-code');
+    } else {
+      setError(result.error || 'Failed to send code.');
+    }
+  };
+
+  const handleVerify = async () => {
+    setError('');
+    setSending(true);
+    const result = await verifyCode(codeInput);
+    setSending(false);
+    if (result.ok) {
+      setStep('idle');
+      setPhoneInput('');
+      setCodeInput('');
+    } else {
+      setError(result.error || 'Verification failed.');
+    }
+  };
+
+  const handleDisconnect = async () => {
+    await disconnect();
+    setStep('idle');
+    setPhoneInput('');
+    setCodeInput('');
+    setError('');
+  };
+
+  return (
+    <div className={clsx(
+      "bg-theme-card rounded-theme-card border shadow-sm transition-all duration-300",
+      isConnected ? "border-primary/30" : "border-theme hover:border-theme-hover"
+    )}>
+      <div className="p-5">
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className={clsx(
+              "w-10 h-10 rounded-lg border shadow-sm flex items-center justify-center",
+              isConnected ? "bg-emerald-900/20 border-emerald-900/30" : "bg-theme-hover border-theme"
+            )}>
+              <Phone className={clsx("w-5 h-5", isConnected ? "text-emerald-400" : "text-theme-muted")} />
+            </div>
+            <div>
+              <h3 className="font-bold text-[14px] text-theme-fg">Phone (SMS / Call)</h3>
+              {isConnected && phone ? (
+                <span className="text-[11px] text-emerald-400 font-medium">{phone}</span>
+              ) : (
+                <span className="text-[11px] text-theme-muted">Verify your phone number</span>
+              )}
+            </div>
+          </div>
+          {isConnected && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-900/20 text-emerald-400 text-[10px] font-bold border border-emerald-900/30 uppercase">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              Verified
+            </span>
+          )}
+        </div>
+
+        <p className="text-[12px] text-theme-muted mb-4 leading-relaxed">
+          Receive SMS messages and phone calls from Stuard. Used for workflow notifications and proactive check-ins.
+        </p>
+
+        {isConnected ? (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-md bg-theme-bg border border-theme text-[12px]">
+              <MessageSquare className="w-4 h-4 text-emerald-400" />
+              <span className="text-theme-fg font-medium">{phone}</span>
+            </div>
+            <button
+              onClick={handleDisconnect}
+              className="px-3 py-2 rounded-md bg-red-900/20 text-red-400 text-[11px] font-bold border border-red-900/30 hover:bg-red-900/30 transition-colors"
+            >
+              Remove
+            </button>
+          </div>
+        ) : step === 'idle' ? (
+          <button
+            onClick={() => setStep('enter-phone')}
+            className="w-full px-4 py-2.5 rounded-lg bg-primary text-white text-[12px] font-bold hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
+          >
+            <Phone className="w-4 h-4" />
+            Verify Phone Number
+          </button>
+        ) : step === 'enter-phone' ? (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-[11px] text-theme-muted font-medium mb-1.5">Phone Number</label>
+              <input
+                type="tel"
+                value={phoneInput}
+                onChange={(e) => setPhoneInput(e.target.value)}
+                placeholder="+1 (555) 123-4567"
+                className="w-full px-3 py-2.5 rounded-lg bg-theme-bg border border-theme text-[13px] text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/50 transition-colors"
+              />
+            </div>
+            {error && <p className="text-[11px] text-red-400">{error}</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setStep('idle'); setError(''); }}
+                className="px-4 py-2 rounded-md bg-theme-hover text-theme-fg text-[11px] font-bold border border-theme hover:bg-theme-active transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRequestCode}
+                disabled={sending || !phoneInput.trim()}
+                className="flex-1 px-4 py-2 rounded-md bg-primary text-white text-[11px] font-bold hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {sending ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                Send Code
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-[11px] text-theme-muted font-medium mb-1.5">Verification Code</label>
+              <input
+                type="text"
+                value={codeInput}
+                onChange={(e) => setCodeInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="123456"
+                maxLength={6}
+                className="w-full px-3 py-2.5 rounded-lg bg-theme-bg border border-theme text-[13px] text-theme-fg text-center tracking-[0.3em] font-mono placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/50 transition-colors"
+              />
+              <p className="text-[10px] text-theme-muted mt-1.5">Check your phone for a 6-digit code.</p>
+            </div>
+            {error && <p className="text-[11px] text-red-400">{error}</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setStep('enter-phone'); setError(''); setCodeInput(''); }}
+                className="px-4 py-2 rounded-md bg-theme-hover text-theme-fg text-[11px] font-bold border border-theme hover:bg-theme-active transition-colors"
+              >
+                Back
+              </button>
+              <button
+                onClick={handleVerify}
+                disabled={sending || codeInput.length !== 6}
+                className="flex-1 px-4 py-2 rounded-md bg-primary text-white text-[11px] font-bold hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {sending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />}
+                Verify
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // ─── Standard Integration Card ───────────────────────────────────────────────
 
 interface StandardCardProps {
@@ -406,6 +603,17 @@ interface StandardCardProps {
   refreshMediapipeStatus?: () => Promise<void> | void;
   browserStatus?: { connected: boolean; clients: number };
   refreshBrowserStatus?: () => Promise<void> | void;
+  ollamaStatus?: any;
+  ollamaChecking?: boolean;
+  refreshOllamaStatus?: () => Promise<void> | void;
+  startOllama?: () => Promise<void> | void;
+  browserUseStatus?: any;
+  browserUseChecking?: boolean;
+  browserUseSetupProgress?: string | null;
+  refreshBrowserUseStatus?: () => Promise<void> | void;
+  setupBrowserUse?: () => Promise<void> | void;
+  stopBrowserUse?: () => Promise<void> | void;
+  uninstallBrowserUse?: () => Promise<void> | void;
 }
 
 const StandardCard: React.FC<StandardCardProps> = ({
@@ -423,6 +631,8 @@ const StandardCard: React.FC<StandardCardProps> = ({
   ffStatus, ffInstalling, refreshFfmpegStatus,
   mpStatus, mpInstalling, refreshMediapipeStatus,
   browserStatus, refreshBrowserStatus,
+  ollamaStatus, ollamaChecking, refreshOllamaStatus, startOllama,
+  browserUseStatus, browserUseChecking, browserUseSetupProgress, refreshBrowserUseStatus, setupBrowserUse, stopBrowserUse, uninstallBrowserUse,
 }) => {
   const [showProfiles, setShowProfiles] = useState(false);
   const [addingProfile, setAddingProfile] = useState(false);
@@ -432,6 +642,8 @@ const StandardCard: React.FC<StandardCardProps> = ({
   const isFfmpeg = i.slug === 'ffmpeg';
   const isMediapipe = i.slug === 'mediapipe';
   const isBrowser = i.slug === 'browser';
+  const isOllama = i.slug === 'ollama';
+  const isBrowserUse = i.slug === 'browser-use';
   const isOAuth = isOAuthSlug(i.slug);
   const provider = slugToProvider(i.slug);
   const cardProfiles = isOAuth && provider ? profiles.filter(p => p.provider === provider) : [];
@@ -439,6 +651,10 @@ const StandardCard: React.FC<StandardCardProps> = ({
 
   const ffAvailable = !!(ffStatus && (ffStatus as any).available);
   const mpAvailable = !!(mpStatus && (mpStatus as any).available);
+  const ollamaAvailable = !!(ollamaStatus && (ollamaStatus as any).available);
+  const ollamaInstalled = !!(ollamaStatus && (ollamaStatus as any).installed);
+  const ollamaRunning = !!(ollamaStatus && (ollamaStatus as any).running);
+  const ollamaModels: any[] = (ollamaStatus as any)?.models || [];
 
   const confirmAddProfile = async () => {
     const label = newProfileName.trim();
@@ -580,117 +796,270 @@ const StandardCard: React.FC<StandardCardProps> = ({
 
       {/* Python details */}
       {isPython && (
-        <div className="mb-4 p-3 bg-theme-bg rounded-lg border border-theme space-y-3">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="font-semibold text-theme-muted uppercase tracking-wide">Runtime</span>
-            <span className={clsx("font-mono", pyStatus?.available ? "text-emerald-400" : "text-theme-muted")}>
-              {pyStatus?.available ? pyStatus.version : 'Not ready'}
-            </span>
-          </div>
-          <div className="flex gap-2">
-            <input
-              value={pyEnvId}
-              onChange={(e) => setPyEnvId?.(e.target.value)}
-              placeholder="Environment ID"
-              className="flex-1 px-2 py-1.5 rounded-md border border-theme bg-theme-card text-theme-fg text-[11px] focus:outline-none focus:border-primary transition-all placeholder:text-theme-muted"
-            />
-            <button
-              onClick={installPython}
-              disabled={pyInstalling || !pyEnvId}
-              className="px-3 py-1.5 bg-primary text-primary-fg text-[11px] font-bold rounded-md hover:opacity-90 disabled:opacity-50 transition-all shadow-sm"
-            >
-              {pyInstalling ? '...' : 'Install'}
-            </button>
+        <div className="mb-4 p-3 bg-theme-bg rounded-lg border border-theme space-y-2">
+          <div className="flex items-center gap-2 text-[11px]">
+            {pyStatus?.available ? (
+              <>
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="font-semibold text-emerald-400">Ready</span>
+                <span className="text-theme-muted ml-auto font-mono text-[10px]">{pyStatus.version}</span>
+              </>
+            ) : (
+              <>
+                <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                <span className="font-semibold text-theme-fg">Setting up...</span>
+              </>
+            )}
           </div>
         </div>
       )}
 
       {/* FFmpeg details */}
       {isFfmpeg && (
-        <div className="mb-4 p-3 bg-theme-bg rounded-lg border border-theme space-y-3">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="font-semibold text-theme-muted uppercase tracking-wide">Status</span>
-            <span className={clsx("font-mono", ffAvailable ? "text-emerald-400" : "text-theme-muted")}>
-              {ffInstalling ? 'Installing...' : ffAvailable ? 'Ready' : 'Not installed'}
-            </span>
-          </div>
-          {(ffStatus as any)?.source && (
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="font-semibold text-theme-muted uppercase tracking-wide">Source</span>
-              <span className="font-mono text-theme-muted">{String((ffStatus as any).source)}</span>
-            </div>
-          )}
-          <div className="flex gap-2">
-            <button
-              onClick={refreshFfmpegStatus}
-              disabled={ffInstalling}
-              className="p-1.5 rounded-md border border-theme bg-transparent text-theme-muted hover:bg-theme-hover hover:text-theme-fg transition-all disabled:opacity-50"
-              title="Refresh"
-            >
-              <RefreshCw className={clsx("w-3.5 h-3.5", ffInstalling && "animate-spin")} />
-            </button>
+        <div className="mb-4 p-3 bg-theme-bg rounded-lg border border-theme space-y-2">
+          <div className="flex items-center gap-2 text-[11px]">
+            {ffInstalling ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
+                <span className="font-semibold text-theme-fg">Installing...</span>
+              </>
+            ) : ffAvailable ? (
+              <>
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="font-semibold text-emerald-400">Ready</span>
+              </>
+            ) : (
+              <>
+                <AlertCircle className="w-3.5 h-3.5 text-theme-muted" />
+                <span className="font-semibold text-theme-fg">Not installed</span>
+                <span className="text-theme-muted text-[10px] ml-auto">Click Install to set up</span>
+              </>
+            )}
           </div>
         </div>
       )}
 
       {/* MediaPipe details */}
       {isMediapipe && (
-        <div className="mb-4 p-3 bg-theme-bg rounded-lg border border-theme space-y-3">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="font-semibold text-theme-muted uppercase tracking-wide">Status</span>
-            <span className={clsx("font-mono", mpAvailable ? "text-emerald-400" : "text-theme-muted")}>
-              {mpInstalling ? 'Installing...' : mpAvailable ? 'Ready' : 'Not installed'}
-            </span>
-          </div>
-          {mpAvailable && (mpStatus as any)?.version && (
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="font-semibold text-theme-muted uppercase tracking-wide">Version</span>
-              <span className="font-mono text-theme-muted">{String((mpStatus as any).version)}</span>
-            </div>
-          )}
-          <div className="text-[10px] text-theme-muted leading-relaxed">
-            Installs <code className="text-theme-fg">mediapipe</code>, <code className="text-theme-fg">opencv-python</code>, and <code className="text-theme-fg">numpy</code>.
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={refreshMediapipeStatus}
-              disabled={mpInstalling}
-              className="p-1.5 rounded-md border border-theme bg-transparent text-theme-muted hover:bg-theme-hover hover:text-theme-fg transition-all disabled:opacity-50"
-              title="Refresh"
-            >
-              <RefreshCw className={clsx("w-3.5 h-3.5", mpInstalling && "animate-spin")} />
-            </button>
+        <div className="mb-4 p-3 bg-theme-bg rounded-lg border border-theme space-y-2">
+          <div className="flex items-center gap-2 text-[11px]">
+            {mpInstalling ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
+                <span className="font-semibold text-theme-fg">Installing...</span>
+              </>
+            ) : mpAvailable ? (
+              <>
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="font-semibold text-emerald-400">Ready</span>
+                {(mpStatus as any)?.version && <span className="text-theme-muted ml-auto font-mono text-[10px]">v{String((mpStatus as any).version)}</span>}
+              </>
+            ) : (
+              <>
+                <AlertCircle className="w-3.5 h-3.5 text-theme-muted" />
+                <span className="font-semibold text-theme-fg">Not installed</span>
+                <span className="text-theme-muted text-[10px] ml-auto">Click Install to set up</span>
+              </>
+            )}
           </div>
         </div>
       )}
 
-      {/* Browser details */}
-      {isBrowser && (
+      {/* Ollama details */}
+      {isOllama && (
         <div className="mb-4 p-3 bg-theme-bg rounded-lg border border-theme space-y-3">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="font-semibold text-theme-muted uppercase tracking-wide">Extension</span>
-            <div className="flex items-center gap-2">
-              <span className={clsx("font-mono", browserStatus?.connected ? "text-emerald-400" : "text-theme-muted")}>
-                {browserStatus?.connected ? `Connected (${browserStatus.clients} tab${browserStatus.clients !== 1 ? 's' : ''})` : 'Not detected'}
-              </span>
+          {ollamaAvailable ? (
+            <>
+              <div className="flex items-center gap-2 text-[11px]">
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="font-semibold text-emerald-400">Running</span>
+                <span className="text-theme-muted ml-auto">{ollamaModels.length} model{ollamaModels.length !== 1 ? 's' : ''}</span>
+              </div>
+              {ollamaModels.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {ollamaModels.slice(0, 6).map((m: any) => (
+                    <span key={m.name} className="px-1.5 py-0.5 bg-violet-500/10 text-violet-400 border border-violet-500/20 rounded text-[9px] font-mono font-bold">
+                      {m.name}
+                    </span>
+                  ))}
+                  {ollamaModels.length > 6 && (
+                    <span className="px-1.5 py-0.5 bg-theme-hover text-theme-muted border border-theme rounded text-[9px] font-bold">
+                      +{ollamaModels.length - 6}
+                    </span>
+                  )}
+                </div>
+              )}
+            </>
+          ) : ollamaInstalled ? (
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-2 text-[11px]">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                <span className="font-semibold text-theme-fg">Installed, not running</span>
+              </div>
+              <p className="text-[11px] text-theme-muted leading-relaxed">
+                Ollama is installed. Click Start and Stuard will launch it for you.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={startOllama}
+                  disabled={ollamaChecking}
+                  className="flex-1 h-7 flex items-center justify-center gap-1.5 rounded-md bg-primary text-primary-fg text-[10px] font-bold hover:opacity-90 transition-all active:scale-95 disabled:opacity-50"
+                >
+                  {ollamaChecking ? <Loader2 className="w-3 h-3 animate-spin" /> : <Bot className="w-3 h-3" />}
+                  Start Ollama
+                </button>
+                <button
+                  onClick={refreshOllamaStatus}
+                  disabled={ollamaChecking}
+                  className="h-7 px-3 flex items-center justify-center gap-1.5 rounded-md border border-theme text-theme-muted text-[10px] font-bold hover:bg-theme-hover transition-all disabled:opacity-50"
+                >
+                  <RefreshCw className={clsx("w-3 h-3", ollamaChecking && "animate-spin")} />
+                  Retry
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-2 text-[11px]">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                <span className="font-semibold text-theme-fg">Not installed</span>
+              </div>
+              <p className="text-[11px] text-theme-muted leading-relaxed">
+                Ollama lets you run AI models privately on your computer. Install it, then click Retry.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleLearnMore('https://ollama.com/download')}
+                  className="flex-1 h-7 flex items-center justify-center gap-1.5 rounded-md bg-violet-600 text-white text-[10px] font-bold hover:bg-violet-500 transition-all active:scale-95"
+                >
+                  <Download className="w-3 h-3" />
+                  Download Ollama
+                </button>
+                <button
+                  onClick={refreshOllamaStatus}
+                  disabled={ollamaChecking}
+                  className="h-7 px-3 flex items-center justify-center gap-1.5 rounded-md border border-theme text-theme-muted text-[10px] font-bold hover:bg-theme-hover transition-all disabled:opacity-50"
+                >
+                  <RefreshCw className={clsx("w-3 h-3", ollamaChecking && "animate-spin")} />
+                  Retry
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Browser Use details */}
+      {isBrowserUse && (
+        <div className="mb-4 p-3 bg-theme-bg rounded-lg border border-theme space-y-3">
+          {browserUseStatus?.running ? (
+            <>
+              <div className="flex items-center gap-2 text-[11px]">
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="font-semibold text-emerald-400">Running</span>
+                <span className="text-theme-muted ml-auto text-[10px]">{browserUseStatus.mode || 'headed'}</span>
+              </div>
+              {browserUseStatus.currentUrl && browserUseStatus.currentUrl !== 'about:blank' && (
+                <div className="text-[10px] text-theme-muted truncate" title={browserUseStatus.currentUrl}>
+                  {browserUseStatus.title || browserUseStatus.currentUrl}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={stopBrowserUse}
+                  className="flex-1 h-7 flex items-center justify-center gap-1.5 rounded-md border border-red-500/30 text-red-400 text-[10px] font-bold hover:bg-red-500/10 transition-all"
+                >
+                  Stop Browser
+                </button>
+                <button
+                  onClick={uninstallBrowserUse}
+                  disabled={browserUseChecking}
+                  className="h-7 px-3 flex items-center justify-center gap-1.5 rounded-md border border-red-500/30 text-red-400 text-[10px] font-bold hover:bg-red-500/10 transition-all disabled:opacity-50"
+                  title="Uninstall Browser Use"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
+            </>
+          ) : browserUseSetupProgress ? (
+            <div className="flex items-center gap-2.5 text-[11px]">
+              <Loader2 className="w-4 h-4 text-primary animate-spin flex-shrink-0" />
+              <div className="space-y-0.5">
+                <span className="font-semibold text-theme-fg">{browserUseSetupProgress}</span>
+                <p className="text-[10px] text-theme-muted">This may take a minute on first setup</p>
+              </div>
+            </div>
+          ) : browserUseStatus?.installed ? (
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-2 text-[11px]">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="font-semibold text-theme-fg">Installed</span>
+                <span className="text-theme-muted ml-auto text-[10px]">Auto-start on use</span>
+              </div>
+              <p className="text-[11px] text-theme-muted leading-relaxed">
+                Browser Use is installed and launches automatically when a tool needs it.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={uninstallBrowserUse}
+                  disabled={browserUseChecking}
+                  className="w-full h-7 flex items-center justify-center gap-1.5 rounded-md border border-red-500/30 text-red-400 text-[10px] font-bold hover:bg-red-500/10 transition-all disabled:opacity-50"
+                  title="Uninstall Browser Use"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  Uninstall
+                </button>
+              </div>
+              {browserUseStatus?.error && (
+                <p className="text-[10px] text-red-400 leading-relaxed">{String(browserUseStatus.error)}</p>
+              )}
+            </div>
+          ) : browserUseStatus?.hasPython === false ? (
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-2 text-[11px]">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                <span className="font-semibold text-theme-fg">Python required</span>
+              </div>
+              <p className="text-[11px] text-theme-muted leading-relaxed">
+                Browser Use needs Python 3.11+. Download it first, then come back and click Set Up.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleLearnMore('https://www.python.org/downloads/')}
+                  className="flex-1 h-7 flex items-center justify-center gap-1.5 rounded-md bg-amber-600 text-white text-[10px] font-bold hover:bg-amber-500 transition-all active:scale-95"
+                >
+                  <Download className="w-3 h-3" />
+                  Get Python
+                </button>
+                <button
+                  onClick={refreshBrowserUseStatus}
+                  disabled={browserUseChecking}
+                  className="h-7 px-3 flex items-center justify-center gap-1.5 rounded-md border border-theme text-theme-muted text-[10px] font-bold hover:bg-theme-hover transition-all disabled:opacity-50"
+                >
+                  <RefreshCw className={clsx("w-3 h-3", browserUseChecking && "animate-spin")} />
+                </button>
+              </div>
+            </div>
+          ) : browserUseStatus?.error ? (
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-2 text-[11px]">
+                <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                <span className="font-semibold text-red-400">Setup failed</span>
+              </div>
+              <p className="text-[10px] text-theme-muted leading-relaxed">{browserUseStatus.error}</p>
               <button
-                onClick={refreshBrowserStatus}
-                className="p-1 rounded text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all"
-                title="Refresh"
+                onClick={setupBrowserUse}
+                disabled={browserUseChecking}
+                className="w-full h-7 flex items-center justify-center gap-1.5 rounded-md bg-primary text-primary-fg text-[10px] font-bold hover:opacity-90 transition-all disabled:opacity-50 active:scale-95"
               >
-                <RefreshCw className="w-3 h-3" />
+                Try Again
               </button>
             </div>
-          </div>
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="font-semibold text-theme-muted uppercase tracking-wide">Server</span>
-            <span className="font-mono text-theme-muted">ws://127.0.0.1:18081</span>
-          </div>
-          {!browserStatus?.connected && (
-            <div className="text-[10px] text-theme-muted leading-relaxed p-2.5 bg-theme-hover/50 rounded-md border border-theme/50 space-y-1">
-              <p><strong className="text-theme-fg">1.</strong> Install the Stuard Browser Extension</p>
-              <p><strong className="text-theme-fg">2.</strong> Ensure Stuard Desktop is running</p>
-              <p><strong className="text-theme-fg">3.</strong> Open any web page and check the extension icon</p>
+          ) : (
+            <div className="space-y-2.5">
+              <p className="text-[11px] text-theme-muted leading-relaxed">
+                Click below to automatically install Browser Use and set up browser automation.
+              </p>
             </div>
           )}
         </div>
@@ -699,43 +1068,104 @@ const StandardCard: React.FC<StandardCardProps> = ({
       {/* Actions */}
       <div className="pt-3 mt-auto border-t border-theme border-dashed flex items-center gap-2">
         {i.available ? (
-          isBrowser ? (
-            <>
+          isBrowserUse ? (
+            browserUseStatus?.running ? (
               <div className="flex-1 flex items-center gap-2 text-[10px] text-theme-muted font-medium">
-                <div className={clsx("w-1.5 h-1.5 rounded-full shadow-sm", browserStatus?.connected ? "bg-emerald-500 animate-pulse" : "bg-amber-500")} />
-                {browserStatus?.connected ? 'Extension Active' : 'Install Extension'}
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Browser Active
               </div>
+            ) : browserUseSetupProgress ? (
+              <div className="flex-1 flex items-center gap-2 text-[10px] text-theme-muted font-medium">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                {browserUseSetupProgress}
+              </div>
+            ) : browserUseStatus?.installed ? (
+              <div className="flex-1 flex items-center gap-2 text-[10px] text-theme-muted font-medium">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                Installed
+              </div>
+            ) : (
               <button
-                onClick={() => handleLearnMore(i.homepage)}
-                className="h-7 px-2.5 rounded-md text-theme-muted hover:text-primary hover:bg-primary/5 border border-transparent hover:border-primary/20 transition-all flex items-center gap-1.5 text-[10px] font-bold"
+                onClick={setupBrowserUse}
+                disabled={browserUseChecking}
+                className="flex-1 h-8 flex items-center justify-center gap-2 rounded-md bg-primary text-primary-fg text-[11px] font-bold shadow-sm transition-all active:scale-95 disabled:opacity-50 hover:opacity-90"
               >
-                Docs <ArrowUpRight className="w-3 h-3" />
+                {browserUseChecking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                {browserUseChecking ? 'Setting up...' : browserUseStatus?.error ? 'Try Again' : 'Set Up'}
               </button>
-            </>
-          ) : isConnected ? (
-            isFfmpeg ? (
-              <button
-                onClick={() => handleConnect(i.slug)}
-                disabled={ffInstalling}
-                className="flex-1 h-8 flex items-center justify-center gap-2 rounded-md bg-theme-fg text-theme-bg text-[11px] font-bold hover:opacity-90 shadow-sm transition-all active:scale-95 disabled:opacity-50"
-              >
-                <RefreshCw className={clsx("w-3.5 h-3.5", ffInstalling && "animate-spin")} />
-                {ffInstalling ? 'Installing...' : 'Repair FFmpeg'}
-              </button>
-            ) : isMediapipe ? (
+            )
+          ) : isBrowser ? (
+            null
+          ) : isOllama ? (
+            ollamaRunning || ollamaAvailable ? (
               <>
+                <div className="flex-1 flex items-center gap-2 text-[10px] text-theme-muted font-medium">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  Ollama Active
+                </div>
                 <button
-                  onClick={() => handleConnect(i.slug)}
-                  disabled={mpInstalling}
-                  className="flex-1 h-8 flex items-center justify-center gap-2 rounded-md bg-theme-fg text-theme-bg text-[11px] font-bold hover:opacity-90 shadow-sm transition-all active:scale-95 disabled:opacity-50"
+                  onClick={refreshOllamaStatus}
+                  disabled={ollamaChecking}
+                  className="h-8 w-8 flex items-center justify-center rounded-md text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all disabled:opacity-50"
+                  title="Refresh"
                 >
-                  <RefreshCw className={clsx("w-3.5 h-3.5", mpInstalling && "animate-spin")} />
-                  {mpInstalling ? 'Installing...' : 'Reinstall'}
-                </button>
-                <button onClick={() => handleLearnMore(i.homepage)} className="h-8 w-8 flex items-center justify-center rounded-md text-theme-muted hover:text-primary hover:bg-primary/5 transition-all" title="Docs">
-                  <Link2 className="w-4 h-4" />
+                  <RefreshCw className={clsx("w-3.5 h-3.5", ollamaChecking && "animate-spin")} />
                 </button>
               </>
+            ) : ollamaInstalled ? (
+              <>
+                <button
+                  onClick={startOllama}
+                  disabled={ollamaChecking}
+                  className="flex-1 h-8 flex items-center justify-center gap-2 rounded-md bg-primary text-primary-fg text-[11px] font-bold shadow-sm transition-all active:scale-95 hover:opacity-90 disabled:opacity-50"
+                >
+                  {ollamaChecking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bot className="w-3.5 h-3.5" />}
+                  Start Ollama
+                </button>
+                <button
+                  onClick={refreshOllamaStatus}
+                  disabled={ollamaChecking}
+                  className="h-8 w-8 flex items-center justify-center rounded-md text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all disabled:opacity-50"
+                  title="Retry"
+                >
+                  <RefreshCw className={clsx("w-3.5 h-3.5", ollamaChecking && "animate-spin")} />
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => handleLearnMore('https://ollama.com/download')}
+                  className="flex-1 h-8 flex items-center justify-center gap-2 rounded-md bg-violet-600 text-white text-[11px] font-bold shadow-sm transition-all active:scale-95 hover:bg-violet-500"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download Ollama
+                </button>
+                <button
+                  onClick={refreshOllamaStatus}
+                  disabled={ollamaChecking}
+                  className="h-8 w-8 flex items-center justify-center rounded-md text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all disabled:opacity-50"
+                  title="Retry"
+                >
+                  <RefreshCw className={clsx("w-3.5 h-3.5", ollamaChecking && "animate-spin")} />
+                </button>
+              </>
+            )
+          ) : isConnected ? (
+            isPython ? (
+              <div className="flex-1 flex items-center gap-2 text-[10px] text-theme-muted font-medium">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Python Ready
+              </div>
+            ) : isFfmpeg ? (
+              <div className="flex-1 flex items-center gap-2 text-[10px] text-theme-muted font-medium">
+                {ffInstalling ? <Loader2 className="w-3 h-3 animate-spin" /> : <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />}
+                {ffInstalling ? 'Installing...' : 'FFmpeg Ready'}
+              </div>
+            ) : isMediapipe ? (
+              <div className="flex-1 flex items-center gap-2 text-[10px] text-theme-muted font-medium">
+                {mpInstalling ? <Loader2 className="w-3 h-3 animate-spin" /> : <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />}
+                {mpInstalling ? 'Installing...' : 'MediaPipe Ready'}
+              </div>
             ) : (
               <>
                 <button
@@ -766,21 +1196,19 @@ const StandardCard: React.FC<StandardCardProps> = ({
             <>
               <button
                 onClick={() => handleConnect(i.slug)}
-                disabled={(isFfmpeg && ffInstalling) || (isMediapipe && mpInstalling)}
+                disabled={(isFfmpeg && ffInstalling) || (isMediapipe && mpInstalling) || (isPython && pyInstalling)}
                 className={clsx(
                   "flex-1 h-8 flex items-center justify-center gap-2 rounded-md text-[11px] font-bold shadow-sm transition-all active:scale-95 disabled:opacity-50",
-                  (isFfmpeg || isMediapipe) ? "bg-theme-fg text-theme-bg hover:opacity-90" : "bg-primary text-primary-fg hover:opacity-90"
+                  (isFfmpeg || isMediapipe || isPython) ? "bg-theme-fg text-theme-bg hover:opacity-90" : "bg-primary text-primary-fg hover:opacity-90"
                 )}
               >
-                {(isFfmpeg || isMediapipe) ? <Download className="w-3.5 h-3.5" /> : <ArrowRight className="w-3.5 h-3.5" />}
-                {isFfmpeg ? (ffInstalling ? 'Installing...' : 'Install FFmpeg') : isMediapipe ? (mpInstalling ? 'Installing...' : 'Install MediaPipe') : 'Connect'}
-              </button>
-              <button
-                onClick={() => handleLearnMore(i.homepage)}
-                className="h-8 w-8 flex items-center justify-center rounded-md text-theme-muted hover:text-primary hover:bg-primary/5 transition-all"
-                title="Docs"
-              >
-                <Link2 className="w-4 h-4" />
+                {(isFfmpeg || isMediapipe || isPython) ? (
+                  (ffInstalling || mpInstalling || pyInstalling) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />
+                ) : <ArrowRight className="w-3.5 h-3.5" />}
+                {isFfmpeg ? (ffInstalling ? 'Installing...' : 'Install')
+                 : isMediapipe ? (mpInstalling ? 'Installing...' : 'Install')
+                 : isPython ? (pyInstalling ? 'Setting up...' : 'Set Up')
+                 : 'Connect'}
               </button>
             </>
           )
@@ -830,6 +1258,22 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     refreshFfmpegStatus,
     refreshMediapipeStatus,
     refreshBrowserStatus,
+    ollamaStatus,
+    ollamaChecking,
+    refreshOllamaStatus,
+    startOllama,
+    telnyxPhone,
+    telnyxVerifying,
+    telnyxRequestCode,
+    telnyxVerifyCode,
+    telnyxDisconnect,
+    browserUseStatus,
+    browserUseChecking,
+    browserUseSetupProgress,
+    refreshBrowserUseStatus,
+    setupBrowserUse,
+    stopBrowserUse,
+    uninstallBrowserUse,
   } = props;
 
   // Load profiles on mount
@@ -843,7 +1287,11 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     [filteredIntegrations]
   );
   const nonGoogleIntegrations = useMemo(
-    () => filteredIntegrations.filter(i => !isGoogleSlug(i.slug)),
+    () => filteredIntegrations.filter(i => !isGoogleSlug(i.slug) && i.slug !== 'telnyx' && i.slug !== 'browser'),
+    [filteredIntegrations]
+  );
+  const showTelnyxCard = useMemo(
+    () => filteredIntegrations.some(i => i.slug === 'telnyx'),
     [filteredIntegrations]
   );
 
@@ -936,11 +1384,23 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
             />
           )}
 
+          {/* Telnyx phone card */}
+          {showTelnyxCard && (
+            <TelnyxPhoneCard
+              isConnected={!!connectedMap.telnyx}
+              phone={telnyxPhone}
+              verifying={telnyxVerifying}
+              requestCode={telnyxRequestCode}
+              verifyCode={telnyxVerifyCode}
+              disconnect={telnyxDisconnect}
+            />
+          )}
+
           {/* Non-Google integrations */}
           {nonGoogleIntegrations.map((i: any) => {
-            const isBrowser = i.slug === 'browser';
-            const isConnected = isBrowser
-              ? (browserStatus?.connected ?? false)
+            const isBrowserUseSlug = i.slug === 'browser-use';
+            const isConnected = isBrowserUseSlug
+              ? !!(browserUseStatus?.running)
               : !!connectedMap[i.slug];
 
             return (
@@ -969,6 +1429,17 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
                 refreshMediapipeStatus={refreshMediapipeStatus}
                 browserStatus={browserStatus}
                 refreshBrowserStatus={refreshBrowserStatus}
+                ollamaStatus={ollamaStatus}
+                ollamaChecking={ollamaChecking}
+                refreshOllamaStatus={refreshOllamaStatus}
+                startOllama={startOllama}
+                browserUseStatus={browserUseStatus}
+                browserUseChecking={browserUseChecking}
+                browserUseSetupProgress={browserUseSetupProgress}
+                refreshBrowserUseStatus={refreshBrowserUseStatus}
+                setupBrowserUse={setupBrowserUse}
+                stopBrowserUse={stopBrowserUse}
+                uninstallBrowserUse={uninstallBrowserUse}
               />
             );
           })}

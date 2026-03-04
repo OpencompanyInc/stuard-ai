@@ -118,7 +118,7 @@ export function WorkflowSidebar({
         <Zap className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-blue-300' : hasUpdate ? 'text-blue-500' : 'text-slate-400'}`} />
 
         {/* Name */}
-        <span className={`flex-1 truncate text-[12px] ${isSelected ? 'text-white font-medium' : 'text-slate-700'}`}>
+        <span className={`flex-1 truncate text-[12px] ${isSelected ? 'text-white font-medium' : 'text-slate-700/80'}`}>
           {i.name || i.id}
         </span>
 
@@ -145,7 +145,7 @@ export function WorkflowSidebar({
             await onDelete(i.id);
           }}
           className={`p-0.5 rounded transition-all shrink-0 ${
-            isSelected ? 'text-white/50 hover:text-white hover:bg-white/10' : 'text-transparent group-hover:text-slate-400 hover:!text-red-500 hover:!bg-red-50'
+            isSelected ? 'text-slate-500 hover:text-slate-900 hover:bg-white/10' : 'text-transparent group-hover:text-slate-400 hover:!text-red-500 hover:!bg-red-50'
           }`}
           title="Delete"
         >
@@ -158,11 +158,11 @@ export function WorkflowSidebar({
   // --- Collapsed state ---
   if (sidebarCollapsed) {
     return (
-      <aside className="w-12 bg-white border-r border-slate-200/80 flex flex-col items-center py-3 gap-3 shrink-0 z-20">
-        <button onClick={onToggleCollapse} className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-all" title="Expand">
+      <aside className="w-12 bg-white border-r border-slate-200 flex flex-col items-center py-3 gap-3 shrink-0 z-20">
+        <button onClick={onToggleCollapse} className="p-2 text-slate-400 hover:text-slate-700/80 hover:bg-slate-100 rounded-lg transition-all" title="Expand">
           <ChevronRight className="w-4 h-4" />
         </button>
-        <div className="w-6 h-px bg-slate-100" />
+        <div className="w-6 h-px bg-slate-50" />
 <button onClick={onCreate} className="p-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-sm transition-all" title="New Flow">
           <Plus className="w-4 h-4" />
         </button>
@@ -179,7 +179,7 @@ export function WorkflowSidebar({
 
   // --- Expanded state ---
   return (
-    <aside className="w-[260px] bg-white border-r border-slate-200/80 flex flex-col h-full shrink-0 z-20" data-onboarding="workflow-sidebar">
+    <aside className="w-[260px] bg-white border-r border-slate-200 flex flex-col h-full shrink-0 z-20" data-onboarding="workflow-sidebar">
       {/* Header */}
       <div className="h-10 px-3 border-b border-slate-100 flex items-center justify-between shrink-0">
         <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Explorer</span>
@@ -205,7 +205,7 @@ export function WorkflowSidebar({
             placeholder="Search..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-slate-50 border border-slate-200 focus:border-blue-400 rounded-lg pl-8 pr-3 py-1.5 text-[12px] text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 transition-all"
+            className="w-full bg-slate-50 border border-slate-200 focus:border-blue-400 rounded-lg pl-8 pr-3 py-1.5 text-[12px] text-slate-700/80 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 transition-all"
           />
         </div>
       </div>
@@ -215,10 +215,10 @@ export function WorkflowSidebar({
         <button onClick={onCreate} className="flex-1 flex items-center justify-center gap-1.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-medium rounded-lg shadow-sm transition-all">
           <Plus className="w-3 h-3" /> New
         </button>
-        <button onClick={onImport} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-medium rounded-lg transition-colors">
+        <button onClick={onImport} className="px-3 py-1.5 bg-slate-50 hover:bg-slate-200 text-slate-600 text-[11px] font-medium rounded-lg transition-colors">
           <Upload className="w-3 h-3" />
         </button>
-        <button onClick={onMarketplace} className="px-3 py-1.5 bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 text-[11px] font-medium rounded-lg transition-colors">
+        <button onClick={onMarketplace} className="px-3 py-1.5 bg-slate-50 hover:bg-blue-100 text-slate-600 hover:text-blue-700 text-[11px] font-medium rounded-lg transition-colors">
           <Grid className="w-3 h-3" />
         </button>
       </div>
@@ -272,7 +272,7 @@ export function WorkflowSidebar({
                       ? <Folder className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                       : <FolderOpen className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                     }
-                    <span className="text-[12px] font-medium text-slate-700 flex-1 truncate">{folderName}</span>
+                    <span className="text-[12px] font-medium text-slate-700/80 flex-1 truncate">{folderName}</span>
                     <span className="text-[10px] text-slate-400">{folderWorkflows.length}</span>
                   </div>
                   {!isCollapsed && (
@@ -319,11 +319,11 @@ export function WorkflowSidebar({
                 if (newName && newName.trim() && newName.trim() !== folderMenu.name) onRenameFolder?.(folderMenu.name, newName.trim());
                 setFolderMenu(null);
               }}
-              className="w-full text-left px-3 py-1.5 text-[12px] text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+              className="w-full text-left px-3 py-1.5 text-[12px] text-slate-700/80 hover:bg-slate-50 flex items-center gap-2"
             >
               <Pencil className="w-3 h-3 text-slate-400" /> Rename
             </button>
-            <div className="h-px bg-slate-100 my-0.5" />
+            <div className="h-px bg-slate-50 my-0.5" />
             <button
               onClick={() => {
                 if (confirm(`Delete "${folderMenu.name}"? Items will move to root.`)) onDeleteFolder?.(folderMenu.name);
@@ -345,7 +345,7 @@ export function WorkflowSidebar({
               <span className="font-medium">Credits</span>
               <span className={credits.remaining < 10 ? "text-amber-500 font-medium" : ""}>{credits.remaining}/{credits.limit}</span>
             </div>
-            <div className="w-full h-1 bg-slate-100 rounded-full overflow-hidden">
+            <div className="w-full h-1 bg-slate-50 rounded-full overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all ${credits.remaining < 10 ? 'bg-amber-500' : 'bg-blue-500'}`}
                 style={{ width: `${Math.min(100, (credits.remaining / Math.max(1, credits.limit)) * 100)}%` }}
@@ -355,7 +355,7 @@ export function WorkflowSidebar({
         )}
         <button
           onClick={onDashboard}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 text-slate-500 hover:bg-slate-50 hover:text-slate-700 text-[11px] font-medium transition-colors"
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 text-slate-500 hover:bg-slate-50 hover:text-slate-700/80 text-[11px] font-medium transition-colors"
         >
           <Home className="w-3.5 h-3.5" /> Dashboard
         </button>
@@ -363,3 +363,4 @@ export function WorkflowSidebar({
     </aside>
   );
 }
+

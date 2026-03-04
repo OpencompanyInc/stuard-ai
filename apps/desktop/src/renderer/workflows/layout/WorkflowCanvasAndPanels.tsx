@@ -22,7 +22,6 @@ interface WorkflowCanvasAndPanelsProps {
   activeTab: string;
   openTabs: OpenFileTab[];
   logs: Array<{ ts: string; msg: string }>;
-  showLogs: boolean;
   floatingContent?: React.ReactNode;
   rightPanel: RightPanel;
   manualRightWidth: number;
@@ -31,7 +30,6 @@ interface WorkflowCanvasAndPanelsProps {
   workspaceInfo: WorkspaceInfo | null;
   onSetActiveTab: (tab: string) => void;
   onCloseFileTab: (filePath: string) => void;
-  onToggleLogs: () => void;
   onClearLogs: () => void;
   onSendLogsToChat: (text: string) => void;
   onCanvasMouseDown: (e: React.MouseEvent) => void;
@@ -91,7 +89,6 @@ export function WorkflowCanvasAndPanels({
   activeTab,
   openTabs,
   logs,
-  showLogs,
   floatingContent,
   rightPanel,
   manualRightWidth,
@@ -100,7 +97,6 @@ export function WorkflowCanvasAndPanels({
   workspaceInfo,
   onSetActiveTab,
   onCloseFileTab,
-  onToggleLogs,
   onClearLogs,
   onSendLogsToChat,
   onCanvasMouseDown,
@@ -157,14 +153,9 @@ export function WorkflowCanvasAndPanels({
         selectionBox={selectionBox}
         activeTab={activeTab}
         openTabs={openTabs}
-        logs={logs}
-        showLogs={showLogs}
         floatingContent={floatingContent}
         onSetActiveTab={onSetActiveTab}
         onCloseFileTab={onCloseFileTab}
-        onToggleLogs={onToggleLogs}
-        onClearLogs={onClearLogs}
-        onSendLogsToChat={onSendLogsToChat}
         onCanvasMouseDown={onCanvasMouseDown}
         onWheel={onWheel}
         onZoomIn={onZoomIn}
@@ -196,6 +187,9 @@ export function WorkflowCanvasAndPanels({
         manualRightWidth={manualRightWidth}
         onStartResizeManualRight={onStartResizeManualRight}
         onResetManualRightWidth={onResetManualRightWidth}
+        logs={logs}
+        onClearLogs={onClearLogs}
+        onSendLogsToChat={onSendLogsToChat}
         model={model}
         errors={errors}
         selectedNodeId={selectedNodeId}

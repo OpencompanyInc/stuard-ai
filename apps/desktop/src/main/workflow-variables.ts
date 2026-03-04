@@ -19,6 +19,8 @@ export type WorkflowVariableType = VariableType | 'json';
 export interface WorkflowVariableDefinition {
   name: string;
   type: WorkflowVariableType;
+  /** Scope: 'workflow' = shared across all stuard files, 'local' = scoped to a single stuard file. Default: 'workflow' */
+  scope?: 'workflow' | 'local';
   defaultValue: any;
   description?: string;
   persistState?: boolean;
@@ -27,8 +29,10 @@ export interface WorkflowVariableDefinition {
 /** Registry of workflow variable definitions by flowId */
 const variableDefinitions = new Map<string, Map<string, WorkflowVariableDefinition>>();
 
+/** Per-workflow variable store (workflow.* and local.* scoped variables) */
 export const variableStore = new Map<string, VariableEntry>();
 const VARIABLES_FILE = path.join(app.getPath('userData'), 'workflow-variables.json');
+
 
 /** Callback fired after a variable changes */
 export type VariableChangeCallback = (name: string, entry: VariableEntry, previousValue: any) => void;
@@ -92,6 +96,7 @@ function _flushSaveVariables(): void {
     console.error('Failed to save workflow variables:', e);
   }
 }
+
 
 function inferType(value: any): VariableType {
   if (typeof value === 'boolean') return 'boolean';
@@ -233,7 +238,8 @@ export function initializeWorkflowVariables(
   for (const v of variables) {
     if (!v.name) continue;
 
-    const fullName = `workflow.${v.name}`;
+    const scope = v.scope || 'workflow';
+    const fullName = `${scope}.${v.name}`;
     const existingEntry = variableStore.get(fullName);
     const storageType: VariableType = v.type === 'json' ? 'string' : (v.type as VariableType) || 'string';
 
@@ -263,7 +269,8 @@ export function cleanupWorkflowVariables(flowId: string): void {
   if (!defs) return;
 
   for (const [name, def] of defs) {
-    const fullName = `workflow.${name}`;
+    const scope = def.scope || 'workflow';
+    const fullName = `${scope}.${name}`;
     if (!def.persistState) {
       variableStore.delete(fullName);
       console.log(`[VARS] Cleaned up non-persistent variable: ${fullName}`);

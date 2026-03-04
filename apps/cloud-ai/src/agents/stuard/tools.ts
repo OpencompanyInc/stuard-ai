@@ -13,13 +13,17 @@ import { getHeadlessAgentStatus } from '../../tools/get-headless-agent-status';
 import { listHeadlessAgentTasks } from '../../tools/list-headless-agent-tasks';
 import { stopHeadlessAgent } from '../../tools/stop-headless-agent';
 import { ffmpeg_status, ffmpeg_setup, ffmpeg_run, ffmpeg_convert_media, ffmpeg_extract_audio, ffmpeg_trim_media, ffmpeg_probe_media, ffmpeg_extract_frames, folder_permission_add, folder_permission_remove, folder_permission_list, folder_permission_set_enabled, folder_permission_check, get_datetime, math_eval, generate_uuid, random_number, random_choice, get_env_var, get_system_info, hash_string, base64_encode, base64_decode, json_parse, json_stringify, sleep, regex_match, regex_replace } from '../../tools/device-tools';
+import { ollama_status, ollama_chat, ollama_generate, ollama_vision, ollama_embeddings, ollama_models } from '../../tools/device-tools';
+import { browser_use_status, browser_use_configure, browser_use_task, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies } from '../../tools/device-tools';
 import { submitFeedback, reportBug, suggestFeature, listMyFeedback, getFeedbackDetails } from '../../tools/feedback-tools';
+import { telnyx_send_sms, telnyx_make_call, telnyx_phone_status } from '../../tools/telnyx-tools';
 import { http_request } from '../../tools/http-tools';
 import { createRequire } from 'node:module';
 import type { SIS as SISType } from 'sis-tools';
 import { searchToolsSemanticSupabase, isSupabaseSISEnabled } from '../../tools/sis-supabase';
 import { SIS_RUNTIME_TOOLS } from '../../tools/sis-runtime-tools';
 import { get_tool_schema, execute_tool, search_tools } from '../../tools/meta-tools';
+import { get_skill_info } from '../../tools/skill-tools';
 import { hasClientBridge } from '../../tools/bridge';
 
 const require = createRequire(import.meta.url);
@@ -205,6 +209,26 @@ export const ALL_TOOLS = {
   find_or_create_space,
   update_space_item,
   delete_space_item,
+  // Ollama (Local AI models — private, on-device)
+  ollama_status,
+  ollama_chat,
+  ollama_generate,
+  ollama_vision,
+  ollama_embeddings,
+  ollama_models,
+  // Browser Use (AI browser automation — requires browser-use Python package)
+  browser_use_status,
+  browser_use_configure,
+  browser_use_task,
+  browser_use_navigate,
+  browser_use_click,
+  browser_use_type,
+  browser_use_press_key,
+  browser_use_screenshot,
+  browser_use_content,
+  browser_use_scroll,
+  browser_use_tabs,
+  browser_use_cookies,
   // GitHub tools (require user to have connected GitHub via dashboard)
   github_get_me,
   github_list_repos,
@@ -260,6 +284,12 @@ export const ALL_TOOLS = {
   get_tool_schema,
   execute_tool,
   search_tools,
+  // Skills
+  get_skill_info,
+  // Telnyx (SMS / Voice calls — requires verified phone)
+  telnyx_send_sms,
+  telnyx_make_call,
+  telnyx_phone_status,
 } as const;
 
 const _INTERNAL_SPACE_TOOLS = {
@@ -326,6 +356,9 @@ export const TIER_1_PARAMOUNT_TOOLS = [
 
   // Meta-tools for lazy-loading (3) — discover & run any other tool
   'get_tool_schema', 'execute_tool', 'search_tools',
+
+  // Skills (1) — retrieve user-defined skill details
+  'get_skill_info',
 ] as const;
 
 const _FFMPEG_TIER_1_TOOLS = [
@@ -458,6 +491,21 @@ export function getTools(
       if (name.startsWith('github_')) tools[name] = tool;
     }
   }
+  if (enabledIntegrations.includes('ollama')) {
+    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+      if (name.startsWith('ollama_')) tools[name] = tool;
+    }
+  }
+  if (enabledIntegrations.includes('telnyx')) {
+    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+      if (name.startsWith('telnyx_')) tools[name] = tool;
+    }
+  }
+  if (enabledIntegrations.includes('browser_use') || hasClientBridge()) {
+    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+      if (name.startsWith('browser_use_')) tools[name] = tool;
+    }
+  }
 
   if (process.env.SIS_DEBUG === '1') {
     console.log(`[tools] Lean mode: ${Object.keys(tools).length} tools (Tier1 + SIS + integrations)`);
@@ -514,12 +562,25 @@ export async function getToolsForQuery(
     github: ['github_'],
     notion: ['notion_'],
     linear: ['linear_'],
+    ollama: ['ollama_'],
+    telnyx: ['telnyx_'],
+    browser_use: ['browser_use_'],
   };
   for (const integration of enabledIntegrations) {
     const prefixes = integrationPrefixes[integration];
     if (!prefixes) continue;
     for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
       if (!selected[name] && prefixes.some(p => name.startsWith(p))) {
+        selected[name] = tool;
+      }
+    }
+  }
+
+  // Safety net: when a desktop bridge is active, keep browser_use tools available
+  // even if integration state arrives late/stale.
+  if (hasClientBridge()) {
+    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+      if (!selected[name] && name.startsWith('browser_use_')) {
         selected[name] = tool;
       }
     }

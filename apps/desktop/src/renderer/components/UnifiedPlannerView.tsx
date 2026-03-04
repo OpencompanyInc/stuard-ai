@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo } from "react";
-import { Calendar as CalendarIcon, Clock, Plus, RefreshCw, Link2, ChevronLeft, ChevronRight, ListTodo, Bell, Trash2 } from "lucide-react";
+import { Calendar as CalendarIcon, Clock, Plus, RefreshCw, Link2, ChevronLeft, ChevronRight, ListTodo, Bell, Trash2, MapPin, WifiOff } from "lucide-react";
 import { clsx } from 'clsx';
 
 export type PlannerViewMode = "today" | "month";
@@ -49,6 +49,69 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
   const [selectedDateKey, setSelectedDateKey] = React.useState<string | null>(null);
   const [dragBlock, setDragBlock] = React.useState<any | null>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
+
+  // Local event creation
+  const [showAddEvent, setShowAddEvent] = useState(false);
+  const [newEvent, setNewEvent] = useState({
+    title: '',
+    date: formatLocalDateKey(new Date()),
+    startTime: '09:00',
+    endTime: '10:00',
+    allDay: false,
+    description: '',
+    location: '',
+    recurring: 'none' as 'none' | 'daily' | 'weekly' | 'monthly',
+  });
+
+  const handleAddLocalEvent = async () => {
+    if (!newEvent.title.trim()) return;
+    try {
+      const start = newEvent.allDay
+        ? `${newEvent.date}T00:00:00`
+        : `${newEvent.date}T${newEvent.startTime}:00`;
+      const end = newEvent.allDay
+        ? `${newEvent.date}T23:59:59`
+        : `${newEvent.date}T${newEvent.endTime}:00`;
+
+      const res = await (window as any).desktopAPI?.offlineCalendarAdd?.({
+        title: newEvent.title.trim(),
+        description: newEvent.description.trim() || undefined,
+        start,
+        end,
+        allDay: newEvent.allDay,
+        location: newEvent.location.trim() || undefined,
+        recurring: newEvent.recurring,
+      });
+
+      if (res?.ok) {
+        setShowAddEvent(false);
+        setNewEvent({
+          title: '',
+          date: formatLocalDateKey(new Date()),
+          startTime: '09:00',
+          endTime: '10:00',
+          allDay: false,
+          description: '',
+          location: '',
+          recurring: 'none',
+        });
+        onRefresh(); // Reload calendar data
+      }
+    } catch (e) {
+      console.error('Failed to add local event:', e);
+    }
+  };
+
+  const handleDeleteLocalEvent = async (eventId: string) => {
+    try {
+      const res = await (window as any).desktopAPI?.offlineCalendarDelete?.(eventId);
+      if (res?.ok) {
+        onRefresh();
+      }
+    } catch (e) {
+      console.error('Failed to delete local event:', e);
+    }
+  };
 
   const currentLocalIso = formatLocalDateKey(new Date());
 
@@ -352,6 +415,17 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
 
         <div className="flex items-center gap-2">
           <button
+            onClick={() => {
+              setNewEvent(e => ({ ...e, date: selectedDateKey || formatLocalDateKey(new Date()) }));
+              setShowAddEvent(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-fg text-[11px] font-bold hover:opacity-90 transition-all shadow-sm"
+            title="Add Local Event"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add Event
+          </button>
+          <button
             onClick={onRefresh}
             className="p-2 rounded-md hover:bg-theme-hover text-theme-muted hover:text-theme-fg transition-colors"
             title="Refresh Calendar"
@@ -373,9 +447,12 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
           )}
 
           {calendarError && (
-            <div className="shrink-0 px-4 py-2 border-b border-theme bg-theme-card">
-              <div className="text-[12px] font-bold text-theme-fg">{calendarError}</div>
-              <div className="text-[11px] text-theme-muted">Local tasks and reminders are still available offline.</div>
+            <div className="shrink-0 px-4 py-2 border-b border-theme/30 bg-theme-card/50">
+              <div className="flex items-center gap-2 text-[12px] font-medium text-theme-muted">
+                <WifiOff className="w-3.5 h-3.5 text-theme-muted/60 shrink-0" />
+                <span>{calendarError}</span>
+              </div>
+              <div className="text-[11px] text-theme-muted/70 ml-5.5 mt-0.5">Local events, tasks, and reminders work offline.</div>
             </div>
           )}
 
@@ -456,7 +533,9 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
                           ? "bg-primary text-primary-fg border-primary z-20 shadow-xl scale-[1.01]"
                           : b.source === 'task'
                             ? "bg-emerald-500/10 text-theme-fg border-emerald-500/30 hover:border-emerald-500/50 hover:bg-emerald-500/15 z-10 border-l-4 border-l-emerald-500"
-                            : "bg-theme-card text-theme-fg border-theme hover:border-primary/30 hover:bg-theme-hover z-10 border-l-4 border-l-primary"
+                            : b.source === 'local'
+                              ? "bg-violet-500/10 text-theme-fg border-violet-500/30 hover:border-violet-500/50 hover:bg-violet-500/15 z-10 border-l-4 border-l-violet-500"
+                              : "bg-theme-card text-theme-fg border-theme hover:border-primary/30 hover:bg-theme-hover z-10 border-l-4 border-l-primary"
                       )}
                       style={{
                         top,
@@ -535,10 +614,13 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
                                   "w-full text-[8px] px-1.5 py-0.5 rounded truncate text-left pointer-events-none font-semibold flex items-center gap-1",
                                   b.source === 'task'
                                     ? "bg-emerald-500/15 text-emerald-600 border border-emerald-500/20"
-                                    : "bg-theme-hover text-theme-fg border border-theme"
+                                    : b.source === 'local'
+                                      ? "bg-violet-500/15 text-violet-600 border border-violet-500/20"
+                                      : "bg-theme-hover text-theme-fg border border-theme"
                                 )}
                               >
                                 {b.source === 'task' && <ListTodo className="w-2.5 h-2.5 shrink-0" />}
+                                {b.source === 'local' && <CalendarIcon className="w-2.5 h-2.5 shrink-0" />}
                                 <span className="truncate">{b.title}</span>
                               </div>
                             ))}
@@ -560,7 +642,15 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
           <div className="w-80 bg-theme-card rounded-theme-card border border-theme shadow-xl p-6 overflow-y-auto custom-scrollbar animate-in slide-in-from-right-2 duration-300">
             <div className="space-y-8">
               <div>
-                <h3 className="text-[18px] font-stuard font-bold text-theme-fg leading-tight mb-2">{selectedBlock.title || "(No Title)"}</h3>
+                <div className="flex items-center gap-2 mb-2">
+                  <h3 className="text-[18px] font-stuard font-bold text-theme-fg leading-tight flex-1">{selectedBlock.title || "(No Title)"}</h3>
+                  {selectedBlock.source === 'local' && (
+                    <span className="px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-500 text-[9px] font-black uppercase tracking-wider border border-violet-500/20 shrink-0">Local</span>
+                  )}
+                  {selectedBlock.source === 'task' || selectedBlock.source === 'unified-tasks' ? (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 text-[9px] font-black uppercase tracking-wider border border-emerald-500/20 shrink-0">Task</span>
+                  ) : null}
+                </div>
                 <div className="flex items-center gap-2 text-[12px] text-theme-muted font-bold">
                   <CalendarIcon className="w-4 h-4 text-primary" />
                   <span>{selectedBlock.start ? new Date(selectedBlock.start).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : ''}</span>
@@ -617,6 +707,21 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
                   </button>
                 </div>
               )}
+              {selectedBlock.source === 'local' && (
+                <div className="pt-4 border-t border-theme">
+                  <button
+                    onClick={() => {
+                      if (confirm('Delete this local event?')) {
+                        handleDeleteLocalEvent(String(selectedBlock.id));
+                      }
+                    }}
+                    className="w-full flex items-center justify-center gap-2 py-3 rounded-theme-button bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white text-[12px] font-bold transition-all border border-red-500/20 hover:border-red-500 shadow-sm"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete Local Event
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         ) : (
@@ -629,6 +734,130 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Add Local Event Modal */}
+      {showAddEvent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setShowAddEvent(false)}>
+          <div
+            className="bg-theme-card rounded-2xl border border-theme shadow-2xl w-[420px] max-h-[80vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-200"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-6 py-4 border-b border-theme">
+              <h3 className="text-[16px] font-black text-theme-fg tracking-tight">Add Local Event</h3>
+              <p className="text-[11px] text-theme-muted mt-0.5">This event is stored locally and works offline.</p>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              <div>
+                <label className="text-[10px] font-black text-theme-muted uppercase tracking-widest block mb-1.5">Title *</label>
+                <input
+                  type="text"
+                  value={newEvent.title}
+                  onChange={e => setNewEvent(ev => ({ ...ev, title: e.target.value }))}
+                  placeholder="Meeting, Appointment, etc."
+                  className="w-full bg-theme-bg border border-theme rounded-xl px-3 py-2.5 text-[13px] text-theme-fg placeholder:text-theme-muted/50 outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 transition-all"
+                  autoFocus
+                />
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <label className="text-[10px] font-black text-theme-muted uppercase tracking-widest block mb-1.5">Date</label>
+                  <input
+                    type="date"
+                    value={newEvent.date}
+                    onChange={e => setNewEvent(ev => ({ ...ev, date: e.target.value }))}
+                    className="w-full bg-theme-bg border border-theme rounded-xl px-3 py-2.5 text-[13px] text-theme-fg outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 transition-all"
+                  />
+                </div>
+                <div className="flex items-center gap-2 mt-5">
+                  <input
+                    type="checkbox"
+                    id="allDay"
+                    checked={newEvent.allDay}
+                    onChange={e => setNewEvent(ev => ({ ...ev, allDay: e.target.checked }))}
+                    className="rounded border-theme accent-primary"
+                  />
+                  <label htmlFor="allDay" className="text-[11px] font-bold text-theme-muted cursor-pointer">All day</label>
+                </div>
+              </div>
+
+              {!newEvent.allDay && (
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className="text-[10px] font-black text-theme-muted uppercase tracking-widest block mb-1.5">Start Time</label>
+                    <input
+                      type="time"
+                      value={newEvent.startTime}
+                      onChange={e => setNewEvent(ev => ({ ...ev, startTime: e.target.value }))}
+                      className="w-full bg-theme-bg border border-theme rounded-xl px-3 py-2.5 text-[13px] text-theme-fg outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 transition-all"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-[10px] font-black text-theme-muted uppercase tracking-widest block mb-1.5">End Time</label>
+                    <input
+                      type="time"
+                      value={newEvent.endTime}
+                      onChange={e => setNewEvent(ev => ({ ...ev, endTime: e.target.value }))}
+                      className="w-full bg-theme-bg border border-theme rounded-xl px-3 py-2.5 text-[13px] text-theme-fg outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 transition-all"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="text-[10px] font-black text-theme-muted uppercase tracking-widest block mb-1.5">Location</label>
+                <input
+                  type="text"
+                  value={newEvent.location}
+                  onChange={e => setNewEvent(ev => ({ ...ev, location: e.target.value }))}
+                  placeholder="Optional"
+                  className="w-full bg-theme-bg border border-theme rounded-xl px-3 py-2.5 text-[13px] text-theme-fg placeholder:text-theme-muted/50 outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black text-theme-muted uppercase tracking-widest block mb-1.5">Description</label>
+                <textarea
+                  value={newEvent.description}
+                  onChange={e => setNewEvent(ev => ({ ...ev, description: e.target.value }))}
+                  placeholder="Optional notes..."
+                  rows={2}
+                  className="w-full bg-theme-bg border border-theme rounded-xl px-3 py-2.5 text-[13px] text-theme-fg placeholder:text-theme-muted/50 outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 transition-all resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black text-theme-muted uppercase tracking-widest block mb-1.5">Repeat</label>
+                <select
+                  value={newEvent.recurring}
+                  onChange={e => setNewEvent(ev => ({ ...ev, recurring: e.target.value as any }))}
+                  className="w-full bg-theme-bg border border-theme rounded-xl px-3 py-2.5 text-[13px] text-theme-fg outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 transition-all"
+                >
+                  <option value="none">Does not repeat</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-theme flex items-center justify-end gap-3">
+              <button
+                onClick={() => setShowAddEvent(false)}
+                className="px-4 py-2 rounded-xl text-[12px] font-bold text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddLocalEvent}
+                disabled={!newEvent.title.trim()}
+                className="px-5 py-2 rounded-xl bg-primary text-primary-fg text-[12px] font-bold hover:opacity-90 transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Add Event
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

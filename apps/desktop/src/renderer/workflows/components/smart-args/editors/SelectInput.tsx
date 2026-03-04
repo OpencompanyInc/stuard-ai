@@ -52,18 +52,18 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
     <div ref={containerRef} className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full px-4 py-2.5 text-sm border border-slate-200 rounded-xl bg-white hover:bg-slate-50 hover:border-slate-300 flex items-center justify-between gap-2 transition-all shadow-sm"
+        className="w-full px-4 py-2.5 text-sm border border-white/[0.08] rounded-xl bg-white/[0.04] hover:bg-white/[0.06] hover:border-white/[0.12] flex items-center justify-between gap-2 transition-all shadow-sm"
       >
-        <span className={selectedOption || isCustomValue ? 'text-slate-700 font-medium' : 'text-slate-400'}>
+        <span className={selectedOption || isCustomValue ? 'text-white/80 font-medium' : 'text-white/40'}>
           {selectedOption?.label || (isCustomValue ? String(value) : (placeholder || 'Select an option...'))}
         </span>
-        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`w-4 h-4 text-white/40 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (
-        <div className="absolute z-50 w-full mt-2 bg-white border border-slate-100 rounded-xl shadow-xl max-h-72 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+        <div className="absolute z-50 w-full mt-2 bg-white/[0.04] border border-white/[0.04] rounded-xl shadow-xl max-h-72 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
           {showSearchInput && (
-            <div className="p-2 border-b border-slate-100 bg-slate-50/50">
+            <div className="p-2 border-b border-white/[0.04] bg-slate-50/50">
               <input
                 type="text"
                 value={search}
@@ -76,7 +76,7 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
                   }
                 }}
                 placeholder={allowFreeform ? 'Search or type a custom value...' : 'Search options...'}
-                className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                className="w-full px-3 py-2 text-sm bg-white/[0.04] border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50"
                 autoFocus
               />
             </div>
@@ -96,20 +96,20 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
                 onClick={() => { onChange(opt.value); setOpen(false); setSearch(''); }}
                 className={`w-full px-3 py-2 text-left text-sm rounded-lg flex items-center justify-between gap-2 transition-colors mb-0.5 ${opt.value == value
                   ? 'bg-indigo-50 text-indigo-700 font-medium'
-                  : 'text-slate-700 hover:bg-slate-50'
+                  : 'text-white/80 hover:bg-white/[0.06]'
                   }`}
               >
                 <div>
                   <div>{opt.label}</div>
                   {opt.description && (
-                    <div className="text-xs text-slate-400 font-normal">{opt.description}</div>
+                    <div className="text-xs text-white/40 font-normal">{opt.description}</div>
                   )}
                 </div>
                 {opt.value == value && <Check className="w-4 h-4 text-indigo-600" />}
               </button>
             ))}
             {filteredOptions.length === 0 && (
-              <div className="px-3 py-8 text-sm text-slate-400 text-center">No matching options</div>
+              <div className="px-3 py-8 text-sm text-white/40 text-center">No matching options</div>
             )}
           </div>
         </div>
@@ -117,3 +117,4 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
     </div>
   );
 }
+

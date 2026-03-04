@@ -33,6 +33,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   const [pyRunCode, setPyRunCode] = useState<string>("print(\"hello from python\")");
   const [pyRunResult, setPyRunResult] = useState<any | null>(null);
   const [browserStatus, setBrowserStatus] = useState<{ connected: boolean; clients: number }>({ connected: false, clients: 0 });
+  const [ollamaStatus, setOllamaStatus] = useState<any | null>(null);
+  const [ollamaChecking, setOllamaChecking] = useState<boolean>(false);
+  const [browserUseStatus, setBrowserUseStatus] = useState<any | null>(null);
+  const [browserUseChecking, setBrowserUseChecking] = useState<boolean>(false);
+  const [browserUseSetupProgress, setBrowserUseSetupProgress] = useState<string | null>(null);
+  const [telnyxPhone, setTelnyxPhone] = useState<string | null>(null);
+  const [telnyxVerifying, setTelnyxVerifying] = useState(false);
 
   // ── Profile state ──
   const [profiles, setProfiles] = useState<IntegrationProfile[]>([]);
@@ -57,69 +64,84 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     } catch {}
   }, []);
 
+  const syncConnectedFromServer = useCallback(async (authToken?: string) => {
+    const token = authToken || session?.access_token;
+    if (!token) return;
+
+    try {
+      const headers = { Authorization: `Bearer ${token}` } as const;
+      const serverConnected: Record<string, boolean | null> = {};
+
+      const fetchStatus = async (url: string, slug: string) => {
+        try {
+          const resp = await fetch(url, { headers });
+          const j = await resp.json().catch(() => null);
+          serverConnected[slug] = !!(j && (j as any).ok && (j as any).connected);
+        } catch {
+          // Keep previous state on transient errors.
+          serverConnected[slug] = null;
+        }
+      };
+
+      await Promise.all([
+        fetchStatus(`${CLOUD_AI_HTTP}/integrations/github/status`, "github"),
+        fetchStatus(`${CLOUD_AI_HTTP}/integrations/outlook/status`, "outlook"),
+        fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=drive`, "google-drive"),
+        fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=calendar`, "google-calendar"),
+        fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=gmail`, "gmail"),
+        fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=sheets`, "google-sheets"),
+        fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=docs`, "google-docs"),
+        fetchStatus(`${CLOUD_AI_HTTP}/integrations/discord/status`, "discord"),
+        fetchStatus(`${CLOUD_AI_HTTP}/integrations/reddit/status`, "reddit"),
+        fetchStatus(`${CLOUD_AI_HTTP}/integrations/telnyx/status`, "telnyx"),
+      ]);
+
+      setConnectedMap((prev) => {
+        const next: Record<string, boolean> = {};
+        // Preserve local-only integration states
+        if (prev.python) next.python = true;
+        if (prev.webhooks) next.webhooks = true;
+        if (prev.ffmpeg) next.ffmpeg = true;
+        if (prev.mediapipe) next.mediapipe = true;
+        if (prev.ollama) next.ollama = true;
+        if (prev.browser_use) next.browser_use = true;
+
+        for (const [slug, connected] of Object.entries(serverConnected)) {
+          if (connected === true) {
+            next[slug] = true;
+            continue;
+          }
+          if (connected === null && prev[slug]) {
+            next[slug] = true;
+          }
+        }
+
+        try {
+          localStorage.setItem("integrations.connected", JSON.stringify(next));
+        } catch {}
+        emitConnectedChanged();
+        return next;
+      });
+    } catch {}
+  }, [session?.access_token, CLOUD_AI_HTTP]);
+
   useEffect(() => {
     (async () => {
       try {
-        const token = session?.access_token;
-        if (!token) return;
-        const headers = { Authorization: `Bearer ${token}` } as const;
-
-        // Track which integrations are actually connected (server truth)
-        const serverConnected: Record<string, boolean> = {};
-
-        const fetchStatus = async (url: string, slug: string) => {
-          try {
-            const resp = await fetch(url, { headers });
-            const j = await resp.json().catch(() => null);
-            // Mark as connected ONLY if server confirms it
-            serverConnected[slug] = !!(j && (j as any).ok && (j as any).connected);
-          } catch {
-            // On error, mark as not connected
-            serverConnected[slug] = false;
-          }
-        };
-
-        await Promise.all([
-          fetchStatus(`${CLOUD_AI_HTTP}/integrations/github/status`, "github"),
-          fetchStatus(`${CLOUD_AI_HTTP}/integrations/outlook/status`, "outlook"),
-          fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=drive`, "google-drive"),
-          fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=calendar`, "google-calendar"),
-          fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=gmail`, "gmail"),
-          fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=sheets`, "google-sheets"),
-          fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=docs`, "google-docs"),
-          fetchStatus(`${CLOUD_AI_HTTP}/integrations/discord/status`, "discord"),
-          fetchStatus(`${CLOUD_AI_HTTP}/integrations/reddit/status`, "reddit"),
-        ]);
-
-        // Update state with server truth (this removes stale localStorage entries)
-        setConnectedMap((prev) => {
-          // Keep local-only integrations (like python) from previous state
-          const next: Record<string, boolean> = {};
-          if (prev.python) next.python = true;
-          if (prev.webhooks) next.webhooks = true;
-          if (prev.ffmpeg) next.ffmpeg = true;
-          if (prev.mediapipe) next.mediapipe = true;
-          // Add server-confirmed integrations
-          for (const [slug, connected] of Object.entries(serverConnected)) {
-            if (connected) next[slug] = true;
-          }
-          try {
-            localStorage.setItem("integrations.connected", JSON.stringify(next));
-          } catch {}
-          emitConnectedChanged();
-          return next;
-        });
+        await syncConnectedFromServer();
       } catch {}
     })();
-  }, [session?.access_token, CLOUD_AI_HTTP]);
+  }, [syncConnectedFromServer]);
 
   // Regular integrations (OAuth-based, not MCPs)
   const integrationLibrary = useMemo(
     () => [
-      { slug: "python", name: "Python", description: "Local Python runtime and managed envs.", category: "Local", homepage: "https://www.python.org/", available: true },
-      { slug: "ffmpeg", name: "FFmpeg", description: "Local media conversion and editing (auto-installs when needed).", category: "Local", homepage: "https://ffmpeg.org/", available: true },
-      { slug: "mediapipe", name: "MediaPipe", description: "Computer vision: pose estimation, hand tracking, face detection, face mesh, segmentation.", category: "Local", homepage: "https://mediapipe.dev/", available: true },
-      { slug: "browser", name: "Browser", description: "Web automation and page interaction via browser extension.", category: "Local", homepage: "https://stuard.ai/extension", available: true },
+      { slug: "python", name: "Python", description: "Required for local tools. Stuard sets it up automatically when needed.", category: "Local", homepage: "https://www.python.org/", available: true },
+      { slug: "ffmpeg", name: "FFmpeg", description: "Convert and edit audio & video files. Installs automatically when needed.", category: "Local", homepage: "https://ffmpeg.org/", available: true },
+      { slug: "mediapipe", name: "MediaPipe", description: "See and understand images and video — hand tracking, face detection, body pose, and more.", category: "Local", homepage: "https://mediapipe.dev/", available: true },
+      { slug: "ollama", name: "Ollama", description: "Run AI models privately on your computer — chat, vision, embeddings, no data leaves your device.", category: "Local", homepage: "https://ollama.com/", available: true },
+      { slug: "browser", name: "Browser Extension", description: "Web automation via browser extension (legacy).", category: "Local", homepage: "https://stuard.ai/extension", available: true },
+      { slug: "browser-use", name: "Browser Use", description: "Let Stuard browse the web for you — fill forms, search, log in, and complete tasks. Saves your cookies and sessions.", category: "Local", homepage: "https://github.com/browser-use/browser-use", available: true },
       { slug: "outlook", name: "Outlook", description: "Connect Microsoft Outlook via PKCE to read mail (Mail.Read).", category: "Communication", homepage: "https://learn.microsoft.com/graph/", available: true },
       { slug: "github", name: "GitHub", description: "Read repos and issues.", category: "Development", homepage: "https://github.com/", available: true },
       { slug: "discord", name: "Discord", description: "Read and send messages, list servers and DMs.", category: "Communication", homepage: "https://discord.com/", available: true },
@@ -130,6 +152,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       { slug: "gmail", name: "Gmail", description: "Send and read email.", category: "Communication", homepage: "https://mail.google.com/", available: true },
       { slug: "google-sheets", name: "Google Sheets", description: "Read spreadsheet ranges.", category: "Data", homepage: "https://sheets.google.com/", available: true },
       { slug: "google-docs", name: "Google Docs", description: "Read document content.", category: "Files", homepage: "https://docs.google.com/", available: true },
+      { slug: "telnyx", name: "Phone (SMS/Call)", description: "Verify your phone number to receive SMS and voice call notifications from Stuard.", category: "Communication", homepage: "https://telnyx.com/", available: true },
     ],
     []
   );
@@ -250,6 +273,161 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     })();
   }, []);
 
+  const refreshOllamaStatus = async () => {
+    setOllamaChecking(true);
+    try {
+      const res = await (window as any).desktopAPI?.execTool?.('ollama_status', {});
+      if (res && typeof res === 'object') setOllamaStatus(res);
+
+      const available = !!(res && (res as any).available);
+      setConnectedMap((prev) => {
+        const next = { ...prev } as Record<string, boolean>;
+        if (available) next.ollama = true;
+        else delete next.ollama;
+        try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
+        emitConnectedChanged();
+        return next;
+      });
+    } catch {
+    } finally {
+      setOllamaChecking(false);
+    }
+  };
+
+  const startOllama = async () => {
+    setOllamaChecking(true);
+    try {
+      const res = await (window as any).desktopAPI?.execTool?.('ollama_start', {});
+      if (res && typeof res === 'object' && !res.ok) {
+        setOllamaStatus((prev: any) => ({ ...(prev || {}), ...res }));
+      }
+      await refreshOllamaStatus();
+    } catch {
+    } finally {
+      setOllamaChecking(false);
+    }
+  };
+
+  useEffect(() => {
+    (async () => {
+      try {
+        await refreshOllamaStatus();
+      } catch {}
+    })();
+  }, []);
+
+  const refreshBrowserUseStatus = async () => {
+    setBrowserUseChecking(true);
+    try {
+      const res = await (window as any).desktopAPI?.execTool?.('browser_use_status', {});
+      if (res && typeof res === 'object') setBrowserUseStatus(res);
+
+      const running = !!(res && (res as any).running);
+      const installed = !!(res && (res as any).installed);
+      setConnectedMap((prev) => {
+        const next = { ...prev } as Record<string, boolean>;
+        if (running || installed) next.browser_use = true;
+        else delete next.browser_use;
+        try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
+        emitConnectedChanged();
+        return next;
+      });
+    } catch {
+    } finally {
+      setBrowserUseChecking(false);
+    }
+  };
+
+  /** One-click: installs browser-use + playwright + starts the server */
+  const setupBrowserUse = async () => {
+    setBrowserUseChecking(true);
+    setBrowserUseSetupProgress('Setting up...');
+    try {
+      const res = await (window as any).desktopAPI?.execTool?.('browser_use_setup', {});
+      if (res && typeof res === 'object' && !res.ok) {
+        setBrowserUseSetupProgress(null);
+        setBrowserUseStatus((prev: any) => ({ ...prev, error: res.error, step: res.step }));
+        await refreshBrowserUseStatus();
+        return;
+      }
+      setBrowserUseStatus((prev: any) => ({ ...(prev || {}), error: null, step: null }));
+      setBrowserUseSetupProgress(null);
+      await refreshBrowserUseStatus();
+    } catch {
+      setBrowserUseSetupProgress(null);
+      setBrowserUseStatus((prev: any) => ({ ...(prev || {}), error: 'Failed to set up Browser Use.' }));
+    } finally {
+      setBrowserUseChecking(false);
+    }
+  };
+
+  const startBrowserUse = async () => {
+    setBrowserUseChecking(true);
+    setBrowserUseSetupProgress('Starting...');
+    try {
+      const res = await (window as any).desktopAPI?.execTool?.('browser_use_start', {});
+      if (res && typeof res === 'object' && !res.ok) {
+        setBrowserUseStatus((prev: any) => ({
+          ...(prev || {}),
+          error: res.error || 'Failed to start Browser Use.',
+        }));
+      } else {
+        setBrowserUseStatus((prev: any) => ({ ...(prev || {}), error: null }));
+      }
+      await refreshBrowserUseStatus();
+    } catch {
+      setBrowserUseStatus((prev: any) => ({ ...(prev || {}), error: 'Failed to start Browser Use.' }));
+    } finally {
+      setBrowserUseSetupProgress(null);
+      setBrowserUseChecking(false);
+    }
+  };
+
+  const stopBrowserUse = async () => {
+    setBrowserUseChecking(true);
+    try {
+      await (window as any).desktopAPI?.execTool?.('browser_use_stop', {});
+      await refreshBrowserUseStatus();
+    } catch {
+    } finally {
+      setBrowserUseChecking(false);
+    }
+  };
+
+  const uninstallBrowserUse = async () => {
+    setBrowserUseChecking(true);
+    setBrowserUseSetupProgress('Uninstalling...');
+    try {
+      const res = await (window as any).desktopAPI?.execTool?.('browser_use_uninstall', {});
+      if (res && typeof res === 'object' && !res.ok) {
+        setBrowserUseStatus((prev: any) => ({ ...(prev || {}), error: res.error || 'Uninstall failed.' }));
+      } else {
+        setBrowserUseStatus(null);
+        setConnectedMap((prev) => {
+          const next = { ...prev };
+          delete next.browser_use;
+          try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
+          emitConnectedChanged();
+          return next;
+        });
+      }
+    } catch {
+      setBrowserUseStatus((prev: any) => ({ ...(prev || {}), error: 'Uninstall failed.' }));
+    } finally {
+      setBrowserUseSetupProgress(null);
+      setBrowserUseChecking(false);
+      await refreshBrowserUseStatus();
+    }
+  };
+
+  useEffect(() => {
+    (async () => {
+      try {
+        await refreshBrowserUseStatus();
+      } catch {}
+    })();
+  }, []);
+
   const setupFfmpeg = async () => {
     setFfInstalling(true);
     try {
@@ -312,21 +490,44 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
         localStorage.setItem("stuard.pref.browser_enabled", "false");
         window.dispatchEvent(new StorageEvent('storage', { key: 'stuard.pref.browser_enabled', newValue: 'false' }));
       } catch {}
+      await refreshBrowserStatus();
+      return;
     }
-    // If a profile label is given, delete that specific profile via the API
+
     const token = session?.access_token;
-    if (token && profileLabel) {
-      const provider = slugToProvider(slug);
-      if (provider) {
+
+    const provider = slugToProvider(slug);
+    if (token && provider) {
+      let profileToDelete = profileLabel?.trim() || '';
+
+      // If no explicit profile was passed, delete the provider's current default profile.
+      if (!profileToDelete) {
+        try {
+          const resp = await fetch(
+            `${CLOUD_AI_HTTP}/integrations/profiles?provider=${encodeURIComponent(provider)}`,
+            { headers: { Authorization: `Bearer ${token}` } },
+          );
+          const j = await resp.json().catch(() => null);
+          const providerProfiles = Array.isArray(j?.profiles) ? j.profiles : [];
+          const defaultProfile = providerProfiles.find((p: any) => !!(p?.isDefault ?? p?.is_default));
+          profileToDelete = String(defaultProfile?.profile || defaultProfile?.profile_label || providerProfiles[0]?.profile || providerProfiles[0]?.profile_label || '').trim();
+        } catch {}
+      }
+
+      if (profileToDelete) {
         try {
           await fetch(
-            `${CLOUD_AI_HTTP}/integrations/profiles?provider=${encodeURIComponent(provider)}&profile=${encodeURIComponent(profileLabel)}`,
+            `${CLOUD_AI_HTTP}/integrations/profiles?provider=${encodeURIComponent(provider)}&profile=${encodeURIComponent(profileToDelete)}`,
             { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
           );
         } catch {}
-        await refreshProfiles();
+        await refreshProfiles(provider);
+        await syncConnectedFromServer(token);
+        return;
       }
     }
+
+    // Fallback for local-only or unknown integrations.
     setConnectedMap((prev) => {
       const next = { ...prev };
       delete next[slug];
@@ -389,7 +590,8 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       });
     } catch {}
     await refreshProfiles(provider);
-  }, [session?.access_token, CLOUD_AI_HTTP, refreshProfiles]);
+    await syncConnectedFromServer(token);
+  }, [session?.access_token, CLOUD_AI_HTTP, refreshProfiles, syncConnectedFromServer]);
 
   /** Delete a specific profile */
   const deleteProfile = useCallback(async (provider: string, profileLabel: string) => {
@@ -407,18 +609,95 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     } catch (e) {
       console.warn('[deleteProfile] Network error:', e);
     }
-    // Also remove from connectedMap if this was the only/last profile for the provider
     await refreshProfiles(provider);
-    // For google provider, refresh all Google statuses since removing a profile may affect connected products
-    if (provider === 'google') {
-      const googleSlugs = ['google-drive', 'google-calendar', 'gmail', 'google-sheets', 'google-docs'];
-      setConnectedMap((prev) => {
-        // After profile deletion, we'll let the next status check update this
-        // For now, keep existing connected state
-        return prev;
+    await syncConnectedFromServer(token);
+  }, [session?.access_token, CLOUD_AI_HTTP, refreshProfiles, syncConnectedFromServer]);
+
+  const telnyxRequestCode = async (phone: string): Promise<{ ok: boolean; error?: string }> => {
+    const token = session?.access_token;
+    if (!token) return { ok: false, error: 'Not signed in.' };
+    try {
+      setTelnyxVerifying(true);
+      const resp = await fetch(`${CLOUD_AI_HTTP}/integrations/telnyx/request-code`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone }),
       });
+      const j = await resp.json().catch(() => null) as any;
+      return { ok: !!j?.ok, error: j?.error };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    } finally {
+      setTelnyxVerifying(false);
     }
-  }, [session?.access_token, CLOUD_AI_HTTP, refreshProfiles]);
+  };
+
+  const telnyxVerifyCode = async (code: string): Promise<{ ok: boolean; phone?: string; error?: string }> => {
+    const token = session?.access_token;
+    if (!token) return { ok: false, error: 'Not signed in.' };
+    try {
+      setTelnyxVerifying(true);
+      const resp = await fetch(`${CLOUD_AI_HTTP}/integrations/telnyx/verify-code`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      });
+      const j = await resp.json().catch(() => null) as any;
+      if (j?.ok && j?.verified) {
+        setTelnyxPhone(j.phone);
+        setConnectedMap((prev) => {
+          const next = { ...prev, telnyx: true };
+          try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
+          emitConnectedChanged();
+          return next;
+        });
+      }
+      return { ok: !!j?.ok, phone: j?.phone, error: j?.error };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    } finally {
+      setTelnyxVerifying(false);
+    }
+  };
+
+  const telnyxDisconnect = async (): Promise<void> => {
+    const token = session?.access_token;
+    if (!token) return;
+    try {
+      await fetch(`${CLOUD_AI_HTTP}/integrations/telnyx/disconnect`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setTelnyxPhone(null);
+      setConnectedMap((prev) => {
+        const next = { ...prev };
+        delete next.telnyx;
+        try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
+        emitConnectedChanged();
+        return next;
+      });
+    } catch {}
+  };
+
+  const refreshTelnyxStatus = useCallback(async () => {
+    const token = session?.access_token;
+    if (!token) return;
+    try {
+      const resp = await fetch(`${CLOUD_AI_HTTP}/integrations/telnyx/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const j = await resp.json().catch(() => null) as any;
+      if (j?.ok && j?.connected) {
+        setTelnyxPhone(j.phone || null);
+        setConnectedMap((prev) => {
+          const next = { ...prev, telnyx: true };
+          try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
+          emitConnectedChanged();
+          return next;
+        });
+      }
+    } catch {}
+  }, [session?.access_token, CLOUD_AI_HTTP]);
 
   const handleLearnMore = (url: string) => {
     if (typeof url === "string" && url.startsWith("http")) {
@@ -459,6 +738,18 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       return;
     }
 
+    if (slug === "ollama") {
+      try {
+        const status = await (window as any).desktopAPI?.execTool?.('ollama_status', {});
+        if (status?.installed && !status?.running) {
+          await startOllama();
+        } else {
+          await refreshOllamaStatus();
+        }
+      } catch {}
+      return;
+    }
+
     if (slug === "browser") {
       try {
         const raw = localStorage.getItem("stuard.pref.browser_enabled");
@@ -469,6 +760,18 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
         }
         await refreshBrowserStatus();
       } catch {}
+      return;
+    }
+
+    if (slug === "browser-use") {
+      try {
+        await setupBrowserUse();
+      } catch {}
+      return;
+    }
+
+    if (slug === "telnyx") {
+      await refreshTelnyxStatus();
       return;
     }
 
@@ -486,19 +789,14 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       }
     };
 
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
     const pollStatus = async (url: string, slugKey: string) => {
-      let attempts = 0;
-      const h = setInterval(async () => {
-        attempts++;
-        if (attempts > 30) {
-          clearInterval(h);
-          return;
-        }
+      for (let attempt = 0; attempt < 30; attempt++) {
         try {
           const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
           const j = await resp.json().catch(() => null);
           if (j && (j as any).ok && (j as any).connected) {
-            clearInterval(h);
             setConnectedMap((prev) => {
               const next = { ...prev, [slugKey]: true };
               try {
@@ -507,80 +805,55 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
               emitConnectedChanged();
               return next;
             });
+            return true;
           }
         } catch {}
-      }, 2000);
-    };
-
-    /** After connecting one Google product, re-check all Google product statuses */
-    const refreshAllGoogleStatuses = async (authToken: string) => {
-      const googleSlugs = [
-        { target: 'drive', slug: 'google-drive' },
-        { target: 'calendar', slug: 'google-calendar' },
-        { target: 'gmail', slug: 'gmail' },
-        { target: 'sheets', slug: 'google-sheets' },
-        { target: 'docs', slug: 'google-docs' },
-      ];
-      const results: Record<string, boolean> = {};
-      await Promise.all(
-        googleSlugs.map(async ({ target, slug }) => {
-          try {
-            const resp = await fetch(
-              `${CLOUD_AI_HTTP}/integrations/google/status?target=${target}`,
-              { headers: { Authorization: `Bearer ${authToken}` } },
-            );
-            const j = await resp.json().catch(() => null);
-            results[slug] = !!(j && (j as any).ok && (j as any).connected);
-          } catch {
-            results[slug] = false;
-          }
-        }),
-      );
-      setConnectedMap((prev) => {
-        const next = { ...prev };
-        for (const [slug, connected] of Object.entries(results)) {
-          if (connected) next[slug] = true;
-          else delete next[slug];
-        }
-        try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
-        emitConnectedChanged();
-        return next;
-      });
+        await sleep(2000);
+      }
+      return false;
     };
 
     if (slug === "outlook") {
       const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
+      const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
       const url = `${CLOUD_AI_HTTP}/integrations/outlook/connect?token=${encodeURIComponent(token)}${profileParam}`;
       openExternal(url);
-      await pollStatus(`${CLOUD_AI_HTTP}/integrations/outlook/status`, "outlook");
+      await pollStatus(`${CLOUD_AI_HTTP}/integrations/outlook/status${statusProfileParam}`, "outlook");
       await refreshProfiles('outlook');
+      await syncConnectedFromServer(token);
       return;
     }
 
     if (slug === "github") {
       const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
+      const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
       const url = `${CLOUD_AI_HTTP}/integrations/github/connect?token=${encodeURIComponent(token)}${profileParam}`;
       openExternal(url);
-      await pollStatus(`${CLOUD_AI_HTTP}/integrations/github/status`, "github");
+      await pollStatus(`${CLOUD_AI_HTTP}/integrations/github/status${statusProfileParam}`, "github");
       await refreshProfiles('github');
+      await syncConnectedFromServer(token);
       return;
     }
 
     if (slug === "discord") {
       const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
+      const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
       const url = `${CLOUD_AI_HTTP}/integrations/discord/connect?token=${encodeURIComponent(token)}${profileParam}`;
       openExternal(url);
-      await pollStatus(`${CLOUD_AI_HTTP}/integrations/discord/status`, "discord");
+      await pollStatus(`${CLOUD_AI_HTTP}/integrations/discord/status${statusProfileParam}`, "discord");
       await refreshProfiles('discord');
+      await syncConnectedFromServer(token);
       return;
     }
 
     if (slug === "reddit") {
       const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
+      const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
       const url = `${CLOUD_AI_HTTP}/integrations/reddit/connect?token=${encodeURIComponent(token)}${profileParam}`;
       openExternal(url);
-      await pollStatus(`${CLOUD_AI_HTTP}/integrations/reddit/status`, "reddit");
+      await pollStatus(`${CLOUD_AI_HTTP}/integrations/reddit/status${statusProfileParam}`, "reddit");
       await refreshProfiles('reddit');
+      await syncConnectedFromServer(token);
       return;
     }
 
@@ -593,11 +866,9 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
       const url = `${CLOUD_AI_HTTP}/integrations/google/connect?token=${encodeURIComponent(token)}&target=${encodeURIComponent(target)}${profileParam}`;
       openExternal(url);
-      await pollStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=${encodeURIComponent(target)}`, slug);
-      // After connecting one Google product, refresh ALL Google product statuses
-      // since scopes are now merged — connecting Gmail no longer breaks Drive
-      await refreshAllGoogleStatuses(token);
+      await pollStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=${encodeURIComponent(target)}${profileParam}`, slug);
       await refreshProfiles('google');
+      await syncConnectedFromServer(token);
       return;
     }
 
@@ -635,6 +906,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     setPyRunCode,
     pyRunResult,
     browserStatus,
+    ollamaStatus,
+    ollamaChecking,
+    browserUseStatus,
+    browserUseChecking,
+    browserUseSetupProgress,
+    telnyxPhone,
+    telnyxVerifying,
     // profiles
     profiles,
     profilesLoading,
@@ -650,6 +928,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     refreshFfmpegStatus,
     refreshMediapipeStatus,
     refreshBrowserStatus,
+    refreshOllamaStatus,
+    startOllama,
+    refreshBrowserUseStatus,
+    setupBrowserUse,
+    startBrowserUse,
+    stopBrowserUse,
+    uninstallBrowserUse,
     setupPython,
     setupFfmpeg,
     setupMediapipe,
@@ -659,5 +944,10 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     refreshProfiles,
     setDefaultProfile,
     deleteProfile,
+    // telnyx
+    telnyxRequestCode,
+    telnyxVerifyCode,
+    telnyxDisconnect,
+    refreshTelnyxStatus,
   };
 }

@@ -101,9 +101,24 @@ export interface UserStorageInfo {
 
 /**
  * Get a user's current storage info (plan, quotas, usage).
+ * Creates a default storage_usage record if one doesn't exist.
  */
 export async function getUserStorageInfo(userId: string): Promise<UserStorageInfo> {
-  const usage = await getStorageUsage(userId);
+  let usage = await getStorageUsage(userId);
+  
+  // Initialize storage_usage record for new users
+  if (!usage) {
+    const defaultPlan = STORAGE_PLANS.free;
+    await upsertStorageUsage(userId, {
+      storage_plan_id: 'free',
+      hot_storage_gb: defaultPlan.hotDiskGb,
+      cold_storage_bytes: 0,
+      storage_quota_gb: defaultPlan.hotDiskGb,
+      cold_quota_gb: defaultPlan.coldStorageGb,
+    } as any);
+    usage = await getStorageUsage(userId);
+  }
+  
   const planId = (usage as any)?.storage_plan_id || 'free';
   const plan = STORAGE_PLANS[planId] || STORAGE_PLANS.free;
 

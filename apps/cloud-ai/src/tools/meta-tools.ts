@@ -24,6 +24,7 @@ import { embedMany } from 'ai';
 import { getSupabaseService } from '../supabase';
 import { registerTool, getToolRegistry, getToolCategories, getTool, type ToolLocation } from './tool-registry';
 import { execLocalTool, hasClientBridge } from './bridge';
+import { get_skill_info } from './skill-tools';
 
 // ─── Zod → JSON Schema helper (lightweight, no external dep) ─────────────
 function unwrapZodMeta(schema: any): { schema: any; optional: boolean; defaultValue?: any; nullable: boolean } {
@@ -363,6 +364,8 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'Media');
     } else if (['mediapipe_status', 'mediapipe_setup', 'mediapipe_pose', 'mediapipe_hands', 'mediapipe_face_detection', 'mediapipe_face_mesh', 'mediapipe_segmentation', 'mediapipe_holistic', 'mediapipe_process_video'].includes(name)) {
         registerTool(t, 'MediaPipe');
+    } else if (name.startsWith('ollama_')) {
+        registerTool(t, 'Ollama');
     } else if (['stream_create', 'stream_close', 'stream_list', 'stream_get_status'].includes(name)) {
         registerTool(t, 'Streaming');
     } else if (name.startsWith('_stream_') || name.startsWith('stream_')) {
@@ -395,6 +398,9 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'Other');
     }
 });
+
+// Skills
+registerTool(get_skill_info, 'Core');
 
 // Integration Tools
 registerTool(analyzeMediaTool, 'AI');
@@ -450,7 +456,7 @@ export const search_tools = createTool({
     id: 'search_tools',
     description: 'Search for available tools by category or query string. Returns tool names and descriptions.',
     inputSchema: z.object({
-        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Streaming', 'Workflow', 'Memory', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'Discord', 'Reddit', 'YouTube', 'Marketplace', 'Variables', 'Database', 'Embeddings', 'Math', 'Feedback', 'Webhooks', 'Integrations', 'Canvas', 'Other']).optional(),
+        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Streaming', 'Workflow', 'Memory', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'Discord', 'Reddit', 'YouTube', 'Marketplace', 'Variables', 'Database', 'Embeddings', 'Math', 'Feedback', 'Webhooks', 'Integrations', 'Canvas', 'Ollama', 'Other']).optional(),
         query: z.string().optional(),
     }),
     outputSchema: z.object({

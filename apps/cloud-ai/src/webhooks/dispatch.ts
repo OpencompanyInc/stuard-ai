@@ -157,7 +157,8 @@ export async function dispatchProviderWebhook(
   eventType: string,
   eventId: string,
   data: any,
-  workflowId?: string
+  workflowId?: string,
+  triggerId?: string
 ): Promise<{ delivered: boolean; queued: boolean }> {
   const payload = {
     type: 'provider_webhook',
@@ -167,7 +168,7 @@ export async function dispatchProviderWebhook(
       id: eventId,
       timestamp: new Date().toISOString(),
     },
-    workflow: workflowId ? { id: workflowId } : undefined,
+    workflow: workflowId ? { id: workflowId, triggerId: triggerId || undefined } : undefined,
     data,
   };
   

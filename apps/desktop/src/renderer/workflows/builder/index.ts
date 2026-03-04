@@ -135,6 +135,10 @@ export class WorkflowBuilder {
         return {};
       case 'fs.watch':
         return { path: shortcut };
+      case 'gmail.new_email':
+        return { profile: 'default', labelIds: ['INBOX'] };
+      case 'drive.new_file':
+        return { profile: 'default', onlyNew: true, includeFolders: false };
       default:
         return { value: shortcut };
     }
@@ -155,6 +159,22 @@ export class WorkflowBuilder {
 
   onFileChange(path: string, pattern?: string): this {
     return this.trigger('fs.watch', { path, pattern });
+  }
+
+  onGmailNewEmail(args: { profile?: string; labelIds?: string[]; labelFilterBehavior?: 'INCLUDE' | 'EXCLUDE' } = {}): this {
+    return this.trigger('gmail.new_email', {
+      profile: args.profile || 'default',
+      labelIds: Array.isArray(args.labelIds) && args.labelIds.length > 0 ? args.labelIds : ['INBOX'],
+      ...(args.labelFilterBehavior ? { labelFilterBehavior: args.labelFilterBehavior } : {}),
+    });
+  }
+
+  onDriveNewFile(args: { profile?: string; onlyNew?: boolean; includeFolders?: boolean } = {}): this {
+    return this.trigger('drive.new_file', {
+      profile: args.profile || 'default',
+      onlyNew: args.onlyNew !== false,
+      includeFolders: Boolean(args.includeFolders),
+    });
   }
 
   manual(): this {
@@ -348,6 +368,10 @@ export class WorkflowBuilder {
         lines.push(`  .onWebhook()`);
       } else if (t.type === 'webhook.cloud') {
         lines.push(`  .onWebhook(true)`);
+      } else if (t.type === 'gmail.new_email') {
+        lines.push(`  .onGmailNewEmail(${JSON.stringify(t.args || {})})`);
+      } else if (t.type === 'drive.new_file') {
+        lines.push(`  .onDriveNewFile(${JSON.stringify(t.args || {})})`);
       } else {
         lines.push(`  .trigger("${t.type}", ${JSON.stringify(t.args)})`);
       }

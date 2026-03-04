@@ -4,6 +4,7 @@ import { upsertExternalAccount, getExternalAccount, listExternalAccounts } from 
 import { authenticateHttpLegacy, requireAuth, sendJson, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
 import { PUBLIC_BASE_URL, WEBSITE_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_PATH, INTEGRATION_STATE_SECRET } from '../../utils/config';
+import { handleGoogleNativeTriggerRoutes } from './google-native-triggers';
 
 // ---------------------------------------------------------------------------
 // Granular scope mapping — each target gets ONLY its own scopes.
@@ -26,6 +27,8 @@ function scopesForTarget(target: string): string[] {
 const normalize = (str: string) => str.split(/[ ,]+/).map(s => s.trim()).filter(Boolean);
 
 export async function handleGoogleRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
+  if (await handleGoogleNativeTriggerRoutes(req, res, parsedUrl)) return true;
+
   // Status - prefer header auth, but allow legacy query param for migration
   if (req.method === 'GET' && parsedUrl.pathname === '/integrations/google/status') {
     try {

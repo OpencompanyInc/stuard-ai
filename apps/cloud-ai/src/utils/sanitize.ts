@@ -1,22 +1,62 @@
 import { safeData } from './logger';
 
+const SENSITIVE_KEY_RE = /(token|secret|password|passwd|authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|session|cookie|private[_-]?key|client_secret)/i;
+
+function redactSensitiveString(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  if (/^Bearer\s+\S+/i.test(trimmed)) return 'Bearer [redacted]';
+  if (/^sk-[A-Za-z0-9]/.test(trimmed)) return '[redacted]';
+  if (/^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(trimmed)) return '[redacted]';
+  return value;
+}
+
+export function redactSensitiveData(input: any, depth = 0, seen?: WeakSet<object>): any {
+  if (input == null) return input;
+  if (depth > 6) return '[truncated]';
+
+  if (typeof input === 'string') return redactSensitiveString(input);
+  if (typeof input !== 'object') return input;
+
+  const seenSet = seen || new WeakSet<object>();
+  if (seenSet.has(input)) return '[circular]';
+  seenSet.add(input);
+
+  if (Array.isArray(input)) {
+    return input.map((v) => redactSensitiveData(v, depth + 1, seenSet));
+  }
+
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (SENSITIVE_KEY_RE.test(k)) {
+      out[k] = '[redacted]';
+      continue;
+    }
+    out[k] = redactSensitiveData(v, depth + 1, seenSet);
+  }
+  return out;
+}
+
 export function sanitizeToolResult(result: any) {
   try {
-    if (result && typeof result === 'object') {
-      const r: any = { ...result };
+    const redacted = redactSensitiveData(result);
+    if (redacted && typeof redacted === 'object') {
+      const r: any = { ...redacted };
       if (typeof r.data === 'string') {
         r.bytes = r.data.length;
         delete r.data;
       }
       return r;
     }
+    return redacted;
   } catch {}
   return result;
 }
 
 export function sanitizeToolEvent(evt: any) {
   try {
-    const e: any = { ...evt };
+    const e: any = { ...redactSensitiveData(evt) };
+    if (e.args) e.args = redactSensitiveData(e.args);
     if (e.result) e.result = sanitizeToolResult(e.result);
     return e;
   } catch {

@@ -91,7 +91,7 @@ export const ChatImage: React.FC<{ src: string; alt?: string }> = ({ src, alt })
             console.error(`[ChatImage video] Failed(${code ?? 'unknown'}): "${src}" → "${imageSrc}"`);
             setError(true);
           }}
-          className="max-w-full max-h-[240px] rounded-lg border border-slate-200 shadow-sm object-contain bg-black"
+          className="max-w-full max-h-[240px] rounded-lg border border-white/[0.08] shadow-sm object-contain bg-black"
         />
       </span>
     );
@@ -108,13 +108,13 @@ export const ChatImage: React.FC<{ src: string; alt?: string }> = ({ src, alt })
 
   return (
     <span className="block my-2 relative group">
-      <div className={`absolute inset-0 bg-slate-100 rounded-lg animate-pulse ${loaded ? 'hidden' : 'block'}`} />
+      <div className={`absolute inset-0 bg-white/[0.06] rounded-lg animate-pulse ${loaded ? 'hidden' : 'block'}`} />
       <img
         src={imageSrc}
         alt={alt || 'Image'}
         onLoad={() => setLoaded(true)}
         onError={() => setError(true)}
-        className={`max-w-full max-h-[240px] rounded-lg border border-slate-200 shadow-sm object-contain bg-white transition-all duration-300 ${loaded ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}
+        className={`max-w-full max-h-[240px] rounded-lg border border-white/[0.08] shadow-sm object-contain bg-white/[0.04] transition-all duration-300 ${loaded ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}
       />
     </span>
   );
@@ -217,7 +217,7 @@ const OpBadge = ({ icon: Icon, color, children }: { icon: any; color: string; ch
     red: 'bg-red-100 text-red-700 border-red-200',
     blue: 'bg-blue-100 text-blue-700 border-blue-200',
     indigo: 'bg-indigo-100 text-indigo-700 border-indigo-200',
-    slate: 'bg-slate-100 text-slate-600 border-slate-200',
+    slate: 'bg-white/[0.06] text-white/70 border-white/[0.08]',
   };
   return (
     <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium border ${colors[color]}`}>
@@ -251,9 +251,9 @@ const OperationDetails = ({ args }: { args: any }) => {
       return (
         <div className="space-y-1.5">
           <OpBadge icon={Plus} color="emerald">Add Step</OpBadge>
-          <div className="text-[12px] text-slate-700 pl-1">
+          <div className="text-[12px] text-white/80 pl-1">
             <span className="font-semibold">{args.label || args.tool}</span>
-            {args.tool && args.label && <span className="text-slate-400 ml-1">({args.tool})</span>}
+            {args.tool && args.label && <span className="text-white/40 ml-1">({args.tool})</span>}
           </div>
           {args.args && Object.keys(args.args).length > 0 && (
             <div className="text-[10px] pl-1 space-y-0.5">
@@ -263,7 +263,7 @@ const OperationDetails = ({ args }: { args: any }) => {
             </div>
           )}
           {args.connectFrom && (
-            <div className="flex items-center gap-1 text-slate-500 text-[10px] pl-1">
+            <div className="flex items-center gap-1 text-white/50 text-[10px] pl-1">
               <ArrowRight className="w-3 h-3" /> from {args.connectFrom}
             </div>
           )}
@@ -274,8 +274,8 @@ const OperationDetails = ({ args }: { args: any }) => {
       return (
         <div className="space-y-1.5">
           <OpBadge icon={Edit} color="blue">Update Step</OpBadge>
-          <div className="text-[12px] text-slate-700 pl-1">
-            <span className="font-mono text-slate-500">{args.nodeId}</span>
+          <div className="text-[12px] text-white/80 pl-1">
+            <span className="font-mono text-white/50">{args.nodeId}</span>
           </div>
           {(args.args || args.label || args.tool) && (
             <div className="text-[10px] pl-1 space-y-0.5">
@@ -293,7 +293,7 @@ const OperationDetails = ({ args }: { args: any }) => {
       return (
         <div className="space-y-1.5">
           <OpBadge icon={Trash2} color="red">Remove Step</OpBadge>
-          <div className="text-[12px] text-slate-700 pl-1">
+          <div className="text-[12px] text-white/80 pl-1">
             <span className="font-mono text-red-600 line-through">{args.nodeId}</span>
           </div>
         </div>
@@ -308,7 +308,7 @@ const OperationDetails = ({ args }: { args: any }) => {
           <OpBadge icon={Zap} color="amber">
             {op === 'add_trigger' ? 'Add Trigger' : 'Set Trigger'}
           </OpBadge>
-          <div className="text-[12px] text-slate-700 pl-1">
+          <div className="text-[12px] text-white/80 pl-1">
             <span className="font-semibold">{triggerType}</span>
           </div>
           {(args.triggerArgs || args.args) && Object.keys(args.triggerArgs || args.args).length > 0 && (
@@ -326,10 +326,10 @@ const OperationDetails = ({ args }: { args: any }) => {
       return (
         <div className="space-y-1.5">
           <OpBadge icon={Link} color="indigo">Connect</OpBadge>
-          <div className="text-[12px] text-slate-700 pl-1 flex items-center gap-1.5">
-            <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded">{args.from}</span>
-            <ArrowRight className="w-3 h-3 text-slate-400" />
-            <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded">{args.to}</span>
+          <div className="text-[12px] text-white/80 pl-1 flex items-center gap-1.5">
+            <span className="font-mono bg-white/[0.06] px-1.5 py-0.5 rounded">{args.from}</span>
+            <ArrowRight className="w-3 h-3 text-white/40" />
+            <span className="font-mono bg-white/[0.06] px-1.5 py-0.5 rounded">{args.to}</span>
           </div>
           {args.guard && (
             <div className="text-[10px] text-amber-600 pl-1">
@@ -344,7 +344,7 @@ const OperationDetails = ({ args }: { args: any }) => {
       return (
         <div className="space-y-1.5">
           <OpBadge icon={Unlink} color="slate">Disconnect</OpBadge>
-          <div className="text-[12px] text-slate-700 pl-1 flex items-center gap-1.5">
+          <div className="text-[12px] text-white/80 pl-1 flex items-center gap-1.5">
             <span className="font-mono bg-red-50 text-red-600 px-1.5 py-0.5 rounded line-through">{args.from}</span>
             <ArrowRight className="w-3 h-3 text-slate-300" />
             <span className="font-mono bg-red-50 text-red-600 px-1.5 py-0.5 rounded line-through">{args.to}</span>
@@ -358,8 +358,8 @@ const OperationDetails = ({ args }: { args: any }) => {
         <div className="space-y-1.5">
           <OpBadge icon={Settings} color="slate">Set Value</OpBadge>
           <div className="text-[11px] pl-1 font-mono">
-            <span className="text-slate-500">{args.path}</span>
-            <span className="text-slate-400 mx-1">=</span>
+            <span className="text-white/50">{args.path}</span>
+            <span className="text-white/40 mx-1">=</span>
             <span className="text-emerald-600">{formatValue(args.value)}</span>
           </div>
         </div>
@@ -369,12 +369,12 @@ const OperationDetails = ({ args }: { args: any }) => {
       return (
         <div className="space-y-1.5">
           <OpBadge icon={Plus} color="indigo">Add Variable</OpBadge>
-          <div className="text-[12px] text-slate-700 pl-1">
+          <div className="text-[12px] text-white/80 pl-1">
             <span className="font-mono">{args.varName}</span>
-            <span className="text-slate-400 ml-1">: {args.varType || 'string'}</span>
+            <span className="text-white/40 ml-1">: {args.varType || 'string'}</span>
           </div>
           {args.varDefault !== undefined && (
-            <div className="text-[10px] text-slate-500 pl-1">default: {formatValue(args.varDefault)}</div>
+            <div className="text-[10px] text-white/50 pl-1">default: {formatValue(args.varDefault)}</div>
           )}
         </div>
       );
@@ -383,7 +383,7 @@ const OperationDetails = ({ args }: { args: any }) => {
       return (
         <div className="space-y-1.5">
           <OpBadge icon={Type} color="slate">Rename</OpBadge>
-          <div className="text-[12px] text-slate-700 pl-1">
+          <div className="text-[12px] text-white/80 pl-1">
             → <span className="font-semibold">{args.name}</span>
           </div>
         </div>
@@ -396,7 +396,7 @@ const OperationDetails = ({ args }: { args: any }) => {
           <OpBadge icon={Settings} color="slate">{op || 'Modify'}</OpBadge>
           <div className="text-[10px] pl-1 space-y-0.5">
             {Object.entries(args).map(([k, v]) => (
-              <div key={k} className="text-slate-600">
+              <div key={k} className="text-white/70">
                 <span className="font-semibold">{k}:</span> {formatValue(v)}
               </div>
             ))}
@@ -424,11 +424,11 @@ const UpdateWorkflowView = ({ args, result }: { args: any, result?: any }) => {
   const statusBg = showSuccess ? 'bg-emerald-500' : showError ? 'bg-red-500' : 'bg-indigo-500';
 
   return (
-    <div className="mt-2 mb-3 rounded-xl border border-slate-200/80 bg-white shadow-sm overflow-hidden max-w-sm">
+    <div className="mt-2 mb-3 rounded-xl border border-white/[0.08] bg-white/[0.04] shadow-sm overflow-hidden max-w-sm">
       {/* Compact header with status indicator */}
-      <div className="flex items-center gap-2 px-3 py-2 bg-slate-50/50 border-b border-slate-100">
+      <div className="flex items-center gap-2 px-3 py-2 bg-slate-50/50 border-b border-white/[0.04]">
         <div className={`w-2 h-2 rounded-full ${statusBg} ${showPending ? 'animate-pulse' : ''}`} />
-        <span className="text-[11px] font-medium text-slate-600">
+        <span className="text-[11px] font-medium text-white/70">
           {showPending ? 'Applying...' : showSuccess ? 'Applied' : showError ? 'Failed' : 'Update'}
         </span>
       </div>
@@ -460,7 +460,7 @@ const UpdateWorkflowView = ({ args, result }: { args: any, result?: any }) => {
 
       {/* Workflow stats badge */}
       {showSuccess && resultWorkflow && (
-        <div className="px-3 py-1.5 bg-slate-50/50 border-t border-slate-100 flex items-center gap-2 text-[10px] text-slate-500">
+        <div className="px-3 py-1.5 bg-slate-50/50 border-t border-white/[0.04] flex items-center gap-2 text-[10px] text-white/50">
           <span className="flex items-center gap-1">
             <Zap className="w-3 h-3 text-amber-500" />
             {resultWorkflow.triggers?.length || 0}
@@ -470,7 +470,7 @@ const UpdateWorkflowView = ({ args, result }: { args: any, result?: any }) => {
             {resultWorkflow.nodes?.length || 0}
           </span>
           <span className="flex items-center gap-1">
-            <Link className="w-3 h-3 text-slate-400" />
+            <Link className="w-3 h-3 text-white/40" />
             {resultWorkflow.wires?.length || 0}
           </span>
         </div>
@@ -492,11 +492,11 @@ const TestStepResultView = ({ args, result }: { args: any, result?: any }) => {
   const error = result?.error;
 
   return (
-    <div className="mt-3 flex flex-col gap-px text-[11px] border border-slate-200 rounded-lg bg-white overflow-hidden shadow-sm max-w-md">
+    <div className="mt-3 flex flex-col gap-px text-[11px] border border-white/[0.08] rounded-lg bg-white/[0.04] overflow-hidden shadow-sm max-w-md">
       {/* Header */}
-      <div className="bg-slate-50/80 px-3 py-2 text-slate-700 text-[10px] font-semibold uppercase tracking-wider border-b border-slate-100 flex items-center justify-between">
+      <div className="bg-slate-50/80 px-3 py-2 text-white/80 text-[10px] font-semibold uppercase tracking-wider border-b border-white/[0.04] flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="p-1 bg-white rounded-md border border-slate-200 shadow-sm">
+          <div className="p-1 bg-white/[0.04] rounded-md border border-white/[0.08] shadow-sm">
             <Zap className="w-3 h-3 text-indigo-500" />
           </div>
           <span>Test Run</span>
@@ -507,15 +507,15 @@ const TestStepResultView = ({ args, result }: { args: any, result?: any }) => {
       </div>
 
       {/* Tool Being Tested */}
-      <div className="px-3 py-2.5 bg-white border-b border-slate-50">
-        <div className="flex items-center gap-2 text-slate-700 font-medium">
+      <div className="px-3 py-2.5 bg-white/[0.04] border-b border-slate-50">
+        <div className="flex items-center gap-2 text-white/80 font-medium">
           <div className="p-1 bg-indigo-100 rounded text-indigo-600">
             <Zap className="w-3 h-3" />
           </div>
-          <span>Testing: <span className="text-slate-900 font-semibold">{formatToolName(testedTool)}</span></span>
+          <span>Testing: <span className="text-white font-semibold">{formatToolName(testedTool)}</span></span>
         </div>
         {Object.keys(testedArgs).length > 0 && (
-          <div className="mt-2 text-[10px] font-mono text-slate-500 bg-slate-50 rounded p-2 max-h-20 overflow-y-auto scrollbar-light">
+          <div className="mt-2 text-[10px] font-mono text-white/50 bg-white/[0.06] rounded p-2 max-h-20 overflow-y-auto scrollbar-light">
             {JSON.stringify(testedArgs, null, 2)}
           </div>
         )}
@@ -542,9 +542,9 @@ const TestStepResultView = ({ args, result }: { args: any, result?: any }) => {
             <div className="flex-1">
               <div className="font-semibold text-[10px] uppercase mb-1 text-emerald-600 flex items-center justify-between">
                 <span>Result</span>
-                {duration && <span className="text-slate-400 font-normal">{duration}ms</span>}
+                {duration && <span className="text-white/40 font-normal">{duration}ms</span>}
               </div>
-              <div className="text-[11px] bg-white rounded p-2 border border-emerald-100 font-mono overflow-x-auto max-h-40 scrollbar-light">
+              <div className="text-[11px] bg-white/[0.04] rounded p-2 border border-emerald-100 font-mono overflow-x-auto max-h-40 scrollbar-light">
                 <pre className="whitespace-pre-wrap break-all">
                   {typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2)}
                 </pre>
@@ -556,14 +556,14 @@ const TestStepResultView = ({ args, result }: { args: any, result?: any }) => {
 
       {/* Assertions */}
       {assertions && assertions.length > 0 && (
-        <div className="bg-slate-50/50 p-3 border-t border-slate-100">
-          <div className="font-semibold text-[10px] uppercase mb-2 text-slate-600">Assertions</div>
+        <div className="bg-slate-50/50 p-3 border-t border-white/[0.04]">
+          <div className="font-semibold text-[10px] uppercase mb-2 text-white/70">Assertions</div>
           <div className="space-y-1">
             {assertions.map((a: any, i: number) => (
               <div key={i} className={`flex items-center gap-2 text-[11px] ${a.passed ? 'text-emerald-700' : 'text-red-700'}`}>
                 {a.passed ? <CheckCircle2 className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
                 <span className="font-medium">{a.type}</span>
-                {a.message && <span className="text-slate-500">— {a.message}</span>}
+                {a.message && <span className="text-white/50">— {a.message}</span>}
               </div>
             ))}
           </div>
@@ -572,8 +572,8 @@ const TestStepResultView = ({ args, result }: { args: any, result?: any }) => {
 
       {/* Running State */}
       {isRunning && (
-        <div className="bg-white p-3">
-          <div className="text-[11px] flex items-center gap-2 text-slate-500">
+        <div className="bg-white/[0.04] p-3">
+          <div className="text-[11px] flex items-center gap-2 text-white/50">
             <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
             Executing {formatToolName(testedTool)}...
           </div>
@@ -734,19 +734,19 @@ export const ToolCallItem = ({ evt }: { evt: ToolEvent }) => {
   const [showDetails, setShowDetails] = React.useState(false);
 
   return (
-    <div className={`mb-3 rounded-lg border ${resultFailed ? 'border-amber-200 bg-amber-50/30' : 'border-slate-200 bg-white'} shadow-sm overflow-hidden transition-all`}>
+    <div className={`mb-3 rounded-lg border ${resultFailed ? 'border-amber-200 bg-amber-50/30' : 'border-white/[0.08] bg-white/[0.04]'} shadow-sm overflow-hidden transition-all`}>
       <div 
         className={`px-3 py-2 ${resultFailed ? 'bg-amber-50' : 'bg-slate-50/50'} flex items-center justify-between cursor-pointer hover:bg-slate-100/50 transition-colors`}
         onClick={() => setShowDetails(!showDetails)}
       >
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          <div className={`w-6 h-6 rounded-md flex items-center justify-center text-[10px] border shadow-sm shrink-0 ${resultFailed ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-white text-indigo-600 border-slate-200'}`}>
+          <div className={`w-6 h-6 rounded-md flex items-center justify-center text-[10px] border shadow-sm shrink-0 ${resultFailed ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-white/[0.04] text-indigo-600 border-white/[0.08]'}`}>
             <Zap className="w-3 h-3" />
           </div>
           <div className="flex flex-col min-w-0">
-            <span className="text-[11px] font-semibold text-slate-700">{formatToolName(evt.tool)}</span>
+            <span className="text-[11px] font-semibold text-white/80">{formatToolName(evt.tool)}</span>
             {summary && (
-              <span className={`text-[10px] truncate ${resultFailed ? 'text-amber-600' : 'text-slate-500'}`}>
+              <span className={`text-[10px] truncate ${resultFailed ? 'text-amber-600' : 'text-white/50'}`}>
                 {summary}
               </span>
             )}
@@ -758,7 +758,7 @@ export const ToolCallItem = ({ evt }: { evt: ToolEvent }) => {
       </div>
 
       {showDetails && (
-        <div className="px-3 py-2 border-t border-slate-100 bg-slate-50/30">
+        <div className="px-3 py-2 border-t border-white/[0.04] bg-slate-50/30">
           {resultFailed && resultError && (
             <div className="mb-2 p-2 bg-amber-50 border border-amber-100 rounded text-amber-800 text-[11px] flex gap-2">
               <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
@@ -768,14 +768,14 @@ export const ToolCallItem = ({ evt }: { evt: ToolEvent }) => {
             </div>
           )}
           <div className="space-y-1.5">
-            <div className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Args</div>
-            <div className="text-[10px] font-mono text-slate-600 whitespace-pre-wrap break-all max-h-24 overflow-y-auto scrollbar-light bg-white rounded p-2 border border-slate-100">
+            <div className="text-[9px] font-semibold text-white/40 uppercase tracking-wider">Args</div>
+            <div className="text-[10px] font-mono text-white/70 whitespace-pre-wrap break-all max-h-24 overflow-y-auto scrollbar-light bg-white/[0.04] rounded p-2 border border-white/[0.04]">
               {JSON.stringify(args, null, 2)}
             </div>
             {evt.result && (
               <>
-                <div className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider mt-2">Result</div>
-                <div className="text-[10px] font-mono text-slate-600 whitespace-pre-wrap break-all max-h-24 overflow-y-auto scrollbar-light bg-white rounded p-2 border border-slate-100">
+                <div className="text-[9px] font-semibold text-white/40 uppercase tracking-wider mt-2">Result</div>
+                <div className="text-[10px] font-mono text-white/70 whitespace-pre-wrap break-all max-h-24 overflow-y-auto scrollbar-light bg-white/[0.04] rounded p-2 border border-white/[0.04]">
                   {JSON.stringify(evt.result, null, 2)}
                 </div>
               </>
@@ -838,19 +838,19 @@ export function ChatPanel({
 
   return (
     <div className="flex flex-col h-full w-full bg-[#fdfdfd] font-sans overflow-hidden">
-      <div className="h-12 border-b border-slate-200/80 flex items-center justify-between px-4 bg-white/80 backdrop-blur-sm sticky top-0 z-10">
+      <div className="h-12 border-b border-white/[0.08] flex items-center justify-between px-4 bg-white/80 backdrop-blur-sm sticky top-0 z-10">
         <div className="flex items-center gap-2.5">
           <div className="w-6 h-6 bg-blue-50 rounded-lg flex items-center justify-center border border-blue-100">
             <Sparkles className="w-3.5 h-3.5 text-blue-600" />
           </div>
-          <span className="font-semibold text-[13px] text-slate-800">Architect</span>
+          <span className="font-semibold text-[13px] text-white/90">Architect</span>
         </div>
         <div className="flex items-center gap-1">
           {onNewSession && (
             <button
               onClick={onNewSession}
               title="New chat"
-              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors"
+              className="p-1.5 text-white/40 hover:text-white/80 hover:bg-white/[0.1] rounded-md transition-colors"
             >
               <Plus className="w-4 h-4" />
             </button>
@@ -859,13 +859,13 @@ export function ChatPanel({
             <button
               onClick={() => setShowSessionHistory(!showSessionHistory)}
               title="Chat history"
-              className={`p-1.5 rounded-md transition-colors ${showSessionHistory ? 'text-blue-600 bg-blue-50' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'}`}
+              className={`p-1.5 rounded-md transition-colors ${showSessionHistory ? 'text-blue-600 bg-blue-50' : 'text-white/40 hover:text-white/80 hover:bg-white/[0.1]'}`}
             >
               <History className="w-4 h-4" />
             </button>
           )}
           {!hideCloseButton && (
-            <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors">
+            <button onClick={onClose} className="p-1.5 text-white/40 hover:text-white/80 hover:bg-white/[0.1] rounded-md transition-colors">
               <X className="w-4 h-4" />
             </button>
           )}
@@ -874,18 +874,18 @@ export function ChatPanel({
       
       {/* Session History Dropdown */}
       {showSessionHistory && pastSessions.length > 0 && (
-        <div className="border-b border-slate-200 bg-slate-50/50 max-h-64 overflow-y-auto scrollbar-minimal shadow-inner">
+        <div className="border-b border-white/[0.08] bg-slate-50/50 max-h-64 overflow-y-auto scrollbar-minimal shadow-inner">
           {pastSessions.map((session) => (
             <div
               key={session.id}
-              className="group px-4 py-3 hover:bg-white border-b border-slate-100 last:border-0 cursor-pointer flex items-start justify-between gap-3 transition-colors"
+              className="group px-4 py-3 hover:bg-white/[0.04] border-b border-white/[0.04] last:border-0 cursor-pointer flex items-start justify-between gap-3 transition-colors"
               onClick={() => onLoadSession && onLoadSession(session.id)}
             >
               <div className="flex-1 min-w-0">
-                <div className="text-[12px] font-medium text-slate-700 truncate mb-0.5">
+                <div className="text-[12px] font-medium text-white/80 truncate mb-0.5">
                   {session.title}
                 </div>
-                <div className="text-[10px] text-slate-400 flex items-center gap-1.5">
+                <div className="text-[10px] text-white/40 flex items-center gap-1.5">
                   <Clock className="w-3 h-3" />
                   {formatSessionTime(session.updatedAt)}
                   <span className="w-0.5 h-0.5 rounded-full bg-slate-300" />
@@ -914,7 +914,7 @@ export function ChatPanel({
           <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
             <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 border shadow-sm mt-0.5
               ${msg.role === 'user' 
-                ? 'bg-slate-100 border-slate-200 text-slate-600' 
+                ? 'bg-white/[0.06] border-white/[0.08] text-white/70' 
                 : 'bg-indigo-600 border-indigo-700 text-white'}`}>
               {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
             </div>
@@ -923,7 +923,7 @@ export function ChatPanel({
               {msg.images && msg.images.length > 0 && (
                 <div className="flex flex-wrap gap-2 mb-1 justify-end">
                   {msg.images.map((img, idx) => (
-                    <div key={idx} className="relative rounded-lg overflow-hidden border border-slate-200 shadow-sm max-w-[200px]">
+                    <div key={idx} className="relative rounded-lg overflow-hidden border border-white/[0.08] shadow-sm max-w-[200px]">
                       <img src={img.dataUrl || toMediaSrc(img.path)} alt="Attached" className="max-h-48 object-cover" />
                     </div>
                   ))}
@@ -933,7 +933,7 @@ export function ChatPanel({
               <div className={`px-4 py-3 rounded-2xl shadow-sm text-sm leading-relaxed
                 ${msg.role === 'user' 
                   ? 'bg-slate-900 text-white rounded-tr-sm' 
-                  : 'bg-white border border-slate-200 text-slate-700 rounded-tl-sm'}`}>
+                  : 'bg-white/[0.04] border border-white/[0.08] text-white/80 rounded-tl-sm'}`}>
                 <div className="markdown-body">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm, remarkMath]}
@@ -942,17 +942,41 @@ export function ChatPanel({
                     img: (props) => <ChatImage {...props as any} />,
                     p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
                     a: ({node, ...props}) => <a {...props} className="text-indigo-500 hover:underline" target="_blank" rel="noopener noreferrer" />,
-                    code: ({node, className, children, ...props}) => {
-                      const match = /language-(\w+)/.exec(className || '')
-                      return !String(className).includes('language-') ? (
-                        <code className={`${msg.role === 'user' ? 'bg-slate-800' : 'bg-slate-100'} px-1.5 py-0.5 rounded text-[12px] font-mono`} {...props}>
+                    pre: ({ children, ...props }: any) => {
+                      let childProps: any = {};
+                      let codeContent = children;
+                      if (React.isValidElement(children)) {
+                        childProps = children.props || {};
+                        codeContent = childProps.children;
+                      } else if (Array.isArray(children) && children.length === 1 && React.isValidElement(children[0])) {
+                        childProps = children[0].props || {};
+                        codeContent = childProps.children;
+                      }
+
+                      const className = childProps.className || '';
+                      
+                      return (
+                        <div className="my-4 rounded-xl overflow-hidden bg-white/[0.04] border border-white/[0.08] shadow-sm flex flex-col">
+                          <div className="bg-white/[0.06] px-4 py-2 border-b border-white/[0.08] flex items-center justify-between">
+                            <span className="text-xs text-white/50 font-mono uppercase tracking-wider">{className.replace('language-', '') || 'code'}</span>
+                          </div>
+                          <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4 bg-slate-50/50">
+                            <code className={clsx(className, "font-mono text-[13px] inline-block min-w-full leading-[1.7] text-white/90 whitespace-pre tab-4")} {...childProps}>{codeContent}</code>
+                          </div>
+                        </div>
+                      );
+                    },
+                    code: ({ className, children, ...props }: any) => {
+                      const isInline = !String(className).includes('language-');
+                      return isInline ? (
+                        <code className="bg-white/[0.06] text-white/90 px-[6px] py-[2px] rounded-md text-[85%] font-mono font-medium border border-white/[0.08] shadow-sm align-middle" {...props}>
                           {children}
                         </code>
                       ) : (
                         <code className={className} {...props}>
                           {children}
                         </code>
-                      )
+                      );
                     }
                   }}
                 >
@@ -1009,7 +1033,7 @@ export function ChatPanel({
               {/* Tools & Content */}
               {streamItems.map((item, i) => (
                 item.type === 'text' ? (
-                  <div key={i} className="px-4 py-3 rounded-2xl rounded-tl-sm bg-white border border-slate-200 text-slate-700 shadow-sm text-sm leading-relaxed">
+                  <div key={i} className="px-4 py-3 rounded-2xl rounded-tl-sm bg-white/[0.04] border border-white/[0.08] text-white/80 shadow-sm text-sm leading-relaxed">
                     <ReactMarkdown 
                       remarkPlugins={[remarkGfm, remarkMath]} 
                       rehypePlugins={[rehypeKatex]}
@@ -1017,11 +1041,42 @@ export function ChatPanel({
                         img: (props) => <ChatImage {...props as any} />,
                         p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
                         a: ({node, ...props}) => <a {...props} className="text-indigo-500 hover:underline" target="_blank" rel="noopener noreferrer" />,
-                        code: ({node, className, children, ...props}) => (
-                          <code className="bg-slate-100 px-1.5 py-0.5 rounded text-[12px] font-mono" {...props}>
-                            {children}
-                          </code>
-                        )
+                        pre: ({ children, ...props }: any) => {
+                          let childProps: any = {};
+                          let codeContent = children;
+                          if (React.isValidElement(children)) {
+                            childProps = children.props || {};
+                            codeContent = childProps.children;
+                          } else if (Array.isArray(children) && children.length === 1 && React.isValidElement(children[0])) {
+                            childProps = children[0].props || {};
+                            codeContent = childProps.children;
+                          }
+
+                          const className = childProps.className || '';
+                          
+                          return (
+                        <div className="my-4 rounded-xl overflow-hidden bg-white/[0.04] border border-white/[0.08] shadow-sm flex flex-col">
+                          <div className="bg-white/[0.06] px-4 py-2 border-b border-white/[0.08] flex items-center justify-between">
+                            <span className="text-xs text-white/50 font-mono uppercase tracking-wider">{className.replace('language-', '') || 'code'}</span>
+                          </div>
+                          <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4 bg-slate-50/50">
+                            <code className={clsx(className, "font-mono text-[13px] inline-block min-w-full leading-[1.7] text-white/90 whitespace-pre tab-4")} {...childProps}>{codeContent}</code>
+                          </div>
+                        </div>
+                          );
+                        },
+                        code: ({ className, children, ...props }: any) => {
+                          const isInline = !String(className).includes('language-');
+                          return isInline ? (
+                            <code className="bg-white/[0.06] text-white/90 px-[6px] py-[2px] rounded-md text-[85%] font-mono font-medium border border-white/[0.08] shadow-sm align-middle" {...props}>
+                              {children}
+                            </code>
+                          ) : (
+                            <code className={className} {...props}>
+                              {children}
+                            </code>
+                          );
+                        }
                       }}
                     >
                       {preprocessMessageContent(item.content)}
@@ -1033,7 +1088,7 @@ export function ChatPanel({
               ))}
               
               {busy && streamItems.length === 0 && !reasoningText && (
-                <div className="flex items-center gap-2 text-slate-400 text-xs px-2 py-1">
+                <div className="flex items-center gap-2 text-white/40 text-xs px-2 py-1">
                   <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce" />
                   <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce delay-75" />
                   <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce delay-150" />
@@ -1072,4 +1127,5 @@ export function ChatPanel({
     </div>
   );
 }
+
 

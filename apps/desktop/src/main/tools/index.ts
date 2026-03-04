@@ -15,6 +15,8 @@ import {
   execCanvasCreate,
   execCanvasDelete,
 } from './handlers/canvas';
+import { execOllamaStatus, execOllamaStart, execOllamaChat, execOllamaGenerate, execOllamaVision, execOllamaEmbeddings, execOllamaModels } from './handlers/ollama';
+import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse } from './handlers/browser-use';
 import {
   execBrowserGetContent,
   execBrowserClickElement,
@@ -131,6 +133,34 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'browser_upload_file') return execBrowserUploadFile(args, ctx);
       if (toolName === 'browser_set_toggle') return execBrowserSetToggle(args, ctx);
       if (toolName === 'browser_execute_script') return execBrowserExecuteScript(args, ctx);
+
+      // Ollama (Local AI) tools
+      if (toolName === 'ollama_status') return execOllamaStatus(args, ctx);
+      if (toolName === 'ollama_start') return execOllamaStart(args, ctx);
+      if (toolName === 'ollama_chat') return execOllamaChat(args, ctx);
+      if (toolName === 'ollama_generate') return execOllamaGenerate(args, ctx);
+      if (toolName === 'ollama_vision') return execOllamaVision(args, ctx);
+      if (toolName === 'ollama_embeddings') return execOllamaEmbeddings(args, ctx);
+      if (toolName === 'ollama_models') return execOllamaModels(args, ctx);
+
+      // Browser Use (AI browser automation) tools
+      if (toolName === 'browser_use_setup') return setupBrowserUse();
+      if (toolName === 'browser_use_install') return installBrowserUse();
+      if (toolName === 'browser_use_start') return startBrowserUseServer();
+      if (toolName === 'browser_use_stop') return stopBrowserUseServer();
+      if (toolName === 'browser_use_uninstall') return uninstallBrowserUse();
+      if (toolName === 'browser_use_status') return execBrowserUseStatus(args, ctx);
+      if (toolName === 'browser_use_configure') return execBrowserUseConfigure(args, ctx);
+      if (toolName === 'browser_use_task') return execBrowserUseTask(args, ctx);
+      if (toolName === 'browser_use_navigate') return execBrowserUseNavigate(args, ctx);
+      if (toolName === 'browser_use_click') return execBrowserUseClick(args, ctx);
+      if (toolName === 'browser_use_type') return execBrowserUseType(args, ctx);
+      if (toolName === 'browser_use_press_key') return execBrowserUsePressKey(args, ctx);
+      if (toolName === 'browser_use_screenshot') return execBrowserUseScreenshot(args, ctx);
+      if (toolName === 'browser_use_content') return execBrowserUseContent(args, ctx);
+      if (toolName === 'browser_use_scroll') return execBrowserUseScroll(args, ctx);
+      if (toolName === 'browser_use_tabs') return execBrowserUseTabs(args, ctx);
+      if (toolName === 'browser_use_cookies') return execBrowserUseCookies(args, ctx);
 
       // GenUI interactive tools - route through custom_ui with component type
       const GENUI_TOOLS = new Set([

@@ -1,0 +1,745 @@
+import { RouterContext } from '../types';
+import { execLocalTool } from './local';
+import { ChildProcess, execFile, spawn } from 'child_process';
+
+const OLLAMA_DEFAULT_HOST = 'http://localhost:11434';
+let ollamaServeProcess: ChildProcess | null = null;
+
+function getOllamaHost(): string {
+  return process.env.OLLAMA_HOST || OLLAMA_DEFAULT_HOST;
+}
+
+async function ollamaFetch(path: string, options?: RequestInit & { timeoutMs?: number }): Promise<Response> {
+  const { timeoutMs = 30000, ...fetchOpts } = options || {};
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetch(`${getOllamaHost()}${path}`, {
+      ...fetchOpts,
+      signal: controller.signal,
+    });
+    return resp;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function runCmd(cmd: string, args: string[], timeoutMs = 10000): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { timeout: timeoutMs, windowsHide: true }, (err) => {
+      resolve(!err);
+    });
+  });
+}
+
+async function isOllamaInstalled(): Promise<boolean> {
+  // Fast and cross-platform enough for our desktop targets.
+  return runCmd('ollama', ['--version'], 6000);
+}
+
+async function isOllamaRunning(): Promise<boolean> {
+  try {
+    const resp = await ollamaFetch('/api/tags', { timeoutMs: 3000 });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+function parseNdjsonLine(line: string): any | null {
+  if (!line.trim()) return null;
+  try {
+    return JSON.parse(line);
+  } catch {
+    return null;
+  }
+}
+
+async function streamOllamaTextToWorkflowStream(
+  endpoint: '/api/chat' | '/api/generate',
+  body: any,
+  streamId: string,
+  ctx: RouterContext,
+  extractToken: (chunk: any) => string,
+): Promise<{ fullText: string; tokenCount: number; writeCount: number }> {
+  const resp = await ollamaFetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    timeoutMs: 600000,
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    throw new Error(`Ollama returned ${resp.status}: ${errText}`);
+  }
+
+  const reader = resp.body?.getReader();
+  if (!reader) {
+    throw new Error('Ollama response has no readable stream body');
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let fullText = '';
+  let tokenCount = 0;
+  let writeCount = 0;
+
+  // Keep stream writes ordered but do not block network reads per token.
+  let writeChain: Promise<void> = Promise.resolve();
+  const enqueueWrite = (text: string) => {
+    if (!text) return;
+    writeCount += 1;
+    writeChain = writeChain
+      .then(async () => {
+        await execLocalTool('stream_write', { streamId, chunk: text, chunkType: 'raw' }, ctx).catch(() => {});
+      })
+      .catch(() => {});
+  };
+
+  const processLine = (line: string): string => {
+    const chunk = parseNdjsonLine(line);
+    if (!chunk) return '';
+    const token = extractToken(chunk);
+    if (!token) return '';
+    tokenCount += 1;
+    fullText += token;
+    return token;
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    let batchedText = '';
+    for (const line of lines) {
+      batchedText += processLine(line);
+    }
+
+    // Write once per network chunk to avoid artificial token-by-token throttling.
+    enqueueWrite(batchedText);
+  }
+
+  // Flush any remaining buffered line (some responses omit trailing newline).
+  if (buffer.trim()) {
+    enqueueWrite(processLine(buffer));
+  }
+
+  await writeChain;
+  return { fullText, tokenCount, writeCount };
+}
+
+// ─── ollama_status ───────────────────────────────────────────────────────────
+
+export async function execOllamaStatus(_args: any, ctx: RouterContext): Promise<any> {
+  try {
+    const isRunning = await isOllamaRunning();
+    if (!isRunning) {
+      const installed = await isOllamaInstalled();
+      return {
+        ok: true,
+        available: false,
+        installed,
+        running: false,
+        host: getOllamaHost(),
+        error: installed
+          ? 'Ollama is installed but not running. Click Start Ollama in Integrations.'
+          : 'Ollama is not installed. Download from ollama.com.',
+      };
+    }
+
+    const [tagsResp, psResp] = await Promise.all([
+      ollamaFetch('/api/tags', { timeoutMs: 5000 }).catch(() => null),
+      ollamaFetch('/api/ps', { timeoutMs: 5000 }).catch(() => null),
+    ]);
+
+    if (!tagsResp || !tagsResp.ok) {
+      const installed = await isOllamaInstalled();
+      return {
+        ok: true,
+        available: false,
+        installed,
+        running: false,
+        host: getOllamaHost(),
+        error: installed
+          ? 'Ollama is installed but not running. Click Start Ollama in Integrations.'
+          : 'Ollama is not installed. Download from ollama.com.',
+      };
+    }
+
+    const tagsData = await tagsResp.json().catch(() => ({}));
+    const models = (tagsData.models || []).map((m: any) => ({
+      name: m.name,
+      size: m.size,
+      parameterSize: m.details?.parameter_size,
+      quantization: m.details?.quantization_level,
+      family: m.details?.family,
+      modifiedAt: m.modified_at,
+    }));
+
+    let runningModels: any[] = [];
+    if (psResp && psResp.ok) {
+      const psData = await psResp.json().catch(() => ({}));
+      runningModels = (psData.models || []).map((m: any) => ({
+        name: m.name,
+        size: m.size,
+        vram: m.size_vram,
+        expiresAt: m.expires_at,
+      }));
+    }
+
+    return {
+      ok: true,
+      available: true,
+      installed: true,
+      running: true,
+      host: getOllamaHost(),
+      modelCount: models.length,
+      models,
+      runningCount: runningModels.length,
+      runningModels,
+    };
+  } catch (err: any) {
+    const installed = await isOllamaInstalled().catch(() => false);
+    return {
+      ok: true,
+      available: false,
+      installed,
+      running: false,
+      host: getOllamaHost(),
+      error: installed
+        ? 'Ollama is installed but not running. Click Start Ollama in Integrations.'
+        : err.message || 'Failed to reach Ollama',
+    };
+  }
+}
+
+// ─── ollama_start ────────────────────────────────────────────────────────────
+
+export async function execOllamaStart(_args: any, _ctx: RouterContext): Promise<any> {
+  if (await isOllamaRunning()) {
+    return { ok: true, installed: true, running: true, alreadyRunning: true };
+  }
+
+  const installed = await isOllamaInstalled();
+  if (!installed) {
+    return { ok: false, installed: false, running: false, error: 'Ollama is not installed.' };
+  }
+
+  try {
+    if (!ollamaServeProcess || ollamaServeProcess.killed) {
+      ollamaServeProcess = spawn('ollama', ['serve'], {
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+      ollamaServeProcess.on('exit', () => {
+        ollamaServeProcess = null;
+      });
+    }
+
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (await isOllamaRunning()) {
+        return { ok: true, installed: true, running: true, started: true };
+      }
+    }
+
+    return {
+      ok: false,
+      installed: true,
+      running: false,
+      error: 'Ollama is installed but did not start. Open Ollama once and retry.',
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      installed: true,
+      running: false,
+      error: err?.message || 'Failed to start Ollama',
+    };
+  }
+}
+
+// ─── ollama_chat ─────────────────────────────────────────────────────────────
+
+export async function execOllamaChat(args: any, ctx: RouterContext): Promise<any> {
+  const model = String(args?.model || 'llama3.2');
+  const messages = args?.messages;
+  const temperature = args?.temperature;
+  const num_predict = args?.num_predict;
+  const top_p = args?.top_p;
+  const top_k = args?.top_k;
+  // Support both 'format' and 'json_mode' (json_mode: true => format: 'json')
+  const format = args?.json_mode === true ? 'json' : args?.format;
+  const keep_alive = args?.keep_alive;
+  const system = args?.system;
+  const stream = args?.stream === true;
+  // Thinking mode for reasoning models (deepseek-r1, etc.)
+  const think = args?.think;
+  // Tool/function calling (optional)
+  const tools = args?.tools;
+
+  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    return { ok: false, error: 'messages is required (array of {role, content})' };
+  }
+
+  const body: any = { model, messages, stream: false };
+  if (temperature !== undefined) body.options = { ...body.options, temperature };
+  if (num_predict !== undefined) body.options = { ...body.options, num_predict };
+  if (top_p !== undefined) body.options = { ...body.options, top_p };
+  if (top_k !== undefined) body.options = { ...body.options, top_k };
+  if (format) body.format = format;
+  if (keep_alive !== undefined) body.keep_alive = keep_alive;
+  if (system) body.messages = [{ role: 'system', content: system }, ...messages];
+  // Enable thinking mode for reasoning models
+  if (think !== undefined) body.think = think;
+  // Pass tools for function calling
+  if (tools && Array.isArray(tools) && tools.length > 0) body.tools = tools;
+
+  // Streaming mode: create a stream, return immediately, push tokens in background
+  if (stream) {
+    body.stream = true;
+    
+    // Create stream via Python agent
+    const streamResult = await execLocalTool('stream_create', {
+      kind: 'text',
+      sourceStepId: 'ollama_chat',
+      metadata: { model, messageCount: messages.length },
+    }, ctx);
+    
+    if (!streamResult?.ok || !streamResult?.streamId) {
+      return { ok: false, error: 'Failed to create stream for Ollama chat' };
+    }
+    
+    const streamId = streamResult.streamId;
+    ctx.logFn?.(`[ollama_chat] Created stream ${streamId}, starting background streaming...`);
+    
+    // Fire and forget — stream tokens in background
+    (async () => {
+      try {
+        const result = await streamOllamaTextToWorkflowStream(
+          '/api/chat',
+          body,
+          streamId,
+          ctx,
+          (chunk) => chunk?.message?.content || '',
+        );
+
+        ctx.logFn?.(
+          `[ollama_chat] Stream completed: ${result.fullText.length} chars (${result.tokenCount} tokens, ${result.writeCount} writes)`,
+        );
+      } catch (err: any) {
+        ctx.logFn?.(`[ollama_chat] Stream error: ${err.message}`);
+      } finally {
+        // Close the stream
+        await execLocalTool('stream_close', { streamId }, ctx).catch(() => {});
+      }
+    })();
+    
+    // Return immediately with streamId — workflow engine will consume via stream wire
+    return { ok: true, streamId, model, streamed: true };
+  }
+
+  // Non-streaming mode
+  try {
+    const resp = await ollamaFetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      timeoutMs: 600000,
+    });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, error: `Ollama returned ${resp.status}: ${errText}` };
+    }
+    const data = await resp.json();
+    const result: any = {
+      ok: true,
+      model: data.model || model,
+      message: data.message,
+      text: data.message?.content || '',
+      totalDuration: data.total_duration,
+      evalCount: data.eval_count,
+      evalDuration: data.eval_duration,
+    };
+    // Include thinking output if present (for reasoning models)
+    if (data.message?.thinking) {
+      result.thinking = data.message.thinking;
+    }
+    // Include tool calls if present (for function calling)
+    if (data.message?.tool_calls) {
+      result.toolCalls = data.message.tool_calls;
+    }
+    return result;
+  } catch (err: any) {
+    return { ok: false, error: err.message || 'Chat request failed' };
+  }
+}
+
+// ─── ollama_generate ─────────────────────────────────────────────────────────
+
+export async function execOllamaGenerate(args: any, ctx: RouterContext): Promise<any> {
+  const model = String(args?.model || 'llama3.2');
+  const prompt = String(args?.prompt || '');
+  const system = args?.system;
+  const temperature = args?.temperature;
+  const num_predict = args?.num_predict;
+  // Support both 'format' and 'json_mode' (json_mode: true => format: 'json')
+  const format = args?.json_mode === true ? 'json' : args?.format;
+  const keep_alive = args?.keep_alive;
+  const stream = args?.stream === true;
+  // Thinking mode for reasoning models (deepseek-r1, etc.)
+  const think = args?.think;
+
+  if (!prompt) {
+    return { ok: false, error: 'prompt is required' };
+  }
+
+  const body: any = { model, prompt, stream: false };
+  if (system) body.system = system;
+  if (temperature !== undefined) body.options = { ...body.options, temperature };
+  if (num_predict !== undefined) body.options = { ...body.options, num_predict };
+  if (format) body.format = format;
+  if (keep_alive !== undefined) body.keep_alive = keep_alive;
+  // Enable thinking mode for reasoning models
+  if (think !== undefined) body.think = think;
+
+  // Streaming mode: create a stream, return immediately, push tokens in background
+  if (stream) {
+    body.stream = true;
+    
+    // Create stream via Python agent
+    const streamResult = await execLocalTool('stream_create', {
+      kind: 'text',
+      sourceStepId: 'ollama_generate',
+      metadata: { model, promptLength: prompt.length },
+    }, ctx);
+    
+    if (!streamResult?.ok || !streamResult?.streamId) {
+      return { ok: false, error: 'Failed to create stream for Ollama generate' };
+    }
+    
+    const streamId = streamResult.streamId;
+    ctx.logFn?.(`[ollama_generate] Created stream ${streamId}, starting background streaming...`);
+    
+    // Fire and forget — stream tokens in background
+    (async () => {
+      try {
+        const result = await streamOllamaTextToWorkflowStream(
+          '/api/generate',
+          body,
+          streamId,
+          ctx,
+          (chunk) => chunk?.response || '',
+        );
+
+        ctx.logFn?.(
+          `[ollama_generate] Stream completed: ${result.fullText.length} chars (${result.tokenCount} tokens, ${result.writeCount} writes)`,
+        );
+      } catch (err: any) {
+        ctx.logFn?.(`[ollama_generate] Stream error: ${err.message}`);
+      } finally {
+        // Close the stream
+        await execLocalTool('stream_close', { streamId }, ctx).catch(() => {});
+      }
+    })();
+    
+    // Return immediately with streamId — workflow engine will consume via stream wire
+    return { ok: true, streamId, model, streamed: true };
+  }
+
+  // Non-streaming mode
+  try {
+    const resp = await ollamaFetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      timeoutMs: 600000,
+    });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, error: `Ollama returned ${resp.status}: ${errText}` };
+    }
+    const data = await resp.json();
+    return {
+      ok: true,
+      model: data.model || model,
+      text: data.response || '',
+      streamed: false,
+      totalDuration: data.total_duration,
+      evalCount: data.eval_count,
+      evalDuration: data.eval_duration,
+    };
+  } catch (err: any) {
+    return { ok: false, error: err.message || 'Generate request failed' };
+  }
+}
+
+// ─── ollama_vision ───────────────────────────────────────────────────────────
+
+export async function execOllamaVision(args: any, ctx: RouterContext): Promise<any> {
+  const model = String(args?.model || 'llava');
+  const prompt = String(args?.prompt || 'Describe this image.');
+  const temperature = args?.temperature;
+  const num_predict = args?.num_predict;
+
+  // Support both 'imagePath' (single string) and 'images' (array)
+  let images = args?.images;
+  if (!images && args?.imagePath) {
+    images = [{ path: args.imagePath }];
+  }
+
+  if (!images || !Array.isArray(images) || images.length === 0) {
+    return { ok: false, error: 'imagePath or images is required' };
+  }
+
+  // Read local files and convert to base64
+  const base64Images: string[] = [];
+  const fs = await import('fs');
+  const path = await import('path');
+
+  for (const img of images) {
+    if (img.data) {
+      // Already base64
+      const cleaned = String(img.data).replace(/^data:image\/[^;]+;base64,/, '');
+      base64Images.push(cleaned);
+    } else if (img.path) {
+      try {
+        const filePath = String(img.path);
+        const buf = fs.readFileSync(filePath);
+        base64Images.push(buf.toString('base64'));
+      } catch (err: any) {
+        return { ok: false, error: `Failed to read image "${img.path}": ${err.message}` };
+      }
+    }
+  }
+
+  if (base64Images.length === 0) {
+    return { ok: false, error: 'No valid images provided' };
+  }
+
+  const body: any = {
+    model,
+    messages: [{ role: 'user', content: prompt, images: base64Images }],
+    stream: false,
+  };
+  if (temperature !== undefined) body.options = { ...body.options, temperature };
+  if (num_predict !== undefined) body.options = { ...body.options, num_predict };
+
+  try {
+    const resp = await ollamaFetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      timeoutMs: 600000,
+    });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, error: `Ollama returned ${resp.status}: ${errText}` };
+    }
+    const data = await resp.json();
+    return {
+      ok: true,
+      model: data.model || model,
+      text: data.message?.content || '',
+      totalDuration: data.total_duration,
+      imageCount: base64Images.length,
+    };
+  } catch (err: any) {
+    return { ok: false, error: err.message || 'Vision request failed' };
+  }
+}
+
+// ─── ollama_embeddings ───────────────────────────────────────────────────────
+
+export async function execOllamaEmbeddings(args: any, ctx: RouterContext): Promise<any> {
+  const model = String(args?.model || 'nomic-embed-text');
+  const input = args?.input;
+
+  if (!input) {
+    return { ok: false, error: 'input is required (string or array of strings)' };
+  }
+
+  const inputArray = Array.isArray(input) ? input : [input];
+
+  try {
+    const resp = await ollamaFetch('/api/embed', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, input: inputArray }),
+      timeoutMs: 120000,
+    });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, error: `Ollama returned ${resp.status}: ${errText}` };
+    }
+    const data = await resp.json();
+    const embeddings = data.embeddings || [];
+    return {
+      ok: true,
+      model: data.model || model,
+      embeddings,
+      dimensions: embeddings[0]?.length || 0,
+      count: embeddings.length,
+    };
+  } catch (err: any) {
+    return { ok: false, error: err.message || 'Embeddings request failed' };
+  }
+}
+
+// ─── ollama_models ───────────────────────────────────────────────────────────
+
+export async function execOllamaModels(args: any, ctx: RouterContext): Promise<any> {
+  const action = String(args?.action || 'list');
+  const model = args?.model ? String(args.model) : '';
+  const destination = args?.destination ? String(args.destination) : '';
+
+  try {
+    switch (action) {
+      case 'list': {
+        const resp = await ollamaFetch('/api/tags', { timeoutMs: 10000 });
+        if (!resp.ok) return { ok: false, error: `Failed: ${resp.status}` };
+        const data = await resp.json();
+        const models = (data.models || []).map((m: any) => ({
+          name: m.name,
+          size: m.size,
+          parameterSize: m.details?.parameter_size,
+          quantization: m.details?.quantization_level,
+          family: m.details?.family,
+          format: m.details?.format,
+          modifiedAt: m.modified_at,
+        }));
+        return { ok: true, action: 'list', models, count: models.length };
+      }
+
+      case 'pull': {
+        if (!model) return { ok: false, error: 'model is required for pull action' };
+        ctx.logFn?.(`Pulling model "${model}"...`);
+
+        const resp = await ollamaFetch('/api/pull', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: model, stream: true }),
+          timeoutMs: 3600000, // 1 hour for large models
+        });
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '');
+          return { ok: false, error: `Pull failed: ${resp.status} ${errText}` };
+        }
+
+        // Stream progress
+        const reader = resp.body?.getReader();
+        if (!reader) return { ok: false, error: 'No response body' };
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let lastStatus = '';
+        let lastPercent = 0;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const chunk = JSON.parse(line);
+              lastStatus = chunk.status || lastStatus;
+              if (chunk.total && chunk.completed) {
+                const pct = Math.round((chunk.completed / chunk.total) * 100);
+                if (pct !== lastPercent) {
+                  lastPercent = pct;
+                  ctx.logFn?.(`[ollama_models] pulling ${model}: ${pct}% - ${lastStatus}`);
+                }
+              }
+            } catch {}
+          }
+        }
+
+        ctx.logFn?.(`[ollama_models] pull complete: ${model}`);
+        return { ok: true, action: 'pull', model, status: 'complete' };
+      }
+
+      case 'delete': {
+        if (!model) return { ok: false, error: 'model is required for delete action' };
+        const resp = await ollamaFetch('/api/delete', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: model }),
+          timeoutMs: 30000,
+        });
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '');
+          return { ok: false, error: `Delete failed: ${resp.status} ${errText}` };
+        }
+        return { ok: true, action: 'delete', model, deleted: true };
+      }
+
+      case 'show': {
+        if (!model) return { ok: false, error: 'model is required for show action' };
+        const resp = await ollamaFetch('/api/show', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: model }),
+          timeoutMs: 10000,
+        });
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '');
+          return { ok: false, error: `Show failed: ${resp.status} ${errText}` };
+        }
+        const data = await resp.json();
+        return {
+          ok: true,
+          action: 'show',
+          model,
+          modelfile: data.modelfile,
+          parameters: data.parameters,
+          template: data.template,
+          details: data.details,
+          modelInfo: data.model_info,
+        };
+      }
+
+      case 'running': {
+        const resp = await ollamaFetch('/api/ps', { timeoutMs: 10000 });
+        if (!resp.ok) return { ok: false, error: `Failed: ${resp.status}` };
+        const data = await resp.json();
+        const models = (data.models || []).map((m: any) => ({
+          name: m.name,
+          size: m.size,
+          vram: m.size_vram,
+          processor: m.digest ? 'gpu' : 'cpu',
+          expiresAt: m.expires_at,
+        }));
+        return { ok: true, action: 'running', models, count: models.length };
+      }
+
+      case 'copy': {
+        if (!model) return { ok: false, error: 'model is required for copy action' };
+        if (!destination) return { ok: false, error: 'destination is required for copy action' };
+        const resp = await ollamaFetch('/api/copy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source: model, destination }),
+          timeoutMs: 60000,
+        });
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '');
+          return { ok: false, error: `Copy failed: ${resp.status} ${errText}` };
+        }
+        return { ok: true, action: 'copy', source: model, destination };
+      }
+
+      default:
+        return { ok: false, error: `Unknown action: ${action}. Valid: list, pull, delete, show, running, copy` };
+    }
+  } catch (err: any) {
+    return { ok: false, error: err.message || `Model ${action} failed` };
+  }
+}

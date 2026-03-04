@@ -20,6 +20,19 @@ export default defineConfig(() => ({
   build: {
     outDir: resolve(__dirname, "dist/renderer"),
     emptyOutDir: true,
+    minify: "terser",
+    terserOptions: {
+      compress: {
+        drop_console: true,
+        drop_debugger: true,
+        passes: 2,
+      },
+      mangle: {
+        toplevel: true,
+        properties: { regex: /^_/ },
+      },
+      format: { comments: false },
+    },
     rollupOptions: {
       input: {
         index: resolve(__dirname, "src/renderer/index.html"),

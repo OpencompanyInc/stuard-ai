@@ -4,6 +4,7 @@ import { CodePanel } from "../components/CodePanel";
 import { InspectorPanel } from "../components/InspectorPanel";
 import { WireInspectorPanel } from "../components/WireInspectorPanel";
 import { WorkflowDocsPanel } from "../components/WorkflowDocsPanel";
+import { WorkflowLogsPanel } from "../components/WorkflowLogsPanel";
 import { WorkspaceExplorer } from "../components/WorkspaceExplorer";
 import type { DesignerModel } from "../types";
 import { PanelErrorBoundary } from "./PanelErrorBoundary";
@@ -30,6 +31,9 @@ interface WorkflowRightPanelsProps {
   onCloseWorkspace: () => void;
   onOpenFile: (filePath: string, fileName: string) => void;
   onOpenStuard?: (subPath: string) => void;
+  logs: Array<{ ts: string; msg: string }>;
+  onClearLogs: () => void;
+  onSendLogsToChat: (text: string) => void;
 }
 
 export function WorkflowRightPanels({
@@ -53,20 +57,23 @@ export function WorkflowRightPanels({
   onCloseWorkspace,
   onOpenFile,
   onOpenStuard,
+  logs,
+  onClearLogs,
+  onSendLogsToChat,
 }: WorkflowRightPanelsProps) {
   return (
     <>
-      {rightPanel !== "none" && (
-        <>
+      {rightPanel !== "none" && rightPanel !== "ai" && (
+        <div
+          className="absolute right-20 top-24 bottom-24 flex z-20 shadow-2xl rounded-xl overflow-hidden bg-white/[0.06] backdrop-blur-2xl border border-white/[0.1] pointer-events-auto"
+          style={{ width: manualRightWidth }}
+        >
           <div
-            className="w-1 hover:w-1.5 bg-slate-200/50 hover:bg-indigo-400/50 cursor-col-resize shrink-0 transition-all duration-200"
+            className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/10 transition-colors z-30"
             onMouseDown={onStartResizeManualRight}
             onDoubleClick={onResetManualRightWidth}
           />
-          <div
-            className="bg-white border-l border-slate-200 flex flex-col shrink-0 z-20 shadow-xl relative transition-all duration-300 min-h-0 overflow-hidden"
-            style={{ width: manualRightWidth }}
-          >
+          <div className="flex flex-col shrink-0 min-h-0 relative w-full h-full pl-2">
             {rightPanel === "inspector" && (
               <PanelErrorBoundary name="Inspector">
                 {selectedWireIndex !== null ? (
@@ -107,13 +114,24 @@ export function WorkflowRightPanels({
                 <WorkflowDocsPanel onClose={() => onSetRightPanel("none")} />
               </PanelErrorBoundary>
             )}
+
+            {rightPanel === "logs" && (
+              <PanelErrorBoundary name="Logs">
+                <WorkflowLogsPanel
+                  logs={logs}
+                  onClear={onClearLogs}
+                  onSendToChat={onSendLogsToChat}
+                  onClose={() => onSetRightPanel("none")}
+                />
+              </PanelErrorBoundary>
+            )}
           </div>
-        </>
+        </div>
       )}
 
-      {showWorkspace && selectedId && (
+      {showWorkspace && selectedId && rightPanel === "none" && (
         <div
-          className="bg-white border-l border-slate-200 flex flex-col shrink-0 z-20 shadow-xl relative transition-all duration-300 min-h-0 overflow-hidden"
+          className="absolute right-20 top-24 bottom-24 z-20 bg-white/[0.06] backdrop-blur-2xl border border-white/[0.1] flex flex-col shrink-0 shadow-2xl rounded-xl overflow-hidden pointer-events-auto"
           style={{ width: 280 }}
         >
           <PanelErrorBoundary name="Workspace">

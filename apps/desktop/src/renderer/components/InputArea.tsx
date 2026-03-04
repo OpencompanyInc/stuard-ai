@@ -69,6 +69,7 @@ interface InputAreaProps {
   // Queue
   queueDepth: number;
   queuedMessages: any[];
+  onCancelQueuedMessage?: (id: string) => void;
 
   // Speech
   isRecording?: boolean;
@@ -373,7 +374,7 @@ const InputArea = forwardRef(function InputArea(
     conversationTitle, conversations, loadingConversations, onSelectConversation, onDeleteConversation, onNewChat, onStopGeneration, onChatMenuOpenChange, chatMenuOpen,
     expanded, onToggleExpand, onOpenDashboard, overlayMode, statusText, statusIcon, statusUrgency,
     connectionStatus,
-    queueDepth, queuedMessages,
+    queueDepth, queuedMessages, onCancelQueuedMessage,
     isRecording, onMicClick,
     contextPaths, setContextPaths,
     translucentMode = false,
@@ -391,6 +392,26 @@ const InputArea = forwardRef(function InputArea(
 
   const conn = connectionStatus || 'connected';
   const isConnSpinner = conn === 'connecting';
+
+  // Drag-over state for visual drop feedback
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragCounter = useRef(0);
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current++;
+    if (dragCounter.current === 1) setIsDragOver(true);
+  }, []);
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current--;
+    if (dragCounter.current <= 0) { dragCounter.current = 0; setIsDragOver(false); }
+  }, []);
+  const handleDropWrapped = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    dragCounter.current = 0;
+    setIsDragOver(false);
+    onDrop?.(e);
+  }, [onDrop]);
 
   // Cloud AI URL for embeddings
   const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
@@ -1590,14 +1611,29 @@ const InputArea = forwardRef(function InputArea(
         )}
         <div
           className={clsx(
-            "drag w-full min-h-[114px] h-auto py-3 rounded-[28px] flex flex-col justify-center px-4 gap-2 transition-all duration-300",
+            "drag w-full min-h-[114px] h-auto py-3 rounded-[28px] flex flex-col justify-center px-4 gap-2 transition-all duration-300 relative",
             translucentMode
               ? "bg-gray-100/80 backdrop-blur-2xl border border-gray-300/50"
-              : "bg-gray-100/90 border border-gray-200"
+              : "bg-gray-100/90 border border-gray-200",
+            isDragOver && "ring-2 ring-primary/50 ring-offset-1"
           )}
           onDragOver={(e) => { e.preventDefault(); try { e.dataTransfer.dropEffect = 'copy'; } catch { } }}
-          onDrop={onDrop}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDropWrapped}
         >
+          {/* Queue Panel */}
+          {queueDepth > 0 && (
+            <QueuePanel messages={queuedMessages} queueDepth={queueDepth} onCancelMessage={onCancelQueuedMessage} />
+          )}
+          {/* Drop overlay */}
+          {isDragOver && (
+            <div className="absolute inset-0 z-50 rounded-[28px] bg-primary/10 border-2 border-dashed border-primary/40 flex items-center justify-center pointer-events-none animate-in fade-in duration-150">
+              <div className="flex items-center gap-2 text-primary font-semibold text-sm">
+                <span>Drop files, images, or PDFs here</span>
+              </div>
+            </div>
+          )}
           {/* Top Row: Status & Actions */}
           <div className="flex items-center justify-between w-full pl-1">
             <button
@@ -1823,11 +1859,13 @@ const InputArea = forwardRef(function InputArea(
 
         {/* Input & Tools Row */}
         <div
-          className="px-3 py-2 flex items-center gap-2 relative"
+          className={clsx("px-3 py-2 flex items-center gap-2 relative", isDragOver && "ring-2 ring-primary/50 rounded-xl")}
           onDragOver={(e) => { e.preventDefault(); try { e.dataTransfer.dropEffect = 'copy'; } catch { } }}
-          onDrop={onDrop}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDropWrapped}
         >
-          <QueuePanel messages={queuedMessages} queueDepth={queueDepth} />
+          <QueuePanel messages={queuedMessages} queueDepth={queueDepth} onCancelMessage={onCancelQueuedMessage} />
 
           {/* Attachment Menu */}
           <DropdownMenu.Root>

@@ -11,7 +11,8 @@ interface WorkflowMainContentProps {
   selectedId: string;
   model: DesignerModel | null;
   loading: boolean;
-  viewMode: "ai" | "manual";
+  viewMode: "ai" | "manual" | "none";
+  onSetViewMode: (mode: "ai" | "manual" | "none") => void;
   aiLeftWidth: number;
   onStartResizeAiLeft: (e: React.MouseEvent) => void;
   onResetAiLeftWidth: () => void;
@@ -37,7 +38,6 @@ interface WorkflowMainContentProps {
   activeTab: string;
   openTabs: OpenFileTab[];
   logs: Array<{ ts: string; msg: string }>;
-  showLogs: boolean;
   workflowChatModelId: string | "auto";
   chat: {
     messages: any[];
@@ -48,7 +48,6 @@ interface WorkflowMainContentProps {
     busy: boolean;
     sendMessage: (text: string) => void;
     stopGeneration: () => void;
-    // Session management
     pastSessions: any[];
     showSessionHistory: boolean;
     setShowSessionHistory: (show: boolean) => void;
@@ -60,7 +59,6 @@ interface WorkflowMainContentProps {
   onSetWorkflowChatModelId: (id: string | "auto") => void;
   onSetActiveTab: (tab: string) => void;
   onCloseFileTab: (filePath: string) => void;
-  onToggleLogs: () => void;
   onClearLogs: () => void;
   onCanvasMouseDown: (e: React.MouseEvent) => void;
   onWheel: (e: React.WheelEvent) => void;
@@ -93,11 +91,8 @@ interface WorkflowMainContentProps {
   onOpenStuard?: (subPath: string) => void;
   chatInputRef?: React.RefObject<ChatInputRef>;
   toolPaletteRef?: React.RefObject<ToolPaletteRef>;
-  /** Breadcrumbs for sub-workflow navigation */
   breadcrumbs?: Array<{ label: string; path: string | null }>;
-  /** Current sub-workflow path (null = main) */
   currentSubPath?: string | null;
-  /** Navigate back to parent workflow */
   onNavigateBack?: () => void;
 }
 
@@ -106,6 +101,7 @@ export function WorkflowMainContent({
   model,
   loading,
   viewMode,
+  onSetViewMode,
   aiLeftWidth,
   onStartResizeAiLeft,
   onResetAiLeftWidth,
@@ -131,14 +127,12 @@ export function WorkflowMainContent({
   activeTab,
   openTabs,
   logs,
-  showLogs,
   workflowChatModelId,
   chat,
   onApplyModel,
   onSetWorkflowChatModelId,
   onSetActiveTab,
   onCloseFileTab,
-  onToggleLogs,
   onClearLogs,
   onCanvasMouseDown,
   onWheel,
@@ -175,208 +169,164 @@ export function WorkflowMainContent({
   currentSubPath,
   onNavigateBack,
 }: WorkflowMainContentProps) {
+  const canvasAndPanelsProps = {
+    model: model!,
+    selectedId,
+    selectedNodeId,
+    selectedNodeIds,
+    connectingFrom,
+    reconnecting,
+    executionState,
+    size,
+    canvasRef,
+    alignmentGuides,
+    zoom,
+    selectedWireIndex,
+    selectionBox,
+    activeTab,
+    openTabs,
+    logs,
+    rightPanel,
+    manualRightWidth,
+    errors,
+    showWorkspace,
+    workspaceInfo,
+    onSetActiveTab,
+    onCloseFileTab,
+    onClearLogs,
+    onCanvasMouseDown,
+    onWheel,
+    onZoomIn,
+    onZoomOut,
+    onZoomReset,
+    onAutoOrganize,
+    onDragOver,
+    onDrop,
+    onMouseMove,
+    onMouseUp,
+    onMouseLeave,
+    onCanvasClick,
+    onNodeSelect,
+    onNodeMouseDown,
+    onNodeContextMenu,
+    onNodeConnect,
+    onWireSelect,
+    onWireDelete,
+    onWireContextMenu,
+    onWireReconnect,
+    onCanvasContextMenu,
+    onStartResizeManualRight,
+    onResetManualRightWidth,
+    onSetSelectedWireIndex,
+    onSetRightPanel,
+    onUpdateModel,
+    onDeleteNode,
+    onStartReconnect,
+    onRefreshWorkspace,
+    onCloseWorkspace,
+    onOpenFile,
+    onOpenStuard,
+    breadcrumbs,
+    currentSubPath,
+    onNavigateBack,
+  };
+
   return (
-    <div className="flex-1 flex flex-col min-w-0 bg-slate-50/50 relative z-0">
+    <div className="w-full h-full flex flex-col min-w-0 relative z-0">
       {selectedId && model ? (
-        <div className="flex-1 flex min-h-0">
+        <div className="flex-1 relative min-h-0">
+          <div className="absolute inset-0 z-0 flex">
+            <WorkflowCanvasAndPanels
+              {...canvasAndPanelsProps}
+              onSendLogsToChat={(text: string) => {
+                chat.sendMessage(text);
+                if (viewMode !== 'ai') onSetRightPanel("ai");
+              }}
+            />
+          </div>
+
+          {/* Floating AI Chat Panel */}
           {viewMode === "ai" && (
-            <>
-              <div
-                className="bg-white border-r border-slate-200 flex flex-col shrink-0 z-20 shadow-sm relative min-h-0"
-                style={{ width: aiLeftWidth }}
-              >
-                <ChatHistory
-                  messages={chat.messages}
-                  streamItems={chat.streamItems}
-                  reasoningText={chat.reasoningText}
-                  showReasoning={chat.showReasoning}
-                  setShowReasoning={chat.setShowReasoning}
-                  busy={chat.busy}
-                  onUndo={onApplyModel}
-                  selectedModelId={workflowChatModelId}
-                  onSelectModel={onSetWorkflowChatModelId}
-                  pastSessions={chat.pastSessions}
-                  showSessionHistory={chat.showSessionHistory}
-                  setShowSessionHistory={chat.setShowSessionHistory}
-                  onNewSession={chat.newSession}
-                  onLoadSession={chat.loadSession}
-                  onDeleteSession={chat.deleteSession}
-                />
+            <div
+              className="absolute right-20 top-24 bottom-24 flex flex-col z-20 bg-white/[0.06] backdrop-blur-2xl border border-white/[0.1] rounded-[20px] shadow-2xl pointer-events-auto"
+              style={{ width: aiLeftWidth, minWidth: 320 }}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06] shrink-0 bg-white/[0.02] rounded-t-[20px] z-20">
+                <span className="font-semibold text-white/90 text-sm">AI Assistant</span>
+                <div className="flex items-center gap-1">
+                  <button onClick={chat.newSession} className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-colors" title="New Chat">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+                  </button>
+                  <button onClick={() => chat.setShowSessionHistory(!chat.showSessionHistory)} className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-colors" title="History">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+                  </button>
+                  <button onClick={() => { onSetViewMode('none'); onSetRightPanel('none'); }} className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-red-500/20 transition-colors ml-1" title="Close">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 min-h-0 relative rounded-b-[20px] overflow-hidden">
+                <div className="absolute inset-0 pb-20">
+                  <ChatHistory
+                    messages={chat.messages}
+                    streamItems={chat.streamItems}
+                    reasoningText={chat.reasoningText}
+                    showReasoning={chat.showReasoning}
+                    setShowReasoning={chat.setShowReasoning}
+                    busy={chat.busy}
+                    onUndo={onApplyModel}
+                    pastSessions={chat.pastSessions}
+                    showSessionHistory={chat.showSessionHistory}
+                    setShowSessionHistory={chat.setShowSessionHistory}
+                    onNewSession={chat.newSession}
+                    onLoadSession={chat.loadSession}
+                    onDeleteSession={chat.deleteSession}
+                  />
+                </div>
+
+                <div className="absolute bottom-0 left-0 right-0 p-4 pointer-events-none z-10">
+                  <div className="pointer-events-auto">
+                    <ChatInput
+                      ref={chatInputRef}
+                      onSend={chat.sendMessage}
+                      busy={chat.busy}
+                      onStop={chat.stopGeneration}
+                      selectedModelId={workflowChatModelId}
+                      onSelectModel={onSetWorkflowChatModelId}
+                    />
+                  </div>
+                </div>
               </div>
 
               <div
-                className="w-1 hover:w-1.5 bg-slate-200/50 hover:bg-indigo-400/50 cursor-col-resize shrink-0 transition-all duration-200"
+                className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/10 transition-colors"
                 onMouseDown={onStartResizeAiLeft}
                 onDoubleClick={onResetAiLeftWidth}
               />
-
-              <WorkflowCanvasAndPanels
-                model={model}
-                selectedId={selectedId}
-                selectedNodeId={selectedNodeId}
-                selectedNodeIds={selectedNodeIds}
-                connectingFrom={connectingFrom}
-                reconnecting={reconnecting}
-                executionState={executionState}
-                size={size}
-                canvasRef={canvasRef}
-                alignmentGuides={alignmentGuides}
-                zoom={zoom}
-                selectedWireIndex={selectedWireIndex}
-                selectionBox={selectionBox}
-                activeTab={activeTab}
-                openTabs={openTabs}
-                logs={logs}
-                showLogs={showLogs}
-                floatingContent={(
-                  <div className="absolute bottom-6 left-0 right-0 z-30 px-6 flex justify-center pointer-events-none">
-                    <div className="w-full max-w-2xl pointer-events-auto">
-                      <ChatInput
-                        ref={chatInputRef}
-                        onSend={chat.sendMessage}
-                        busy={chat.busy}
-                        onStop={chat.stopGeneration}
-                      />
-                    </div>
-                  </div>
-                )}
-                rightPanel={rightPanel}
-                manualRightWidth={manualRightWidth}
-                errors={errors}
-                showWorkspace={showWorkspace}
-                workspaceInfo={workspaceInfo}
-                onSetActiveTab={onSetActiveTab}
-                onCloseFileTab={onCloseFileTab}
-                onToggleLogs={onToggleLogs}
-                onClearLogs={onClearLogs}
-                onSendLogsToChat={chat.sendMessage}
-                onCanvasMouseDown={onCanvasMouseDown}
-                onWheel={onWheel}
-                onZoomIn={onZoomIn}
-                onZoomOut={onZoomOut}
-                onZoomReset={onZoomReset}
-                onAutoOrganize={onAutoOrganize}
-                onDragOver={onDragOver}
-                onDrop={onDrop}
-                onMouseMove={onMouseMove}
-                onMouseUp={onMouseUp}
-                onMouseLeave={onMouseLeave}
-                onCanvasClick={onCanvasClick}
-                onNodeSelect={onNodeSelect}
-                onNodeMouseDown={onNodeMouseDown}
-                onNodeContextMenu={onNodeContextMenu}
-                onNodeConnect={onNodeConnect}
-                onWireSelect={onWireSelect}
-                onWireDelete={onWireDelete}
-                onWireContextMenu={onWireContextMenu}
-                onWireReconnect={onWireReconnect}
-                onCanvasContextMenu={onCanvasContextMenu}
-                onStartResizeManualRight={onStartResizeManualRight}
-                onResetManualRightWidth={onResetManualRightWidth}
-                onSetSelectedWireIndex={onSetSelectedWireIndex}
-                onSetRightPanel={onSetRightPanel}
-                onUpdateModel={onUpdateModel}
-                onDeleteNode={onDeleteNode}
-                onStartReconnect={onStartReconnect}
-                onRefreshWorkspace={onRefreshWorkspace}
-                onCloseWorkspace={onCloseWorkspace}
-                onOpenFile={onOpenFile}
-                onOpenStuard={onOpenStuard}
-                breadcrumbs={breadcrumbs}
-                currentSubPath={currentSubPath}
-                onNavigateBack={onNavigateBack}
-              />
-            </>
+            </div>
           )}
 
+          {/* Floating Tool Palette for Manual Mode */}
           {viewMode === "manual" && (
-            <>
-              <div className="w-64 bg-white border-r border-slate-200 flex flex-col shrink-0 z-10 min-h-0 overflow-hidden shadow-[4px_0_24px_-12px_rgba(0,0,0,0.1)]">
-                <ToolPalette
-                  ref={toolPaletteRef}
-                  onDragStart={(e, item) => {
-                    e.dataTransfer.setData("text/plain", JSON.stringify(item));
-                    e.dataTransfer.effectAllowed = "copy";
-                  }}
-                  disabled={model.locked}
-                />
-              </div>
-
-              <WorkflowCanvasAndPanels
-                model={model}
-                selectedId={selectedId}
-                selectedNodeId={selectedNodeId}
-                selectedNodeIds={selectedNodeIds}
-                connectingFrom={connectingFrom}
-                reconnecting={reconnecting}
-                executionState={executionState}
-                size={size}
-                canvasRef={canvasRef}
-                alignmentGuides={alignmentGuides}
-                zoom={zoom}
-                selectedWireIndex={selectedWireIndex}
-                selectionBox={selectionBox}
-                activeTab={activeTab}
-                openTabs={openTabs}
-                logs={logs}
-                showLogs={showLogs}
-                rightPanel={rightPanel}
-                manualRightWidth={manualRightWidth}
-                errors={errors}
-                showWorkspace={showWorkspace}
-                workspaceInfo={workspaceInfo}
-                onSetActiveTab={onSetActiveTab}
-                onCloseFileTab={onCloseFileTab}
-                onToggleLogs={onToggleLogs}
-                onClearLogs={onClearLogs}
-                onSendLogsToChat={(text: string) => {
-                  chat.sendMessage(text);
-                  onSetRightPanel("ai");
+            <div className="absolute left-6 top-32 bottom-24 w-64 bg-white/[0.06] backdrop-blur-2xl border border-white/[0.1] rounded-xl shadow-2xl flex flex-col shrink-0 z-20 overflow-hidden pointer-events-auto">
+              <ToolPalette
+                ref={toolPaletteRef}
+                onDragStart={(e, item) => {
+                  e.dataTransfer.setData("text/plain", JSON.stringify(item));
+                  e.dataTransfer.effectAllowed = "copy";
                 }}
-                onCanvasMouseDown={onCanvasMouseDown}
-                onWheel={onWheel}
-                onZoomIn={onZoomIn}
-                onZoomOut={onZoomOut}
-                onZoomReset={onZoomReset}
-                onAutoOrganize={onAutoOrganize}
-                onDragOver={onDragOver}
-                onDrop={onDrop}
-                onMouseMove={onMouseMove}
-                onMouseUp={onMouseUp}
-                onMouseLeave={onMouseLeave}
-                onCanvasClick={onCanvasClick}
-                onNodeSelect={onNodeSelect}
-                onNodeMouseDown={onNodeMouseDown}
-                onNodeContextMenu={onNodeContextMenu}
-                onNodeConnect={onNodeConnect}
-                onWireSelect={onWireSelect}
-                onWireDelete={onWireDelete}
-                onWireContextMenu={onWireContextMenu}
-                onWireReconnect={onWireReconnect}
-                onCanvasContextMenu={onCanvasContextMenu}
-                onStartResizeManualRight={onStartResizeManualRight}
-                onResetManualRightWidth={onResetManualRightWidth}
-                onSetSelectedWireIndex={onSetSelectedWireIndex}
-                onSetRightPanel={onSetRightPanel}
-                onUpdateModel={onUpdateModel}
-                onDeleteNode={onDeleteNode}
-                onStartReconnect={onStartReconnect}
-                onRefreshWorkspace={onRefreshWorkspace}
-                onCloseWorkspace={onCloseWorkspace}
-                onOpenFile={onOpenFile}
-                onOpenStuard={onOpenStuard}
-                breadcrumbs={breadcrumbs}
-                currentSubPath={currentSubPath}
-                onNavigateBack={onNavigateBack}
+                disabled={model.locked}
               />
-            </>
+            </div>
           )}
         </div>
       ) : (
-        <div className="flex-1 flex items-center justify-center bg-slate-50">
+        <div className="flex-1 flex items-center justify-center bg-black">
           <div className="text-center max-w-sm px-6">
-            <div className="w-12 h-12 border-4 border-slate-200 border-t-indigo-600 rounded-full animate-spin mx-auto mb-6" />
-            <h2 className="text-lg font-semibold text-slate-900 mb-2">Loading...</h2>
+            <div className="w-12 h-12 border-4 border-slate-700 border-t-blue-500 rounded-full animate-spin mx-auto mb-6" />
+            <h2 className="text-lg font-semibold text-slate-200 mb-2">Loading...</h2>
             <p className="text-sm text-slate-500">Getting your workflow ready.</p>
           </div>
         </div>

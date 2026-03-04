@@ -7,6 +7,7 @@ import { handleGoogleRoutes } from './integrations/google';
 import { handleOutlookRoutes } from './integrations/outlook';
 import { handleDiscordRoutes } from './integrations/discord';
 import { handleRedditRoutes } from './integrations/reddit';
+import { handleTelnyxRoutes } from './integrations/telnyx';
 import { handleProfileRoutes } from './integrations/profiles';
 import { handleCalendarRoutes } from './calendar';
 import { handleInferenceRoutes } from './inference';
@@ -30,6 +31,8 @@ import { handleCloudSnapshotsRoutes } from './cloud-snapshots';
 import { handleCloudDeploysRoutes } from './cloud-deploys';
 import { handleCloudAdminRoutes } from './cloud-admin';
 import { handleVMRelayRoutes } from './vm-relay';
+import { handleDesktopToolRelayRoutes } from './desktop-tool-relay';
+import { handleProactiveRoutes } from './proactive';
 
 export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   if (await handleWebhooks(req, res, parsedUrl)) return true;
@@ -43,6 +46,7 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleOutlookRoutes(req, res, parsedUrl)) return true;
   if (await handleDiscordRoutes(req, res, parsedUrl)) return true;
   if (await handleRedditRoutes(req, res, parsedUrl)) return true;
+  if (await handleTelnyxRoutes(req, res, parsedUrl)) return true;
   if (await handleProfileRoutes(req, res, parsedUrl)) return true;
   if (await handleCalendarRoutes(req, res, parsedUrl)) return true;
   if (await handleInferenceRoutes(req, res, parsedUrl)) return true;
@@ -63,5 +67,7 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleCloudDeploysRoutes(req, res, parsedUrl)) return true;
   if (await handleCloudAdminRoutes(req, res, parsedUrl)) return true;
   if (await handleVMRelayRoutes(req, res, parsedUrl)) return true;
+  if (await handleDesktopToolRelayRoutes(req, res, parsedUrl)) return true;
+  if (await handleProactiveRoutes(req, res, parsedUrl)) return true;
   return false;
 }

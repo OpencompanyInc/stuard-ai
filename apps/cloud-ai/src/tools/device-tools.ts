@@ -237,6 +237,36 @@ export {
   mediapipe_process_video,
 } from './device/mediapipe';
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// OLLAMA — Local AI Models (Chat, Vision, Embeddings, Model Management)
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  ollama_status,
+  ollama_chat,
+  ollama_generate,
+  ollama_vision,
+  ollama_embeddings,
+  ollama_models,
+} from './device/ollama';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BROWSER USE — AI Browser Automation (Navigate, Click, Type, Screenshot, Tasks)
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  browser_use_status,
+  browser_use_configure,
+  browser_use_task,
+  browser_use_navigate,
+  browser_use_click,
+  browser_use_type,
+  browser_use_press_key,
+  browser_use_screenshot,
+  browser_use_content,
+  browser_use_scroll,
+  browser_use_tabs,
+  browser_use_cookies,
+} from './device/browser-use';
+
 // Canvas Document Tools (AI can read/write user's canvas notes)
 export {
   canvas_list,

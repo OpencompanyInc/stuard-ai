@@ -289,8 +289,23 @@ async function installWindowsUpdate(): Promise<{ ok: boolean; error?: string }> 
   // Wait for file handles to release
   await new Promise((r) => setTimeout(r, 1000));
   
-  // Launch installer with silent args
-  const args = ["/SP-", "/silent", "/currentuser", "/closeapplications", "/restartapplications"];
+  // Launch installer in update mode:
+  //   /VERYSILENT = no UI at all (mini-updater feel)
+  //   /SUPPRESSMSGBOXES = suppress any confirmation dialogs
+  //   /NORESTART = don't reboot the machine
+  //   /CLOSEAPPLICATIONS = close running instances
+  //   /UPDATE = custom flag that tells setup.iss to show "Updating" UI
+  //             and auto-relaunch the app after install
+  const args = [
+    "/VERYSILENT",
+    "/SUPPRESSMSGBOXES",
+    "/NORESTART",
+    "/CLOSEAPPLICATIONS",
+    "/CURRENTUSER",
+    "/UPDATE",
+  ];
+  
+  console.log(`[Updates] Launching installer: ${installerPath} ${args.join(" ")}`);
   
   try {
     const child = spawn(installerPath, args, { detached: true, stdio: "ignore" });
@@ -299,7 +314,7 @@ async function installWindowsUpdate(): Promise<{ ok: boolean; error?: string }> 
     return { ok: false, error: e.message };
   }
   
-  // Quit app after short delay
+  // Quit app after short delay to let the installer take over
   setTimeout(() => {
     try {
       app.quit();

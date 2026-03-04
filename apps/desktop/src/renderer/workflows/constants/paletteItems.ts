@@ -5,6 +5,8 @@ export const TRIGGER_ITEMS: PaletteItem[] = [
   { k: 'trigger', t: 'schedule.cron', label: 'Schedule', args: { cron: '*/5 * * * *' } },
   { k: 'trigger', t: 'webhook.local', label: 'Webhook (Local)', args: {} },
   { k: 'trigger', t: 'webhook.cloud', label: 'Webhook (Cloud)', args: {} },
+  { k: 'trigger', t: 'gmail.new_email', label: 'Gmail: New Email', args: { profile: 'default', labelIds: ['INBOX'] } },
+  { k: 'trigger', t: 'drive.new_file', label: 'Drive: New File', args: { profile: 'default', onlyNew: true, includeFolders: false } },
   { k: 'trigger', t: 'hotkey', label: 'Hotkey', args: { accelerator: 'Ctrl+Alt+C' } },
   { k: 'trigger', t: 'hotkey.release', label: 'Hotkey Release', args: { accelerator: 'Ctrl+Alt+C' } },
   { k: 'trigger', t: 'outlook.calendar.poll', label: 'Outlook Calendar (poll)', args: { intervalSec: 60 } },

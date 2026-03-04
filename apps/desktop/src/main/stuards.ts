@@ -78,7 +78,6 @@ function attachUnifiedTasksListener(ws: WebSocket) {
 
       if (msg?.type === 'request' && msg.event && msg.event.startsWith('unified_tasks_')) {
         const { event, data, id } = msg;
-        console.log(`[stuards] Received unified_tasks request: ${event} id=${id}`);
         let result: any = { ok: false, error: 'unknown_event' };
 
         if (event === 'unified_tasks_get_pending') {
@@ -101,8 +100,6 @@ function attachUnifiedTasksListener(ws: WebSocket) {
           result = unifiedTasksService.add(data);
         } else if (event === 'unified_tasks_list') {
           result = unifiedTasksService.list();
-          // Filter out implementation/dev data from logs if needed, but logging status is fine
-          console.log(`[stuards] unified_tasks_list result count: ${result.tasks?.length}`);
         } else if (event === 'unified_tasks_update') {
           result = unifiedTasksService.update(data);
         } else if (event === 'unified_tasks_delete') {
@@ -124,7 +121,6 @@ function attachUnifiedTasksListener(ws: WebSocket) {
         }
 
         if (id) {
-          console.log(`[stuards] Sending response for ${id}: ok=${result?.ok} error=${result?.error}`);
           ws.send(JSON.stringify({
             type: 'response',
             id,

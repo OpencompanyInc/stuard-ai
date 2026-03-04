@@ -1,5 +1,6 @@
 import React, { useCallback, useState, forwardRef, useImperativeHandle, useRef } from "react";
-import { Link2, Square } from "lucide-react";
+import { Link2, Square, Plus } from "lucide-react";
+import { ModelSelector } from "../../../components/ModelSelector";
 
 function extractAnyUrl(text: string): string | null {
   if (!text) return null;
@@ -15,7 +16,9 @@ export const ChatInput = forwardRef<ChatInputRef, {
   onSend: (text: string) => void;
   busy: boolean;
   onStop?: () => void;
-}>(({ onSend, busy, onStop }, ref) => {
+  selectedModelId?: string | 'auto';
+  onSelectModel?: (id: string | 'auto') => void;
+}>(({ onSend, busy, onStop, selectedModelId, onSelectModel }, ref) => {
   const [text, setText] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   const [hasDragUrl, setHasDragUrl] = useState(false);
@@ -106,11 +109,10 @@ export const ChatInput = forwardRef<ChatInputRef, {
 
   return (
     <div
-      className={`w-full bg-white/90 backdrop-blur-sm border rounded-2xl shadow-xl shadow-slate-200/50 overflow-hidden ring-1 transition-all duration-200 ${
-        isDragOver && hasDragUrl
-          ? 'border-indigo-400 ring-indigo-400/30 bg-indigo-50/50'
-          : 'border-slate-200/80 ring-slate-900/5'
-      }`}
+      className={`w-full bg-black/40 backdrop-blur-md border rounded-2xl shadow-xl shadow-black/50 ring-1 transition-all duration-200 ${isDragOver && hasDragUrl
+          ? 'border-indigo-500/50 ring-indigo-500/30 bg-indigo-500/10'
+          : 'border-white/[0.08] ring-white/[0.04]'
+        }`}
       onDragOver={handleDragOver}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
@@ -118,17 +120,17 @@ export const ChatInput = forwardRef<ChatInputRef, {
     >
       {/* Drop indicator overlay */}
       {isDragOver && hasDragUrl && (
-        <div className="flex items-center justify-center gap-2 px-3 py-2 text-[12px] font-medium bg-indigo-100/80 text-indigo-700">
+        <div className="flex items-center justify-center gap-2 px-3 py-2 text-[12px] font-medium bg-indigo-500/20 text-indigo-400">
           <Link2 className="w-4 h-4" />
           Drop link here
         </div>
       )}
 
-      <div className="flex items-end gap-2 p-2.5">
-<textarea
+      <div className="flex flex-col p-2.5">
+        <textarea
           ref={textareaRef}
-          className="flex-1 resize-none outline-none text-[13px] text-slate-800 placeholder:text-slate-400 bg-transparent min-h-[44px] max-h-[140px] py-2.5 px-2 scrollbar-minimal"
-          placeholder={busy ? "Working..." : "Describe what to change..."}
+          className="w-full resize-none outline-none text-[13px] text-white/90 placeholder:text-white/40 bg-transparent min-h-[44px] max-h-[140px] py-1 px-1 scrollbar-minimal"
+          placeholder={busy ? "Working..." : "Tell Stuard what to do"}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
@@ -139,27 +141,49 @@ export const ChatInput = forwardRef<ChatInputRef, {
           }}
           disabled={busy}
         />
-        {busy && onStop ? (
-          <button
-            type="button"
-            onClick={onStop}
-            className="px-3 py-2 rounded-lg text-[13px] font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors flex items-center gap-1.5"
-            title="Stop generating"
-          >
-            <Square className="w-3 h-3 fill-current" />
-            Stop
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={send}
-            disabled={busy || text.trim().length === 0}
-            className="px-3 py-2 rounded-lg text-[13px] font-semibold bg-indigo-600 text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-indigo-700 transition-colors"
-          >
-            Send
-          </button>
-        )}
-</div>
+        <div className="flex items-center justify-between mt-2">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/[0.06] transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {onSelectModel && selectedModelId && (
+              <ModelSelector
+                selectedModelId={selectedModelId}
+                onSelectModel={onSelectModel}
+                side="top"
+                align="end"
+                variant="glass"
+              />
+            )}
+            {busy && onStop ? (
+              <button
+                type="button"
+                onClick={onStop}
+                className="px-3 py-1.5 rounded-xl text-[12px] font-semibold bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30 transition-colors flex items-center gap-1.5"
+                title="Stop generating"
+              >
+                <Square className="w-3 h-3 fill-current" />
+                Stop
+              </button>
+            ) : (text.trim().length > 0 && (
+              <button
+                type="button"
+                onClick={send}
+                disabled={busy}
+                className="px-3 py-1.5 rounded-xl text-[12px] font-semibold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-indigo-500/30 transition-colors"
+              >
+                Send
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 });

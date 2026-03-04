@@ -4,6 +4,7 @@ import { initToolRegistry } from '../tools/meta-tools';
 import { getToolRegistry } from '../tools/tool-registry';
 import { runWithSecrets } from '../tools/bridge';
 import { verifyToken, checkAccess, logUsageEvent } from '../supabase';
+import { verifyVMAuthFromRequest } from '../services/vm-tokens';
 import { CORS_ALLOWED_ORIGINS, PUBLIC_TOOLS_ALLOWLIST, REQUIRE_TOOL_AUTH, IS_DEVELOPMENT } from '../utils/config';
 
 function getCorsOrigin(req: IncomingMessage): string {
@@ -96,7 +97,7 @@ export async function handleToolsRoutes(req: IncomingMessage, res: ServerRespons
   if (req.method === 'OPTIONS' && path.startsWith('/tools/')) {
     const headers: Record<string, string> = {
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-VM-User-Id',
       'Access-Control-Max-Age': '600',
     };
     if (corsOrigin) {
@@ -272,14 +273,24 @@ export async function handleToolsRoutes(req: IncomingMessage, res: ServerRespons
       const body = await readJsonBody(req);
 
       const auth = req.headers.authorization || '';
-      const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+      const vmUserIdHeader = req.headers['x-vm-user-id'] as string | undefined;
       let userId: string | null = null;
 
-      if (token) {
+      if (vmUserIdHeader) {
+        // VM HMAC auth — no Supabase JWT needed; verified against per-VM secret in DB
         try {
-          const authed = await verifyToken(token);
-          userId = authed?.userId || null;
+          const vmAuth = await verifyVMAuthFromRequest(auth, vmUserIdHeader);
+          userId = vmAuth?.userId || null;
         } catch {}
+      } else {
+        // Standard Supabase JWT auth
+        const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+        if (token) {
+          try {
+            const authed = await verifyToken(token);
+            userId = authed?.userId || null;
+          } catch {}
+        }
       }
 
       const isPublicTool = PUBLIC_TOOLS_ALLOWLIST.has(toolName);

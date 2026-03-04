@@ -130,13 +130,13 @@ export function AcceleratorEditor({ value, onChange }: AcceleratorEditorProps) {
         <div className="flex gap-2">
           <button
             onClick={() => setEditing(true)}
-            className="flex-1 px-4 py-3 text-sm border border-slate-200 rounded-xl bg-white hover:bg-slate-50 hover:border-blue-300 flex items-center justify-center gap-3 transition-all shadow-sm group"
+            className="flex-1 px-4 py-3 text-sm border border-white/[0.08] rounded-xl bg-white/[0.04] hover:bg-white/[0.06] hover:border-blue-300 flex items-center justify-center gap-3 transition-all shadow-sm group"
           >
             {parts.length > 0 ? (
               <div className="flex items-center gap-1.5">
                 {parts.map((p, i) => (
                   <React.Fragment key={`${p}-${i}`}>
-                    <span className="px-2.5 py-1 bg-slate-100 border border-slate-200 rounded-lg font-medium text-slate-700 text-xs shadow-sm">
+                    <span className="px-2.5 py-1 bg-white/[0.06] border border-white/[0.08] rounded-lg font-medium text-white/80 text-xs shadow-sm">
                       {displayPart(p)}
                     </span>
                     {i < parts.length - 1 && <span className="text-slate-300 text-xs">+</span>}
@@ -144,7 +144,7 @@ export function AcceleratorEditor({ value, onChange }: AcceleratorEditorProps) {
                 ))}
               </div>
             ) : (
-              <div className="flex items-center gap-2 text-slate-400">
+              <div className="flex items-center gap-2 text-white/40">
                 <Keyboard className="w-4 h-4" />
                 <span>Click to record shortcut</span>
               </div>
@@ -153,7 +153,7 @@ export function AcceleratorEditor({ value, onChange }: AcceleratorEditorProps) {
           {parts.length > 0 && (
             <button
               onClick={() => { setParts([]); onChange(''); }}
-              className="p-3 text-slate-400 hover:text-red-500 hover:bg-red-50 border border-slate-200 rounded-xl transition-all"
+              className="p-3 text-white/40 hover:text-red-500 hover:bg-red-50 border border-white/[0.08] rounded-xl transition-all"
               title="Clear"
             >
               <RotateCcw className="w-4 h-4" />
@@ -164,3 +164,4 @@ export function AcceleratorEditor({ value, onChange }: AcceleratorEditorProps) {
     </div>
   );
 }
+

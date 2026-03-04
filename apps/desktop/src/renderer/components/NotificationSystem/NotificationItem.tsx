@@ -1,5 +1,9 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { NotificationState, NotificationAction } from './types';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 import {
     X,
     Info,
@@ -10,6 +14,7 @@ import {
     Send,
 } from 'lucide-react';
 import clsx from 'clsx';
+import 'katex/dist/katex.min.css';
 
 interface NotificationItemProps {
     notification: NotificationState;
@@ -23,8 +28,15 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
     const [isExiting, setIsExiting] = useState(false);
     const [inputValue, setInputValue] = useState(notification.input?.defaultValue || '');
     const [isHovered, setIsHovered] = useState(false);
+    const [expandedMessage, setExpandedMessage] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
     const progressRef = useRef<HTMLDivElement>(null);
+    const messageText = notification.message || '';
+    const messageLineCount = useMemo(() => messageText.split('\n').length, [messageText]);
+    const shouldShowExpand = useMemo(
+        () => messageText.length > 220 || messageLineCount > 4,
+        [messageText, messageLineCount]
+    );
 
     // Handle dismiss with exit animation
     const handleDismiss = useCallback(() => {
@@ -216,9 +228,56 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                             {notification.title}
                         </h4>
                         {notification.message && (
-                            <p className="mt-0.5 text-[12.5px] text-gray-500 leading-snug line-clamp-3">
-                                {notification.message}
-                            </p>
+                            <div className="mt-0.5">
+                                <div
+                                    className={clsx(
+                                        'text-[12.5px] text-gray-600 leading-snug transition-[max-height] duration-200',
+                                        !expandedMessage && shouldShowExpand && 'max-h-[92px] overflow-hidden'
+                                    )}
+                                >
+                                    <ReactMarkdown
+                                        remarkPlugins={[remarkGfm, remarkMath]}
+                                        rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
+                                        components={{
+                                            p: ({ node, ...props }) => <p {...props} className="m-0 mb-1.5 last:mb-0" />,
+                                            ul: ({ node, ...props }) => <ul {...props} className="m-0 ml-4 list-disc" />,
+                                            ol: ({ node, ...props }) => <ol {...props} className="m-0 ml-4 list-decimal" />,
+                                            code: ({ node, inline, className, children, ...props }: any) => {
+                                                return inline ? (
+                                                    <code className="bg-slate-100 text-slate-800 px-[6px] py-[2px] rounded-md text-[85%] font-mono font-medium border border-slate-200 shadow-sm align-middle" {...props}>
+                                                        {children}
+                                                    </code>
+                                                ) : (
+                                                    <code className={clsx(
+                                                        'block p-3 rounded-lg bg-white border border-slate-200 shadow-sm text-[12px] text-slate-800 overflow-x-auto font-mono whitespace-pre tab-4 leading-[1.7]',
+                                                        className
+                                                    )} {...props}>
+                                                        {children}
+                                                    </code>
+                                                )
+                                            },
+                                            a: ({ node, ...props }) => (
+                                                <a
+                                                    {...props}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="text-blue-600 hover:underline"
+                                                />
+                                            ),
+                                        }}
+                                    >
+                                        {notification.message}
+                                    </ReactMarkdown>
+                                </div>
+                                {shouldShowExpand && (
+                                    <button
+                                        onClick={() => setExpandedMessage(v => !v)}
+                                        className="mt-1 text-[11px] font-medium text-blue-600 hover:text-blue-700 transition-colors"
+                                    >
+                                        {expandedMessage ? 'Show less' : 'Show more'}
+                                    </button>
+                                )}
+                            </div>
                         )}
 
                         {/* Custom progress bar (for progress notifications) */}

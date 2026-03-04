@@ -118,6 +118,15 @@ if __name__ == "__main__":
     logger.info("python_version=%s", sys.version)
     logger.info("working_dir=%s", os.getcwd())
     
+    # Suppress noisy access logs for high-frequency polling endpoints
+    import logging as _logging
+    class _PollFilter(_logging.Filter):
+        _QUIET = ("/health", "/v1/tasks/list", "/v1/reminders/list", "/v1/subagents/list")
+        def filter(self, record: _logging.LogRecord) -> bool:
+            msg = record.getMessage()
+            return not any(p in msg for p in self._QUIET)
+    _logging.getLogger("uvicorn.access").addFilter(_PollFilter())
+
     # In frozen mode, must pass app object directly (no string import path)
     uvicorn.run(
         app,

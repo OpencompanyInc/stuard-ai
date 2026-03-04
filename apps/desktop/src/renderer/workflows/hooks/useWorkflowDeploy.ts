@@ -178,6 +178,9 @@ export function useWorkflowDeploy({ selectedId, model }: UseWorkflowDeployProps)
       await (window as any).desktopAPI?.workflowsSave?.(selectedId, JSON.stringify(model, null, 2));
 
       // Create cloud deployment via API
+      // NOTE: No user tokens are passed to the VM. The VM authenticates with cloud-ai
+      // using its own per-VM HMAC secret (VM_TOKEN_SECRET), which cloud-ai verifies
+      // server-side to resolve the userId. This prevents token theft if a VM is compromised.
       const res = await cloudFetch('/v1/cloud-engine/deploys', {
         method: 'POST',
         body: JSON.stringify({

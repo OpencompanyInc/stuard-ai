@@ -1,11 +1,17 @@
 import asyncio
 import json
 import hashlib
+import os
 from typing import Any, Dict, Optional
 import websockets
 from ..logging_config import get_logger
-from ..tools.dispatch import execute as dispatch_execute
 from .session import WebSocketSession
+
+# ── VM mode: use slim dispatch that excludes desktop-only modules ────────────
+if os.environ.get("STUARD_AGENT_MODE") == "vm":
+    from ..tools.dispatch_vm import execute as dispatch_execute
+else:
+    from ..tools.dispatch import execute as dispatch_execute
 
 logger = get_logger("agent")
 
@@ -55,7 +61,7 @@ CLIENT_TOOLS = {
     "stuards_stop",
     "test_run_steps",
 }
-CLIENT_PREFIXES = ("terminal_",)
+CLIENT_PREFIXES = ("terminal_", "browser_use_")
 SENSITIVE_CLIENT_TOOLS = {
     "terminal_create",
     "terminal_send_input",
@@ -156,8 +162,9 @@ async def handle_cloud_tool_request(
                     "tool": tool,
                     "args": args,
                 }))
-                # Default 5 min timeout for client tools (interactive flows)
-                result = await asyncio.wait_for(fut, timeout=300.0)
+                # browser_use_task can take up to 10 min; others default to 5 min
+                client_timeout = 660.0 if tool == "browser_use_task" else 300.0
+                result = await asyncio.wait_for(fut, timeout=client_timeout)
             except asyncio.TimeoutError:
                 result = {"ok": False, "error": "client_tool_timeout"}
             except Exception as e:

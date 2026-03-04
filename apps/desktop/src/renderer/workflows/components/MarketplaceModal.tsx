@@ -46,13 +46,13 @@ function ModalShell({
 }) {
   return (
     <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 backdrop-blur-md p-4 animate-in fade-in duration-200">
-      <div className={`w-full ${maxWidth} bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200`}>
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between shrink-0 bg-slate-50/50">
-          <div className="text-[15px] font-semibold text-slate-900">{title}</div>
+      <div className={`w-full ${maxWidth} bg-white/[0.04] rounded-2xl border border-white/[0.08] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200`}>
+        <div className="px-5 py-4 border-b border-white/[0.08] flex items-center justify-between shrink-0 bg-slate-50/50">
+          <div className="text-[15px] font-semibold text-white">{title}</div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            className="p-1 rounded-md text-white/40 hover:text-white/80 hover:bg-white/[0.1] transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -80,7 +80,7 @@ function TagInput({ tags, onChange }: { tags: string[], onChange: (tags: string[
   };
 
   return (
-    <div className="flex flex-wrap gap-2 p-2 border border-slate-300 rounded-lg focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:border-indigo-500 bg-white min-h-[42px] transition-all">
+    <div className="flex flex-wrap gap-2 p-2 border border-white/[0.12] rounded-lg focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:border-indigo-500 bg-white/[0.04] min-h-[42px] transition-all">
       {tags.map(tag => (
         <span key={tag} className="flex items-center gap-1 pl-2 pr-1 py-1 bg-indigo-50 text-indigo-700 text-xs font-medium rounded-md border border-indigo-100 animate-in zoom-in-95 duration-200">
           {tag}
@@ -105,7 +105,7 @@ function TagInput({ tags, onChange }: { tags: string[], onChange: (tags: string[
             setInput("");
           }
         }}
-        className="flex-1 min-w-[120px] text-sm outline-none bg-transparent placeholder:text-slate-400"
+        className="flex-1 min-w-[120px] text-sm outline-none bg-transparent placeholder:text-white/40"
         placeholder={tags.length === 0 ? "Add tags (press Enter)..." : ""}
       />
     </div>
@@ -276,8 +276,8 @@ export function PublishModal({
           <div className="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mb-6 animate-in zoom-in duration-300">
             <CheckCircle2 className="w-10 h-10 text-emerald-600" />
           </div>
-          <h3 className="text-xl font-bold text-slate-900 mb-2">Successfully Published!</h3>
-          <p className="text-sm text-slate-600 max-w-xs">
+          <h3 className="text-xl font-bold text-white mb-2">Successfully Published!</h3>
+          <p className="text-sm text-white/70 max-w-xs">
             Your workflow "{name}" is now live on the Stuard Marketplace and available for others to discover.
           </p>
         </div>
@@ -301,14 +301,14 @@ export function PublishModal({
     return (
       <ModalShell title="Manage Published Workflow" onClose={onClose}>
         <div className="p-6 space-y-6">
-          <div className="bg-slate-50 border border-slate-100 rounded-xl p-5 flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-indigo-600 shadow-sm">
+          <div className="bg-white/[0.06] border border-white/[0.04] rounded-xl p-5 flex items-start gap-4">
+            <div className="w-12 h-12 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-indigo-600 shadow-sm">
               <Globe className="w-6 h-6" />
             </div>
             <div className="flex-1">
-              <h3 className="font-bold text-slate-900 text-lg">{existingWorkflow.name}</h3>
-              <p className="text-sm text-slate-500 mt-1 line-clamp-2">{existingWorkflow.description}</p>
-              <div className="flex items-center gap-3 mt-3 text-xs text-slate-400 font-medium">
+              <h3 className="font-bold text-white text-lg">{existingWorkflow.name}</h3>
+              <p className="text-sm text-white/50 mt-1 line-clamp-2">{existingWorkflow.description}</p>
+              <div className="flex items-center gap-3 mt-3 text-xs text-white/40 font-medium">
                 <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-100">
                   v{existingWorkflow.version}
                 </span>
@@ -345,32 +345,32 @@ export function PublishModal({
             <button
               onClick={handleUnpublish}
               disabled={unpublishLoading}
-              className="flex items-center justify-between p-4 rounded-xl border border-slate-200 hover:border-rose-200 hover:bg-rose-50/30 text-left group transition-all disabled:opacity-50"
+              className="flex items-center justify-between p-4 rounded-xl border border-white/[0.08] hover:border-rose-200 hover:bg-rose-50/30 text-left group transition-all disabled:opacity-50"
             >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center group-hover:bg-rose-100 group-hover:text-rose-500 transition-colors">
+                <div className="w-10 h-10 rounded-lg bg-white/[0.06] text-white/50 flex items-center justify-center group-hover:bg-rose-100 group-hover:text-rose-500 transition-colors">
                   {unpublishLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 className="w-5 h-5" />}
                 </div>
                 <div>
-                  <div className="font-semibold text-slate-900 group-hover:text-rose-700">Unpublish from Marketplace</div>
-                  <div className="text-xs text-slate-500 group-hover:text-rose-600/70">Remove this workflow permanently from the store</div>
+                  <div className="font-semibold text-white group-hover:text-rose-700">Unpublish from Marketplace</div>
+                  <div className="text-xs text-white/50 group-hover:text-rose-600/70">Remove this workflow permanently from the store</div>
                 </div>
               </div>
             </button>
           </div>
         </div>
 
-        <div className="p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl flex justify-between gap-3">
+        <div className="p-5 border-t border-white/[0.08] bg-white/[0.06] rounded-b-2xl flex justify-between gap-3">
           <button
             onClick={() => setExistingWorkflow(null)}
-            className="text-xs text-slate-400 hover:text-slate-600 font-medium px-2"
+            className="text-xs text-white/40 hover:text-white/70 font-medium px-2"
           >
             Publish as new instead
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-lg text-sm border border-slate-300 text-slate-700 hover:bg-white hover:shadow-sm font-medium transition-all"
+            className="px-4 py-2 rounded-lg text-sm border border-white/[0.12] text-white/80 hover:bg-white/[0.04] hover:shadow-sm font-medium transition-all"
           >
             Close
           </button>
@@ -399,58 +399,58 @@ export function PublishModal({
         )}
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-slate-700">Workflow Name</label>
+          <label className="text-sm font-medium text-white/80">Workflow Name</label>
           <input
             type="text"
             value={name}
             onChange={e => setName(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+            className="w-full px-3 py-2 border border-white/[0.12] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
             placeholder="e.g., Email Summarizer"
           />
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-slate-700">Description</label>
+          <label className="text-sm font-medium text-white/80">Description</label>
           <textarea
             value={description}
             onChange={e => setDescription(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm min-h-[100px] resize-none transition-all"
+            className="w-full px-3 py-2 border border-white/[0.12] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm min-h-[100px] resize-none transition-all"
             placeholder="Describe what your workflow does, how it works, and any requirements..."
           />
           <div className="flex justify-end">
-            <span className="text-xs text-slate-400">{description.length} chars</span>
+            <span className="text-xs text-white/40">{description.length} chars</span>
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">Category</label>
+            <label className="text-sm font-medium text-white/80">Category</label>
             <div className="relative">
               <select
                 value={category}
                 onChange={e => setCategory(e.target.value)}
                 disabled={fetchingCats}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm bg-white appearance-none pr-8 transition-all"
+                className="w-full px-3 py-2 border border-white/[0.12] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm bg-white/[0.04] appearance-none pr-8 transition-all"
               >
                 <option value="general">General</option>
                 {categories.map(c => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-white/40">
                 <ChevronRight className="w-4 h-4 rotate-90" />
               </div>
             </div>
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">Tags</label>
+            <label className="text-sm font-medium text-white/80">Tags</label>
             <TagInput tags={tags} onChange={setTags} />
           </div>
         </div>
 
         {/* Lock workflow toggle */}
-        <div className={`rounded-xl p-4 border transition-all ${locked ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50/50 border-slate-200'}`}>
+        <div className={`rounded-xl p-4 border transition-all ${locked ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50/50 border-white/[0.08]'}`}>
           <div className="flex items-start gap-3">
             <button
               type="button"
@@ -458,16 +458,16 @@ export function PublishModal({
               className={`mt-0.5 w-10 h-6 rounded-full transition-all flex items-center px-1 ${locked ? 'bg-amber-500' : 'bg-slate-300'
                 }`}
             >
-              <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${locked ? 'translate-x-4' : 'translate-x-0'}`} />
+              <div className={`w-4 h-4 rounded-full bg-white/[0.04] shadow-sm transition-transform ${locked ? 'translate-x-4' : 'translate-x-0'}`} />
             </button>
             <div className="flex-1">
               <div className="flex items-center gap-2">
-                {locked ? <Lock className="w-4 h-4 text-amber-600" /> : <Unlock className="w-4 h-4 text-slate-400" />}
-                <span className={`text-sm font-semibold ${locked ? 'text-amber-900' : 'text-slate-700'}`}>
+                {locked ? <Lock className="w-4 h-4 text-amber-600" /> : <Unlock className="w-4 h-4 text-white/40" />}
+                <span className={`text-sm font-semibold ${locked ? 'text-amber-900' : 'text-white/80'}`}>
                   {locked ? 'Locked Workflow' : 'Open Workflow'}
                 </span>
               </div>
-              <p className={`text-xs mt-1 leading-relaxed ${locked ? 'text-amber-700/80' : 'text-slate-500'}`}>
+              <p className={`text-xs mt-1 leading-relaxed ${locked ? 'text-amber-700/80' : 'text-white/50'}`}>
                 {locked
                   ? 'Users who download this workflow will not be able to view the code, use AI to modify it, or manually edit it. They can only run the workflow and wait for your updates.'
                   : 'Users can view, modify, and customize this workflow after downloading.'}
@@ -477,11 +477,11 @@ export function PublishModal({
         </div>
       </div>
 
-      <div className="p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl flex justify-end gap-3">
+      <div className="p-5 border-t border-white/[0.08] bg-white/[0.06] rounded-b-2xl flex justify-end gap-3">
         <button
           type="button"
           onClick={onClose}
-          className="px-4 py-2 rounded-lg text-sm border border-slate-300 text-slate-700 hover:bg-white hover:shadow-sm font-medium transition-all"
+          className="px-4 py-2 rounded-lg text-sm border border-white/[0.12] text-white/80 hover:bg-white/[0.04] hover:shadow-sm font-medium transition-all"
         >
           Cancel
         </button>
@@ -589,8 +589,8 @@ export function UpdateWorkflowModal({
           <div className="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mb-6 animate-in zoom-in duration-300">
             <ArrowUpCircle className="w-10 h-10 text-emerald-600" />
           </div>
-          <h3 className="text-xl font-bold text-slate-900 mb-2">Successfully Updated!</h3>
-          <p className="text-sm text-slate-600 max-w-xs">
+          <h3 className="text-xl font-bold text-white mb-2">Successfully Updated!</h3>
+          <p className="text-sm text-white/70 max-w-xs">
             Your workflow "{name}" has been updated to a new version and is now live on the marketplace.
           </p>
         </div>
@@ -620,79 +620,79 @@ export function UpdateWorkflowModal({
         )}
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-slate-700">Workflow Name</label>
+          <label className="text-sm font-medium text-white/80">Workflow Name</label>
           <input
             type="text"
             value={name}
             onChange={e => setName(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+            className="w-full px-3 py-2 border border-white/[0.12] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
           />
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-slate-700">Description</label>
+          <label className="text-sm font-medium text-white/80">Description</label>
           <textarea
             value={description}
             onChange={e => setDescription(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm min-h-[100px] resize-none transition-all"
+            className="w-full px-3 py-2 border border-white/[0.12] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm min-h-[100px] resize-none transition-all"
           />
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-slate-700">What's New (Changelog)</label>
+          <label className="text-sm font-medium text-white/80">What's New (Changelog)</label>
           <textarea
             value={changelog}
             onChange={e => setChangelog(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-sm min-h-[80px] resize-none transition-all bg-amber-50/30"
+            className="w-full px-3 py-2 border border-white/[0.12] rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-sm min-h-[80px] resize-none transition-all bg-amber-50/30"
             placeholder="Describe what changed in this update..."
           />
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">Category</label>
+            <label className="text-sm font-medium text-white/80">Category</label>
             <div className="relative">
               <select
                 value={category}
                 onChange={e => setCategory(e.target.value)}
                 disabled={fetchingData}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm bg-white appearance-none pr-8 transition-all"
+                className="w-full px-3 py-2 border border-white/[0.12] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm bg-white/[0.04] appearance-none pr-8 transition-all"
               >
                 <option value="general">General</option>
                 {categories.map(c => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-white/40">
                 <ChevronRight className="w-4 h-4 rotate-90" />
               </div>
             </div>
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">Tags</label>
+            <label className="text-sm font-medium text-white/80">Tags</label>
             <TagInput tags={tags} onChange={setTags} />
           </div>
         </div>
 
         {versions.length > 1 && (
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
-              <History className="w-4 h-4 text-slate-400" />
+            <label className="text-sm font-medium text-white/80 flex items-center gap-2">
+              <History className="w-4 h-4 text-white/40" />
               Version History
             </label>
-            <div className="bg-slate-50 rounded-lg border border-slate-200 p-3 max-h-32 overflow-y-auto">
+            <div className="bg-white/[0.06] rounded-lg border border-white/[0.08] p-3 max-h-32 overflow-y-auto">
               {versions.slice(0, 5).map((v, i) => (
-                <div key={v.version + i} className={`flex items-center justify-between py-1.5 ${i > 0 ? 'border-t border-slate-100' : ''}`}>
+                <div key={v.version + i} className={`flex items-center justify-between py-1.5 ${i > 0 ? 'border-t border-white/[0.04]' : ''}`}>
                   <div className="flex items-center gap-2">
-                    <span className={`text-xs font-mono font-semibold ${v.current ? 'text-indigo-600' : 'text-slate-500'}`}>
+                    <span className={`text-xs font-mono font-semibold ${v.current ? 'text-indigo-600' : 'text-white/50'}`}>
                       v{v.version}
                     </span>
                     {v.current && (
                       <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-medium">Current</span>
                     )}
                   </div>
-                  <span className="text-xs text-slate-400">
+                  <span className="text-xs text-white/40">
                     {new Date(v.created_at).toLocaleDateString()}
                   </span>
                 </div>
@@ -702,11 +702,11 @@ export function UpdateWorkflowModal({
         )}
       </div>
 
-      <div className="p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl flex justify-end gap-3">
+      <div className="p-5 border-t border-white/[0.08] bg-white/[0.06] rounded-b-2xl flex justify-end gap-3">
         <button
           type="button"
           onClick={onClose}
-          className="px-4 py-2 rounded-lg text-sm border border-slate-300 text-slate-700 hover:bg-white hover:shadow-sm font-medium transition-all"
+          className="px-4 py-2 rounded-lg text-sm border border-white/[0.12] text-white/80 hover:bg-white/[0.04] hover:shadow-sm font-medium transition-all"
         >
           Cancel
         </button>
@@ -807,7 +807,7 @@ export function MyPublishedWorkflowsModal({
       <ModalShell title="My Published Workflows" onClose={onClose} maxWidth="max-w-3xl">
         <div className="min-h-[400px] flex flex-col">
           {loading ? (
-            <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-400">
+            <div className="flex-1 flex flex-col items-center justify-center gap-3 text-white/40">
               <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
               <span className="text-sm">Loading your workflows...</span>
             </div>
@@ -817,8 +817,8 @@ export function MyPublishedWorkflowsModal({
                 <AlertCircle className="w-8 h-8 text-rose-400" />
               </div>
               <div className="text-center">
-                <p className="font-medium text-slate-900">Something went wrong</p>
-                <p className="text-sm text-slate-500 mt-1">{error}</p>
+                <p className="font-medium text-white">Something went wrong</p>
+                <p className="text-sm text-white/50 mt-1">{error}</p>
                 <button
                   onClick={loadWorkflows}
                   className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
@@ -833,8 +833,8 @@ export function MyPublishedWorkflowsModal({
                 <Package className="w-10 h-10 text-blue-500" />
               </div>
               <div>
-                <h3 className="text-lg font-bold text-slate-900 mb-2">No published workflows yet</h3>
-                <p className="text-sm text-slate-600 max-w-sm leading-relaxed">
+                <h3 className="text-lg font-bold text-white mb-2">No published workflows yet</h3>
+                <p className="text-sm text-white/70 max-w-sm leading-relaxed">
                   Share your workflows with the community! Open a workflow and click "Publish to Marketplace" to get started.
                 </p>
               </div>
@@ -843,9 +843,9 @@ export function MyPublishedWorkflowsModal({
             <div className="p-5 space-y-5">
               {/* Stats Summary */}
               <div className="grid grid-cols-3 gap-3">
-                <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
-                  <div className="text-2xl font-bold text-slate-900">{workflows.length}</div>
-                  <div className="text-xs text-slate-500 font-medium mt-1">Published</div>
+                <div className="bg-white/[0.06] rounded-xl p-4 border border-white/[0.04]">
+                  <div className="text-2xl font-bold text-white">{workflows.length}</div>
+                  <div className="text-xs text-white/50 font-medium mt-1">Published</div>
                 </div>
 <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
                   <div className="text-2xl font-bold text-blue-600">{totalStats.downloads}</div>
@@ -857,7 +857,7 @@ export function MyPublishedWorkflowsModal({
                 </div>
               </div>
 
-              <div className="h-px bg-slate-100" />
+              <div className="h-px bg-white/[0.06]" />
 
               <div className="space-y-3">
                 {workflows.map(w => {
@@ -865,9 +865,9 @@ export function MyPublishedWorkflowsModal({
                   return (
                     <div
                       key={w.id}
-                      className={`bg-white border rounded-xl transition-all overflow-hidden ${w.status === 'published'
-                        ? 'border-slate-200 hover:border-blue-200 hover:shadow-md'
-                        : 'border-slate-100 bg-slate-50 opacity-60'
+                      className={`bg-white/[0.04] border rounded-xl transition-all overflow-hidden ${w.status === 'published'
+                        ? 'border-white/[0.08] hover:border-blue-200 hover:shadow-md'
+                        : 'border-white/[0.04] bg-white/[0.06] opacity-60'
                         }`}
                     >
                       <div className="p-4">
@@ -878,8 +878,8 @@ export function MyPublishedWorkflowsModal({
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <h3 className="font-semibold text-slate-900 truncate">{w.name}</h3>
-                                <span className="text-xs font-mono text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
+                                <h3 className="font-semibold text-white truncate">{w.name}</h3>
+                                <span className="text-xs font-mono text-white/40 bg-white/[0.06] px-1.5 py-0.5 rounded">
                                   v{w.version}
                                 </span>
                                 {w.locked && (
@@ -888,13 +888,13 @@ export function MyPublishedWorkflowsModal({
                                   </span>
                                 )}
                                 {w.status !== 'published' && (
-                                  <span className="text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded font-medium uppercase">
+                                  <span className="text-[10px] bg-slate-200 text-white/70 px-1.5 py-0.5 rounded font-medium uppercase">
                                     {w.status}
                                   </span>
                                 )}
                               </div>
-                              <p className="text-sm text-slate-500 mt-0.5 line-clamp-1">{w.description}</p>
-                              <div className="flex items-center gap-4 mt-2 text-xs text-slate-400">
+                              <p className="text-sm text-white/50 mt-0.5 line-clamp-1">{w.description}</p>
+                              <div className="flex items-center gap-4 mt-2 text-xs text-white/40">
                                 <div className="flex items-center gap-1">
                                   <Download className="w-3.5 h-3.5" />
                                   {w.download_count} downloads
@@ -916,7 +916,7 @@ export function MyPublishedWorkflowsModal({
                           <div className="flex items-center gap-2 shrink-0">
                             <button
                               onClick={() => setExpandedId(isExpanded ? null : w.id)}
-                              className="p-2 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-colors"
+                              className="p-2 rounded-lg border border-white/[0.08] text-white/40 hover:bg-white/[0.06] hover:text-white/70 transition-colors"
                               title={isExpanded ? "Hide details" : "Show details"}
                             >
                               <ChevronRight className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
@@ -924,7 +924,7 @@ export function MyPublishedWorkflowsModal({
                             {w.status === 'published' && onUpdateWorkflow && (
                               <button
                                 onClick={() => onUpdateWorkflow(w)}
-                                className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600 transition-colors"
+                                className="p-2 rounded-lg border border-white/[0.08] text-white/70 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600 transition-colors"
                                 title="Push an update"
                               >
                                 <ArrowUpCircle className="w-4 h-4" />
@@ -933,7 +933,7 @@ export function MyPublishedWorkflowsModal({
                             <button
                               onClick={() => handleDelete(w.slug, w.name)}
                               disabled={deletingSlug === w.slug}
-                              className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-rose-50 hover:border-rose-200 hover:text-rose-600 transition-colors disabled:opacity-50"
+                              className="p-2 rounded-lg border border-white/[0.08] text-white/70 hover:bg-rose-50 hover:border-rose-200 hover:text-rose-600 transition-colors disabled:opacity-50"
                               title="Unpublish workflow"
                             >
                               {deletingSlug === w.slug ? (
@@ -948,19 +948,19 @@ export function MyPublishedWorkflowsModal({
 
                       {/* Expanded Details */}
                       {isExpanded && (
-                        <div className="px-4 pb-4 pt-2 border-t border-slate-100 bg-slate-50/50 animate-in slide-in-from-top-2 duration-200">
+                        <div className="px-4 pb-4 pt-2 border-t border-white/[0.04] bg-slate-50/50 animate-in slide-in-from-top-2 duration-200">
                           <div className="grid grid-cols-2 gap-4">
                             <div>
-                              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Category</div>
-                              <div className="text-sm text-slate-700 capitalize">{w.category || 'General'}</div>
+                              <div className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1">Category</div>
+                              <div className="text-sm text-white/80 capitalize">{w.category || 'General'}</div>
                             </div>
                             <div>
-                              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Slug</div>
-                              <div className="text-xs font-mono text-slate-500 bg-white px-2 py-1 rounded border border-slate-200 truncate">{w.slug}</div>
+                              <div className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1">Slug</div>
+                              <div className="text-xs font-mono text-white/50 bg-white/[0.04] px-2 py-1 rounded border border-white/[0.08] truncate">{w.slug}</div>
                             </div>
                             {w.tags && w.tags.length > 0 && (
                               <div className="col-span-2">
-                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Tags</div>
+                                <div className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1.5">Tags</div>
                                 <div className="flex flex-wrap gap-1.5">
                                   {w.tags.map(tag => (
                                     <span key={tag} className="text-xs px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full border border-indigo-100">
@@ -971,8 +971,8 @@ export function MyPublishedWorkflowsModal({
                               </div>
                             )}
                             <div className="col-span-2">
-                              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Description</div>
-                              <p className="text-sm text-slate-600 leading-relaxed">{w.description}</p>
+                              <div className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1">Description</div>
+                              <p className="text-sm text-white/70 leading-relaxed">{w.description}</p>
                             </div>
                           </div>
                         </div>
@@ -1063,8 +1063,8 @@ export function WorkflowUpdateModal({
           <div className="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mb-6 animate-in zoom-in duration-300">
             <CheckCircle2 className="w-10 h-10 text-emerald-600" />
           </div>
-          <h3 className="text-xl font-bold text-slate-900 mb-2">Successfully Updated!</h3>
-          <p className="text-sm text-slate-600 max-w-xs">
+          <h3 className="text-xl font-bold text-white mb-2">Successfully Updated!</h3>
+          <p className="text-sm text-white/70 max-w-xs">
             "{currentWorkflowName}" has been updated to version {update.latestVersion}.
           </p>
         </div>
@@ -1078,24 +1078,24 @@ export function WorkflowUpdateModal({
         {/* Update Banner */}
 <div className="bg-gradient-to-r from-blue-50 to-sky-50 rounded-xl p-5 border border-blue-100">
           <div className="flex items-start gap-4">
-            <div className="w-14 h-14 rounded-xl bg-white border border-blue-200 flex items-center justify-center text-blue-600 shadow-sm">
+            <div className="w-14 h-14 rounded-xl bg-white/[0.04] border border-blue-200 flex items-center justify-center text-blue-600 shadow-sm">
               <ArrowUpCircle className="w-7 h-7" />
             </div>
             <div className="flex-1">
-              <h3 className="font-bold text-slate-900 text-lg">{update.name}</h3>
-              <p className="text-sm text-slate-600 mt-1">
+              <h3 className="font-bold text-white text-lg">{update.name}</h3>
+              <p className="text-sm text-white/70 mt-1">
                 A new version is available from the Marketplace
               </p>
               <div className="flex items-center gap-4 mt-3">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500">Current:</span>
-                  <span className="text-xs font-mono bg-slate-100 px-2 py-0.5 rounded text-slate-600">
+                  <span className="text-xs text-white/50">Current:</span>
+                  <span className="text-xs font-mono bg-white/[0.06] px-2 py-0.5 rounded text-white/70">
                     v{update.currentVersion}
                   </span>
                 </div>
                 <ChevronRight className="w-4 h-4 text-slate-300" />
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500">Latest:</span>
+                  <span className="text-xs text-white/50">Latest:</span>
                   <span className="text-xs font-mono bg-emerald-100 px-2 py-0.5 rounded text-emerald-700 font-semibold">
                     v{update.latestVersion}
                   </span>
@@ -1121,12 +1121,12 @@ export function WorkflowUpdateModal({
           <>
             {changelog && (
               <div className="space-y-2">
-                <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                <label className="text-sm font-semibold text-white/80 flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-amber-500" />
                   What's New
                 </label>
                 <div className="bg-amber-50/50 border border-amber-100 rounded-lg p-4">
-                  <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
+                  <p className="text-sm text-white/80 whitespace-pre-wrap leading-relaxed">
                     {changelog}
                   </p>
                 </div>
@@ -1136,16 +1136,16 @@ export function WorkflowUpdateModal({
             {/* Version History */}
             {versions.length > 1 && (
               <div className="space-y-2">
-                <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-                  <History className="w-4 h-4 text-slate-400" />
+                <label className="text-sm font-semibold text-white/80 flex items-center gap-2">
+                  <History className="w-4 h-4 text-white/40" />
                   Version History
                 </label>
-                <div className="bg-slate-50 rounded-lg border border-slate-200 p-3 max-h-40 overflow-y-auto">
+                <div className="bg-white/[0.06] rounded-lg border border-white/[0.08] p-3 max-h-40 overflow-y-auto">
                   {versions.slice(0, 6).map((v, i) => (
-                    <div key={v.version + i} className={`flex items-center justify-between py-2 ${i > 0 ? 'border-t border-slate-100' : ''}`}>
+                    <div key={v.version + i} className={`flex items-center justify-between py-2 ${i > 0 ? 'border-t border-white/[0.04]' : ''}`}>
                       <div className="flex items-center gap-3">
                         <span className={`text-xs font-mono font-semibold px-2 py-0.5 rounded ${v.current ? 'bg-emerald-100 text-emerald-700' :
-                          v.version === update.currentVersion ? 'bg-slate-200 text-slate-600' : 'text-slate-500'
+                          v.version === update.currentVersion ? 'bg-slate-200 text-white/70' : 'text-white/50'
                           }`}>
                           v{v.version}
                         </span>
@@ -1153,10 +1153,10 @@ export function WorkflowUpdateModal({
                           <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">Latest</span>
                         )}
                         {v.version === update.currentVersion && (
-                          <span className="text-[10px] bg-slate-300 text-slate-600 px-1.5 py-0.5 rounded font-medium">Your version</span>
+                          <span className="text-[10px] bg-slate-300 text-white/70 px-1.5 py-0.5 rounded font-medium">Your version</span>
                         )}
                       </div>
-                      <span className="text-xs text-slate-400">
+                      <span className="text-xs text-white/40">
                         {new Date(v.created_at).toLocaleDateString()}
                       </span>
                     </div>
@@ -1168,20 +1168,20 @@ export function WorkflowUpdateModal({
         )}
 
         {/* Warning */}
-        <div className="flex items-start gap-2 p-3 bg-slate-50 border border-slate-200 rounded-lg">
-          <Info className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
-          <p className="text-xs text-slate-500 leading-relaxed">
+        <div className="flex items-start gap-2 p-3 bg-white/[0.06] border border-white/[0.08] rounded-lg">
+          <Info className="w-4 h-4 text-white/40 mt-0.5 shrink-0" />
+          <p className="text-xs text-white/50 leading-relaxed">
             Updating will replace your current workflow with the latest version from the Marketplace.
             Any local changes you've made may be overwritten.
           </p>
         </div>
       </div>
 
-      <div className="p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl flex justify-end gap-3">
+      <div className="p-5 border-t border-white/[0.08] bg-white/[0.06] rounded-b-2xl flex justify-end gap-3">
         <button
           type="button"
           onClick={onClose}
-          className="px-4 py-2 rounded-lg text-sm border border-slate-300 text-slate-700 hover:bg-white hover:shadow-sm font-medium transition-all"
+          className="px-4 py-2 rounded-lg text-sm border border-white/[0.12] text-white/80 hover:bg-white/[0.04] hover:shadow-sm font-medium transition-all"
         >
           Not Now
         </button>
@@ -1207,7 +1207,7 @@ function WorkflowCard({ workflow, onClick }: { workflow: MarketplaceWorkflow; on
   return (
     <button
       onClick={onClick}
-      className="flex flex-col text-left bg-white border border-slate-200 rounded-xl p-4 hover:border-blue-300 hover:shadow-lg hover:shadow-blue-100/50 transition-all group h-full relative overflow-hidden"
+      className="flex flex-col text-left bg-white/[0.04] border border-white/[0.08] rounded-xl p-4 hover:border-blue-300 hover:shadow-lg hover:shadow-blue-100/50 transition-all group h-full relative overflow-hidden"
     >
       <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
         <div className="bg-blue-50 text-blue-600 rounded-lg p-1">
@@ -1221,10 +1221,10 @@ function WorkflowCard({ workflow, onClick }: { workflow: MarketplaceWorkflow; on
             {workflow.icon ? <span className="text-2xl">{workflow.icon}</span> : <Globe className="w-6 h-6" />}
           </div>
           <div>
-            <div className="font-semibold text-slate-900 line-clamp-1 group-hover:text-blue-600 transition-colors">
+            <div className="font-semibold text-white line-clamp-1 group-hover:text-blue-600 transition-colors">
               {workflow.name}
             </div>
-            <div className="text-xs text-slate-500 flex items-center gap-1.5 mt-0.5">
+            <div className="text-xs text-white/50 flex items-center gap-1.5 mt-0.5">
               <User className="w-3 h-3" />
               {workflow.publisher_name}
             </div>
@@ -1232,12 +1232,12 @@ function WorkflowCard({ workflow, onClick }: { workflow: MarketplaceWorkflow; on
         </div>
       </div>
 
-      <p className="text-sm text-slate-600 line-clamp-2 mb-4 flex-1 leading-relaxed">
+      <p className="text-sm text-white/70 line-clamp-2 mb-4 flex-1 leading-relaxed">
         {workflow.description}
       </p>
 
       <div className="flex items-center justify-between w-full pt-3 border-t border-slate-50 mt-auto">
-        <div className="flex items-center gap-3 text-xs text-slate-500 font-medium">
+        <div className="flex items-center gap-3 text-xs text-white/50 font-medium">
           {workflow.rating_avg > 0 && (
             <div className="flex items-center gap-1 text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md">
               <Star className="w-3 h-3 fill-current" />
@@ -1250,7 +1250,7 @@ function WorkflowCard({ workflow, onClick }: { workflow: MarketplaceWorkflow; on
           </div>
         </div>
         {workflow.category && (
-          <div className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 bg-slate-50 border border-slate-100 px-2 py-0.5 rounded-full">
+          <div className="text-[10px] uppercase tracking-wider font-semibold text-white/40 bg-white/[0.06] border border-white/[0.04] px-2 py-0.5 rounded-full">
             {workflow.category}
           </div>
         )}
@@ -1298,10 +1298,10 @@ function WorkflowDetail({
 
   return (
     <div className="flex flex-col h-full bg-slate-50/30">
-      <div className="p-6 border-b border-slate-200 bg-white sticky top-0 z-10 shadow-sm">
+      <div className="p-6 border-b border-white/[0.08] bg-white/[0.04] sticky top-0 z-10 shadow-sm">
         <button
           onClick={onBack}
-          className="text-xs font-medium text-slate-500 hover:text-slate-800 mb-6 flex items-center gap-1 transition-colors"
+          className="text-xs font-medium text-white/50 hover:text-white/90 mb-6 flex items-center gap-1 transition-colors"
         >
           <ChevronRight className="w-3 h-3 rotate-180" />
           Back to browsing
@@ -1313,9 +1313,9 @@ function WorkflowDetail({
               {workflow.icon ? <span className="text-4xl">{workflow.icon}</span> : <Globe className="w-10 h-10" />}
             </div>
             <div>
-              <h2 className="text-2xl font-bold text-slate-900 tracking-tight">{workflow.name}</h2>
-              <div className="flex items-center gap-5 mt-3 text-sm text-slate-600">
-                <div className="flex items-center gap-1.5 bg-slate-100 px-2.5 py-1 rounded-full text-xs font-medium">
+              <h2 className="text-2xl font-bold text-white tracking-tight">{workflow.name}</h2>
+              <div className="flex items-center gap-5 mt-3 text-sm text-white/70">
+                <div className="flex items-center gap-1.5 bg-white/[0.06] px-2.5 py-1 rounded-full text-xs font-medium">
                   <User className="w-3.5 h-3.5" />
                   {workflow.publisher_name}
                 </div>
@@ -1323,7 +1323,7 @@ function WorkflowDetail({
                   <Download className="w-3.5 h-3.5" />
                   {workflow.download_count} downloads
                 </div>
-                <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-white/40">
                   <Calendar className="w-3.5 h-3.5" />
                   {new Date(workflow.created_at).toLocaleDateString()}
                 </div>
@@ -1343,23 +1343,23 @@ function WorkflowDetail({
       </div>
 
       <div className="flex-1 overflow-y-auto p-8 space-y-8">
-        <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
-          <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider mb-4 flex items-center gap-2">
+        <div className="bg-white/[0.04] rounded-2xl p-6 border border-white/[0.08] shadow-sm">
+          <h3 className="text-sm font-semibold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
             <div className="w-1 h-4 bg-blue-500 rounded-full" />
             About this workflow
           </h3>
-          <p className="text-slate-600 leading-relaxed whitespace-pre-wrap text-sm">{workflow.description}</p>
+          <p className="text-white/70 leading-relaxed whitespace-pre-wrap text-sm">{workflow.description}</p>
         </div>
 
         <div className="grid grid-cols-2 gap-6">
-          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
-            <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider mb-4 flex items-center gap-2">
+          <div className="bg-white/[0.04] rounded-2xl p-6 border border-white/[0.08] shadow-sm">
+            <h3 className="text-sm font-semibold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
               <div className="w-1 h-4 bg-emerald-500 rounded-full" />
               Tags & Category
             </h3>
             <div className="flex flex-wrap gap-2">
               {workflow.category && (
-                <span className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-200">
+                <span className="px-3 py-1.5 rounded-lg bg-white/[0.06] text-white/80 text-xs font-semibold border border-white/[0.08]">
                   {workflow.category}
                 </span>
               )}
@@ -1372,8 +1372,8 @@ function WorkflowDetail({
             </div>
           </div>
 
-          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
-            <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider mb-4 flex items-center gap-2">
+          <div className="bg-white/[0.04] rounded-2xl p-6 border border-white/[0.08] shadow-sm">
+            <h3 className="text-sm font-semibold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
               <div className="w-1 h-4 bg-amber-500 rounded-full" />
               Rate this workflow
             </h3>
@@ -1397,7 +1397,7 @@ function WorkflowDetail({
                   </button>
                 ))}
               </div>
-              <div className="text-sm font-medium text-slate-500 bg-slate-50 px-3 py-1.5 rounded-lg">
+              <div className="text-sm font-medium text-white/50 bg-white/[0.06] px-3 py-1.5 rounded-lg">
                 {workflow.rating_count} ratings
               </div>
             </div>
@@ -1616,15 +1616,15 @@ export function MarketplaceBrowser({
         ) : (
           <div className="flex flex-col h-[70vh]">
             {/* Search Header */}
-            <div className="p-5 border-b border-slate-200 bg-white space-y-4 shrink-0">
+            <div className="p-5 border-b border-white/[0.08] bg-white/[0.04] space-y-4 shrink-0">
               <div className="flex gap-4">
                 <div className="relative flex-1">
-                  <Search className="absolute left-3 top-2.5 w-5 h-5 text-slate-400" />
+                  <Search className="absolute left-3 top-2.5 w-5 h-5 text-white/40" />
                   <input
                     type="text"
                     value={search}
                     onChange={e => setSearch(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm shadow-sm transition-all"
+                    className="w-full pl-10 pr-4 py-2.5 border border-white/[0.08] rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm shadow-sm transition-all"
                     placeholder="Search for workflows..."
                   />
                 </div>
@@ -1632,14 +1632,14 @@ export function MarketplaceBrowser({
                   <select
                     value={category}
                     onChange={e => setCategory(e.target.value)}
-                    className="px-4 py-2.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm bg-white shadow-sm min-w-[150px] appearance-none pr-8 cursor-pointer hover:bg-slate-50 transition-colors"
+                    className="px-4 py-2.5 border border-white/[0.08] rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm bg-white/[0.04] shadow-sm min-w-[150px] appearance-none pr-8 cursor-pointer hover:bg-white/[0.06] transition-colors"
                   >
                     <option value="all">All Categories</option>
                     {categories.map(c => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
-                  <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-white/40">
                     <ChevronRight className="w-4 h-4 rotate-90" />
                   </div>
                 </div>
@@ -1648,7 +1648,7 @@ export function MarketplaceBrowser({
               <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
                 <button
                   onClick={() => { setCategory('all'); setSearch(''); }}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium border whitespace-nowrap transition-all ${category === 'all' && !search ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-200 hover:text-indigo-600'}`}
+                  className={`px-3 py-1.5 rounded-full text-xs font-medium border whitespace-nowrap transition-all ${category === 'all' && !search ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white/[0.04] text-white/70 border-white/[0.08] hover:border-indigo-200 hover:text-indigo-600'}`}
                 >
                   All
                 </button>
@@ -1656,7 +1656,7 @@ export function MarketplaceBrowser({
                   <button
                     key={c.id}
                     onClick={() => setCategory(c.id)}
-                    className={`px-3 py-1.5 rounded-full text-xs font-medium border whitespace-nowrap transition-all ${category === c.id ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-200 hover:text-indigo-600'}`}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium border whitespace-nowrap transition-all ${category === c.id ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white/[0.04] text-white/70 border-white/[0.08] hover:border-indigo-200 hover:text-indigo-600'}`}
                   >
                     {c.name}
                   </button>
@@ -1667,7 +1667,7 @@ export function MarketplaceBrowser({
             {/* Results Grid */}
             <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
               {loading ? (
-                <div className="flex flex-col items-center justify-center h-full gap-3 text-slate-400">
+                <div className="flex flex-col items-center justify-center h-full gap-3 text-white/40">
                   <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
                   <span className="text-sm">{initialLoad ? 'Loading marketplace...' : 'Searching...'}</span>
                 </div>
@@ -1677,8 +1677,8 @@ export function MarketplaceBrowser({
                     <AlertCircle className="w-8 h-8 text-rose-400" />
                   </div>
                   <div className="text-center">
-                    <p className="font-medium text-slate-900">Something went wrong</p>
-                    <p className="text-sm text-slate-500 mt-1 max-w-xs">{error}</p>
+                    <p className="font-medium text-white">Something went wrong</p>
+                    <p className="text-sm text-white/50 mt-1 max-w-xs">{error}</p>
                     <button
                       onClick={loadFeatured}
 className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
@@ -1699,16 +1699,16 @@ className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium 
                 </div>
               ) : search.trim() || category !== 'all' ? (
                 // Search with no results
-                <div className="flex flex-col items-center justify-center h-full gap-4 text-slate-400">
-                  <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center">
+                <div className="flex flex-col items-center justify-center h-full gap-4 text-white/40">
+                  <div className="w-16 h-16 rounded-full bg-white/[0.06] flex items-center justify-center">
                     <Search className="w-8 h-8 text-slate-300" />
                   </div>
                   <div className="text-center">
-                    <p className="font-medium text-slate-900">No workflows found</p>
+                    <p className="font-medium text-white">No workflows found</p>
                     <p className="text-sm mt-1">Try different search terms or browse all categories</p>
                     <button
                       onClick={() => { setSearch(''); setCategory('all'); }}
-                      className="mt-4 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-white hover:shadow-sm transition-all"
+                      className="mt-4 px-4 py-2 border border-white/[0.12] text-white/80 rounded-lg text-sm font-medium hover:bg-white/[0.04] hover:shadow-sm transition-all"
                     >
                       Clear filters
                     </button>
@@ -1721,8 +1721,8 @@ className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium 
                     <Rocket className="w-12 h-12 text-indigo-500" />
                   </div>
                   <div>
-                    <h3 className="text-xl font-bold text-slate-900 mb-2">The marketplace is waiting for you!</h3>
-                    <p className="text-sm text-slate-600 max-w-md leading-relaxed">
+                    <h3 className="text-xl font-bold text-white mb-2">The marketplace is waiting for you!</h3>
+                    <p className="text-sm text-white/70 max-w-md leading-relaxed">
                       Be the first to share your workflows with the community.
                       Create powerful automations and help others save time.
                     </p>

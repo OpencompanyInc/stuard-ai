@@ -33,19 +33,19 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
       // Fallback: call IPC directly
       try {
         (window as any).desktopAPI?.toggleSidebarExpanded?.();
-      } catch {}
+      } catch { }
     }
   };
 
   return (
     <div className={clsx(
       "w-full h-full flex flex-col overflow-hidden rounded-2xl",
-      translucentMode 
-        ? "bg-theme-card/80 backdrop-blur-2xl" 
+      translucentMode
+        ? "bg-theme-card/80 backdrop-blur-2xl"
         : "bg-theme-bg"
     )}>
       {/* Header with drag region and tabs */}
-      <div 
+      <div
         className="flex items-center justify-between px-2 py-2 border-b border-theme/5 shrink-0"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
@@ -86,7 +86,7 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
           >
             {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
-          
+
           {/* Close button */}
           <button
             onClick={onClose}
@@ -110,8 +110,8 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
           />
         )}
         {activeTab === 'canvas' && (
-          <CanvasPanel 
-            className="w-full h-full" 
+          <CanvasPanel
+            className="w-full h-full"
             selectedDocumentId={selectedItem?.type === 'canvas' ? selectedItem.id : undefined}
             onSelectedDocumentHandled={selectedItem?.type === 'canvas' ? onSelectedItemHandled : undefined}
           />
@@ -140,7 +140,7 @@ const TabButton: React.FC<TabButtonProps> = ({ icon: Icon, label, isActive, onCl
     className={clsx(
       "flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] font-semibold transition-all",
       isActive
-        ? "bg-primary/20 text-primary"
+        ? "bg-primary/20 text-white"
         : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
     )}
   >
