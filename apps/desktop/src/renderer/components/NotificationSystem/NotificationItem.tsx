@@ -239,16 +239,31 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                                         rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
                                         components={{
                                             p: ({ node, ...props }) => <p {...props} className="m-0 mb-1.5 last:mb-0" />,
+                                            strong: ({ node, ...props }) => <strong {...props} className="font-bold text-gray-900" />,
+                                            em: ({ node, ...props }) => <em {...props} className="italic" />,
+                                            h1: ({ node, ...props }) => <h1 {...props} className="text-[14px] font-bold text-gray-900 mt-2 mb-1" />,
+                                            h2: ({ node, ...props }) => <h2 {...props} className="text-[13px] font-bold text-gray-900 mt-2 mb-1" />,
+                                            h3: ({ node, ...props }) => <h3 {...props} className="text-[12.5px] font-semibold text-gray-800 mt-1.5 mb-0.5" />,
+                                            blockquote: ({ node, ...props }) => (
+                                                <blockquote {...props} className="border-l-2 border-gray-300 pl-2.5 my-1.5 text-gray-500 italic" />
+                                            ),
+                                            hr: ({ node, ...props }) => <hr {...props} className="border-gray-200 my-2" />,
                                             ul: ({ node, ...props }) => <ul {...props} className="m-0 ml-4 list-disc" />,
                                             ol: ({ node, ...props }) => <ol {...props} className="m-0 ml-4 list-decimal" />,
+                                            li: ({ node, ...props }) => <li {...props} className="mb-0.5" />,
+                                            pre: ({ node, children, ...props }) => (
+                                                <pre {...props} className="my-1.5 p-2.5 rounded-lg bg-slate-50 border border-slate-200 overflow-x-auto text-[11px] leading-relaxed">
+                                                    {children}
+                                                </pre>
+                                            ),
                                             code: ({ node, inline, className, children, ...props }: any) => {
                                                 return inline ? (
-                                                    <code className="bg-slate-100 text-slate-800 px-[6px] py-[2px] rounded-md text-[85%] font-mono font-medium border border-slate-200 shadow-sm align-middle" {...props}>
+                                                    <code className="bg-slate-100 text-slate-800 px-[5px] py-[1px] rounded text-[85%] font-mono font-medium border border-slate-200" {...props}>
                                                         {children}
                                                     </code>
                                                 ) : (
                                                     <code className={clsx(
-                                                        'block p-3 rounded-lg bg-white border border-slate-200 shadow-sm text-[12px] text-slate-800 overflow-x-auto font-mono whitespace-pre tab-4 leading-[1.7]',
+                                                        'block text-[11px] text-slate-800 font-mono whitespace-pre leading-[1.6]',
                                                         className
                                                     )} {...props}>
                                                         {children}
@@ -260,8 +275,27 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                                                     {...props}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
-                                                    className="text-blue-600 hover:underline"
+                                                    className="text-blue-600 hover:underline underline-offset-2"
                                                 />
+                                            ),
+                                            img: ({ node, ...props }) => (
+                                                <img
+                                                    {...props}
+                                                    className="max-w-full h-auto rounded-md my-1.5 border border-gray-200"
+                                                    loading="lazy"
+                                                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                                                />
+                                            ),
+                                            table: ({ node, ...props }) => (
+                                                <div className="overflow-x-auto my-1.5">
+                                                    <table {...props} className="w-full text-[11px] border-collapse" />
+                                                </div>
+                                            ),
+                                            th: ({ node, ...props }) => (
+                                                <th {...props} className="text-left font-semibold text-gray-800 px-2 py-1 border-b border-gray-300 bg-gray-50" />
+                                            ),
+                                            td: ({ node, ...props }) => (
+                                                <td {...props} className="px-2 py-1 border-b border-gray-100 text-gray-600" />
                                             ),
                                         }}
                                     >
