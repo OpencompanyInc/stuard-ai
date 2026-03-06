@@ -323,6 +323,16 @@ export default function App() {
     try { (window as any).desktopAPI?.broadcastTheme?.({ themeMode, themeDarkShade, themeLightShade, themeText }); } catch { }
   }, [themeMode, themeDarkShade, themeLightShade, themeText]);
 
+  // Listen for permission responses from the notification overlay window
+  useEffect(() => {
+    const unsub = (window as any).desktopAPI?.onPermissionResponse?.((data: { id: string; allow: boolean }) => {
+      if (!data?.id) return;
+      respondToApproval(data.id, data.allow);
+      setApprovalPrompt((curr) => (curr && curr.id === data.id ? null : curr));
+    });
+    return () => { try { unsub?.(); } catch {} };
+  }, [respondToApproval]);
+
   // Open onboarding wizard window when not complete, hide overlay to show only wizard
   useEffect(() => {
     if (!onboardingComplete) {
@@ -503,12 +513,30 @@ export default function App() {
             const tool = String(d.tool || '');
             const args = (d.args && typeof d.args === 'object') ? d.args : undefined;
             const description = typeof d.description === 'string' ? d.description : undefined;
-            if (id && tool) setApprovalPrompt({ id, tool, args, description });
-            try { (window as any).desktopAPI?.notify?.('Permission required', 'The assistant needs your approval.'); } catch { }
+            if (id && tool) {
+              setApprovalPrompt({ id, tool, args, description });
+              // Send rich permission notification so users can approve from the notification overlay
+              try {
+                const notifWin = (window as any).desktopAPI;
+                notifWin?.notify?.({
+                  title: 'Permission Required',
+                  message: description || `Stuard wants to use **${tool.replace(/_/g, ' ')}**`,
+                  variant: 'warning',
+                  position: 'top-right',
+                  duration: 0,
+                  dismissible: false,
+                  sound: true,
+                  id: `permission-${id}`,
+                  permissionRequest: { id, tool, args, description },
+                });
+              } catch { }
+            }
           }
           if (status === 'completed') {
             const id = String(d.id || '');
             setApprovalPrompt((curr) => (curr && curr.id === id ? null : curr));
+            // Dismiss the permission notification if it exists
+            try { (window as any).desktopAPI?.notify?.({ id: `permission-${id}`, title: '', duration: 1, dismissible: true }); } catch { }
           }
 
           // Canvas Actions
@@ -1290,10 +1318,14 @@ export default function App() {
                     onAllow={() => {
                       respondToApproval(approvalPrompt.id, true);
                       setApprovalPrompt(null);
+                      // Dismiss the notification overlay version
+                      try { (window as any).desktopAPI?.notify?.({ id: `permission-${approvalPrompt.id}`, title: '', duration: 1, dismissible: true }); } catch { }
                     }}
                     onDeny={() => {
                       respondToApproval(approvalPrompt.id, false);
                       setApprovalPrompt(null);
+                      // Dismiss the notification overlay version
+                      try { (window as any).desktopAPI?.notify?.({ id: `permission-${approvalPrompt.id}`, title: '', duration: 1, dismissible: true }); } catch { }
                     }}
                   />
                 )}

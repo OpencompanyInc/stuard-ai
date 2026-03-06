@@ -155,12 +155,11 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
         const base = 'px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-150 active:scale-[0.97]';
         switch (variant) {
             case 'primary':
-                return clsx(base, 'text-white shadow-sm hover:opacity-90')
-                    + ` bg-[${config.accentColor}]`;
+                return { className: clsx(base, 'text-white shadow-sm hover:opacity-90'), style: { backgroundColor: config.accentColor } };
             case 'danger':
-                return clsx(base, 'bg-red-500 text-white hover:bg-red-600 shadow-sm');
+                return { className: clsx(base, 'bg-red-500 text-white hover:bg-red-600 shadow-sm'), style: undefined };
             default:
-                return clsx(base, 'bg-gray-100 text-gray-700 hover:bg-gray-200');
+                return { className: clsx(base, 'bg-gray-100 text-gray-700 hover:bg-gray-200'), style: undefined };
         }
     };
 
@@ -332,18 +331,22 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                         {/* Action buttons */}
                         {notification.actions && notification.actions.length > 0 && (
                             <div className="mt-2.5 flex items-center gap-2 flex-wrap">
-                                {notification.actions.map((action, index) => (
-                                    <button
-                                        key={index}
-                                        onClick={() => {
-                                            action.onClick();
-                                            handleDismiss();
-                                        }}
-                                        className={getButtonStyles(action.variant)}
-                                    >
-                                        {action.label}
-                                    </button>
-                                ))}
+                                {notification.actions.map((action, index) => {
+                                    const btnStyles = getButtonStyles(action.variant);
+                                    return (
+                                        <button
+                                            key={index}
+                                            onClick={() => {
+                                                action.onClick();
+                                                handleDismiss();
+                                            }}
+                                            className={btnStyles.className}
+                                            style={btnStyles.style}
+                                        >
+                                            {action.label}
+                                        </button>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>

@@ -517,5 +517,19 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     return () => { try { ipcRenderer.off('proactive-checkin', handler); } catch { } };
   },
   proactiveReply: (payload: { wakeUpId: string; text: string }) => ipcRenderer.invoke('proactive:reply', payload),
+
+  // Permission approval via notification window
+  onPermissionRequest: (cb: (data: { id: string; tool: string; args?: Record<string, any>; description?: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('permission:request', handler);
+    return () => { try { ipcRenderer.off('permission:request', handler); } catch { } };
+  },
+  respondToPermission: (id: string, allow: boolean) => ipcRenderer.send('permission:respond', { id, allow }),
+  onPermissionResponse: (cb: (data: { id: string; allow: boolean }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('permission:response', handler);
+    return () => { try { ipcRenderer.off('permission:response', handler); } catch { } };
+  },
+
   setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => ipcRenderer.send('window:ignore-mouse-events', ignore, options),
 });

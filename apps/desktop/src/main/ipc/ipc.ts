@@ -432,6 +432,16 @@ export function setupIpc() {
     }
   });
 
+  // Permission approval relay: notification window → main overlay window
+  ipcMain.on('permission:respond', (_event, payload: { id: string; allow: boolean }) => {
+    // Broadcast to all windows so the main overlay (which holds the WS) picks it up
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) {
+        try { w.webContents.send('permission:response', payload); } catch { }
+      }
+    }
+  });
+
   ipcMain.on('window:ignore-mouse-events', (event, ignore, options) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     win?.setIgnoreMouseEvents(ignore, options);

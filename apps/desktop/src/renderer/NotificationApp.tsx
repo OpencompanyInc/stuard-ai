@@ -7,7 +7,60 @@ const NotificationListener = () => {
 
     useEffect(() => {
         // Listen for show-notification events from Main process
-        const removeListener = (window as any).desktopAPI?.onShowNotification?.((config: NotificationConfig) => {
+        const removeListener = (window as any).desktopAPI?.onShowNotification?.((config: NotificationConfig & { permissionRequest?: any }) => {
+            // If this is a permission request, inject Accept/Reject actions
+            if (config.permissionRequest) {
+                const { id, tool, args, description } = config.permissionRequest;
+                const toolLabel = tool.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+
+                // Build a short summary of the args
+                let argsSummary = '';
+                if (args && typeof args === 'object') {
+                    const importantKeys = ['command', 'path', 'code', 'query', 'file', 'content', 'to', 'subject'];
+                    for (const key of importantKeys) {
+                        if (args[key]) {
+                            const val = String(args[key]);
+                            argsSummary = val.length > 80 ? val.slice(0, 80) + '...' : val;
+                            break;
+                        }
+                    }
+                    if (!argsSummary) {
+                        const firstKey = Object.keys(args)[0];
+                        if (firstKey) {
+                            const val = String(args[firstKey]);
+                            argsSummary = val.length > 80 ? val.slice(0, 80) + '...' : val;
+                        }
+                    }
+                }
+
+                const message = [
+                    description || `Stuard wants to use **${toolLabel}**`,
+                    argsSummary ? `\n\`${argsSummary}\`` : '',
+                ].join('');
+
+                show({
+                    ...config,
+                    message,
+                    actions: [
+                        {
+                            label: 'Deny',
+                            variant: 'secondary',
+                            onClick: () => {
+                                (window as any).desktopAPI?.respondToPermission?.(id, false);
+                            },
+                        },
+                        {
+                            label: 'Allow',
+                            variant: 'primary',
+                            onClick: () => {
+                                (window as any).desktopAPI?.respondToPermission?.(id, true);
+                            },
+                        },
+                    ],
+                });
+                return;
+            }
+
             show(config);
         });
 
