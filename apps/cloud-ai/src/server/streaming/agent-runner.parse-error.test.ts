@@ -30,6 +30,34 @@ vi.mock('../../utils/logger', () => {
   };
 });
 
+vi.mock('../../agents/skill-agent', () => {
+  return {
+    getSkillAgent: vi.fn(),
+    SKILL_SYSTEM_PROMPT: '',
+    clearSessionSkill: vi.fn(),
+    setSessionSkill: vi.fn(),
+  };
+});
+
+vi.mock('../../router/model-router', () => {
+  return {
+    routeModel: vi.fn(),
+    ModelChoice: {},
+  };
+});
+
+vi.mock('../../tools/bridge', () => {
+  return {
+    withClientBridge: vi.fn((_ws: any, fn: any) => fn()),
+  };
+});
+
+vi.mock('../../utils/usage', () => {
+  return {
+    normalizeUsage: vi.fn((u: any) => u),
+  };
+});
+
 describe('runAgent tool-call JSON parse failure handling', () => {
   beforeEach(() => {
     getStuardAgentMock.mockReset();
