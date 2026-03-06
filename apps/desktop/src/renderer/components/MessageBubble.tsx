@@ -63,6 +63,11 @@ const HIDDEN_TOOL_NAMES = new Set([
   'knowledge_get_identity',
   // Planner internal tools
   'planner_list_items',
+  // Internal meta-tools (invisible to user)
+  'get_tool_schema',
+  'search_tools',
+  // ask_user renders inline prompt, not a tool pill
+  'ask_user',
   // GenUI display tools (rendered as UI, don't need pill)
   ...GENUI_TOOL_NAMES,
 ]);
@@ -75,8 +80,12 @@ const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool }) => {
   const isError = status === 'error';
   const [showDetails, setShowDetails] = useState(false);
 
+  // execute_tool is a wrapper — show the actual tool being executed
+  const resolvedToolName = tool.tool === 'execute_tool' && tool.args?.tool_name
+    ? String(tool.args.tool_name)
+    : tool.tool;
   // Use description from tool if available, otherwise humanize tool name
-  const displayText = tool.description || humanizeToolName(tool.tool);
+  const displayText = tool.description || humanizeToolName(resolvedToolName);
 
   // Filter out internal IDs from display data
   const filterInternalIds = (obj: any): any => {
@@ -94,30 +103,43 @@ const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool }) => {
   // Format result for display
   const formatResult = (result: any): React.ReactNode => {
     if (!result) return <span className="text-gray-500 italic">No result</span>;
+
+    // Extract file paths first — show them prominently with actions
+    const filePaths = extractFilePaths(result);
+
     const filtered = filterInternalIds(result);
-    if (!filtered) return <span className="text-green-600">✓ Success</span>;
+    if (!filtered && filePaths.length === 0) return <span className="text-green-600">✓ Success</span>;
 
     // Handle common result patterns
-    if (filtered.ok === true && Object.keys(filtered).length === 1) {
-      return <span className="text-green-600">✓ Success</span>;
-    }
-    if (filtered.error) {
+    if (filtered?.error) {
       return <span className="text-red-600">Error: {String(filtered.error)}</span>;
     }
 
-    // Show simplified result
     return (
-      <div className="flex flex-wrap gap-1 items-center">
-        {Object.entries(filtered).slice(0, 5).map(([key, value]) => (
-          <div key={key} className="flex items-center gap-1 bg-green-50 border border-green-200 rounded px-2 py-1">
-            <span className="font-medium text-green-800 text-[10px]">{key}:</span>
-            <span className="text-green-700 text-[10px] max-w-[200px] truncate">
-              {typeof value === 'string' ? value : JSON.stringify(value)}
-            </span>
+      <div className="space-y-1">
+        {filePaths.length > 0 && (
+          <div className="flex flex-col gap-0.5">
+            {filePaths.map((fp) => <FilePathActions key={fp} filePath={fp} />)}
           </div>
-        ))}
-        {Object.keys(filtered).length > 5 && (
-          <span className="text-gray-500 text-[10px]">+{Object.keys(filtered).length - 5} more</span>
+        )}
+        {filtered && !(filtered.ok === true && Object.keys(filtered).length === 1 && filePaths.length > 0) && (
+          <div className="flex flex-wrap gap-1 items-center">
+            {Object.entries(filtered).slice(0, 5).map(([key, value]) => {
+              // Skip keys whose values are file paths (already shown above)
+              if (isFilePath(value)) return null;
+              return (
+                <div key={key} className="flex items-center gap-1 bg-green-50 border border-green-200 rounded px-2 py-1">
+                  <span className="font-medium text-green-800 text-[10px]">{key}:</span>
+                  <span className="text-green-700 text-[10px] max-w-[200px] truncate">
+                    {typeof value === 'string' ? value : JSON.stringify(value)}
+                  </span>
+                </div>
+              );
+            })}
+            {Object.keys(filtered).length > 5 && (
+              <span className="text-gray-500 text-[10px]">+{Object.keys(filtered).length - 5} more</span>
+            )}
+          </div>
         )}
       </div>
     );
@@ -552,6 +574,11 @@ const GENUI_COMPONENT_MAP: Record<string, string> = {
   'integrations': 'connect_integration',
   'connect': 'connect_integration',
   'integration_connect': 'connect_integration',
+  // Forms / Wizards
+  'form': 'show_form',
+  'wizard': 'show_form',
+  'survey': 'show_form',
+  'form_wizard': 'show_form',
 };
 
 function extractContentSegments(inputText: string): ContentSegment[] {
@@ -881,6 +908,98 @@ function formatDuration(seconds: number): string {
   return `${mins}m ${secs}s`;
 }
 
+// Detect file paths in tool results and render copy/open actions
+const FILE_PATH_RE = /^([a-zA-Z]:[/\\]|\/(?:tmp|var|home|Users)\/).+\.\w{1,5}$/;
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']);
+const AUDIO_EXTS = new Set(['mp3', 'wav', 'ogg', 'flac', 'aac', 'opus', 'm4a']);
+
+function getFileExt(p: string): string {
+  return (p.match(/\.([a-zA-Z0-9]+)$/)?.[1] || '').toLowerCase();
+}
+
+function isFilePath(v: unknown): v is string {
+  return typeof v === 'string' && FILE_PATH_RE.test(v.trim());
+}
+
+/** Extract all file paths from a tool result (flat or nested in arrays/objects) */
+function extractFilePaths(result: any): string[] {
+  const paths: string[] = [];
+  if (!result || typeof result !== 'object') return paths;
+
+  const walk = (obj: any) => {
+    if (!obj || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) { obj.forEach(walk); return; }
+    for (const [key, val] of Object.entries(obj)) {
+      if (isFilePath(val)) paths.push(val);
+      else if (typeof val === 'object' && val) walk(val);
+    }
+  };
+  walk(result);
+  return [...new Set(paths)];
+}
+
+const FilePathActions: React.FC<{ filePath: string }> = ({ filePath }) => {
+  const [copied, setCopied] = React.useState(false);
+  const ext = getFileExt(filePath);
+  const isImage = IMAGE_EXTS.has(ext);
+  const isAudio = AUDIO_EXTS.has(ext);
+  const fileName = filePath.split(/[/\\]/).pop() || filePath;
+
+  const copyPath = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(filePath);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const openFile = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try { (window as any).desktopAPI?.openPath?.(filePath); } catch {}
+  };
+
+  const revealInFolder = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try { (window as any).desktopAPI?.showItemInFolder?.(filePath); } catch {}
+  };
+
+  return (
+    <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-md px-2 py-1.5 my-0.5 group/fp">
+      <span className="text-[10px] text-gray-500 shrink-0">
+        {isImage ? '🖼' : isAudio ? '🔊' : '📄'}
+      </span>
+      <span className="text-[10px] font-medium text-gray-700 truncate max-w-[200px]" title={filePath}>
+        {fileName}
+      </span>
+      <div className="flex items-center gap-0.5 ml-auto shrink-0">
+        <button
+          onClick={openFile}
+          className="p-0.5 rounded hover:bg-gray-200 transition-colors"
+          title="Open file"
+        >
+          <ExternalLink className="w-3 h-3 text-gray-500 hover:text-gray-700" />
+        </button>
+        <button
+          onClick={revealInFolder}
+          className="p-0.5 rounded hover:bg-gray-200 transition-colors"
+          title="Show in folder"
+        >
+          <Folder className="w-3 h-3 text-gray-500 hover:text-gray-700" />
+        </button>
+        <button
+          onClick={copyPath}
+          className="p-0.5 rounded hover:bg-gray-200 transition-colors"
+          title="Copy path"
+        >
+          {copied
+            ? <Check className="w-3 h-3 text-green-600" />
+            : <Copy className="w-3 h-3 text-gray-500 hover:text-gray-700" />
+          }
+        </button>
+      </div>
+    </div>
+  );
+};
+
 // Humanize tool name - removes underscores, capitalizes words, makes it readable
 function humanizeToolName(tool: string): string {
   return tool
@@ -1098,10 +1217,10 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
         </div>
       );
     },
-        code: ({ className, children, ...props }: any) => {
-          // Inline code
-          return <code className="bg-slate-100 border border-slate-200 text-slate-800 rounded-md px-[6px] py-[2px] font-mono text-[0.85em] font-medium align-middle" {...props}>{children}</code>;
-        },
+    code: ({ className, children, ...props }: any) => {
+      // Inline code
+      return <code className="bg-slate-100 border border-slate-200 text-slate-800 rounded-md px-[6px] py-[2px] font-mono text-[0.85em] font-medium align-middle" {...props}>{children}</code>;
+    },
     table: (props: any) => (
       <div className="overflow-x-auto my-3 rounded-xl border border-theme/20 shadow-sm">
         <table className="min-w-full divide-y divide-theme/15 text-sm" {...props} />
@@ -1579,13 +1698,13 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
             compact
               ? "w-full max-w-full bg-transparent px-4 py-3 text-theme-fg"
               : clsx(
-                  "rounded-2xl px-5 py-3.5",
-                  role === 'user'
-                    ? (isEditing
-                      ? "bg-primary text-primary-fg border-primary shadow-primary/5 ml-auto w-full max-w-[85%] font-semibold"
-                      : "bg-primary text-primary-fg border-primary shadow-primary/5 ml-auto w-fit max-w-[85%] min-w-[56px] font-semibold")
-                    : "bg-gray-100 text-gray-900 mr-auto w-fit max-w-[85%] font-medium"
-                )
+                "rounded-2xl px-5 py-3.5",
+                role === 'user'
+                  ? (isEditing
+                    ? "bg-primary text-primary-fg border-primary shadow-primary/5 ml-auto w-full max-w-[85%] font-semibold"
+                    : "bg-primary text-primary-fg border-primary shadow-primary/5 ml-auto w-fit max-w-[85%] min-w-[56px] font-semibold")
+                  : "bg-gray-100 text-gray-900 mr-auto w-fit max-w-[85%] font-medium"
+              )
           )}>
             {/* Edit mode for user messages */}
             {role === 'user' && isEditing ? (
@@ -1618,93 +1737,93 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                 </div>
               </div>
             ) : (
-            <div
-              className="select-text whitespace-pre-wrap break-words"
-              aria-live={role === 'assistant' && isStreaming ? "polite" : "off"}
-            >
-              {segments.length === 0 ? (
-                <ReactMarkdown
-                  remarkPlugins={[remarkMath, remarkGfm]}
-                  rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
-                  urlTransform={(url) => url}
-                  components={markdownComponents}
-                >
-                  {normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(text)))}
-                </ReactMarkdown>
-              ) : (
-                segments.map((seg, idx) => {
-                  if (seg.kind === 'genui') {
-                    const isCompleted = genUIResults[seg.id] !== undefined;
-                    return (
-                      <div key={`genui-${idx}`} className="my-3">
-                        <GenUIErrorBoundary componentName={seg.component}>
-                          <GenUIContainer
-                            toolName={seg.component}
-                            args={stripMarkdownFromArgs(seg.args)}
-                            isCompleted={isCompleted}
-                            result={genUIResults[seg.id]}
-                            onResult={(result) => {
-                              // Update local state
-                              setGenUIResults(prev => ({ ...prev, [seg.id]: result }));
-                              // For syntax-based GenUI, trigger a follow-up message to the AI
-                              if (onGenUIResponse) {
-                                onGenUIResponse(seg.component, result);
-                              }
-                            }}
-                          />
-                        </GenUIErrorBoundary>
-                      </div>
-                    );
-                  }
-                  if (seg.kind === 'genui_loading') {
-                    return (
-                      <div key={`genui-loading-${idx}`} className="my-3 p-5 border border-theme/20 rounded-xl bg-theme-hover/30 animate-pulse shadow-inner">
-                        <div className="flex items-center gap-3">
-                          <Loader2 className="w-4 h-4 text-primary animate-spin" />
-                          <span className="text-[11px] font-black uppercase tracking-widest text-theme-muted">
-                            {seg.title || humanizeToolName(seg.component) || 'Loading component...'}
-                          </span>
+              <div
+                className="select-text whitespace-pre-wrap break-words"
+                aria-live={role === 'assistant' && isStreaming ? "polite" : "off"}
+              >
+                {segments.length === 0 ? (
+                  <ReactMarkdown
+                    remarkPlugins={[remarkMath, remarkGfm]}
+                    rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
+                    urlTransform={(url) => url}
+                    components={markdownComponents}
+                  >
+                    {normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(text)))}
+                  </ReactMarkdown>
+                ) : (
+                  segments.map((seg, idx) => {
+                    if (seg.kind === 'genui') {
+                      const isCompleted = genUIResults[seg.id] !== undefined;
+                      return (
+                        <div key={`genui-${idx}`} className="my-3">
+                          <GenUIErrorBoundary componentName={seg.component}>
+                            <GenUIContainer
+                              toolName={seg.component}
+                              args={stripMarkdownFromArgs(seg.args)}
+                              isCompleted={isCompleted}
+                              result={genUIResults[seg.id]}
+                              onResult={(result) => {
+                                // Update local state
+                                setGenUIResults(prev => ({ ...prev, [seg.id]: result }));
+                                // For syntax-based GenUI, trigger a follow-up message to the AI
+                                if (onGenUIResponse) {
+                                  onGenUIResponse(seg.component, result);
+                                }
+                              }}
+                            />
+                          </GenUIErrorBoundary>
                         </div>
-                        <div className="mt-4 space-y-2">
-                          <div className="h-3 bg-theme-muted/20 rounded-full w-3/4" />
-                          <div className="h-3 bg-theme-muted/10 rounded-full w-1/2" />
+                      );
+                    }
+                    if (seg.kind === 'genui_loading') {
+                      return (
+                        <div key={`genui-loading-${idx}`} className="my-3 p-5 border border-theme/20 rounded-xl bg-theme-hover/30 animate-pulse shadow-inner">
+                          <div className="flex items-center gap-3">
+                            <Loader2 className="w-4 h-4 text-primary animate-spin" />
+                            <span className="text-[11px] font-black uppercase tracking-widest text-theme-muted">
+                              {seg.title || humanizeToolName(seg.component) || 'Loading component...'}
+                            </span>
+                          </div>
+                          <div className="mt-4 space-y-2">
+                            <div className="h-3 bg-theme-muted/20 rounded-full w-3/4" />
+                            <div className="h-3 bg-theme-muted/10 rounded-full w-1/2" />
+                          </div>
                         </div>
-                      </div>
-                    );
-                  }
-                  if (seg.kind === 'image') {
-                    return <InlineImage key={`img-${idx}`} src={seg.src} />;
-                  }
-                  if (seg.kind === 'video') {
-                    return <InlineVideo key={`vid-${idx}`} src={seg.src} />;
-                  }
-                  if (seg.kind === 'audio') {
-                    return <AudioPlayer key={`aud-${idx}`} src={toMediaSrc(seg.src)} />;
-                  }
-                  if (seg.kind === 'youtube') {
-                    return <YouTubeEmbed key={`yt-${idx}`} videoId={seg.videoId} url={seg.url} />;
-                  }
-                  if (seg.kind === 'link_preview') {
-                    return <LinkPreview key={`lp-${idx}`} url={seg.url} />;
-                  }
-                  if (seg.kind === 'text') {
-                    return (
-                      <ReactMarkdown
-                        key={`md-${idx}`}
-                        remarkPlugins={[remarkMath, remarkGfm]}
-                        rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
-                        urlTransform={(url) => url}
-                        components={markdownComponents}
-                      >
-                        {seg.value}
-                      </ReactMarkdown>
-                    );
-                  }
+                      );
+                    }
+                    if (seg.kind === 'image') {
+                      return <InlineImage key={`img-${idx}`} src={seg.src} />;
+                    }
+                    if (seg.kind === 'video') {
+                      return <InlineVideo key={`vid-${idx}`} src={seg.src} />;
+                    }
+                    if (seg.kind === 'audio') {
+                      return <AudioPlayer key={`aud-${idx}`} src={toMediaSrc(seg.src)} />;
+                    }
+                    if (seg.kind === 'youtube') {
+                      return <YouTubeEmbed key={`yt-${idx}`} videoId={seg.videoId} url={seg.url} />;
+                    }
+                    if (seg.kind === 'link_preview') {
+                      return <LinkPreview key={`lp-${idx}`} url={seg.url} />;
+                    }
+                    if (seg.kind === 'text') {
+                      return (
+                        <ReactMarkdown
+                          key={`md-${idx}`}
+                          remarkPlugins={[remarkMath, remarkGfm]}
+                          rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
+                          urlTransform={(url) => url}
+                          components={markdownComponents}
+                        >
+                          {seg.value}
+                        </ReactMarkdown>
+                      );
+                    }
 
-                  return null;
-                })
-              )}
-            </div>
+                    return null;
+                  })
+                )}
+              </div>
             )}
             {/* Copy + Revert buttons for assistant messages */}
             {role === 'assistant' && !isStreaming && (

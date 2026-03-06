@@ -135,6 +135,11 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 logger.info("stop_requested cancelled=%d", cancelled_count)
                 await session.send_json({"type": "stopped", "success": cancelled_count > 0})
 
+            elif kind == "auth":
+                # Desktop client sends auth after handshake for webhook registration.
+                # Local agent has no auth – just acknowledge silently.
+                await session.send_json({"type": "auth_result", "ok": True, "queued": 0})
+
             else:
                 logger.warning("unknown_message_type %s", kind)
                 await session.send_json({"type": "error", "message": f"unknown type: {kind}"})

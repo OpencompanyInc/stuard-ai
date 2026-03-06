@@ -46,7 +46,7 @@ export async function handleDiscordRoutes(req: IncomingMessage, res: ServerRespo
 
       let connected = false;
       let acc: any = null;
-      try { acc = await getExternalAccount(userId, 'discord', profileLabel); connected = !!acc; } catch {}
+      try { acc = await getExternalAccount(userId, 'discord', profileLabel); connected = !!acc; } catch { }
       const body = JSON.stringify({
         ok: true,
         connected,
@@ -131,7 +131,7 @@ export async function handleDiscordRoutes(req: IncomingMessage, res: ServerRespo
         return true;
       }
       let decoded = '';
-      try { decoded = Buffer.from(stateRaw, 'base64url').toString('utf8'); } catch {}
+      try { decoded = Buffer.from(stateRaw, 'base64url').toString('utf8'); } catch { }
       const parts = decoded.split(':');
 
       // Format: discord:{userId}:{nonce}:{profileLabel}:{sig} (5 parts)
@@ -194,7 +194,7 @@ export async function handleDiscordRoutes(req: IncomingMessage, res: ServerRespo
         });
         const user: any = await (async () => { try { return await userRes.json(); } catch { return null; } })();
         accountEmail = String(user?.email || user?.username || '') || null;
-      } catch {}
+      } catch { }
 
       try {
         await upsertExternalAccount({

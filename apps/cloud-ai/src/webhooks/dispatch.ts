@@ -12,8 +12,11 @@ import type { Webhook, WebhookEvent } from './core';
 const activeConnections = new Map<string, Set<WebSocket>>();
 
 /**
- * Register a client connection for webhook delivery
+ * Register a client connection for webhook delivery.
+ * Safe to call multiple times for the same WS — idempotent.
  */
+const registeredCloseHandlers = new WeakSet<WebSocket>();
+
 export function registerWebhookClient(userId: string, ws: WebSocket) {
   let connections = activeConnections.get(userId);
   if (!connections) {
@@ -21,14 +24,17 @@ export function registerWebhookClient(userId: string, ws: WebSocket) {
     activeConnections.set(userId, connections);
   }
   connections.add(ws);
-  
-  // Remove on close
-  ws.on('close', () => {
-    connections?.delete(ws);
-    if (connections?.size === 0) {
-      activeConnections.delete(userId);
-    }
-  });
+
+  // Only add the close handler once per WebSocket to avoid listener accumulation
+  if (!registeredCloseHandlers.has(ws)) {
+    registeredCloseHandlers.add(ws);
+    ws.on('close', () => {
+      connections?.delete(ws);
+      if (connections?.size === 0) {
+        activeConnections.delete(userId);
+      }
+    });
+  }
 }
 
 /**
@@ -37,7 +43,7 @@ export function registerWebhookClient(userId: string, ws: WebSocket) {
 export function hasActiveConnection(userId: string): boolean {
   const connections = activeConnections.get(userId);
   if (!connections || connections.size === 0) return false;
-  
+
   // Check if any connection is actually open
   for (const ws of connections) {
     if (ws.readyState === WebSocket.OPEN) {
@@ -53,7 +59,7 @@ export function hasActiveConnection(userId: string): boolean {
 function getActiveWs(userId: string): WebSocket | null {
   const connections = activeConnections.get(userId);
   if (!connections) return null;
-  
+
   for (const ws of connections) {
     if (ws.readyState === WebSocket.OPEN) {
       return ws;
@@ -107,7 +113,7 @@ export async function dispatchWebhook(
     },
     data,
   };
-  
+
   // Add workflow info if configured
   if (webhook.target_workflow_id) {
     payload.workflow = {
@@ -115,36 +121,36 @@ export async function dispatchWebhook(
       triggerId: webhook.target_workflow_trigger_id || undefined,
     };
   }
-  
+
   // Try to deliver immediately
   const ws = getActiveWs(userId);
   if (ws) {
     try {
       ws.send(JSON.stringify(payload));
       writeLog('webhook_delivered', { userId, webhookId: webhook.id, eventId });
-      
+
       await updateWebhookEvent(eventId, {
         status: 'delivered',
         delivered_to: 'desktop',
         delivered_at: new Date().toISOString(),
       });
-      
+
       return { delivered: true, queued: false };
     } catch (e: any) {
       writeLog('webhook_delivery_failed', { userId, webhookId: webhook.id, error: e?.message });
     }
   }
-  
+
   // Queue for later delivery
   writeLog('webhook_queued', { userId, webhookId: webhook.id, eventId });
-  
+
   await queueWebhookDelivery(userId, webhook.id, eventId, payload);
-  
+
   await updateWebhookEvent(eventId, {
     status: 'processing',
     delivered_to: 'queued',
   });
-  
+
   return { delivered: false, queued: true };
 }
 
@@ -171,7 +177,7 @@ export async function dispatchProviderWebhook(
     workflow: workflowId ? { id: workflowId, triggerId: triggerId || undefined } : undefined,
     data,
   };
-  
+
   const ws = getActiveWs(userId);
   if (ws) {
     try {
@@ -182,11 +188,11 @@ export async function dispatchProviderWebhook(
       writeLog('provider_webhook_delivery_failed', { userId, provider, error: e?.message });
     }
   }
-  
+
   // Queue for later
   await queueWebhookDelivery(userId, null, eventId, payload);
   writeLog('provider_webhook_queued', { userId, provider, eventType, eventId });
-  
+
   return { delivered: false, queued: true };
 }
 
@@ -195,13 +201,13 @@ export async function dispatchProviderWebhook(
  */
 export async function deliverQueuedWebhooks(userId: string, ws: WebSocket): Promise<number> {
   const { getPendingDeliveries, markDelivered } = await import('./core');
-  
+
   const pending = await getPendingDeliveries(userId);
   let delivered = 0;
-  
+
   for (const item of pending) {
     if (ws.readyState !== WebSocket.OPEN) break;
-    
+
     try {
       ws.send(JSON.stringify(item.payload));
       await markDelivered(item.id);
@@ -210,11 +216,11 @@ export async function deliverQueuedWebhooks(userId: string, ws: WebSocket): Prom
       break;
     }
   }
-  
+
   if (delivered > 0) {
     writeLog('queued_webhooks_delivered', { userId, count: delivered });
   }
-  
+
   return delivered;
 }
 
@@ -239,17 +245,17 @@ export async function processIncomingWebhook(
 }> {
   // Find the webhook by slug
   const webhook = await getWebhookBySlug(slug);
-  
+
   if (!webhook) {
     writeLog('webhook_not_found', { slug });
     return { ok: false, error: 'webhook_not_found' };
   }
-  
+
   if (!webhook.is_active) {
     writeLog('webhook_inactive', { slug, webhookId: webhook.id });
     return { ok: false, error: 'webhook_inactive' };
   }
-  
+
   // Check IP whitelist
   if (webhook.allowed_ips && webhook.allowed_ips.length > 0 && sourceIp) {
     if (!webhook.allowed_ips.includes(sourceIp)) {
@@ -257,21 +263,21 @@ export async function processIncomingWebhook(
       return { ok: false, error: 'ip_not_allowed' };
     }
   }
-  
+
   // Verify signature if required
   if (webhook.require_signature) {
     if (!signature) {
       writeLog('webhook_missing_signature', { slug });
       return { ok: false, error: 'signature_required' };
     }
-    
+
     const { verifyHmacSignature } = await import('./core');
     if (!verifyHmacSignature(rawBody, signature, webhook.secret)) {
       writeLog('webhook_invalid_signature', { slug });
       return { ok: false, error: 'invalid_signature' };
     }
   }
-  
+
   // Log the event
   const eventId = await logWebhookEvent({
     webhook_id: webhook.id,
@@ -286,12 +292,12 @@ export async function processIncomingWebhook(
     status: 'received',
     delivery_attempts: 0,
   });
-  
+
   if (!eventId) {
     writeLog('webhook_log_failed', { slug });
     return { ok: false, error: 'logging_failed' };
   }
-  
+
   // Dispatch to user
   const result = await dispatchWebhook(
     webhook.user_id,
@@ -300,7 +306,7 @@ export async function processIncomingWebhook(
     body,
     'webhook.cloud'
   );
-  
+
   return {
     ok: true,
     webhook,

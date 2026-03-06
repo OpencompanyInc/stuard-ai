@@ -270,6 +270,7 @@ label: 'Text to Speech',
     items: [
       { k: 'cloud.tool', t: 'analyze_current_screen', label: 'Analyze Screen', icon: Eye, args: {} },
       { k: 'cloud.tool', t: 'analyze_image', label: 'Analyze Image', icon: Eye, args: { path: '' } },
+      { k: 'cloud.tool', t: 'generate_image', label: 'Generate Image', icon: Sparkles, args: { prompt: '', model: 'gpt-image-1', size: 'auto', aspect_ratio: 'auto', quality: 'auto', n: 1, format: 'png', background: 'auto' } },
       { k: 'cloud.tool', t: 'analyze_media', label: 'Transcribe Audio', icon: Mic, args: { sources: [{ path: '' }], task: 'transcribe' } },
       { k: 'cloud.tool', t: 'cloud_ai_vision', label: 'AI Vision (JSON)', icon: Eye, args: { prompt: '', imagePath: '' } },
     ],

@@ -2,7 +2,6 @@
  * BooleanToggle - Modern toggle with Yes/No button options
  */
 import React from 'react';
-import { Check, X } from 'lucide-react';
 
 interface BooleanToggleProps {
   value: boolean;
@@ -13,27 +12,23 @@ interface BooleanToggleProps {
 
 export function BooleanToggle({ value, onChange, yesLabel = 'Yes', noLabel = 'No' }: BooleanToggleProps) {
   return (
-    <div className="flex items-center gap-1 p-1 bg-white/[0.06] rounded-xl w-fit">
+    <div className="flex items-stretch w-full rounded-2xl border border-white/[0.08] bg-white/[0.02] p-1 gap-1">
       <button
         onClick={() => onChange(true)}
-        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-          value 
-            ? 'bg-emerald-500/100 text-white shadow-sm' 
-            : 'text-white/50 hover:text-white/80 hover:bg-slate-200'
-        }`}
+        className={`flex-1 flex items-center justify-center py-3 text-sm font-medium transition-all rounded-xl ${value
+            ? 'bg-white text-black shadow'
+            : 'text-white/60 hover:text-white hover:bg-white/[0.04]'
+          }`}
       >
-        <Check className={`w-4 h-4 ${value ? 'opacity-100' : 'opacity-40'}`} />
         {yesLabel}
       </button>
       <button
         onClick={() => onChange(false)}
-        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-          !value 
-            ? 'bg-slate-600 text-white shadow-sm' 
-            : 'text-white/50 hover:text-white/80 hover:bg-slate-200'
-        }`}
+        className={`flex-1 flex items-center justify-center py-3 text-sm font-medium transition-all rounded-xl ${!value
+            ? 'bg-white text-black shadow'
+            : 'text-white/60 hover:text-white hover:bg-white/[0.04]'
+          }`}
       >
-        <X className={`w-4 h-4 ${!value ? 'opacity-100' : 'opacity-40'}`} />
         {noLabel}
       </button>
     </div>

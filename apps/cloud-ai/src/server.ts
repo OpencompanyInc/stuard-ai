@@ -28,6 +28,7 @@ import { registerWebhookClient, deliverQueuedWebhooks } from './webhooks/dispatc
 import { getOrCreateQueryEmbedding } from './utils/shared-embedding';
 import { getRankedToolNames } from './utils/tool-ranking';
 import { normalizeUsage } from './utils/usage';
+import { hasProactiveModeMarker, mergeForcedToolNames } from './tools/proactive-task-tools';
 
 import { getAgentForQuery } from './agents/stuard/index';
 
@@ -297,6 +298,7 @@ function abortAndCleanup(ws: WebSocket, requestId: string | undefined) {
 // Note: Server-side queuing removed - client handles per-tab queuing via requestId routing
 
 wss.on('connection', (ws: WebSocket, req: any) => {
+  let connectToken = '';
   try {
     const rawUrl = String(req?.url || '');
     const qIndex = rawUrl.indexOf('?');
@@ -305,13 +307,44 @@ wss.on('connection', (ws: WebSocket, req: any) => {
       const parts = search.split('&');
       for (const part of parts) {
         const [k, v] = part.split('=');
-        if (decodeURIComponent(k || '') === 'client') {
-          (ws as any).__clientType = decodeURIComponent(v || '');
-          break;
+        const key = decodeURIComponent(k || '');
+        const val = decodeURIComponent(v || '');
+        if (key === 'client') {
+          (ws as any).__clientType = val;
+        } else if (key === 'token') {
+          connectToken = val;
         }
       }
     }
   } catch { }
+
+  // If an auth token was provided in the URL, verify it and immediately
+  // register this connection for webhook delivery (Gmail Pub/Sub, Drive, etc.)
+  // so triggers work even before the user sends a chat message.
+  if (connectToken) {
+    (async () => {
+      try {
+        const authResult = await verifyAccessToken(connectToken);
+        if (authResult?.success && authResult.userId) {
+          (ws as any).__userId = authResult.userId;
+          registerWebhookClient(authResult.userId, ws);
+          // Also register as a desktop connection for VM relay
+          try {
+            const ct = (ws as any).__clientType || 'desktop';
+            if (ct !== 'vm-agent') registerConnection(ws, authResult.userId, 'desktop');
+          } catch { }
+          // Deliver any queued webhooks that accumulated while offline
+          const delivered = await deliverQueuedWebhooks(authResult.userId, ws);
+          if (delivered > 0) {
+            writeLog('connect_queued_webhooks_delivered', { userId: authResult.userId, count: delivered });
+          }
+          writeLog('ws_auth_on_connect', { userId: authResult.userId });
+        }
+      } catch (e) {
+        writeLog('ws_auth_on_connect_failed', { error: String((e as any)?.message || e) });
+      }
+    })();
+  }
 
   send(ws, { type: 'handshake', origin: 'cloud-ai', message: 'connected' });
   conversations.set(ws, []);
@@ -357,6 +390,34 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           const connInfo = getConnectionInfo(ws);
           if (connInfo?.userId) handleDesktopRelayResult(connInfo.userId, msg);
         } catch { }
+      }
+      return;
+    }
+    // Handle explicit auth message: client sends {type:'auth', accessToken:'...'} to register
+    // for webhook delivery (Gmail Pub/Sub, Drive triggers, etc.) without needing to send a chat.
+    if (kind === 'auth') {
+      const token = String(msg?.accessToken || '').trim();
+      if (!token) {
+        send(ws, { type: 'auth_result', ok: false, error: 'missing_token' });
+        return;
+      }
+      try {
+        const authResult = await verifyAccessToken(token);
+        if (authResult?.success && authResult.userId) {
+          (ws as any).__userId = authResult.userId;
+          registerWebhookClient(authResult.userId, ws);
+          try {
+            const ct = (ws as any).__clientType || 'desktop';
+            if (ct !== 'vm-agent') registerConnection(ws, authResult.userId, 'desktop');
+          } catch { }
+          const delivered = await deliverQueuedWebhooks(authResult.userId, ws);
+          send(ws, { type: 'auth_result', ok: true, queued: delivered });
+          writeLog('ws_auth_message', { userId: authResult.userId, delivered });
+        } else {
+          send(ws, { type: 'auth_result', ok: false, error: 'invalid_token' });
+        }
+      } catch (e) {
+        send(ws, { type: 'auth_result', ok: false, error: String((e as any)?.message || 'auth_failed') });
       }
       return;
     }
@@ -898,6 +959,10 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                 console.warn('[tool-rank] Ranking failed, using static Tier 1:', e.message);
               }
             }
+          }
+
+          if (hasProactiveModeMarker((msg as any)?.hiddenContext)) {
+            rankedToolNames = mergeForcedToolNames(rankedToolNames);
           }
 
           agent = await getAgentForQuery(routedTier, prompt, undefined, enabledIntegrations, mcpTools, chosenModelId, rankedToolNames);
@@ -1979,6 +2044,84 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               },
               requestId
             );
+          }
+          return;
+        }
+
+        // Check for tool hallucination errors (model tried to call a non-existent tool)
+        const isToolHallucination = (() => {
+          if (!e || typeof e !== 'object') return null;
+          const eName = String((e as any).name || '');
+          const eMsg = String((e as any).message || '');
+          if (eName === 'AI_NoSuchToolError' || eName === 'NoSuchToolError' || eMsg.includes('is not a tool')) {
+            return { toolName: (e as any).toolName || eMsg.match(/[Tt]ool\s+['"`](\w+)['"`]/)?.[1] || 'unknown', message: eMsg };
+          }
+          if (eName === 'AI_InvalidToolArgumentsError' || eName === 'InvalidToolArgumentsError') {
+            return { toolName: (e as any).toolName || 'unknown', message: eMsg };
+          }
+          const lower = eMsg.toLowerCase();
+          if ((lower.includes('tool') && (lower.includes('not found') || lower.includes('does not exist') || lower.includes('unknown tool'))) || lower.includes('no such tool')) {
+            return { toolName: (e as any).toolName || eMsg.match(/[Tt]ool\s+['"`](\w+)['"`]/)?.[1] || 'unknown', message: eMsg };
+          }
+          return null;
+        })();
+
+        if (isToolHallucination) {
+          const toolCallId = `tc-hallucinated-${Date.now()}`;
+          console.warn(`[cloud-ai] Tool hallucination: "${isToolHallucination.toolName}"`);
+
+          try {
+            writeLog('tool_hallucination', { toolName: isToolHallucination.toolName, message: isToolHallucination.message });
+          } catch { }
+
+          // Show the hallucinated tool as an error pill in the UI
+          try {
+            send(ws, {
+              type: 'progress',
+              event: 'tool_event',
+              data: {
+                tool: isToolHallucination.toolName,
+                status: 'called',
+                toolCallId,
+                args: {},
+                description: `${isToolHallucination.toolName} (hallucinated)`,
+              }
+            }, requestId);
+            send(ws, {
+              type: 'progress',
+              event: 'tool_event',
+              data: {
+                tool: isToolHallucination.toolName,
+                status: 'error',
+                toolCallId,
+                error: `Tool "${isToolHallucination.toolName}" does not exist. The model tried to call a non-existent tool.`,
+              }
+            }, requestId);
+          } catch { }
+
+          const errorText = aggregatedText
+            ? aggregatedText.trim() + `\n\nI attempted to use a tool called "${isToolHallucination.toolName}" that doesn't exist. Please try rephrasing your request.`
+            : `I attempted to use a tool called "${isToolHallucination.toolName}" that doesn't exist. Please try rephrasing your request.`;
+
+          if (!didSendFinal) {
+            didSendFinal = true;
+            if (authUser && conversationId) {
+              try {
+                const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
+                const metadata = {
+                  mode: requestedMode, tier: routedTier, modelId: chosenModelId,
+                  toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
+                  streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+                  finishReason: 'error',
+                };
+                await addAssistantMessage(authUser.userId, conversationId, errorText, metadata);
+              } catch { }
+            }
+            send(ws, {
+              type: 'final',
+              origin: 'cloud-ai',
+              result: { text: errorText, steps: [], finishReason: 'error' },
+            }, requestId);
           }
           return;
         }

@@ -12,6 +12,7 @@ import { FileNavigatorOverlay } from './chat-view/FileNavigatorOverlay';
 import { SidebarTabsPanel } from './SidebarTabsPanel';
 import { TasksView, TaskSubTab } from './TasksView';
 import { SubagentDashboard } from './chat-view/SubagentDashboard';
+import { AskUserPrompt } from './chat-view/AskUserPrompt';
 import { useSubagentDashboard } from '../hooks/useSubagentDashboard';
 
 interface ChatViewProps {
@@ -86,6 +87,10 @@ interface ChatViewProps {
   // GenUI
   onSubmitToolOutput?: (id: string, result: any) => void;
   onGenUIResponse?: (component: string, result: any) => void;
+
+  // ask_user tool prompts
+  askUserPrompts?: Array<{ id: string; tool: string; args: any; status: string }>;
+  onAskUserRespond?: (toolCallId: string, result: any) => void;
 
   // Edit & Revert
   onEditMessage?: (messageId: string, newText: string) => void;
@@ -162,6 +167,8 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   onAddTab,
   onSubmitToolOutput,
   onGenUIResponse,
+  askUserPrompts = [],
+  onAskUserRespond,
   onEditMessage,
   onRevertFiles,
   pendingMemories = [],
@@ -528,6 +535,11 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               </div>
             </div>
 
+            {/* ask_user prompts */}
+            {askUserPrompts.filter(p => p.status === 'pending' && p.tool === 'ask_user').map(p => (
+              <AskUserPrompt key={p.id} prompt={p} onRespond={onAskUserRespond!} />
+            ))}
+
             {/* Bottom Card: Status & Input */}
             <ChatInputArea
               query={query}
@@ -701,6 +713,11 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                 )}
               </div>
             </div>
+
+            {/* ask_user prompts */}
+            {askUserPrompts.filter(p => p.status === 'pending' && p.tool === 'ask_user').map(p => (
+              <AskUserPrompt key={p.id} prompt={p} onRespond={onAskUserRespond!} />
+            ))}
 
             {/* Bottom Card: Status & Input */}
             <ChatInputArea

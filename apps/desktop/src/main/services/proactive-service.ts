@@ -33,6 +33,35 @@ interface ProactiveTask {
   updatedAt: string;
 }
 
+interface WakeUpStageEvent {
+  stage: string;
+  label: string;
+  progress: number;
+  detail?: string;
+  at: string;
+}
+
+interface WakeUpToolCall {
+  id: string;
+  tool: string;
+  status?: string;
+  description?: string;
+  args?: any;
+  result?: any;
+  error?: string;
+  startedAt: string;
+  updatedAt: string;
+}
+
+interface WakeUpActivityEvent {
+  id: string;
+  kind: 'lifecycle' | 'routing' | 'reasoning' | 'tool' | 'status';
+  event: string;
+  label: string;
+  detail?: string;
+  at: string;
+}
+
 interface WakeUpLog {
   id: string;
   startedAt: string;
@@ -41,6 +70,17 @@ interface WakeUpLog {
   contextUsed: string[];
   tasksProcessed: string[];
   agentMessage?: string;
+  executionTarget?: 'local' | 'cloud';
+  modelMode?: 'auto' | 'fast' | 'balanced' | 'smart';
+  modelId?: string;
+  timeoutMs?: number;
+  timedOut?: boolean;
+  failureReason?: string;
+  partialResponse?: string;
+  stageHistory?: WakeUpStageEvent[];
+  reasoningText?: string;
+  toolCalls?: WakeUpToolCall[];
+  activityEvents?: WakeUpActivityEvent[];
 }
 
 interface ProactiveData {
@@ -71,7 +111,17 @@ function loadData(): ProactiveData {
       return {
         config: { ...DEFAULT_CONFIG, ...raw.config },
         tasks: Array.isArray(raw.tasks) ? raw.tasks : [],
-        wakeUpLog: Array.isArray(raw.wakeUpLog) ? raw.wakeUpLog : [],
+        wakeUpLog: Array.isArray(raw.wakeUpLog)
+          ? raw.wakeUpLog.map((log: any) => ({
+            ...log,
+            contextUsed: Array.isArray(log?.contextUsed) ? log.contextUsed : [],
+            tasksProcessed: Array.isArray(log?.tasksProcessed) ? log.tasksProcessed : [],
+            stageHistory: Array.isArray(log?.stageHistory) ? log.stageHistory : [],
+            reasoningText: typeof log?.reasoningText === 'string' ? log.reasoningText : '',
+            toolCalls: Array.isArray(log?.toolCalls) ? log.toolCalls : [],
+            activityEvents: Array.isArray(log?.activityEvents) ? log.activityEvents : [],
+          }))
+          : [],
       };
     }
   } catch (e) {
@@ -191,6 +241,67 @@ export const proactiveService = {
     const idx = data.wakeUpLog.findIndex(l => l.id === logId);
     if (idx >= 0) {
       data.wakeUpLog[idx] = { ...data.wakeUpLog[idx], ...updates };
+      saveData(data);
+    }
+    return { ok: true };
+  },
+
+  appendWakeUpStage(logId: string, stage: WakeUpStageEvent): { ok: true } {
+    const data = loadData();
+    const idx = data.wakeUpLog.findIndex(l => l.id === logId);
+    if (idx >= 0) {
+      const history = Array.isArray(data.wakeUpLog[idx].stageHistory) ? data.wakeUpLog[idx].stageHistory : [];
+      data.wakeUpLog[idx] = {
+        ...data.wakeUpLog[idx],
+        stageHistory: [...history, stage],
+      };
+      saveData(data);
+    }
+    return { ok: true };
+  },
+
+  appendWakeUpReasoning(logId: string, chunk: string): { ok: true } {
+    if (!chunk) return { ok: true };
+    const data = loadData();
+    const idx = data.wakeUpLog.findIndex(l => l.id === logId);
+    if (idx >= 0) {
+      const current = typeof data.wakeUpLog[idx].reasoningText === 'string' ? data.wakeUpLog[idx].reasoningText : '';
+      data.wakeUpLog[idx] = {
+        ...data.wakeUpLog[idx],
+        reasoningText: current + chunk,
+      };
+      saveData(data);
+    }
+    return { ok: true };
+  },
+
+  upsertWakeUpToolCall(logId: string, toolCall: WakeUpToolCall): { ok: true } {
+    const data = loadData();
+    const idx = data.wakeUpLog.findIndex(l => l.id === logId);
+    if (idx >= 0) {
+      const current = Array.isArray(data.wakeUpLog[idx].toolCalls) ? data.wakeUpLog[idx].toolCalls : [];
+      const existingIdx = current.findIndex(call => call.id === toolCall.id);
+      const nextCalls = existingIdx >= 0
+        ? current.map((call, i) => i === existingIdx ? { ...call, ...toolCall, startedAt: call.startedAt || toolCall.startedAt } : call)
+        : [...current, toolCall];
+      data.wakeUpLog[idx] = {
+        ...data.wakeUpLog[idx],
+        toolCalls: nextCalls.slice(-50),
+      };
+      saveData(data);
+    }
+    return { ok: true };
+  },
+
+  appendWakeUpActivity(logId: string, activity: WakeUpActivityEvent): { ok: true } {
+    const data = loadData();
+    const idx = data.wakeUpLog.findIndex(l => l.id === logId);
+    if (idx >= 0) {
+      const current = Array.isArray(data.wakeUpLog[idx].activityEvents) ? data.wakeUpLog[idx].activityEvents : [];
+      data.wakeUpLog[idx] = {
+        ...data.wakeUpLog[idx],
+        activityEvents: [...current, activity].slice(-80),
+      };
       saveData(data);
     }
     return { ok: true };

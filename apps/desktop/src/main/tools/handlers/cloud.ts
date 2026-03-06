@@ -22,6 +22,11 @@ export async function execCloudTool(tool: string, args: any, ctx: RouterContext)
     if (tool === 'text_to_speech') {
       return execTextToSpeech(args, ctx);
     }
+
+    // Special handling for generate_image - cloud returns base64, we save locally
+    if (tool === 'generate_image') {
+      return execGenerateImage(args, ctx);
+    }
     
     const url = `${ctx.cloudAiUrl}${endpoint}`;
 
@@ -267,10 +272,11 @@ async function execAnalyzeMedia(args: any, ctx: RouterContext): Promise<any> {
       headers['Authorization'] = `Bearer ${ctx.accessToken}`;
     }
     
+    const model = args?.mode === 'detailed' ? 'gemini-3.1-pro-preview' : '';
     const resp = await net.fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ task, media: mediaParts }),
+      body: JSON.stringify({ task, media: mediaParts, model }),
     });
     
     if (!resp.ok) {
@@ -402,6 +408,99 @@ async function execTextToSpeech(args: any, ctx: RouterContext): Promise<any> {
   } catch (e: any) {
     ctx.logFn(`TTS error: ${e?.message}`);
     return { ok: false, error: String(e?.message || 'tts_failed') };
+  }
+}
+
+/**
+ * Special handler for generate_image - cloud generates image(s), we save locally
+ */
+async function execGenerateImage(args: any, ctx: RouterContext): Promise<any> {
+  try {
+    const prompt = String(args?.prompt || '').trim();
+    const model = args?.model || 'gpt-image-1';
+    const format = args?.format || 'png';
+
+    if (!prompt) {
+      return { ok: false, error: 'prompt_required' };
+    }
+
+    ctx.logFn(`Image Gen: "${prompt.slice(0, 60)}${prompt.length > 60 ? '...' : ''}" (model=${model})`);
+
+    // Call cloud to generate image
+    const url = `${ctx.cloudAiUrl}/tools/generate_image`;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (ctx.accessToken) {
+      headers['Authorization'] = `Bearer ${ctx.accessToken}`;
+    }
+
+    const resp = await net.fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(args),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, error: `cloud_error_${resp.status}: ${errText}` };
+    }
+
+    const cloudResult: any = await resp.json();
+    const result = cloudResult?.result || cloudResult;
+
+    if (!result?.ok || !result?.images?.length) {
+      return { ok: false, error: result?.error || 'no_images_generated' };
+    }
+
+    // Re-save images locally using _b64 from cloud, since cloud temp paths aren't accessible
+    const { randomUUID } = await import('crypto');
+    const { tmpdir } = await import('os');
+    const { join } = await import('path');
+    const { writeFile, mkdir } = await import('fs/promises');
+
+    const imgDir = join(tmpdir(), 'stuard-images');
+    try { await mkdir(imgDir, { recursive: true }); } catch {}
+
+    const savedImages: Array<{ filePath: string; format: string; sizeBytes?: number; revisedPrompt?: string }> = [];
+
+    for (const img of result.images) {
+      const imgFormat = img.format || format;
+      const ext = imgFormat === 'jpeg' ? 'jpg' : imgFormat;
+
+      if (img._b64) {
+        // Cloud provided base64 data — save locally
+        const fileName = `img_${randomUUID().slice(0, 8)}.${ext}`;
+        const filePath = join(imgDir, fileName);
+        const buffer = Buffer.from(img._b64, 'base64');
+        await writeFile(filePath, buffer);
+        savedImages.push({
+          filePath,
+          format: imgFormat,
+          sizeBytes: buffer.length,
+          revisedPrompt: img.revisedPrompt,
+        });
+        ctx.logFn(`Image Gen: Saved ${filePath} (${Math.round(buffer.length / 1024)}KB)`);
+      } else if (img.filePath) {
+        // Cloud already saved, path is directly usable (same-machine / VM scenario)
+        savedImages.push({
+          filePath: img.filePath,
+          format: imgFormat,
+          sizeBytes: img.sizeBytes,
+          revisedPrompt: img.revisedPrompt,
+        });
+        ctx.logFn(`Image Gen: Using ${img.filePath}`);
+      }
+    }
+
+    return {
+      ok: true,
+      images: savedImages,
+      model: result.model || model,
+      provider: result.provider,
+      prompt,
+    };
+  } catch (e: any) {
+    ctx.logFn(`Image Gen error: ${e?.message}`);
+    return { ok: false, error: String(e?.message || 'image_gen_failed') };
   }
 }
 

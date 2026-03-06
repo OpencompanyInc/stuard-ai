@@ -11,6 +11,7 @@ import * as redditTools from './reddit-tools';
 import * as youtubeTools from './youtube-tools';
 import * as marketplaceTools from './marketplace-tools';
 import * as ttsTools from './tts-tools';
+import { generate_image } from './image-gen';
 import * as feedbackTools from './feedback-tools';
 import * as webhookTools from './webhook-tools';
 import * as httpTools from './http-tools';
@@ -25,6 +26,7 @@ import { getSupabaseService } from '../supabase';
 import { registerTool, getToolRegistry, getToolCategories, getTool, type ToolLocation } from './tool-registry';
 import { execLocalTool, hasClientBridge } from './bridge';
 import { get_skill_info } from './skill-tools';
+import { ask_user } from './ask-user';
 
 // ─── Zod → JSON Schema helper (lightweight, no external dep) ─────────────
 function unwrapZodMeta(schema: any): { schema: any; optional: boolean; defaultValue?: any; nullable: boolean } {
@@ -336,6 +338,7 @@ registerTool(customUiTool, 'GUI');
 registerTool(updateCustomUiTool, 'GUI');
 registerTool(notifyTool, 'System');
 registerTool(logTool, 'Core');
+registerTool(ask_user, 'Core');
 
 // Device Tools
 Object.values(deviceTools).forEach(t => {
@@ -405,6 +408,7 @@ registerTool(get_skill_info, 'Core');
 // Integration Tools
 registerTool(analyzeMediaTool, 'AI');
 registerTool(aiInferenceTool, 'AI');
+registerTool(generate_image, 'AI');
 registerTool(web_search, 'Search');
 registerTool(scrape_url, 'Search');
 

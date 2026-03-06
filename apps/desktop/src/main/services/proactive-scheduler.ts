@@ -13,8 +13,11 @@
 import { Notification, BrowserWindow, desktopCapturer, net } from 'electron';
 import WebSocket from 'ws';
 import { proactiveService } from './proactive-service';
+import { buildLocalProactiveHiddenContext, buildLocalProactivePrompt, buildUserFacingProactiveMessage, executeAgentToolRequest, extractAgentTextFromWsMessage, extractAgentToolRequest } from './proactive-scheduler-utils';
 import { getNotificationWindow } from '../windows/window';
 import logger from '../utils/logger';
+import type { RouterContext } from '../tools/types';
+import { loadSkills } from '../skills';
 
 function getCloudAiHttpForTelnyx(): string {
   return String(
@@ -138,6 +141,8 @@ function ensureAgentWs(): Promise<WebSocket> {
 export type ProactiveStage =
   | 'initializing'
   | 'capturing-screen'
+  | 'capturing-system-audio'
+  | 'capturing-mic-audio'
   | 'gathering-context'
   | 'loading-tasks'
   | 'connecting'
@@ -151,16 +156,28 @@ interface StageInfo {
   progress: number;
 }
 
+interface StagePayload {
+  type: 'stage';
+  logId: string;
+  stage: ProactiveStage;
+  label: string;
+  progress: number;
+  detail?: string;
+  at: string;
+}
+
 const STAGE_META: Record<ProactiveStage, StageInfo> = {
-  'initializing':     { label: 'Initializing check-in...', progress: 5 },
-  'capturing-screen': { label: 'Capturing screenshot...',  progress: 15 },
-  'gathering-context':{ label: 'Gathering context...',     progress: 25 },
-  'loading-tasks':    { label: 'Loading queued tasks...',   progress: 35 },
-  'connecting':       { label: 'Connecting to agent...',    progress: 50 },
-  'thinking':         { label: 'Agent is thinking...',      progress: 65 },
-  'processing':       { label: 'Processing response...',    progress: 85 },
-  'complete':         { label: 'Check-in complete',         progress: 100 },
-  'failed':           { label: 'Check-in failed',           progress: 100 },
+  'initializing': { label: 'Initializing check-in...', progress: 5 },
+  'capturing-screen': { label: 'Capturing screenshot...', progress: 15 },
+  'capturing-system-audio': { label: 'Recording system audio...', progress: 20 },
+  'capturing-mic-audio': { label: 'Recording microphone...', progress: 23 },
+  'gathering-context': { label: 'Gathering context...', progress: 25 },
+  'loading-tasks': { label: 'Loading queued tasks...', progress: 35 },
+  'connecting': { label: 'Connecting to agent...', progress: 50 },
+  'thinking': { label: 'Agent is thinking...', progress: 65 },
+  'processing': { label: 'Processing response...', progress: 85 },
+  'complete': { label: 'Check-in complete', progress: 100 },
+  'failed': { label: 'Check-in failed', progress: 100 },
 };
 
 // ─── Notifications & Broadcasts ─────────────────────────────────────────────
@@ -177,7 +194,23 @@ function broadcastUpdate(payload: any) {
 
 function emitStage(logId: string, stage: ProactiveStage, detail?: string) {
   const meta = STAGE_META[stage];
-  const stagePayload = { type: 'stage' as const, logId, stage, label: meta.label, progress: meta.progress, detail };
+  const stagePayload: StagePayload = {
+    type: 'stage',
+    logId,
+    stage,
+    label: meta.label,
+    progress: meta.progress,
+    detail,
+    at: new Date().toISOString(),
+  };
+
+  proactiveService.appendWakeUpStage(logId, {
+    stage,
+    label: meta.label,
+    progress: meta.progress,
+    detail,
+    at: stagePayload.at,
+  });
 
   broadcastUpdate(stagePayload);
 
@@ -190,18 +223,19 @@ function emitStage(logId: string, stage: ProactiveStage, detail?: string) {
 // ─── Notification-based Check-in ────────────────────────────────────────────
 
 function sendCheckinNotification(wakeUpId: string, agentMessage: string, screenshotUsed: boolean, tasksCompleted: number): void {
+  const displayMessage = buildUserFacingProactiveMessage(agentMessage);
   const notifWin = getNotificationWindow();
   if (notifWin && !notifWin.isDestroyed()) {
     notifWin.webContents.send('proactive-checkin', {
       wakeUpId,
-      agentMessage,
+      agentMessage: displayMessage,
       screenshotUsed,
       tasksCompleted,
     });
   } else {
     try {
       if (Notification.isSupported()) {
-        new Notification({ title: 'Stuard - Check-in', body: agentMessage.slice(0, 200) || '' }).show();
+        new Notification({ title: 'Stuard - Check-in', body: displayMessage.slice(0, 200) || '' }).show();
       }
     } catch { }
   }
@@ -218,6 +252,28 @@ export async function handleProactiveReply(wakeUpId: string, text: string): Prom
     const modelSelection = buildModelSelection(config);
     let reply: string;
 
+    const { logs } = proactiveService.getWakeUpLog(50);
+    const prevLog = logs?.find(l => l.id === wakeUpId);
+    const prevAgentMessage = prevLog?.agentMessage || prevLog?.partialResponse || 'I just checked in with you.';
+
+    const cloudPrompt = `[PROACTIVE REPLY]
+Previous Check-in Message:
+"""
+${prevAgentMessage}
+"""
+
+User Reply:
+${text}
+
+Respond briefly, warmly, and helpfully.`;
+
+    const localHiddenContext = `[PROACTIVE REPLY] The user is replying to your proactive check-in. Be helpful, friendly, and concise. Return only the final user-facing reply. Do not expose reasoning or internal planning.
+
+Previous Check-in Message:
+"""
+${prevAgentMessage}
+"""`;
+
     if (config.executionTarget === 'cloud') {
       const result = await executeCloud(`${wakeUpId}_reply`, {
         config: {
@@ -225,9 +281,9 @@ export async function handleProactiveReply(wakeUpId: string, text: string): Prom
           modelMode: modelSelection.model,
           modelId: modelSelection.modelId || '',
         },
-        prompt: `[PROACTIVE REPLY]\nUser: ${text}\n\nRespond briefly, warmly, and helpfully.`,
+        prompt: cloudPrompt,
         context: {},
-        tasks: [],
+        tasks: proactiveService.getActiveTasks(),
       });
       reply = result.text;
     } else {
@@ -244,15 +300,33 @@ export async function handleProactiveReply(wakeUpId: string, text: string): Prom
 
         const cleanup = () => { clearTimeout(timeout); ws.off('message', onMessage); };
 
-        const onMessage = (raw: WebSocket.RawData) => {
+        const toolCtx: RouterContext = {
+          agentWsUrl: getAgentWsUrl(),
+          cloudAiUrl: getCloudAiUrl(),
+          accessToken: token || undefined,
+          logFn: (msg) => logger.info(`[proactive-scheduler reply] ${msg}`),
+        };
+
+        const onMessage = async (raw: WebSocket.RawData) => {
           if (resolved) return;
           try {
             const msg = JSON.parse(raw.toString('utf8'));
+
+            const toolRequest = extractAgentToolRequest(msg);
+            if (toolRequest) {
+              const { execTool } = await import('../tools');
+              const toolResult = await executeAgentToolRequest(toolRequest, toolCtx, execTool);
+              try {
+                ws.send(JSON.stringify(toolResult));
+              } catch { }
+              return;
+            }
+
             if (msg?.requestId !== replyId) return;
             if (msg?.type === 'progress' && msg?.data?.text) chunks.push(msg.data.text);
             if (msg?.type === 'final' || msg?.type === 'proactive_result') {
               resolved = true; cleanup();
-              resolve(msg?.message?.text || msg?.text || msg?.message || chunks.join('') || 'I got your message.');
+              resolve(extractAgentTextFromWsMessage(msg, chunks.join('') || 'I got your message.'));
             }
             if (msg?.type === 'error') {
               resolved = true; cleanup();
@@ -266,10 +340,11 @@ export async function handleProactiveReply(wakeUpId: string, text: string): Prom
           type: 'chat',
           requestId: replyId,
           text,
+          reasoningLevel: 'none',
           ...(modelSelection.model ? { model: modelSelection.model } : {}),
           ...(modelSelection.modelId ? { modelId: modelSelection.modelId } : {}),
           ...(token ? { auth: { accessToken: token } } : {}),
-          hiddenContext: '[PROACTIVE REPLY] The user is replying to your proactive check-in. Be helpful, friendly, and concise.',
+          hiddenContext: localHiddenContext,
         }));
       });
     }
@@ -313,22 +388,151 @@ function computeNextWakeUp(interval: string): string | null {
   return new Date(now + ms).toISOString();
 }
 
+function humanizeAgentToolName(tool: string): string {
+  return String(tool || 'tool')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim();
+}
+
+function sanitizeWakeUpValue(value: any, depth = 0): any {
+  if (value === null || value === undefined) return value;
+  if (depth >= 3) return '[truncated]';
+  if (typeof value === 'string') return value.length > 600 ? `${value.slice(0, 600)}…` : value;
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.slice(0, 12).map(item => sanitizeWakeUpValue(item, depth + 1));
+  if (typeof value === 'object') {
+    const entries = Object.entries(value).slice(0, 20);
+    return Object.fromEntries(entries.map(([k, v]) => [k, sanitizeWakeUpValue(v, depth + 1)]));
+  }
+  return String(value);
+}
+
+function summarizeWakeUpValue(value: any): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === 'string') return value.length > 180 ? `${value.slice(0, 180)}…` : value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.length > 0 ? `Array(${value.length})` : '[]';
+  if (typeof value === 'object') {
+    const entries = Object.entries(value).slice(0, 4);
+    if (entries.length === 0) return '{}';
+    return entries.map(([k, v]) => `${k}: ${summarizeWakeUpValue(v) ?? '…'}`).join(', ');
+  }
+  return String(value);
+}
+
+function appendAgentActivity(
+  logId: string,
+  kind: 'lifecycle' | 'routing' | 'reasoning' | 'tool' | 'status',
+  event: string,
+  label: string,
+  detail?: string,
+) {
+  const activity = {
+    id: `${event}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    kind,
+    event,
+    label,
+    detail,
+    at: new Date().toISOString(),
+  };
+  proactiveService.appendWakeUpActivity(logId, activity);
+  broadcastUpdate({ type: 'agent-activity', logId, activity });
+}
+
+function upsertAgentToolCall(logId: string, data: any) {
+  let tool = String(data?.tool || 'tool');
+  if (tool === 'execute_tool' && data?.args?.tool_name) {
+    tool = String(data.args.tool_name);
+  }
+
+  const status = typeof data?.status === 'string' ? data.status : undefined;
+  const toolCallId = String(data?.toolCallId || data?.id || `tc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
+  const now = new Date().toISOString();
+  const description = typeof data?.description === 'string' ? data.description : undefined;
+  const args = sanitizeWakeUpValue(data?.args);
+  const result = sanitizeWakeUpValue(data?.result);
+  const error = data?.error ? String(data.error) : undefined;
+
+  const toolCall = {
+    id: toolCallId,
+    tool,
+    status,
+    description,
+    args,
+    result,
+    error,
+    startedAt: now,
+    updatedAt: now,
+  };
+
+  proactiveService.upsertWakeUpToolCall(logId, toolCall);
+  broadcastUpdate({ type: 'agent-tool', logId, toolCall });
+
+  const normalizedStatus = String(status || '').toLowerCase();
+  if (normalizedStatus && !['delta', 'input_delta', 'input_stream_start', 'input_stream_end'].includes(normalizedStatus)) {
+    let detail = description || summarizeWakeUpValue(args) || summarizeWakeUpValue(result) || error;
+    if (normalizedStatus === 'completed' && !detail) detail = summarizeWakeUpValue(result);
+    if ((normalizedStatus === 'error' || normalizedStatus === 'failed') && error) detail = error;
+    appendAgentActivity(logId, 'tool', `tool_${normalizedStatus}`, `${humanizeAgentToolName(tool)} · ${normalizedStatus}`, detail);
+  }
+}
+
 // ─── Local Agent Execution ──────────────────────────────────────────────────
 
-async function executeLocal(logId: string, payload: any): Promise<string> {
+interface WakeUpExecutionResult {
+  text: string;
+  partialResponse?: string;
+  timedOut?: boolean;
+  failureReason?: string;
+  taskUpdates: Array<{ id: string; status: string; result?: string }>;
+  newTasks: Array<{ title: string; instructions?: string; status?: string }>;
+}
+
+async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutionResult> {
   const ws = await ensureAgentWs();
   const token = await getAuthToken();
   const modelSelection = buildModelSelection(payload?.config || {});
+  const toolCtx: RouterContext = {
+    agentWsUrl: getAgentWsUrl(),
+    cloudAiUrl: getCloudAiUrl(),
+    accessToken: token || undefined,
+    logFn: (msg) => logger.info(`[proactive-scheduler] ${msg}`),
+  };
 
-  return new Promise<string>((resolve) => {
+  return new Promise<WakeUpExecutionResult>((resolve) => {
     let resolved = false;
     const chunks: string[] = [];
+    let lastPublished = '';
+    let lastPublishedAt = 0;
+
+    const publishPartialResponse = (force = false) => {
+      const partialResponse = chunks.join('').trim();
+      if (!partialResponse) return;
+      const now = Date.now();
+      if (!force && partialResponse === lastPublished) return;
+      if (!force && partialResponse.length < lastPublished.length + 80 && now - lastPublishedAt < 1200) return;
+      lastPublished = partialResponse;
+      lastPublishedAt = now;
+      proactiveService.updateWakeUpLog(logId, { partialResponse });
+      broadcastUpdate({ type: 'agent-progress', logId, partialResponse });
+    };
 
     const timeout = setTimeout(() => {
       if (!resolved) {
         resolved = true;
+        publishPartialResponse(true);
         cleanup();
-        resolve(chunks.join('') || 'Agent did not respond within the time limit.');
+        const partialResponse = chunks.join('').trim();
+        const timeoutReason = `Agent did not respond within ${Math.round(AGENT_RESPONSE_TIMEOUT_MS / 1000)} seconds.`;
+        resolve({
+          text: partialResponse || timeoutReason,
+          partialResponse: partialResponse || undefined,
+          timedOut: true,
+          failureReason: timeoutReason,
+          taskUpdates: [],
+          newTasks: [],
+        });
       }
     }, AGENT_RESPONSE_TIMEOUT_MS);
 
@@ -337,28 +541,91 @@ async function executeLocal(logId: string, payload: any): Promise<string> {
       ws.off('message', onMessage);
     };
 
-    const onMessage = (raw: WebSocket.RawData) => {
+    const onMessage = async (raw: WebSocket.RawData) => {
       if (resolved) return;
       try {
         const msg = JSON.parse(raw.toString('utf8'));
+        const toolRequest = extractAgentToolRequest(msg);
+        if (toolRequest) {
+          const { execTool } = await import('../tools');
+          const toolResult = await executeAgentToolRequest(toolRequest, toolCtx, execTool);
+          try {
+            ws.send(JSON.stringify(toolResult));
+          } catch { }
+          return;
+        }
 
-        if (msg?.type === 'progress' && msg?.data?.text && msg?.requestId === logId) {
-          chunks.push(msg.data.text);
+        const matchesRequest = msg?.requestId === logId || msg?.id === logId;
+        if (!matchesRequest) return;
+
+        if (msg?.type === 'progress') {
+          const event = String(msg?.event || '').trim();
+          const data = msg?.data || {};
+
+          if (event === 'delta' && typeof data?.text === 'string') {
+            chunks.push(data.text);
+            publishPartialResponse();
+          } else if (event === 'tool_event') {
+            upsertAgentToolCall(logId, data);
+          } else if (event === 'reasoning_start') {
+            appendAgentActivity(logId, 'reasoning', 'reasoning_start', 'Reasoning started');
+          } else if (event === 'reasoning' && typeof data?.text === 'string' && data.text) {
+            proactiveService.appendWakeUpReasoning(logId, data.text);
+            broadcastUpdate({ type: 'agent-reasoning', logId, textChunk: data.text });
+          } else if (event === 'reasoning_end') {
+            appendAgentActivity(logId, 'reasoning', 'reasoning_end', 'Reasoning finished');
+          } else if (event === 'routing') {
+            appendAgentActivity(logId, 'routing', 'routing', 'Model routed', summarizeWakeUpValue(data?.model || data));
+          } else if (event === 'model') {
+            appendAgentActivity(logId, 'routing', 'model', 'Model selected', summarizeWakeUpValue(data?.modelId || data?.tier || data));
+          } else if (event === 'start') {
+            appendAgentActivity(logId, 'lifecycle', 'start', 'Agent started');
+          } else if (event === 'queued') {
+            appendAgentActivity(logId, 'status', 'queued', 'Queued', summarizeWakeUpValue(data));
+          } else if (event) {
+            appendAgentActivity(logId, 'status', event, event.replace(/_/g, ' '), summarizeWakeUpValue(data));
+          }
         }
-        if (msg?.type === 'final' && msg?.requestId === logId) {
+
+        if (msg?.type === 'final') {
           resolved = true;
+          if (typeof msg?.result?.reasoning === 'string' && msg.result.reasoning) {
+            proactiveService.appendWakeUpReasoning(logId, msg.result.reasoning);
+          }
+          if (typeof msg?.result?.thinking === 'string' && msg.result.thinking) {
+            proactiveService.appendWakeUpReasoning(logId, msg.result.thinking);
+          }
+          publishPartialResponse(true);
           cleanup();
-          resolve(msg?.message?.text || msg?.text || chunks.join('') || '');
+          resolve({
+            text: extractAgentTextFromWsMessage(msg, chunks.join('') || ''),
+            partialResponse: chunks.join('').trim() || undefined,
+            taskUpdates: [],
+            newTasks: [],
+          });
         }
-        if (msg?.type === 'proactive_result' && msg?.id === logId) {
+        if (msg?.type === 'proactive_result') {
           resolved = true;
+          publishPartialResponse(true);
           cleanup();
-          resolve(msg.message || msg.result || '');
+          resolve({
+            text: extractAgentTextFromWsMessage(msg, chunks.join('') || ''),
+            partialResponse: chunks.join('').trim() || undefined,
+            taskUpdates: [],
+            newTasks: [],
+          });
         }
-        if (msg?.type === 'error' && msg?.requestId === logId) {
+        if (msg?.type === 'error') {
           resolved = true;
+          publishPartialResponse(true);
           cleanup();
-          resolve(`Error: ${msg.message || 'Unknown error'}`);
+          resolve({
+            text: `Error: ${msg.message || 'Unknown error'}`,
+            partialResponse: chunks.join('').trim() || undefined,
+            failureReason: String(msg.message || 'Unknown error'),
+            taskUpdates: [],
+            newTasks: [],
+          });
         }
       } catch { }
     };
@@ -368,44 +635,17 @@ async function executeLocal(logId: string, payload: any): Promise<string> {
     const chatPayload = {
       type: 'chat',
       requestId: logId,
-      text: buildPrompt(payload),
+      text: buildLocalProactivePrompt(payload),
+      reasoningLevel: 'none',
       ...(modelSelection.model ? { model: modelSelection.model } : {}),
       ...(modelSelection.modelId ? { modelId: modelSelection.modelId } : {}),
       ...(token ? { auth: { accessToken: token } } : {}),
       context: payload.context?.screenshot ? { screenshots: [payload.context.screenshot] } : undefined,
-      hiddenContext: `[PROACTIVE MODE] The user has enabled proactive check-ins. ${payload.config?.instructions || ''}`,
-      hiddenStateSummary: payload.tasks?.length
-        ? `Queued tasks to work on:\n${payload.tasks.map((t: any) => `- ${t.title}: ${t.instructions}`).join('\n')}`
-        : undefined,
+      hiddenContext: buildLocalProactiveHiddenContext(payload),
     };
 
     ws.send(JSON.stringify(chatPayload));
   });
-}
-
-function buildPrompt(payload: any): string {
-  const parts: string[] = [];
-  parts.push('[Proactive Check-in]');
-
-  if (payload.config?.instructions) {
-    parts.push(payload.config.instructions);
-  } else {
-    parts.push('Check in on the user. See if they need help with anything.');
-  }
-
-  if (payload.tasks?.length) {
-    parts.push('\nQueued tasks:');
-    for (const t of payload.tasks) {
-      parts.push(`- ${t.title}${t.instructions ? ': ' + t.instructions : ''}`);
-    }
-  }
-
-  if (payload.context?.screenshot) {
-    parts.push('\n(A screenshot of the user\'s current screen is attached.)');
-  }
-
-  parts.push('\nRespond concisely. If nothing needs attention, say so briefly.');
-  return parts.join('\n');
 }
 
 // ─── Cloud VM Execution ─────────────────────────────────────────────────────
@@ -429,25 +669,53 @@ interface CloudWakeUpResult {
   text: string;
   taskUpdates: Array<{ id: string; status: string; result?: string }>;
   newTasks: Array<{ title: string; instructions?: string; status?: string }>;
+  deletedTaskIds: string[];
+  timedOut?: boolean;
+  failureReason?: string;
 }
 
 async function executeCloud(logId: string, payload: any): Promise<CloudWakeUpResult> {
   const token = await getAuthToken();
-  if (!token) return { text: 'Cloud execution failed: not authenticated. Please sign in.', taskUpdates: [], newTasks: [] };
+  if (!token) {
+    return {
+      text: 'Cloud execution failed: not authenticated. Please sign in.',
+      taskUpdates: [],
+      newTasks: [],
+      deletedTaskIds: [],
+      failureReason: 'Cloud execution failed: not authenticated.',
+    };
+  }
 
   const cloudUrl = getCloudAiUrl();
+  const abortController = new AbortController();
+  const requestTimeout = setTimeout(() => abortController.abort(), AGENT_RESPONSE_TIMEOUT_MS);
 
   try {
+    // Load active skills to pass to cloud agent
+    const activeSkills = loadSkills().filter(s => s.isActive);
+
     const body = JSON.stringify({
       tasks: payload.tasks || [],
       instructions: payload.config?.instructions || '',
+      prompt: typeof payload.prompt === 'string' ? payload.prompt : undefined,
+      allowedTools: Array.isArray(payload.config?.allowedTools) ? payload.config.allowedTools : [],
       modelMode: normalizeProactiveModelMode(payload.config?.modelMode),
       modelId: String(payload.config?.modelId || '').trim() || undefined,
       context: {
-        screenshot: !!payload.context?.screenshot,
+        screenshot: payload.context?.screenshot || null,
         systemAudio: payload.context?.systemAudio || false,
         micAudio: payload.context?.micAudio || false,
       },
+      skills: activeSkills.map(s => ({
+        id: s.id,
+        name: s.name,
+        description: s.description,
+        trigger: s.trigger,
+        steps: s.steps,
+        icon: s.icon,
+        color: s.color,
+        isActive: s.isActive,
+      })),
     });
 
     const resp = await net.fetch(`${cloudUrl}/v1/proactive/wakeup`, {
@@ -457,17 +725,38 @@ async function executeCloud(logId: string, payload: any): Promise<CloudWakeUpRes
         'Authorization': `Bearer ${token}`,
       },
       body,
+      signal: abortController.signal,
     });
 
     const data = await resp.json() as any;
+    clearTimeout(requestTimeout);
     return {
       text: data.text || (data.ok ? 'Cloud check-in completed.' : `Cloud execution failed: ${data.error || 'Unknown error'}`),
       taskUpdates: Array.isArray(data.taskUpdates) ? data.taskUpdates : [],
       newTasks: Array.isArray(data.newTasks) ? data.newTasks : [],
+      deletedTaskIds: Array.isArray(data.deletedTaskIds) ? data.deletedTaskIds : [],
+      failureReason: data.ok === false ? `Cloud execution failed: ${data.error || 'Unknown error'}` : undefined,
     };
   } catch (e: any) {
+    clearTimeout(requestTimeout);
     logger.error('[proactive-scheduler] Cloud execution failed:', e);
-    return { text: `Cloud execution failed: ${e.message || 'Connection error'}`, taskUpdates: [], newTasks: [] };
+    if (e?.name === 'AbortError') {
+      return {
+        text: `Cloud execution timed out after ${Math.round(AGENT_RESPONSE_TIMEOUT_MS / 1000)} seconds.`,
+        taskUpdates: [],
+        newTasks: [],
+        deletedTaskIds: [],
+        timedOut: true,
+        failureReason: `Cloud execution timed out after ${Math.round(AGENT_RESPONSE_TIMEOUT_MS / 1000)} seconds.`,
+      };
+    }
+    return {
+      text: `Cloud execution failed: ${e.message || 'Connection error'}`,
+      taskUpdates: [],
+      newTasks: [],
+      deletedTaskIds: [],
+      failureReason: `Cloud execution failed: ${e.message || 'Connection error'}`,
+    };
   }
 }
 
@@ -486,19 +775,37 @@ async function executeWakeUp() {
   currentRunId = logId;
 
   const contextUsed: string[] = [];
+  let taskIds: string[] = [];
   let screenshotData: string | null = null;
+  const startedAt = new Date().toISOString();
+  const modelSelection = buildModelSelection(config);
 
   try {
     logger.info(`[proactive-scheduler] Starting wake-up (target: ${config.executionTarget})`);
-    emitStage(logId, 'initializing');
 
     proactiveService.addWakeUpLog({
       id: logId,
-      startedAt: new Date().toISOString(),
+      startedAt,
       status: 'running',
       contextUsed: [],
       tasksProcessed: [],
+      executionTarget: config.executionTarget,
+      modelMode: modelSelection.model,
+      modelId: modelSelection.modelId,
+      timeoutMs: AGENT_RESPONSE_TIMEOUT_MS,
+      timedOut: false,
+      stageHistory: [],
     });
+    broadcastUpdate({
+      type: 'wake-up-start',
+      logId,
+      startedAt,
+      executionTarget: config.executionTarget,
+      modelMode: modelSelection.model,
+      modelId: modelSelection.modelId,
+      timeoutMs: AGENT_RESPONSE_TIMEOUT_MS,
+    });
+    emitStage(logId, 'initializing');
 
     // Capture context
     if (config.contextPermissions.screenshot) {
@@ -506,8 +813,49 @@ async function executeWakeUp() {
       screenshotData = await captureScreenshot();
       if (screenshotData) contextUsed.push('screenshot');
     }
-    if (config.contextPermissions.systemAudio) contextUsed.push('systemAudio');
-    if (config.contextPermissions.micAudio) contextUsed.push('micAudio');
+
+    let systemAudioData: string | null = null;
+    let micAudioData: string | null = null;
+
+    if (config.contextPermissions.systemAudio || config.contextPermissions.micAudio) {
+      const { execLocalTool } = await import('../tools/handlers/local');
+      const fs = await import('fs/promises');
+      const toolCtx: RouterContext = {
+        agentWsUrl: getAgentWsUrl(),
+        cloudAiUrl: getCloudAiUrl(),
+        logFn: (msg) => logger.info(`[proactive-scheduler] ${msg}`),
+      };
+
+      if (config.contextPermissions.systemAudio) {
+        emitStage(logId, 'capturing-system-audio', 'Listening to system audio...');
+        try {
+          const res = await execLocalTool('capture_system_audio', { durationMs: 3000 }, toolCtx, 10000);
+          if (res?.ok && res.filePath) {
+            const buf = await fs.readFile(res.filePath);
+            systemAudioData = `data:audio/wav;base64,${buf.toString('base64')}`;
+            await fs.unlink(res.filePath).catch(() => { });
+            contextUsed.push('systemAudio');
+          }
+        } catch (e) {
+          logger.warn('[proactive-scheduler] system audio capture failed:', e);
+        }
+      }
+
+      if (config.contextPermissions.micAudio) {
+        emitStage(logId, 'capturing-mic-audio', 'Listening to microphone...');
+        try {
+          const res = await execLocalTool('capture_media', { kind: 'audio', durationMs: 3000 }, toolCtx, 10000);
+          if (res?.ok && res.filePath) {
+            const buf = await fs.readFile(res.filePath);
+            micAudioData = `data:audio/wav;base64,${buf.toString('base64')}`;
+            await fs.unlink(res.filePath).catch(() => { });
+            contextUsed.push('micAudio');
+          }
+        } catch (e) {
+          logger.warn('[proactive-scheduler] mic audio capture failed:', e);
+        }
+      }
+    }
 
     if (contextUsed.length > 0) {
       emitStage(logId, 'gathering-context', contextUsed.join(', '));
@@ -515,13 +863,16 @@ async function executeWakeUp() {
 
     // Get all active tasks (queued + in_progress) — agent manages lifecycle via tools
     const activeTasks = proactiveService.getActiveTasks();
-    const taskIds = activeTasks.map(t => t.id);
+    taskIds = activeTasks.map(t => t.id);
 
     if (activeTasks.length > 0) {
       emitStage(logId, 'loading-tasks', `${activeTasks.length} task${activeTasks.length === 1 ? '' : 's'}`);
     }
 
     // No auto in_progress marking — the agent controls task status via kanban tools
+
+    // Load active skills for context
+    const activeSkills = loadSkills().filter(s => s.isActive);
 
     const wakeUpPayload = {
       config: {
@@ -532,14 +883,20 @@ async function executeWakeUp() {
       },
       context: {
         screenshot: screenshotData,
-        systemAudio: config.contextPermissions.systemAudio,
-        micAudio: config.contextPermissions.micAudio,
+        systemAudio: systemAudioData,
+        micAudio: micAudioData,
       },
       tasks: activeTasks.map(t => ({
         id: t.id,
         title: t.title,
         instructions: t.instructions,
         status: t.status,
+      })),
+      skills: activeSkills.map(s => ({
+        id: s.id,
+        name: s.name,
+        description: s.description,
+        trigger: s.trigger,
       })),
     };
 
@@ -548,22 +905,50 @@ async function executeWakeUp() {
 
     // Execute on the appropriate target
     let agentMessage: string;
+    let executionResult: WakeUpExecutionResult;
     if (config.executionTarget === 'cloud') {
       emitStage(logId, 'thinking', 'Cloud VM processing');
-      const result = await executeCloud(logId, wakeUpPayload);
-      agentMessage = result.text;
+      executionResult = await executeCloud(logId, wakeUpPayload);
+      agentMessage = executionResult.text;
 
       // Apply agent-returned mutations
-      if (result.taskUpdates.length > 0) {
-        proactiveService.applyTaskUpdates(result.taskUpdates as any);
+      if (executionResult.taskUpdates.length > 0) {
+        proactiveService.applyTaskUpdates(executionResult.taskUpdates as any);
       }
-      if (result.newTasks.length > 0) {
-        proactiveService.applyNewTasks(result.newTasks as any);
+      if (executionResult.newTasks.length > 0) {
+        proactiveService.applyNewTasks(executionResult.newTasks as any);
+      }
+      // Apply deletions from cloud agent
+      if (Array.isArray((executionResult as any).deletedTaskIds)) {
+        for (const taskId of (executionResult as any).deletedTaskIds) {
+          proactiveService.deleteTask(String(taskId));
+        }
       }
     } else {
       emitStage(logId, 'thinking', 'Local agent processing');
-      agentMessage = await executeLocal(logId, wakeUpPayload);
-      // Local path: no tool support yet, tasks remain in current state
+      executionResult = await executeLocal(logId, wakeUpPayload);
+      agentMessage = executionResult.text;
+      // Local path executes desktop-backed tool calls inline, so task-board mutations
+      // are applied immediately by the proactive task handlers.
+    }
+
+    // Broadcast task board refresh so UI updates immediately
+    const updatedTasks = proactiveService.listTasks();
+    broadcastUpdate({ type: 'tasks-refreshed', tasks: updatedTasks.tasks });
+
+    if (executionResult.partialResponse) {
+      proactiveService.updateWakeUpLog(logId, { partialResponse: executionResult.partialResponse });
+    }
+    if (executionResult.failureReason) {
+      const error = new Error(executionResult.failureReason) as Error & {
+        partialResponse?: string;
+        timedOut?: boolean;
+        userFacingMessage?: string;
+      };
+      error.partialResponse = executionResult.partialResponse;
+      error.timedOut = executionResult.timedOut;
+      error.userFacingMessage = executionResult.text;
+      throw error;
     }
 
     emitStage(logId, 'processing');
@@ -576,6 +961,9 @@ async function executeWakeUp() {
       contextUsed,
       tasksProcessed: taskIds,
       agentMessage,
+      partialResponse: executionResult.partialResponse,
+      timedOut: false,
+      failureReason: undefined,
     });
 
     proactiveService.setLastWakeUp(new Date().toISOString());
@@ -587,10 +975,10 @@ async function executeWakeUp() {
         sendCheckinNotification(logId, agentMessage, contextUsed.includes('screenshot'), taskIds.length);
       }
       if (channels.includes('sms')) {
-        sendTelnyxNotification('sms', `Stuard Check-in: ${agentMessage.slice(0, 1500)}`).catch(() => {});
+        sendTelnyxNotification('sms', `Stuard Check-in: ${agentMessage.slice(0, 1500)}`).catch(() => { });
       }
       if (channels.includes('call')) {
-        sendTelnyxNotification('call', agentMessage.slice(0, 500)).catch(() => {});
+        sendTelnyxNotification('call', agentMessage.slice(0, 500)).catch(() => { });
       }
     }
 
@@ -604,9 +992,13 @@ async function executeWakeUp() {
       completedAt: new Date().toISOString(),
       status: 'failed',
       contextUsed,
-      agentMessage: String(e.message || e),
+      tasksProcessed: taskIds,
+      agentMessage: String(e.userFacingMessage || e.message || e),
+      partialResponse: typeof e?.partialResponse === 'string' ? e.partialResponse : undefined,
+      timedOut: !!e?.timedOut,
+      failureReason: String(e.message || e),
     });
-    broadcastUpdate({ type: 'wake-up-failed', logId, error: String(e.message || e) });
+    broadcastUpdate({ type: 'wake-up-failed', logId, error: String(e.message || e), timedOut: !!e?.timedOut });
   } finally {
     currentRunId = null;
 

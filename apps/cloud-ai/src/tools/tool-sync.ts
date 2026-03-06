@@ -6,7 +6,7 @@ import { clearToolCache } from './sis-supabase';
 import { z } from 'zod';
 
 // Ensure registry is initialized
-import './meta-tools'; 
+import './meta-tools';
 import { initToolRegistry } from './meta-tools';
 
 const EMBEDDING_MODEL = 'text-embedding-3-large';
@@ -23,7 +23,9 @@ export interface ToolSyncResult {
  * Add alternative phrases, common user queries, and related terms.
  */
 const SEMANTIC_HINTS: Record<string, string[]> = {
-  // Gmail
+  // Gmail / Google Profile
+  google_list_profiles: ['list google users', 'list connected accounts', 'who am i', 'what google profiles do i have', 'google accounts'],
+  google_get_userinfo: ['user profile', 'google profile', 'my account info', 'who am i', 'my email'],
   gmail_send_message: ['email', 'send mail', 'compose', 'draft', 'message'],
   gmail_list_messages: ['inbox', 'email list', 'check mail', 'emails'],
   gmail_get_message_brief: ['email summary', 'read email', 'message preview'],
@@ -199,7 +201,7 @@ function zodToJSON(schema: any): any {
   if (schema instanceof z.ZodDefault) return zodToJSON(schema._def.innerType);
   if (schema instanceof z.ZodAny) return "any";
   if (schema instanceof z.ZodRecord) return "record";
-  
+
   return "unknown";
 }
 
@@ -212,7 +214,7 @@ export async function syncToolsToSupabase(options: {
 } = {}): Promise<ToolSyncResult> {
   // Ensure tools are registered
   initToolRegistry();
-  
+
   const { force = false, toolNames } = options;
   const result: ToolSyncResult = { synced: 0, skipped: 0, errors: [] };
 
@@ -225,7 +227,7 @@ export async function syncToolsToSupabase(options: {
   // Get tools from registry
   const registry = getToolRegistry();
   let toolsToSync: any[] = [];
-  
+
   if (toolNames && toolNames.length > 0) {
     for (const name of toolNames) {
       const tool = registry.get(name);
@@ -289,15 +291,15 @@ export async function syncToolsToSupabase(options: {
       const rows = batch.map((tool, idx) => {
         const id = tool.id || tool.name;
         const metadata = getToolMetadata(id) || { category: 'Other', kind: 'local' };
-        
+
         return {
           name: id,
           description: tool.description,
           category: metadata.category,
           kind: metadata.kind || 'local',
-          schema: { 
-            args: zodToJSON(tool.inputSchema), 
-            output: zodToJSON(tool.outputSchema) 
+          schema: {
+            args: zodToJSON(tool.inputSchema),
+            output: zodToJSON(tool.outputSchema)
           },
           semantic_hints: getSemanticHints(id),
           embedding: embeddings[idx],
@@ -387,7 +389,7 @@ export async function getSyncStatus(): Promise<{
   const supabase = getSupabaseService();
   const registry = getToolRegistry();
   const definedTools = Array.from(registry.keys());
-  
+
   if (!supabase) {
     return {
       definedCount: definedTools.length,

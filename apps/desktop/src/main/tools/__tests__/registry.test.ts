@@ -8,6 +8,7 @@ describe('Tool Registry', () => {
 
   it('should return correct kind for known tools', () => {
     expect(getToolKind('custom_ui')).toBe('electron');
+    expect(getToolKind('proactive_task_list')).toBe('electron');
     expect(getToolKind('analyze_media')).toBe('cloud');
     expect(getToolKind('run_sequential')).toBe('orchestration');
   });

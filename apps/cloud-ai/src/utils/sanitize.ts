@@ -13,7 +13,7 @@ function redactSensitiveString(value: string): string {
 
 export function redactSensitiveData(input: any, depth = 0, seen?: WeakSet<object>): any {
   if (input == null) return input;
-  if (depth > 6) return '[truncated]';
+  if (depth > 20) return '[truncated]';
 
   if (typeof input === 'string') return redactSensitiveString(input);
   if (typeof input !== 'object') return input;
@@ -55,6 +55,19 @@ export function sanitizeToolResult(result: any) {
 
 export function sanitizeToolEvent(evt: any) {
   try {
+    // Preserve workflow data from sanitization — workflow_modify returns full
+    // workflow objects that have deeply nested args (window.shadow.enabled etc.)
+    // and must not be truncated since the client applies them directly.
+    const isWorkflowTool = evt?.tool === 'modify_workflow' || evt?.tool === 'workflow_modify' || evt?.tool === 'create_workflow';
+    if (isWorkflowTool && evt?.result?.workflow) {
+      // Only redact the non-workflow parts; pass workflow through untouched
+      const { result, ...rest } = evt;
+      const { workflow, ...resultRest } = result;
+      const safeRest = redactSensitiveData(rest);
+      const safeResultRest = redactSensitiveData(resultRest);
+      return { ...safeRest, result: { ...safeResultRest, workflow } };
+    }
+
     const e: any = { ...redactSensitiveData(evt) };
     if (e.args) e.args = redactSensitiveData(e.args);
     if (e.result) e.result = sanitizeToolResult(e.result);

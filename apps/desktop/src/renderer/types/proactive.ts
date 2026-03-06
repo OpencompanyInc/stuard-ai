@@ -44,6 +44,46 @@ export interface ProactiveWakeUpLog {
   contextUsed: string[];
   tasksProcessed: string[];
   agentMessage?: string;
+  executionTarget?: ExecutionTarget;
+  modelMode?: ProactiveModelMode;
+  modelId?: string;
+  timeoutMs?: number;
+  timedOut?: boolean;
+  failureReason?: string;
+  partialResponse?: string;
+  stageHistory?: ProactiveWakeUpStageEvent[];
+  reasoningText?: string;
+  toolCalls?: ProactiveWakeUpToolCall[];
+  activityEvents?: ProactiveWakeUpActivityEvent[];
+}
+
+export interface ProactiveWakeUpStageEvent {
+  stage: string;
+  label: string;
+  progress: number;
+  detail?: string;
+  at: string;
+}
+
+export interface ProactiveWakeUpToolCall {
+  id: string;
+  tool: string;
+  status?: string;
+  description?: string;
+  args?: any;
+  result?: any;
+  error?: string;
+  startedAt: string;
+  updatedAt: string;
+}
+
+export interface ProactiveWakeUpActivityEvent {
+  id: string;
+  kind: 'lifecycle' | 'routing' | 'reasoning' | 'tool' | 'status';
+  event: string;
+  label: string;
+  detail?: string;
+  at: string;
 }
 
 export interface ProactiveData {

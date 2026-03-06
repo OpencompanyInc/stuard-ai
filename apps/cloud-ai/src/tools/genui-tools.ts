@@ -30,10 +30,10 @@ async function executeGenUI(toolName: string, args: any, blocking: boolean = tru
       return { ok: false, error: err.message || 'GenUI tool failed' };
     }
   }
-  
+
   // Fallback when no bridge (shouldn't happen in production)
   console.warn(`[GenUI] No client bridge for ${toolName}, returning mock response`);
-  return blocking 
+  return blocking
     ? { ok: false, error: 'No client connected' }
     : { displayed: true };
 }
@@ -264,6 +264,43 @@ export const showFeedbackForm = createTool({
   },
 });
 
+export const showForm = createTool({
+  id: 'show_form',
+  description: 'Display a multi-page form/wizard to collect structured user input. Supports various field types: select (single choice), multiselect (multiple choices), text, textarea, toggle, number, slider. Organize fields into pages for multi-step flows. Blocks until user submits or cancels.',
+  inputSchema: z.object({
+    title: z.string().describe('Form title shown at the top'),
+    description: z.string().optional().describe('Short description shown below the title'),
+    pages: z.array(z.object({
+      id: z.string().describe('Unique page ID'),
+      title: z.string().describe('Page title'),
+      description: z.string().optional().describe('Page description'),
+      fields: z.array(z.object({
+        id: z.string().describe('Unique field ID — this becomes the key in the submitted data'),
+        type: z.enum(['select', 'multiselect', 'text', 'textarea', 'toggle', 'number', 'slider']).describe('Field type'),
+        label: z.string().describe('Field label'),
+        description: z.string().optional().describe('Help text below the label'),
+        placeholder: z.string().optional().describe('Placeholder text for text/textarea fields'),
+        options: z.array(z.object({
+          id: z.string().describe('Option value returned when selected'),
+          label: z.string().describe('Display label'),
+          sublabel: z.string().optional().describe('Secondary text'),
+        })).optional().describe('Options for select/multiselect fields'),
+        required: z.boolean().optional().describe('Whether the field must be filled before proceeding'),
+        defaultValue: z.any().optional().describe('Default value for the field'),
+        min: z.number().optional().describe('Minimum value for number/slider'),
+        max: z.number().optional().describe('Maximum value for number/slider'),
+        step: z.number().optional().describe('Step increment for number/slider'),
+      })).describe('Fields to render on this page'),
+    })).describe('Form pages — use multiple pages for wizard-style flows, or a single page for simple forms'),
+    submitLabel: z.string().optional().default('Submit').describe('Text for the submit button'),
+    cancelLabel: z.string().optional().default('Cancel').describe('Text for the cancel button'),
+    showProgress: z.boolean().optional().default(true).describe('Show progress indicator for multi-page forms'),
+  }),
+  execute: async (args) => {
+    return executeGenUI('show_form', args, true);
+  },
+});
+
 export const showWeather = createTool({
   id: 'show_weather',
   description: 'Display a rich weather card with current conditions and forecast.',
@@ -301,6 +338,7 @@ export const genuiTools = {
   show_colors: showColors,
   show_progress: showProgress,
   show_feedback_form: showFeedbackForm,
+  show_form: showForm,
   show_weather: showWeather,
 };
 

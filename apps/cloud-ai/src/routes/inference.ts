@@ -388,10 +388,16 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
           });
         }
         
+        const isProModel = requestedModel === 'gemini-3.1-pro-preview' || requestedModel === '3.1';
         const out = await generateText({
           model: model as any,
           messages: [{ role: 'user' as const, content: contentParts }],
           temperature: 0.2,
+          ...(isProModel && {
+            providerOptions: {
+              google: { thinkingConfig: { thinkingBudget: 8192 } },
+            },
+          }),
         });
         
         const summary = out.text?.trim() || '';

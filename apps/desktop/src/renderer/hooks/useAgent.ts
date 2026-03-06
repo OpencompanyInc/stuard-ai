@@ -42,6 +42,10 @@ const HIDDEN_TOOL_NAMES = new Set([
   'pending_memory_confirm',
   'pending_memory_reject',
   'pending_memory_delete',
+
+  // Internal meta-tools (invisible to user)
+  'get_tool_schema',
+  'search_tools',
 ]);
 
 const HIDDEN_WRAPPER_TOOL_NAMES = new Set([
@@ -66,6 +70,7 @@ const GENUI_TOOL_NAMES = new Set([
   'show_link',
   'show_colors',
   'show_progress',
+  'show_form',
 ]);
 
 // GenUI tools that block and wait for user interaction
@@ -75,6 +80,7 @@ const BLOCKING_GENUI_TOOLS = new Set([
   'pick_date',
   'request_files',
   'show_command',
+  'show_form',
 ]);
 
 export interface GenUIToolCall {
@@ -116,9 +122,9 @@ export interface PendingMemory {
 
 // Stream chunk types for interleaved display
 export type StreamChunk =
-| { type: 'text'; content: string }
-| { type: 'reasoning'; content: string }
-| { type: 'tool'; tool: ToolCall };
+  | { type: 'text'; content: string }
+  | { type: 'reasoning'; content: string }
+  | { type: 'tool'; tool: ToolCall };
 
 // Hidden state for AI context - tracks IDs and tool results that should be remembered
 // This is NOT rendered in the UI but sent to the AI for context continuity
@@ -171,32 +177,32 @@ export function summarizeHiddenState(state: HiddenState, maxResults: number = 20
 export function hiddenStateToContextString(state: HiddenState): string {
   const summary = summarizeHiddenState(state);
   const lines: string[] = ['[SESSION CONTEXT - IDs and recent tool results]'];
-  
+
   if (summary.terminals.length > 0) {
     lines.push('\nActive Terminals:');
     for (const t of summary.terminals) {
       lines.push(`  - ${t.terminalId}: "${t.command}" (${t.status}${t.exitCode !== undefined ? `, exit: ${t.exitCode}` : ''})`);
     }
   }
-  
+
   if (summary.subagents.length > 0) {
     lines.push('\nSubagent Tasks:');
     for (const s of summary.subagents) {
       lines.push(`  - ${s.taskId}: "${s.objective}" (${s.status}${s.resultPreview ? `, result: ${s.resultPreview}` : ''})`);
     }
   }
-  
+
   if (summary.recentToolResults.length > 0) {
     lines.push('\nRecent Tool Results (use these instead of re-running):');
     for (const r of summary.recentToolResults.slice(0, 10)) {
       lines.push(`  - ${r.tool}: ${r.resultPreview}`);
     }
   }
-  
+
   if (lines.length === 1) {
     return '';
   }
-  
+
   lines.push('\n[END SESSION CONTEXT]');
   return lines.join('\n');
 }
@@ -443,13 +449,13 @@ export function useAgent(options?: string | UseAgentOptions) {
     const nextMode = (typeof mode === 'string' && mode.trim()) ? mode.trim() : DEFAULT_TAB_CHAT_MODE;
     setTabs(prev => prev.map(t => t.id === targetTabId ? { ...t, chatMode: nextMode } : t));
     // Persist to localStorage so it survives restart
-    try { localStorage.setItem('stuard.pref.chat_mode', JSON.stringify(nextMode)); } catch {}
+    try { localStorage.setItem('stuard.pref.chat_mode', JSON.stringify(nextMode)); } catch { }
   }, []);
   const setChatModels = useCallback((cfg: ChatModelsConfig) => {
     const targetTabId = activeTabIdRef.current;
     setTabs(prev => prev.map(t => t.id === targetTabId ? { ...t, chatModels: cloneChatModelsConfig(cfg || DEFAULT_TAB_CHAT_MODELS) } : t));
     // Persist to localStorage so it survives restart
-    try { localStorage.setItem('stuard.pref.chat_models', JSON.stringify(cfg || DEFAULT_TAB_CHAT_MODELS)); } catch {}
+    try { localStorage.setItem('stuard.pref.chat_models', JSON.stringify(cfg || DEFAULT_TAB_CHAT_MODELS)); } catch { }
   }, []);
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -611,10 +617,10 @@ export function useAgent(options?: string | UseAgentOptions) {
       queueDepthRef.current = nextList.length;
       return nextList;
     });
-    
+
     outboundQueueRef.current = outboundQueueRef.current.filter(m => m.id !== msgId);
     pendingSendRef.current = pendingSendRef.current.filter(m => m.id !== msgId);
-    
+
     // If the queue is now empty and we were waiting for queued start, reset
     if (queueDepthRef.current === 0) {
       waitingQueuedStartRef.current = false;
@@ -799,7 +805,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     } catch { }
   }, []);
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     const ready = wsRef.current?.readyState;
     if (ready === WebSocket.OPEN || ready === WebSocket.CONNECTING) return;
 
@@ -823,7 +829,18 @@ export function useAgent(options?: string | UseAgentOptions) {
       };
       const hinted = hintedWs || (hintedHttp ? httpToWs(hintedHttp) : '');
       const target = customAgentUrl || hinted || 'ws://127.0.0.1:8765/ws';
-      const ws = new WebSocket(target);
+      // Append auth token to WS URL so the server can immediately register
+      // this connection for webhook delivery (Gmail Pub/Sub, Drive, etc.)
+      // without waiting for a chat message to be sent.
+      let wsUrl = target;
+      try {
+        const token = await getValidAccessToken();
+        if (token) {
+          const sep = wsUrl.includes('?') ? '&' : '?';
+          wsUrl = `${wsUrl}${sep}client=desktop&token=${encodeURIComponent(token)}`;
+        }
+      } catch { }
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -869,6 +886,21 @@ export function useAgent(options?: string | UseAgentOptions) {
 
           if (msg.type === 'handshake') {
             console.log('[agent] Handshake:', msg.message);
+            // Send auth message immediately so the server registers this connection
+            // for webhook delivery (Gmail Pub/Sub, Drive triggers, etc.)
+            (async () => {
+              try {
+                const token = await getValidAccessToken();
+                if (token && wsRef.current?.readyState === WebSocket.OPEN) {
+                  wsRef.current.send(JSON.stringify({ type: 'auth', accessToken: token }));
+                }
+              } catch { }
+            })();
+          } else if (msg.type === 'auth_result') {
+            // Server confirmed webhook registration
+            if (msg.ok) {
+              console.log('[agent] Auth registered for webhooks', msg.queued > 0 ? `(${msg.queued} queued delivered)` : '');
+            }
           } else if (msg.type === 'webhook_trigger' || msg.type === 'provider_webhook') {
             // Cloud webhook received - forward to main process to trigger workflow
             console.log('[agent] Cloud webhook received:', msg.type, msg);
@@ -881,6 +913,16 @@ export function useAgent(options?: string | UseAgentOptions) {
             // Handle server-side tool execution requests (e.g. get_local_time)
             // This is critical for the "Bridge" to work without blocking
             const { id, tool, args } = msg;
+
+            // ask_user tool: add to activeGenUITools for inline chat rendering
+            if (tool === 'ask_user') {
+              console.log('[agent] ask_user tool request received:', args);
+              setActiveGenUITools(prev => {
+                if (prev.some(t => t.id === id)) return prev;
+                return [...prev, { id, tool: 'ask_user', args, status: 'pending' }];
+              });
+              return; // Wait for respondToGenUI to send result back
+            }
 
             // If it's a GenUI tool, add to activeGenUITools for UI rendering
             if (tool && GENUI_TOOL_NAMES.has(tool)) {
@@ -1142,7 +1184,11 @@ export function useAgent(options?: string | UseAgentOptions) {
                 console.log('[agent] Ignoring tool_event after stop');
                 return;
               }
-              const tool = String(evt.data?.tool || 'tool');
+              let tool = String(evt.data?.tool || 'tool');
+              // execute_tool is a wrapper — show the actual tool being executed
+              if (tool === 'execute_tool' && evt.data?.args?.tool_name) {
+                tool = String(evt.data.args.tool_name);
+              }
               const toolStatus = evt.data?.status || '';
               const humanTool = humanizeToolName(tool);
               const normalizedStatus = typeof toolStatus === 'string' ? toolStatus.toLowerCase() : '';
@@ -1335,7 +1381,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                     const newStatus = normalizedStatus === 'completed' ? 'completed' : 'error';
                     const result = normalizedStatus === 'completed' ? d.result : undefined;
                     const error = normalizedStatus === 'completed' ? undefined : (d.error || d.result?.error || 'failed');
-                    
+
                     updateStreamingTab(t => {
                       // Find the matching tool call - prefer exact id match, fallback to tool name with pending status
                       const findMatch = (tc: ToolCall) =>
@@ -1359,7 +1405,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                           entries.slice(0, 50).forEach(([k, v]) => resultMap.set(k, v));
                         }
                         newHiddenState.toolResults = resultMap;
-                        
+
                         // Track terminal creation
                         if ((tool === 'start_terminal' || tool === 'run_terminal_command') && result?.terminalId) {
                           const termMap = new Map(t.hiddenState.terminals);
@@ -1546,6 +1592,18 @@ export function useAgent(options?: string | UseAgentOptions) {
               const displayText = isAborted && t.currentResponse ? t.currentResponse : finalText;
               const hasAccumulatedWork = t.currentToolCalls.length > 0 || t.currentStreamChunks.length > 0 || t.currentReasoning;
 
+              // Finalize any tool calls still in 'called' status (they'd show perpetual spinners otherwise)
+              const finalizedToolCalls = t.currentToolCalls.map(tc =>
+                tc.status === 'called'
+                  ? { ...tc, status: (isAborted ? 'error' : 'completed') as 'error' | 'completed', error: isAborted ? 'Stopped' : undefined }
+                  : tc
+              );
+              const finalizedStreamChunks = t.currentStreamChunks.map(chunk =>
+                chunk.type === 'tool' && chunk.tool?.status === 'called'
+                  ? { ...chunk, tool: { ...chunk.tool, status: (isAborted ? 'error' : 'completed') as 'error' | 'completed', error: isAborted ? 'Stopped' : undefined } }
+                  : chunk
+              );
+
               // Commit a message if we have text OR if there was accumulated work (tool calls, reasoning, etc.)
               const shouldCommitMessage = displayText || hasAccumulatedWork;
 
@@ -1557,8 +1615,8 @@ export function useAgent(options?: string | UseAgentOptions) {
                   text: (displayText || '') + (isAborted ? '\n\n*(Stopped)*' : ''),
                   reasoning: t.currentReasoning || undefined,
                   reasoningDuration: t.currentReasoning ? reasoningDuration : undefined,
-                  toolCalls: t.currentToolCalls.length > 0 ? [...t.currentToolCalls] : undefined,
-                  streamChunks: t.currentStreamChunks.length > 0 ? [...t.currentStreamChunks] : undefined,
+                  toolCalls: finalizedToolCalls.length > 0 ? finalizedToolCalls : undefined,
+                  streamChunks: finalizedStreamChunks.length > 0 ? finalizedStreamChunks : undefined,
                   timestamp: Date.now(),
                   aborted: isAborted,
                   modifiedFiles: turnModifiedFiles,
@@ -1670,6 +1728,16 @@ export function useAgent(options?: string | UseAgentOptions) {
               const hasAccumulatedWork = t.currentToolCalls.length > 0 || t.currentStreamChunks.length > 0 || t.currentResponse || t.currentReasoning;
               const errorSuffix = `\n\n⚠️ *Error: ${normalizedError.userMessage}*`;
 
+              // Mark any tool calls still in 'called' status as 'error' so they don't show perpetual spinners
+              const finalizedToolCalls = t.currentToolCalls.map(tc =>
+                tc.status === 'called' ? { ...tc, status: 'error' as const, error: normalizedError.userMessage } : tc
+              );
+              const finalizedStreamChunks = t.currentStreamChunks.map(chunk =>
+                chunk.type === 'tool' && chunk.tool?.status === 'called'
+                  ? { ...chunk, tool: { ...chunk.tool, status: 'error' as const, error: normalizedError.userMessage } }
+                  : chunk
+              );
+
               if (hasAccumulatedWork) {
                 // Commit partial work as an assistant message so it's not lost
                 return {
@@ -1679,8 +1747,8 @@ export function useAgent(options?: string | UseAgentOptions) {
                     role: 'assistant',
                     text: (t.currentResponse || '').trim() + errorSuffix,
                     reasoning: t.currentReasoning || undefined,
-                    toolCalls: t.currentToolCalls.length > 0 ? [...t.currentToolCalls] : undefined,
-                    streamChunks: t.currentStreamChunks.length > 0 ? [...t.currentStreamChunks] : undefined,
+                    toolCalls: finalizedToolCalls.length > 0 ? finalizedToolCalls : undefined,
+                    streamChunks: finalizedStreamChunks.length > 0 ? finalizedStreamChunks : undefined,
                     timestamp: Date.now(),
                   }],
                   currentResponse: '',
@@ -1916,7 +1984,7 @@ export function useAgent(options?: string | UseAgentOptions) {
           }
         }
       } catch { }
-      
+
       // Include hidden state context for AI (terminals, subagents, recent tool results)
       const hiddenState = currentTab?.hiddenState;
       if (hiddenState) {
@@ -1927,7 +1995,7 @@ export function useAgent(options?: string | UseAgentOptions) {
         // Also send serializable summary for server-side processing
         payload.hiddenStateSummary = summarizeHiddenState(hiddenState);
       }
-      
+
       if (hist.length > 0) {
         payload.messages = hist;
       }

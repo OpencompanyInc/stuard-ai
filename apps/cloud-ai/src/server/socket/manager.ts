@@ -5,6 +5,8 @@ import { handleClientToolMessage, withClientBridge } from '../../tools/bridge';
 import { getTool } from '../../tools/tool-registry';
 import { normalizeMessages } from '../../utils/messages';
 import { verifyToken, checkAccess, incrementDailyRequestCounter, createConversation, addUserMessage, addAssistantMessage } from '../../supabase';
+import { verifyAccessToken } from '../../auth';
+import { registerWebhookClient, deliverQueuedWebhooks } from '../../webhooks/dispatch';
 import { runAgent, abortAgent } from '../streaming/agent-runner';
 import { PING_INTERVAL_MS } from '../../utils/config';
 import { registerConnection, getDesktopWs, type ClientType } from '../../services/vm-bridge';
@@ -26,9 +28,9 @@ export class SocketManager {
 
   constructor() {
     this.wss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD });
-    
+
     this.wss.on('connection', this.handleConnection.bind(this));
-    
+
     // Setup heartbeat
     this.pingTimer = setInterval(() => {
       this.wss.clients.forEach((client: WebSocket) => {
@@ -76,7 +78,7 @@ export class SocketManager {
           }
         }
       }
-    } catch {}
+    } catch { }
 
     this.send(ws, { type: 'handshake', origin: 'cloud-ai', message: 'connected' });
     wsQueues.set(ws, []);
@@ -114,7 +116,7 @@ export class SocketManager {
         const userId = (ws as any).__userId;
         if (userId) {
           const action = kind.replace('terminal_', '') as 'open' | 'data' | 'resize' | 'close';
-          sendVMTerminalCommand(userId, action, msg).catch(() => {});
+          sendVMTerminalCommand(userId, action, msg).catch(() => { });
         }
       } catch { }
       return;
@@ -131,6 +133,35 @@ export class SocketManager {
     // so the tool can relay tool_request messages back to the client
     if (kind === 'exec_tool_bridged') {
       this.handleBridgedToolExec(ws, msg);
+      return;
+    }
+
+    // Handle explicit auth message: client sends {type:'auth', accessToken:'...'} to register
+    // for webhook delivery (Gmail Pub/Sub, Drive triggers, etc.) without needing to send a chat.
+    if (kind === 'auth') {
+      const token = String(msg?.accessToken || '').trim();
+      if (!token) {
+        this.send(ws, { type: 'auth_result', ok: false, error: 'missing_token' });
+        return;
+      }
+      try {
+        const authResult = await verifyAccessToken(token);
+        if (authResult?.success && authResult.userId) {
+          (ws as any).__userId = authResult.userId;
+          registerWebhookClient(authResult.userId, ws);
+          try {
+            const ct = (ws as any).__clientType || 'desktop';
+            if (ct !== 'vm-agent') registerConnection(ws, authResult.userId, 'desktop');
+          } catch { }
+          const delivered = await deliverQueuedWebhooks(authResult.userId, ws);
+          this.send(ws, { type: 'auth_result', ok: true, queued: delivered });
+          writeLog('ws_auth_message', { userId: authResult.userId, delivered });
+        } else {
+          this.send(ws, { type: 'auth_result', ok: false, error: 'invalid_token' });
+        }
+      } catch (e: any) {
+        this.send(ws, { type: 'auth_result', ok: false, error: String(e?.message || 'auth_failed') });
+      }
       return;
     }
 
@@ -163,7 +194,7 @@ export class SocketManager {
     try {
       const accessToken = String(msg?.auth?.accessToken || '');
       const authUser = accessToken ? await verifyToken(accessToken) : null;
-      
+
       if (REQUIRE_AUTH && !authUser) {
         this.send(ws, { type: 'error', message: 'unauthorized' });
         return;
@@ -185,7 +216,7 @@ export class SocketManager {
       }
 
       wsIsRunning.set(ws, true);
-      
+
       // Determine agent configuration from message
       const userText = msg.text || (messages[messages.length - 1] as any).content || '';
       const normalizeTier = (v: any) => {

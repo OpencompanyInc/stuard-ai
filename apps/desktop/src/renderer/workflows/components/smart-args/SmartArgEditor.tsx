@@ -297,9 +297,13 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
         );
 
       case 'array':
-        const arrayValue = Array.isArray(value)
+        // Allow string variable references (e.g. "{{step.items}}") to pass through
+        const isVarRefArray = typeof value === 'string' && value.includes('{{');
+        const arrayValue = isVarRefArray
           ? value
-          : (value !== undefined && value !== null && value !== '' ? [value] : []);
+          : Array.isArray(value)
+            ? value
+            : (value !== undefined && value !== null && value !== '' ? [value] : []);
         return (
           <ArrayEditor
             value={arrayValue}
@@ -446,7 +450,7 @@ export function ToolArgsEditor({
           </summary>
           <div className="p-4 space-y-3 bg-black/20">
             <p className="text-[11px] text-white/40 leading-snug">
-              Define a function App() using JSX. Hooks: useState, useEffect, useVar(name, default). API: stuard.submit(data), stuard.close(), stuard.callTool(name, args). Use useState for multi-page navigation.
+              Define a function App() using JSX. <b className="text-white/55">Hooks:</b> useState, useEffect, useVar(name, default), useStyles(css), useInterval, useTimeout, useLocalStorage. <b className="text-white/55">Animation:</b> motion.div (Framer Motion), AnimatePresence, useAnimation, useMotionValue. <b className="text-white/55">Components:</b> Badge, Progress, Spinner, Skeleton, Tooltip, Switch, Toast, Avatar, Divider, Kbd. <b className="text-white/55">API:</b> stuard.submit(data), stuard.close(), stuard.callTool(name, args). <b className="text-white/55">Fonts:</b> Inter, Outfit, Space Grotesk, JetBrains Mono.
             </p>
             <button
               onClick={() => setShowUIBuilder(true)}
@@ -832,8 +836,8 @@ export function ToolArgsEditor({
                         onUpdate({ ...args, sources: newSources });
                       }}
                       className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-semibold transition-all ${sourceType === 'file'
-                          ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                          : 'text-white/40 hover:text-white/60 hover:bg-white/[0.04]'
+                        ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                        : 'text-white/40 hover:text-white/60 hover:bg-white/[0.04]'
                         }`}
                     >
                       📁 File Path
@@ -846,8 +850,8 @@ export function ToolArgsEditor({
                         onUpdate({ ...args, sources: newSources });
                       }}
                       className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-semibold transition-all ${sourceType === 'url'
-                          ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                          : 'text-white/40 hover:text-white/60 hover:bg-white/[0.04]'
+                        ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                        : 'text-white/40 hover:text-white/60 hover:bg-white/[0.04]'
                         }`}
                     >
                       🔗 URL
@@ -860,8 +864,8 @@ export function ToolArgsEditor({
                         onUpdate({ ...args, sources: newSources });
                       }}
                       className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-semibold transition-all ${sourceType === 'screen'
-                          ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                          : 'text-white/40 hover:text-white/60 hover:bg-white/[0.04]'
+                        ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                        : 'text-white/40 hover:text-white/60 hover:bg-white/[0.04]'
                         }`}
                     >
                       🖥️ Screen
@@ -1006,8 +1010,8 @@ export function ToolArgsEditor({
               type="button"
               onClick={() => setInputMode('file')}
               className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${inputMode === 'file'
-                  ? 'bg-white/[0.08] text-lime-400 shadow-sm border border-lime-500/30'
-                  : 'text-white/50 hover:text-white/70 hover:bg-white/[0.04]'
+                ? 'bg-white/[0.08] text-lime-400 shadow-sm border border-lime-500/30'
+                : 'text-white/50 hover:text-white/70 hover:bg-white/[0.04]'
                 }`}
             >
               📁 Image File
@@ -1016,8 +1020,8 @@ export function ToolArgsEditor({
               type="button"
               onClick={() => setInputMode('base64')}
               className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${inputMode === 'base64'
-                  ? 'bg-white/[0.08] text-lime-400 shadow-sm border border-lime-500/30'
-                  : 'text-white/50 hover:text-white/70 hover:bg-white/[0.04]'
+                ? 'bg-white/[0.08] text-lime-400 shadow-sm border border-lime-500/30'
+                : 'text-white/50 hover:text-white/70 hover:bg-white/[0.04]'
                 }`}
             >
               🔗 Base64 / Data URL

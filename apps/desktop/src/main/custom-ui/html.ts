@@ -143,9 +143,9 @@ function buildThemeCss(options: {
   const containerBg = bgValue; // inner container always gets the real background
 
   return `
-    html { background: ${htmlBg}; -webkit-font-smoothing: antialiased; height: 100%; }
+    html { background: ${htmlBg}; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; height: 100%; }
     body {
-      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-family: 'Inter', 'Outfit', 'Segoe UI', system-ui, -apple-system, sans-serif;
       background: ${bodyBg}; color: #1e293b; height: 100%;
       font-size: 14px; line-height: 1.5;
       ${borderRadius > 0 ? `${radiusStyle} ${overflowStyle}` : ''}
@@ -217,6 +217,13 @@ function buildThemeCss(options: {
     body.dark .btn-ghost, .dark .btn-ghost { color: #94a3b8; }
     body.dark .btn-ghost:hover, .dark .btn-ghost:hover { background: rgba(255,255,255,0.05); color: #f8fafc; }
     body.dark .glass, .dark .glass { background: rgba(15,23,42,0.7)!important; border-color: rgba(255,255,255,0.08); }
+
+    /* Font family utilities */
+    .font-inter { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    .font-outfit { font-family: 'Outfit', system-ui, -apple-system, sans-serif; }
+    .font-grotesk { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; }
+    .font-mono, .font-code { font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace; }
+    code, pre { font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace; }
   `;
 }
 
@@ -314,12 +321,19 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
     id, flowId, data, processedComponent,
   });
 
+  // Google Fonts for premium typography
+  const googleFontsLink = `
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">`;
+
   return `<!DOCTYPE html>
 <html${(transparentBg || borderRadius > 0) ? ' style="background:transparent!important"' : ''}>
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: file:; img-src * data: blob: local-file: file:; media-src * data: blob: local-file: file:; font-src * data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: file:; img-src * data: blob: local-file: file:; media-src * data: blob: local-file: file:; font-src * data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; connect-src https://fonts.googleapis.com https://fonts.gstatic.com;">
   <title>${escapeHtml(title)}</title>
+  ${googleFontsLink}
   <style>${getTailwindPrebuiltCss()}</style>
   <style>${EXTRA_CSS}</style>
   <style>${themeCss}\n${css || ''}\n${animationKeyframes}</style>
@@ -459,6 +473,223 @@ function buildRuntimeScript(options: {
       var useLayoutEffect = React.useLayoutEffect;
       var Fragment = React.Fragment;
       var createElement = React.createElement;
+
+      // === Framer Motion (global scope) ===
+      var _Motion = (typeof window !== 'undefined' && window.Motion) || {};
+      var motion = _Motion.motion || {};
+      var AnimatePresence = _Motion.AnimatePresence || React.Fragment;
+      var useAnimation = _Motion.useAnimation || function() { return {}; };
+      var useMotionValue = _Motion.useMotionValue || function(v) { return { get: function() { return v; }, set: function() {} }; };
+      var useTransform = _Motion.useTransform || function(v) { return v; };
+      var useSpring = _Motion.useSpring || function(v) { return v; };
+      var useInView = _Motion.useInView || function() { return true; };
+      var useScroll = _Motion.useScroll || function() { return { scrollY: 0, scrollYProgress: 0 }; };
+      var m = motion; // shorthand alias
+
+      // === useStyles Hook — inject dynamic CSS (keyframes, custom animations) ===
+      var _styleIdCounter = 0;
+      function useStyles(cssString) {
+        var idRef = React.useRef('stuard-dyn-' + (++_styleIdCounter));
+        React.useEffect(function() {
+          var style = document.createElement('style');
+          style.id = idRef.current;
+          style.textContent = cssString;
+          document.head.appendChild(style);
+          return function() {
+            var el = document.getElementById(idRef.current);
+            if (el) el.remove();
+          };
+        }, [cssString]);
+      }
+
+      // === useInterval Hook ===
+      function useInterval(callback, delay) {
+        var savedCallback = React.useRef(callback);
+        React.useEffect(function() { savedCallback.current = callback; }, [callback]);
+        React.useEffect(function() {
+          if (delay === null || delay === undefined) return;
+          var id = setInterval(function() { savedCallback.current(); }, delay);
+          return function() { clearInterval(id); };
+        }, [delay]);
+      }
+
+      // === useTimeout Hook ===
+      function useTimeout(callback, delay) {
+        var savedCallback = React.useRef(callback);
+        React.useEffect(function() { savedCallback.current = callback; }, [callback]);
+        React.useEffect(function() {
+          if (delay === null || delay === undefined) return;
+          var id = setTimeout(function() { savedCallback.current(); }, delay);
+          return function() { clearTimeout(id); };
+        }, [delay]);
+      }
+
+      // === useLocalStorage Hook ===
+      function useLocalStorage(key, initialValue) {
+        var state = React.useState(function() {
+          try {
+            var item = window.localStorage.getItem(key);
+            return item ? JSON.parse(item) : initialValue;
+          } catch (e) { return initialValue; }
+        });
+        var value = state[0], _setValue = state[1];
+        var setValue = React.useCallback(function(newValue) {
+          _setValue(newValue);
+          try { window.localStorage.setItem(key, JSON.stringify(newValue)); } catch (e) {}
+        }, [key]);
+        return [value, setValue];
+      }
+
+      // === Pre-built Component Library ===
+
+      // Spinner
+      function Spinner(props) {
+        var size = props.size || 24;
+        var color = props.color || 'currentColor';
+        return React.createElement('svg', {
+          width: size, height: size, viewBox: '0 0 24 24', fill: 'none',
+          className: 'animate-spin ' + (props.className || ''),
+          style: props.style
+        },
+          React.createElement('circle', { cx: 12, cy: 12, r: 10, stroke: color, strokeWidth: 3, strokeDasharray: '32 32', strokeLinecap: 'round', opacity: 0.25 }),
+          React.createElement('circle', { cx: 12, cy: 12, r: 10, stroke: color, strokeWidth: 3, strokeDasharray: '32 32', strokeDashoffset: 32, strokeLinecap: 'round' })
+        );
+      }
+
+      // Badge
+      function Badge(props) {
+        var variants = {
+          default: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+          primary: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300',
+          success: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+          warning: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
+          danger: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+          info: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300',
+        };
+        var variant = props.variant || 'default';
+        return React.createElement('span', {
+          className: 'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ' + (variants[variant] || variants.default) + ' ' + (props.className || ''),
+          style: props.style
+        }, props.children);
+      }
+
+      // Progress
+      function Progress(props) {
+        var value = Math.min(100, Math.max(0, props.value || 0));
+        var max = props.max || 100;
+        var pct = (value / max) * 100;
+        var color = props.color || 'bg-indigo-500';
+        return React.createElement('div', {
+          className: 'w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden ' + (props.className || ''),
+          style: Object.assign({ height: props.height || 8 }, props.style)
+        },
+          React.createElement('div', {
+            className: color + ' rounded-full transition-all duration-500 ease-out',
+            style: { width: pct + '%', height: '100%' }
+          })
+        );
+      }
+
+      // Skeleton
+      function Skeleton(props) {
+        return React.createElement('div', {
+          className: 'skeleton ' + (props.circle ? 'rounded-full' : 'rounded-lg') + ' ' + (props.className || ''),
+          style: Object.assign({ width: props.width || '100%', height: props.height || 20 }, props.style)
+        });
+      }
+
+      // Tooltip (simple CSS-based)
+      function Tooltip(props) {
+        var showState = React.useState(false);
+        var show = showState[0], setShow = showState[1];
+        return React.createElement('div', {
+          className: 'relative inline-block',
+          onMouseEnter: function() { setShow(true); },
+          onMouseLeave: function() { setShow(false); },
+        },
+          props.children,
+          show && React.createElement('div', {
+            className: 'absolute z-50 px-3 py-1.5 text-xs font-medium text-white bg-slate-900 dark:bg-slate-700 rounded-lg shadow-lg whitespace-nowrap animate-fade-in pointer-events-none',
+            style: { bottom: 'calc(100% + 8px)', left: '50%', transform: 'translateX(-50%)' }
+          }, props.content)
+        );
+      }
+
+      // Switch/Toggle
+      function Switch(props) {
+        var checked = !!props.checked;
+        return React.createElement('button', {
+          type: 'button',
+          role: 'switch',
+          'aria-checked': checked,
+          onClick: function() { if (props.onChange) props.onChange(!checked); },
+          className: 'relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none ' + (checked ? 'bg-indigo-500' : 'bg-slate-300 dark:bg-slate-600') + ' ' + (props.className || ''),
+          style: props.style
+        },
+          React.createElement('span', {
+            className: 'inline-block h-4 w-4 rounded-full bg-white transform transition-transform duration-200 ' + (checked ? 'translate-x-6' : 'translate-x-1')
+          })
+        );
+      }
+
+      // Toast notification (auto-dismiss)
+      function Toast(props) {
+        var visState = React.useState(true);
+        var visible = visState[0];
+        var duration = props.duration || 3000;
+        React.useEffect(function() {
+          var t = setTimeout(function() { visState[1](false); if (props.onDismiss) props.onDismiss(); }, duration);
+          return function() { clearTimeout(t); };
+        }, []);
+        if (!visible) return null;
+        var typeStyles = {
+          success: 'bg-emerald-500 text-white',
+          error: 'bg-red-500 text-white',
+          warning: 'bg-amber-500 text-white',
+          info: 'bg-blue-500 text-white',
+        };
+        return React.createElement('div', {
+          className: 'fixed bottom-4 right-4 z-50 px-4 py-3 rounded-xl shadow-2xl animate-slide-up font-medium text-sm ' + (typeStyles[props.type] || typeStyles.info) + ' ' + (props.className || ''),
+          style: props.style
+        }, props.message || props.children);
+      }
+
+      // Divider
+      function Divider(props) {
+        return React.createElement('div', {
+          className: 'w-full border-t ' + (props.className || 'border-white/10'),
+          style: Object.assign({ margin: '16px 0' }, props.style)
+        },
+          props.label ? React.createElement('span', {
+            className: 'relative inline-block px-3 text-xs text-white/40 bg-inherit',
+            style: { top: '-0.7em' }
+          }, props.label) : null
+        );
+      }
+
+      // Avatar
+      function Avatar(props) {
+        var size = props.size || 40;
+        return React.createElement('div', {
+          className: 'rounded-full overflow-hidden flex-shrink-0 ' + (props.className || ''),
+          style: Object.assign({ width: size, height: size }, props.style)
+        },
+          props.src
+            ? React.createElement('img', { src: props.src, alt: props.alt || '', className: 'w-full h-full object-cover' })
+            : React.createElement('div', {
+                className: 'w-full h-full flex items-center justify-center bg-indigo-500 text-white font-semibold',
+                style: { fontSize: size * 0.4 }
+              }, props.name ? props.name.charAt(0).toUpperCase() : '?')
+        );
+      }
+
+      // Kbd (keyboard shortcut display)
+      function Kbd(props) {
+        return React.createElement('kbd', {
+          className: 'inline-flex items-center px-2 py-0.5 text-xs font-mono font-medium rounded border bg-white/5 border-white/10 text-white/60 ' + (props.className || ''),
+          style: props.style
+        }, props.children);
+      }
 
       // === Variable Subscription ===
       window.__varListeners = {};

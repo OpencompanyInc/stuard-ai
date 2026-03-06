@@ -1,6 +1,6 @@
 /**
  * React Runtime Loader
- * Reads React + ReactDOM UMD production builds from node_modules at runtime.
+ * Reads React + ReactDOM + Framer Motion UMD production builds from node_modules at runtime.
  * These are inlined into custom UI HTML for fully offline operation.
  *
  * Since tsup uses skipNodeModulesBundle: true, node_modules remain
@@ -12,6 +12,7 @@ import * as path from 'path';
 
 let _reactUmd: string | null = null;
 let _reactDomUmd: string | null = null;
+let _framerMotionUmd: string | null = null;
 
 function resolveModulePath(modulePath: string): string {
   try {
@@ -53,10 +54,27 @@ export function getReactDomUmd(): string {
 }
 
 /**
- * Get combined React + ReactDOM runtime for inlining into HTML.
+ * Get the Framer Motion UMD build (~154KB)
+ * Exports to window.Motion with motion, AnimatePresence, useAnimation, etc.
+ */
+export function getFramerMotionUmd(): string {
+  if (!_framerMotionUmd) {
+    try {
+      const filePath = resolveModulePath('framer-motion/dist/framer-motion.js');
+      _framerMotionUmd = fs.readFileSync(filePath, 'utf-8');
+    } catch (err: any) {
+      console.error('[custom-ui] Failed to load Framer Motion UMD:', err?.message || err);
+      _framerMotionUmd = '// Framer Motion failed to load';
+    }
+  }
+  return _framerMotionUmd;
+}
+
+/**
+ * Get combined React + ReactDOM + Framer Motion runtime for inlining into HTML.
  * Cached after first call.
  */
 export function getReactRuntime(): string {
-  return getReactUmd() + '\n' + getReactDomUmd();
+  return getReactUmd() + '\n' + getReactDomUmd() + '\n' + getFramerMotionUmd();
 }
 

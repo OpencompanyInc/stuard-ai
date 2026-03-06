@@ -316,6 +316,13 @@ export { planner_list_items } from './device/productivity';
 // Generic local notification helper
 export { send_notification } from './device/productivity';
 
+// Proactive task board tools (desktop-backed)
+export {
+  proactive_task_list,
+  proactive_task_update,
+  proactive_task_create,
+} from './proactive-task-tools';
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // KNOWLEDGE GRAPH TOOLS
 // ═══════════════════════════════════════════════════════════════════════════════

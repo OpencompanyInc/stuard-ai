@@ -1,8 +1,9 @@
 /**
  * ArrayEditor - User-friendly list editor with drag hints and clear actions
+ * Supports both manual item entry and variable reference mode
  */
-import React, { useEffect } from 'react';
-import { Plus, Trash2, FolderOpen, GripVertical, FileText } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Plus, Trash2, FolderOpen, GripVertical, FileText, Variable, List } from 'lucide-react';
 import { SelectInput } from './SelectInput';
 import { TextInputWithVariables, type UpstreamNode } from './TextInputWithVariables';
 import type { ArgOption } from '../../../constants/tool-schemas';
@@ -10,7 +11,7 @@ import type { WorkflowVariable } from '../../../types';
 
 interface ArrayEditorProps {
   value: any[];
-  onChange: (v: any[]) => void;
+  onChange: (v: any) => void;
   itemType?: string;
   itemOptions?: ArgOption[];
   upstreamNodes?: UpstreamNode[];
@@ -29,6 +30,10 @@ export function ArrayEditor({
   itemTemplate,
   argKey,
 }: ArrayEditorProps) {
+  // Detect if value is a variable reference string (e.g. "{{step_id.items}}")
+  const isVarRef = typeof value === 'string' && value.includes('{{');
+  const [mode, setMode] = useState<'manual' | 'variable'>(isVarRef ? 'variable' : 'manual');
+
   const rawItems = Array.isArray(value) ? value : [];
   const isSourcesField = argKey === 'sources';
 
@@ -85,109 +90,163 @@ export function ArrayEditor({
     return 'item';
   };
 
+  const hasVariables = (upstreamNodes && upstreamNodes.length > 0) || (workflowVariables && workflowVariables.length > 0);
+
   return (
     <div className="space-y-2">
-      {items.length === 0 ? (
-        <div className="text-center py-6 bg-white/[0.06] rounded-xl border border-dashed border-white/[0.08]">
-          <div className="w-10 h-10 mx-auto mb-3 rounded-full bg-white/[0.06] flex items-center justify-center">
-            {isPathArray ? <FileText className="w-5 h-5 text-white/40" /> : <Plus className="w-5 h-5 text-white/40" />}
-          </div>
-          <p className="text-sm text-white/50 mb-3">No {getItemLabel()}s added yet</p>
+      {/* Mode toggle - only show when variables are available */}
+      {hasVariables && (
+        <div className="flex items-center gap-1 p-0.5 bg-white/[0.03] rounded-lg border border-white/[0.06] w-fit">
           <button
-            onClick={addItem}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-indigo-400 bg-indigo-500/10 rounded-lg hover:bg-indigo-500/200/20 transition-colors"
+            type="button"
+            onClick={() => {
+              setMode('manual');
+              if (typeof value === 'string') onChange([]);
+            }}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${mode === 'manual'
+              ? 'bg-white/[0.08] text-white/80 shadow-sm'
+              : 'text-white/40 hover:text-white/60'
+              }`}
           >
-            <Plus className="w-4 h-4" />
-            Add {getItemLabel()}
+            <List className="w-3 h-3" />
+            Manual List
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMode('variable');
+              if (Array.isArray(value)) onChange('');
+            }}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${mode === 'variable'
+              ? 'bg-indigo-500/20 text-indigo-400 shadow-sm'
+              : 'text-white/40 hover:text-white/60'
+              }`}
+          >
+            <Variable className="w-3 h-3" />
+            From Variable
           </button>
         </div>
+      )}
+
+      {/* Variable reference mode */}
+      {mode === 'variable' ? (
+        <div className="space-y-1.5">
+          <TextInputWithVariables
+            value={String(typeof value === 'string' ? value : '')}
+            onChange={onChange}
+            placeholder="{{step_id.items}} or {{workflow.myList}}"
+            upstreamNodes={upstreamNodes}
+            workflowVariables={workflowVariables}
+          />
+          <p className="text-[10px] text-white/35 px-1">
+            Reference a list from a previous step or workflow variable. The value will be resolved at runtime.
+          </p>
+        </div>
       ) : (
+        /* Manual list mode */
         <>
-          {items.map((item, i) => (
-            <div key={i} className="flex gap-2 items-center group p-2 bg-white/[0.06] rounded-xl border border-white/[0.04] hover:border-white/[0.08] transition-colors">
-              {/* Index indicator */}
-              <div className="w-6 h-6 rounded-lg bg-slate-200 flex items-center justify-center text-xs font-medium text-white/50 shrink-0">
-                {i + 1}
+          {items.length === 0 ? (
+            <div className="text-center py-6 bg-white/[0.06] rounded-xl border border-dashed border-white/[0.08]">
+              <div className="w-10 h-10 mx-auto mb-3 rounded-full bg-white/[0.06] flex items-center justify-center">
+                {isPathArray ? <FileText className="w-5 h-5 text-white/40" /> : <Plus className="w-5 h-5 text-white/40" />}
               </div>
-              
-              {/* Item editor */}
-              <div className="flex-1 min-w-0">
-                {itemOptions ? (
-                  <SelectInput
-                    value={item}
-                    onChange={v => updateItem(i, v)}
-                    options={itemOptions}
-                  />
-                ) : isPathArray && typeof item === 'object' && item !== null ? (
-                  <div className="flex gap-2">
-                    <div className="flex-1">
+              <p className="text-sm text-white/50 mb-3">No {getItemLabel()}s added yet</p>
+              <button
+                onClick={addItem}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-indigo-400 bg-indigo-500/10 rounded-lg hover:bg-indigo-500/20 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                Add {getItemLabel()}
+              </button>
+            </div>
+          ) : (
+            <>
+              {items.map((item, i) => (
+                <div key={i} className="flex gap-2 items-center group p-2 bg-white/[0.06] rounded-xl border border-white/[0.04] hover:border-white/[0.08] transition-colors">
+                  {/* Index indicator */}
+                  <div className="w-6 h-6 rounded-lg bg-slate-200 flex items-center justify-center text-xs font-medium text-white/50 shrink-0">
+                    {i + 1}
+                  </div>
+
+                  {/* Item editor */}
+                  <div className="flex-1 min-w-0">
+                    {itemOptions ? (
+                      <SelectInput
+                        value={item}
+                        onChange={v => updateItem(i, v)}
+                        options={itemOptions}
+                      />
+                    ) : isPathArray && typeof item === 'object' && item !== null ? (
+                      <div className="flex gap-2">
+                        <div className="flex-1">
+                          <TextInputWithVariables
+                            value={item.path || ''}
+                            onChange={v => updateItemPath(i, v)}
+                            placeholder="Enter file path..."
+                            upstreamNodes={upstreamNodes}
+                            workflowVariables={workflowVariables}
+                          />
+                        </div>
+                        <button
+                          onClick={async () => {
+                            try {
+                              const api = (window as any).desktopAPI;
+                              if (!api?.pickFiles) return;
+                              const result = await api.pickFiles({ title: 'Select File', multiple: false });
+                              if (result?.ok && result.files?.length > 0) {
+                                const file = result.files[0];
+                                updateItemPath(i, typeof file === 'string' ? file : file.path);
+                              }
+                            } catch {}
+                          }}
+                          className="px-3 py-2 bg-white/[0.04] border border-white/[0.08] rounded-lg text-white/50 hover:text-indigo-400 hover:border-indigo-500/40 transition-colors shrink-0"
+                          title="Browse files"
+                        >
+                          <FolderOpen className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : typeof item === 'object' && item !== null ? (
+                      <textarea
+                        value={JSON.stringify(item, null, 2)}
+                        onChange={e => {
+                          try { updateItem(i, JSON.parse(e.target.value)); } catch { /* ignore */ }
+                        }}
+                        className="w-full px-3 py-2 text-xs font-mono bg-white/[0.04] border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 resize-none"
+                        rows={3}
+                      />
+                    ) : (
                       <TextInputWithVariables
-                        value={item.path || ''}
-                        onChange={v => updateItemPath(i, v)}
-                        placeholder="Enter file path..."
+                        value={String(item || '')}
+                        onChange={v => updateItem(i, v)}
+                        placeholder={`Enter ${getItemLabel()}...`}
                         upstreamNodes={upstreamNodes}
                         workflowVariables={workflowVariables}
                       />
-                    </div>
-                    <button
-                      onClick={async () => {
-                        try {
-                          const api = (window as any).desktopAPI;
-                          if (!api?.pickFiles) return;
-                          const result = await api.pickFiles({ title: 'Select File', multiple: false });
-                          if (result?.ok && result.files?.length > 0) {
-                            const file = result.files[0];
-                            updateItemPath(i, typeof file === 'string' ? file : file.path);
-                          }
-                        } catch {}
-                      }}
-                      className="px-3 py-2 bg-white/[0.04] border border-white/[0.08] rounded-lg text-white/50 hover:text-indigo-400 hover:border-indigo-500/40 transition-colors shrink-0"
-                      title="Browse files"
-                    >
-                      <FolderOpen className="w-4 h-4" />
-                    </button>
+                    )}
                   </div>
-                ) : typeof item === 'object' && item !== null ? (
-                  <textarea
-                    value={JSON.stringify(item, null, 2)}
-                    onChange={e => {
-                      try { updateItem(i, JSON.parse(e.target.value)); } catch { /* ignore */ }
-                    }}
-                    className="w-full px-3 py-2 text-xs font-mono bg-white/[0.04] border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 resize-none"
-                    rows={3}
-                  />
-                ) : (
-                  <TextInputWithVariables
-                    value={String(item || '')}
-                    onChange={v => updateItem(i, v)}
-                    placeholder={`Enter ${getItemLabel()}...`}
-                    upstreamNodes={upstreamNodes}
-                    workflowVariables={workflowVariables}
-                  />
-                )}
-              </div>
 
-              {/* Remove button */}
+                  {/* Remove button */}
+                  <button
+                    onClick={() => removeItem(i)}
+                    className="p-2 text-white/40 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                    title="Remove"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+
               <button
-                onClick={() => removeItem(i)}
-                className="p-2 text-white/40 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                title="Remove"
+                onClick={addItem}
+                className="w-full py-2.5 border border-dashed border-white/[0.08] rounded-xl text-xs font-semibold text-white/50 hover:text-indigo-400 hover:border-indigo-500/40 hover:bg-indigo-500/10 transition-all flex items-center justify-center gap-2"
               >
-                <Trash2 className="w-4 h-4" />
+                <Plus className="w-4 h-4" />
+                Add {getItemLabel()}
               </button>
-            </div>
-          ))}
-
-          <button
-            onClick={addItem}
-            className="w-full py-2.5 border border-dashed border-white/[0.08] rounded-xl text-xs font-semibold text-white/50 hover:text-indigo-400 hover:border-indigo-500/40 hover:bg-indigo-500/200/10 transition-all flex items-center justify-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            Add {getItemLabel()}
-          </button>
+            </>
+          )}
         </>
       )}
     </div>
   );
 }
-

@@ -8,6 +8,7 @@ import { execTerminalCreate, execTerminalList, execTerminalGet, execTerminalSend
 import { execCallWorkflow, execInvokeWorkflow, execTestRunSteps, execListLocalWorkflows, execListLocalStuards } from './handlers/workflow';
 import { execCallWorkspaceFunction, execListWorkspaceFunctions } from './handlers/workspace-functions';
 import { execWorkspaceReadFile, execWorkspaceWriteFile, execWorkspaceDeleteFile, execWorkspaceListFiles, execWorkspaceCreateFolder, execWorkspaceGetInfo } from './handlers/workspace-files';
+import { execProactiveTaskCreate, execProactiveTaskList, execProactiveTaskUpdate, execProactiveTaskDelete } from './handlers/proactive';
 import {
   execCanvasList,
   execCanvasRead,
@@ -161,6 +162,23 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'browser_use_scroll') return execBrowserUseScroll(args, ctx);
       if (toolName === 'browser_use_tabs') return execBrowserUseTabs(args, ctx);
       if (toolName === 'browser_use_cookies') return execBrowserUseCookies(args, ctx);
+      if (toolName === 'proactive_task_list') return execProactiveTaskList(args, ctx);
+      if (toolName === 'proactive_task_update') return execProactiveTaskUpdate(args, ctx);
+      if (toolName === 'proactive_task_create') return execProactiveTaskCreate(args, ctx);
+      if (toolName === 'proactive_task_delete') return execProactiveTaskDelete(args, ctx);
+
+      // ask_user — blocking interactive questionnaire rendered in chat overlay
+      if (toolName === 'ask_user') {
+        return execCustomUi({
+          id: args?.id || `ask-user-${Date.now()}`,
+          title: args?.title || 'Question',
+          layout: { type: 'ask_user', ...args },
+          blocking: true,
+          timeoutMs: args?.timeoutMs || 300000,
+          window: { width: 420, height: 360, position: 'center', alwaysOnTop: true, ...args?.window },
+          data: args,
+        }, ctx);
+      }
 
       // GenUI interactive tools - route through custom_ui with component type
       const GENUI_TOOLS = new Set([

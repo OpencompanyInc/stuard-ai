@@ -180,7 +180,8 @@ export default function App() {
     tabs, activeTabId, addTab, closeTab, switchTab,
     chatMode, setChatMode, chatModels, setChatModels,
     pendingMemories, confirmPendingMemory, rejectPendingMemory,
-    editMessage, revertFiles
+    editMessage, revertFiles,
+    activeGenUITools, respondToGenUI
   } = useAgent({ onTitleUpdate: handleTitleUpdate, initialChatMode: defaultChatMode, initialChatModels: defaultChatModels }) as any;
 
   // Speech Hook
@@ -1374,6 +1375,8 @@ export default function App() {
                     translucentMode={translucentMode}
                     onSubmitToolOutput={submitToolOutput}
                     onGenUIResponse={handleGenUIResponse}
+                    askUserPrompts={activeGenUITools}
+                    onAskUserRespond={respondToGenUI}
                     onEditMessage={editMessage}
                     onRevertFiles={revertFiles}
                     pendingMemories={pendingMemories}

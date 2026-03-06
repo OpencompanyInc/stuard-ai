@@ -122,11 +122,11 @@ export async function execWait(args: any, ctx: RouterContext): Promise<any> {
     0,
     Number(
       args?.ms ??
-        args?.milliseconds ??
-        args?.delayMs ??
-        args?.duration ??
-        args?.durationMs ??
-        0
+      args?.milliseconds ??
+      args?.delayMs ??
+      args?.duration ??
+      args?.durationMs ??
+      0
     )
   );
   if (ms > 0) await new Promise(r => setTimeout(r, ms));

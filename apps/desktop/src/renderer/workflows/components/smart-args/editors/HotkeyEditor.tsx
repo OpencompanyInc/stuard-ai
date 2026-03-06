@@ -10,12 +10,12 @@ interface HotkeyEditorProps {
 }
 
 const KEY_DISPLAY: Record<string, string> = {
-  ctrl: '⌃ Ctrl',
-  alt: '⌥ Alt', 
-  shift: '⇧ Shift',
-  meta: '⌘ Cmd',
+  ctrl: 'Ctrl',
+  alt: 'Alt',
+  shift: 'Shift',
+  meta: 'Cmd',
   space: 'Space',
-  enter: '↵ Enter',
+  enter: 'Enter',
   escape: 'Esc',
   backspace: '⌫',
   delete: 'Del',
@@ -23,6 +23,7 @@ const KEY_DISPLAY: Record<string, string> = {
   arrowdown: '↓',
   arrowleft: '←',
   arrowright: '→',
+  tab: 'Tab',
 };
 
 export function HotkeyEditor({ value, onChange }: HotkeyEditorProps) {
@@ -60,15 +61,15 @@ export function HotkeyEditor({ value, onChange }: HotkeyEditorProps) {
   const formatKey = (k: string) => KEY_DISPLAY[k.toLowerCase()] || k.toUpperCase();
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 w-full">
       {editing ? (
         <div className="relative">
-          <div className="w-full px-4 py-4 text-sm border-2 border-blue-400 rounded-xl bg-gradient-to-r from-blue-50 to-sky-50 flex flex-col items-center justify-center gap-2">
-            <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center animate-pulse">
-              <Keyboard className="w-5 h-5 text-blue-600" />
+          <div className="w-full px-4 py-4 text-sm border border-blue-500/50 rounded-2xl bg-blue-500/10 flex flex-col items-center justify-center gap-2 transition-all">
+            <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center animate-pulse">
+              <Keyboard className="w-5 h-5 text-blue-400" />
             </div>
-            <span className="font-semibold text-blue-700">Press your shortcut keys...</span>
-            <span className="text-xs text-blue-500">Example: Ctrl + Shift + K</span>
+            <span className="font-medium text-white">Press your shortcut keys...</span>
+            <span className="text-xs text-white/50">Example: Ctrl + Shift + K</span>
           </div>
           <input
             ref={inputRef}
@@ -80,38 +81,37 @@ export function HotkeyEditor({ value, onChange }: HotkeyEditorProps) {
           />
         </div>
       ) : (
-        <div className="flex gap-2">
+        <div className="flex gap-3">
           <button
             onClick={() => setEditing(true)}
-            className="flex-1 px-4 py-3 text-sm border border-white/[0.08] rounded-xl bg-white/[0.04] hover:bg-white/[0.06] hover:border-blue-300 flex items-center justify-center gap-3 transition-all shadow-sm group"
+            className="flex-1 px-4 py-3 text-sm border border-white/[0.08] rounded-2xl bg-white/[0.02] hover:bg-white/[0.04] flex items-center justify-center transition-all shadow-sm"
           >
             {keys.length > 0 ? (
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-3">
                 {keys.map((k, i) => (
                   <React.Fragment key={k}>
-                    <span className="px-2.5 py-1 bg-white/[0.06] border border-white/[0.08] rounded-lg font-medium text-white/80 text-xs">
+                    <span className="px-3 py-1.5 bg-white/[0.06] border border-white/[0.08] rounded-xl font-medium text-white/80 text-sm shadow-sm">
                       {formatKey(k)}
                     </span>
-                    {i < keys.length - 1 && <span className="text-white/40">+</span>}
+                    {i < keys.length - 1 && <span className="text-white/40 text-lg font-light">+</span>}
                   </React.Fragment>
                 ))}
               </div>
             ) : (
-              <div className="flex items-center gap-2 text-white/40">
+              <div className="flex items-center gap-2 text-white/40 py-1.5">
                 <Keyboard className="w-4 h-4" />
                 <span>Click to record shortcut</span>
               </div>
             )}
           </button>
-          {keys.length > 0 && (
-            <button
-              onClick={() => { setKeys([]); onChange([]); }}
-              className="p-3 text-white/40 hover:text-red-500 hover:bg-red-500/10 border border-white/[0.08] rounded-xl transition-all"
-              title="Clear"
-            >
-              <RotateCcw className="w-4 h-4" />
-            </button>
-          )}
+
+          <button
+            onClick={() => { setKeys([]); onChange([]); }}
+            className="px-10 flex items-center justify-center text-white/60 hover:text-white bg-white/[0.02] hover:bg-white/[0.04] border border-white/[0.08] rounded-2xl transition-all h-auto"
+            title="Clear"
+          >
+            <RotateCcw className="w-5 h-5" />
+          </button>
         </div>
       )}
     </div>

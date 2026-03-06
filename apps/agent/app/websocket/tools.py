@@ -60,6 +60,10 @@ CLIENT_TOOLS = {
     "stuards_run",
     "stuards_stop",
     "test_run_steps",
+    # Proactive task board tools (desktop-backed)
+    "proactive_task_list",
+    "proactive_task_update",
+    "proactive_task_create",
 }
 CLIENT_PREFIXES = ("terminal_", "browser_use_")
 SENSITIVE_CLIENT_TOOLS = {

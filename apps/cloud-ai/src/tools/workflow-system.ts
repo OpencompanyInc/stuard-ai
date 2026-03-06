@@ -12,6 +12,8 @@ import * as googleTools from './google-tools';
 import * as httpTools from './http-tools';
 import * as marketplaceTools from './marketplace-tools';
 import * as ttsTools from './tts-tools';
+import { generate_image } from './image-gen';
+import { ask_user } from './ask-user';
 import { generateText, generateObject } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { google } from '@ai-sdk/google';
@@ -191,6 +193,8 @@ function getCloudTools(): Map<string, any> {
       add(maybe);
     }
   }
+  add(generate_image);
+  add(ask_user);
 
   _cloudToolsCache = registry;
   return registry;

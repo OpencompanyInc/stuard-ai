@@ -186,6 +186,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'ollama_embeddings', category: 'ollama', kind: 'local', description: 'Generate vector embeddings using a local model for semantic search and RAG.', argsTemplate: { model: 'nomic-embed-text', input: '' }, outputSchema: { ok: 'boolean', model: 'string', embeddings: 'any[]', dimensions: 'number', count: 'number', error: 'string' } },
   { id: 'ollama_models', category: 'ollama', kind: 'local', description: 'Manage local Ollama models: list, pull, delete, show details, see running, or copy.', argsTemplate: { action: 'list', model: '' }, outputSchema: { ok: 'boolean', action: 'string', models: 'any[]', count: 'number', model: 'string', status: 'string', deleted: 'boolean', error: 'string' } },
 
+  { id: 'generate_image', category: 'vision', kind: 'cloud', description: 'Generate images from text or reference images using AI. Supports OpenAI (GPT Image, DALL-E), Google (Nano Banana, Imagen), and xAI (Grok Imagine).', argsTemplate: { prompt: '', input_images: [], model: 'gpt-image-1', size: 'auto', aspect_ratio: 'auto', quality: 'auto', n: 1, format: 'png', background: 'auto' }, outputSchema: { ok: 'boolean', images: 'any[]', model: 'string', provider: 'string', error: 'string' } },
   { id: 'text_to_speech', category: 'vision', kind: 'cloud', description: 'Convert text to speech audio using ElevenLabs TTS with language support', argsTemplate: { text: '', voice_id: 'JBFqnCBsd6RMkjVDRZzb', model_id: 'eleven_multilingual_v2', language_code: '', speed: 1.0, format: 'mp3', save: true, play: false, outputPath: '' }, outputSchema: { ok: 'boolean', filePath: 'string', format: 'string', voice_id: 'string', textLength: 'number', played: 'boolean', error: 'string' } },
   { id: 'list_tts_voices', category: 'vision', kind: 'cloud', description: 'List all available ElevenLabs text-to-speech voices', argsTemplate: {}, outputSchema: { ok: 'boolean', voices: 'any[]' } },
   { id: 'get_tts_models', category: 'vision', kind: 'cloud', description: 'List available ElevenLabs TTS models', argsTemplate: {}, outputSchema: { ok: 'boolean', models: 'any[]' } },
@@ -195,7 +196,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'web_search', category: 'data', kind: 'cloud', description: 'Search the web using Perplexity AI', argsTemplate: { query: '', max_results: 5, max_tokens_per_page: 1024 }, outputSchema: { results: 'any[]', id: 'string' } },
 
   // --- UI ---
-  { id: 'custom_ui', category: 'ui', kind: 'local', description: 'Display custom overlay UI using React JSX components (offline). Component has access to: stuard.callNode(id|label, data) for node-routing to sibling nodes with {{caller.X}} templates and visual wire animations (connect with callNode wires), stuard.callTool(name, args) for invisible tool calls, stuard.pickFile/pickFolder/pickSavePath for native OS file/folder picker dialogs, stuard.readFile/writeFile for file I/O, stuard.copyToClipboard/readClipboard, stuard.notify for system notifications, and useVar(name, default) for reactive workflow variable binding.', argsTemplate: { id: 'my-panel', title: 'My Custom UI', component: '', css: '', data: {}, window: { width: 400, height: 500, position: 'center', alwaysOnTop: true, frameless: true, borderRadius: 12, resizable: false, draggable: true, backgroundType: 'color', backgroundColor: '#1a1a2e', contentPadding: 24, shadow: { enabled: true, color: '#00000040', blur: 20, spread: 0, x: 0, y: 8 }, animation: { open: 'fade', close: 'fade', duration: 300, easing: 'ease-out' }, invisible: false, translucent: { color: '#1a1a2e', opacity: 0.7, blur: 12 } }, blocking: true }, outputSchema: { ok: 'boolean', action: 'string', data: 'object' } },
+  { id: 'custom_ui', category: 'ui', kind: 'local', description: 'Display custom overlay UI using React JSX components (offline). Full React + Framer Motion runtime. Animation: motion.div/span/button etc., AnimatePresence, useAnimation, useMotionValue, useTransform, useSpring, useInView. Hooks: useState, useEffect, useVar(name, default), useStyles(css) for dynamic keyframes, useInterval(fn, ms), useTimeout(fn, ms), useLocalStorage(key, init). Pre-built components: Spinner, Badge(variant), Progress(value), Skeleton, Tooltip(content), Switch(checked, onChange), Toast(message, type), Avatar(src|name), Divider, Kbd. API: stuard.callNode(id|label, data), stuard.callTool(name, args), stuard.pickFile/pickFolder/pickSavePath, stuard.readFile/writeFile, stuard.copyToClipboard/readClipboard, stuard.notify. Fonts: Inter, Outfit, Space Grotesk, JetBrains Mono (use font-inter, font-outfit, font-grotesk, font-mono classes). 50+ CSS animations: animate-fade-in, animate-slide-up, animate-bounce-in, animate-float, animate-glow, animate-shimmer, animate-gradient-shift, animate-morph, animate-heartbeat, animate-tada, etc. Stagger children with stagger-children class + delay-100 through delay-2000. Gradient presets: gradient-purple-pink, gradient-ocean, gradient-aurora, gradient-sunset, gradient-cosmic, gradient-text. Effects: glass, glass-heavy, glass-colored, noise, shadow-neon-blue/purple/cyan/pink, text-glow, gradient-border. All Tailwind utilities available.', argsTemplate: { id: 'my-panel', title: 'My Custom UI', component: '', css: '', data: {}, window: { width: 400, height: 500, position: 'center', alwaysOnTop: true, frameless: true, borderRadius: 12, resizable: false, draggable: true, backgroundType: 'color', backgroundColor: '#1a1a2e', contentPadding: 24, shadow: { enabled: true, color: '#00000040', blur: 20, spread: 0, x: 0, y: 8 }, animation: { open: 'fade', close: 'fade', duration: 300, easing: 'ease-out' }, invisible: false, translucent: { color: '#1a1a2e', opacity: 0.7, blur: 12 } }, blocking: true }, outputSchema: { ok: 'boolean', action: 'string', data: 'object' } },
   { id: 'update_custom_ui', category: 'ui', kind: 'local', description: 'Update existing custom_ui window with new content', argsTemplate: { id: 'my-panel', title: '', html: '', css: '', data: {}, window: {} }, outputSchema: { ok: 'boolean', action: 'string', data: 'object' } },
   { id: 'close_custom_ui', category: 'ui', kind: 'local', description: 'Close a UI window', argsTemplate: { id: '' }, outputSchema: { ok: 'boolean' } },
   { id: 'ask_confirmation', category: 'ui', kind: 'local', description: 'Show a confirmation dialog to the user', argsTemplate: { title: 'Confirm Action', message: '', confirmLabel: 'Confirm', cancelLabel: 'Cancel', variant: 'warning' }, outputSchema: { confirmed: 'boolean' } },
@@ -212,8 +213,11 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'show_colors', category: 'ui', kind: 'local', description: 'Display a color palette with clickable swatches', argsTemplate: { title: '', colors: [] }, outputSchema: { ok: 'boolean' } },
   { id: 'show_info_card', category: 'ui', kind: 'local', description: 'Display a rich information card with optional action', argsTemplate: { title: 'Info', message: '', variant: 'info', actionLabel: '', footer: '' }, outputSchema: { action: 'string' } },
   { id: 'show_progress', category: 'ui', kind: 'local', description: 'Display a progress bar for long-running tasks', argsTemplate: { progress: 50, label: '', sublabel: '', variant: 'download', status: 'active', color: 'blue' }, outputSchema: { ok: 'boolean' } },
+  { id: 'show_form', category: 'ui', kind: 'local', description: 'Display a multi-page form/wizard to collect structured user input. Supports select, multiselect, text, textarea, toggle, number, slider fields.', argsTemplate: { title: 'User Input', description: '', pages: [{ id: 'page1', title: 'Page 1', fields: [] }], submitLabel: 'Submit', cancelLabel: 'Cancel', showProgress: true }, outputSchema: { submitted: 'boolean', cancelled: 'boolean', data: 'object' } },
 
   // --- INTEGRATIONS ---
+  { id: 'google_get_userinfo', category: 'integrations', kind: 'cloud', description: 'Get Google account profile via oauth2 v3 userinfo (Current user profile info).', argsTemplate: { profile: 'default' }, outputSchema: { me: 'object' } },
+  { id: 'google_list_profiles', category: 'integrations', kind: 'cloud', description: 'List all connected Google profiles/accounts for the current user. Returns the profile labels (e.g., "default", "work", "personal") which can be passed to other Google tools.', argsTemplate: {}, outputSchema: { profiles: 'any[]' } },
   { id: 'gmail_send_message', category: 'integrations', kind: 'cloud', description: 'Send an email via Gmail with optional file attachments', argsTemplate: { to: [], subject: '', body: '', contentType: 'text/plain', from: '', cc: [], bcc: [], attachments: [] }, outputSchema: { message: 'object', attachmentCount: 'number' } },
   { id: 'gmail_list_messages', category: 'integrations', kind: 'cloud', description: 'List Gmail messages', argsTemplate: { q: '', labelIds: [], maxResults: 10, includeSpamTrash: false }, outputSchema: { items: 'any[]', count: 'number', nextPageToken: 'string' } },
   { id: 'gmail_get_message_brief', category: 'integrations', kind: 'cloud', description: 'Get a Gmail message brief', argsTemplate: { id: '' }, outputSchema: { message: 'object' } },
@@ -1556,6 +1560,132 @@ if (TOOL_SCHEMAS['analyze_media']) {
 }
 
 // ============================================================================
+// GENERATE_IMAGE — Rich UI overrides
+// ============================================================================
+
+if (TOOL_SCHEMAS['generate_image']) {
+  TOOL_SCHEMAS['generate_image'].label = 'Generate Image';
+  TOOL_SCHEMAS['generate_image'].args = {
+    prompt: {
+      type: 'string',
+      label: 'Prompt',
+      description: 'Text description of the image to generate. Be detailed and specific for best results.',
+      required: true,
+      placeholder: 'A futuristic city skyline at sunset with flying cars...',
+    },
+    input_images: {
+      type: 'files',
+      label: 'Input Images',
+      description: 'Optional reference/source images for image-to-image or editing. Best supported by Gemini image-preview models and OpenAI gpt-image-1.',
+      default: [],
+    },
+    model: {
+      type: 'select',
+      label: 'Model',
+      description: 'AI model for image generation. You can also type a custom model ID.',
+      default: 'gpt-image-1',
+      allowFreeform: true,
+      options: [
+        // OpenAI
+        { value: 'gpt-image-1.5', label: 'GPT Image 1.5', description: 'Latest & best quality (OpenAI)', group: 'OpenAI' },
+        { value: 'gpt-image-1', label: 'GPT Image 1', description: 'High quality (OpenAI)', group: 'OpenAI' },
+        { value: 'gpt-image-1-mini', label: 'GPT Image 1 Mini', description: 'Fast & cheap (OpenAI)', group: 'OpenAI' },
+        { value: 'dall-e-3', label: 'DALL-E 3', description: 'Legacy (OpenAI)', group: 'OpenAI' },
+        // Google — Nano Banana family
+        { value: 'gemini-3.1-flash-image-preview', label: 'Nano Banana 2', description: 'Latest — fast + high quality (Google)', group: 'Google' },
+        { value: 'gemini-3.0-pro-image-preview', label: 'Nano Banana Pro', description: 'Pro quality, up to 4K (Google)', group: 'Google' },
+        { value: 'gemini-2.5-flash-image', label: 'Nano Banana', description: 'Fast & efficient (Google)', group: 'Google' },
+        // Google — Imagen family
+        { value: 'imagen-4.0-generate-001', label: 'Imagen 4', description: 'Dedicated image model (Google)', group: 'Google' },
+        { value: 'imagen-3.0-generate-002', label: 'Imagen 3', description: 'Previous gen (Google)', group: 'Google' },
+        // xAI / Grok
+        { value: 'grok-imagine-image', label: 'Grok Imagine', description: 'Aurora-powered, wide style range (xAI)', group: 'xAI' },
+        { value: 'grok-2-image', label: 'Grok 2 Image', description: 'Legacy (xAI)', group: 'xAI' },
+      ],
+    },
+    size: {
+      type: 'select',
+      label: 'Size',
+      description: 'Image dimensions (OpenAI models). For Google/xAI prefer Aspect Ratio instead.',
+      default: 'auto',
+      allowFreeform: true,
+      options: [
+        { value: 'auto', label: 'Auto (1024x1024)', description: 'Default square' },
+        { value: '1024x1024', label: '1024x1024', description: 'Square' },
+        { value: '1536x1024', label: '1536x1024', description: 'Landscape' },
+        { value: '1024x1536', label: '1024x1536', description: 'Portrait' },
+        { value: '512x512', label: '512x512', description: 'Small square' },
+        { value: '256x256', label: '256x256', description: 'Thumbnail' },
+      ],
+    },
+    aspect_ratio: {
+      type: 'select',
+      label: 'Aspect Ratio',
+      description: 'Image aspect ratio. Used by Google and xAI models. auto = 1:1.',
+      default: 'auto',
+      allowFreeform: true,
+      options: [
+        { value: 'auto', label: 'Auto (1:1)', description: 'Default square' },
+        { value: '1:1', label: '1:1', description: 'Square' },
+        { value: '3:2', label: '3:2', description: 'Landscape' },
+        { value: '2:3', label: '2:3', description: 'Portrait' },
+        { value: '4:3', label: '4:3', description: 'Standard landscape' },
+        { value: '3:4', label: '3:4', description: 'Standard portrait' },
+        { value: '16:9', label: '16:9', description: 'Widescreen' },
+        { value: '9:16', label: '9:16', description: 'Vertical / mobile' },
+        { value: '21:9', label: '21:9', description: 'Ultra-wide' },
+      ],
+    },
+    quality: {
+      type: 'select',
+      label: 'Quality',
+      description: 'Image quality (OpenAI models)',
+      default: 'auto',
+      advanced: true,
+      allowFreeform: true,
+      options: [
+        { value: 'auto', label: 'Auto', description: 'Model default' },
+        { value: 'high', label: 'High', description: 'Best quality, slower' },
+        { value: 'medium', label: 'Medium', description: 'Balanced' },
+        { value: 'low', label: 'Low', description: 'Fastest' },
+      ],
+    },
+    n: {
+      type: 'number',
+      label: 'Count',
+      description: 'Number of images to generate (1-4). DALL-E 3 only supports 1.',
+      default: 1,
+      advanced: true,
+    },
+    format: {
+      type: 'select',
+      label: 'Format',
+      description: 'Output image format (OpenAI models). Google returns png, xAI returns jpeg.',
+      default: 'png',
+      advanced: true,
+      options: [
+        { value: 'png', label: 'PNG', description: 'Lossless, supports transparency' },
+        { value: 'webp', label: 'WebP', description: 'Smaller file, supports transparency' },
+        { value: 'jpeg', label: 'JPEG', description: 'Smallest file, no transparency' },
+      ],
+    },
+    background: {
+      type: 'select',
+      label: 'Background',
+      description: 'Background style (OpenAI GPT Image models only)',
+      default: 'auto',
+      advanced: true,
+      options: [
+        { value: 'auto', label: 'Auto', description: 'Model decides' },
+        { value: 'transparent', label: 'Transparent', description: 'No background (png/webp only)' },
+        { value: 'opaque', label: 'Opaque', description: 'Solid background' },
+      ],
+    },
+  };
+  TOOL_SCHEMAS['generate_image'].outputs = ['ok', 'images', 'model', 'provider', 'error'];
+}
+
+// ============================================================================
 // SHOW_CHOICES — choices as JSON
 // ============================================================================
 
@@ -1896,6 +2026,7 @@ const AGENT_AVAILABLE_TOOLS: ArgOption[] = [
   // AI Helpers
   { value: 'agent_decision', label: 'AI Decision', description: 'Quick yes/no or choice decision', group: 'AI Helpers' },
   { value: 'agent_extract', label: 'AI Extract', description: 'Extract structured data from text', group: 'AI Helpers' },
+  { value: 'generate_image', label: 'Generate Image', description: 'Generate images from text prompts or reference images', group: 'AI Helpers' },
 
   // Headless Agents
   { value: 'deploy_headless_agent', label: 'Deploy Agent', description: 'Launch a background agent', group: 'Agents' },

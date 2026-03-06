@@ -2,6 +2,7 @@
  * TextInputWithVariables - Text input with variable autocomplete
  */
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Variable, Plus } from 'lucide-react';
 import { getToolOutputs } from '../../../constants/tool-schemas';
 import type { WorkflowVariable } from '../../../types';
@@ -35,8 +36,25 @@ export function TextInputWithVariables({
   const [suggestions, setSuggestions] = useState<Array<{ text: string; label: string; description?: string; category?: string }>>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [cursorPos, setCursorPos] = useState(0);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Calculate dropdown position relative to viewport
+  const updateDropdownPos = useCallback(() => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const dropdownHeight = 240; // max-h-60 = 15rem = 240px
+    // Show above if not enough space below
+    const showAbove = spaceBelow < dropdownHeight && rect.top > spaceBelow;
+    setDropdownPos({
+      top: showAbove ? rect.top - dropdownHeight : rect.bottom + 4,
+      left: rect.left,
+      width: rect.width,
+    });
+  }, []);
 
   // Build suggestions from upstream nodes and workflow variables
   const buildSuggestions = useCallback((searchText: string) => {
@@ -111,10 +129,11 @@ export function TextInputWithVariables({
       setSuggestions(newSuggestions);
       setShowSuggestions(newSuggestions.length > 0);
       setSelectedIndex(0);
+      if (newSuggestions.length > 0) updateDropdownPos();
     } else {
       setShowSuggestions(false);
     }
-  }, [buildSuggestions]);
+  }, [buildSuggestions, updateDropdownPos]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const newValue = e.target.value;
@@ -182,6 +201,7 @@ export function TextInputWithVariables({
     setSuggestions(newSuggestions);
     setShowSuggestions(true);
     setSelectedIndex(0);
+    updateDropdownPos();
     if (!cursorPos && inputRef.current) {
       setCursorPos(inputRef.current.value.length);
     }
@@ -189,7 +209,10 @@ export function TextInputWithVariables({
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const inContainer = containerRef.current?.contains(target);
+      const inDropdown = dropdownRef.current?.contains(target);
+      if (!inContainer && !inDropdown) {
         setShowSuggestions(false);
       }
     };
@@ -235,9 +258,19 @@ export function TextInputWithVariables({
         </div>
       )}
 
-      {/* Suggestions dropdown */}
-      {showSuggestions && (
-        <div className="absolute z-50 w-full mt-2 bg-black/80 backdrop-blur-2xl border border-white/[0.08] rounded-xl shadow-2xl shadow-black/50 max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150">
+      {/* Suggestions dropdown - rendered via portal to escape overflow clipping */}
+      {showSuggestions && dropdownPos && createPortal(
+        <div
+          ref={dropdownRef}
+          style={{
+            position: 'fixed',
+            top: dropdownPos.top,
+            left: dropdownPos.left,
+            width: dropdownPos.width,
+            zIndex: 9999,
+          }}
+          className="bg-black/80 backdrop-blur-2xl border border-white/[0.08] rounded-xl shadow-2xl shadow-black/50 max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150"
+        >
           <div className="px-3 py-2 bg-white/[0.04] border-b border-white/[0.08] text-[10px] font-bold text-white/50 uppercase tracking-wider flex items-center gap-1.5 sticky top-0">
             <Variable className="w-3 h-3" />
             Pick a Variable
@@ -247,10 +280,10 @@ export function TextInputWithVariables({
               <button
                 key={s.text}
                 onClick={() => insertSuggestion(s.text)}
-                className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 transition-all rounded-lg mb-0.5 ${i === selectedIndex ? 'bg-indigo-500/100/20 text-indigo-400 shadow-sm' : 'text-white/60 hover:bg-white/[0.06]'
+                className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 transition-all rounded-lg mb-0.5 ${i === selectedIndex ? 'bg-indigo-500/20 text-indigo-400 shadow-sm' : 'text-white/60 hover:bg-white/[0.06]'
                   }`}
               >
-                <code className={`px-1.5 py-0.5 rounded text-xs font-mono border ${i === selectedIndex ? 'bg-indigo-500/100/10 border-indigo-500/30 text-indigo-300' : 'bg-white/[0.04] border-white/[0.08] text-white/50'
+                <code className={`px-1.5 py-0.5 rounded text-xs font-mono border ${i === selectedIndex ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-300' : 'bg-white/[0.04] border-white/[0.08] text-white/50'
                   }`}>
                   {s.label}
                 </code>
@@ -263,7 +296,8 @@ export function TextInputWithVariables({
               <div className="px-3 py-4 text-sm text-white/40 text-center">No variables found</div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

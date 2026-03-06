@@ -1,6 +1,6 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { getExternalAccount, upsertExternalAccount } from '../supabase';
+import { getExternalAccount, upsertExternalAccount, listExternalAccounts } from '../supabase';
 import { getBridgeSecrets } from './bridge';
 import { PUBLIC_BASE_URL as CFG_PUBLIC_BASE_URL, GOOGLE_CLIENT_ID as CFG_GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET as CFG_GOOGLE_CLIENT_SECRET } from '../utils/config';
 import { refreshGoogleTokenIfNeeded } from '../routes/integrations/google-shared';
@@ -79,16 +79,16 @@ async function ensureConnectedAndScopes(required: string[], profileLabel?: strin
     const connectPath = buildConnectPath(required);
     return { ok: false, error: 'google_not_connected', connectPath, url: `${PUBLIC_BASE}${connectPath}` } as const;
   }
-  
+
   const have = new Set<string>((Array.isArray(acc.scopes) ? acc.scopes : []).map((s) => String(s)));
-  
+
   // Expand "have" scopes using hierarchy
   for (const s of Array.from(have)) {
     if (SCOPE_HIERARCHY[s]) {
       for (const sub of SCOPE_HIERARCHY[s]) have.add(sub);
     }
   }
-  
+
   const missing = required.filter((s) => !have.has(s));
   if (missing.length > 0) {
     const connectPath = buildConnectPath(required);
@@ -112,7 +112,7 @@ async function googleAuthorizedFetch(url: string, init?: RequestInit, profileLab
     const fullUrl = url.startsWith('http') ? url : `${GOOGLE_API}${url}`;
     const res = await fetch(fullUrl, { ...init, headers });
     let body: any = null;
-    try { body = await res.json(); } catch {}
+    try { body = await res.json(); } catch { }
     return { res, body } as const;
   }
 
@@ -147,12 +147,12 @@ async function googleAuthorizedFetch(url: string, init?: RequestInit, profileLab
             profileLabel: acc.profile_label || 'default',
             accountEmail: acc.account_email || null,
           });
-        } catch {}
+        } catch { }
         acc = { ...acc, access_token: newAccess, expires_at, refresh_token };
         accessToken = newAccess;
         ({ res, body } = await doFetch(accessToken));
       }
-    } catch {}
+    } catch { }
   }
 
   if (!res.ok) {
@@ -165,10 +165,30 @@ async function googleAuthorizedFetch(url: string, init?: RequestInit, profileLab
 export const google_get_userinfo = createTool({
   id: 'google_get_userinfo',
   description: 'Get Google account profile via oauth2 v3 userinfo.',
+  inputSchema: z.object({
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { profile } = inputData as any;
+    const me = await googleAuthorizedFetch('https://www.googleapis.com/oauth2/v3/userinfo', undefined, profile);
+    return { me };
+  },
+});
+
+export const google_list_profiles = createTool({
+  id: 'google_list_profiles',
+  description: 'List all connected Google profiles/accounts for the current user. Returns the profile labels (e.g., "default", "work", "personal") which can be passed to other Google tools.',
   inputSchema: z.object({}),
   execute: async () => {
-    const me = await googleAuthorizedFetch('https://www.googleapis.com/oauth2/v3/userinfo');
-    return { me };
+    const userId = await requireUserId();
+    const accounts = await listExternalAccounts(userId, 'google');
+    const profiles = accounts.map(a => ({
+      profile: a.profile_label,
+      isDefault: a.is_default,
+      email: a.account_email || null,
+      scopes: a.scopes,
+    }));
+    return { profiles };
   },
 });
 
@@ -193,12 +213,12 @@ export const gmail_send_message = createTool({
     const { profile } = inputData as any;
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.send'], profile);
     if ((gate as any).ok !== true) return gate;
-    const { to, subject, body, contentType, from, cc, bcc, attachments  } = inputData as any;
-    
+    const { to, subject, body, contentType, from, cc, bcc, attachments } = inputData as any;
+
     const senderEmail = (gate as any).acc?.account_email || '';
     const boundary = `boundary_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const mime = contentType || 'text/plain';
-    
+
     // Build headers
     const headers: string[] = [
       `To: ${to.join(', ')}`,
@@ -214,16 +234,16 @@ export const gmail_send_message = createTool({
     }
     if (cc?.length) headers.push(`Cc: ${cc.join(', ')}`);
     if (bcc?.length) headers.push(`Bcc: ${bcc.join(', ')}`);
-    
+
     let rawMessage: string;
-    
+
     // Check if we have attachments
     const attachmentList = Array.isArray(attachments) ? attachments : [];
     console.log(`[gmail_send_message] Sending email with ${attachmentList.length} attachment(s)`);
-    
+
     let attachmentsIncluded = 0;
     const attachmentErrors: string[] = [];
-    
+
     if (attachmentList.length === 0) {
       // Simple message without attachments
       headers.push(`Content-Type: ${mime}; charset=UTF-8`);
@@ -232,39 +252,39 @@ export const gmail_send_message = createTool({
       // Multipart message with attachments
       headers.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
       headers.push('MIME-Version: 1.0');
-      
+
       const parts: string[] = [];
-      
+
       // Body part
       parts.push(`--${boundary}`);
       parts.push(`Content-Type: ${mime}; charset=UTF-8`);
       parts.push('Content-Transfer-Encoding: 7bit');
       parts.push('');
       parts.push(body);
-      
+
       // Attachment parts - read files via bridge
       const { execLocalTool, hasClientBridge } = await import('./bridge');
       const hasBridge = hasClientBridge();
       console.log(`[gmail_send_message] Client bridge available: ${hasBridge}`);
-      
+
       for (const att of attachmentList) {
         const filePath = String(att.path || '');
         if (!filePath) {
           console.log(`[gmail_send_message] Skipping attachment with empty path`);
           continue;
         }
-        
+
         // Get filename
         const pathParts = filePath.replace(/\\/g, '/').split('/');
         const filename = att.filename || pathParts[pathParts.length - 1] || 'attachment';
         console.log(`[gmail_send_message] Reading attachment: ${filename} from ${filePath}`);
-        
+
         // Read file via local bridge using execLocalTool
         let fileContent: string | null = null;
         try {
           const result = await execLocalTool('read_file_base64', { path: filePath }, undefined, 30000, { silent: true });
           console.log(`[gmail_send_message] Read result for ${filename}: ok=${result?.ok}, hasData=${!!result?.data}, dataLen=${result?.data?.length || 0}`);
-          
+
           if (result?.ok && result?.data) {
             fileContent = result.data;
           } else {
@@ -277,7 +297,7 @@ export const gmail_send_message = createTool({
           console.error(`[gmail_send_message] Exception reading attachment ${filePath}:`, errMsg);
           attachmentErrors.push(`${filename}: ${errMsg}`);
         }
-        
+
         if (fileContent) {
           attachmentsIncluded++;
           console.log(`[gmail_send_message] Adding attachment: ${filename} (${fileContent.length} bytes base64)`);
@@ -308,7 +328,7 @@ export const gmail_send_message = createTool({
             'html': 'text/html',
           };
           const attachMime = mimeTypes[ext] || 'application/octet-stream';
-          
+
           parts.push(`--${boundary}`);
           parts.push(`Content-Type: ${attachMime}; name="${filename}"`);
           parts.push('Content-Transfer-Encoding: base64');
@@ -319,24 +339,24 @@ export const gmail_send_message = createTool({
           parts.push(b64Lines.join('\r\n'));
         }
       }
-      
+
       // Close boundary
       parts.push(`--${boundary}--`);
-      
+
       rawMessage = `${headers.join('\r\n')}\r\n\r\n${parts.join('\r\n')}`;
     }
-    
+
     const raw = Buffer.from(rawMessage, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
     console.log(`[gmail_send_message] Sending email, raw message length: ${raw.length}`);
     const data = await googleAuthorizedFetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
       method: 'POST',
       body: JSON.stringify({ raw }),
     } as any);
-    
+
     console.log(`[gmail_send_message] Email sent successfully. Attachments: ${attachmentsIncluded}/${attachmentList.length}`);
-    const returnResult: any = { 
+    const returnResult: any = {
       ok: true,
-      message: data, 
+      message: data,
       attachmentsRequested: attachmentList.length,
       attachmentsIncluded: attachmentList.length > 0 ? attachmentsIncluded : 0,
     };
@@ -361,7 +381,7 @@ export const gmail_list_messages = createTool({
     const { profile } = inputData as any;
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.readonly'], profile);
     if ((gate as any).ok !== true) return gate;
-    const { q, labelIds, maxResults, includeSpamTrash  } = inputData as any;
+    const { q, labelIds, maxResults, includeSpamTrash } = inputData as any;
     const params = new URLSearchParams();
     if (typeof q === 'string' && q) params.set('q', q);
     if (Array.isArray(labelIds) && labelIds.length) for (const l of labelIds) params.append('labelIds', l);
@@ -389,7 +409,7 @@ export const calendar_list_events = createTool({
     const { profile } = inputData as any;
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/calendar.events'], profile);
     if ((gate as any).ok !== true) return gate;
-    const { calendarId, timeMin, timeMax, maxResults, singleEvents, orderBy  } = inputData as any;
+    const { calendarId, timeMin, timeMax, maxResults, singleEvents, orderBy } = inputData as any;
     const params = new URLSearchParams();
     if (timeMin) params.set('timeMin', timeMin);
     if (timeMax) params.set('timeMax', timeMax);
@@ -439,7 +459,7 @@ export const calendar_create_event = createTool({
   execute: async (inputData, context) => {
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/calendar.events']);
     if ((gate as any).ok !== true) return gate;
-    const { calendarId, summary, description, location, start, end, timeZone, attendees, reminders  } = inputData as any;
+    const { calendarId, summary, description, location, start, end, timeZone, attendees, reminders } = inputData as any;
     const isDateOnly = (s: string) => {
       try {
         const str = String(s || '');
@@ -455,7 +475,7 @@ export const calendar_create_event = createTool({
         const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
         const dd = String(d.getUTCDate()).padStart(2, '0');
         adjEnd = `${yyyy}-${mm}-${dd}`;
-      } catch {}
+      } catch { }
     }
     const startField = isDateOnly(start)
       ? { date: start, ...(timeZone ? { timeZone } : {}) }
@@ -500,7 +520,7 @@ export const calendar_delete_event = createTool({
   execute: async (inputData, context) => {
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/calendar.events']);
     if ((gate as any).ok !== true) return gate;
-    const { calendarId, eventId, sendUpdates  } = inputData as any;
+    const { calendarId, eventId, sendUpdates } = inputData as any;
 
     const params = new URLSearchParams();
     if (sendUpdates) params.set('sendUpdates', String(sendUpdates));
@@ -557,7 +577,7 @@ export const drive_list_files = createTool({
     const { profile } = inputData as any;
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive.readonly'], profile);
     if ((gate as any).ok !== true) return gate;
-    const { query, pageSize, orderBy, fields  } = inputData as any;
+    const { query, pageSize, orderBy, fields } = inputData as any;
     const params = new URLSearchParams();
     params.set('pageSize', String(pageSize || 20));
     if (query) params.set('q', query);
@@ -582,7 +602,7 @@ export const sheets_read_range = createTool({
     const { profile } = inputData as any;
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/spreadsheets.readonly'], profile);
     if ((gate as any).ok !== true) return gate;
-    const { spreadsheetId, range, majorDimension  } = inputData as any;
+    const { spreadsheetId, range, majorDimension } = inputData as any;
     const params = new URLSearchParams();
     if (majorDimension) params.set('majorDimension', majorDimension);
     const data = await googleAuthorizedFetch(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?${params.toString()}`);
@@ -1141,7 +1161,7 @@ export const docs_get_document = createTool({
   execute: async (inputData, context) => {
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/documents.readonly']);
     if ((gate as any).ok !== true) return gate;
-    const { documentId  } = inputData as any;
+    const { documentId } = inputData as any;
     const data = await googleAuthorizedFetch(`https://docs.googleapis.com/v1/documents/${encodeURIComponent(documentId)}`);
     return { document: data };
   },
@@ -1191,7 +1211,7 @@ function extractBody(payload: any): { html?: string; text?: string } {
     };
 
     walk(payload);
-  } catch {}
+  } catch { }
   return out;
 }
 
@@ -1212,7 +1232,7 @@ function extractAttachments(payload: any): Array<{ filename: string; mimeType: s
       for (const part of parts) walk(part);
     };
     walk(payload);
-  } catch {}
+  } catch { }
   return out;
 }
 
@@ -1223,7 +1243,7 @@ export const gmail_get_message_brief = createTool({
   execute: async (inputData, context) => {
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.readonly']);
     if ((gate as any).ok !== true) return gate;
-    const { id  } = inputData as any;
+    const { id } = inputData as any;
     const data = await googleAuthorizedFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`);
     const headers = (data?.payload?.headers || []) as Array<{ name?: string; value?: string }>;
     const brief = {
@@ -1246,7 +1266,7 @@ export const gmail_get_message_full = createTool({
   execute: async (inputData, context) => {
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.readonly']);
     if ((gate as any).ok !== true) return gate;
-    const { id  } = inputData as any;
+    const { id } = inputData as any;
     const data = await googleAuthorizedFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`);
     const headers = (data?.payload?.headers || []) as Array<{ name?: string; value?: string }>;
     const body = extractBody(data?.payload);
@@ -1281,19 +1301,19 @@ export const gmail_download_attachment = createTool({
     const { messageId, attachmentId, path } = inputData as any;
 
     const data = await googleAuthorizedFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`);
-    
+
     // data.data is base64url encoded
     let b64 = String((data as any)?.data || '');
     b64 = b64.replace(/-/g, '+').replace(/_/g, '/');
 
     const { execLocalTool, hasClientBridge } = await import('./bridge');
     if (!hasClientBridge()) {
-        return { ok: false, error: 'No client bridge available to save file locally' };
+      return { ok: false, error: 'No client bridge available to save file locally' };
     }
 
     const res = await execLocalTool('write_file_base64', { path, content: b64 });
     if (!res.ok) {
-        return { ok: false, error: res.error || 'Failed to write file' };
+      return { ok: false, error: res.error || 'Failed to write file' };
     }
 
     return { ok: true, path, size: (data as any)?.size };
@@ -1307,7 +1327,7 @@ export const gmail_get_messages_brief = createTool({
   execute: async (inputData, context) => {
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.readonly']);
     if ((gate as any).ok !== true) return gate;
-    const { ids  } = inputData as any;
+    const { ids } = inputData as any;
     const results: any[] = [];
     for (const id of ids) {
       try {
@@ -1322,7 +1342,7 @@ export const gmail_get_messages_brief = createTool({
           snippet: String(d?.snippet || ''),
           labelIds: Array.isArray(d?.labelIds) ? d.labelIds : [],
         });
-      } catch {}
+      } catch { }
     }
     return { items: results, count: results.length };
   },
@@ -1335,7 +1355,7 @@ export const gmail_list_recent_brief = createTool({
   execute: async (inputData, context) => {
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.readonly']);
     if ((gate as any).ok !== true) return gate;
-    const { maxResults  } = inputData as any;
+    const { maxResults } = inputData as any;
     const list = await googleAuthorizedFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${encodeURIComponent(String(maxResults || 5))}`);
     const ids = Array.isArray((list as any)?.messages) ? (list as any).messages.map((m: any) => String(m.id)) : [];
     const results: any[] = [];
@@ -1352,7 +1372,7 @@ export const gmail_list_recent_brief = createTool({
           snippet: String(d?.snippet || ''),
           labelIds: Array.isArray(d?.labelIds) ? d.labelIds : [],
         });
-      } catch {}
+      } catch { }
     }
     return { items: results, count: results.length };
   },
@@ -1365,7 +1385,7 @@ export const gmail_get_most_recent_full = createTool({
   execute: async (inputData, context) => {
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.readonly']);
     if ((gate as any).ok !== true) return gate;
-    const { labelIds  } = inputData as any;
+    const { labelIds } = inputData as any;
     const params = new URLSearchParams();
     params.set('maxResults', '1');
     const labels = Array.isArray(labelIds) && labelIds.length ? labelIds : ['INBOX'];
@@ -1400,7 +1420,7 @@ export const docs_create_document = createTool({
   execute: async (inputData, context) => {
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/documents']);
     if ((gate as any).ok !== true) return gate;
-    const { title  } = inputData as any;
+    const { title } = inputData as any;
     const data = await googleAuthorizedFetch('https://docs.googleapis.com/v1/documents', {
       method: 'POST',
       body: JSON.stringify({ title }),
@@ -1420,7 +1440,7 @@ export const gmail_modify_message = createTool({
   execute: async (inputData, context) => {
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.modify']);
     if ((gate as any).ok !== true) return gate;
-    const { id, addLabelIds, removeLabelIds  } = inputData as any;
+    const { id, addLabelIds, removeLabelIds } = inputData as any;
     const body: any = {};
     if (Array.isArray(addLabelIds) && addLabelIds.length > 0) body.addLabelIds = addLabelIds;
     if (Array.isArray(removeLabelIds) && removeLabelIds.length > 0) body.removeLabelIds = removeLabelIds;
@@ -1439,7 +1459,7 @@ export const gmail_delete_message = createTool({
   execute: async (inputData, context) => {
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.modify']);
     if ((gate as any).ok !== true) return gate;
-    const { id  } = inputData as any;
+    const { id } = inputData as any;
     const data = await googleAuthorizedFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     } as any);
@@ -1454,7 +1474,7 @@ export const gmail_archive_message = createTool({
   execute: async (inputData, context) => {
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.modify']);
     if ((gate as any).ok !== true) return gate;
-    const { id  } = inputData as any;
+    const { id } = inputData as any;
     const body = { removeLabelIds: ['INBOX'] };
     const data = await googleAuthorizedFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}/modify`, {
       method: 'POST',
@@ -1471,7 +1491,7 @@ export const gmail_mark_as_read = createTool({
   execute: async (inputData, context) => {
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.modify']);
     if ((gate as any).ok !== true) return gate;
-    const { id  } = inputData as any;
+    const { id } = inputData as any;
     const body = { removeLabelIds: ['UNREAD'] };
     const data = await googleAuthorizedFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}/modify`, {
       method: 'POST',
@@ -1488,7 +1508,7 @@ export const gmail_mark_as_unread = createTool({
   execute: async (inputData, context) => {
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.modify']);
     if ((gate as any).ok !== true) return gate;
-    const { id  } = inputData as any;
+    const { id } = inputData as any;
     const body = { addLabelIds: ['UNREAD'] };
     const data = await googleAuthorizedFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}/modify`, {
       method: 'POST',
@@ -1509,12 +1529,12 @@ export const docs_write_text = createTool({
   execute: async (inputData, context) => {
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/documents']);
     if ((gate as any).ok !== true) return gate;
-    const { documentId, text, index  } = inputData as any;
-    
-    const location = typeof index === 'number' 
-      ? { index } 
+    const { documentId, text, index } = inputData as any;
+
+    const location = typeof index === 'number'
+      ? { index }
       : undefined;
-    
+
     const endOfSegmentLocation = typeof index !== 'number'
       ? { segmentId: '' }
       : undefined;
@@ -1554,11 +1574,11 @@ export const gmail_retrieve_messages_with_attachments = createTool({
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.readonly']);
     if ((gate as any).ok !== true) return gate;
 
-    const { 
-      q, 
-      labelIds, 
-      maxResults, 
-      includeSpamTrash, 
+    const {
+      q,
+      labelIds,
+      maxResults,
+      includeSpamTrash,
       downloadAttachments,
       downloadPath,
       filterAttachmentTypes,
@@ -1599,7 +1619,7 @@ export const gmail_retrieve_messages_with_attachments = createTool({
         const data = await googleAuthorizedFetch(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(msgId)}?format=full`
         );
-        
+
         const headers = (data?.payload?.headers || []) as Array<{ name?: string; value?: string }>;
         const body = extractBody(data?.payload);
         const attachments = extractAttachments(data?.payload);
@@ -1626,7 +1646,7 @@ export const gmail_retrieve_messages_with_attachments = createTool({
         // Step 3: Download attachments if requested
         if (downloadAttachments && hasBridge && downloadPath && attachments.length > 0) {
           const downloaded: any[] = [];
-          
+
           for (const att of attachments) {
             // Check MIME type filter
             if (filterAttachmentTypes && filterAttachmentTypes.length > 0) {
@@ -1655,7 +1675,7 @@ export const gmail_retrieve_messages_with_attachments = createTool({
               const attData = await googleAuthorizedFetch(
                 `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(msgId)}/attachments/${encodeURIComponent(att.attachmentId)}`
               );
-              
+
               let b64 = String((attData as any)?.data || '');
               b64 = b64.replace(/-/g, '+').replace(/_/g, '/');
 
@@ -1664,9 +1684,9 @@ export const gmail_retrieve_messages_with_attachments = createTool({
               const filePath = `${downloadPath.replace(/\\/g, '/').replace(/\/$/, '')}/${safeFilename}`;
 
               // Save via bridge
-              const writeRes = await execLocalTool('write_file_base64', { 
-                path: filePath, 
-                content: b64 
+              const writeRes = await execLocalTool('write_file_base64', {
+                path: filePath,
+                content: b64
               }, undefined, 60000, { silent: true });
 
               if (writeRes.ok) {

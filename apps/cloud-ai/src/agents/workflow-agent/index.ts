@@ -605,6 +605,10 @@ JSX SYNTAX:
 AVAILABLE HOOKS:
   - useState, useEffect, useRef, useMemo, useCallback, useReducer, useContext
   - useVar(name, default)  — bridges React state to workflow variables. Auto-seeds from data args.
+  - useStyles(cssString)   — inject dynamic CSS (custom keyframes, animations) at runtime. Auto-cleaned on unmount.
+  - useInterval(fn, ms)    — safe setInterval hook (auto-clears on unmount)
+  - useTimeout(fn, ms)     — safe setTimeout hook (auto-clears on unmount)
+  - useLocalStorage(key, init) — persistent state via localStorage
 
 useVar HOOK:
   const [count, setCount] = useVar('counter', 0);
@@ -612,6 +616,15 @@ useVar HOOK:
   // setCount(5) updates everywhere (other UIs, workflow context)
   // External set_variable calls also trigger re-render
   // AUTO-SEEDS from data: if data has {"counter": "{{step1.json.count}}"}, useVar('counter', 0) returns it
+
+useStyles HOOK — inject dynamic CSS at runtime:
+  useStyles(\`
+    @keyframes myPulse {
+      0%, 100% { transform: scale(1); box-shadow: 0 0 0 rgba(99,102,241,0); }
+      50% { transform: scale(1.05); box-shadow: 0 0 20px rgba(99,102,241,0.4); }
+    }
+    .my-card { animation: myPulse 2s ease-in-out infinite; }
+  \`);
 
 INTERACTION:
   stuard.submit(data)          // Submit and resolve blocking promise
@@ -715,6 +728,90 @@ DATA PASSING — Feeding previous step output into custom_ui:
       }
     }
 
+═══════════════════════════════════════════════════════════════════════════════
+FRAMER MOTION — Full Animation Library (Available as Globals)
+═══════════════════════════════════════════════════════════════════════════════
+
+Every custom_ui has Framer Motion available. No imports — all are globals.
+
+GLOBALS: motion (motion.div, motion.span, motion.button, etc.), m (shorthand),
+  AnimatePresence, useAnimation, useMotionValue, useTransform, useSpring, useInView, useScroll
+
+EXAMPLES:
+  // Animate on mount
+  <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>Hello</motion.div>
+
+  // Spring animation
+  <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 260, damping: 20 }} />
+
+  // Hover and tap
+  <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="btn-primary">Click</motion.button>
+
+  // Stagger children
+  const container = { hidden: {}, show: { transition: { staggerChildren: 0.1 } } };
+  const child = { hidden: { opacity: 0, y: 20 }, show: { opacity: 1, y: 0 } };
+  <motion.div variants={container} initial="hidden" animate="show">
+    {items.map(i => <motion.div key={i.id} variants={child}>{i.name}</motion.div>)}
+  </motion.div>
+
+  // Animate mount/unmount
+  <AnimatePresence>
+    {show && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>Content</motion.div>}
+  </AnimatePresence>
+
+  // Drag
+  <motion.div drag dragConstraints={{ left: 0, right: 300, top: 0, bottom: 200 }}>Drag me</motion.div>
+
+═══════════════════════════════════════════════════════════════════════════════
+PRE-BUILT COMPONENT LIBRARY (Available as Globals)
+═══════════════════════════════════════════════════════════════════════════════
+
+  <Spinner size={24} color="currentColor" />                          — animated loading spinner
+  <Badge variant="success">Active</Badge>                             — variants: default/primary/success/warning/danger/info
+  <Progress value={75} max={100} color="bg-indigo-500" height={8} />  — animated progress bar
+  <Skeleton width={200} height={20} circle={false} />                 — shimmer loading placeholder
+  <Tooltip content="Helpful tip"><button>Hover</button></Tooltip>     — hover tooltip (above)
+  <Switch checked={isOn} onChange={setIsOn} />                        — toggle switch
+  <Toast message="Saved!" type="success" duration={3000} />           — auto-dismiss notification
+  <Avatar src="/photo.jpg" name="John" size={40} />                   — user avatar (image or initial)
+  <Divider label="OR" />                                              — horizontal divider
+  <Kbd>⌘K</Kbd>                                                      — keyboard shortcut display
+
+═══════════════════════════════════════════════════════════════════════════════
+GOOGLE FONTS (Pre-loaded), CSS ANIMATIONS (50+), VISUAL EFFECTS
+═══════════════════════════════════════════════════════════════════════════════
+
+FONTS: Inter (default body), Outfit (headings), Space Grotesk (tech), JetBrains Mono (code).
+  Classes: font-inter, font-outfit, font-grotesk, font-mono/font-code. <code>/<pre> auto use JetBrains Mono.
+
+ENTRANCE ANIMATIONS: animate-fade-in, animate-fade-in-up, animate-fade-in-down,
+  animate-fade-in-left, animate-fade-in-right, animate-slide-up, animate-slide-down,
+  animate-scale-in, animate-zoom-in, animate-bounce-in, animate-bounce-in-up,
+  animate-flip-in-x, animate-flip-in-y, animate-rotate-in, animate-elastic-in, animate-blur-in
+
+CONTINUOUS: animate-float, animate-float-slow, animate-glow, animate-glow-cyan, animate-glow-pink,
+  animate-shimmer, animate-gradient-shift, animate-breathe, animate-orbit, animate-spin,
+  animate-pulse, animate-bounce, animate-ping, animate-morph, animate-heartbeat, animate-levitate
+
+ATTENTION: animate-shake, animate-wobble, animate-tada, animate-jello, animate-swing, animate-rubber-band
+
+STAGGER: <div className="stagger-children"> auto-delays children 50ms apart. Manual: delay-100 to delay-2000.
+
+GRADIENT PRESETS: gradient-purple-pink, gradient-blue-cyan, gradient-ocean, gradient-aurora,
+  gradient-sunset, gradient-cosmic, gradient-candy, gradient-midnight, gradient-fire, gradient-emerald
+  + gradient-text to apply gradient to text, + animate-gradient-shift for animated gradients.
+
+GLASSMORPHISM: glass, glass-sm, glass-heavy, glass-colored. + noise for texture overlay.
+
+NEON SHADOWS: shadow-neon-blue, shadow-neon-purple, shadow-neon-cyan, shadow-neon-green,
+  shadow-neon-pink, shadow-neon-orange. Hover: hover:shadow-neon-blue etc.
+
+TEXT EFFECTS: text-glow, text-glow-sm, text-glow-lg, text-shadow, text-shadow-lg, text-outline.
+
+LOADING: skeleton, skeleton-text, skeleton-circle.
+
+3D: perspective, preserve-3d, backface-hidden, rotate-x-12, rotate-y-12.
+
 WINDOW CONFIG (optional):
   window: {
     width: 400, height: 300,
@@ -740,27 +837,39 @@ IMPORTANT — borderRadius + background:
   ONLY — html/body stay transparent so the rounded corners are visible.
   Always set frameless: true when using borderRadius.
 
-BACKGROUND TYPES:
-  window.backgroundType: "color" | "gradient" | "image" | "translucent" | "transparent"
+UNDERSTANDING TRANSPARENCY — Three Different Concepts:
 
-  • color (default): Solid background. Set window.backgroundColor.
-  • translucent: Semi-transparent frosted glass. Requires frameless: true.
-    window: { backgroundType: "translucent", frameless: true,
-              translucent: { color: "#1a1a2e", opacity: 0.7, blur: 12 } }
-    - color: hex tint color  - opacity: 0-1 (0.7 = 70% opaque)  - blur: backdrop blur px (frosted glass)
-  • transparent: Fully transparent background. Requires frameless: true.
-    window: { backgroundType: "transparent", frameless: true }
-  • gradient/image: Advanced backgrounds (see UI builder).
+  1. TRANSPARENT FRAME (rounded corners, solid content):
+     Most common. Rounded floating panel with solid background inside.
+     window: { frameless: true, borderRadius: 16, backgroundColor: "#1a1a2e" }
+
+  2. TRANSLUCENT BACKGROUND (frosted glass, see through but blurred):
+     Semi-transparent with blur. Great for overlays, HUDs, dashboards.
+     window: { frameless: true, backgroundType: "translucent", borderRadius: 16,
+               translucent: { color: "#1a1a2e", opacity: 0.7, blur: 12 } }
+     opacity: 0→1 (lower=more see-through). blur: backdrop blur px.
+
+  3. FULLY TRANSPARENT BACKGROUND (100% invisible background):
+     Only rendered content is visible. Background is invisible.
+     window: { frameless: true, backgroundType: "transparent" }
+     Use solid bg on specific elements: <div className="bg-slate-900/80 rounded-xl p-4">
+
+  SUMMARY TABLE:
+  ┌────────────────────────┬─────────────────────────────┬──────────────────────────┐
+  │ What You Want          │ backgroundType              │ Key Settings             │
+  ├────────────────────────┼─────────────────────────────┼──────────────────────────┤
+  │ Floating rounded panel │ "color" (default)           │ frameless, borderRadius  │
+  │ Frosted glass overlay  │ "translucent"               │ frameless, translucent{} │
+  │ Invisible background   │ "transparent"               │ frameless                │
+  │ Standard solid window  │ "color" + frameless: false  │ backgroundColor          │
+  └────────────────────────┴─────────────────────────────┴──────────────────────────┘
 
 DRAGGABLE WINDOWS:
-  By default, frameless windows are draggable by their background (the .drag CSS class is
-  applied to the root container). Buttons, inputs, links, textareas, and elements with
-  class="no-drag" are excluded from dragging automatically.
-  Set window.draggable: false to disable window dragging entirely.
+  By default, frameless windows are draggable by their background. Buttons, inputs, links,
+  and class="no-drag" elements are excluded. Set window.draggable: false to disable.
 
 HIDE FROM SCREENSHARE (content protection):
-  window.invisible: true — Hides this window from screenshots and screen recordings.
-  Use for sensitive overlays (passwords, private data, secret dashboards).
+  window.invisible: true — Hides from screenshots and screen recordings.
   window: { invisible: true, ... }
 
 JSON ESCAPING for component field:
@@ -1243,24 +1352,24 @@ export function getWorkflowAgent(modelIdOverride?: string): Agent {
   const originalStream = agent.stream.bind(agent);
   (agent as any).stream = async (input: any, options?: any) => {
     console.log('[workflow-agent] Input message:', JSON.stringify(input, null, 2));
-    
+
     // Inject thinkingConfig at the stream call level for Gemini 3 models
     const mergedOptions = useThinking
       ? {
-          ...options,
-          providerOptions: {
-            ...options?.providerOptions,
-            google: {
-              ...options?.providerOptions?.google,
-              thinkingConfig: {
-                includeThoughts: true,
-                thinkingLevel: 'high',
-              },
+        ...options,
+        providerOptions: {
+          ...options?.providerOptions,
+          google: {
+            ...options?.providerOptions?.google,
+            thinkingConfig: {
+              includeThoughts: true,
+              thinkingLevel: 'high',
             },
           },
-        }
+        },
+      }
       : options;
-    
+
     const result = await originalStream(input, mergedOptions);
     return result;
   };

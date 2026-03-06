@@ -5,7 +5,7 @@
  *
  * Receives tasks + config from the desktop scheduler, creates an in-memory
  * kanban + Mastra agent with proactive system prompt, runs synchronously
- * via agent.generate(), and returns { text, taskUpdates, newTasks }.
+ * via agent.generate(), and returns { text, taskUpdates, newTasks, deletedTaskIds }.
  */
 
 import type { IncomingMessage, ServerResponse } from 'http';
@@ -18,7 +18,10 @@ import { getModel } from '../agents/stuard/models';
 import { search_tools, get_tool_schema, execute_tool } from '../tools/meta-tools';
 import { web_search } from '../tools/perplexity-tools';
 import { deployHeadlessAgent } from '../tools/deploy-headless-agent';
+import { get_skill_info, getSkillsFromContext } from '../tools/skill-tools';
+import { runWithSecrets } from '../tools/bridge';
 import type { ModelChoice } from '../router/model-router';
+import { buildProactiveMessageContent, filterProactiveTools } from './proactive-utils';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -26,7 +29,7 @@ function readJsonBody(req: IncomingMessage): Promise<any> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     req.on('data', (c: any) => {
-      try { chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)); } catch {}
+      try { chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)); } catch { }
     });
     req.on('end', () => {
       const raw = Buffer.concat(chunks).toString('utf8');
@@ -47,7 +50,7 @@ function writeJson(res: ServerResponse, status: number, obj: any) {
     });
     res.end(body);
   } catch {
-    try { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{"ok":false,"error":"internal"}'); } catch {}
+    try { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{"ok":false,"error":"internal"}'); } catch { }
   }
 }
 
@@ -78,6 +81,7 @@ function createKanbanTools(initialTasks: TaskState[]) {
   const tasks: TaskState[] = initialTasks.map(t => ({ ...t }));
   const taskUpdates: TaskUpdate[] = [];
   const newTasks: NewTask[] = [];
+  const deletedTaskIds: string[] = [];
 
   const proactive_task_list = createTool({
     id: 'proactive_task_list',
@@ -150,9 +154,28 @@ function createKanbanTools(initialTasks: TaskState[]) {
     },
   });
 
+  const proactive_task_delete = createTool({
+    id: 'proactive_task_delete',
+    description: 'Delete a proactive task from the board. Use this to remove obsolete or duplicate tasks.',
+    inputSchema: z.object({
+      task_id: z.string().describe('The ID of the task to delete'),
+    }),
+    outputSchema: z.object({
+      ok: z.boolean(),
+      error: z.string().optional(),
+    }),
+    execute: async ({ task_id }) => {
+      const idx = tasks.findIndex(t => t.id === task_id);
+      if (idx < 0) return { ok: false, error: `Task '${task_id}' not found` };
+      tasks.splice(idx, 1);
+      deletedTaskIds.push(task_id);
+      return { ok: true };
+    },
+  });
+
   return {
-    tools: { proactive_task_list, proactive_task_update, proactive_task_create },
-    getResults: () => ({ taskUpdates, newTasks }),
+    tools: { proactive_task_list, proactive_task_update, proactive_task_create, proactive_task_delete },
+    getResults: () => ({ taskUpdates, newTasks, deletedTaskIds }),
   };
 }
 
@@ -181,9 +204,12 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
     const {
       tasks: incomingTasks = [],
       instructions = '',
+      prompt = '',
+      allowedTools = [],
       modelMode = 'balanced',
       modelId,
       context = {},
+      skills: incomingSkills = [],
     } = body;
 
     // Build in-memory kanban
@@ -197,76 +223,103 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
 
     const kanban = createKanbanTools(taskStates);
 
-    // Build tool set
-    const tools: Record<string, any> = {
+    // Build tool set — include kanban, discovery, web search, skills, and headless agents
+    const availableTools: Record<string, any> = {
       ...kanban.tools,
       web_search,
       deploy_headless_agent: deployHeadlessAgent,
       search_tools,
       get_tool_schema,
       execute_tool,
+      get_skill_info,
     };
+    const tools = filterProactiveTools(availableTools, allowedTools);
 
-    // Build system prompt with user instructions
+    // Build system prompt with user instructions and skill awareness
     let systemPrompt = PROACTIVE_SYSTEM_PROMPT;
     if (instructions.trim()) {
       systemPrompt += `\n\n## USER INSTRUCTIONS\n${instructions.trim()}`;
     }
 
-    // Select model
-    const model = getModel(
-      (modelMode || 'balanced') as ModelChoice,
-      typeof modelId === 'string' && modelId.trim() ? modelId : undefined,
-    );
-
-    const agent = new Agent({
-      id: 'stuard-proactive',
-      name: 'stuard-proactive',
-      instructions: [{ role: 'system', content: systemPrompt }] as any,
-      model,
-      tools,
-    });
-
-    // Build the user message
-    const parts: string[] = ['[Proactive Wake-Up]'];
-    if (taskStates.length > 0) {
-      parts.push(`\nYou have ${taskStates.length} task(s) on your board. Call proactive_task_list to see them.`);
-    } else {
-      parts.push('\nNo tasks on the board right now. Check in with the user.');
+    // Set up secrets context so get_skill_info can access skills
+    const secretBag: Record<string, any> = {};
+    if (Array.isArray(incomingSkills) && incomingSkills.length > 0) {
+      secretBag.__skills = incomingSkills;
     }
-    if (context.screenshot) {
-      parts.push('\n(A screenshot of the user\'s screen is attached for context.)');
-    }
-    const userMessage = parts.join('\n');
 
-    try {
-      // Run with timeout
-      const TIMEOUT_MS = 180_000; // 3 minutes
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Proactive agent timed out after 3 minutes')), TIMEOUT_MS);
-      });
+    // Run agent within secrets context
+    await runWithSecrets(secretBag, async () => {
+      // Inject available skills summary into system prompt
+      const skillsSummary = getSkillsFromContext();
+      if (skillsSummary.length > 0) {
+        const skillLines = skillsSummary.map(s => `- ${s.name}: ${s.description || s.trigger}`);
+        systemPrompt += `\n\n## AVAILABLE SKILLS\nYou can use get_skill_info to get full details about any skill.\n${skillLines.join('\n')}`;
+      }
 
-      const generatePromise = agent.generate(
-        [{ role: 'user', content: userMessage }],
-        { maxSteps: 20 },
+      // Select model
+      const model = getModel(
+        (modelMode || 'balanced') as ModelChoice,
+        typeof modelId === 'string' && modelId.trim() ? modelId : undefined,
       );
 
-      const response: any = await Promise.race([generatePromise, timeoutPromise]);
-      const text = response?.text || '';
-      const { taskUpdates, newTasks } = kanban.getResults();
-
-      writeJson(res, 200, { ok: true, text, taskUpdates, newTasks });
-    } catch (e: any) {
-      console.error('[proactive] Agent execution failed:', e?.message || e);
-      const { taskUpdates, newTasks } = kanban.getResults();
-      writeJson(res, 200, {
-        ok: false,
-        error: String(e?.message || 'Agent execution failed'),
-        text: '',
-        taskUpdates,
-        newTasks,
+      const agent = new Agent({
+        id: 'stuard-proactive',
+        name: 'stuard-proactive',
+        instructions: [{ role: 'system', content: systemPrompt }] as any,
+        model,
+        tools,
       });
-    }
+
+      // Build the user message content (supports screenshot as image)
+      const screenshotData = typeof context.screenshot === 'string' && context.screenshot.length > 100
+        ? context.screenshot
+        : null;
+      const systemAudioData = typeof context.systemAudio === 'string' && context.systemAudio.length > 100
+        ? context.systemAudio
+        : null;
+      const micAudioData = typeof context.micAudio === 'string' && context.micAudio.length > 100
+        ? context.micAudio
+        : null;
+
+      const messageContent = buildProactiveMessageContent({
+        prompt,
+        taskCount: taskStates.length,
+        tasks: taskStates,
+        screenshot: screenshotData,
+        systemAudio: systemAudioData,
+        micAudio: micAudioData,
+      });
+
+      try {
+        // Run with timeout
+        const TIMEOUT_MS = 180_000; // 3 minutes
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('Proactive agent timed out after 3 minutes')), TIMEOUT_MS);
+        });
+
+        const generatePromise = agent.generate(
+          [{ role: 'user', content: messageContent }],
+          { maxSteps: 20 },
+        );
+
+        const response: any = await Promise.race([generatePromise, timeoutPromise]);
+        const text = response?.text || '';
+        const { taskUpdates, newTasks, deletedTaskIds } = kanban.getResults();
+
+        writeJson(res, 200, { ok: true, text, taskUpdates, newTasks, deletedTaskIds });
+      } catch (e: any) {
+        console.error('[proactive] Agent execution failed:', e?.message || e);
+        const { taskUpdates, newTasks, deletedTaskIds } = kanban.getResults();
+        writeJson(res, 200, {
+          ok: false,
+          error: String(e?.message || 'Agent execution failed'),
+          text: '',
+          taskUpdates,
+          newTasks,
+          deletedTaskIds,
+        });
+      }
+    });
 
     return true;
   }

@@ -125,7 +125,7 @@ function startKeystrokeHook() {
         for (const [listenerId, listener] of holdHotkeyListeners.entries()) {
           // Skip release-only listeners on keydown
           if ((listener as any).releaseOnly) continue;
-          
+
           if (char.toLowerCase() !== listener.key) continue;
           let modifiersMatch = true;
           for (const mod of listener.modifiers) {
@@ -199,7 +199,7 @@ function startKeystrokeHook() {
       if (char && holdHotkeyListeners.size > 0) {
         for (const [listenerId, listener] of holdHotkeyListeners.entries()) {
           if (char.toLowerCase() !== listener.key) continue;
-          
+
           // Check modifiers match for release-only triggers
           const isReleaseOnly = (listener as any).releaseOnly;
           if (isReleaseOnly) {
@@ -321,31 +321,49 @@ async function registerGoogleNativeTrigger(
   type: 'gmail.new_email' | 'drive.new_file',
   args: any
 ) {
-  try {
-    const token = await getRendererAccessToken();
-    if (!token) {
-      logFlow(flowId, `Google trigger '${type}' not registered (missing auth session)`);
-      return { ok: false, error: 'missing_access_token' };
+  // Retry logic: the renderer may not have loaded the Supabase session yet
+  // during app startup autostart, so we retry a few times with a delay.
+  const MAX_RETRIES = 5;
+  const RETRY_DELAY_MS = 3000;
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const token = await getRendererAccessToken(attempt > 0);
+      if (!token) {
+        if (attempt < MAX_RETRIES - 1) {
+          logFlow(flowId, `Google trigger '${type}' waiting for auth session (attempt ${attempt + 1}/${MAX_RETRIES})...`);
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+          continue;
+        }
+        logFlow(flowId, `Google trigger '${type}' not registered (missing auth session after ${MAX_RETRIES} attempts)`);
+        return { ok: false, error: 'missing_access_token' };
+      }
+      const base = getCloudAiHttpBase();
+      const resp = await net.fetch(`${base}/integrations/google/native-triggers/register`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ workflowId: flowId, triggerId, type, args: args || {} }),
+      });
+      const out: any = await resp.json().catch(() => ({}));
+      if (!resp.ok || !out?.ok) {
+        const err = String(out?.error || `http_${resp.status}`);
+        logFlow(flowId, `Google trigger '${type}' registration failed: ${err}`);
+        return { ok: false, error: err };
+      }
+      return { ok: true };
+    } catch (e: any) {
+      if (attempt < MAX_RETRIES - 1) {
+        logFlow(flowId, `Google trigger '${type}' registration error, retrying: ${e?.message}`);
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+        continue;
+      }
+      return { ok: false, error: String(e?.message || 'register_failed') };
     }
-    const base = getCloudAiHttpBase();
-    const resp = await net.fetch(`${base}/integrations/google/native-triggers/register`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ workflowId: flowId, triggerId, type, args: args || {} }),
-    });
-    const out: any = await resp.json().catch(() => ({}));
-    if (!resp.ok || !out?.ok) {
-      const err = String(out?.error || `http_${resp.status}`);
-      logFlow(flowId, `Google trigger '${type}' registration failed: ${err}`);
-      return { ok: false, error: err };
-    }
-    return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: String(e?.message || 'register_failed') };
   }
+  return { ok: false, error: 'max_retries_exceeded' };
 }
 
 async function unregisterGoogleNativeTrigger(
@@ -643,10 +661,10 @@ export function designerModelToStuardSpec(m: any, triggerId?: string): StuardSpe
     // Find the wire from this trigger to its start node
     const triggerWire = wires.find((w: any) => String(w?.from || '') === tid);
     const triggerStart = triggerWire ? String(triggerWire.to || '') : undefined;
-    
-    return { 
+
+    return {
       id: tid,
-      type: String(t?.type || ''), 
+      type: String(t?.type || ''),
       args: t?.args || {},
       inputParams: Array.isArray(t?.inputParams) ? t.inputParams : undefined,
       start: triggerStart // Start node for this trigger (used by call_function)
@@ -783,41 +801,41 @@ export async function executeWorkflowFromTrigger(flowId: string, origin: string,
   }
 }
 
- export function handleCloudWebhookEvent(msg: any) {
-   try {
-     const t = String(msg?.type || '');
-     const data = msg?.data;
+export function handleCloudWebhookEvent(msg: any) {
+  try {
+    const t = String(msg?.type || '');
+    const data = msg?.data;
 
-     const workflowId = typeof msg?.workflow?.id === 'string' ? msg.workflow.id : '';
-     const triggerId = typeof msg?.workflow?.triggerId === 'string' ? msg.workflow.triggerId : undefined;
+    const workflowId = typeof msg?.workflow?.id === 'string' ? msg.workflow.id : '';
+    const triggerId = typeof msg?.workflow?.triggerId === 'string' ? msg.workflow.triggerId : undefined;
 
-     if (workflowId) {
-       executeWorkflowFromTrigger(workflowId, t || 'webhook.cloud', data, triggerId);
-       return { ok: true, delivered: 1 };
-     }
+    if (workflowId) {
+      executeWorkflowFromTrigger(workflowId, t || 'webhook.cloud', data, triggerId);
+      return { ok: true, delivered: 1 };
+    }
 
-     if (t === 'webhook_trigger') {
-       const slug = typeof msg?.webhook?.slug === 'string' ? msg.webhook.slug : '';
-       const candidate = safeFlowId(slug);
-       if (candidate && cloudWebhookEnabledFlows.has(candidate)) {
-         const tId = cloudWebhookEnabledFlows.get(candidate);
-         executeWorkflowFromTrigger(candidate, 'webhook.cloud', data, tId);
-         return { ok: true, delivered: 1 };
-       }
-     }
+    if (t === 'webhook_trigger') {
+      const slug = typeof msg?.webhook?.slug === 'string' ? msg.webhook.slug : '';
+      const candidate = safeFlowId(slug);
+      if (candidate && cloudWebhookEnabledFlows.has(candidate)) {
+        const tId = cloudWebhookEnabledFlows.get(candidate);
+        executeWorkflowFromTrigger(candidate, 'webhook.cloud', data, tId);
+        return { ok: true, delivered: 1 };
+      }
+    }
 
-     let delivered = 0;
-     for (const [fid, tId] of cloudWebhookEnabledFlows.entries()) {
-       try {
-         executeWorkflowFromTrigger(fid, 'webhook.cloud', data, tId);
-         delivered++;
-       } catch { }
-     }
-     return { ok: true, delivered };
-   } catch (e: any) {
-     return { ok: false, error: String(e?.message || 'failed') };
-   }
- }
+    let delivered = 0;
+    for (const [fid, tId] of cloudWebhookEnabledFlows.entries()) {
+      try {
+        executeWorkflowFromTrigger(fid, 'webhook.cloud', data, tId);
+        delivered++;
+      } catch { }
+    }
+    return { ok: true, delivered };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
 
 export function startLocalWebhookServer() {
   try {
@@ -993,9 +1011,9 @@ export function startFlowRuntime(id: string) {
     } else if (type === 'webhook.local') {
       webhookEnabledFlows.set(safe, triggerId);
       started++;
-     } else if (type === 'webhook.cloud') {
-       cloudWebhookEnabledFlows.set(safe, triggerId);
-       started++;
+    } else if (type === 'webhook.cloud') {
+      cloudWebhookEnabledFlows.set(safe, triggerId);
+      started++;
     } else if (type === 'hotkey') {
       const accel = String(args?.accelerator || 'CommandOrControl+Alt+K');
       const passthrough = Boolean(args?.passthrough);
@@ -1781,10 +1799,10 @@ export function workflows_stop(id: string) {
       const ctx = { agentWsUrl: '', cloudAiUrl: '', logFn: (m: string) => logFlow(safe, m) };
       execLocalTool('stop_captures_by_flow', { flowId: safe }, ctx, 15000)
         .then((r: any) => { if (r?.stopped > 0) logFlow(safe, `Stopped ${r.stopped} capture session(s)`); })
-        .catch(() => {});
+        .catch(() => { });
       execLocalTool('close_all_streams', { flowId: safe }, ctx, 15000)
         .then((r: any) => { if (r?.closed > 0) logFlow(safe, `Closed ${r.closed} stream(s)`); })
-        .catch(() => {});
+        .catch(() => { });
     } catch { }
 
     // Emit flow execution ended + log (best-effort; engine will also emit when it observes abort)

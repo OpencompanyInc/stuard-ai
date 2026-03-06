@@ -32,6 +32,10 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'play_audio': { kind: 'electron' },
   'get_clipboard_content': { kind: 'electron' },
   'set_clipboard_content': { kind: 'electron' },
+  'proactive_task_list': { kind: 'electron' },
+  'proactive_task_update': { kind: 'electron' },
+  'proactive_task_create': { kind: 'electron' },
+  'proactive_task_delete': { kind: 'electron' },
 
   'list_open_windows': { kind: 'electron' },
   'bring_window_to_foreground': { kind: 'electron' },
@@ -97,6 +101,9 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'show_info_card': { kind: 'electron' },
   'show_feedback_form': { kind: 'electron' },
 
+  // Agent asks user a question (popup in chat)
+  'ask_user': { kind: 'electron' },
+
   // Terminal tools (PTY-based, electron-native)
   'terminal_create': { kind: 'electron' },
   'terminal_list': { kind: 'electron' },
@@ -126,6 +133,7 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'web_search': { kind: 'cloud', handler: '/tools/web_search' },
   'scrape_url': { kind: 'cloud', handler: '/tools/scrape_url' },
   'text_to_speech': { kind: 'cloud', handler: '/tools/text_to_speech' },
+  'generate_image': { kind: 'cloud', handler: '/tools/generate_image' },
   'list_tts_voices': { kind: 'cloud', handler: '/tools/list_tts_voices' },
   'youtube_get_video': { kind: 'cloud' },
   'youtube_get_channel': { kind: 'cloud' },
@@ -139,6 +147,7 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
 
   // Google integrations
   'google_get_userinfo': { kind: 'cloud' },
+  'google_list_profiles': { kind: 'cloud' },
   'gmail_send': { kind: 'cloud' }, // Alias for gmail_send_message
   'gmail_send_message': { kind: 'cloud' },
   'gmail_list_messages': { kind: 'cloud' },

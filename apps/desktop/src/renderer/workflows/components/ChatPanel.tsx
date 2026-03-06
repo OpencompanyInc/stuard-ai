@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import { PaperPlaneIcon, MagicWandIcon, Cross2Icon, PersonIcon, DesktopIcon, ClockIcon, PlusIcon, TrashIcon, ImageIcon } from "@radix-ui/react-icons";
-import { Send, Sparkles, X, User, Bot, History, Plus, Trash2, Image as ImageIconLucide, AlertCircle, CheckCircle2, RotateCw, Zap, Clock, ArrowRight, Link, Unlink, Edit, FileText, Settings, Type } from "lucide-react";
+import { Send, Sparkles, X, User, Bot, History, Plus, Trash2, Image as ImageIconLucide, AlertCircle, CheckCircle2, RotateCw, Zap, Clock, ArrowRight, Link, Unlink, Edit, FileText, Settings, Type, ExternalLink, Folder, Copy, Check } from "lucide-react";
 import { designerModelToStuardSpec, specToDesignerModel } from "../utils/conversions";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -24,6 +24,78 @@ const HIDDEN_TOOL_NAMES = new Set([
   'search_tools',
   'get_tool_schema',
 ]);
+
+// --- File path detection & actions for tool results ---
+const FILE_PATH_RE = /^([a-zA-Z]:[/\\]|\/(?:tmp|var|home|Users)\/).+\.\w{1,5}$/;
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']);
+const AUDIO_EXTS = new Set(['mp3', 'wav', 'ogg', 'flac', 'aac', 'opus', 'm4a']);
+
+function isFilePath(v: unknown): v is string {
+  return typeof v === 'string' && FILE_PATH_RE.test(v.trim());
+}
+
+function extractFilePaths(result: any): string[] {
+  const paths: string[] = [];
+  if (!result || typeof result !== 'object') return paths;
+  const walk = (obj: any) => {
+    if (!obj || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) { obj.forEach(walk); return; }
+    for (const [, val] of Object.entries(obj)) {
+      if (isFilePath(val)) paths.push(val as string);
+      else if (typeof val === 'object' && val) walk(val);
+    }
+  };
+  walk(result);
+  return [...new Set(paths)];
+}
+
+const FilePathActions: React.FC<{ filePath: string }> = ({ filePath }) => {
+  const [copied, setCopied] = React.useState(false);
+  const ext = (filePath.match(/\.([a-zA-Z0-9]+)$/)?.[1] || '').toLowerCase();
+  const isImage = IMAGE_EXTS.has(ext);
+  const isAudio = AUDIO_EXTS.has(ext);
+  const fileName = filePath.split(/[/\\]/).pop() || filePath;
+
+  const copyPath = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(filePath);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  const openFile = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try { (window as any).desktopAPI?.openPath?.(filePath); } catch {}
+  };
+  const revealInFolder = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try { (window as any).desktopAPI?.showItemInFolder?.(filePath); } catch {}
+  };
+
+  return (
+    <div className="flex items-center gap-1.5 bg-white/[0.04] border border-white/[0.08] rounded-md px-2 py-1.5 my-0.5">
+      <span className="text-[10px] text-white/40 shrink-0">
+        {isImage ? '🖼' : isAudio ? '🔊' : '📄'}
+      </span>
+      <span className="text-[10px] font-medium text-white/70 truncate max-w-[200px]" title={filePath}>
+        {fileName}
+      </span>
+      <div className="flex items-center gap-0.5 ml-auto shrink-0">
+        <button onClick={openFile} className="p-0.5 rounded hover:bg-white/10 transition-colors" title="Open file">
+          <ExternalLink className="w-3 h-3 text-white/40 hover:text-white/70" />
+        </button>
+        <button onClick={revealInFolder} className="p-0.5 rounded hover:bg-white/10 transition-colors" title="Show in folder">
+          <Folder className="w-3 h-3 text-white/40 hover:text-white/70" />
+        </button>
+        <button onClick={copyPath} className="p-0.5 rounded hover:bg-white/10 transition-colors" title="Copy path">
+          {copied
+            ? <Check className="w-3 h-3 text-emerald-400" />
+            : <Copy className="w-3 h-3 text-white/40 hover:text-white/70" />
+          }
+        </button>
+      </div>
+    </div>
+  );
+};
 
 // Convert local file path to file:// URL for Electron
 function toMediaSrc(src: string): string {
@@ -584,7 +656,11 @@ const TestStepResultView = ({ args, result }: { args: any, result?: any }) => {
 };
 
 export const ToolCallItem = ({ evt }: { evt: ToolEvent }) => {
-  const toolName = (evt.tool || '').toLowerCase().trim();
+  // execute_tool is a wrapper — show the actual tool being executed
+  const rawTool = evt.tool === 'execute_tool' && (evt.args?.tool_name || evt.argsText)
+    ? (evt.args?.tool_name || (() => { try { return JSON.parse(evt.argsText || '{}').tool_name; } catch { return evt.tool; } })())
+    : evt.tool;
+  const toolName = (rawTool || '').toLowerCase().trim();
   const isWorkflowTool = toolName === 'workflow_modify' || toolName === 'modify_workflow' || toolName === 'create_workflow';
   const isTestStep = toolName === 'test_step' || toolName === 'execute_step';
   const args = useMemo(() => {
@@ -744,7 +820,7 @@ export const ToolCallItem = ({ evt }: { evt: ToolEvent }) => {
             <Zap className="w-3 h-3" />
           </div>
           <div className="flex flex-col min-w-0">
-            <span className="text-[11px] font-semibold text-white/80">{formatToolName(evt.tool)}</span>
+            <span className="text-[11px] font-semibold text-white/80">{formatToolName(rawTool || evt.tool)}</span>
             {summary && (
               <span className={`text-[10px] truncate ${resultFailed ? 'text-amber-600' : 'text-white/50'}`}>
                 {summary}
@@ -772,14 +848,22 @@ export const ToolCallItem = ({ evt }: { evt: ToolEvent }) => {
             <div className="text-[10px] font-mono text-white/70 whitespace-pre-wrap break-all max-h-24 overflow-y-auto scrollbar-light bg-white/[0.04] rounded p-2 border border-white/[0.04]">
               {JSON.stringify(args, null, 2)}
             </div>
-            {evt.result && (
-              <>
-                <div className="text-[9px] font-semibold text-white/40 uppercase tracking-wider mt-2">Result</div>
-                <div className="text-[10px] font-mono text-white/70 whitespace-pre-wrap break-all max-h-24 overflow-y-auto scrollbar-light bg-white/[0.04] rounded p-2 border border-white/[0.04]">
-                  {JSON.stringify(evt.result, null, 2)}
-                </div>
-              </>
-            )}
+            {evt.result && (() => {
+              const filePaths = extractFilePaths(evt.result);
+              return (
+                <>
+                  <div className="text-[9px] font-semibold text-white/40 uppercase tracking-wider mt-2">Result</div>
+                  {filePaths.length > 0 && (
+                    <div className="flex flex-col gap-0.5">
+                      {filePaths.map((fp) => <FilePathActions key={fp} filePath={fp} />)}
+                    </div>
+                  )}
+                  <div className="text-[10px] font-mono text-white/70 whitespace-pre-wrap break-all max-h-24 overflow-y-auto scrollbar-light bg-white/[0.04] rounded p-2 border border-white/[0.04]">
+                    {JSON.stringify(evt.result, null, 2)}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}

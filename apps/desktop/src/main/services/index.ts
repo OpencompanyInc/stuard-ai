@@ -10,3 +10,4 @@ export * from "./offline-calendar";
 export { startReminderScheduler, stopReminderScheduler } from "./reminder-scheduler";
 export { startProactiveScheduler, stopProactiveScheduler, handleProactiveReply } from "./proactive-scheduler";
 export { proactiveService } from "./proactive-service";
+export { startCloudWebhooks, stopCloudWebhooks } from "./cloud-webhooks";

@@ -19,6 +19,7 @@ import { WeatherCard } from './WeatherCard';
 import { EmailView } from './EmailView';
 import { AgentTodoList } from './AgentTodoList';
 import { FeedbackForm } from './FeedbackForm';
+import { FormWizard } from './FormWizard';
 import { IntegrationConnect } from './IntegrationConnect';
 import type { DropzoneFile } from './FileDropzone';
 import { GenUIErrorBoundary } from './GenUIErrorBoundary';
@@ -332,6 +333,25 @@ export const GenUIContainer: React.FC<GenUIProps> = ({
             allowScreenshot={safeArgs.allowScreenshot}
             onSubmit={(data) => onResult({ submitted: true, ...data })}
             onCancel={() => onResult({ submitted: false, cancelled: true })}
+            isSubmitted={isCompleted && result?.submitted}
+            isCancelled={isCompleted && result?.cancelled}
+          />
+        );
+
+      // === Forms / Wizards ===
+      case 'show_form':
+      case 'form_wizard':
+        return (
+          <FormWizard
+            title={safeArgs.title}
+            description={safeArgs.description}
+            pages={safeArgs.pages || []}
+            submitLabel={safeArgs.submitLabel}
+            cancelLabel={safeArgs.cancelLabel}
+            showProgress={safeArgs.showProgress}
+            onSubmit={(data) => onResult({ submitted: true, data })}
+            onCancel={() => onResult({ submitted: false, cancelled: true })}
+            disabled={disabled}
             isSubmitted={isCompleted && result?.submitted}
             isCancelled={isCompleted && result?.cancelled}
           />

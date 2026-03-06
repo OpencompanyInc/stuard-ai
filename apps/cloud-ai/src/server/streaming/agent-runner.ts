@@ -8,6 +8,77 @@ import { routeModel, ModelChoice } from '../../router/model-router';
 import { writeLog } from '../../utils/logger';
 import { normalizeUsage } from '../../utils/usage';
 
+/** Max retries when the model calls a bad/missing tool or sends invalid args */
+const MAX_TOOL_ERROR_RETRIES = 3;
+
+/**
+ * Detect if an error is caused by the model calling a non-existent, invalid, or
+ * broken tool. Returns info about the problematic tool, or null for other errors.
+ */
+function detectToolError(error: any): { toolName: string; type: 'no_such_tool' | 'invalid_args' | 'tool_not_found' | 'tool_execution_error'; message: string } | null {
+  if (!error || typeof error !== 'object') return null;
+
+  const name = String(error.name || '');
+  const message = String(error.message || '');
+
+  // AI SDK NoSuchToolError (error.name === 'AI_NoSuchToolError')
+  if (name === 'AI_NoSuchToolError' || name === 'NoSuchToolError' || message.includes('is not a tool')) {
+    return {
+      toolName: error.toolName || extractToolName(message) || 'unknown',
+      type: 'no_such_tool',
+      message: message || 'The model tried to call a tool that does not exist.',
+    };
+  }
+
+  // AI SDK InvalidToolArgumentsError
+  if (name === 'AI_InvalidToolArgumentsError' || name === 'InvalidToolArgumentsError') {
+    return {
+      toolName: error.toolName || extractToolName(message) || 'unknown',
+      type: 'invalid_args',
+      message: message || 'The model generated invalid arguments for a tool call.',
+    };
+  }
+
+  // AI SDK ToolExecutionError (tool.execute threw during execution)
+  if (name === 'AI_ToolExecutionError' || name === 'ToolExecutionError') {
+    return {
+      toolName: error.toolName || extractToolName(message) || 'unknown',
+      type: 'tool_execution_error',
+      message: message || 'Tool execution failed.',
+    };
+  }
+
+  // Generic patterns in error message
+  const lower = message.toLowerCase();
+  if (
+    (lower.includes('tool') && (lower.includes('not found') || lower.includes('does not exist') || lower.includes('unknown tool'))) ||
+    lower.includes('no such tool')
+  ) {
+    return {
+      toolName: error.toolName || extractToolName(message) || 'unknown',
+      type: 'tool_not_found',
+      message,
+    };
+  }
+
+  // Catch tool-related execution errors (bridge failures, timeout, etc.)
+  if (lower.includes('tool') && (lower.includes('failed') || lower.includes('error') || lower.includes('timeout'))) {
+    return {
+      toolName: error.toolName || extractToolName(message) || 'unknown',
+      type: 'tool_execution_error',
+      message,
+    };
+  }
+
+  return null;
+}
+
+/** Try to extract a tool name from an error message like "Tool 'foo' not found" */
+function extractToolName(message: string): string | undefined {
+  const match = message.match(/[Tt]ool\s+['"`](\w+)['"`]/);
+  return match?.[1];
+}
+
 type AgentType = 'stuard' | 'workflow' | 'skill';
 
 interface AgentMessage {
@@ -136,9 +207,10 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
 
       // Prepare input with context
       const userContent = contextPrefix + message.text;
-      const input = (() => {
-        if (history.length > 0) {
-          const base = [...history, { role: 'user', content: userContent }];
+      const buildInput = (extraMessages?: Array<{ role: string; content: string }>) => {
+        const extra = extraMessages || [];
+        if (history.length > 0 || extra.length > 0) {
+          const base = [...history, ...extra, { role: 'user', content: userContent }];
           if (agentType === 'workflow') {
             return [{ role: 'system', content: WORKFLOW_SYSTEM_PROMPT }, ...base];
           }
@@ -154,7 +226,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
           return [{ role: 'system', content: SKILL_SYSTEM_PROMPT }, { role: 'user', content: userContent }];
         }
         return userContent;
-      })();
+      };
 
       // Notify start
       send(ws, { type: 'progress', event: 'start', data: {} });
@@ -226,66 +298,153 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         }
       }
 
-      // Get stream result from Mastra
-      const streamResult: any = await agent.stream(input, streamOptions);
+      // Track tool errors for retry logic
+      const toolErrorHistory: string[] = [];
+      let attempt = 0;
 
-      // Try to get the async iterable - Mastra uses fullStream
-      const stream = streamResult?.fullStream || streamResult;
+      while (attempt <= MAX_TOOL_ERROR_RETRIES) {
+        try {
+          // Build input, injecting tool error feedback if retrying
+          const extraMessages = toolErrorHistory.length > 0
+            ? [{ role: 'assistant', content: fullText || 'I tried to use a tool.' },
+               { role: 'user', content: `[System: Tool call failed] ${toolErrorHistory[toolErrorHistory.length - 1]}. Please use only the tools available to you. Do NOT invent or guess tool names.` }]
+            : undefined;
+          const input = buildInput(extraMessages);
 
-      // Check if it's actually iterable
-      if (stream && typeof stream[Symbol.asyncIterator] === 'function') {
-        // Stream is async iterable - process chunks
-        let chunkCount = 0;
-        let reasoningChunks = 0;
-        for await (const chunk of stream) {
-          chunkCount++;
-          if (chunk?.type === 'finish') {
-            const finishUsage = chunk?.usage ?? chunk?.payload?.usage ?? chunk?.payload;
-            if (finishUsage) {
-              usage = normalizeUsage(finishUsage);
+          // Get stream result from Mastra
+          const streamResult: any = await agent.stream(input, streamOptions);
+
+          // Try to get the async iterable - Mastra uses fullStream
+          const stream = streamResult?.fullStream || streamResult;
+
+          // Check if it's actually iterable
+          if (stream && typeof stream[Symbol.asyncIterator] === 'function') {
+            // Stream is async iterable - process chunks
+            let chunkCount = 0;
+            let reasoningChunks = 0;
+            for await (const chunk of stream) {
+              chunkCount++;
+              if (chunk?.type === 'finish') {
+                const finishUsage = chunk?.usage ?? chunk?.payload?.usage ?? chunk?.payload;
+                if (finishUsage) {
+                  usage = normalizeUsage(finishUsage);
+                }
+              }
+              // Debug: log thinking/reasoning chunks
+              if (chunk?.type?.includes('reasoning') || chunk?.type?.includes('thinking')) {
+                reasoningChunks++;
+                console.log('[AgentRunner] THINKING chunk:', chunk.type, chunk.payload?.text?.slice(0, 80) || chunk.textDelta?.slice(0, 80));
+              }
+              const delta = handleStreamChunk(ws, chunk);
+              if (delta) fullText += delta;
+            }
+            console.log(`[AgentRunner] Stream complete: ${chunkCount} chunks, ${reasoningChunks} reasoning`);
+          } else {
+            // Not iterable - this is the aggregated result
+            console.log('[AgentRunner] Stream not iterable, using aggregated result');
+            if (streamResult?.text) {
+              fullText = streamResult.text;
+              send(ws, { type: 'progress', event: 'delta', data: { text: fullText } });
+            }
+            if (streamResult?.usage) {
+              usage = normalizeUsage(streamResult.usage);
             }
           }
-          // Debug: log thinking/reasoning chunks
-          if (chunk?.type?.includes('reasoning') || chunk?.type?.includes('thinking')) {
-            reasoningChunks++;
-            console.log('[AgentRunner] THINKING chunk:', chunk.type, chunk.payload?.text?.slice(0, 80) || chunk.textDelta?.slice(0, 80));
+
+          // Try to get final text if we didn't accumulate any
+          if (!fullText && streamResult?.text) {
+            fullText = streamResult.text;
           }
-          const delta = handleStreamChunk(ws, chunk);
-          if (delta) fullText += delta;
-        }
-        console.log(`[AgentRunner] Stream complete: ${chunkCount} chunks, ${reasoningChunks} reasoning`);
-      } else {
-        // Not iterable - this is the aggregated result
-        // Mastra might return { text, toolCalls, usage, steps }
-        console.log('[AgentRunner] Stream not iterable, using aggregated result');
-        if (streamResult?.text) {
-          fullText = streamResult.text;
-          // Send all at once as a delta
-          send(ws, { type: 'progress', event: 'delta', data: { text: fullText } });
-        }
-        if (streamResult?.usage) {
-          usage = normalizeUsage(streamResult.usage);
-        }
-      }
 
-      // Try to get final text if we didn't accumulate any
-      if (!fullText && streamResult?.text) {
-        fullText = streamResult.text;
-      }
+          // Get usage from stream result if not set
+          if (!usage && streamResult?.usage) {
+            usage = normalizeUsage(streamResult.usage);
+          }
 
-      // Get usage from stream result if not set
-      if (!usage && streamResult?.usage) {
-        usage = normalizeUsage(streamResult.usage);
-      }
+          // Check for reasoning/thinking in final result
+          if (streamResult?.reasoning) {
+            console.log('[AgentRunner] Final reasoning found:', String(streamResult.reasoning).slice(0, 100));
+            send(ws, { type: 'progress', event: 'reasoning', data: { text: streamResult.reasoning } });
+          }
+          if (streamResult?.thinking) {
+            console.log('[AgentRunner] Final thinking found:', String(streamResult.thinking).slice(0, 100));
+            send(ws, { type: 'progress', event: 'reasoning', data: { text: streamResult.thinking } });
+          }
 
-      // Check for reasoning/thinking in final result (Gemini returns this with includeThoughts)
-      if (streamResult?.reasoning) {
-        console.log('[AgentRunner] Final reasoning found:', String(streamResult.reasoning).slice(0, 100));
-        send(ws, { type: 'progress', event: 'reasoning', data: { text: streamResult.reasoning } });
-      }
-      if (streamResult?.thinking) {
-        console.log('[AgentRunner] Final thinking found:', String(streamResult.thinking).slice(0, 100));
-        send(ws, { type: 'progress', event: 'reasoning', data: { text: streamResult.thinking } });
+          // Stream succeeded - break out of retry loop
+          break;
+
+        } catch (streamError: any) {
+          // Check if this is a tool error we can retry
+          const toolError = detectToolError(streamError);
+          if (toolError && attempt < MAX_TOOL_ERROR_RETRIES) {
+            attempt++;
+            const toolCallId = `tc-error-${Date.now()}`;
+            const isHallucination = toolError.type === 'no_such_tool' || toolError.type === 'tool_not_found';
+            const label = isHallucination ? 'hallucinated' : toolError.type === 'invalid_args' ? 'invalid args' : 'execution failed';
+
+            console.warn(`[AgentRunner] Tool error (${label}): "${toolError.toolName}" (${toolError.type}), retrying (${attempt}/${MAX_TOOL_ERROR_RETRIES})`);
+
+            try {
+              writeLog('tool_error_retry', {
+                toolName: toolError.toolName,
+                type: toolError.type,
+                attempt,
+                message: toolError.message,
+              });
+            } catch { }
+
+            // Notify UI about the failed tool call (show as error pill)
+            send(ws, {
+              type: 'progress',
+              event: 'tool_event',
+              data: {
+                tool: toolError.toolName,
+                status: 'called',
+                toolCallId,
+                args: {},
+                description: `${toolError.toolName} (${label})`,
+              }
+            });
+            send(ws, {
+              type: 'progress',
+              event: 'tool_event',
+              data: {
+                tool: toolError.toolName,
+                status: 'error',
+                toolCallId,
+                error: isHallucination
+                  ? `Tool "${toolError.toolName}" does not exist. Use search_tools to find available tools, or execute_tool to run tools by name. (attempt ${attempt}/${MAX_TOOL_ERROR_RETRIES})`
+                  : `Tool "${toolError.toolName}" failed: ${toolError.message}. Check args with get_tool_schema first. (attempt ${attempt}/${MAX_TOOL_ERROR_RETRIES})`,
+              }
+            });
+
+            // Store error feedback to inject into the retry
+            if (isHallucination) {
+              toolErrorHistory.push(
+                `The tool "${toolError.toolName}" does not exist and cannot be called directly. ` +
+                `Use search_tools to find available tools, or use execute_tool({ tool_name: "...", args: {...} }) to run tools by name. ` +
+                `Do NOT invent tool names — only use tools you can verify exist.`
+              );
+            } else if (toolError.type === 'invalid_args') {
+              toolErrorHistory.push(
+                `Tool "${toolError.toolName}" received invalid arguments: ${toolError.message}. ` +
+                `Use get_tool_schema({ tool_name: "${toolError.toolName}" }) to see the correct argument format before retrying.`
+              );
+            } else {
+              toolErrorHistory.push(
+                `Tool "${toolError.toolName}" failed during execution: ${toolError.message}. ` +
+                `Try a different approach or use a different tool.`
+              );
+            }
+
+            // Continue to next iteration of the retry loop
+            continue;
+          }
+
+          // Not a retryable tool error, or retries exhausted - re-throw
+          throw streamError;
+        }
       }
 
       // Send final message
@@ -309,6 +468,58 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         resultText = fullText || '(Stopped)';
       } else {
         console.error('[AgentRunner] Error:', error);
+
+        // Check for tool errors that exhausted retries
+        const toolError = detectToolError(error);
+        if (toolError) {
+          const toolCallId = `tc-error-final-${Date.now()}`;
+          const isHallucination = toolError.type === 'no_such_tool' || toolError.type === 'tool_not_found';
+          console.error(`[AgentRunner] Tool error (retries exhausted): "${toolError.toolName}" (${toolError.type})`);
+
+          try {
+            writeLog('tool_error_final', {
+              toolName: toolError.toolName,
+              type: toolError.type,
+              message: toolError.message,
+            });
+          } catch { }
+
+          // Show the failed tool as an error in the UI
+          send(ws, {
+            type: 'progress',
+            event: 'tool_event',
+            data: {
+              tool: toolError.toolName,
+              status: 'called',
+              toolCallId,
+              args: {},
+              description: `${toolError.toolName} (${isHallucination ? 'not found' : 'failed'})`,
+            }
+          });
+          send(ws, {
+            type: 'progress',
+            event: 'tool_event',
+            data: {
+              tool: toolError.toolName,
+              status: 'error',
+              toolCallId,
+              error: isHallucination
+                ? `Tool "${toolError.toolName}" does not exist. All retry attempts exhausted.`
+                : `Tool "${toolError.toolName}" failed after ${MAX_TOOL_ERROR_RETRIES} attempts: ${toolError.message}`,
+            }
+          });
+
+          const errorText = fullText
+            ? fullText + (isHallucination
+              ? `\n\nI apologize, but I attempted to use a tool called "${toolError.toolName}" that doesn't exist. Please try rephrasing your request.`
+              : `\n\nThe tool "${toolError.toolName}" encountered an error: ${toolError.message}. Please try a different approach.`)
+            : (isHallucination
+              ? `I attempted to use a tool called "${toolError.toolName}" that doesn't exist. Please try rephrasing your request, and I'll use only the tools available to me.`
+              : `The tool "${toolError.toolName}" failed: ${toolError.message}. Let me try a different approach.`);
+          send(ws, { type: 'final', result: { text: errorText, response: errorText } });
+          resultText = errorText;
+          return;
+        }
 
         const toolCallParseError =
           error &&
@@ -497,6 +708,24 @@ function handleStreamChunk(ws: WebSocket, chunk: any): string {
       case 'step-start':
         send(ws, { type: 'progress', event: 'start', data: { stepId: chunk.payload?.stepId } });
         break;
+
+      case 'error': {
+        // Handle error chunks from the stream (e.g. tool execution errors)
+        const errPayload = chunk.payload || {};
+        const errMessage = errPayload.message || errPayload.error || 'Stream error';
+        console.error('[AgentRunner] Error chunk received:', errMessage);
+        send(ws, {
+          type: 'progress',
+          event: 'tool_event',
+          data: {
+            tool: errPayload.toolName || 'stream',
+            status: 'error',
+            toolCallId: errPayload.toolCallId || `tc-err-${Date.now()}`,
+            error: String(errMessage),
+          }
+        });
+        break;
+      }
 
       case 'finish':
         // Don't send final here - we'll send it after the loop

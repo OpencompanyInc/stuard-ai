@@ -84,7 +84,7 @@ export const analyzeMediaTool = createTool({
         })
       )
       .min(1),
-    mode: z.enum(['fast', 'detailed']).default('fast').describe('fast = Gemini 2.5 Flash, detailed = Gemini 2.5 Pro with thinking'),
+    mode: z.enum(['fast', 'detailed']).default('fast').describe('fast = Gemini 2.5 Flash, detailed = Gemini 3.1 Pro Preview with thinking'),
   }),
   outputSchema: z.object({ summary: z.string() }),
   execute: async (inputData: any, { writer }: any) => {
@@ -103,7 +103,7 @@ export const analyzeMediaTool = createTool({
     });
 
     const isDetailed = mode === 'detailed';
-    const modelId = isDetailed ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
+    const modelId = isDetailed ? 'gemini-3.1-pro-preview' : 'gemini-3.1-flash-lite-preview';
     const parts: any[] = [{ type: 'text', text: task || 'Analyze this media and provide key observations, details, and any relevant information.' }];
     const uploadedObjects: string[] = [];
 

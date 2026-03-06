@@ -447,13 +447,17 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
 
               } else if (evt.event === 'tool_event') {
                 const d = evt.data || {};
-                const tool = String(d.tool || d.toolName || (d.step && (d.step.tool || d.step.toolName)) || 'unknown');
+                let tool = String(d.tool || d.toolName || (d.step && (d.step.tool || d.step.toolName)) || 'unknown');
+                // execute_tool is a wrapper — show the actual tool being executed
+                if (tool === 'execute_tool' && d.args?.tool_name) {
+                  tool = String(d.args.tool_name);
+                }
 
                 // Skip hidden tools (knowledge tools and internal discovery tools)
                 const HIDDEN_TOOLS = [
                   'knowledge_get_identity', 'knowledge_get_directives', 'knowledge_get_bio',
                   'knowledge_list_entities', 'knowledge_search_facts', 'knowledge_get_entity_context',
-                  'retrieve_tool_format', 'search_tools',
+                  'retrieve_tool_format', 'search_tools', 'get_tool_schema',
                   // Hide duplicate workflow tools - use run_workflow and search_local_workflows instead
                   'invoke_workflow', 'execute_workflow', 'list_local_stuards'
                 ];

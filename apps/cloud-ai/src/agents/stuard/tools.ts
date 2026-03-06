@@ -18,6 +18,7 @@ import { browser_use_status, browser_use_configure, browser_use_task, browser_us
 import { submitFeedback, reportBug, suggestFeature, listMyFeedback, getFeedbackDetails } from '../../tools/feedback-tools';
 import { telnyx_send_sms, telnyx_make_call, telnyx_phone_status } from '../../tools/telnyx-tools';
 import { http_request } from '../../tools/http-tools';
+import { proactive_task_create, proactive_task_list, proactive_task_update, proactive_task_delete } from '../../tools/proactive-task-tools';
 import { createRequire } from 'node:module';
 import type { SIS as SISType } from 'sis-tools';
 import { searchToolsSemanticSupabase, isSupabaseSISEnabled } from '../../tools/sis-supabase';
@@ -25,6 +26,7 @@ import { SIS_RUNTIME_TOOLS } from '../../tools/sis-runtime-tools';
 import { get_tool_schema, execute_tool, search_tools } from '../../tools/meta-tools';
 import { get_skill_info } from '../../tools/skill-tools';
 import { hasClientBridge } from '../../tools/bridge';
+import { ask_user } from '../../tools/ask-user';
 
 const require = createRequire(import.meta.url);
 const { SIS: SISRuntime } = require('sis-tools') as { SIS: new (...args: any[]) => SISType };
@@ -141,6 +143,10 @@ export const ALL_TOOLS = {
   task_crud,
   task_reminders,
   planner_list_items,
+  proactive_task_list,
+  proactive_task_update,
+  proactive_task_create,
+  proactive_task_delete,
   // Basic filesystem tools
   list_directory,
   read_file,
@@ -286,6 +292,8 @@ export const ALL_TOOLS = {
   search_tools,
   // Skills
   get_skill_info,
+  // User interaction
+  ask_user,
   // Telnyx (SMS / Voice calls — requires verified phone)
   telnyx_send_sms,
   telnyx_make_call,
@@ -359,6 +367,9 @@ export const TIER_1_PARAMOUNT_TOOLS = [
 
   // Skills (1) — retrieve user-defined skill details
   'get_skill_info',
+
+  // User interaction (1) — ask questions, confirmations, choices
+  'ask_user',
 ] as const;
 
 const _FFMPEG_TIER_1_TOOLS = [

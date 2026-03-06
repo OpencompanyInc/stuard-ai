@@ -262,13 +262,17 @@ IMPORTANT:
 
               } else if (evt.event === 'tool_event') {
                 const d = evt.data || {};
-                const tool = String(d.tool || d.toolName || 'unknown');
+                let tool = String(d.tool || d.toolName || 'unknown');
+                // execute_tool is a wrapper — show the actual tool being executed
+                if (tool === 'execute_tool' && d.args?.tool_name) {
+                  tool = String(d.args.tool_name);
+                }
 
                 // Hide internal tools from the UI
                 const HIDDEN_TOOLS = [
                   'knowledge_get_identity', 'knowledge_get_directives', 'knowledge_get_bio',
                   'knowledge_list_entities', 'knowledge_search_facts', 'knowledge_get_entity_context',
-                  'retrieve_tool_format', 'search_tools',
+                  'retrieve_tool_format', 'search_tools', 'get_tool_schema',
                 ];
                 if (HIDDEN_TOOLS.includes(tool)) return;
 
