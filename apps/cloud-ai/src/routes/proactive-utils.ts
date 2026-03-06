@@ -69,7 +69,7 @@ export function buildProactiveUserMessage(args: {
  * Build the user message content array for the proactive agent.
  * When a screenshot is available, returns a multi-part message with both text and image.
  */
-export function buildProactiveMessageContent(args: { prompt?: string; taskCount: number; tasks?: TaskSnapshot[]; screenshot?: string | null }): any[] {
+export function buildProactiveMessageContent(args: { prompt?: string; taskCount: number; tasks?: TaskSnapshot[]; screenshot?: string | null; systemAudio?: string | null; micAudio?: string | null }): any[] {
   const textPart = buildProactiveUserMessage({
     prompt: args.prompt,
     taskCount: args.taskCount,

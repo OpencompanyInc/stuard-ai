@@ -48,7 +48,7 @@ function sanitizeSkill(raw: any): SkillSummary | null {
         content: safeText(step?.content, 4000),
         ...(toolName ? { toolName } : {}),
       };
-    }).filter((s) => s.id && s.type)
+    }).filter((s: { id: string; type: string }) => s.id && s.type)
     : [];
 
   return {

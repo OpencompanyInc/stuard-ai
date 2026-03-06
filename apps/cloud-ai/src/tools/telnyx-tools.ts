@@ -53,7 +53,7 @@ export const telnyx_send_sms = createTool({
     to: z.string().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context: input }) => {
+  execute: async (input) => {
     try {
       const userId = await requireUserId();
       const phone = await getVerifiedPhone(userId);
@@ -94,7 +94,7 @@ export const telnyx_make_call = createTool({
     to: z.string().optional(),
     error: z.string().optional(),
   }),
-  execute: async ({ context: input }) => {
+  execute: async (input) => {
     try {
       const userId = await requireUserId();
       const phone = await getVerifiedPhone(userId);
