@@ -10,7 +10,7 @@ import type { ArgOption } from '../../../constants/tool-schemas';
 import type { WorkflowVariable } from '../../../types';
 
 interface ArrayEditorProps {
-  value: any[];
+  value: any[] | string;
   onChange: (v: any) => void;
   itemType?: string;
   itemOptions?: ArgOption[];

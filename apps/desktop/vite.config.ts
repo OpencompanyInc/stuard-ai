@@ -20,7 +20,7 @@ export default defineConfig(() => ({
   build: {
     outDir: resolve(__dirname, "dist/renderer"),
     emptyOutDir: true,
-    minify: "terser",
+    minify: "terser" as const,
     terserOptions: {
       compress: {
         drop_console: true,

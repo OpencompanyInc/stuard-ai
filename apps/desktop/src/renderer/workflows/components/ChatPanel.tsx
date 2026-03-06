@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
+import clsx from "clsx";
 import { PaperPlaneIcon, MagicWandIcon, Cross2Icon, PersonIcon, DesktopIcon, ClockIcon, PlusIcon, TrashIcon, ImageIcon } from "@radix-ui/react-icons";
 import { Send, Sparkles, X, User, Bot, History, Plus, Trash2, Image as ImageIconLucide, AlertCircle, CheckCircle2, RotateCw, Zap, Clock, ArrowRight, Link, Unlink, Edit, FileText, Settings, Type, ExternalLink, Folder, Copy, Check } from "lucide-react";
 import { designerModelToStuardSpec, specToDesignerModel } from "../utils/conversions";
