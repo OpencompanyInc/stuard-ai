@@ -145,5 +145,12 @@ export async function deleteSnapshot(id: string) {
 // ── Billing ────────────────────────────────────────────────────────────────
 
 export async function getComputeUsage() {
-  return getCloudEngineStatus(); // billing data included in status
+  const data = await getCloudEngineStatus();
+  if (!data.ok) return data;
+  return {
+    ok: true,
+    ...(data.billing || {}),
+    current_tier: data.billing?.current_tier || data.engine?.tier,
+    engine_status: data.billing?.engine_status || data.engine?.status,
+  };
 }

@@ -16,39 +16,35 @@ export function useCloudTerminal() {
 
   const connect = useCallback((opts?: { cols?: number; rows?: number }) => {
     const token = localStorage.getItem('stuard_access_token');
-    if (!token) return;
+    if (!token) return undefined;
 
-    const wsUrl = CLOUD_API_URL.replace(/^http/, 'ws') + '/ws?client=desktop';
+    wsRef.current?.close();
+    setConnected(false);
+    setSessionId(null);
+
+    const wsUrl = CLOUD_API_URL.replace(/^http/, 'ws') + `/terminal?token=${encodeURIComponent(token)}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
-      setConnected(true);
-      // Authenticate
-      ws.send(JSON.stringify({
-        type: 'auth',
-        auth: { accessToken: token },
-      }));
-      // Open terminal
-      ws.send(JSON.stringify({
-        type: 'terminal_open',
-        cols: opts?.cols || 80,
-        rows: opts?.rows || 24,
-      }));
+      // The terminal relay authenticates + opens the PTY automatically.
+      // Keep these values around for future protocol expansion if needed.
+      void opts;
     };
 
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data);
-        if (msg.type === 'terminal_output' && onDataRef.current) {
+        if (msg.type === 'terminal_opened') {
+          setConnected(true);
+          setSessionId(msg.sessionId || msg.terminalId || null);
+        } else if (msg.type === 'terminal_data' && onDataRef.current) {
           onDataRef.current(msg.data);
-          if (!sessionId && msg.sessionId) setSessionId(msg.sessionId);
-        }
-        if (msg.type === 'command_result' && msg.result?.sessionId) {
-          setSessionId(msg.result.sessionId);
-        }
-        if (msg.type === 'terminal_closed') {
+        } else if (msg.type === 'terminal_idle_timeout' || msg.type === 'terminal_closed') {
+          setConnected(false);
           onClosedRef.current?.();
+        } else if (msg.type === 'error') {
+          setConnected(false);
         }
       } catch {}
     };
@@ -56,47 +52,49 @@ export function useCloudTerminal() {
     ws.onclose = () => {
       setConnected(false);
       setSessionId(null);
+      onClosedRef.current?.();
+    };
+
+    ws.onerror = () => {
+      setConnected(false);
     };
 
     return () => {
       ws.close();
-      wsRef.current = null;
+      if (wsRef.current === ws) wsRef.current = null;
     };
-  }, [sessionId]);
+  }, []);
 
   const sendData = useCallback((data: string) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
+    if (wsRef.current?.readyState === WebSocket.OPEN && data) {
       wsRef.current.send(JSON.stringify({
         type: 'terminal_data',
-        sessionId,
         data,
       }));
     }
-  }, [sessionId]);
+  }, []);
 
   const resize = useCallback((cols: number, rows: number) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN && sessionId) {
+    if (wsRef.current?.readyState === WebSocket.OPEN && cols > 0 && rows > 0) {
       wsRef.current.send(JSON.stringify({
         type: 'terminal_resize',
-        sessionId,
         cols,
         rows,
       }));
     }
-  }, [sessionId]);
+  }, []);
 
   const close = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN && sessionId) {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'terminal_close',
-        sessionId,
       }));
     }
     wsRef.current?.close();
     wsRef.current = null;
     setConnected(false);
     setSessionId(null);
-  }, [sessionId]);
+  }, []);
 
   const onData = useCallback((cb: (data: string) => void) => {
     onDataRef.current = cb;

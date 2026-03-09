@@ -58,8 +58,23 @@ function measureCpuPercent(): number {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function measureMemory(): { percent: number; usedMb: number; totalMb: number } {
-  const totalBytes = os.totalmem();
-  const freeBytes = os.freemem();
+  let totalBytes = os.totalmem();
+  let freeBytes = os.freemem();
+
+  try {
+    // Prefer /proc/meminfo on Linux so we report host memory instead of a
+    // service/cgroup-limited Node view when the agent runs under systemd.
+    const meminfo = fs.readFileSync('/proc/meminfo', 'utf-8');
+    const totalKb = Number(meminfo.match(/^MemTotal:\s+(\d+)\s+kB$/m)?.[1] || 0);
+    const availableKb = Number(
+      meminfo.match(/^MemAvailable:\s+(\d+)\s+kB$/m)?.[1]
+      || meminfo.match(/^MemFree:\s+(\d+)\s+kB$/m)?.[1]
+      || 0,
+    );
+    if (totalKb > 0) totalBytes = totalKb * 1024;
+    if (availableKb > 0) freeBytes = availableKb * 1024;
+  } catch {}
+
   const usedBytes = totalBytes - freeBytes;
   const totalMb = Math.round(totalBytes / (1024 * 1024));
   const usedMb = Math.round(usedBytes / (1024 * 1024));

@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { verifyToken, checkAccess, getCloudEngine, upsertCloudEngine, updateCloudEngineStatus, deleteCloudEngine, getStorageUsage, upsertStorageUsage, updateEngineHealth } from '../supabase';
-import { COMPUTE_TIER_CONFIG, STORAGE_PRICING, estimateComputeCostCredits, estimateStorageCostCredits } from '../pricing';
+import { verifyToken, checkAccess, getCloudEngine, upsertCloudEngine, updateCloudEngineStatus, deleteCloudEngine, getStorageUsage, upsertStorageUsage, updateEngineHealth, getCreditSummary } from '../supabase';
+import { COMPUTE_TIER_CONFIG, DEFAULT_CLOUD_DISK_GB_BY_TIER, STORAGE_PRICING, estimateComputeCostCredits, estimateMachineCreditsPerHour, estimateStorageCostCredits, resolveComputeMachineSpec } from '../pricing';
 import { getComputeProvider } from '../services/compute';
 import { syncToCloud, restoreFromCloud, getSyncStatus } from '../services/sync-engine';
 import { deleteAllUserData } from '../services/cold-storage';
@@ -80,7 +80,13 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       machineType: cfg.machineType,
       vcpus: cfg.vcpus,
       memoryGb: cfg.memoryGb,
+      defaultDiskGb: DEFAULT_CLOUD_DISK_GB_BY_TIER[key] ?? MIN_DISK_GB,
       hourlyUsd: cfg.hourlyUsd,
+      estimatedComputeCreditsPerHour: estimateComputeCostCredits(key, 1),
+      estimatedStorageCreditsPerHour: estimateStorageCostCredits(DEFAULT_CLOUD_DISK_GB_BY_TIER[key] ?? MIN_DISK_GB, 0, 1),
+      estimatedTotalCreditsPerHour:
+        estimateComputeCostCredits(key, 1)
+        + estimateStorageCostCredits(DEFAULT_CLOUD_DISK_GB_BY_TIER[key] ?? MIN_DISK_GB, 0, 1),
       estimatedMonthlyCostCredits: estimateComputeCostCredits(key, 730),
     }));
     json(res, 200, {
@@ -159,20 +165,20 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
 
       // Resolve tier config — for 'custom' tier, pick the closest match or use body vcpus/ramGb
       let tierConfig = COMPUTE_TIER_CONFIG[tier];
+      let machineTypeOverride: string | undefined;
       if (tier === 'custom') {
         const customVcpus = Math.max(1, Math.min(16, Number(body.vcpus) || 2));
         const customRam = Math.max(1, Math.min(64, Number(body.ramGb) || 4));
-        // Pick closest GCE machine type based on custom vcpus
-        const machineType = customVcpus <= 1 ? 'e2-small'
-          : customVcpus <= 2 ? 'e2-standard-2'
-          : customVcpus <= 4 ? 'e2-standard-4'
-          : customVcpus <= 8 ? 'e2-standard-8'
-          : `e2-standard-${customVcpus}`;
+        const memoryMb = customRam * 1024;
+        const machineType = `e2-custom-${customVcpus}-${memoryMb}`;
         const hourlyUsd = customVcpus * 0.034; // ~$0.034/vCPU/hr for e2
         tierConfig = { machineType, vcpus: customVcpus, memoryGb: customRam, hourlyUsd };
+        machineTypeOverride = machineType;
       }
       const provider = getComputeProvider();
-      const { instanceName, zone, vmSecret } = await provider.provisionVM(user.userId, tier, diskSizeGb);
+      const { instanceName, zone, vmSecret } = await provider.provisionVM(user.userId, tier, diskSizeGb, {
+        machineType: machineTypeOverride,
+      });
 
       // Insert cloud engine record (including per-VM secret for HMAC auth)
       const engine = await upsertCloudEngine(user.userId, {
@@ -410,20 +416,27 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
 
       const syncStatus = await getSyncStatus(user.userId);
       const computeUsage = await getUserComputeUsage(user.userId);
-
-      // Derive tier from machineType for display
-      const tierEntry = Object.entries(COMPUTE_TIER_CONFIG).find(
-        ([, cfg]) => cfg.machineType === engine.machine_type
-      );
+      const creditSummary = await getCreditSummary(user.userId);
+      const machineSpec = resolveComputeMachineSpec(engine.machine_type);
+      const currentTier = machineSpec?.custom ? 'custom' : (machineSpec?.tier || 'custom');
+      const computeCreditsPerHour = estimateMachineCreditsPerHour(engine.machine_type);
+      const storageCredits = computeUsage.hotStorage + computeUsage.coldStorage;
+      const hoursThisMonth = computeCreditsPerHour > 0
+        ? Number((computeUsage.compute / computeCreditsPerHour).toFixed(2))
+        : 0;
 
       json(res, 200, {
         ok: true,
         engine: {
+          id: engine.id,
+          userId: engine.user_id,
           status: engine.status,
           instanceName: engine.instance_name,
           zone: engine.zone,
           machineType: engine.machine_type,
-          tier: tierEntry?.[0] || 'custom',
+          tier: currentTier,
+          vcpus: machineSpec?.vcpus ?? null,
+          ramGb: machineSpec?.memoryGb ?? null,
           diskSizeGb: engine.disk_size_gb,
           createdAt: engine.created_at,
           startedAt: engine.started_at,
@@ -434,7 +447,19 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
           agentVersion: engine.agent_version,
         },
         storage: syncStatus,
-        billing: computeUsage,
+        billing: {
+          total_credits_used: computeUsage.total,
+          compute_credits: computeUsage.compute,
+          storage_credits: storageCredits,
+          hot_storage_credits: computeUsage.hotStorage,
+          cold_storage_credits: computeUsage.coldStorage,
+          current_tier: currentTier,
+          engine_status: engine.status,
+          hours_this_month: hoursThisMonth,
+          compute_credits_per_hour: computeCreditsPerHour,
+          credits_remaining: creditSummary.remaining,
+          credits_limit: creditSummary.limit,
+        },
       });
     } catch (e: any) {
       console.error('[cloud-engine] status error:', e?.message);

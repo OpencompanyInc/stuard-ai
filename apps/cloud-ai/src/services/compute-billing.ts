@@ -1,9 +1,8 @@
 import { COMPUTE_BILLING_INTERVAL_MS } from '../utils/config';
 import {
-  COMPUTE_TIER_CONFIG,
   STORAGE_PRICING,
   creditsFromUsd,
-  creditsPerUsd,
+  resolveComputeMachineSpec,
 } from '../pricing';
 import {
   getActiveCloudEngines,
@@ -55,21 +54,19 @@ export async function runBillingCycle(): Promise<void> {
 async function billEngine(engine: CloudEngine, billingHour: Date): Promise<void> {
   const userId = engine.user_id;
 
-  // Resolve tier from machine_type
-  const tier = Object.entries(COMPUTE_TIER_CONFIG).find(
-    ([, cfg]) => cfg.machineType === engine.machine_type,
-  );
-  const tierKey = tier?.[0] || 'basic';
-  const tierConfig = tier?.[1] || COMPUTE_TIER_CONFIG.basic;
+  const machineSpec = resolveComputeMachineSpec(engine.machine_type);
+  const tierKey = machineSpec?.tier || 'custom';
+  const hourlyUsd = machineSpec?.hourlyUsd ?? 0;
+  const machineType = machineSpec?.machineType || engine.machine_type;
 
   // ── Compute billing (only when running) ──────────────────────────────────
   if (engine.status === 'running') {
-    const computeCredits = creditsFromUsd(tierConfig.hourlyUsd);
+    const computeCredits = creditsFromUsd(hourlyUsd);
     if (computeCredits > 0) {
       await insertBillingEvent(userId, 'compute', computeCredits, {
         tier: tierKey,
-        machineType: engine.machine_type,
-        hourlyUsd: tierConfig.hourlyUsd,
+        machineType,
+        hourlyUsd,
       }, billingHour);
 
       // Also log to usage_events for unified credit tracking
@@ -77,7 +74,7 @@ async function billEngine(engine: CloudEngine, billingHour: Date): Promise<void>
         promptTokens: 0,
         completionTokens: 0,
         totalTokens: 0,
-        costUsd: tierConfig.hourlyUsd,
+        costUsd: hourlyUsd,
       });
     }
   }

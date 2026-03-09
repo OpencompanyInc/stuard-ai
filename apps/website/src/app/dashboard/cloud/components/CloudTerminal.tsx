@@ -17,6 +17,10 @@ export function CloudTerminal({ engine }: CloudTerminalProps) {
 
     let term: any;
     let fitAddon: any;
+    let ro: ResizeObserver | null = null;
+    let disposeWs: (() => void) | undefined;
+    let disposeInput: { dispose: () => void } | undefined;
+    let disposed = false;
 
     const init = async () => {
       try {
@@ -48,37 +52,38 @@ export function CloudTerminal({ engine }: CloudTerminalProps) {
         xtermRef.current = term;
 
         // Connect terminal → WS
-        term.onData((data: string) => sendData(data));
+        disposeInput = term.onData((data: string) => sendData(data));
 
         // Connect WS → terminal
         onData((data: string) => term.write(data));
 
         // Connect WS
-        const cleanup = connect({ cols: term.cols, rows: term.rows });
+        disposeWs = connect({ cols: term.cols, rows: term.rows });
 
         // Handle resize
-        const ro = new ResizeObserver(() => {
+        ro = new ResizeObserver(() => {
           fitAddon.fit();
           resize(term.cols, term.rows);
         });
         ro.observe(termRef.current!);
-
-        return () => {
-          ro.disconnect();
-          cleanup?.();
-          term.dispose();
-        };
       } catch (e) {
-        console.error('Failed to initialize terminal:', e);
+        if (!disposed) {
+          console.error('Failed to initialize terminal:', e);
+        }
       }
     };
 
-    const cleanup = init();
+    void init();
     return () => {
-      cleanup.then(fn => fn?.());
+      disposed = true;
+      ro?.disconnect();
+      disposeInput?.dispose();
+      disposeWs?.();
+      xtermRef.current = null;
+      term?.dispose();
       close();
     };
-  }, [engine.status]);
+  }, [engine.status, close, connect, onData, resize, sendData]);
 
   if (engine.status !== 'running') {
     return (

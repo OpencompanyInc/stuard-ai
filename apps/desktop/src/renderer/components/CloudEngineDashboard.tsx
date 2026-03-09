@@ -14,35 +14,55 @@ import { CloudResourceMonitor } from './CloudResourceMonitor';
 
 type DashTab = 'overview' | 'terminal' | 'files' | 'monitoring' | 'billing' | 'snapshots' | 'deploys';
 
+const CREDITS_PER_USD = 33;
+const STORAGE_USD_PER_GB_MONTH = 0.10;
+const HOURS_PER_MONTH = 730;
+
+function creditsFromUsd(usd: number): number {
+  return Math.max(0, Math.round(usd * CREDITS_PER_USD));
+}
+
+function estimateCustomComputeCredits(vcpus: number): number {
+  return creditsFromUsd(vcpus * 0.034);
+}
+
+function estimateStorageCredits(diskGb: number): number {
+  return creditsFromUsd((diskGb * STORAGE_USD_PER_GB_MONTH) / HOURS_PER_MONTH);
+}
+
 /* ─── Credit-based pricing plans ─────────────────────────────────── */
 const PLANS = [
   {
     id: 'starter', label: 'Starter', emoji: '🌱',
     tagline: 'Perfect for trying things out',
     vcpus: 1, ram: 2, disk: 10,
-    credits: 5, creditsPer: 'hr',
+    hourlyUsd: 0.017,
+    credits: creditsFromUsd(0.017), creditsPer: 'hr',
     features: ['1 CPU core', '2 GB memory', '10 GB storage', 'Great for light tasks'],
   },
   {
     id: 'basic', label: 'Essential', emoji: '⚡',
     tagline: 'For everyday automation',
-    vcpus: 2, ram: 4, disk: 20,
-    credits: 10, creditsPer: 'hr',
-    features: ['2 CPU cores', '4 GB memory', '20 GB storage', 'Run automations 24/7'],
+    vcpus: 2, ram: 8, disk: 20,
+    hourlyUsd: 0.067,
+    credits: creditsFromUsd(0.067), creditsPer: 'hr',
+    features: ['2 CPU cores', '8 GB memory', '20 GB storage', 'Run automations 24/7'],
   },
   {
     id: 'pro', label: 'Pro', emoji: '🚀', popular: true,
     tagline: 'Best for most users',
-    vcpus: 4, ram: 8, disk: 50,
-    credits: 20, creditsPer: 'hr',
-    features: ['4 CPU cores', '8 GB memory', '50 GB storage', 'Fast AI processing'],
+    vcpus: 4, ram: 16, disk: 50,
+    hourlyUsd: 0.134,
+    credits: creditsFromUsd(0.134), creditsPer: 'hr',
+    features: ['4 CPU cores', '16 GB memory', '50 GB storage', 'Fast AI processing'],
   },
   {
     id: 'power', label: 'Power', emoji: '🔥',
     tagline: 'Maximum performance',
-    vcpus: 8, ram: 16, disk: 100,
-    credits: 40, creditsPer: 'hr',
-    features: ['8 CPU cores', '16 GB memory', '100 GB storage', 'Heavy workloads'],
+    vcpus: 8, ram: 32, disk: 100,
+    hourlyUsd: 0.268,
+    credits: creditsFromUsd(0.268), creditsPer: 'hr',
+    features: ['8 CPU cores', '32 GB memory', '100 GB storage', 'Heavy workloads'],
   },
 ];
 
@@ -66,8 +86,8 @@ export function CloudEngineDashboard() {
   // ─── Provision Flow ────────────────────────────────────────────────
   if (!engine && !loading) {
     const plan = PLANS.find(p => p.id === selectedPlan)!;
-    const diskCredits = Math.ceil((customMode ? customDisk : plan.disk) * 0.5);
-    const cpuCredits = customMode ? customCpu * 5 : plan.credits;
+    const diskCredits = estimateStorageCredits(customMode ? customDisk : plan.disk);
+    const cpuCredits = customMode ? estimateCustomComputeCredits(customCpu) : plan.credits;
     const totalCredits = cpuCredits + diskCredits;
 
     const handleProvision = async () => {
@@ -354,6 +374,11 @@ export function CloudEngineDashboard() {
               <InfoRow icon={Server} label="Name" value={engine.instance_name} />
               <InfoRow icon={Globe} label="Region" value={engine.zone} />
               <InfoRow icon={Cpu} label="Plan" value={engine.tier} capitalize />
+              <InfoRow
+                icon={Cpu}
+                label="Machine"
+                value={engine.vcpus && engine.ram_gb ? `${engine.vcpus} vCPU / ${engine.ram_gb} GB RAM` : '—'}
+              />
               <InfoRow icon={HardDrive} label="Storage" value={`${engine.disk_size_gb} GB`} />
               {engine.external_ip && <InfoRow icon={Globe} label="Address" value={engine.external_ip} mono />}
               <InfoRow icon={Clock} label="Created" value={new Date(engine.created_at).toLocaleDateString()} />

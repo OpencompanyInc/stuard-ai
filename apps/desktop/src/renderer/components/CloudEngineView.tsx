@@ -12,12 +12,24 @@ interface CloudEngineViewProps {
   className?: string;
 }
 
+const CREDITS_PER_USD = 33;
+const STORAGE_USD_PER_GB_MONTH = 0.10;
+const HOURS_PER_MONTH = 730;
+
+function creditsFromUsd(usd: number): number {
+  return Math.max(0, Math.round(usd * CREDITS_PER_USD));
+}
+
+function estimateStorageCredits(diskGb: number): number {
+  return creditsFromUsd((diskGb * STORAGE_USD_PER_GB_MONTH) / HOURS_PER_MONTH);
+}
+
 /* ─── Credit-based plans (compact for sidebar) ──────────────────── */
 const PLANS = [
-  { id: 'starter', label: '🌱 Starter', desc: '1 core · 2 GB', credits: 5 },
-  { id: 'basic', label: '⚡ Essential', desc: '2 cores · 4 GB', credits: 10 },
-  { id: 'pro', label: '🚀 Pro', desc: '4 cores · 8 GB', credits: 20, popular: true },
-  { id: 'power', label: '🔥 Power', desc: '8 cores · 16 GB', credits: 40 },
+  { id: 'starter', label: '🌱 Starter', desc: '1 core · 2 GB', credits: creditsFromUsd(0.017) },
+  { id: 'basic', label: '⚡ Essential', desc: '2 cores · 8 GB', credits: creditsFromUsd(0.067) },
+  { id: 'pro', label: '🚀 Pro', desc: '4 cores · 16 GB', credits: creditsFromUsd(0.134), popular: true },
+  { id: 'power', label: '🔥 Power', desc: '8 cores · 32 GB', credits: creditsFromUsd(0.268) },
 ];
 
 export const CloudEngineView: React.FC<CloudEngineViewProps> = ({ className }) => {
@@ -30,7 +42,7 @@ export const CloudEngineView: React.FC<CloudEngineViewProps> = ({ className }) =
   // ─── No Engine: Provision Flow ───────────────────────────────────────
   if (!engine && !loading) {
     const plan = PLANS.find(p => p.id === selectedPlan)!;
-    const totalCredits = plan.credits + Math.ceil(provDisk * 0.5);
+    const totalCredits = plan.credits + estimateStorageCredits(provDisk);
 
     return (
       <div className={clsx('flex flex-col h-full p-4 gap-3', className)}>
@@ -165,6 +177,7 @@ export const CloudEngineView: React.FC<CloudEngineViewProps> = ({ className }) =
               </div>
               <div className="grid grid-cols-2 gap-2 text-[10px]">
                 <div><span className="text-theme-muted">Plan:</span> <span className="text-theme-fg font-medium capitalize">{engine.tier}</span></div>
+                <div><span className="text-theme-muted">Machine:</span> <span className="text-theme-fg font-medium">{engine.vcpus && engine.ram_gb ? `${engine.vcpus} vCPU / ${engine.ram_gb} GB` : '—'}</span></div>
                 <div><span className="text-theme-muted">Storage:</span> <span className="text-theme-fg font-medium">{engine.disk_size_gb} GB</span></div>
                 <div><span className="text-theme-muted">Region:</span> <span className="text-theme-fg font-medium">{engine.zone}</span></div>
                 <div><span className="text-theme-muted">Status:</span> <span className="text-theme-fg font-medium capitalize">{engine.health_status || '—'}</span></div>

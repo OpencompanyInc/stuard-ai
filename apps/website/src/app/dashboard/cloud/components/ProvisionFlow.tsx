@@ -3,35 +3,51 @@
 import React, { useState } from 'react';
 import { provisionCloudEngine } from '@/lib/cloudApi';
 
+const CREDITS_PER_USD = 33;
+const STORAGE_USD_PER_GB_MONTH = 0.10;
+const HOURS_PER_MONTH = 730;
+
+function creditsFromUsd(usd: number): number {
+  return Math.max(0, Math.round(usd * CREDITS_PER_USD));
+}
+
+function estimateCustomComputeCredits(vcpus: number): number {
+  return creditsFromUsd(vcpus * 0.034);
+}
+
+function estimateStorageCredits(diskGb: number): number {
+  return creditsFromUsd((diskGb * STORAGE_USD_PER_GB_MONTH) / HOURS_PER_MONTH);
+}
+
 /* ─── Credit-based plans ─────────────────────────────────────────── */
 const PLANS = [
   {
     id: 'starter', name: 'Starter', emoji: '🌱',
     tagline: 'Perfect for trying things out',
     vcpus: 1, ram: 2, disk: 10,
-    credits: 5,
+    credits: creditsFromUsd(0.017),
     features: ['1 CPU core', '2 GB memory', '10 GB storage'],
   },
   {
     id: 'basic', name: 'Essential', emoji: '⚡',
     tagline: 'For everyday automation',
-    vcpus: 2, ram: 4, disk: 20,
-    credits: 10,
-    features: ['2 CPU cores', '4 GB memory', '20 GB storage'],
+    vcpus: 2, ram: 8, disk: 20,
+    credits: creditsFromUsd(0.067),
+    features: ['2 CPU cores', '8 GB memory', '20 GB storage'],
   },
   {
     id: 'pro', name: 'Pro', emoji: '🚀', popular: true,
     tagline: 'Best for most users',
-    vcpus: 4, ram: 8, disk: 50,
-    credits: 20,
-    features: ['4 CPU cores', '8 GB memory', '50 GB storage'],
+    vcpus: 4, ram: 16, disk: 50,
+    credits: creditsFromUsd(0.134),
+    features: ['4 CPU cores', '16 GB memory', '50 GB storage'],
   },
   {
     id: 'power', name: 'Power', emoji: '🔥',
     tagline: 'Maximum performance',
-    vcpus: 8, ram: 16, disk: 100,
-    credits: 40,
-    features: ['8 CPU cores', '16 GB memory', '100 GB storage'],
+    vcpus: 8, ram: 32, disk: 100,
+    credits: creditsFromUsd(0.268),
+    features: ['8 CPU cores', '32 GB memory', '100 GB storage'],
   },
 ];
 
@@ -49,8 +65,8 @@ export function ProvisionFlow({ onProvisioned }: ProvisionFlowProps) {
   const [error, setError] = useState<string | null>(null);
 
   const plan = PLANS.find(p => p.id === selectedPlan)!;
-  const cpuCredits = customMode ? customCpu * 5 : plan.credits;
-  const diskCredits = Math.ceil((customMode ? customDisk : plan.disk) * 0.5);
+  const cpuCredits = customMode ? estimateCustomComputeCredits(customCpu) : plan.credits;
+  const diskCredits = estimateStorageCredits(customMode ? customDisk : plan.disk);
   const totalCredits = cpuCredits + diskCredits;
 
   const handleProvision = async () => {

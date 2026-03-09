@@ -34,7 +34,7 @@ export async function handleTerminalConnection(ws: WebSocket, req: IncomingMessa
   }
 
   const userId = user.userId;
-  let terminalId: string | null = null;
+  let sessionId: string | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let lastActivity = Date.now();
 
@@ -51,13 +51,33 @@ export async function handleTerminalConnection(ws: WebSocket, req: IncomingMessa
       ws.close(4002, 'terminal_open_failed');
       return;
     }
-    terminalId = result.result?.terminalId || result.result?.id || 'default';
-    ws.send(JSON.stringify({ type: 'terminal_opened', terminalId }));
+    sessionId = result.result?.sessionId || result.result?.terminalId || result.result?.id || null;
+    if (!sessionId) {
+      ws.send(JSON.stringify({ type: 'error', error: 'terminal_session_missing' }));
+      ws.close(4002, 'terminal_session_missing');
+      return;
+    }
+    ws.send(JSON.stringify({ type: 'terminal_opened', sessionId }));
   } catch (e: any) {
     ws.send(JSON.stringify({ type: 'error', error: e?.message || 'terminal_open_exception' }));
     ws.close(4002, 'terminal_open_exception');
     return;
   }
+
+  const pollOutput = async () => {
+    if (ws.readyState !== WebSocket.OPEN || !sessionId) return;
+    try {
+      const result = await sendVMTerminalCommand(userId, 'read', { sessionId });
+      if (result.ok && result.result?.data) {
+        ws.send(JSON.stringify({ type: 'terminal_data', data: result.result.data }));
+      }
+    } catch {
+      // Ignore transient poll errors. The next poll will retry.
+    }
+  };
+
+  // Pull any initial shell prompt/output immediately after opening the PTY.
+  await pollOutput();
 
   // Poll VM for terminal output
   pollTimer = setInterval(async () => {
@@ -70,13 +90,7 @@ export async function handleTerminalConnection(ws: WebSocket, req: IncomingMessa
       ws.close(4003, 'idle_timeout');
       return;
     }
-
-    try {
-      const result = await sendVMTerminalCommand(userId, 'read', { terminalId });
-      if (result.ok && result.result?.data) {
-        ws.send(JSON.stringify({ type: 'terminal_data', data: result.result.data }));
-      }
-    } catch { /* ignore poll errors */ }
+    await pollOutput();
   }, POLL_INTERVAL_MS);
 
   // Handle incoming messages from desktop
@@ -93,12 +107,12 @@ export async function handleTerminalConnection(ws: WebSocket, req: IncomingMessa
     if (kind === 'terminal_data' && msg.data) {
       // Forward keystrokes to VM
       await sendVMTerminalCommand(userId, 'data', {
-        terminalId,
+        sessionId,
         data: msg.data,
       }).catch(() => {});
     } else if (kind === 'terminal_resize' && msg.rows && msg.cols) {
       await sendVMTerminalCommand(userId, 'resize', {
-        terminalId,
+        sessionId,
         rows: msg.rows,
         cols: msg.cols,
       }).catch(() => {});
@@ -114,10 +128,10 @@ export async function handleTerminalConnection(ws: WebSocket, req: IncomingMessa
       pollTimer = null;
     }
     // Close terminal on VM (fire-and-forget)
-    if (terminalId) {
-      sendVMTerminalCommand(userId, 'close', { terminalId }).catch(() => {});
+    if (sessionId) {
+      sendVMTerminalCommand(userId, 'close', { sessionId }).catch(() => {});
     }
-    writeLog('terminal_relay_close', { userId, terminalId });
+    writeLog('terminal_relay_close', { userId, sessionId });
   }
 
   ws.on('close', () => cleanup());

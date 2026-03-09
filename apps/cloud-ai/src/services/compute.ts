@@ -18,7 +18,12 @@ import { generateVMSecret } from './vm-tokens';
 export type VMStatus = 'running' | 'stopped' | 'staging' | 'terminated' | 'not_found';
 
 export interface IComputeProvider {
-  provisionVM(userId: string, tier: string, diskSizeGb: number): Promise<{ instanceName: string; zone: string; vmSecret: string }>;
+  provisionVM(
+    userId: string,
+    tier: string,
+    diskSizeGb: number,
+    options?: { machineType?: string },
+  ): Promise<{ instanceName: string; zone: string; vmSecret: string }>;
   startVM(instanceName: string, zone: string): Promise<void>;
   stopVM(instanceName: string, zone: string): Promise<void>;
   deleteVM(instanceName: string, zone: string): Promise<void>;
@@ -111,6 +116,11 @@ ENVEOF
 grep -q STUARD_VM /etc/environment 2>/dev/null || cat /opt/stuard/env >> /etc/environment
 
 # ── 3. Install Node.js 20 LTS (if not already installed) ────────────────────
+# Also install guest disk utilities so the root filesystem can expand to the
+# requested boot disk size instead of staying at the image default.
+apt-get update -y
+apt-get install -y -q cloud-guest-utils xfsprogs e2fsprogs 2>/dev/null || true
+
 if ! command -v node &>/dev/null; then
   echo "[stuard] Installing Node.js 20..."
   curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
@@ -123,6 +133,22 @@ fi
 # Install node-pty native dependency (needed for terminal PTY support)
 apt-get install -y -q build-essential python3 python3-pip python3-venv 2>/dev/null || true
 npm install -g node-pty 2>/dev/null || echo "[stuard] node-pty global install skipped (will try local)"
+
+# Expand the root partition/filesystem to the full boot disk size if the image
+# came up with a smaller default filesystem.
+ROOT_DEV="$(findmnt -n -o SOURCE / 2>/dev/null || true)"
+ROOT_FSTYPE="$(findmnt -n -o FSTYPE / 2>/dev/null || true)"
+ROOT_DISK="$(lsblk -no PKNAME "$ROOT_DEV" 2>/dev/null | head -n1 || true)"
+ROOT_PARTNUM="$(lsblk -no PARTNUM "$ROOT_DEV" 2>/dev/null | head -n1 || true)"
+if [ -n "$ROOT_DEV" ] && [ -n "$ROOT_DISK" ] && [ -n "$ROOT_PARTNUM" ] && command -v growpart >/dev/null 2>&1; then
+  echo "[stuard] Expanding root partition on /dev/$ROOT_DISK part $ROOT_PARTNUM..."
+  growpart "/dev/$ROOT_DISK" "$ROOT_PARTNUM" 2>/dev/null || true
+  if [ "$ROOT_FSTYPE" = "ext4" ] && command -v resize2fs >/dev/null 2>&1; then
+    resize2fs "$ROOT_DEV" 2>/dev/null || true
+  elif [ "$ROOT_FSTYPE" = "xfs" ] && command -v xfs_growfs >/dev/null 2>&1; then
+    xfs_growfs / 2>/dev/null || true
+  fi
+fi
 
 # ── 4. Download VM agent bundle from GCS ────────────────────────────────────
 AGENT_PATH="/opt/stuard/vm-agent-bundle.js"
@@ -459,8 +485,13 @@ export class GCEComputeProvider implements IComputeProvider {
     }
   }
 
-  async provisionVM(userId: string, tier: string, diskSizeGb: number): Promise<{ instanceName: string; zone: string; vmSecret: string }> {
-    return withProvisionLock(userId, () => this._doProvisionVM(userId, tier, diskSizeGb));
+  async provisionVM(
+    userId: string,
+    tier: string,
+    diskSizeGb: number,
+    options?: { machineType?: string },
+  ): Promise<{ instanceName: string; zone: string; vmSecret: string }> {
+    return withProvisionLock(userId, () => this._doProvisionVM(userId, tier, diskSizeGb, options));
   }
 
   /** Clean up any orphaned stuard VMs for this user before provisioning a new one. */
@@ -511,10 +542,16 @@ export class GCEComputeProvider implements IComputeProvider {
     }
   }
 
-  private async _doProvisionVM(userId: string, tier: string, diskSizeGb: number): Promise<{ instanceName: string; zone: string; vmSecret: string }> {
+  private async _doProvisionVM(
+    userId: string,
+    tier: string,
+    diskSizeGb: number,
+    options?: { machineType?: string },
+  ): Promise<{ instanceName: string; zone: string; vmSecret: string }> {
     const client = await this.getClient();
     const tierConfig = COMPUTE_TIER_CONFIG[tier];
-    if (!tierConfig) throw new Error(`Unknown compute tier: ${tier}`);
+    const machineTypeName = options?.machineType || tierConfig?.machineType;
+    if (!machineTypeName) throw new Error(`Unknown compute tier: ${tier}`);
 
     const instanceName = buildInstanceName(userId);
     const zone = GCP_ZONE;
@@ -539,7 +576,7 @@ export class GCEComputeProvider implements IComputeProvider {
       ? [{ email: GCP_VM_SERVICE_ACCOUNT, scopes: ['https://www.googleapis.com/auth/cloud-platform'] }]
       : [{ email: 'default', scopes: ['https://www.googleapis.com/auth/cloud-platform'] }];
 
-    console.log(`[compute:gce] Provisioning VM ${instanceName} (${tierConfig.machineType}, ${diskSizeGb}GB) in ${zone}...`);
+    console.log(`[compute:gce] Provisioning VM ${instanceName} (${machineTypeName}, ${diskSizeGb}GB) in ${zone}...`);
 
     const [operation] = await withRetry<any[]>(
       () => client.insert({
@@ -547,7 +584,7 @@ export class GCEComputeProvider implements IComputeProvider {
         zone,
         instanceResource: {
           name: instanceName,
-          machineType: `zones/${zone}/machineTypes/${tierConfig.machineType}`,
+          machineType: `zones/${zone}/machineTypes/${machineTypeName}`,
           disks: [{
             boot: true,
             autoDelete: true,
@@ -579,7 +616,7 @@ export class GCEComputeProvider implements IComputeProvider {
 
     await waitForOperation(operation);
 
-    console.log(`[compute:gce] Provisioned VM ${instanceName} (${tierConfig.machineType}, ${diskSizeGb}GB) in ${zone}`);
+    console.log(`[compute:gce] Provisioned VM ${instanceName} (${machineTypeName}, ${diskSizeGb}GB) in ${zone}`);
     return { instanceName, zone, vmSecret };
   }
 

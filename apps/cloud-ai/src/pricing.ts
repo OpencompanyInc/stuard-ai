@@ -58,6 +58,83 @@ export const COMPUTE_TIER_CONFIG: Record<string, { machineType: string; vcpus: n
   power:   { machineType: 'e2-standard-8', vcpus: 8, memoryGb: 32, hourlyUsd: 0.268 },
 };
 
+export const DEFAULT_CLOUD_DISK_GB_BY_TIER: Record<string, number> = {
+  starter: 10,
+  basic: 20,
+  pro: 50,
+  power: 100,
+};
+
+export interface ComputeMachineSpec {
+  tier: string;
+  machineType: string;
+  vcpus: number;
+  memoryGb: number;
+  hourlyUsd: number;
+  custom: boolean;
+}
+
+const CUSTOM_E2_MACHINE_RE = /^e2-custom-(\d+)-(\d+)$/i;
+
+function estimateCustomHourlyUsd(vcpus: number): number {
+  return Number((vcpus * 0.034).toFixed(3));
+}
+
+export function resolveComputeMachineSpec(input: string): ComputeMachineSpec | null {
+  const rawValue = String(input || '').trim();
+  const value = rawValue.includes('/') ? rawValue.slice(rawValue.lastIndexOf('/') + 1) : rawValue;
+  if (!value) return null;
+
+  const directTier = COMPUTE_TIER_CONFIG[value];
+  if (directTier) {
+    return {
+      tier: value,
+      machineType: directTier.machineType,
+      vcpus: directTier.vcpus,
+      memoryGb: directTier.memoryGb,
+      hourlyUsd: directTier.hourlyUsd,
+      custom: false,
+    };
+  }
+
+  const tierEntry = Object.entries(COMPUTE_TIER_CONFIG).find(([, cfg]) => cfg.machineType === value);
+  if (tierEntry) {
+    const [tier, cfg] = tierEntry;
+    return {
+      tier,
+      machineType: cfg.machineType,
+      vcpus: cfg.vcpus,
+      memoryGb: cfg.memoryGb,
+      hourlyUsd: cfg.hourlyUsd,
+      custom: false,
+    };
+  }
+
+  const customMatch = value.match(CUSTOM_E2_MACHINE_RE);
+  if (customMatch) {
+    const vcpus = Number(customMatch[1]) || 0;
+    const memoryMb = Number(customMatch[2]) || 0;
+    const memoryGb = memoryMb / 1024;
+    if (vcpus > 0 && memoryGb > 0) {
+      return {
+        tier: 'custom',
+        machineType: value,
+        vcpus,
+        memoryGb,
+        hourlyUsd: estimateCustomHourlyUsd(vcpus),
+        custom: true,
+      };
+    }
+  }
+
+  return null;
+}
+
+export function estimateMachineCreditsPerHour(input: string): number {
+  const spec = resolveComputeMachineSpec(input);
+  return spec ? creditsFromUsd(spec.hourlyUsd) : 0;
+}
+
 export const STORAGE_PRICING = {
   hotPerGbMonthUsd: 0.10,   // pd-balanced persistent disk
   coldPerGbMonthUsd: 0.02,  // GCS standard class
