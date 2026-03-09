@@ -137,6 +137,7 @@ export default function App() {
   const [loadingConvs, setLoadingConvs] = useState(false);
   const [attachments, setAttachments] = useState<Array<{ type: 'image' | 'file'; name: string; data: string; mimeType: string }>>([]);
   const [approvalPrompt, setApprovalPrompt] = useState<{ id: string; tool: string; args?: Record<string, any>; description?: string } | null>(null);
+  const activePermissionNotifsRef = useRef<Set<string>>(new Set());
   const [contextPaths, setContextPaths] = useState<ContextItem[]>([]);
   const [showMiniOutput, setShowMiniOutput] = useState(true);
   const activeConversationIdRef = useRef<string | null>(null);
@@ -339,6 +340,7 @@ export default function App() {
     const unsub = (window as any).desktopAPI?.onPermissionResponse?.((data: { id: string; allow: boolean }) => {
       if (!data?.id) return;
       respondToApproval(data.id, data.allow);
+      activePermissionNotifsRef.current.delete(data.id);
       setApprovalPrompt((curr) => (curr && curr.id === data.id ? null : curr));
     });
     return () => { try { unsub?.(); } catch {} };
@@ -526,6 +528,7 @@ export default function App() {
             const description = typeof d.description === 'string' ? d.description : undefined;
             if (id && tool) {
               setApprovalPrompt({ id, tool, args, description });
+              activePermissionNotifsRef.current.add(id);
               // Send rich permission notification so users can approve from the notification overlay
               try {
                 const notifWin = (window as any).desktopAPI;
@@ -546,8 +549,11 @@ export default function App() {
           if (status === 'completed') {
             const id = String(d.id || '');
             setApprovalPrompt((curr) => (curr && curr.id === id ? null : curr));
-            // Dismiss the permission notification if it exists
-            try { (window as any).desktopAPI?.notify?.({ id: `permission-${id}`, title: '', duration: 1, dismissible: true }); } catch { }
+            // Only dismiss the permission notification if one was actually shown for this tool call
+            if (activePermissionNotifsRef.current.has(id)) {
+              activePermissionNotifsRef.current.delete(id);
+              try { (window as any).desktopAPI?.notify?.({ id: `permission-${id}`, title: '', duration: 1, dismissible: true }); } catch { }
+            }
           }
 
           // Canvas Actions
@@ -1340,12 +1346,14 @@ export default function App() {
                     description={approvalPrompt.description}
                     onAllow={() => {
                       respondToApproval(approvalPrompt.id, true);
+                      activePermissionNotifsRef.current.delete(approvalPrompt.id);
                       setApprovalPrompt(null);
                       // Dismiss the notification overlay version
                       try { (window as any).desktopAPI?.notify?.({ id: `permission-${approvalPrompt.id}`, title: '', duration: 1, dismissible: true }); } catch { }
                     }}
                     onDeny={() => {
                       respondToApproval(approvalPrompt.id, false);
+                      activePermissionNotifsRef.current.delete(approvalPrompt.id);
                       setApprovalPrompt(null);
                       // Dismiss the notification overlay version
                       try { (window as any).desktopAPI?.notify?.({ id: `permission-${approvalPrompt.id}`, title: '', duration: 1, dismissible: true }); } catch { }

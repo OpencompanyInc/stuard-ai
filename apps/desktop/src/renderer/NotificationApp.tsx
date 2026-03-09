@@ -126,10 +126,13 @@ const NotificationOverlayHandler = () => {
     const { notifications } = useNotification();
     const lastIgnoreRef = useRef<boolean | null>(null);
 
+    // Filter out ghost notifications (empty title + very short duration used for dismissal)
+    const visibleCount = notifications.filter(n => !!(n.title || n.message || n.structuredContent)).length;
+
     useEffect(() => {
         const handleMouseMove = (e: MouseEvent) => {
-            // If no notifications, we should be completely click-through without forwarding to avoid flicker
-            if (notifications.length === 0) {
+            // If no visible notifications, stay completely click-through without forwarding to avoid flicker
+            if (visibleCount === 0) {
                 if (lastIgnoreRef.current !== true) {
                     (window as any).desktopAPI?.setIgnoreMouseEvents?.(true);
                     lastIgnoreRef.current = true;
@@ -138,7 +141,7 @@ const NotificationOverlayHandler = () => {
             }
 
             const el = document.elementFromPoint(e.clientX, e.clientY);
-            // elementFromPoint skips pointer-events: none, so if we hit something 
+            // elementFromPoint skips pointer-events: none, so if we hit something
             // that isn't the body or html, it MUST be a notification element.
             const isInteractive = !!(el && el !== document.body && el !== document.documentElement);
             const shouldIgnore = !isInteractive;
@@ -158,7 +161,7 @@ const NotificationOverlayHandler = () => {
         window.addEventListener('mousemove', handleMouseMove);
 
         // Initial state
-        if (notifications.length === 0) {
+        if (visibleCount === 0) {
             (window as any).desktopAPI?.setIgnoreMouseEvents?.(true);
             lastIgnoreRef.current = true;
         } else {
@@ -168,7 +171,7 @@ const NotificationOverlayHandler = () => {
         }
 
         return () => window.removeEventListener('mousemove', handleMouseMove);
-    }, [notifications.length]);
+    }, [visibleCount]);
 
     return null;
 };
