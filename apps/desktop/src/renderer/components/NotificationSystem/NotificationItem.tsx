@@ -22,6 +22,38 @@ interface NotificationItemProps {
     onDismiss: () => void;
 }
 
+function resolveNotificationImageSrc(image?: string): string | undefined {
+    const raw = String(image || '').trim();
+    if (!raw) return undefined;
+    // Web URLs and data URIs pass through
+    if (/^(https?:|data:|blob:)/i.test(raw)) return raw;
+    // Already using local-file protocol
+    if (/^local-file:/i.test(raw)) return raw;
+    // Convert file:// to local-file:// (bypassCSP custom protocol)
+    if (/^file:/i.test(raw)) return raw.replace(/^file:/i, 'local-file:');
+
+    const encodePath = (inputPath: string, preserveDrive: boolean) => {
+        const parts = inputPath.split('/');
+        return parts
+            .map((part, idx) => {
+                if (preserveDrive && idx === 0 && /^[a-zA-Z]:$/.test(part)) return part;
+                return encodeURIComponent(part);
+            })
+            .join('/');
+    };
+
+    // Windows paths (C:\... or C:/...)
+    const normalized = raw.replace(/\\/g, '/');
+    if (/^[a-zA-Z]:\//.test(normalized)) {
+        return `local-file:///${encodePath(normalized, true)}`;
+    }
+    // Unix absolute paths
+    if (normalized.startsWith('/')) {
+        return `local-file://${encodePath(normalized, false)}`;
+    }
+    return raw;
+}
+
 export const NotificationItem: React.FC<NotificationItemProps> = ({
     notification,
     onDismiss,
@@ -30,10 +62,13 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
     const [inputValue, setInputValue] = useState(notification.input?.defaultValue || '');
     const [isHovered, setIsHovered] = useState(false);
     const [expandedMessage, setExpandedMessage] = useState(false);
+    const [imageFailed, setImageFailed] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
     const progressRef = useRef<HTMLDivElement>(null);
     const messageText = notification.message || '';
     const messageLineCount = useMemo(() => messageText.split('\n').length, [messageText]);
+    const imageSrc = useMemo(() => resolveNotificationImageSrc(notification.image), [notification.image]);
+    const submitText = useMemo(() => String(notification.input?.submitText || '').trim(), [notification.input?.submitText]);
     const shouldShowExpand = useMemo(
         () => messageText.length > 220 || messageLineCount > 4,
         [messageText, messageLineCount]
@@ -83,6 +118,10 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
             inputRef.current.focus();
         }
     }, [notification.input]);
+
+    useEffect(() => {
+        setImageFailed(false);
+    }, [imageSrc]);
 
     // Progress animation for auto-dismiss
     useEffect(() => {
@@ -203,14 +242,14 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
             <div className="px-4 py-3">
                 <div className="flex items-start gap-3">
                     {/* Icon or Image */}
-                    {notification.image ? (
+                    {imageSrc && !imageFailed ? (
                         <div className="shrink-0 w-10 h-10 rounded-lg overflow-hidden ring-1 ring-gray-200">
                             <img
-                                src={notification.image}
+                                src={imageSrc}
                                 alt=""
                                 className="w-full h-full object-cover"
                                 onError={(e) => {
-                                    (e.target as HTMLImageElement).style.display = 'none';
+                                    setImageFailed(true);
                                 }}
                             />
                         </div>
@@ -283,9 +322,10 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                                                     className="text-blue-600 hover:underline underline-offset-2"
                                                 />
                                             ),
-                                            img: ({ node, ...props }) => (
+                                            img: ({ node, src, ...props }) => (
                                                 <img
                                                     {...props}
+                                                    src={resolveNotificationImageSrc(src) || src}
                                                     className="max-w-full h-auto rounded-md my-1.5 border border-gray-200"
                                                     loading="lazy"
                                                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
@@ -364,10 +404,13 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                                     />
                                     <button
                                         onClick={handleInputSubmit}
-                                        className="p-1.5 rounded-md text-white hover:opacity-90 active:scale-95 transition-all"
+                                        className={clsx(
+                                            'rounded-md text-white hover:opacity-90 active:scale-95 transition-all',
+                                            submitText ? 'px-2.5 py-1.5 text-[11px] font-semibold leading-none min-w-[52px]' : 'p-1.5'
+                                        )}
                                         style={{ backgroundColor: config.accentColor }}
                                     >
-                                        <Send className="w-3.5 h-3.5" />
+                                        {submitText ? submitText : <Send className="w-3.5 h-3.5" />}
                                     </button>
                                 </div>
                                 {(notification.input.cancelText) && (

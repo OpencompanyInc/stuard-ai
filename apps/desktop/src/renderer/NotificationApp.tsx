@@ -61,7 +61,35 @@ const NotificationListener = () => {
                 return;
             }
 
-            show(config);
+            const responseId = typeof (config as any).responseId === 'string' ? (config as any).responseId : '';
+            if (!responseId) {
+                show(config);
+                return;
+            }
+
+            const respond = (type: 'submit' | 'cancel' | 'dismiss', value?: string) => {
+                try {
+                    (window as any).desktopAPI?.respondToNotification?.({ responseId, type, value });
+                } catch {
+                    // no-op
+                }
+            };
+
+            show({
+                ...config,
+                onDismiss: () => respond('dismiss'),
+                input: config.input ? {
+                    ...config.input,
+                    onSubmit: (value: string) => respond('submit', value),
+                    onCancel: () => respond('cancel'),
+                } : config.input,
+            });
+        });
+
+        const removeDismissListener = (window as any).desktopAPI?.onDismissNotification?.((data: { id: string }) => {
+            if (data?.id) {
+                dismiss(data.id);
+            }
         });
 
         // Listen for proactive check-in notifications (with reply support)
@@ -104,6 +132,7 @@ const NotificationListener = () => {
 
         return () => {
             removeListener && removeListener();
+            removeDismissListener && removeDismissListener();
             removeProactive && removeProactive();
         };
     }, [show, update, dismiss]);

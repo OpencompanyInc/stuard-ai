@@ -5,6 +5,7 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'custom_ui': { kind: 'electron' },
   'update_custom_ui': { kind: 'electron' },
   'close_custom_ui': { kind: 'electron' },
+  'send_notification': { kind: 'electron' },
   'send_ui_event': { kind: 'electron' },     // Send event to custom UI window
   'run_ui_script': { kind: 'electron' },     // Run JavaScript in custom UI window
   'list_custom_ui_windows': { kind: 'electron' },  // List open custom UI windows

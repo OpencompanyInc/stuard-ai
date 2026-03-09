@@ -354,6 +354,8 @@ function WorkflowsApp() {
       // Clear file tabs when switching workflows
       setOpenTabs([]);
       setActiveTab('canvas');
+      // Clear logs from previous workflow
+      setLogs([]);
       // If workflow is locked, force manual mode and close panels
       if (loadedModel?.locked) {
         setViewMode('manual');

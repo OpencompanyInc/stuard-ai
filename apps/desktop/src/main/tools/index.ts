@@ -2,7 +2,7 @@ import { RouterContext } from './types';
 import { getToolKind } from './registry';
 import { execCloudTool } from './handlers/cloud';
 import { execLocalTool, calcToolTimeout } from './handlers/local';
-import { execCustomUi, execCloseCustomUi, execPlayAudio, execLog, execWait, execEnd, execReturnValue, execUpdateCustomUi, execGetClipboardContent, execSetClipboardContent, execSendUiEvent, execRunUiScript, execListCustomUiWindows, initCustomUiIpc, execListOpenWindows, execBringWindowToForeground, execGetWindowInfo, execSmartBringWindowToForeground, execSetWindowBounds } from './handlers/electron';
+import { execCustomUi, execCloseCustomUi, execPlayAudio, execLog, execWait, execEnd, execReturnValue, execUpdateCustomUi, execGetClipboardContent, execSetClipboardContent, execSendNotification, execSendUiEvent, execRunUiScript, execListCustomUiWindows, initCustomUiIpc, execListOpenWindows, execBringWindowToForeground, execGetWindowInfo, execSmartBringWindowToForeground, execSetWindowBounds } from './handlers/electron';
 import { execSetVariable, execGetVariable, execToggleVariable, execIncrementVariable, execAppendToList, execListVariables, execDeleteVariable } from './handlers/variables';
 import { execTerminalCreate, execTerminalList, execTerminalGet, execTerminalSendInput, execTerminalSendRaw, execTerminalSendKeys, execTerminalRead, execTerminalWaitFor, execTerminalDestroy } from './handlers/terminal';
 import { execCallWorkflow, execInvokeWorkflow, execTestRunSteps, execListLocalWorkflows, execListLocalStuards } from './handlers/workflow';
@@ -58,6 +58,7 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'custom_ui') return execCustomUi(args, ctx);
       if (toolName === 'close_custom_ui') return execCloseCustomUi(args);
       if (toolName === 'update_custom_ui') return execUpdateCustomUi(args, ctx);
+      if (toolName === 'send_notification') return execSendNotification(args, ctx);
       if (toolName === 'send_ui_event') return execSendUiEvent(args, ctx);
       if (toolName === 'run_ui_script') return execRunUiScript(args, ctx);
       if (toolName === 'list_custom_ui_windows') return execListCustomUiWindows(args, ctx);

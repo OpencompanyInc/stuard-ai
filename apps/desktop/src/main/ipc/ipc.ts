@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut, nativ
 import * as path from "path";
 import { selectFiles, selectImages, listDirectory, selectFolder } from "../utils/files";
 import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, getInternalSidebarState, getNotificationWindow, setScreenCaptureInvisible } from "../windows";
+import { settleNotificationResponse } from "../tools/handlers/electron";
 import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_readWorkspaceFileBinary, workflows_writeWorkspaceFile, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir, workflows_renameWorkspaceFile, workflows_moveWorkspaceFile, workflows_createWorkspaceStuard, workflows_readWorkspaceStuard, workflows_saveWorkspaceStuard, workflows_listWorkspaceFunctions } from "../workflows";
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
@@ -525,6 +526,14 @@ export function setupIpc() {
       return { ok: true };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e || 'failed') };
+    }
+  });
+  ipcMain.handle('notification:respond', (_e, payload: { responseId: string; type: 'submit' | 'cancel' | 'dismiss'; value?: string }) => {
+    try {
+      const settled = settleNotificationResponse(payload);
+      return { ok: settled };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'notification_response_failed') };
     }
   });
 

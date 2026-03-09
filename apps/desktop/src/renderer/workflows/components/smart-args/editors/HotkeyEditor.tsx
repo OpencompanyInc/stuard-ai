@@ -29,27 +29,59 @@ const KEY_DISPLAY: Record<string, string> = {
 export function HotkeyEditor({ value, onChange }: HotkeyEditorProps) {
   const [editing, setEditing] = useState(false);
   const [keys, setKeys] = useState<string[]>(value || []);
+  const pendingRef = useRef<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     e.preventDefault();
     const key = e.key.toLowerCase();
-    const newKeys: string[] = [];
 
-    if (e.ctrlKey) newKeys.push('ctrl');
-    if (e.altKey) newKeys.push('alt');
-    if (e.shiftKey) newKeys.push('shift');
-    if (e.metaKey) newKeys.push('meta');
-
-    if (!['control', 'alt', 'shift', 'meta'].includes(key)) {
-      newKeys.push(key === ' ' ? 'space' : key);
-    }
-
-    if (newKeys.length > 0) {
-      setKeys(newKeys);
-      onChange(newKeys);
+    // Escape cancels editing
+    if (key === 'escape') {
+      pendingRef.current = [];
       setEditing(false);
+      return;
     }
+
+    // Enter confirms the current keys
+    if (key === 'enter') {
+      if (pendingRef.current.length > 0) {
+        setKeys(pendingRef.current);
+        onChange(pendingRef.current);
+      }
+      pendingRef.current = [];
+      setEditing(false);
+      return;
+    }
+
+    // Ignore bare modifier presses
+    if (['control', 'alt', 'shift', 'meta'].includes(key)) return;
+
+    const combo: string[] = [];
+    if (e.ctrlKey) combo.push('ctrl');
+    if (e.altKey) combo.push('alt');
+    if (e.shiftKey) combo.push('shift');
+    if (e.metaKey) combo.push('meta');
+    combo.push(key === ' ' ? 'space' : key);
+
+    const updated = [...pendingRef.current, ...combo];
+    pendingRef.current = updated;
+    setKeys(updated);
+  };
+
+  const finishEditing = () => {
+    if (pendingRef.current.length > 0) {
+      setKeys(pendingRef.current);
+      onChange(pendingRef.current);
+    }
+    pendingRef.current = [];
+    setEditing(false);
+  };
+
+  const startEditing = () => {
+    pendingRef.current = [];
+    setKeys([]);
+    setEditing(true);
   };
 
   useEffect(() => {
@@ -68,22 +100,41 @@ export function HotkeyEditor({ value, onChange }: HotkeyEditorProps) {
             <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center animate-pulse">
               <Keyboard className="w-5 h-5 text-blue-400" />
             </div>
-            <span className="font-medium text-white">Press your shortcut keys...</span>
-            <span className="text-xs text-white/50">Example: Ctrl + Shift + K</span>
+            {keys.length > 0 ? (
+              <div className="flex items-center gap-2 flex-wrap justify-center">
+                {keys.map((k, i) => (
+                  <React.Fragment key={i}>
+                    <span className="px-2.5 py-1 bg-white/[0.08] border border-white/[0.12] rounded-lg font-medium text-white/90 text-sm">
+                      {formatKey(k)}
+                    </span>
+                    {i < keys.length - 1 && <span className="text-white/30 text-sm">+</span>}
+                  </React.Fragment>
+                ))}
+              </div>
+            ) : (
+              <span className="font-medium text-white">Press your keys...</span>
+            )}
+            <span className="text-xs text-white/50">Press keys to add · Enter to confirm · Esc to cancel</span>
+            <button
+              onMouseDown={(e) => { e.preventDefault(); finishEditing(); }}
+              className="mt-1 px-4 py-1.5 text-xs font-medium bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 rounded-lg text-blue-300 transition-all"
+            >
+              Done
+            </button>
           </div>
           <input
             ref={inputRef}
             type="text"
             className="sr-only"
             onKeyDown={handleKeyDown}
-            onBlur={() => setEditing(false)}
+            onBlur={() => finishEditing()}
             readOnly
           />
         </div>
       ) : (
         <div className="flex gap-3">
           <button
-            onClick={() => setEditing(true)}
+            onClick={() => startEditing()}
             className="flex-1 px-4 py-3 text-sm border border-white/[0.08] rounded-2xl bg-white/[0.02] hover:bg-white/[0.04] flex items-center justify-center transition-all shadow-sm"
           >
             {keys.length > 0 ? (

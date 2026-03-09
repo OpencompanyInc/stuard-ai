@@ -120,6 +120,9 @@ declare global {
       updatesDownload: () => Promise<{ ok: boolean; error?: string }>;
       updatesInstall: () => Promise<{ ok: boolean; error?: string }>;
       onUpdatesState: (cb: (data: { status: string; info?: any }) => void) => void | (() => void);
+      onShowNotification: (cb: (data: any) => void) => void | (() => void);
+      onDismissNotification: (cb: (data: { id: string }) => void) => void | (() => void);
+      respondToNotification: (payload: { responseId: string; type: 'submit' | 'cancel' | 'dismiss'; value?: string }) => Promise<{ ok: boolean; error?: string }>;
 
       execTool: (tool: string, args: any) => Promise<any>;
 

@@ -509,6 +509,13 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('notification:show', handler);
     return () => { try { ipcRenderer.off('notification:show', handler); } catch { } };
   },
+  onDismissNotification: (cb: (data: { id: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('notification:dismiss', handler);
+    return () => { try { ipcRenderer.off('notification:dismiss', handler); } catch { } };
+  },
+  respondToNotification: (payload: { responseId: string; type: 'submit' | 'cancel' | 'dismiss'; value?: string }) =>
+    ipcRenderer.invoke('notification:respond', payload),
   onProactiveProgress: (cb: (data: any) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('proactive-progress', handler);

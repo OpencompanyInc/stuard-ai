@@ -86,7 +86,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'workspace_create_folder', category: 'data', kind: 'local', description: 'Create a subdirectory in the workflow workspace.', argsTemplate: { path: 'data/exports' }, outputSchema: { ok: 'boolean', error: 'string' } },
   { id: 'workspace_get_info', category: 'data', kind: 'local', description: 'Get workspace info: absolute path, subdirectories, and all files.', argsTemplate: {}, outputSchema: { ok: 'boolean', workspacePath: 'string', subdirs: 'string[]', files: 'array', error: 'string' } },
   { id: 'log', category: 'flow', kind: 'local', description: 'Log a message to the workflow execution log', argsTemplate: { message: 'Step completed' }, outputSchema: { ok: 'boolean', logged: 'string' } },
-  { id: 'send_notification', category: 'flow', kind: 'local', description: 'Show a local desktop notification (OS toast)', argsTemplate: { title: 'Stuard AI', body: 'Hello!', severity: 'info', taskId: '', workflowRunId: '' }, outputSchema: { ok: 'boolean', notification: 'object', error: 'string' } },
+  { id: 'send_notification', category: 'flow', kind: 'local', description: 'Show a rich local desktop notification with optional image and reply input', argsTemplate: { title: 'Stuard AI', body: 'Hello!', severity: 'info', imagePath: '', durationMs: 5000, showInput: false, waitForInput: false, inputPlaceholder: 'Reply…', inputDefaultValue: '', inputSubmitText: 'Send', inputCancelText: 'Cancel', inputType: 'text', keepAfterSubmit: false, progress: 0, taskId: '', workflowRunId: '', timeoutMs: 300000 }, outputSchema: { ok: 'boolean', notification: 'object', value: 'string', response: 'object', submitted: 'boolean', cancelled: 'boolean', dismissed: 'boolean', error: 'string' } },
 
   // --- SYSTEM ---
   { id: 'run_command', category: 'system', kind: 'local', description: 'Run shell commands cross-platform with timeout', argsTemplate: { command: 'echo hello', shell: 'auto', timeoutMs: 30000, cwd: '', checkpoint: false, background: false, terminalId: '' }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number', terminalId: 'string', pid: 'number', status: 'string', shell: 'string' } },
@@ -453,6 +453,7 @@ const SEVERITY_OPTIONS: ArgOption[] = [
   { value: 'success', label: 'Success', description: 'Success notification' },
   { value: 'warning', label: 'Warning', description: 'Warning notification' },
   { value: 'error', label: 'Error', description: 'Error notification' },
+  { value: 'neutral', label: 'Neutral', description: 'Subtle neutral notification' },
 ];
 
 const HTTP_METHOD_OPTIONS: ArgOption[] = [
@@ -868,266 +869,6 @@ if (TOOL_SCHEMAS['drive.new_file']) {
   };
 }
 
-// Glob (Find Files) - user-friendly file search with pattern presets
-const GLOB_PATTERN_PRESETS: ArgOption[] = [
-  { value: '*.*', label: 'All Files', description: 'Every file in the folder' },
-  { value: '*.txt', label: 'Text Files', description: '.txt files' },
-  { value: '*.pdf', label: 'PDF Documents', description: '.pdf files' },
-  { value: '*.{jpg,jpeg,png,gif,webp}', label: 'Images', description: 'Common image formats' },
-  { value: '*.{mp4,mov,avi,mkv}', label: 'Videos', description: 'Common video formats' },
-  { value: '*.{mp3,wav,flac,ogg}', label: 'Audio', description: 'Common audio formats' },
-  { value: '*.{doc,docx,xlsx,pptx}', label: 'Office Documents', description: 'Word, Excel, PowerPoint' },
-  { value: '*.{js,ts,jsx,tsx}', label: 'JavaScript / TypeScript', description: 'JS and TS source files' },
-  { value: '*.{py}', label: 'Python Files', description: '.py files' },
-  { value: '*.{html,css}', label: 'Web Files', description: 'HTML and CSS files' },
-  { value: '*.{json,yaml,yml,toml}', label: 'Config Files', description: 'JSON, YAML, TOML configs' },
-  { value: '*.log', label: 'Log Files', description: '.log files' },
-  { value: '*.csv', label: 'CSV Files', description: 'Comma-separated data' },
-  { value: '*.zip', label: 'Archives', description: 'ZIP archive files' },
-];
-
-if (TOOL_SCHEMAS['glob']) {
-  TOOL_SCHEMAS['glob'].args = {
-    pattern: {
-      type: 'select',
-      label: 'What to Find',
-      description: 'Pick a file type — or select "Custom" from the menu and type your own pattern using * as wildcard',
-      required: true,
-      options: GLOB_PATTERN_PRESETS,
-      default: '*.*',
-      allowFreeform: true,
-      placeholder: 'e.g. *.txt, report*, *.{jpg,png}',
-    },
-    root: {
-      type: 'path',
-      label: 'Look In',
-      description: 'Which folder to search. Leave empty to search the current working directory.',
-      placeholder: 'C:/Users/Documents',
-    },
-    recursive: {
-      type: 'boolean',
-      label: 'Search Subfolders',
-      description: 'When on, also looks inside all subfolders',
-      default: true,
-    },
-    include_files: {
-      type: 'boolean',
-      label: 'Show Files',
-      description: 'Include files in the results',
-      default: true,
-      advanced: true,
-    },
-    include_dirs: {
-      type: 'boolean',
-      label: 'Show Folders',
-      description: 'Include folders in the results',
-      default: true,
-      advanced: true,
-    },
-    max_results: {
-      type: 'number',
-      label: 'Max Results',
-      description: 'Stop after this many matches',
-      default: 100,
-      advanced: true,
-    },
-  };
-}
-
-// Grep (Search In Files) - user-friendly text search with file type presets
-const GREP_FILE_TYPE_PRESETS: ArgOption[] = [
-  { value: '', label: 'All Files', description: 'Search every file' },
-  { value: '*.{js,ts,jsx,tsx}', label: 'JavaScript / TypeScript', description: 'JS and TS source files' },
-  { value: '*.py', label: 'Python', description: 'Python source files' },
-  { value: '*.{html,css}', label: 'Web (HTML/CSS)', description: 'HTML and CSS files' },
-  { value: '*.{json,yaml,yml}', label: 'Config Files', description: 'JSON and YAML configs' },
-  { value: '*.txt', label: 'Text Files', description: '.txt files only' },
-  { value: '*.log', label: 'Log Files', description: '.log files only' },
-  { value: '*.md', label: 'Markdown', description: 'Markdown documentation' },
-  { value: '*.csv', label: 'CSV Data', description: 'CSV spreadsheet data' },
-  { value: '*.{c,cpp,h,hpp}', label: 'C / C++', description: 'C and C++ source files' },
-  { value: '*.{java,kt}', label: 'Java / Kotlin', description: 'Java and Kotlin files' },
-  { value: '*.{rs}', label: 'Rust', description: 'Rust source files' },
-  { value: '*.{go}', label: 'Go', description: 'Go source files' },
-];
-
-const GREP_EXCLUDE_PRESETS: ArgOption[] = [
-  { value: '', label: 'Nothing', description: 'Don\'t skip any files' },
-  { value: '*.min.js', label: 'Minified JS', description: 'Skip minified JavaScript' },
-  { value: '*.map', label: 'Source Maps', description: 'Skip .map files' },
-  { value: '*.min.js,*.map', label: 'Minified + Maps', description: 'Skip minified JS and source maps' },
-  { value: '*.lock,*.sum', label: 'Lock Files', description: 'Skip lock files (package-lock, go.sum)' },
-];
-
-if (TOOL_SCHEMAS['grep']) {
-  TOOL_SCHEMAS['grep'].args = {
-    path: {
-      type: 'path',
-      label: 'Search In',
-      description: 'Pick a file or folder to search inside',
-      required: true,
-      placeholder: 'C:/Users/MyProject or C:/log.txt',
-    },
-    pattern: {
-      type: 'string',
-      label: 'Find This Text',
-      description: 'Type the word, phrase, or error message you\'re looking for',
-      required: true,
-      placeholder: 'e.g. TODO, error, password, function main',
-    },
-    case_sensitive: {
-      type: 'boolean',
-      label: 'Exact Case',
-      description: 'When on, "Error" won\'t match "error" — case must match exactly',
-      default: false,
-    },
-    include_glob: {
-      type: 'select',
-      label: 'File Types to Search',
-      description: 'Limit search to specific file types. Pick a preset or type a custom pattern.',
-      options: GREP_FILE_TYPE_PRESETS,
-      default: '',
-      allowFreeform: true,
-      placeholder: 'e.g. *.txt, *.js',
-    },
-    exclude_glob: {
-      type: 'select',
-      label: 'File Types to Skip',
-      description: 'Ignore certain files. Pick a preset or type a custom pattern.',
-      options: GREP_EXCLUDE_PRESETS,
-      default: '',
-      allowFreeform: true,
-      placeholder: 'e.g. *.min.js, node_modules/**',
-      advanced: true,
-    },
-    regex: {
-      type: 'boolean',
-      label: 'Regex Mode',
-      description: 'Treat search text as a regular expression (for advanced pattern matching)',
-      default: false,
-      advanced: true,
-    },
-    max_results: {
-      type: 'number',
-      label: 'Max Matches',
-      description: 'Stop searching after this many matches',
-      default: 100,
-      advanced: true,
-    },
-    max_file_size: {
-      type: 'number',
-      label: 'Max File Size (bytes)',
-      description: 'Skip files bigger than this (useful for ignoring huge logs)',
-      advanced: true,
-    },
-  };
-}
-
-// File/Folder Watch Trigger - user-friendly path and pattern editor
-if (TOOL_SCHEMAS['fs.watch']) {
-  TOOL_SCHEMAS['fs.watch'].args = {
-    path: {
-      type: 'path',
-      label: 'Watch Path',
-      description: 'File or folder path to watch for changes',
-      required: true,
-      placeholder: 'C:/Users/Documents or /home/user/folder',
-    },
-    pattern: {
-      type: 'string',
-      label: 'File Pattern',
-      description: 'Glob pattern to filter files (e.g., *.txt, *.{js,ts}, **/*.log)',
-      default: '*.*',
-      placeholder: '*.*',
-    },
-    recursive: {
-      type: 'boolean',
-      label: 'Watch Subfolders',
-      description: 'Also watch files in subdirectories',
-      default: true,
-    },
-    events: {
-      type: 'array',
-      label: 'Watch Events',
-      description: 'Which file events to watch for',
-      default: ['add', 'change', 'unlink'],
-      itemType: 'string',
-      itemOptions: [
-        { value: 'add', label: 'File Added', description: 'When a new file is created' },
-        { value: 'change', label: 'File Changed', description: 'When a file is modified' },
-        { value: 'unlink', label: 'File Deleted', description: 'When a file is removed' },
-        { value: 'addDir', label: 'Folder Added', description: 'When a new folder is created' },
-        { value: 'unlinkDir', label: 'Folder Deleted', description: 'When a folder is removed' },
-      ],
-    },
-  };
-  TOOL_SCHEMAS['fs.watch'].outputs = ['filePath', 'eventType', 'stats'];
-}
-
-// Gmail native push trigger (no polling)
-if (TOOL_SCHEMAS['gmail.new_email']) {
-  TOOL_SCHEMAS['gmail.new_email'].args = {
-    profile: {
-      type: 'string',
-      label: 'Google Profile',
-      description: 'Connected Google profile label to use (default, work, personal, etc.)',
-      default: 'default',
-      placeholder: 'default',
-    },
-    labelIds: {
-      type: 'array',
-      label: 'Label IDs',
-      description: 'Gmail labels to watch. Default is INBOX.',
-      default: ['INBOX'],
-      itemType: 'string',
-      itemOptions: [
-        { value: 'INBOX', label: 'Inbox', description: 'Primary inbox messages' },
-        { value: 'IMPORTANT', label: 'Important', description: 'Important messages' },
-        { value: 'UNREAD', label: 'Unread', description: 'Unread messages' },
-      ],
-    },
-    labelFilterBehavior: {
-      type: 'select',
-      label: 'Label Filter Mode',
-      description: 'How label filters are interpreted by Gmail watch',
-      default: 'INCLUDE',
-      options: [
-        { value: 'INCLUDE', label: 'Include', description: 'Only trigger when labels match' },
-        { value: 'EXCLUDE', label: 'Exclude', description: 'Trigger for everything except matching labels' },
-      ],
-      advanced: true,
-    },
-  };
-  TOOL_SCHEMAS['gmail.new_email'].outputs = ['messageId', 'message', 'historyId', 'emailAddress', 'profile'];
-}
-
-// Google Drive native push trigger (no polling)
-if (TOOL_SCHEMAS['drive.new_file']) {
-  TOOL_SCHEMAS['drive.new_file'].args = {
-    profile: {
-      type: 'string',
-      label: 'Google Profile',
-      description: 'Connected Google profile label to use (default, work, personal, etc.)',
-      default: 'default',
-      placeholder: 'default',
-    },
-    onlyNew: {
-      type: 'boolean',
-      label: 'Only New Uploads',
-      description: 'When on, trigger only for newly created files (not edits)',
-      default: true,
-    },
-    includeFolders: {
-      type: 'boolean',
-      label: 'Include Folders',
-      description: 'Also trigger when new folders are created in Drive',
-      default: false,
-      advanced: true,
-    },
-  };
-  TOOL_SCHEMAS['drive.new_file'].outputs = ['fileId', 'file', 'changeTime', 'profile'];
-}
-
 // Gmail Send Message - Enhanced email composition
 if (TOOL_SCHEMAS['gmail_send_message']) {
   TOOL_SCHEMAS['gmail_send_message'].args = {
@@ -1429,7 +1170,115 @@ if (TOOL_SCHEMAS['send_notification']) {
     description: 'Notification urgency level',
     options: SEVERITY_OPTIONS,
   };
-}
+  TOOL_SCHEMAS['send_notification'].args.title = {
+    ...TOOL_SCHEMAS['send_notification'].args.title,
+    label: 'Title',
+    description: 'Short notification heading',
+    placeholder: 'Stuard AI',
+  };
+  TOOL_SCHEMAS['send_notification'].args.body = {
+    ...TOOL_SCHEMAS['send_notification'].args.body,
+    label: 'Message',
+    description: 'Main notification body text. Markdown and inline images in the text are supported.',
+    placeholder: 'Something happened!',
+  };
+  TOOL_SCHEMAS['send_notification'].args.imagePath = {
+    type: 'path',
+    label: 'Image',
+    description: 'Optional local image path, file URL, web URL, or data URI to display beside the notification.',
+    placeholder: 'C:/Users/you/Pictures/preview.png',
+  };
+  TOOL_SCHEMAS['send_notification'].args.durationMs = {
+    ...TOOL_SCHEMAS['send_notification'].args.durationMs,
+    type: 'number',
+    label: 'Auto Close (ms)',
+    description: 'How long the notification stays visible. Set to 0 to keep it open until dismissed.',
+  };
+  TOOL_SCHEMAS['send_notification'].args.showInput = {
+    ...TOOL_SCHEMAS['send_notification'].args.showInput,
+    type: 'boolean',
+    label: 'Show Input Bar',
+    description: 'Display a reply/input field inside the notification.',
+  };
+  TOOL_SCHEMAS['send_notification'].args.waitForInput = {
+    ...TOOL_SCHEMAS['send_notification'].args.waitForInput,
+    type: 'boolean',
+    label: 'Wait For Reply',
+    description: 'Pause the workflow until the user submits, cancels, dismisses, or the notification times out.',
+    showWhen: { field: 'showInput', value: true },
+  };
+  TOOL_SCHEMAS['send_notification'].args.inputPlaceholder = {
+    ...TOOL_SCHEMAS['send_notification'].args.inputPlaceholder,
+    label: 'Input Placeholder',
+    description: 'Placeholder text shown inside the reply bar.',
+    showWhen: { field: 'showInput', value: true },
+  };
+  TOOL_SCHEMAS['send_notification'].args.inputDefaultValue = {
+    ...TOOL_SCHEMAS['send_notification'].args.inputDefaultValue,
+    label: 'Default Input Value',
+    description: 'Optional pre-filled value for the input bar.',
+    showWhen: { field: 'showInput', value: true },
+    advanced: true,
+  };
+  TOOL_SCHEMAS['send_notification'].args.inputSubmitText = {
+    ...TOOL_SCHEMAS['send_notification'].args.inputSubmitText,
+    label: 'Submit Button',
+    description: 'Label for the input submit button.',
+    showWhen: { field: 'showInput', value: true },
+  };
+  TOOL_SCHEMAS['send_notification'].args.inputCancelText = {
+    ...TOOL_SCHEMAS['send_notification'].args.inputCancelText,
+    label: 'Cancel Button',
+    description: 'Optional cancel button text shown under the input.',
+    showWhen: { field: 'showInput', value: true },
+    advanced: true,
+  };
+  TOOL_SCHEMAS['send_notification'].args.inputType = {
+    ...TOOL_SCHEMAS['send_notification'].args.inputType,
+    type: 'select',
+    label: 'Input Type',
+    description: 'Choose the keyboard/input mode for the reply field.',
+    options: [
+      { value: 'text', label: 'Text' },
+      { value: 'email', label: 'Email' },
+      { value: 'number', label: 'Number' },
+      { value: 'password', label: 'Password' },
+    ],
+    showWhen: { field: 'showInput', value: true },
+    advanced: true,
+  };
+  TOOL_SCHEMAS['send_notification'].args.keepAfterSubmit = {
+    ...TOOL_SCHEMAS['send_notification'].args.keepAfterSubmit,
+    type: 'boolean',
+    label: 'Keep Open After Submit',
+    description: 'Leave the notification open after the user submits text.',
+    showWhen: { field: 'showInput', value: true },
+    advanced: true,
+  };
+  TOOL_SCHEMAS['send_notification'].args.timeoutMs = {
+    ...TOOL_SCHEMAS['send_notification'].args.timeoutMs,
+    type: 'number',
+    label: 'Reply Timeout (ms)',
+    description: 'Maximum time to wait for a reply when Wait For Reply is enabled.',
+    showWhen: { field: 'showInput', value: true },
+    advanced: true,
+  };
+  TOOL_SCHEMAS['send_notification'].args.progress = {
+    ...TOOL_SCHEMAS['send_notification'].args.progress,
+    type: 'number',
+    label: 'Progress (%)',
+    description: 'Optional progress bar value from 0 to 100.',
+    advanced: true,
+  };
+  TOOL_SCHEMAS['send_notification'].args.taskId = {
+    ...TOOL_SCHEMAS['send_notification'].args.taskId,
+    advanced: true,
+  };
+  TOOL_SCHEMAS['send_notification'].args.workflowRunId = {
+    ...TOOL_SCHEMAS['send_notification'].args.workflowRunId,
+    advanced: true,
+  };
+ }
 
 // ============================================================================
 // SET WINDOW BOUNDS — bounds as JSON with clear description

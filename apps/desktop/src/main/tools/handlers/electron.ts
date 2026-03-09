@@ -1,5 +1,7 @@
-import { clipboard, shell } from 'electron';
+import { clipboard, Notification, shell } from 'electron';
 import { execCloseCustomUi as _execCloseCustomUi, execCustomUi as _execCustomUi, execUpdateCustomUi as _execUpdateCustomUi, execPlayAudio as _execPlayAudio, customUiWindows, sendEventToCustomUi, initCustomUiIpc } from '../../custom-ui';
+import { getNotificationWindow, openNotificationWindow } from '../../windows';
+import { pathToFileURL } from 'node:url';
 import { RouterContext } from '../types';
 
 export const execCustomUi = _execCustomUi;
@@ -145,6 +147,176 @@ export async function execReturnValue(args: any, ctx: RouterContext): Promise<an
   const success = args?.success !== false; // Default to true
   const message = args?.message || '';
   return { ok: true, action: 'return', terminated: true, value, success, message };
+}
+
+type PendingNotificationResponse = {
+  resolve: (value: any) => void;
+  timer?: NodeJS.Timeout;
+};
+
+const pendingNotificationResponses = new Map<string, PendingNotificationResponse>();
+
+function normalizeNotificationVariant(value: any): 'info' | 'success' | 'warning' | 'error' | 'neutral' {
+  const raw = String(value || 'info').trim().toLowerCase();
+  if (raw === 'success' || raw === 'warning' || raw === 'error' || raw === 'neutral') {
+    return raw;
+  }
+  return 'info';
+}
+
+function normalizeNotificationImage(value: any): string | undefined {
+  const raw = String(value || '').trim();
+  if (!raw) return undefined;
+  if (/^(https?:|data:|file:)/i.test(raw)) return raw;
+  if (/^[a-zA-Z]:[\\/]/.test(raw) || raw.startsWith('\\\\')) {
+    try {
+      return pathToFileURL(raw).toString();
+    } catch {
+      return raw;
+    }
+  }
+  return raw;
+}
+
+function deliverNotification(config: Record<string, any>): boolean {
+  openNotificationWindow();
+  const notificationWin = getNotificationWindow();
+  if (notificationWin && !notificationWin.isDestroyed()) {
+    const send = () => {
+      try {
+        notificationWin.webContents.send('notification:show', config);
+      } catch {}
+    };
+
+    if (notificationWin.webContents.isLoadingMainFrame()) {
+      notificationWin.webContents.once('did-finish-load', send);
+    } else {
+      send();
+    }
+    return true;
+  }
+  return false;
+}
+
+function dismissNotificationById(id: string): void {
+  const notificationWin = getNotificationWindow();
+  if (!notificationWin || notificationWin.isDestroyed()) return;
+  try {
+    notificationWin.webContents.send('notification:dismiss', { id });
+  } catch {}
+}
+
+export function settleNotificationResponse(payload: any): boolean {
+  const responseId = String(payload?.responseId || payload?.id || '').trim();
+  if (!responseId) return false;
+  const pending = pendingNotificationResponses.get(responseId);
+  if (!pending) return false;
+  pendingNotificationResponses.delete(responseId);
+  if (pending.timer) clearTimeout(pending.timer);
+  pending.resolve(payload);
+  return true;
+}
+
+export async function execSendNotification(args: any, ctx: RouterContext): Promise<any> {
+  const title = String(args?.title || 'Stuard AI').trim() || 'Stuard AI';
+  const message = String(args?.message ?? args?.body ?? '').trim();
+  const variant = normalizeNotificationVariant(args?.severity ?? args?.variant);
+  const position = String(args?.position || 'top-right').trim() || 'top-right';
+  const progress = Number(args?.progress);
+  const requestedDuration = Number(args?.durationMs ?? args?.duration);
+  const waitForInput = Boolean(args?.waitForInput);
+  const showInput = waitForInput
+    || Boolean(args?.showInput)
+    || String(args?.inputPlaceholder || args?.inputDefaultValue || '').trim().length > 0;
+  const duration = waitForInput
+    ? 0
+    : (Number.isFinite(requestedDuration) && requestedDuration >= 0 ? requestedDuration : 5000);
+  const inputType = String(args?.inputType || 'text').trim().toLowerCase();
+  const responseId = `notification-response-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const notification = {
+    id: String(args?.id || responseId),
+    title,
+    message,
+    variant,
+    position,
+    duration,
+    dismissible: args?.dismissible !== false,
+    sound: args?.sound ?? true,
+    progress: Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : undefined,
+    image: normalizeNotificationImage(args?.image ?? args?.imagePath),
+    taskId: args?.taskId ? String(args.taskId) : undefined,
+    workflowRunId: args?.workflowRunId ? String(args.workflowRunId) : undefined,
+  } as Record<string, any>;
+
+  if (showInput) {
+    notification.input = {
+      placeholder: String(args?.inputPlaceholder || 'Type here...'),
+      defaultValue: String(args?.inputDefaultValue || ''),
+      submitText: String(args?.inputSubmitText || 'Send'),
+      cancelText: args?.inputCancelText ? String(args.inputCancelText) : undefined,
+      type: inputType === 'password' || inputType === 'email' || inputType === 'number' ? inputType : 'text',
+      keepAfterSubmit: Boolean(args?.keepAfterSubmit),
+    };
+  }
+
+  if (waitForInput) {
+    notification.responseId = responseId;
+  }
+
+  const delivered = deliverNotification(notification);
+  if (!delivered) {
+    if (waitForInput) {
+      return { ok: false, error: 'interactive_notification_unavailable' };
+    }
+    if (Notification && typeof (Notification as any).isSupported === 'function' && Notification.isSupported()) {
+      try {
+        const nativeNotification = new Notification({ title, body: message });
+        nativeNotification.show();
+      } catch (e: any) {
+        return { ok: false, error: String(e?.message || 'notification_failed') };
+      }
+      return { ok: true, notification, native: true };
+    }
+    return { ok: false, error: 'notification_window_unavailable' };
+  }
+
+  ctx.logFn(`send_notification: ${title}${message ? ` — ${message}` : ''}`);
+
+  if (!waitForInput) {
+    return { ok: true, notification };
+  }
+
+  const timeoutMs = Math.max(0, Number(args?.timeoutMs || 300000));
+  return await new Promise((resolve) => {
+    const timer = timeoutMs > 0
+      ? setTimeout(() => {
+        pendingNotificationResponses.delete(responseId);
+        dismissNotificationById(notification.id);
+        resolve({ ok: false, error: 'timeout', notification, responseId });
+      }, timeoutMs)
+      : undefined;
+
+    pendingNotificationResponses.set(responseId, {
+      timer,
+      resolve: (payload) => {
+        const responseType = String(payload?.type || 'submit');
+        resolve({
+          ok: true,
+          notification,
+          responseId,
+          response: {
+            type: responseType,
+            value: payload?.value,
+          },
+          submitted: responseType === 'submit',
+          dismissed: responseType === 'dismiss',
+          cancelled: responseType === 'cancel',
+          value: payload?.value,
+        });
+      },
+    });
+  });
 }
 
 let _nwm: any | null = null;
