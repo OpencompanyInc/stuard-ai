@@ -107,9 +107,17 @@ export async function localGetExternalAccount(
 ): Promise<ExternalAccount | null> {
   const accounts = load();
   if (profileLabel) {
-    return accounts.find(
+    // Try matching by profile_label first
+    const byLabel = accounts.find(
       (a) => a.user_id === userId && a.provider === provider && a.profile_label === profileLabel,
-    ) ?? null;
+    );
+    if (byLabel) return byLabel;
+    // Fallback: match by account_email (AI may pass email instead of label)
+    const byEmail = accounts.find(
+      (a) => a.user_id === userId && a.provider === provider && a.account_email === profileLabel,
+    );
+    if (byEmail) return byEmail;
+    return null;
   }
   // Default profile
   const defaultAcc = accounts.find(

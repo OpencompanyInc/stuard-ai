@@ -44,9 +44,10 @@ function getProviderForModel(model: string): string {
 }
 
 const INPUT_IMAGE_SCHEMA = z.object({
-  path: z.string().min(1).describe('Path to a local input image file'),
+  path: z.string().optional().describe('Path to a local input image file'),
   filename: z.string().optional().describe('Optional filename override'),
   contentType: z.string().optional().describe('Optional MIME type override'),
+  data: z.string().optional().describe('Base64-encoded image data (used when images are sent from desktop to cloud)'),
 });
 
 type InputImageFile = z.infer<typeof INPUT_IMAGE_SCHEMA>;
@@ -86,11 +87,24 @@ function inferImageMimeType(filePath: string, contentType?: string): string {
 async function loadInputImages(inputImages: InputImageFile[] = []): Promise<LoadedInputImage[]> {
   return Promise.all(
     inputImages.map(async (image) => {
-      const buffer = await readFile(image.path);
-      const mimeType = inferImageMimeType(image.path, image.contentType);
+      // Prefer pre-encoded base64 data (sent from desktop client), fall back to reading from path
+      let buffer: Buffer;
+      let mimeType: string;
+
+      if (image.data) {
+        buffer = Buffer.from(image.data, 'base64');
+        mimeType = image.contentType || (image.path ? inferImageMimeType(image.path, image.contentType) : 'image/png');
+      } else if (image.path) {
+        buffer = await readFile(image.path);
+        mimeType = inferImageMimeType(image.path, image.contentType);
+      } else {
+        throw new Error('Input image must have either a "data" (base64) or "path" field.');
+      }
+
+      const name = image.filename || (image.path ? basename(image.path) : `input_${Date.now()}.png`);
       return {
         ...image,
-        name: image.filename || basename(image.path),
+        name,
         mimeType,
         buffer,
         b64: buffer.toString('base64'),
@@ -106,36 +120,36 @@ export function getImageInputSupport(model: string): { supported: boolean; reaso
     if (model.startsWith('imagen-')) {
       return {
         supported: false,
-        reason: 'input_images are not supported for Imagen models in this tool yet. Use a Gemini image-preview model instead.',
+        reason: 'input_images are not supported for Imagen models. Use a Gemini image-preview model instead.',
       };
     }
     return { supported: true };
   }
 
   if (provider === 'openai') {
-    if (model === 'gpt-image-1') return { supported: true };
+    // All GPT Image models support images.edit (gpt-image-1.5, gpt-image-1, gpt-image-1-mini)
+    if (model.startsWith('gpt-image')) return { supported: true };
     if (model.startsWith('dall-e-')) {
       return {
         supported: false,
-        reason: 'input_images are not supported for DALL-E models in this tool.',
+        reason: 'input_images are not supported for DALL-E models. Use a gpt-image model instead.',
       };
     }
-    return {
-      supported: false,
-      reason: 'OpenAI input_images are currently supported only with gpt-image-1 in this tool.',
-    };
+    return { supported: true }; // Default to supported for unknown OpenAI models
   }
 
   if (provider === 'xai') {
+    // Grok Imagine supports multi-reference image editing via /v1/images/edits
+    if (model === 'grok-imagine-image') return { supported: true };
     return {
       supported: false,
-      reason: 'input_images are not wired for xAI image models in this tool yet.',
+      reason: `input_images are not supported for ${model}. Use grok-imagine-image instead.`,
     };
   }
 
   return {
     supported: false,
-    reason: `input_images are not supported for model ${model} in this tool.`,
+    reason: `input_images are not supported for model ${model}.`,
   };
 }
 
@@ -220,7 +234,7 @@ async function generateWithOpenAI(params: {
   const isGptImage = params.model.startsWith('gpt-image');
 
   if (params.inputImages?.length) {
-    if (params.model !== 'gpt-image-1') {
+    if (!params.model.startsWith('gpt-image')) {
       throw new Error(getImageInputSupport(params.model).reason || `input_images are not supported for ${params.model}`);
     }
 
@@ -233,7 +247,7 @@ async function generateWithOpenAI(params: {
       prompt: params.prompt,
       image: uploads.length === 1 ? uploads[0] : uploads,
       n: params.n,
-      size: params.size,
+      size: params.size !== 'auto' ? params.size : '1024x1024',
     };
 
     if (params.quality !== 'auto') requestParams.quality = params.quality;
@@ -282,7 +296,57 @@ async function generateWithXAI(params: {
   model: string;
   n: number;
   aspectRatio: string;
+  inputImages?: LoadedInputImage[];
 }): Promise<GeneratedImagesResult> {
+  const apiKey = process.env.XAI_API_KEY;
+  if (!apiKey) throw new Error('XAI_API_KEY is required for xAI image generation');
+
+  // xAI image editing uses JSON endpoint, NOT OpenAI SDK multipart
+  if (params.inputImages?.length && params.model === 'grok-imagine-image') {
+    const imageRefs = params.inputImages.map((img) => ({
+      url: `data:${img.mimeType};base64,${img.b64}`,
+      type: 'image_url' as const,
+    }));
+
+    const body: any = {
+      model: params.model,
+      prompt: params.prompt,
+      n: params.n,
+      response_format: 'b64_json',
+    };
+    // Single image → "image", multiple → "images"
+    if (imageRefs.length === 1) {
+      body.image = imageRefs[0];
+    } else {
+      body.images = imageRefs;
+    }
+    if (params.aspectRatio !== 'auto') {
+      body.aspect_ratio = params.aspectRatio;
+    }
+
+    const resp = await fetch('https://api.x.ai/v1/images/edits', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      throw new Error(`xAI image edit error ${resp.status}: ${errText.slice(0, 300)}`);
+    }
+
+    const data: any = await resp.json();
+    const images = (data?.data || []).map((img: any) => ({
+      b64: img.b64_json || img.b64 || '',
+      revisedPrompt: img.revised_prompt,
+    }));
+    return { images, outputFormat: 'jpeg' };
+  }
+
+  // Standard generation (no input images)
   const client = getXAIClient();
 
   const requestParams: any = {
@@ -313,7 +377,7 @@ async function generateWithGoogle(params: {
   size: string;
   inputImages?: LoadedInputImage[];
 }): Promise<GeneratedImagesResult> {
-  const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || '';
+  const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
   if (!apiKey) throw new Error('GOOGLE_GENERATIVE_AI_API_KEY or GEMINI_API_KEY is required for Google image generation');
 
   const isImagen = params.model.startsWith('imagen-');
@@ -448,7 +512,10 @@ export const generate_image = createTool({
   inputSchema: z.object({
     prompt: z.string().min(1).max(4000).describe('Text description of the image to generate. Be detailed and specific.'),
     input_images: z.array(INPUT_IMAGE_SCHEMA).optional().describe(
-      'Optional input/reference images for image-to-image or editing workflows. Best supported by Gemini image-preview models and OpenAI gpt-image-1.'
+      'Optional input/reference images for image-to-image or editing workflows. ' +
+      'Supported by: all GPT Image models (gpt-image-1.5, gpt-image-1, gpt-image-1-mini), ' +
+      'Gemini image-preview models, and grok-imagine-image (up to 3 images). ' +
+      'NOT supported by: DALL-E, Imagen, or grok-2-image.'
     ),
     model: z.string().default('gpt-image-1').describe(
       `Image model to use. Known models: ${allModels.join(', ')}. ` +
@@ -504,7 +571,7 @@ export const generate_image = createTool({
           result = await generateWithGoogle({ prompt, model, n, aspectRatio: aspect_ratio, size, inputImages: loadedInputImages });
           break;
         case 'xai':
-          result = await generateWithXAI({ prompt, model, n, aspectRatio: aspect_ratio });
+          result = await generateWithXAI({ prompt, model, n, aspectRatio: aspect_ratio, inputImages: loadedInputImages });
           break;
         case 'openai':
         default:

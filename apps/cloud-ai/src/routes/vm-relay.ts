@@ -24,18 +24,25 @@ import { resolveVMBaseUrl, resolveVMSecret, pingVMAgent, resolveVMAddress, VM_AG
 import { mintVMToken } from '../services/vm-tokens';
 
 // ── Security: allowed VM agent paths (strict allowlist) ─────────────────────
-const ALLOWED_VM_PATHS = new Set([
-  '/command',
-  '/health',
-  '/metrics',
-  '/terminal/open',
-  '/terminal/data',
-  '/terminal/resize',
-  '/terminal/close',
-  '/terminal/read',
-  '/sync/upload',
-  '/sync/download',
-]);
+const ALLOWED_VM_PATHS: RegExp[] = [
+  /^\/command$/,
+  /^\/health$/,
+  /^\/metrics$/,
+  /^\/terminal\/open$/,
+  /^\/terminal\/data$/,
+  /^\/terminal\/resize$/,
+  /^\/terminal\/close$/,
+  /^\/terminal\/read$/,
+  /^\/sync\/upload$/,
+  /^\/sync\/download$/,
+  /^\/v1\/memory\/conversations(?:\?.*)?$/,
+  /^\/v1\/memory\/conversations\/[^/?#]+(?:\?.*)?$/,
+  /^\/v1\/memory\/conversations\/[^/?#]+\/messages(?:\?.*)?$/,
+];
+
+function isAllowedVmPath(vmPath: string): boolean {
+  return ALLOWED_VM_PATHS.some((pattern) => pattern.test(vmPath));
+}
 
 // ── Security: allowed HTTP methods ──────────────────────────────────────────
 const ALLOWED_METHODS = new Set(['GET', 'POST', 'PUT', 'DELETE']);
@@ -202,7 +209,7 @@ export async function handleVMRelayRoutes(
     }
 
     // ── SECURITY: strict path allowlist (prevents SSRF to metadata/internal services) ──
-    if (!ALLOWED_VM_PATHS.has(vmPath)) {
+    if (!isAllowedVmPath(vmPath)) {
       json(res, 403, { error: 'path_not_allowed' }, req);
       return true;
     }

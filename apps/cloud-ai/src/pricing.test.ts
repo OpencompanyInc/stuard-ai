@@ -169,7 +169,7 @@ describe('pricing module', () => {
 
   describe('creditsPerUsd', () => {
     it('should return default credits per USD', () => {
-      expect(creditsPerUsd()).toBe(100);
+      expect(creditsPerUsd()).toBe(33);
     });
 
     it('should respect environment variable override', () => {
@@ -181,15 +181,14 @@ describe('pricing module', () => {
 
   describe('creditsFromUsd', () => {
     it('should convert USD to credits correctly', () => {
-      expect(creditsFromUsd(1)).toBe(100);
-      expect(creditsFromUsd(2.5)).toBe(250);
-      expect(creditsFromUsd(0.5)).toBe(50);
+      expect(creditsFromUsd(1)).toBe(33);
+      expect(creditsFromUsd(2.5)).toBe(83);
+      expect(creditsFromUsd(0.5)).toBe(17);
     });
 
     it('should round to nearest integer', () => {
-      // Note: floating point precision means 1.005 * 100 = 100.49999...
-      expect(creditsFromUsd(1.006)).toBe(101);
-      expect(creditsFromUsd(1.004)).toBe(100);
+      expect(creditsFromUsd(1.016)).toBe(34);
+      expect(creditsFromUsd(1.014)).toBe(33);
     });
 
     it('should return 0 for negative values', () => {
@@ -200,26 +199,26 @@ describe('pricing module', () => {
   describe('monthlyCreditLimitForPlan', () => {
     it('should return credits for FREE_TRIAL plan', () => {
       const credits = monthlyCreditLimitForPlan('FREE_TRIAL');
-      // $0.50 budget * 100 credits/USD = 50 credits
-      expect(credits).toBe(50);
+      // $0.45 budget * 33 credits/USD ≈ 15 credits
+      expect(credits).toBe(15);
     });
 
     it('should return credits for STARTER plan', () => {
       const credits = monthlyCreditLimitForPlan('STARTER');
-      // $6.50 budget * 100 credits/USD = 650 credits
-      expect(credits).toBe(650);
+      // $6.50 budget * 33 credits/USD ≈ 215 credits
+      expect(credits).toBe(215);
     });
 
     it('should return credits for PRO plan', () => {
       const credits = monthlyCreditLimitForPlan('PRO');
-      // $29.25 budget * 100 credits/USD = 2925 credits
-      expect(credits).toBe(2925);
+      // $29.25 budget * 33 credits/USD ≈ 965 credits
+      expect(credits).toBe(965);
     });
 
     it('should return credits for POWER plan', () => {
       const credits = monthlyCreditLimitForPlan('POWER');
-      // $65 budget * 100 credits/USD = 6500 credits
-      expect(credits).toBe(6500);
+      // $65 budget * 33 credits/USD = 2145 credits
+      expect(credits).toBe(2145);
     });
 
     it('should return -1 (unlimited) for BYOK plan', () => {
@@ -239,9 +238,9 @@ describe('pricing module', () => {
     });
 
     it('should handle case-insensitive plan names', () => {
-      expect(monthlyCreditLimitForPlan('free_trial')).toBe(50);
-      expect(monthlyCreditLimitForPlan('Free_Trial')).toBe(50);
-      expect(monthlyCreditLimitForPlan('FREE_TRIAL')).toBe(50);
+      expect(monthlyCreditLimitForPlan('free_trial')).toBe(15);
+      expect(monthlyCreditLimitForPlan('Free_Trial')).toBe(15);
+      expect(monthlyCreditLimitForPlan('FREE_TRIAL')).toBe(15);
     });
 
     it('should return -1 for unknown plans', () => {
@@ -253,7 +252,7 @@ describe('pricing module', () => {
   describe('PLAN_CONFIG', () => {
     it('should have correct configuration for FREE_TRIAL', () => {
       expect(PLAN_CONFIG.FREE_TRIAL.priceUsd).toBe(0);
-      expect(PLAN_CONFIG.FREE_TRIAL.budgetUsd).toBe(0.50);
+      expect(PLAN_CONFIG.FREE_TRIAL.budgetUsd).toBe(0.45);
       expect(PLAN_CONFIG.FREE_TRIAL.isRecurring).toBe(false);
       expect(PLAN_CONFIG.FREE_TRIAL.allModels).toBe(false);
     });

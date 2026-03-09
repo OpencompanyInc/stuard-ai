@@ -3,7 +3,7 @@ import { runSequentialTool, runParallelTool } from '../../tools/workflow-system'
 import { analyzeMediaTool } from '../../tools/analyze-media';
 import { outlook_get_me, outlook_list_messages, outlook_search_messages, outlook_send_mail } from '../../tools/outlook-tools';
 import { github_get_me, github_list_repos, github_list_issues, github_create_issue } from '../../tools/github-tools';
-import { google_get_userinfo, gmail_send_message, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, gmail_modify_message, gmail_delete_message, gmail_archive_message, gmail_mark_as_read, gmail_mark_as_unread, gmail_download_attachment, calendar_list_events, calendar_create_event, calendar_delete_event, tasks_list, drive_list_files, sheets_read_range, sheets_create_spreadsheet, sheets_write_range, sheets_append_rows, sheets_clear_range, sheets_get_spreadsheet, sheets_add_sheet, sheets_format_cells, sheets_batch_update_values, sheets_delete_rows_columns, sheets_sort_range, sheets_auto_resize, docs_get_document, docs_create_document, docs_write_text } from '../../tools/google-tools';
+import { google_get_userinfo, google_list_profiles, gmail_send_message, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, gmail_modify_message, gmail_delete_message, gmail_archive_message, gmail_mark_as_read, gmail_mark_as_unread, gmail_download_attachment, calendar_list_events, calendar_create_event, calendar_delete_event, tasks_list, drive_list_files, sheets_read_range, sheets_create_spreadsheet, sheets_write_range, sheets_append_rows, sheets_clear_range, sheets_get_spreadsheet, sheets_add_sheet, sheets_format_cells, sheets_batch_update_values, sheets_delete_rows_columns, sheets_sort_range, sheets_auto_resize, docs_get_document, docs_create_document, docs_write_text } from '../../tools/google-tools';
 import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, canvas_list, canvas_read, canvas_write, canvas_create, canvas_delete, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, stop_system_audio, describe_system_audio_capabilities, run_command, run_system_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, list_local_stuards, show_json_workflow_code, execute_workflow, find_workflow_semantic, import_workflow, run_automation, stop_automation, invoke_workflow, search_local_workflows, run_workflow, search_past_conversations, get_conversation_context, list_user_spaces, get_space_contents, add_to_space, ensure_space_path, list_space_path, add_to_space_path, get_space_tree, create_space, add_source_to_space, add_note_to_space, add_code_snippet_to_space, link_conversation_to_space, find_or_create_space, update_space_item, delete_space_item, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, get_window_info, set_window_bounds, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, glob, grep, browser_get_content, browser_click_element, browser_type_text, browser_find_text, browser_get_element_position, browser_find_clickable, browser_hover, browser_select_option, browser_press_key, browser_get_form_fields, browser_fill_form, browser_wait_for_element, browser_scroll_to, browser_get_page_info, browser_execute_script, browser_upload_file, browser_set_toggle, agent_todo, get_mouse_position, computer_use, click_at_coordinates, double_click_at_coordinates, type_text, scroll, drag_and_drop } from '../../tools/device-tools';
 import { computer_use_agent, agent_node, agent_decision, agent_extract } from '../../tools/device-tools';
 import { web_search } from '../../tools/perplexity-tools';
@@ -14,9 +14,11 @@ import { listHeadlessAgentTasks } from '../../tools/list-headless-agent-tasks';
 import { stopHeadlessAgent } from '../../tools/stop-headless-agent';
 import { ffmpeg_status, ffmpeg_setup, ffmpeg_run, ffmpeg_convert_media, ffmpeg_extract_audio, ffmpeg_trim_media, ffmpeg_probe_media, ffmpeg_extract_frames, folder_permission_add, folder_permission_remove, folder_permission_list, folder_permission_set_enabled, folder_permission_check, get_datetime, math_eval, generate_uuid, random_number, random_choice, get_env_var, get_system_info, hash_string, base64_encode, base64_decode, json_parse, json_stringify, sleep, regex_match, regex_replace } from '../../tools/device-tools';
 import { ollama_status, ollama_chat, ollama_generate, ollama_vision, ollama_embeddings, ollama_models } from '../../tools/device-tools';
-import { browser_use_status, browser_use_configure, browser_use_task, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies } from '../../tools/device-tools';
+import { browser_use_status, browser_use_configure, browser_use_execute_script, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies } from '../../tools/device-tools';
 import { submitFeedback, reportBug, suggestFeature, listMyFeedback, getFeedbackDetails } from '../../tools/feedback-tools';
 import { telnyx_send_sms, telnyx_make_call, telnyx_phone_status } from '../../tools/telnyx-tools';
+import { whatsapp_send_message, whatsapp_send_media, whatsapp_send_reaction, whatsapp_mark_read, whatsapp_upload_media, whatsapp_status } from '../../tools/whatsapp-tools';
+import { text_to_speech, list_tts_voices, get_tts_models, elevenlabs_list_agents, elevenlabs_get_signed_conversation_url, elevenlabs_get_webrtc_token, elevenlabs_list_conversations, elevenlabs_get_conversation, elevenlabs_twilio_outbound_call } from '../../tools/tts-tools';
 import { http_request } from '../../tools/http-tools';
 import { proactive_task_create, proactive_task_list, proactive_task_update, proactive_task_delete } from '../../tools/proactive-task-tools';
 import { createRequire } from 'node:module';
@@ -56,6 +58,7 @@ export const ALL_TOOLS = {
   outlook_send_mail,
   // Google Workspace
   google_get_userinfo,
+  google_list_profiles,
   gmail_send_message,
   gmail_list_messages,
   gmail_get_message_brief,
@@ -68,6 +71,8 @@ export const ALL_TOOLS = {
   gmail_archive_message,
   gmail_mark_as_read,
   gmail_mark_as_unread,
+  gmail_download_attachment,
+  calendar_list_events,
   calendar_create_event,
   calendar_delete_event,
   tasks_list,
@@ -225,7 +230,7 @@ export const ALL_TOOLS = {
   // Browser Use (AI browser automation — requires browser-use Python package)
   browser_use_status,
   browser_use_configure,
-  browser_use_task,
+  browser_use_execute_script,
   browser_use_navigate,
   browser_use_click,
   browser_use_type,
@@ -294,10 +299,26 @@ export const ALL_TOOLS = {
   get_skill_info,
   // User interaction
   ask_user,
+  text_to_speech,
+  list_tts_voices,
+  get_tts_models,
+  elevenlabs_list_agents,
+  elevenlabs_get_signed_conversation_url,
+  elevenlabs_get_webrtc_token,
+  elevenlabs_list_conversations,
+  elevenlabs_get_conversation,
+  elevenlabs_twilio_outbound_call,
   // Telnyx (SMS / Voice calls — requires verified phone)
   telnyx_send_sms,
   telnyx_make_call,
   telnyx_phone_status,
+  // WhatsApp (messaging — requires connected WhatsApp number)
+  whatsapp_send_message,
+  whatsapp_send_media,
+  whatsapp_send_reaction,
+  whatsapp_mark_read,
+  whatsapp_upload_media,
+  whatsapp_status,
 } as const;
 
 const _INTERNAL_SPACE_TOOLS = {
@@ -317,6 +338,30 @@ const _INTERNAL_SPACE_TOOLS = {
   update_space_item,
   delete_space_item,
 } as const;
+
+const LEGACY_BROWSER_EXTENSION_TOOL_NAMES = new Set([
+  'browser_get_content',
+  'browser_click_element',
+  'browser_type_text',
+  'browser_find_text',
+  'browser_get_element_position',
+  'browser_find_clickable',
+  'browser_hover',
+  'browser_select_option',
+  'browser_press_key',
+  'browser_get_form_fields',
+  'browser_fill_form',
+  'browser_wait_for_element',
+  'browser_scroll_to',
+  'browser_get_page_info',
+  'browser_upload_file',
+  'browser_set_toggle',
+  'browser_execute_script',
+]);
+
+function isLegacyBrowserExtensionTool(name: string): boolean {
+  return LEGACY_BROWSER_EXTENSION_TOOL_NAMES.has(name);
+}
 
 /**
  * Minimal Paramount Tools - DEPRECATED
@@ -356,8 +401,8 @@ export const TIER_1_PARAMOUNT_TOOLS = [
   // Vision (1) — screenshots for computer-use flows
   'capture_screen',
 
-  // Memory (1) — recall past context
-  'search_past_conversations',
+  // Memory (2) — recall past context
+  'search_past_conversations', 'get_conversation_context',
 
   // Task Tracking (1) — multi-step task management
   'agent_todo',
@@ -384,6 +429,8 @@ const _FFMPEG_TIER_1_TOOLS = [
 ] as const;
 
 const SIS_ESSENTIAL_TOOLS = ['wait', 'run_sequential', 'run_parallel'] as const;
+
+const PROMPT_DIRECT_TOOLS = ['terminal_create', 'terminal_send_input', 'terminal_read', 'search_local_workflows', 'run_workflow'] as const;
 
 const SIS_META_TOOL_NAMES = ['sis_search_tools', 'sis_execute_tool', 'sis_list_categories'] as const;
 
@@ -423,6 +470,7 @@ async function getSis(): Promise<SISType | null> {
   // Build SIS index once from ALL_TOOLS. We use descriptions + lightweight semantic hints.
   // We intentionally do not include handlers here; we only use SIS for selection.
   for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+    if (isLegacyBrowserExtensionTool(name)) continue;
     const description = String((tool as any)?.description || '').trim();
     _sis.register({
       name,
@@ -453,8 +501,6 @@ async function getSis(): Promise<SISType | null> {
   return _sis;
 }
 
-// Core tools list removed - using ALL_TOOLS by default
-
 export function getTools(
   enabledIntegrations: string[] = [],
   mcpTools: Record<string, any> = {},
@@ -472,6 +518,20 @@ export function getTools(
 
   // Load Tier 1 tools
   for (const name of TIER_1_PARAMOUNT_TOOLS) {
+    if ((ALL_TOOLS as any)[name]) {
+      tools[name] = (ALL_TOOLS as any)[name];
+    }
+  }
+
+  // Always load essential orchestration tools (wait, run_sequential, run_parallel)
+  for (const name of SIS_ESSENTIAL_TOOLS) {
+    if ((ALL_TOOLS as any)[name]) {
+      tools[name] = (ALL_TOOLS as any)[name];
+    }
+  }
+
+  // Always load prompt direct tools
+  for (const name of PROMPT_DIRECT_TOOLS) {
     if ((ALL_TOOLS as any)[name]) {
       tools[name] = (ALL_TOOLS as any)[name];
     }
@@ -512,6 +572,11 @@ export function getTools(
       if (name.startsWith('telnyx_')) tools[name] = tool;
     }
   }
+  if (enabledIntegrations.includes('whatsapp')) {
+    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+      if (name.startsWith('whatsapp_')) tools[name] = tool;
+    }
+  }
   if (enabledIntegrations.includes('browser_use') || hasClientBridge()) {
     for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
       if (name.startsWith('browser_use_')) tools[name] = tool;
@@ -547,6 +612,20 @@ export async function getToolsForQuery(
     }
   }
 
+  // ── 1b. Essential orchestration tools (wait, run_sequential, run_parallel) ──
+  for (const name of SIS_ESSENTIAL_TOOLS) {
+    if ((ALL_TOOLS as any)[name]) {
+      selected[name] = (ALL_TOOLS as any)[name];
+    }
+  }
+
+  // ── 1c. Prompt direct tools (always loaded) ──
+  for (const name of PROMPT_DIRECT_TOOLS) {
+    if ((ALL_TOOLS as any)[name]) {
+      selected[name] = (ALL_TOOLS as any)[name];
+    }
+  }
+
   // ── 2. SIS meta-tools for long-tail discovery (always loaded, 3) ──
   for (const name of SIS_META_TOOL_NAMES) {
     if ((ALL_TOOLS as any)[name]) {
@@ -560,6 +639,7 @@ export async function getToolsForQuery(
   // The embedding is memoized and shared with knowledge/memory retrieval.
   if (rankedToolNames && rankedToolNames.length > 0) {
     for (const name of rankedToolNames) {
+      if (isLegacyBrowserExtensionTool(name)) continue;
       if ((ALL_TOOLS as any)[name] && !selected[name]) {
         selected[name] = (ALL_TOOLS as any)[name];
       }
@@ -575,6 +655,7 @@ export async function getToolsForQuery(
     linear: ['linear_'],
     ollama: ['ollama_'],
     telnyx: ['telnyx_'],
+    whatsapp: ['whatsapp_'],
     browser_use: ['browser_use_'],
   };
   for (const integration of enabledIntegrations) {

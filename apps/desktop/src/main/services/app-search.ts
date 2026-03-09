@@ -8,8 +8,10 @@
  * 4. Returns merged, ranked results
  */
 
+import * as path from "path";
 import { getInstalledApps, type DiscoveredApp } from "./app-discovery";
 import { searchFiles } from "./file-indexing";
+import { peekCachedFileIcon } from "./icon-cache";
 import logger from "../utils/logger";
 
 // ─────────────────────────────────────────────────────────
@@ -27,6 +29,8 @@ export interface SearchResult {
   launchTarget?: string;
   /** Icon hint path */
   iconHint?: string;
+  /** Warmed icon data when available */
+  iconDataUrl?: string;
   /** Relevance score (0-100, higher = better) */
   score: number;
   /** Source system: "app-discovery" | "file-index" */
@@ -48,6 +52,11 @@ export interface UnifiedSearchOptions {
   includeFiles?: boolean;
 }
 
+const SEARCH_CACHE_TTL_MS = 30_000;
+const FILE_SEARCH_TIMEOUT_MS = 600;
+const searchCache = new Map<string, { expiresAt: number; results: SearchResult[] }>();
+const inFlightSearches = new Map<string, Promise<SearchResult[]>>();
+
 // ─────────────────────────────────────────────────────────
 // Public API
 // ─────────────────────────────────────────────────────────
@@ -67,40 +76,81 @@ export async function unifiedSearch(
     includeFiles = true,
   } = options;
 
-  const q = (query || "").trim();
-  if (q.length < 1) return [];
+  const rawQuery = String(query || "").trim();
+  const q = normalizeSearchText(rawQuery);
+  if (q.length < 2) return [];
 
-  const appLimit = Math.min(6, limit);
-  const fileLimit = Math.max(6, limit - 2);
-
-  // Run app search and file search in parallel
-  const [appResults, fileResults] = await Promise.all([
-    includeApps ? searchApps(q, appLimit) : Promise.resolve([]),
-    includeFiles ? searchFileIndex(q, fileLimit, rootId) : Promise.resolve([]),
-  ]);
-
-  // Merge: apps first, then files, respecting the total limit
-  const merged: SearchResult[] = [];
-
-  // Add all app results first
-  for (const r of appResults) {
-    if (merged.length >= limit) break;
-    merged.push(r);
+  const cacheKey = JSON.stringify({
+    rawQuery,
+    q,
+    limit,
+    rootId: rootId || "",
+    includeApps,
+    includeFiles,
+  });
+  const now = Date.now();
+  const cached = searchCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return cached.results;
   }
 
-  // Fill remaining slots with file results
-  for (const r of fileResults) {
-    if (merged.length >= limit) break;
-    // Skip files that duplicate an app entry (e.g. same .exe)
-    const isDupe = appResults.some(
-      (a) =>
-        a.path.toLowerCase() === r.path.toLowerCase() ||
-        a.name.toLowerCase() === r.name.toLowerCase()
-    );
-    if (!isDupe) merged.push(r);
-  }
+  const existing = inFlightSearches.get(cacheKey);
+  if (existing) return existing;
 
-  return merged;
+  const searchPromise = (async () => {
+    const appLimit = Math.min(5, limit);
+    const fileLimit = Math.max(6, limit - 1);
+
+    const fileSearchWithTimeout: Promise<SearchResult[]> = includeFiles
+      ? Promise.race([
+          searchFileIndex(rawQuery, fileLimit, rootId),
+          new Promise<SearchResult[]>((resolve) =>
+            setTimeout(() => resolve([]), FILE_SEARCH_TIMEOUT_MS)
+          ),
+        ])
+      : Promise.resolve([]);
+
+    const [appResults, fileResults] = await Promise.all([
+      includeApps ? searchApps(q, appLimit) : Promise.resolve([]),
+      fileSearchWithTimeout,
+    ]);
+
+    // Merge: keep strong app matches visible first, then fill with files.
+    const merged: SearchResult[] = [];
+    for (const r of appResults) {
+      if (merged.length >= limit) break;
+      merged.push(r);
+    }
+
+    for (const r of fileResults) {
+      if (merged.length >= limit) break;
+      const isDupe = appResults.some(
+        (a) =>
+          a.path.toLowerCase() === r.path.toLowerCase() ||
+          a.name.toLowerCase() === r.name.toLowerCase()
+      );
+      if (!isDupe) merged.push(r);
+    }
+
+    const results = merged.slice(0, limit);
+    const hasFiles = fileResults.length > 0;
+    searchCache.set(cacheKey, {
+      expiresAt: Date.now() + (hasFiles ? SEARCH_CACHE_TTL_MS : 2000),
+      results,
+    });
+    if (searchCache.size > 100) {
+      const oldestKey = searchCache.keys().next().value;
+      if (oldestKey) searchCache.delete(oldestKey);
+    }
+    return results;
+  })();
+
+  inFlightSearches.set(cacheKey, searchPromise);
+  try {
+    return await searchPromise;
+  } finally {
+    inFlightSearches.delete(cacheKey);
+  }
 }
 
 // ─────────────────────────────────────────────────────────
@@ -116,20 +166,21 @@ async function searchApps(query: string, limit: number): Promise<SearchResult[]>
   }
   if (!apps.length) return [];
 
-  const q = query.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
-  const qTokens = q.split(" ").filter(Boolean);
+  const q = normalizeSearchText(query);
+  const qTokens = tokenizeSearchText(query);
+  const minScore = getAppScoreThreshold(q);
 
   // Score every app
   const scored: { app: DiscoveredApp; score: number }[] = [];
   for (const a of apps) {
     const score = scoreApp(a, q, qTokens);
-    if (score > 0) {
+    if (score >= minScore) {
       scored.push({ app: a, score });
     }
   }
 
   // Sort descending by score
-  scored.sort((a, b) => b.score - a.score);
+  scored.sort((a, b) => b.score - a.score || a.app.name.localeCompare(b.app.name));
 
   return scored.slice(0, limit).map(({ app: a, score }) => ({
     kind: "application",
@@ -137,111 +188,117 @@ async function searchApps(query: string, limit: number): Promise<SearchResult[]>
     path: a.id,
     launchTarget: a.launchTarget,
     iconHint: a.iconHint,
-    score: Math.round(score),
+    iconDataUrl: peekCachedFileIcon([a.iconHint, a.launchTarget, a.id], "normal"),
+    score: clampScore(score),
     source: "app-discovery",
     display_name: a.name,
   }));
 }
 
 function scoreApp(app: DiscoveredApp, query: string, qTokens: string[]): number {
-  const name = app._searchName;
-  const tokens = app._tokens;
+  const name = app._searchName || normalizeSearchText(app.name);
+  const tokens = (app._tokens && app._tokens.length > 0)
+    ? app._tokens
+    : tokenizeSearchText(app.name);
+  if (!name || query.length < 2) return 0;
 
-  // ── Exact prefix match on full name: highest score ──
-  if (name.startsWith(query)) return 100;
+  if (name === query) return 100;
+  if (tokens.some((t) => t === query)) return 98;
+  if (name.startsWith(query)) return 96;
+  if (tokens.some((t) => t.startsWith(query))) return 91;
 
-  // ── Full name contains the query ──
-  if (name.includes(query)) return 90;
+  // Short queries should feel precise, not fuzzy.
+  if (query.length <= 2) return 0;
 
-  // ── All query tokens found as prefixes of app tokens ──
-  // e.g. "vs co" matches "visual studio code"
-  const allTokensMatchAsPrefix = qTokens.every((qt) =>
+  if (name.includes(query)) return 84;
+
+  const allTokensExact = qTokens.length > 1 && qTokens.every((qt) => tokens.some((t) => t === qt));
+  if (allTokensExact) return 92;
+
+  const allTokensMatchAsPrefix = qTokens.length > 1 && qTokens.every((qt) =>
     tokens.some((t) => t.startsWith(qt))
   );
-  if (allTokensMatchAsPrefix) return 85;
+  if (allTokensMatchAsPrefix) return 87;
 
-  // ── All query tokens are substrings of some app token ──
-  const allTokensSubstring = qTokens.every((qt) =>
-    tokens.some((t) => t.includes(qt))
+  const allTokensSubstring = qTokens.length > 1 && qTokens.every((qt) =>
+    qt.length >= 3 && tokens.some((t) => t.includes(qt))
   );
-  if (allTokensSubstring) return 75;
+  if (allTokensSubstring) return 74;
 
-  // ── Acronym matching: "vsc" → "Visual Studio Code" ──
-  // Moved before fuzzy so acronyms score higher than typo matches
+  // Acronym matching: "vsc" -> "Visual Studio Code"
   if (qTokens.length === 1 && query.length >= 2 && query.length <= tokens.length) {
     const acronym = tokens.map((t) => t[0]).join("");
-    if (acronym.startsWith(query)) return 70;
-    // Fuzzy acronym with 1 edit
-    if (query.length >= 2 && levenshtein(query, acronym.slice(0, query.length + 1)) <= 1) return 55;
+    if (acronym.startsWith(query)) return 76;
+    if (query.length >= 3 && levenshtein(query, acronym.slice(0, query.length + 1)) <= 1) return 60;
   }
 
-  // ── Fuzzy: check each query token against app tokens with edit distance ──
-  // More generous thresholds for typo tolerance
-  let fuzzyScore = 0;
-  let matchedTokens = 0;
-  for (const qt of qTokens) {
-    let bestTokenScore = 0;
-    for (const t of tokens) {
-      // More tolerant: allow 1 edit for 2-3 chars, 2 for 4-5, 3 for 6+
-      const maxDist = qt.length <= 2 ? 1 : qt.length <= 4 ? 2 : 3;
-      // Compare against slightly longer prefix to handle insertions
-      const slice = t.slice(0, qt.length + maxDist);
-      const dist = levenshtein(qt, slice);
-      if (dist <= maxDist) {
-        // Closer distance = higher score
-        const s = (1 - dist / (maxDist + 1)) * 65;
-        bestTokenScore = Math.max(bestTokenScore, s);
-      }
-      // Also try full token for short app names (e.g. "arc" for "Arc")
-      if (t.length <= qt.length + 2) {
-        const fullDist = levenshtein(qt, t);
-        if (fullDist <= maxDist) {
-          const s = (1 - fullDist / (maxDist + 1)) * 65;
-          bestTokenScore = Math.max(bestTokenScore, s);
-        }
-      }
-    }
-    if (bestTokenScore > 0) {
-      matchedTokens++;
-      fuzzyScore += bestTokenScore;
-    }
-  }
-
-  if (matchedTokens === qTokens.length && qTokens.length > 0) {
-    return fuzzyScore / qTokens.length;
-  }
-
-  // ── Partial token match: at least one query token matches well ──
-  // Helpful for multi-word queries where only part is misspelled
-  if (matchedTokens > 0 && qTokens.length > 1) {
-    return (fuzzyScore / qTokens.length) * (matchedTokens / qTokens.length);
-  }
-
-  // ── Bigram similarity as last resort for heavily misspelled queries ──
-  const bigramScore = bigramSimilarity(query, name) * 55;
-  if (bigramScore >= 15) return bigramScore;
-
-  // ── Substring of any single token (handles partial typing) ──
   if (query.length >= 3) {
     for (const t of tokens) {
-      if (t.includes(query)) return 40;
+      if (t.includes(query)) return 68;
     }
   }
 
-  // ── Last resort: full query vs full name Levenshtein ──
-  // Catches cases like "discrd" → "discord" where single-token approach might miss
-  {
-    const maxDist = query.length <= 3 ? 1 : query.length <= 5 ? 2 : 3;
+  // Near-exact token typos should still feel "obviously right".
+  if (qTokens.length === 1) {
+    let bestSingleTokenScore = 0;
+    for (const t of tokens) {
+      const compactLen = Math.max(query.length, t.length);
+      const maxDist = compactLen >= 7 ? 2 : 1;
+      const dist = levenshtein(query, t);
+      if (dist <= maxDist) {
+        const score = dist === 0
+          ? 96
+          : dist === 1
+            ? (compactLen >= 5 ? 80 : 72)
+            : 64;
+        bestSingleTokenScore = Math.max(bestSingleTokenScore, score);
+      }
+    }
+    if (bestSingleTokenScore > 0) return bestSingleTokenScore;
+  }
+
+  // Fuzzy matching is only worth the cost for longer queries.
+  if (query.length >= 4) {
+    let fuzzyScore = 0;
+    let matchedTokens = 0;
+    for (const qt of qTokens) {
+      let bestTokenScore = 0;
+      for (const t of tokens) {
+        const maxDist = qt.length <= 4 ? 1 : 2;
+        const slice = t.slice(0, qt.length + maxDist);
+        const dist = levenshtein(qt, slice);
+        if (dist <= maxDist) {
+          const s = (1 - dist / (maxDist + 1)) * 62;
+          bestTokenScore = Math.max(bestTokenScore, s);
+        }
+        if (t.length <= qt.length + 2) {
+          const fullDist = levenshtein(qt, t);
+          if (fullDist <= maxDist) {
+            const s = (1 - fullDist / (maxDist + 1)) * 60;
+            bestTokenScore = Math.max(bestTokenScore, s);
+          }
+        }
+      }
+      if (bestTokenScore > 0) {
+        matchedTokens++;
+        fuzzyScore += bestTokenScore;
+      }
+    }
+
+    if (matchedTokens === qTokens.length && qTokens.length > 0) {
+      return fuzzyScore / qTokens.length;
+    }
+    if (matchedTokens > 0 && qTokens.length > 1) {
+      return (fuzzyScore / qTokens.length) * (matchedTokens / qTokens.length);
+    }
+
+    const bigramScore = bigramSimilarity(query, name) * 54;
+    if (bigramScore >= 26) return bigramScore;
+
+    const maxDist = query.length <= 5 ? 1 : 2;
     const dist = levenshtein(query, name);
     if (dist <= maxDist) {
-      return (1 - dist / (maxDist + 1)) * 55;
-    }
-    // Also try against each individual token directly
-    for (const t of tokens) {
-      const tokenDist = levenshtein(query, t);
-      if (tokenDist <= maxDist) {
-        return (1 - tokenDist / (maxDist + 1)) * 50;
-      }
+      return (1 - dist / (maxDist + 1)) * 52;
     }
   }
 
@@ -263,12 +320,23 @@ async function searchFileIndex(
       rootId,
     });
     if (!Array.isArray(files)) return [];
+    const q = normalizeSearchText(query);
+    const qTokens = tokenizeSearchText(query);
+    const minScore = getFileScoreThreshold(q, qTokens.length);
 
-    return files.map((f: any, idx: number) => ({
+    const scored = files
+      .map((f: any, idx: number) => ({
+        file: f,
+        score: scoreFileResult(f, q, qTokens, idx),
+      }))
+      .filter((item) => item.score >= minScore)
+      .sort((a, b) => b.score - a.score);
+
+    return scored.slice(0, limit).map(({ file: f, score }) => ({
       kind: String(f.kind || "file").toLowerCase(),
       name: f.display_name || f.filename || f.path,
       path: String(f.path || ""),
-      score: Math.max(0, 60 - idx * 2), // Decreasing score based on rank
+      score: clampScore(score),
       source: "file-index",
       extension: f.extension,
       display_name: f.display_name,
@@ -280,6 +348,112 @@ async function searchFileIndex(
     logger.debug("[app-search] File search failed:", e);
     return [];
   }
+}
+
+function scoreFileResult(file: any, query: string, qTokens: string[], index: number): number {
+  const rawPath = String(file?.path || "");
+  const fileNameRaw = String(file?.filename || path.basename(rawPath) || "");
+  const displayRaw = String(file?.display_name || fileNameRaw || rawPath);
+  const display = normalizeSearchText(displayRaw);
+  const fileName = normalizeSearchText(fileNameRaw);
+  const pathText = normalizeSearchText(rawPath);
+  const tokens = Array.from(new Set([
+    ...tokenizeSearchText(displayRaw),
+    ...tokenizeSearchText(fileNameRaw),
+    ...tokenizeSearchText(rawPath),
+  ]));
+
+  let score = 0;
+
+  if (display === query || fileName === query) {
+    score = 100;
+  } else if (fileName.startsWith(query) || display.startsWith(query)) {
+    score = 96;
+  } else if (tokens.some((t) => t === query)) {
+    score = 92;
+  } else if (tokens.some((t) => t.startsWith(query))) {
+    score = 84;
+  } else if (query.length > 2 && (fileName.includes(query) || display.includes(query))) {
+    score = 72;
+  } else if (query.length >= 4 && pathText.includes(query)) {
+    score = 58;
+  }
+
+  if (score === 0 && qTokens.length > 1) {
+    let exactMatches = 0;
+    let prefixMatches = 0;
+    let substringMatches = 0;
+    for (const qt of qTokens) {
+      if (tokens.some((t) => t === qt)) exactMatches++;
+      else if (tokens.some((t) => t.startsWith(qt))) prefixMatches++;
+      else if (qt.length >= 3 && tokens.some((t) => t.includes(qt))) substringMatches++;
+    }
+
+    if (exactMatches === qTokens.length) score = 94;
+    else if (exactMatches + prefixMatches === qTokens.length) score = 88;
+    else if (prefixMatches === qTokens.length) score = 82;
+    else if (exactMatches + prefixMatches + substringMatches === qTokens.length) score = 70;
+    else score = exactMatches * 10 + prefixMatches * 8 + substringMatches * 5;
+  }
+
+  if (score === 0 && query.length >= 5) {
+    const candidate = fileName || display;
+    const maxDist = query.length <= 6 ? 1 : 2;
+    const dist = levenshtein(query, candidate);
+    if (dist <= maxDist) {
+      score = dist === 1 ? 64 : 56;
+    }
+  }
+
+  const kind = String(file?.kind || "").toLowerCase();
+  if (kind === "application") score += 4;
+  if (kind === "folder") score -= 2;
+  score += Math.max(0, 10 - index);
+
+  const depth = rawPath.split(/[/\\]+/).filter(Boolean).length;
+  score -= Math.min(8, Math.max(0, depth - 3)) * 0.5;
+
+  return clampScore(score);
+}
+
+function normalizeSearchText(value: string): string {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[/\\]+/g, " ")
+    .replace(/[_\-.]+/g, " ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenizeSearchText(value: string): string[] {
+  const normalized = normalizeSearchText(value);
+  if (!normalized) return [];
+  return Array.from(new Set(normalized.split(" ").filter(Boolean)));
+}
+
+function clampScore(score: number): number {
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function getAppScoreThreshold(query: string): number {
+  const compactLen = query.replace(/\s+/g, "").length;
+  if (compactLen <= 2) return 90;
+  if (compactLen <= 4) return 58;
+  if (compactLen <= 7) return 46;
+  return 36;
+}
+
+function getFileScoreThreshold(query: string, tokenCount: number): number {
+  const compactLen = query.replace(/\s+/g, "").length;
+  if (tokenCount > 1) {
+    if (compactLen <= 5) return 44;
+    return 36;
+  }
+  if (compactLen <= 2) return 82;
+  if (compactLen <= 4) return 58;
+  if (compactLen <= 7) return 44;
+  return 34;
 }
 
 // ─────────────────────────────────────────────────────────

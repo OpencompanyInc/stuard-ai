@@ -79,6 +79,7 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({
             id,
             title: config.title,
             message: config.message,
+            structuredContent: config.structuredContent,
             variant: config.variant || 'info',
             position: config.position || defaultPosition,
             image: config.image,
@@ -95,12 +96,17 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({
         };
 
         setNotifications((prev) => {
-            // Remove existing notification with same ID
-            const filtered = prev.filter((n) => n.id !== id);
+            const existingIndex = prev.findIndex((n) => n.id === id);
 
-            // Add new notification and limit to max
-            const updated = [notification, ...filtered].slice(0, maxNotifications);
-            return updated;
+            if (existingIndex >= 0) {
+                // In-place update — avoids unmount/remount blink
+                const updated = [...prev];
+                updated[existingIndex] = notification;
+                return updated;
+            }
+
+            // New notification — prepend and limit to max
+            return [notification, ...prev].slice(0, maxNotifications);
         });
 
         // Play sound
@@ -270,7 +276,7 @@ const NotificationContainer: React.FC<NotificationContainerProps> = ({ position,
                 ...positionMap[position],
                 flexDirection: isBottom ? 'column-reverse' : 'column',
             }}
-            className="notification-container scrollbar-hidden"
+            className="notification-container custom-scrollbar"
         >
             {children}
         </div>

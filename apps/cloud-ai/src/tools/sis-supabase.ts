@@ -12,6 +12,26 @@ import { openai } from '@ai-sdk/openai';
 const EMBEDDING_MODEL = 'text-embedding-3-large';
 const EMBEDDING_CACHE_TTL_MS = 1000 * 60 * 60; // 1 hour
 
+const LEGACY_BROWSER_EXTENSION_TOOL_NAMES = new Set([
+  'browser_get_content',
+  'browser_click_element',
+  'browser_type_text',
+  'browser_find_text',
+  'browser_get_element_position',
+  'browser_find_clickable',
+  'browser_hover',
+  'browser_select_option',
+  'browser_press_key',
+  'browser_get_form_fields',
+  'browser_fill_form',
+  'browser_wait_for_element',
+  'browser_scroll_to',
+  'browser_get_page_info',
+  'browser_upload_file',
+  'browser_set_toggle',
+  'browser_execute_script',
+]);
+
 export interface ToolMetadata {
   name: string;
   description: string;
@@ -59,7 +79,8 @@ export async function fetchAllToolsFromDB(): Promise<ToolMetadata[]> {
     return [];
   }
 
-  const tools = (data || []) as ToolMetadata[];
+  const tools = ((data || []) as ToolMetadata[])
+    .filter((tool) => !LEGACY_BROWSER_EXTENSION_TOOL_NAMES.has(tool.name));
   toolCache.set(cacheKey, { tools, timestamp: Date.now() });
 
   if (process.env.SIS_DEBUG === '1') {
@@ -106,7 +127,7 @@ export async function searchToolsSemanticSupabase(
   } = {}
 ): Promise<ResolvedTool[]> {
   const {
-    topK = 12,
+    topK = 5,
     threshold = 0.25,
     category = null,
     kind = null,
@@ -136,15 +157,17 @@ export async function searchToolsSemanticSupabase(
     return [];
   }
 
-  const results = (data || []).map((row: any) => ({
-    name: row.name,
-    description: row.description,
-    category: row.category,
-    kind: row.kind,
-    schema: row.schema,
-    semantic_hints: row.semantic_hints,
-    score: row.similarity,
-  }));
+  const results = (data || [])
+    .filter((row: any) => !LEGACY_BROWSER_EXTENSION_TOOL_NAMES.has(row.name))
+    .map((row: any) => ({
+      name: row.name,
+      description: row.description,
+      category: row.category,
+      kind: row.kind,
+      schema: row.schema,
+      semantic_hints: row.semantic_hints,
+      score: row.similarity,
+    }));
 
   if (process.env.SIS_DEBUG === '1') {
     console.log(`[sis-supabase] Query: "${query.slice(0, 50)}..." -> ${results.length} tools`);

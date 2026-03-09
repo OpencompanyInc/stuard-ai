@@ -533,24 +533,25 @@ export async function handleOpsRoutes(
         return true;
       }
 
-      // Get counts for all main tables
       const tables = [
         "profiles", "conversations", "messages", "devices", "usage_events",
         "shared_spaces", "space_shares", "memory_outbox",
         "webhooks", "webhook_events", "webhook_providers", "webhook_queue",
-        "marketplace_workflows", "marketplace_ratings", "marketplace_downloads",
-        "external_accounts", "beta_users", "waitlist", "feedback", "feedback_comments"
+        "marketplace_workflows", "marketplace_workflow_versions", "marketplace_ratings", "marketplace_downloads",
+        "external_accounts", "beta_users", "waitlist", "feedback", "feedback_comments",
+        "deployments", "cloud_engines", "storage_usage", "compute_billing_events", "vm_snapshots",
+        "vm_metrics_history", "terminal_sessions", "vm_deployments"
       ];
 
       const counts: Record<string, number> = {};
-      
+
       await Promise.all(
         tables.map(async (table) => {
           try {
             const { count } = await supabase.from(table).select("id", { count: "exact", head: true });
             counts[table] = count || 0;
           } catch {
-            counts[table] = -1; // Table might not exist
+            counts[table] = -1;
           }
         })
       );
@@ -604,7 +605,6 @@ export async function handleOpsRoutes(
           const d = item[dateField]?.slice(0, 10);
           if (d) map[d] = (map[d] || 0) + 1;
         }
-        // Fill missing days with 0
         const result: { date: string; count: number }[] = [];
         const start = new Date(since);
         const end = new Date();
@@ -615,7 +615,6 @@ export async function handleOpsRoutes(
         return result;
       }
 
-      // Model breakdown from usage_events
       const modelMap: Record<string, { tokens: number; cost: number; count: number; promptTokens: number; completionTokens: number }> = {};
       for (const u of usageRes.data || []) {
         const m = u.model || "unknown";
@@ -627,7 +626,6 @@ export async function handleOpsRoutes(
         modelMap[m].completionTokens += u.completion_tokens || 0;
       }
 
-      // Usage trend by day
       const usageByDay: Record<string, { tokens: number; cost: number; requests: number }> = {};
       for (const u of usageRes.data || []) {
         const d = u.created_at?.slice(0, 10);
@@ -639,7 +637,6 @@ export async function handleOpsRoutes(
         }
       }
 
-      // Fill missing days for usage trend
       const usageTrend: { date: string; tokens: number; cost: number; requests: number }[] = [];
       const startDate = new Date(since);
       const endDate = new Date();
@@ -648,7 +645,6 @@ export async function handleOpsRoutes(
         usageTrend.push({ date: key, tokens: usageByDay[key]?.tokens || 0, cost: usageByDay[key]?.cost || 0, requests: usageByDay[key]?.requests || 0 });
       }
 
-      // Message role breakdown
       const roleBreakdown: Record<string, number> = {};
       for (const m of msgsRes.data || []) {
         const role = m.role || "unknown";

@@ -20,6 +20,26 @@ function normalizeMarkdownSpacing(input: string): string {
   return normalized.join('```');
 }
 
+function getMessageText(message: any): string {
+  if (typeof message?.content === 'string') return message.content;
+  if (typeof message?.text === 'string') return message.text;
+  if (message?.content !== undefined) return JSON.stringify(message.content);
+  return '';
+}
+
+function getMessageReasoning(message: any): string | undefined {
+  if (typeof message?.reasoning === 'string' && message.reasoning.trim()) return message.reasoning;
+  if (typeof message?.metadata?.reasoning === 'string' && message.metadata.reasoning.trim()) return message.metadata.reasoning;
+  return undefined;
+}
+
+function getMessageToolCalls(message: any): any[] {
+  if (Array.isArray(message?.toolCalls)) return message.toolCalls;
+  if (Array.isArray(message?.metadata?.toolCalls)) return message.metadata.toolCalls;
+  if (Array.isArray(message?.tool_calls)) return message.tool_calls;
+  return [];
+}
+
 interface HistoryViewProps {
   usage: any[];
   conversations: any[];
@@ -168,11 +188,36 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                             }
                           }}
                         >
-                          {typeof m.content === 'string'
-                            ? normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(m.content)))
-                            : normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(JSON.stringify(m.content))))}
+                          {normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(getMessageText(m))))}
                         </ReactMarkdown>
                       </div>
+                      {getMessageReasoning(m) && (
+                        <details className="mt-3 rounded-lg border border-theme bg-theme-bg/60 px-3 py-2">
+                          <summary className="cursor-pointer text-[11px] font-medium text-theme-muted">Reasoning</summary>
+                          <div className="mt-2 text-[12px] whitespace-pre-wrap text-theme-muted leading-relaxed">
+                            {getMessageReasoning(m)}
+                          </div>
+                        </details>
+                      )}
+                      {getMessageToolCalls(m).length > 0 && (
+                        <details className="mt-3 rounded-lg border border-theme bg-theme-bg/60 px-3 py-2">
+                          <summary className="cursor-pointer text-[11px] font-medium text-theme-muted">
+                            Tool calls ({getMessageToolCalls(m).length})
+                          </summary>
+                          <div className="mt-2 space-y-2">
+                            {getMessageToolCalls(m).map((tool: any, toolIdx: number) => (
+                              <div key={tool.id || toolIdx} className="rounded-md border border-theme bg-theme-card px-2.5 py-2">
+                                <div className="text-[12px] font-medium text-theme-fg">
+                                  {tool.tool || tool.name || 'Tool'}
+                                </div>
+                                {tool.status && (
+                                  <div className="text-[11px] text-theme-muted mt-0.5">{tool.status}</div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      )}
                     </div>
                   </div>
                 ))

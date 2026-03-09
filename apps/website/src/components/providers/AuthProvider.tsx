@@ -3,6 +3,7 @@
 import { createContext, useContext, ReactNode } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import type { User } from '@supabase/supabase-js';
+import type { OnboardingPath, OnboardingProfile } from '../../../../../shared/onboardingProfile';
 
 interface UserData {
   uid: string;
@@ -17,6 +18,8 @@ interface UserData {
   };
   plan?: string;
   stripeCustomerId?: string | null;
+  onboardingPath?: OnboardingPath | null;
+  onboardingProfile?: OnboardingProfile | null;
 }
 
 interface SessionData {
@@ -33,6 +36,7 @@ interface SessionData {
 interface AuthResult {
   success: boolean;
   error?: string;
+  user?: User | null;
   sessionData?: SessionData;
 }
 
@@ -40,7 +44,7 @@ interface AuthContextType {
   user: User | null;
   userData: UserData | null;
   loading: boolean;
-  signUp: (email: string, password: string, fullName: string, phone?: string, smsControlEnabled?: boolean, marketingEmails?: boolean) => Promise<AuthResult>;
+  signUp: (email: string, password: string, fullName: string, phone?: string, smsControlEnabled?: boolean, marketingEmails?: boolean, onboardingProfile?: OnboardingProfile | null) => Promise<AuthResult>;
   signIn: (email: string, password: string) => Promise<AuthResult>;
   signInWithGoogle: () => Promise<AuthResult>;
   logout: () => Promise<AuthResult>;

@@ -64,55 +64,28 @@ const NotificationListener = () => {
             show(config);
         });
 
-        // Listen for proactive progress stages (visualizer toast)
-        const PROGRESS_ID = 'proactive-progress';
-        const removeProgress = (window as any).desktopAPI?.onProactiveProgress?.((data: any) => {
-            const { stage, label, progress, detail } = data;
-
-            if (stage === 'complete' || stage === 'failed') {
-                show({
-                    id: PROGRESS_ID,
-                    title: '✦ Stuard Waking Up',
-                    message: detail ? `${label}\n${detail}` : label,
-                    variant: stage === 'failed' ? 'error' : 'success',
-                    position: 'top-right',
-                    duration: 12000,
-                    dismissible: true,
-                    progress: 100,
-                });
-                return;
-            }
-
-            show({
-                id: PROGRESS_ID,
-                title: '✦ Stuard Waking Up',
-                message: detail ? `${label}\n${detail}` : label,
-                variant: 'neutral',
-                position: 'top-right',
-                duration: 0,
-                dismissible: true,
-                progress,
-            });
-        });
-
         // Listen for proactive check-in notifications (with reply support)
+        const CHECKIN_ID = 'proactive-checkin';
         const removeProactive = (window as any).desktopAPI?.onProactiveCheckin?.((data: any) => {
-            const { wakeUpId, agentMessage, screenshotUsed, tasksCompleted } = data;
-
-            dismiss(PROGRESS_ID);
+            const { wakeUpId, agentMessage, structuredContent, screenshotUsed, tasksCompleted, isFollowUp } = data;
 
             show({
-                title: '✦ Stuard Check-in',
+                id: CHECKIN_ID,
+                title: isFollowUp ? '✦ Stuard' : '✦ Stuard Check-in',
                 message: agentMessage,
+                structuredContent,
                 variant: 'info',
                 position: 'top-right',
                 duration: 0,
                 dismissible: true,
-                sound: true,
+                sound: !isFollowUp,
                 input: {
                     placeholder: 'Reply to Stuard...',
                     submitText: 'Send',
+                    keepAfterSubmit: false,
                     onSubmit: (value: string) => {
+                        // Dismiss the notification immediately while waiting for the response
+                        dismiss(CHECKIN_ID);
                         (window as any).desktopAPI?.proactiveReply?.({ wakeUpId, text: value });
                     },
                 },
@@ -120,6 +93,7 @@ const NotificationListener = () => {
                     {
                         label: 'Open Chat',
                         variant: 'primary',
+                        keepNotification: true,
                         onClick: () => {
                             (window as any).desktopAPI?.openDashboard?.({ tab: 'proactive' });
                         },
@@ -130,7 +104,6 @@ const NotificationListener = () => {
 
         return () => {
             removeListener && removeListener();
-            removeProgress && removeProgress();
             removeProactive && removeProactive();
         };
     }, [show, update, dismiss]);

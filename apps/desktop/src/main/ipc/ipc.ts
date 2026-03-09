@@ -1,4 +1,3 @@
-
 import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut, nativeImage } from "electron";
 import * as path from "path";
 import { selectFiles, selectImages, listDirectory, selectFolder } from "../utils/files";
@@ -7,17 +6,114 @@ import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
 import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } from "../integrations/outlook";
-import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, createCheckout, getCustomer, listProducts, openCustomerPortal, purchaseCredits, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch } from "../services";
+import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, createCheckout, getCustomer, listProducts, openCustomerPortal, purchaseCredits, unifiedTasksService, offlineCalendarService, getInstalledApps, refreshAppCache, unifiedSearch, getFileIconCached } from "../services";
 import { setupSpeechIpc } from "./speech";
 import { setupTerminalIpc } from "../terminal";
 import logger from "../utils/logger";
 import * as fs from "fs";
 import { Buffer } from "node:buffer";
-import { getGlobalHotkey, setGlobalHotkey as saveGlobalHotkey, getTimezone, setTimezone } from "../settings";
+import { getGlobalHotkey, setGlobalHotkey as saveGlobalHotkey, getTimezone, setTimezone, loadSettings, saveSettings } from "../settings";
 import { skills_list, skills_get, skills_save, skills_delete, skills_toggle, loadSkills, type Skill } from "../skills";
+import { proactiveService } from "../services/proactive-service";
+import { handleProactiveReply, isProactiveSchedulerRunning, triggerManualWakeUp } from "../services/proactive-scheduler";
+import { TOOL_REGISTRY } from "../tools/registry";
 
 let nodeNotifier: any = null;
 try { nodeNotifier = require('node-notifier'); } catch { }
+
+function pickChromeProfileDisplayName(profilePath: string, fallbackName: string) {
+  const genericNames = new Set(['default', 'your chrome']);
+  const isGenericName = (value: string) => {
+    const normalized = value.trim().toLowerCase();
+    return !normalized
+      || genericNames.has(normalized)
+      || /^profile\s+\d+$/i.test(normalized)
+      || /^person\s+\d+$/i.test(normalized);
+  };
+
+  const prefsPath = path.join(profilePath, 'Preferences');
+  if (!fs.existsSync(prefsPath)) return fallbackName;
+
+  try {
+    const prefs = JSON.parse(fs.readFileSync(prefsPath, 'utf-8'));
+    const profile = prefs?.profile || {};
+    const accountInfo = Array.isArray(prefs?.account_info) ? prefs.account_info : [];
+    const primaryAccount = accountInfo.find((entry: any) => {
+      const email = String(entry?.email || '').trim();
+      const fullName = String(entry?.full_name || entry?.given_name || '').trim();
+      return !!email || !!fullName;
+    });
+
+    const candidates = [
+      profile?.gaia_name,
+      profile?.gaia_given_name,
+      primaryAccount?.full_name,
+      primaryAccount?.given_name,
+      profile?.shortcut_name,
+      profile?.name,
+      primaryAccount?.email,
+    ];
+
+    for (const candidate of candidates) {
+      const value = String(candidate || '').trim();
+      if (!value || isGenericName(value)) continue;
+      return value;
+    }
+  } catch {}
+
+  return fallbackName;
+}
+
+function listChromeProfilesLocal() {
+  const home = app.getPath('home');
+  const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+  const candidates = process.platform === 'win32'
+    ? [
+      { browser: 'Chrome', userDataDir: path.join(localAppData, 'Google', 'Chrome', 'User Data') },
+      { browser: 'Chrome Beta', userDataDir: path.join(localAppData, 'Google', 'Chrome Beta', 'User Data') },
+      { browser: 'Edge', userDataDir: path.join(localAppData, 'Microsoft', 'Edge', 'User Data') },
+      { browser: 'Brave', userDataDir: path.join(localAppData, 'BraveSoftware', 'Brave-Browser', 'User Data') },
+    ]
+    : process.platform === 'darwin'
+      ? [
+        { browser: 'Chrome', userDataDir: path.join(home, 'Library', 'Application Support', 'Google', 'Chrome') },
+        { browser: 'Chrome Beta', userDataDir: path.join(home, 'Library', 'Application Support', 'Google', 'Chrome Beta') },
+        { browser: 'Edge', userDataDir: path.join(home, 'Library', 'Application Support', 'Microsoft Edge') },
+        { browser: 'Brave', userDataDir: path.join(home, 'Library', 'Application Support', 'BraveSoftware', 'Brave-Browser') },
+      ]
+      : [
+        { browser: 'Chrome', userDataDir: path.join(home, '.config', 'google-chrome') },
+        { browser: 'Chrome Beta', userDataDir: path.join(home, '.config', 'google-chrome-beta') },
+        { browser: 'Edge', userDataDir: path.join(home, '.config', 'microsoft-edge') },
+        { browser: 'Brave', userDataDir: path.join(home, '.config', 'BraveSoftware', 'Brave-Browser') },
+      ];
+
+  return candidates.flatMap(({ browser, userDataDir }) => {
+    try {
+      if (!fs.existsSync(userDataDir) || !fs.statSync(userDataDir).isDirectory()) return [];
+      const profiles: Array<{ name: string; path: string }> = [];
+      const defaultProfilePath = path.join(userDataDir, 'Default');
+      const defaultCookies = fs.existsSync(path.join(userDataDir, 'Default', 'Network', 'Cookies'))
+        || fs.existsSync(path.join(userDataDir, 'Default', 'Cookies'));
+      if (defaultCookies) {
+        profiles.push({ name: pickChromeProfileDisplayName(defaultProfilePath, 'Default'), path: defaultProfilePath });
+      }
+      for (const entry of fs.readdirSync(userDataDir, { withFileTypes: true })) {
+        if (!entry.isDirectory() || !entry.name.startsWith('Profile ')) continue;
+        const profilePath = path.join(userDataDir, entry.name);
+        const hasCookies = fs.existsSync(path.join(profilePath, 'Network', 'Cookies'))
+          || fs.existsSync(path.join(profilePath, 'Cookies'));
+        if (!hasCookies) continue;
+        const displayName = pickChromeProfileDisplayName(profilePath, entry.name);
+        profiles.push({ name: displayName, path: profilePath });
+      }
+      if (!profiles.length) return [];
+      return [{ browser, userDataDir, profiles }];
+    } catch {
+      return [];
+    }
+  });
+}
 
 // SECURITY: SSRF protection - block requests to private/internal IP addresses
 function isPrivateOrInternalUrl(urlString: string): boolean {
@@ -442,6 +538,111 @@ export function setupIpc() {
     }
   });
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Security & Privacy
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  ipcMain.handle('security:getSettings', async () => {
+    try {
+      return await execLocalTool('security_get_settings', {});
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'security_get_settings failed' };
+    }
+  });
+
+  ipcMain.handle('security:setPassword', async (_e, password: string, currentPassword?: string) => {
+    try {
+      return await execLocalTool('security_set_password', { password, current_password: currentPassword });
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'security_set_password failed' };
+    }
+  });
+
+  ipcMain.handle('security:verifyPassword', async (_e, password: string) => {
+    try {
+      return await execLocalTool('security_verify_password', { password });
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'security_verify_password failed' };
+    }
+  });
+
+  ipcMain.handle('security:updateSettings', async (_e, updates: any) => {
+    try {
+      return await execLocalTool('security_update_settings', updates || {});
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'security_update_settings failed' };
+    }
+  });
+
+  ipcMain.handle('security:removePassword', async (_e, currentPassword: string) => {
+    try {
+      return await execLocalTool('security_remove_password', { current_password: currentPassword });
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'security_remove_password failed' };
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Secure Vault (Credential Management)
+  // Routes to Python agent vault tools via execLocalTool
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  ipcMain.handle('vault:list', async (_e, options?: any) => {
+    try {
+      return await execLocalTool('vault_list', options || {});
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'vault_list failed' };
+    }
+  });
+
+  ipcMain.handle('vault:get', async (_e, id: string) => {
+    try {
+      return await execLocalTool('vault_get', { id });
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'vault_get failed' };
+    }
+  });
+
+  ipcMain.handle('vault:add', async (_e, entry: any) => {
+    try {
+      return await execLocalTool('vault_add', entry || {});
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'vault_add failed' };
+    }
+  });
+
+  ipcMain.handle('vault:update', async (_e, id: string, fields: any) => {
+    try {
+      return await execLocalTool('vault_update', { id, ...fields });
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'vault_update failed' };
+    }
+  });
+
+  ipcMain.handle('vault:delete', async (_e, id: string) => {
+    try {
+      return await execLocalTool('vault_delete', { id });
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'vault_delete failed' };
+    }
+  });
+
+  ipcMain.handle('vault:search', async (_e, query: string) => {
+    try {
+      return await execLocalTool('vault_search', { query });
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'vault_search failed' };
+    }
+  });
+
+  ipcMain.handle('vault:stats', async () => {
+    try {
+      return await execLocalTool('vault_stats', {});
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'vault_stats failed' };
+    }
+  });
+
   ipcMain.on('window:ignore-mouse-events', (event, ignore, options) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     win?.setIgnoreMouseEvents(ignore, options);
@@ -491,70 +692,7 @@ export function setupIpc() {
   });
 
   ipcMain.handle('system:getFileIcon', async (_e, filePath: string, options?: { size?: 'small' | 'normal' | 'large' }) => {
-    try {
-      const p = String(filePath || '').trim();
-      if (!p) return { ok: false, error: 'invalid_path' };
-      const size = options?.size;
-
-      // Expand %ENV_VAR% on Windows and strip quotes / trailing ",N" resource index
-      const normalize = (s: string): string => {
-        let v = String(s || '').trim();
-        if (!v) return '';
-        if (process.platform === 'win32') {
-          v = v.replace(/%([^%]+)%/g, (_m, name) => {
-            const key = String(name || '').trim();
-            return key ? String(process.env[key] ?? _m) : _m;
-          });
-          if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-            v = v.slice(1, -1).trim();
-          }
-          const m = v.match(/^(.*?),\s*\d+$/);
-          if (m?.[1]) return m[1].trim();
-        }
-        return v;
-      };
-
-      const cleaned = normalize(p);
-      if (!cleaned) return { ok: false, error: 'invalid_path' };
-
-      // Squirrel-based apps: if path points to Update.exe, look for the real app exe
-      if (process.platform === 'win32' && cleaned.toLowerCase().endsWith('update.exe')) {
-        try {
-          const dir = path.dirname(cleaned);
-          const appDirs = fs.readdirSync(dir).filter((e: string) => e.startsWith('app-')).sort((a: string, b: string) => b.localeCompare(a, undefined, { numeric: true }));
-          if (appDirs.length > 0) {
-            const latestDir = path.join(dir, appDirs[0]);
-            const exes = fs.readdirSync(latestDir).filter((f: string) => f.toLowerCase().endsWith('.exe') && f.toLowerCase() !== 'update.exe' && !f.toLowerCase().includes('squirrel') && !f.toLowerCase().includes('unins'));
-            if (exes.length > 0) {
-              const candidate = path.join(latestDir, exes[0]);
-              const img = await app.getFileIcon(candidate, size ? { size } : undefined);
-              if (img && !img.isEmpty()) return { ok: true, dataUrl: img.toDataURL() };
-            }
-          }
-        } catch { }
-      }
-
-      // .ico / .png / .bmp — read actual image bytes via nativeImage
-      const extLow = cleaned.toLowerCase();
-      if (extLow.endsWith('.ico') || extLow.endsWith('.png') || extLow.endsWith('.bmp')) {
-        try {
-          if (fs.existsSync(cleaned)) {
-            const img = nativeImage.createFromPath(cleaned);
-            if (img && !img.isEmpty()) return { ok: true, dataUrl: img.toDataURL() };
-          }
-        } catch { }
-      }
-
-      // Use Electron's built-in app.getFileIcon() — works for .exe, .app, and any file
-      try {
-        const img = await app.getFileIcon(cleaned, size ? { size } : undefined);
-        if (img && !img.isEmpty()) return { ok: true, dataUrl: img.toDataURL() };
-      } catch { }
-
-      return { ok: false, error: 'no_icon' };
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message || 'failed') };
-    }
+    return getFileIconCached(filePath, options);
   });
 
   // Theme
@@ -596,6 +734,56 @@ export function setupIpc() {
     try {
       setTimezone(typeof tz === 'string' && tz.trim() ? tz.trim() : null);
       return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+
+  ipcMain.handle('browserUse:getChromeSyncSettings', () => {
+    try {
+      const settings = loadSettings();
+      return {
+        ok: true,
+        settings: {
+          chromeSyncEnabled: settings.chromeSyncEnabled !== false,
+          chromeSyncBrowserName: settings.chromeSyncBrowserName || 'Chrome',
+          chromeSyncProfileName: settings.chromeSyncProfileName || 'Default',
+          chromeSyncProfilePath: settings.chromeSyncProfilePath || null,
+          chromeSyncUserDataDir: settings.chromeSyncUserDataDir || null,
+        },
+      };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+
+  ipcMain.handle('browserUse:listChromeProfiles', () => {
+    try {
+      return { ok: true, browsers: listChromeProfilesLocal() };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+
+  ipcMain.handle('browserUse:updateChromeSyncSettings', (_e, updates: any) => {
+    try {
+      const next = {
+        chromeSyncEnabled: updates?.chromeSyncEnabled !== false,
+        chromeSyncBrowserName: typeof updates?.chromeSyncBrowserName === 'string' && updates.chromeSyncBrowserName.trim()
+          ? updates.chromeSyncBrowserName.trim()
+          : null,
+        chromeSyncProfileName: typeof updates?.chromeSyncProfileName === 'string' && updates.chromeSyncProfileName.trim()
+          ? updates.chromeSyncProfileName.trim()
+          : null,
+        chromeSyncProfilePath: typeof updates?.chromeSyncProfilePath === 'string' && updates.chromeSyncProfilePath.trim()
+          ? updates.chromeSyncProfilePath.trim()
+          : null,
+        chromeSyncUserDataDir: typeof updates?.chromeSyncUserDataDir === 'string' && updates.chromeSyncUserDataDir.trim()
+          ? updates.chromeSyncUserDataDir.trim()
+          : null,
+      };
+      saveSettings(next);
+      return { ok: true, settings: { ...next, chromeSyncEnabled: next.chromeSyncEnabled !== false } };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || 'failed') };
     }
@@ -682,6 +870,32 @@ export function setupIpc() {
   ipcMain.handle('skills:delete', (_e, id: string) => skills_delete(id));
   ipcMain.handle('skills:toggle', (_e, id: string) => skills_toggle(id));
 
+  // Unified Tasks
+  ipcMain.handle('unified-tasks:list', () => unifiedTasksService.list());
+  ipcMain.handle('unified-tasks:get', (_e, taskId: string) => unifiedTasksService.get(taskId));
+  ipcMain.handle('unified-tasks:add', (_e, task: any) => unifiedTasksService.add(task));
+  ipcMain.handle('unified-tasks:update', (_e, task: any) => unifiedTasksService.update(task));
+  ipcMain.handle('unified-tasks:delete', (_e, taskId: string) => unifiedTasksService.delete(taskId));
+  ipcMain.handle('unified-tasks:toggle-status', (_e, taskId: string) => unifiedTasksService.toggleStatus(taskId));
+  ipcMain.handle('unified-tasks:add-subtodo', (_e, taskId: string, subtodo: any) => unifiedTasksService.addSubtodo(taskId, subtodo));
+  ipcMain.handle('unified-tasks:update-subtodo', (_e, taskId: string, subtodoId: string, updates: any) => unifiedTasksService.updateSubtodo(taskId, subtodoId, updates));
+  ipcMain.handle('unified-tasks:toggle-subtodo', (_e, taskId: string, subtodoId: string) => unifiedTasksService.toggleSubtodo(taskId, subtodoId));
+  ipcMain.handle('unified-tasks:delete-subtodo', (_e, taskId: string, subtodoId: string) => unifiedTasksService.deleteSubtodo(taskId, subtodoId));
+  ipcMain.handle('unified-tasks:add-agent-assignment', (_e, taskId: string, assignment: any) => unifiedTasksService.addAgentAssignment(taskId, assignment));
+  ipcMain.handle('unified-tasks:update-agent-assignment', (_e, taskId: string, assignmentId: string, updates: any) => unifiedTasksService.updateAgentAssignment(taskId, assignmentId, updates));
+  ipcMain.handle('unified-tasks:delete-agent-assignment', (_e, taskId: string, assignmentId: string) => unifiedTasksService.deleteAgentAssignment(taskId, assignmentId));
+  ipcMain.handle('unified-tasks:get-pending-assignments', () => unifiedTasksService.getPendingAssignments());
+  ipcMain.handle('unified-tasks:get-calendar-items', () => unifiedTasksService.getCalendarItems());
+
+  // Offline Calendar
+  ipcMain.handle('offline-calendar:list', () => offlineCalendarService.list());
+  ipcMain.handle('offline-calendar:get', (_e, eventId: string) => offlineCalendarService.get(eventId));
+  ipcMain.handle('offline-calendar:add', (_e, eventData: any) => offlineCalendarService.add(eventData));
+  ipcMain.handle('offline-calendar:update', (_e, eventData: any) => offlineCalendarService.update(eventData));
+  ipcMain.handle('offline-calendar:delete', (_e, eventId: string) => offlineCalendarService.delete(eventId));
+  ipcMain.handle('offline-calendar:get-for-range', (_e, startIso: string, endIso: string) => offlineCalendarService.getForRange(startIso, endIso));
+  ipcMain.handle('offline-calendar:get-calendar-blocks', (_e, startIso: string, endIso: string) => offlineCalendarService.getCalendarBlocks(startIso, endIso));
+
   // Python Environment Management
   ipcMain.handle('python:status', async () => {
     return await execLocalTool('python_status', {});
@@ -755,7 +969,7 @@ export function setupIpc() {
     return { ok: true, endpoint: getCurrentApiEndpoint() };
   });
 
-  // Tools execution (Renderer -> Main -> Local Agent/System)
+  // Tools execution (Renderer → Main → Local Agent/System)
   ipcMain.handle('tools:exec', async (_e, tool: string, args: any) => {
     try {
       logger.info("Initializing custom UI IPC...");
@@ -829,98 +1043,60 @@ export function setupIpc() {
     }
   });
 
-  // File Indexing
-  ipcMain.handle('fileIndex:listRoots', async () => {
+  // Proactive Agent System
+  ipcMain.handle('proactive:getConfig', () => proactiveService.getConfig());
+  ipcMain.handle('proactive:updateConfig', (_e, updates: any) => {
     try {
-      const roots = await listRoots();
-      return { ok: true, roots };
+      return proactiveService.updateConfig(updates || {});
     } catch (e: any) {
-      return { ok: false, error: String(e?.message || e) };
+      return { ok: false, error: String(e?.message || 'failed') };
     }
   });
-
-  ipcMain.handle('fileIndex:addRoot', async (_e, path: string, schedule?: string) => {
+  ipcMain.handle('proactive:listTasks', () => proactiveService.listTasks());
+  ipcMain.handle('proactive:addTask', (_e, task: any) => {
     try {
-      const root = await addRoot(path, schedule as any);
-      if (!root) return { ok: false, error: 'Failed to add root' };
-      return { ok: true, root };
+      return proactiveService.addTask(task || {});
     } catch (e: any) {
-      return { ok: false, error: String(e?.message || e) };
+      return { ok: false, error: String(e?.message || 'failed') };
     }
   });
-
-  ipcMain.handle('fileIndex:removeRoot', async (_e, rootId: string) => {
+  ipcMain.handle('proactive:updateTask', (_e, taskId: string, updates: any) => {
     try {
-      const success = await removeRoot(rootId);
-      return { ok: success };
+      return proactiveService.updateTask(taskId, updates || {});
     } catch (e: any) {
-      return { ok: false, error: String(e?.message || e) };
+      return { ok: false, error: String(e?.message || 'failed') };
     }
   });
-
-  ipcMain.handle('fileIndex:getStats', async () => {
+  ipcMain.handle('proactive:deleteTask', (_e, taskId: string) => {
     try {
-      const stats = await getFileIndexStats();
-      return { ok: true, stats };
+      return proactiveService.deleteTask(taskId);
     } catch (e: any) {
-      return { ok: false, error: String(e?.message || e) };
+      return { ok: false, error: String(e?.message || 'failed') };
     }
   });
-
-  ipcMain.handle('fileIndex:scan', async (_e, rootId: string) => {
+  ipcMain.handle('proactive:getWakeUpLog', (_e, limit?: number) => {
     try {
-      const progress = await scanRoot(rootId);
-      return { ok: true, progress };
+      return proactiveService.getWakeUpLog(typeof limit === 'number' ? limit : 20);
     } catch (e: any) {
-      return { ok: false, error: String(e?.message || e) };
+      return { ok: false, error: String(e?.message || 'failed') };
     }
   });
-
-  ipcMain.handle('fileIndex:search', async (_e, query: string, options?: any) => {
+  ipcMain.handle('proactive:triggerNow', () => triggerManualWakeUp());
+  ipcMain.handle('proactive:getAvailableTools', () => {
     try {
-      const files = await searchFiles(query, options || {});
-      return { ok: true, files };
+      return { ok: true, tools: Object.keys(TOOL_REGISTRY).sort((a, b) => a.localeCompare(b)) };
     } catch (e: any) {
-      return { ok: false, error: String(e?.message || e) };
+      return { ok: false, error: String(e?.message || 'failed') };
     }
   });
-
-  // ── App Discovery & Unified Search ──
-  ipcMain.handle('apps:list', async (_e, forceRefresh?: boolean) => {
-    try {
-      const apps = await getInstalledApps(forceRefresh ?? false);
-      return { ok: true, apps };
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message || e) };
-    }
-  });
-
-  ipcMain.handle('apps:refresh', async () => {
-    try {
-      await refreshAppCache();
-      const apps = await getInstalledApps();
-      return { ok: true, count: apps.length };
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message || e) };
-    }
-  });
-
-  ipcMain.handle('apps:launch', async (_e, launchTarget: string) => {
-    try {
-      if (!launchTarget) return { ok: false, error: 'No launch target' };
-      if (launchTarget.startsWith('shell:')) {
-        // UWP / shell folder apps
-        await shell.openExternal(launchTarget);
-      } else if (fs.existsSync(launchTarget)) {
-        // Direct executable or .app path
-        await shell.openPath(launchTarget);
-      } else {
-        await shell.openExternal(launchTarget);
-      }
-      return { ok: true };
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message || e) };
-    }
+  ipcMain.handle('proactive:submitResult', () => ({ ok: true }));
+  ipcMain.handle('proactive:isRunning', () => ({ ok: true, running: isProactiveSchedulerRunning() }));
+  ipcMain.handle('proactive:reply', async (_e, payload: { wakeUpId: string; text: string }) => {
+    const wakeUpId = String(payload?.wakeUpId || '').trim();
+    const text = String(payload?.text || '').trim();
+    if (!wakeUpId) return { ok: false, error: 'wakeUpId is required' };
+    if (!text) return { ok: false, error: 'text is required' };
+    return handleProactiveReply(wakeUpId, text);
   });
 
   ipcMain.handle('search:unified', async (_e, query: string, options?: any) => {
@@ -1075,6 +1251,13 @@ export function setupIpc() {
             try { w.webContents.send('overlay:view-mode', { mode: 'tasks', subTab: target === 'agent' ? 'agent' : 'todo' }); } catch { }
           }
           break;
+        case 'terminal':
+          openSidebarWindow({ tab: 'terminal', expanded: true });
+          break;
+        case 'overlay':
+          setOverlayMode('window');
+          showWindow();
+          break;
       }
     } catch (e) {
       logger.warn('Failed to execute bookmark via keybind:', e);
@@ -1184,177 +1367,6 @@ export function setupIpc() {
     return { ok: true, bookmarks: ordered };
   });
 
-  // ==========================================
-  // UNIFIED TASKS SYSTEM
-  // ==========================================
-
-  ipcMain.handle('unified-tasks:list', () => unifiedTasksService.list());
-  ipcMain.handle('unified-tasks:get', (_e, taskId: string) => unifiedTasksService.get(taskId));
-  ipcMain.handle('unified-tasks:add', (_e, task: any) => unifiedTasksService.add(task));
-  ipcMain.handle('unified-tasks:update', (_e, task: any) => unifiedTasksService.update(task));
-  ipcMain.handle('unified-tasks:delete', (_e, taskId: string) => unifiedTasksService.delete(taskId));
-  ipcMain.handle('unified-tasks:toggle-status', (_e, taskId: string) => unifiedTasksService.toggleStatus(taskId));
-  ipcMain.handle('unified-tasks:add-subtodo', (_e, taskId: string, subtodo: any) => unifiedTasksService.addSubtodo(taskId, subtodo));
-  ipcMain.handle('unified-tasks:update-subtodo', (_e, taskId: string, subtodoId: string, updates: any) => unifiedTasksService.updateSubtodo(taskId, subtodoId, updates));
-  ipcMain.handle('unified-tasks:toggle-subtodo', (_e, taskId: string, subtodoId: string) => unifiedTasksService.toggleSubtodo(taskId, subtodoId));
-  ipcMain.handle('unified-tasks:delete-subtodo', (_e, taskId: string, subtodoId: string) => unifiedTasksService.deleteSubtodo(taskId, subtodoId));
-  ipcMain.handle('unified-tasks:add-agent-assignment', (_e, taskId: string, assignment: any) => unifiedTasksService.addAgentAssignment(taskId, assignment));
-  ipcMain.handle('unified-tasks:update-agent-assignment', (_e, taskId: string, assignmentId: string, updates: any) => unifiedTasksService.updateAgentAssignment(taskId, assignmentId, updates));
-  ipcMain.handle('unified-tasks:delete-agent-assignment', (_e, taskId: string, assignmentId: string) => unifiedTasksService.deleteAgentAssignment(taskId, assignmentId));
-  ipcMain.handle('unified-tasks:get-pending-assignments', () => unifiedTasksService.getPendingAssignments());
-  ipcMain.handle('unified-tasks:get-calendar-items', () => unifiedTasksService.getCalendarItems());
-
-  // ==========================================
-  // PROACTIVE AGENT SYSTEM
-  // ==========================================
-  const { proactiveService } = require('../services/proactive-service');
-  const { triggerManualWakeUp } = require('../services/proactive-scheduler');
-  const { TOOL_REGISTRY } = require('../tools/registry');
-
-  ipcMain.handle('proactive:getConfig', () => proactiveService.getConfig());
-  ipcMain.handle('proactive:updateConfig', (_e: any, updates: any) => {
-    const result = proactiveService.updateConfig(updates);
-    // If enabled state or interval changed, broadcast so the scheduler picks it up immediately
-    if ('enabled' in updates || 'interval' in updates) {
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (!win.isDestroyed()) {
-          win.webContents.send('proactive-update', { type: 'config-changed', config: result.config });
-        }
-      }
-    }
-    return result;
-  });
-  ipcMain.handle('proactive:listTasks', () => proactiveService.listTasks());
-  ipcMain.handle('proactive:addTask', (_e: any, task: any) => proactiveService.addTask(task));
-  ipcMain.handle('proactive:updateTask', (_e: any, taskId: string, updates: any) => proactiveService.updateTask(taskId, updates));
-  ipcMain.handle('proactive:deleteTask', (_e: any, taskId: string) => proactiveService.deleteTask(taskId));
-  ipcMain.handle('proactive:getWakeUpLog', (_e: any, limit?: number) => proactiveService.getWakeUpLog(limit));
-  ipcMain.handle('proactive:triggerNow', () => triggerManualWakeUp());
-  ipcMain.handle('proactive:getAvailableTools', () => {
-    return { ok: true, tools: Object.keys(TOOL_REGISTRY) };
-  });
-  ipcMain.handle('proactive:submitResult', (_e: any, payload: any) => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send('proactive-result-relay', payload);
-      }
-    }
-    return { ok: true };
-  });
-  ipcMain.handle('proactive:isRunning', () => {
-    const { isProactiveSchedulerRunning } = require('../services/proactive-scheduler');
-    return { ok: true, running: isProactiveSchedulerRunning() };
-  });
-
-  ipcMain.handle('proactive:reply', async (_e: any, payload: { wakeUpId: string; text: string }) => {
-    try {
-      const { handleProactiveReply } = require('../services/proactive-scheduler');
-      return await handleProactiveReply(payload.wakeUpId, payload.text);
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message || e) };
-    }
-  });
-
-  // ==========================================
-  // OFFLINE CALENDAR EVENTS
-  // ==========================================
-  const { offlineCalendarService } = require('../services/offline-calendar');
-
-  ipcMain.handle('offline-calendar:list', () => offlineCalendarService.list());
-  ipcMain.handle('offline-calendar:get', (_e: any, eventId: string) => offlineCalendarService.get(eventId));
-  ipcMain.handle('offline-calendar:add', (_e: any, eventData: any) => offlineCalendarService.add(eventData));
-  ipcMain.handle('offline-calendar:update', (_e: any, eventData: any) => offlineCalendarService.update(eventData));
-  ipcMain.handle('offline-calendar:delete', (_e: any, eventId: string) => offlineCalendarService.delete(eventId));
-  ipcMain.handle('offline-calendar:get-for-range', (_e: any, startIso: string, endIso: string) => offlineCalendarService.getForRange(startIso, endIso));
-  ipcMain.handle('offline-calendar:get-calendar-blocks', (_e: any, startIso: string, endIso: string) => offlineCalendarService.getCalendarBlocks(startIso, endIso));
-
-  // Legacy User To-Do List (for backwards compatibility)
-  const todosPath = () => {
-    const userDataPath = app.getPath('userData');
-    return require('path').join(userDataPath, 'user-todos.json');
-  };
-
-  const loadTodos = (): any[] => {
-    try {
-      const p = todosPath();
-      if (fs.existsSync(p)) {
-        return JSON.parse(fs.readFileSync(p, 'utf-8'));
-      }
-    } catch (e) {
-      logger.warn('Failed to load todos:', e);
-    }
-    return [];
-  };
-
-  const saveTodos = (todos: any[]) => {
-    try {
-      fs.writeFileSync(todosPath(), JSON.stringify(todos, null, 2), 'utf-8');
-    } catch (e) {
-      logger.warn('Failed to save todos:', e);
-    }
-  };
-
-  ipcMain.handle('todos:list', () => {
-    return { ok: true, todos: loadTodos() };
-  });
-
-  ipcMain.handle('todos:save', (_e, todos: any[]) => {
-    saveTodos(todos);
-    return { ok: true };
-  });
-
-  ipcMain.handle('todos:add', (_e, todo: any) => {
-    const todos = loadTodos();
-    todos.unshift(todo);
-    saveTodos(todos);
-    return { ok: true, todos };
-  });
-
-  ipcMain.handle('todos:update', (_e, todo: any) => {
-    const todos = loadTodos();
-    const idx = todos.findIndex((t: any) => t.id === todo.id);
-    if (idx >= 0) {
-      todos[idx] = todo;
-      saveTodos(todos);
-      return { ok: true, todos };
-    }
-    return { ok: false, error: 'Todo not found' };
-  });
-
-  ipcMain.handle('todos:delete', (_e, todoId: string) => {
-    const todos = loadTodos();
-    const filtered = todos.filter((t: any) => t.id !== todoId);
-    saveTodos(filtered);
-    return { ok: true, todos: filtered };
-  });
-
-  ipcMain.handle('todos:toggle', (_e, todoId: string) => {
-    const todos = loadTodos();
-    const idx = todos.findIndex((t: any) => t.id === todoId);
-    if (idx >= 0) {
-      todos[idx].completed = !todos[idx].completed;
-      todos[idx].completedAt = todos[idx].completed ? new Date().toISOString() : null;
-      saveTodos(todos);
-      return { ok: true, todos };
-    }
-    return { ok: false, error: 'Todo not found' };
-  });
-
-  ipcMain.handle('todos:reorder', (_e, todoIds: string[]) => {
-    const todos = loadTodos();
-    const ordered = todoIds
-      .map(id => todos.find((t: any) => t.id === id))
-      .filter(Boolean);
-    const orderedIds = new Set(todoIds);
-    for (const t of todos) {
-      if (!orderedIds.has(t.id)) {
-        ordered.push(t);
-      }
-    }
-    saveTodos(ordered);
-    return { ok: true, todos: ordered };
-  });
-
   ipcMain.handle('bookmarks:execute', async (_e, bookmark: any) => {
     try {
       const type = String(bookmark.type || '').toLowerCase();
@@ -1408,13 +1420,12 @@ export function setupIpc() {
           return { ok: true };
 
         case 'canvas':
-          // Open sidebar to canvas tab in expanded mode and select specific document
           openSidebarWindow({ tab: 'canvas', expanded: true });
           // Handle special '_new' target to create a fresh canvas
           if (target === '_new') {
             const newId = `canvas_${Date.now()}`;
             const now = new Date().toISOString();
-            const newDoc = { id: newId, title: 'Untitled', content: '', createdAt: now, updatedAt: now };
+            const newDoc = { id: newId, title: 'Quick Note', content: '', createdAt: now, updatedAt: now };
             const docs = loadCanvasDocs();
             docs.unshift(newDoc);
             saveCanvasDocs(docs);
@@ -1438,6 +1449,15 @@ export function setupIpc() {
           for (const w of BrowserWindow.getAllWindows()) {
             try { w.webContents.send('overlay:view-mode', { mode: 'tasks', subTab: tasksSubTab }); } catch { }
           }
+          return { ok: true };
+
+        case 'terminal':
+          openSidebarWindow({ tab: 'terminal', expanded: true });
+          return { ok: true };
+
+        case 'overlay':
+          setOverlayMode('window');
+          showWindow();
           return { ok: true };
 
         default:

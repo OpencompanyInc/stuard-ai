@@ -9,7 +9,10 @@ export const PROACTIVE_TASK_TOOL_NAMES = [
 ] as const;
 
 export function hasProactiveModeMarker(hiddenContext: unknown): boolean {
-  return typeof hiddenContext === 'string' && hiddenContext.includes('[PROACTIVE MODE]');
+  return typeof hiddenContext === 'string' && (
+    hiddenContext.includes('[PROACTIVE MODE]') ||
+    hiddenContext.includes('[PROACTIVE FOLLOW-UP]')
+  );
 }
 
 export function mergeForcedToolNames(rankedToolNames?: string[]): string[] {

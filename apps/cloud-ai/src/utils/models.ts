@@ -1,9 +1,14 @@
 import { xai } from '@ai-sdk/xai';
-import { google } from '@ai-sdk/google';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { deepseek } from '@ai-sdk/deepseek';
 import { openai } from '@ai-sdk/openai';
 import { anthropic } from '@ai-sdk/anthropic';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+
+// Single configured Google provider — reads GOOGLE_API_KEY (or legacy fallbacks)
+export const google = createGoogleGenerativeAI({
+  apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '',
+});
 
 /**
  * Builds an AI SDK model instance from a provider/model-id string.

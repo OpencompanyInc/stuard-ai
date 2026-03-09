@@ -1,6 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { getHeadlessAgent } from '../agents/headless-agent';
+import { generateWithToolRecovery } from '../routes/proactive-utils';
 
 export const executeAgenticTask = createTool({
   id: 'execute_agentic_task',
@@ -41,9 +42,14 @@ export const executeAgenticTask = createTool({
       });
 
       // Run the agent
-      const runPromise = agent.generate([
-        { role: 'user', content: prompt }
-      ]);
+      const runPromise = generateWithToolRecovery({
+        agent: agent as any,
+        baseMessages: [
+          { role: 'user', content: prompt }
+        ],
+        maxSteps: 20,
+        maxRetries: 3,
+      });
 
       // Race against timeout
       const response: any = await Promise.race([runPromise, timeoutPromise]);

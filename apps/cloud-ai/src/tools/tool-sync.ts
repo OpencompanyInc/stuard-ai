@@ -104,6 +104,19 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   capture_media: ['record', 'capture video', 'capture audio', 'record screen'],
   analyze_image: ['image analysis', 'vision', 'describe image'],
   analyze_current_screen: ['what on screen', 'screen analysis'],
+  find_text: ['find text on screen', 'locate text on screen', 'get text coordinates', 'find label on screen', 'ocr screen text'],
+  find_text_on_screen: ['legacy screen text finder', 'find text on screen', 'screen text coordinates'],
+  find_and_click_text: ['find and click text', 'click text on screen', 'ocr click text', 'click matching label'],
+
+  // Secure Vault (Credential Management)
+  vault_list: ['list passwords', 'list credentials', 'saved passwords', 'vault entries', 'my credentials'],
+  vault_get: ['get password', 'get credential', 'show credential', 'view password', 'retrieve secret'],
+  vault_add: ['save password', 'store credential', 'add password', 'save secret', 'store api key'],
+  vault_update: ['update password', 'change credential', 'update secret', 'change api key'],
+  vault_delete: ['delete password', 'remove credential', 'delete secret'],
+  vault_get_credential: ['use credential', 'login with saved password', 'get login info', 'use saved password'],
+  vault_search: ['find password', 'search credentials', 'find credential for', 'lookup password'],
+  vault_stats: ['vault statistics', 'how many passwords', 'credential count'],
 
   // Web Search
   web_search: ['google', 'search online', 'look up', 'find information', 'research'],

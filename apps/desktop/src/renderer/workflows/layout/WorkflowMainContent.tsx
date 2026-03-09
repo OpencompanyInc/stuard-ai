@@ -1,11 +1,15 @@
 import React from "react";
+import type { ReasoningLevel } from "../../hooks/usePreferences";
 import type { ValidationError } from "../builder/compiler";
 import { ChatHistory } from "../components/chat/ChatHistory";
 import { ChatInput, ChatInputRef } from "../components/chat/ChatInput";
+import { DiscoverTips } from "../components/DiscoverTips";
 import { ToolPalette, ToolPaletteRef } from "../components/ToolPalette";
 import type { DesignerModel } from "../types";
 import type { ExecutionState, OpenFileTab, RightPanel, WorkspaceInfo } from "./types";
 import { WorkflowCanvasAndPanels } from "./WorkflowCanvasAndPanels";
+import { useModelRegistry } from "../../hooks/useModelRegistry";
+import { buildContextUsageMetrics } from "../../utils/contextUsage";
 
 interface WorkflowMainContentProps {
   selectedId: string;
@@ -39,6 +43,7 @@ interface WorkflowMainContentProps {
   openTabs: OpenFileTab[];
   logs: Array<{ ts: string; msg: string }>;
   workflowChatModelId: string | "auto";
+  workflowReasoningLevel: ReasoningLevel;
   chat: {
     messages: any[];
     streamItems: any[];
@@ -54,9 +59,12 @@ interface WorkflowMainContentProps {
     newSession: () => void;
     loadSession: (sessionId: string) => void;
     deleteSession: (sessionId: string) => void;
+    latestUsage?: Record<string, any>;
+    latestModelId?: string;
   };
   onApplyModel: (model: any) => void;
   onSetWorkflowChatModelId: (id: string | "auto") => void;
+  onSetWorkflowReasoningLevel: (level: ReasoningLevel) => void;
   onSetActiveTab: (tab: string) => void;
   onCloseFileTab: (filePath: string) => void;
   onClearLogs: () => void;
@@ -128,9 +136,11 @@ export function WorkflowMainContent({
   openTabs,
   logs,
   workflowChatModelId,
+  workflowReasoningLevel,
   chat,
   onApplyModel,
   onSetWorkflowChatModelId,
+  onSetWorkflowReasoningLevel,
   onSetActiveTab,
   onCloseFileTab,
   onClearLogs,
@@ -169,6 +179,13 @@ export function WorkflowMainContent({
   currentSubPath,
   onNavigateBack,
 }: WorkflowMainContentProps) {
+  const { modelById } = useModelRegistry();
+  const workflowContextMetrics = React.useMemo(() => buildContextUsageMetrics({
+    usage: chat.latestUsage,
+    modelId: chat.latestModelId || (workflowChatModelId !== 'auto' ? workflowChatModelId : undefined),
+    modelById,
+  }), [chat.latestModelId, chat.latestUsage, modelById, workflowChatModelId]);
+
   const canvasAndPanelsProps = {
     model: model!,
     selectedId,
@@ -293,8 +310,11 @@ export function WorkflowMainContent({
                       onSend={chat.sendMessage}
                       busy={chat.busy}
                       onStop={chat.stopGeneration}
+                      contextMetrics={workflowContextMetrics}
                       selectedModelId={workflowChatModelId}
                       onSelectModel={onSetWorkflowChatModelId}
+                      reasoningLevel={workflowReasoningLevel}
+                      onReasoningLevelChange={onSetWorkflowReasoningLevel}
                     />
                   </div>
                 </div>
@@ -324,10 +344,32 @@ export function WorkflowMainContent({
         </div>
       ) : (
         <div className="flex-1 flex items-center justify-center bg-black">
-          <div className="text-center max-w-sm px-6">
+          <div className="text-center max-w-xl px-6">
             <div className="w-12 h-12 border-4 border-slate-700 border-t-blue-500 rounded-full animate-spin mx-auto mb-6" />
             <h2 className="text-lg font-semibold text-slate-200 mb-2">Loading...</h2>
-            <p className="text-sm text-slate-500">Getting your workflow ready.</p>
+            <p className="text-sm text-slate-500 mb-5">Getting your workflow ready.</p>
+            <DiscoverTips
+              compact
+              title="Discover while this loads"
+              className="text-left"
+              tips={[
+                {
+                  id: "main-ai",
+                  title: "Workflows do not have to start visually",
+                  description: "You can prompt the AI with the outcome you want, then adjust the generated nodes and wires manually.",
+                },
+                {
+                  id: "main-ui",
+                  title: "Custom UI turns workflows into mini apps",
+                  description: "Forms, status panels, and small tools can all be layered onto a workflow when interaction matters.",
+                },
+                {
+                  id: "main-path",
+                  title: "Good workflows often begin as repeated chat tasks",
+                  description: "If you keep asking Stuard to do the same thing, that is usually the best candidate to automate next.",
+                },
+              ]}
+            />
           </div>
         </div>
       )}

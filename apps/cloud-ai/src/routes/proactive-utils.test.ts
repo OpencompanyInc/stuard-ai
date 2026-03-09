@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildProactiveUserMessage, buildProactiveMessageContent, filterProactiveTools } from './proactive-utils';
+import { buildProactiveUserMessage, buildProactiveMessageContent, detectRetryableToolError, filterProactiveTools, generateWithToolRecovery } from './proactive-utils';
 
 describe('buildProactiveUserMessage', () => {
   it('uses the explicit prompt when provided', () => {
@@ -72,7 +72,9 @@ describe('filterProactiveTools', () => {
       get_tool_schema: 8,
       get_skill_info: 9,
       deploy_headless_agent: 10,
-      some_random_tool: 11,
+      search_past_conversations: 11,
+      get_conversation_context: 12,
+      some_random_tool: 13,
     };
 
     const result = filterProactiveTools(tools, ['some_random_tool']);
@@ -87,6 +89,8 @@ describe('filterProactiveTools', () => {
     expect(result).toHaveProperty('get_tool_schema');
     expect(result).toHaveProperty('get_skill_info');
     expect(result).toHaveProperty('deploy_headless_agent');
+    expect(result).toHaveProperty('search_past_conversations');
+    expect(result).toHaveProperty('get_conversation_context');
     // Explicitly allowed tool is kept
     expect(result).toHaveProperty('some_random_tool');
   });
@@ -104,5 +108,88 @@ describe('filterProactiveTools', () => {
     expect(result).toHaveProperty('web_search');
     expect(result).toHaveProperty('another_tool');
     expect(result).not.toHaveProperty('some_other_tool');
+  });
+
+  it('preserves conversation memory tools', () => {
+    const tools = {
+      proactive_task_list: 1,
+      web_search: 2,
+      get_conversation_context: 3,
+      search_past_conversations: 4,
+      some_other_tool: 5,
+    };
+
+    const result = filterProactiveTools(tools, ['web_search']);
+    expect(result).toHaveProperty('proactive_task_list');
+    expect(result).toHaveProperty('web_search');
+    expect(result).toHaveProperty('get_conversation_context');
+    expect(result).toHaveProperty('search_past_conversations');
+    expect(result).not.toHaveProperty('some_other_tool');
+  });
+});
+
+describe('detectRetryableToolError', () => {
+  it('detects nested missing-tool errors', () => {
+    const nested = {
+      cause: new Error('Tool get_conversation_context not found'),
+    };
+
+    expect(detectRetryableToolError(nested)).toMatchObject({
+      toolName: 'get_conversation_context',
+      type: 'tool_not_found',
+    });
+  });
+});
+
+describe('generateWithToolRecovery', () => {
+  it('retries after a missing tool call and returns the successful response', async () => {
+    const agent = {
+      generate: async (messages: any[]) => {
+        if (messages.length === 1) {
+          throw {
+            name: 'NoSuchToolError',
+            toolName: 'get_conversation_context',
+            message: 'Tool get_conversation_context not found',
+          };
+        }
+        return { text: 'Recovered successfully' };
+      },
+    };
+
+    const result = await generateWithToolRecovery({
+      agent,
+      baseMessages: [{ role: 'user', content: 'Find the sheet from last night' }],
+      maxRetries: 2,
+    });
+
+    expect(result).toEqual({ text: 'Recovered successfully' });
+  });
+
+  it('injects correction guidance on retry', async () => {
+    const calls: any[][] = [];
+    const agent = {
+      generate: async (messages: any[]) => {
+        calls.push(messages);
+        if (calls.length === 1) {
+          throw {
+            name: 'NoSuchToolError',
+            toolName: 'bad_tool',
+            message: 'Tool bad_tool not found',
+          };
+        }
+        return { text: 'ok' };
+      },
+    };
+
+    await generateWithToolRecovery({
+      agent,
+      baseMessages: [{ role: 'user', content: 'Do the task' }],
+      maxRetries: 2,
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1][1]).toMatchObject({ role: 'assistant', content: 'I tried to use a tool.' });
+    expect(String(calls[1][2]?.content || '')).toContain('Use search_tools');
+    expect(String(calls[1][2]?.content || '')).toContain('execute_tool');
   });
 });

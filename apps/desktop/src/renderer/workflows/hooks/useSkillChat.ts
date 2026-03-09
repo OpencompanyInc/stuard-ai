@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useMemo, useState, useRef, useCallback } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import type { Message, StreamItem, ToolEvent } from './useWorkflowChat';
 import type { Skill } from '../components/Skills';
@@ -70,6 +70,8 @@ export function useSkillChat({
     let fullText = '';
     let currentReasoning = '';
     let currentItems: StreamItem[] = [];
+    let finalUsage: Record<string, any> | undefined;
+    let finalModelId: string | undefined;
 
     try {
       let accessToken: string | undefined;
@@ -384,6 +386,12 @@ IMPORTANT:
               const result = msg.result || {};
               const textFinal = typeof result.text === 'string' && result.text.trim().length > 0 ? result.text : fullText;
               if (textFinal) fullText = textFinal;
+              finalUsage = result.usage && typeof result.usage === 'object' ? result.usage : undefined;
+              finalModelId = typeof result.modelId === 'string'
+                ? result.modelId
+                : typeof msg.model === 'string'
+                  ? msg.model
+                  : undefined;
               done = true;
               try { ws.close(); } catch { }
               resolve();
@@ -431,8 +439,10 @@ IMPORTANT:
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: fullText || (abortedRef.current ? '(Stopped by user)' : 'Done.'),
-        parts: currentItems.filter(i => i.type === 'tool'),
+        parts: currentItems.length > 0 ? [...currentItems] : undefined,
         reasoning: currentReasoning || undefined,
+        usage: finalUsage,
+        modelId: finalModelId,
       }]);
       setStreamItems([]);
     } catch (err: any) {
@@ -454,5 +464,32 @@ IMPORTANT:
     }
   }, [messages, busy, skill, onApplySkill, cloudAiHttp]);
 
-  return { messages, streamItems, reasoningText, showReasoning, setShowReasoning, busy, sendMessage, stopGeneration };
+  const latestAssistantContext = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message?.role === 'assistant' && message?.usage) {
+        return {
+          usage: message.usage,
+          modelId: message.modelId,
+        };
+      }
+    }
+    return {
+      usage: undefined,
+      modelId: undefined,
+    };
+  }, [messages]);
+
+  return {
+    messages,
+    streamItems,
+    reasoningText,
+    showReasoning,
+    setShowReasoning,
+    busy,
+    sendMessage,
+    stopGeneration,
+    latestUsage: latestAssistantContext.usage,
+    latestModelId: latestAssistantContext.modelId,
+  };
 }

@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { getSupabaseService } from '../supabase';
 
-const GOOGLE_API_KEY = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY;
+const GOOGLE_API_KEY = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
 
 function getSupabase(): SupabaseClient {
   const client = getSupabaseService();

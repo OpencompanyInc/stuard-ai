@@ -2,8 +2,8 @@
 VM-mode Python Agent Entry Point
 
 Lightweight WebSocket server for headless Linux cloud VMs.
-Listens on ws://127.0.0.1:8765/ws and handles tool_exec requests
-from the Node.js VM engine (vm-engine.ts).
+Listens on ws://127.0.0.1:8765/ws and handles the same chat/tool
+protocol as the desktop agent, but with VM-safe dispatch.
 
 Uses dispatch_vm.py which excludes all desktop-only modules
 (GUI, clipboard, screen capture, media devices, etc.).
@@ -33,8 +33,9 @@ if agent_dir not in sys.path:
 import websockets
 from websockets.server import serve, WebSocketServerProtocol
 
-# Import the VM-optimized dispatcher
-from app.tools.dispatch_vm import execute as dispatch_execute
+from app.websocket.chat import handle_chat
+from app.websocket.tools import handle_tool_exec
+from app.websocket.session import WebSocketSession
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -53,14 +54,24 @@ logger = logging.getLogger("vm-agent")
 
 # ── WebSocket Handler ─────────────────────────────────────────────────────────
 
+class _WSAdapter:
+    """Minimal adapter so WebSocketSession can write to websockets-server clients."""
+
+    def __init__(self, ws: WebSocketServerProtocol):
+        self._ws = ws
+
+    async def send_text(self, data: str) -> None:
+        await self._ws.send(data)
+
 async def handle_connection(ws: WebSocketServerProtocol) -> None:
     remote = ws.remote_address
     logger.info("ws_connected remote=%s", remote)
+    session = WebSocketSession(_WSAdapter(ws))  # type: ignore[arg-type]
 
     # Send handshake
     await ws.send(json.dumps({
         "type": "handshake",
-        "origin": "vm-python-agent",
+        "origin": "agent",
         "message": "connected",
         "mode": "vm",
     }))
@@ -75,82 +86,74 @@ async def handle_connection(ws: WebSocketServerProtocol) -> None:
 
             kind = str(msg.get("type", "")).lower()
 
-            if kind == "tool_exec":
-                # Fire-and-forget so we can handle concurrent requests
-                asyncio.create_task(_handle_tool_exec(ws, msg))
+            if kind == "chat":
+                task = asyncio.create_task(handle_chat(msg, session))
+                session.active_chat_tasks.add(task)
+
+                def _cleanup_chat(done_task: asyncio.Task) -> None:
+                    try:
+                        session.active_chat_tasks.discard(done_task)
+                    except Exception:
+                        pass
+
+                task.add_done_callback(_cleanup_chat)
+            elif kind == "tool_exec":
+                async def _run_tool_exec(msg_local: Dict[str, Any] = msg) -> None:
+                    try:
+                        await handle_tool_exec(msg_local, session)
+                    except Exception:
+                        logger.exception("tool_exec_task_failed")
+
+                task = asyncio.create_task(_run_tool_exec())
+                session.active_tool_tasks.add(task)
+
+                def _cleanup_tool(done_task: asyncio.Task) -> None:
+                    try:
+                        session.active_tool_tasks.discard(done_task)
+                    except Exception:
+                        pass
+
+                task.add_done_callback(_cleanup_tool)
+            elif kind == "approval_response":
+                try:
+                    req_id = str(msg.get("id") or "").strip()
+                    allow = bool(msg.get("allow"))
+                    fut = session.pending_approvals.get(req_id)
+                    if fut and not fut.done():
+                        fut.set_result({"allow": allow})
+                except Exception:
+                    pass
+            elif kind == "tool_result":
+                try:
+                    req_id = str(msg.get("id") or "").strip()
+                    result = msg.get("result")
+                    fut = session.pending_client_tool_results.get(req_id)
+                    if fut and not fut.done():
+                        fut.set_result(result)
+                except Exception:
+                    pass
+            elif kind == "stop" or kind == "abort":
+                cancelled_count = 0
+                for task in list(session.active_chat_tasks):
+                    try:
+                        if not task.done():
+                            task.cancel()
+                            cancelled_count += 1
+                    except Exception:
+                        pass
+                logger.info("stop_requested cancelled=%d", cancelled_count)
+                await ws.send(json.dumps({"type": "stopped", "success": cancelled_count > 0}))
+            elif kind == "auth":
+                await ws.send(json.dumps({"type": "auth_result", "ok": True, "queued": 0}))
             elif kind == "ping":
                 await ws.send(json.dumps({"type": "pong"}))
             else:
                 logger.warning("unknown_message_type kind=%s", kind)
+                await ws.send(json.dumps({"type": "error", "message": f"unknown type: {kind}"}))
     except websockets.exceptions.ConnectionClosed:
         logger.info("ws_disconnected remote=%s", remote)
     except Exception:
         logger.exception("ws_handler_error remote=%s", remote)
-
-
-async def _handle_tool_exec(ws: WebSocketServerProtocol, msg: Dict[str, Any]) -> None:
-    """Execute a tool and send back tool_event + tool_result messages."""
-    raw_tool = str(msg.get("tool", "")).strip()
-    tool = raw_tool.lower().replace("-", "_")
-    args = msg.get("args") or {}
-    req_id = msg.get("id") or f"tool-{int(asyncio.get_event_loop().time() * 1000)}"
-
-    logger.info("tool_exec id=%s tool=%s", req_id, tool)
-
-    async def emit(status: str, extra: Dict[str, Any] | None = None) -> None:
-        payload: Dict[str, Any] = {
-            "type": "tool_event",
-            "id": req_id,
-            "tool": tool,
-            "status": status,
-        }
-        if extra:
-            payload.update(extra)
-        try:
-            await ws.send(json.dumps(payload, default=str))
-        except Exception:
-            pass
-
-    result: Dict[str, Any] = {"ok": False, "error": "tool_exec_never_completed"}
-
-    try:
-        await emit("started", {"args": args})
-        result = await dispatch_execute(tool, args, emit)
-    except Exception as e:
-        logger.exception("tool_exec_error id=%s tool=%s", req_id, tool)
-        result = {"ok": False, "error": str(e)}
-
-    # Sanitize large data fields before sending result
-    safe_result = _sanitize_result(result)
-    await emit("completed", {"result": safe_result})
-
-    # Always send tool_result so the caller never hangs
-    try:
-        await ws.send(json.dumps({
-            "type": "tool_result",
-            "id": req_id,
-            "tool": tool,
-            "result": result,
-        }, default=str))
-    except Exception:
-        logger.exception("tool_result_send_failed id=%s tool=%s", req_id, tool)
-
-
-def _sanitize_result(result: Any) -> Any:
-    """Strip large binary/base64 data from result for logging/events."""
-    if not isinstance(result, dict):
-        return result
-    if "data" not in result:
-        return result
-    safe = dict(result)
-    data_val = safe.get("data")
-    if isinstance(data_val, (bytes, bytearray)):
-        safe["bytes"] = len(data_val)
-        del safe["data"]
-    elif isinstance(data_val, str) and len(data_val) > 10_000:
-        safe["bytes"] = len(data_val)
-        del safe["data"]
-    return safe
 
 
 # ── Server Lifecycle ──────────────────────────────────────────────────────────

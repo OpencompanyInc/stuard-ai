@@ -1,19 +1,73 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useAuthContext } from '@/components/providers/AuthProvider';
 import { supabase } from '@/lib/supabaseClient';
+
+type CreditSummary = {
+    ok?: boolean;
+    plan?: string;
+    limit?: number;
+    used?: number;
+    remaining?: number;
+    unlimited?: boolean;
+    includedCredits?: number;
+    includedRemaining?: number;
+    addonCredits?: number;
+    addonRemaining?: number;
+};
+
+const CLOUD_API_URL = process.env.NEXT_PUBLIC_CLOUD_API_URL || 'https://api.stuard.ai';
 
 export default function BillingPage() {
     const { user, userData, loading } = useAuthContext();
     const [isManaging, setIsManaging] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [amount, setAmount] = useState(30);
+    const [creditSummary, setCreditSummary] = useState<CreditSummary | null>(null);
+    const [creditsLoading, setCreditsLoading] = useState(true);
+
+    useEffect(() => {
+        let isActive = true;
+        async function loadCredits() {
+            if (!user) {
+                if (isActive) {
+                    setCreditSummary(null);
+                    setCreditsLoading(false);
+                }
+                return;
+            }
+            try {
+                setCreditsLoading(true);
+                const { data: sessionDataRes } = await supabase.auth.getSession();
+                const token = sessionDataRes.session?.access_token;
+                if (!token) {
+                    if (isActive) setCreditsLoading(false);
+                    return;
+                }
+                const res = await fetch(`${CLOUD_API_URL}/v1/credits`, {
+                    headers: { Authorization: `Bearer ${token}` },
+                });
+                const data = await res.json();
+                if (isActive && data?.ok) {
+                    setCreditSummary(data);
+                }
+            } catch (e: any) {
+                if (isActive) setError((prev) => prev || String(e?.message || 'Failed to load credits.'));
+            } finally {
+                if (isActive) setCreditsLoading(false);
+            }
+        }
+        loadCredits();
+        return () => {
+            isActive = false;
+        };
+    }, [user]);
 
     const currentPlan = (() => {
-        const raw = String(userData?.plan || 'free').trim().toLowerCase();
+        const raw = String(creditSummary?.plan || userData?.plan || 'free').trim().toLowerCase();
         if (raw === 'free_trial' || raw === 'trial') return 'free';
         if (raw === 'starter') return 'starter';
         if (raw === 'pro') return 'pro';
@@ -133,13 +187,31 @@ export default function BillingPage() {
                         <p className="text-gray-400 mt-2 text-sm">
                             {currentPlan === 'free' ? 'Upgrade to unlock more power.' : 'Thanks for being a subscriber.'}
                         </p>
+                        {creditSummary && (
+                            <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                                <div className="rounded-xl bg-white/10 px-4 py-3">
+                                    <div className="text-gray-300">Available now</div>
+                                    <div className="text-xl font-semibold text-white">
+                                        {creditSummary.unlimited ? 'Unlimited' : Number(creditSummary.remaining || 0).toLocaleString()}
+                                    </div>
+                                </div>
+                                <div className="rounded-xl bg-white/10 px-4 py-3">
+                                    <div className="text-gray-300">Subscription pool</div>
+                                    <div className="text-xl font-semibold text-white">{Number(creditSummary.includedRemaining || 0).toLocaleString()}</div>
+                                </div>
+                                <div className="rounded-xl bg-white/10 px-4 py-3">
+                                    <div className="text-gray-300">Add-on pool</div>
+                                    <div className="text-xl font-semibold text-white">{Number(creditSummary.addonRemaining || 0).toLocaleString()}</div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                     <div className="flex flex-col items-end gap-3 w-full md:w-auto">
                         <Button
                             variant="outline"
                             className="bg-white/10 text-white border-white/20 hover:bg-white/20"
                             onClick={handleManage}
-                            disabled={(!canManage && !isFreePlan) || isManaging || loading}
+                            disabled={(!canManage && !isFreePlan) || isManaging || loading || creditsLoading}
                             isLoading={isManaging}
                         >
                             {isFreePlan ? 'View Plans' : 'Manage Subscription'}
@@ -209,7 +281,11 @@ export default function BillingPage() {
                     <Card className="border border-black/5 shadow-sm bg-white/80 backdrop-blur-md">
                         <CardHeader>
                             <CardTitle className="text-lg">Estimated credits</CardTitle>
-                            <CardDescription>Based on your chosen amount.</CardDescription>
+                            <CardDescription>
+                                {creditSummary
+                                    ? `You currently have ${creditSummary.unlimited ? 'unlimited credits' : `${Number(creditSummary.remaining || 0).toLocaleString()} credits available`}.`
+                                    : 'Based on your chosen amount.'}
+                            </CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-5">
                             <div className="rounded-2xl bg-gray-900 p-6 text-white">

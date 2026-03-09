@@ -8,12 +8,13 @@ import {
   LayoutGrid, Rocket, Store, Activity, ChevronsUpDown, Layers,
   SlidersHorizontal, Tv, Box, Mic, Settings, ArrowDownCircle, Wand2
 } from "lucide-react";
+import { DiscoverTips } from "./DiscoverTips";
 import { 
   Skill, SKILL_COLORS, SkillsLibrary, SkillEditor,
   formatRelativeTime
 } from "./Skills";
 
-type ActiveView = 'workflows' | 'skills';
+type ActiveView = 'workflows' | 'skills' | 'deployed';
 
 interface WorkflowItem {
   id: string;
@@ -26,6 +27,12 @@ interface WorkflowItem {
   updatedAt?: string;
 }
 
+interface DeployStatus {
+  deployed: boolean;
+  running: boolean;
+  triggers: string[];
+}
+
 interface WorkflowLauncherProps {
   items: WorkflowItem[];
   loading: boolean;
@@ -35,12 +42,12 @@ interface WorkflowLauncherProps {
   onImport: () => void;
   onMarketplace: () => void;
   onDelete: (id: string) => Promise<void>;
-  onDashboard: () => void;
+  onDashboard?: () => void;
 }
 
 export function WorkflowLauncher({
   items, loading, runningIds,
-  onSelect, onCreate, onImport, onMarketplace, onDelete, onDashboard
+  onSelect, onCreate, onImport, onMarketplace, onDelete
 }: WorkflowLauncherProps) {
   const [search, setSearch] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -48,6 +55,7 @@ export function WorkflowLauncher({
   const [skills, setSkills] = useState<Skill[]>([]);
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
   const [skillSearch, setSkillSearch] = useState("");
+  const [deployStatuses, setDeployStatuses] = useState<Record<string, DeployStatus>>({});
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Load skills from disk on mount
@@ -63,9 +71,47 @@ export function WorkflowLauncher({
     return items.filter(i => (i.name || i.id).toLowerCase().includes(q));
   }, [items, search]);
 
+  const deployedItems = useMemo(() => {
+    const source = items.filter((item) => deployStatuses[item.id]?.deployed);
+    if (!search.trim()) return source;
+    const q = search.toLowerCase();
+    return source.filter(i => (i.name || i.id).toLowerCase().includes(q));
+  }, [deployStatuses, items, search]);
+
+  const visibleWorkflowItems = activeView === 'deployed' ? deployedItems : filtered;
 
   // Reset selection when filter changes
-  useEffect(() => { setSelectedIndex(0); }, [filtered.length]);
+  useEffect(() => { setSelectedIndex(0); }, [filtered.length, deployedItems.length, activeView]);
+
+  useEffect(() => {
+    if (activeView !== 'deployed' || items.length === 0) return;
+    let cancelled = false;
+
+    (async () => {
+      const entries = await Promise.all(
+        items.map(async (item) => {
+          try {
+            const status = await (window as any).desktopAPI?.workflowsGetDeployStatus?.(item.id);
+            return [item.id, status?.ok ? {
+              deployed: Boolean(status.deployed),
+              running: Boolean(status.running),
+              triggers: Array.isArray(status.triggers) ? status.triggers : [],
+            } : { deployed: false, running: false, triggers: [] }] as const;
+          } catch {
+            return [item.id, { deployed: false, running: false, triggers: [] }] as const;
+          }
+        })
+      );
+
+      if (!cancelled) {
+        setDeployStatuses(Object.fromEntries(entries));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeView, items]);
 
   // Auto-focus search on mount
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -74,15 +120,15 @@ export function WorkflowLauncher({
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "ArrowRight" || e.key === "ArrowDown") {
       e.preventDefault();
-      setSelectedIndex(i => Math.min(i + 1, filtered.length - 1));
+      setSelectedIndex(i => Math.min(i + 1, visibleWorkflowItems.length - 1));
     } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
       e.preventDefault();
       setSelectedIndex(i => Math.max(i - 1, 0));
-    } else if (e.key === "Enter" && filtered.length > 0) {
+    } else if (e.key === "Enter" && visibleWorkflowItems.length > 0) {
       e.preventDefault();
-      onSelect(filtered[selectedIndex].id);
+      onSelect(visibleWorkflowItems[selectedIndex].id);
     }
-  }, [filtered, selectedIndex, onSelect]);
+  }, [visibleWorkflowItems, selectedIndex, onSelect]);
 
   const handleCreateSkill = () => {
     const newSkill: Skill = {
@@ -131,7 +177,7 @@ export function WorkflowLauncher({
   }
 
   return (
-    <div className="flex-1 flex bg-[#F4F4F5] h-screen w-screen overflow-hidden text-white font-sans">
+    <div className="flex-1 flex bg-[#F4F4F5] h-screen w-screen overflow-hidden text-slate-900 font-sans">
       
       {/* Sidebar - Now structured as 3 separate rounded containers */}
       <div className="w-[300px] flex flex-col p-6 drag shrink-0 z-10 relative gap-5 border-r border-slate-200/50">
@@ -149,9 +195,8 @@ export function WorkflowLauncher({
           <NavItem icon={Layers} label="My Workflows" active={activeView === 'workflows'} onClick={() => setActiveView('workflows')} />
           <NavItem icon={Wand2} label="Skills" active={activeView === 'skills'} onClick={() => setActiveView('skills')} />
           <div className="h-px bg-slate-50 my-2" />
-          <NavItem icon={Rocket} label="Deployed Workflows" />
-          <NavItem icon={Store} label="Marketplace" onClick={onMarketplace} />
-          <NavItem icon={LayoutGrid} label="Stuard Dashboard" onClick={onDashboard} />
+          <NavItem icon={Rocket} label="Deployed Workflows" active={activeView === 'deployed'} onClick={() => setActiveView('deployed')} />
+          <NavItem icon={Store} label="Marketplace" onClick={onMarketplace} accent="indigo" />
         </div>
 
         {/* Container 3: Bottom Actions */}
@@ -166,8 +211,8 @@ export function WorkflowLauncher({
         {/* Top Header */}
         <div className="px-10 pt-10 pb-8 flex items-start justify-between shrink-0">
           <div>
-            <h1 className="text-[26px] font-bold text-white tracking-tight">
-              {activeView === 'workflows' ? 'My Workflows' : 'Skills'}
+            <h1 className="text-[26px] font-bold text-slate-900 tracking-tight">
+              {activeView === 'workflows' ? 'My Workflows' : activeView === 'skills' ? 'Skills' : 'Deployed Workflows'}
             </h1>
             <div className="flex items-center gap-1.5 text-[14px] text-slate-500 mt-2 cursor-pointer hover:text-slate-800 transition-colors w-fit rounded-md">
               <span>Your Workspace</span>
@@ -180,10 +225,10 @@ export function WorkflowLauncher({
             <input
               ref={inputRef}
               type="text"
-              placeholder={activeView === 'workflows' ? 'Search workflows...' : 'Search skills...'}
-              value={activeView === 'workflows' ? search : skillSearch}
-              onChange={(e) => activeView === 'workflows' ? setSearch(e.target.value) : setSkillSearch(e.target.value)}
-              onKeyDown={activeView === 'workflows' ? handleKeyDown : undefined}
+              placeholder={activeView === 'skills' ? 'Search skills...' : activeView === 'deployed' ? 'Search deployed workflows...' : 'Search workflows...'}
+              value={activeView === 'skills' ? skillSearch : search}
+              onChange={(e) => activeView === 'skills' ? setSkillSearch(e.target.value) : setSearch(e.target.value)}
+              onKeyDown={activeView === 'skills' ? undefined : handleKeyDown}
               className="w-full bg-white border border-slate-200 focus:border-blue-400 rounded-full pl-11 pr-4 py-3 text-[14px] text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-blue-100/50 transition-all shadow-sm"
             />
           </div>
@@ -216,15 +261,36 @@ export function WorkflowLauncher({
         ) : (
           <div className="flex-1 px-10 pb-10 overflow-y-auto scrollbar-minimal">
             {loading ? (
-              <div className="py-12 flex justify-center">
+              <div className="py-12 max-w-2xl mx-auto flex flex-col items-center gap-5">
                 <div className="w-8 h-8 border-2 border-slate-200 border-t-blue-500 rounded-full animate-spin" />
+                <DiscoverTips
+                  title="Discover workflows faster"
+                  className="w-full max-w-xl bg-white border border-slate-200 shadow-sm"
+                  tips={[
+                    {
+                      id: "launcher-ai",
+                      title: "Describe the outcome, not the steps",
+                      description: "Workflow AI works best when you explain what you want finished, then refine the generated flow.",
+                    },
+                    {
+                      id: "launcher-mini-app",
+                      title: "A workflow can also feel like an app",
+                      description: "Use custom UI to turn a workflow into a small interactive tool, not just a background automation.",
+                    },
+                    {
+                      id: "launcher-path",
+                      title: "Chat first, automate second",
+                      description: "A repeated task that works well in chat is often the next thing worth turning into a workflow.",
+                    },
+                  ]}
+                />
               </div>
             ) : (
             /* ==================== WORKFLOWS GRID ==================== */
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-12">
               
               {/* Create Card - Dark with prominent blue glow matching the image */}
-              {!search && (
+              {activeView === 'workflows' && !search && (
                 <div 
                   onClick={onCreate}
                   className="group relative h-[200px] rounded-[24px] cursor-pointer overflow-hidden flex flex-col items-center justify-center transition-all border border-blue-500/50 bg-slate-900 hover:border-blue-400 shadow-md hover:shadow-lg"
@@ -239,9 +305,10 @@ export function WorkflowLauncher({
               )}
 
               {/* Item Cards */}
-              {filtered.map((item, idx) => {
+              {visibleWorkflowItems.map((item, idx) => {
                 const isRunning = runningIds[item.id];
                 const isHighlighted = idx === selectedIndex;
+                const deployStatus = deployStatuses[item.id];
                 
                 // Color variation based on name length just for visual variety matching the image
                 const nameLen = (item.name || item.id).length;
@@ -284,6 +351,13 @@ export function WorkflowLauncher({
                              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                              <span className="text-emerald-600">Running now</span>
                            </>
+                        ) : activeView === 'deployed' ? (
+                           <>
+                             <div className={`w-1.5 h-1.5 rounded-full ${deployStatus?.running ? 'bg-emerald-500' : 'bg-blue-500'}`} />
+                             <span className={deployStatus?.running ? 'text-emerald-600' : 'text-blue-600'}>
+                               {deployStatus?.running ? 'Auto-running' : 'Deployed'}
+                             </span>
+                           </>
                         ) : item.updatedAt ? (
                            <span>Modified {formatRelativeTime(item.updatedAt)}</span>
                         ) : null}
@@ -309,13 +383,23 @@ export function WorkflowLauncher({
               })}
 
               {/* Empty state */}
-              {filtered.length === 0 && search && (
+              {visibleWorkflowItems.length === 0 && search && (
                 <div className="col-span-full py-16 flex flex-col items-center justify-center text-center">
                   <div className="w-16 h-16 bg-white shadow-sm rounded-full flex items-center justify-center mb-4 border border-slate-200">
                     <Search className="w-7 h-7 text-slate-400" />
                   </div>
-                  <h3 className="text-[16px] font-semibold text-slate-800">No workflows found</h3>
+                  <h3 className="text-[16px] font-semibold text-slate-800">No {activeView === 'deployed' ? 'deployed workflows' : 'workflows'} found</h3>
                   <p className="text-[14px] text-slate-500 mt-1">Try adjusting your search query</p>
+                </div>
+              )}
+
+              {activeView === 'deployed' && visibleWorkflowItems.length === 0 && !search && !loading && (
+                <div className="col-span-full py-16 flex flex-col items-center justify-center text-center">
+                  <div className="w-16 h-16 bg-white shadow-sm rounded-full flex items-center justify-center mb-4 border border-slate-200">
+                    <Rocket className="w-7 h-7 text-blue-500" />
+                  </div>
+                  <h3 className="text-[16px] font-semibold text-slate-800">No deployed workflows yet</h3>
+                  <p className="text-[14px] text-slate-500 mt-1 max-w-md">Deploy a workflow from the editor and it will show up here for quick access.</p>
                 </div>
               )}
             </div>
@@ -331,24 +415,28 @@ function NavItem({
   icon: Icon, 
   label, 
   active, 
-  onClick 
+  onClick,
+  accent
 }: { 
   icon: any, 
   label: string, 
   active?: boolean, 
-  onClick?: () => void 
+  onClick?: () => void,
+  accent?: 'default' | 'indigo'
 }) {
   return (
     <button 
       onClick={onClick}
       className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-[16px] transition-all group ${
         active 
-          ? "bg-slate-100/80 text-white font-semibold" 
-          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+          ? "bg-slate-100/90 text-slate-900 font-semibold shadow-sm" 
+          : accent === 'indigo'
+            ? "text-indigo-700 hover:bg-indigo-50 hover:text-indigo-900"
+            : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
       }`}
     >
       <Icon className={`w-5 h-5 transition-colors ${
-        active ? "text-slate-800" : "text-slate-400 group-hover:text-slate-600"
+        active ? "text-slate-800" : accent === 'indigo' ? "text-indigo-500 group-hover:text-indigo-700" : "text-slate-400 group-hover:text-slate-600"
       }`} />
       <span className="text-[14px] tracking-wide">{label}</span>
     </button>

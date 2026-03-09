@@ -1,9 +1,9 @@
 import React from 'react';
 import { clsx } from 'clsx';
-import { LayoutGrid, Terminal, X, FileText, Maximize2 } from 'lucide-react';
+import { LayoutGrid, Terminal, X, NotebookPen, Maximize2 } from 'lucide-react';
 import { SpacesSidebar } from './SpacesSidebar';
 import { XTerminalPanel } from './XTerminalPanel';
-import { CanvasPanel } from './sidebar/CanvasPanel';
+import { QuickNotesPanel } from './sidebar/QuickNotesPanel';
 
 interface SidebarTabsPanelProps {
     isOpen: boolean;
@@ -38,7 +38,7 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
                         className={clsx(
                             "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition-all",
                             activeTab === 'spaces'
-                                ? "bg-theme-card text-white shadow-sm"
+                                ? "bg-theme-card text-theme-fg shadow-sm ring-1 ring-theme/10"
                                 : "text-theme-muted hover:text-theme-fg"
                         )}
                     >
@@ -50,19 +50,19 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
                         className={clsx(
                             "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition-all",
                             activeTab === 'canvas'
-                                ? "bg-theme-card text-white shadow-sm"
+                                ? "bg-theme-card text-theme-fg shadow-sm ring-1 ring-theme/10"
                                 : "text-theme-muted hover:text-theme-fg"
                         )}
                     >
-                        <FileText className="w-3 h-3" />
-                        <span>Canvas</span>
+                        <NotebookPen className="w-3 h-3" />
+                        <span>Notes</span>
                     </button>
                     <button
                         onClick={() => onSwitchTab('terminal')}
                         className={clsx(
                             "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition-all",
                             activeTab === 'terminal'
-                                ? "bg-theme-card text-white shadow-sm"
+                                ? "bg-theme-card text-theme-fg shadow-sm ring-1 ring-theme/10"
                                 : "text-theme-muted hover:text-theme-fg"
                         )}
                     >
@@ -102,7 +102,7 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
                     />
                 )}
                 {activeTab === 'canvas' && (
-                    <CanvasPanel
+                    <QuickNotesPanel
                         className="w-full h-full"
                     />
                 )}

@@ -1,6 +1,9 @@
 import React, { useCallback, useState, forwardRef, useImperativeHandle, useRef } from "react";
 import { Link2, Square, Plus } from "lucide-react";
 import { ModelSelector } from "../../../components/ModelSelector";
+import type { ReasoningLevel } from "../../../hooks/usePreferences";
+import type { ContextUsageMetrics } from "../../../utils/contextUsage";
+import { ContextUsageIndicator } from "../../../components/ContextUsageIndicator";
 
 function extractAnyUrl(text: string): string | null {
   if (!text) return null;
@@ -16,9 +19,12 @@ export const ChatInput = forwardRef<ChatInputRef, {
   onSend: (text: string) => void;
   busy: boolean;
   onStop?: () => void;
+  contextMetrics?: ContextUsageMetrics | null;
   selectedModelId?: string | 'auto';
   onSelectModel?: (id: string | 'auto') => void;
-}>(({ onSend, busy, onStop, selectedModelId, onSelectModel }, ref) => {
+  reasoningLevel?: ReasoningLevel;
+  onReasoningLevelChange?: (level: ReasoningLevel) => void;
+}>(({ onSend, busy, onStop, contextMetrics, selectedModelId, onSelectModel, reasoningLevel, onReasoningLevelChange }, ref) => {
   const [text, setText] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   const [hasDragUrl, setHasDragUrl] = useState(false);
@@ -152,13 +158,18 @@ export const ChatInput = forwardRef<ChatInputRef, {
           </div>
 
           <div className="flex items-center gap-2">
+            <ContextUsageIndicator metrics={contextMetrics} compact />
             {onSelectModel && selectedModelId && (
               <ModelSelector
                 selectedModelId={selectedModelId}
                 onSelectModel={onSelectModel}
+                reasoningLevel={reasoningLevel}
+                onReasoningLevelChange={onReasoningLevelChange}
                 side="top"
                 align="end"
                 variant="glass"
+                portal
+                panelWidth={340}
               />
             )}
             {busy && onStop ? (

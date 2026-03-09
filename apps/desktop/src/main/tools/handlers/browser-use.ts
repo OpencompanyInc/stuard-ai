@@ -2,36 +2,112 @@ import { app } from 'electron';
 import { ChildProcess, spawn, execFile } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import net from 'net';
 import { randomBytes } from 'crypto';
 import { RouterContext } from '../types';
+import { loadSettings } from '../../settings';
 
 const BROWSER_USE_PORT = 18082;
-const BROWSER_USE_DEFAULT_HOST = `http://localhost:${BROWSER_USE_PORT}`;
+const BROWSER_USE_DEFAULT_HOST = 'http://localhost';
 const BROWSER_USE_AUTH_HEADER = 'x-stuard-browser-token';
 const BROWSER_USE_AUTH_TOKEN = process.env.BROWSER_USE_AUTH_TOKEN || randomBytes(24).toString('hex');
 
-let serverProcess: ChildProcess | null = null;
-let serverReady = false;
+type BrowserUseRuntime = {
+  sessionId: string;
+  port: number;
+  process: ChildProcess | null;
+  ready: boolean;
+  setupPromise: Promise<{ ok: boolean; error?: string; step?: string; alreadyRunning?: boolean }> | null;
+  chromeSyncPromise: Promise<void> | null;
+  lastChromeSyncAt: number;
+  lastChromeSyncKey: string;
+};
 
-function getBrowserUseHost(): string {
-  return process.env.BROWSER_USE_HOST || BROWSER_USE_DEFAULT_HOST;
+const browserUseRuntimes = new Map<string, BrowserUseRuntime>();
+const browserUseRuntimePromises = new Map<string, Promise<BrowserUseRuntime>>();
+
+const CHROME_SYNC_MIN_INTERVAL_MS = 15000;
+
+function normalizeBrowserUseSessionId(value: any): string {
+  const raw = String(value || 'default').trim();
+  if (!raw) return 'default';
+  const safe = raw.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 96);
+  return safe || 'default';
 }
 
-function getProfileDir(): string {
+function getBrowserUseSessionId(args: any): string {
+  return normalizeBrowserUseSessionId(args?.session_id || args?._browserUseSessionId || 'default');
+}
+
+function getBrowserUseHost(runtime: BrowserUseRuntime): string {
+  return process.env.BROWSER_USE_HOST || `${BROWSER_USE_DEFAULT_HOST}:${runtime.port}`;
+}
+
+function getProfileRootDir(): string {
   return path.join(app.getPath('userData'), 'browser-profiles');
+}
+
+function getProfileDir(sessionId = 'default'): string {
+  return path.join(getProfileRootDir(), normalizeBrowserUseSessionId(sessionId));
+}
+
+async function allocateBrowserUsePort(): Promise<number> {
+  return await new Promise<number>((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : BROWSER_USE_PORT;
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve(port);
+      });
+    });
+  });
+}
+
+async function getRuntime(sessionId = 'default'): Promise<BrowserUseRuntime> {
+  const normalizedSessionId = normalizeBrowserUseSessionId(sessionId);
+  const existing = browserUseRuntimes.get(normalizedSessionId);
+  if (existing) return existing;
+
+  const pending = browserUseRuntimePromises.get(normalizedSessionId);
+  if (pending) return pending;
+
+  const created = (async () => {
+    const runtime: BrowserUseRuntime = {
+      sessionId: normalizedSessionId,
+      port: await allocateBrowserUsePort(),
+      process: null,
+      ready: false,
+      setupPromise: null,
+      chromeSyncPromise: null,
+      lastChromeSyncAt: 0,
+      lastChromeSyncKey: '',
+    };
+    browserUseRuntimes.set(normalizedSessionId, runtime);
+    browserUseRuntimePromises.delete(normalizedSessionId);
+    return runtime;
+  })();
+
+  browserUseRuntimePromises.set(normalizedSessionId, created);
+  return created;
 }
 
 async function browserUseFetch(
   endpoint: string,
   options?: RequestInit & { timeoutMs?: number },
+  sessionId = 'default',
 ): Promise<Response> {
+  const runtime = await getRuntime(sessionId);
   const { timeoutMs = 30000, ...fetchOpts } = options || {};
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const headers = new Headers(fetchOpts.headers || undefined);
     headers.set(BROWSER_USE_AUTH_HEADER, BROWSER_USE_AUTH_TOKEN);
-    return await fetch(`${getBrowserUseHost()}${endpoint}`, {
+    return await fetch(`${getBrowserUseHost(runtime)}${endpoint}`, {
       ...fetchOpts,
       headers,
       signal: controller.signal,
@@ -53,10 +129,6 @@ function runCmd(cmd: string, args: string[], timeoutMs = 120000): Promise<{ ok: 
   });
 }
 
-// ---------------------------------------------------------------------------
-// Installation — fully automatic, no terminal needed
-// ---------------------------------------------------------------------------
-
 async function checkPythonAvailable(): Promise<boolean> {
   const { ok } = await runCmd(getPythonCmd(), ['--version'], 10000);
   return ok;
@@ -64,11 +136,6 @@ async function checkPythonAvailable(): Promise<boolean> {
 
 async function checkBrowserUseInstalled(): Promise<boolean> {
   const { ok } = await runCmd(getPythonCmd(), ['-c', 'import browser_use; print("ok")'], 15000);
-  return ok;
-}
-
-async function checkBrowserUseChatOpenAIAvailable(): Promise<boolean> {
-  const { ok } = await runCmd(getPythonCmd(), ['-c', 'from browser_use import ChatOpenAI; print("ok")'], 15000);
   return ok;
 }
 
@@ -83,7 +150,7 @@ export async function installBrowserUse(): Promise<{ ok: boolean; error?: string
   }
 
   if (!(await checkBrowserUseInstalled())) {
-    const pip = await runCmd(getPythonCmd(), ['-m', 'pip', 'install', 'browser-use', 'aiohttp'], 300000);
+    const pip = await runCmd(getPythonCmd(), ['-m', 'pip', 'install', 'browser-use', 'aiohttp', 'cryptography'], 300000);
     if (!pip.ok) {
       return { ok: false, error: `Failed to install browser-use: ${pip.stderr.slice(0, 300)}`, step: 'pip' };
     }
@@ -103,31 +170,8 @@ export async function installBrowserUse(): Promise<{ ok: boolean; error?: string
   return { ok: true };
 }
 
-async function ensureBrowserUseTaskDependencies(): Promise<{ ok: boolean; error?: string }> {
-  if (!(await checkPythonAvailable())) {
-    return { ok: false, error: 'Python is not installed. Please install Python 3.11+ from python.org first.' };
-  }
-  // browser_use.ChatOpenAI is bundled with modern browser-use and avoids
-  // requiring BROWSER_USE_API_KEY for local Stuard proxy-based calls.
-  if (await checkBrowserUseChatOpenAIAvailable()) {
-    return { ok: true };
-  }
-
-  const pip = await runCmd(getPythonCmd(), ['-m', 'pip', 'install', '--upgrade', 'browser-use'], 300000);
-  if (!pip.ok) {
-    return { ok: false, error: `Failed to install task dependency browser-use: ${pip.stderr.slice(0, 300)}` };
-  }
-  return (await checkBrowserUseChatOpenAIAvailable())
-    ? { ok: true }
-    : { ok: false, error: 'browser-use is installed but missing ChatOpenAI support. Please upgrade browser-use.' };
-}
-
-// ---------------------------------------------------------------------------
-// Uninstall
-// ---------------------------------------------------------------------------
-
 export async function uninstallBrowserUse(): Promise<{ ok: boolean; error?: string }> {
-  await stopBrowserUseServer();
+  await stopAllBrowserUseServers();
 
   const hasPython = await checkPythonAvailable();
   if (!hasPython) return { ok: true };
@@ -135,7 +179,7 @@ export async function uninstallBrowserUse(): Promise<{ ok: boolean; error?: stri
   const pip1 = await runCmd(getPythonCmd(), ['-m', 'pip', 'uninstall', '-y', 'browser-use'], 60000);
   const pip2 = await runCmd(getPythonCmd(), ['-m', 'pip', 'uninstall', '-y', 'playwright'], 60000);
 
-  const profileDir = getProfileDir();
+  const profileDir = getProfileRootDir();
   try {
     if (fs.existsSync(profileDir)) {
       fs.rmSync(profileDir, { recursive: true, force: true });
@@ -149,10 +193,6 @@ export async function uninstallBrowserUse(): Promise<{ ok: boolean; error?: stri
   return { ok: true };
 }
 
-// ---------------------------------------------------------------------------
-// Process management
-// ---------------------------------------------------------------------------
-
 function getServerScript(): string {
   const devPath = path.join(app.getAppPath(), '..', 'agent', 'browser_use_server.py');
   if (fs.existsSync(devPath)) return devPath;
@@ -163,13 +203,13 @@ function getServerScript(): string {
   return devPath;
 }
 
-async function killPortProcess(): Promise<void> {
+async function killPortProcess(port: number): Promise<void> {
   if (process.platform === 'win32') {
     try {
       const { stdout } = await runCmd('netstat', ['-ano'], 10000);
       const lines = stdout.split('\n');
       for (const line of lines) {
-        if (line.includes(`:${BROWSER_USE_PORT}`) && line.includes('LISTENING')) {
+        if (line.includes(`:${port}`) && line.includes('LISTENING')) {
           const parts = line.trim().split(/\s+/);
           const pid = parts[parts.length - 1];
           if (pid && /^\d+$/.test(pid)) {
@@ -180,7 +220,7 @@ async function killPortProcess(): Promise<void> {
     } catch {}
   } else {
     try {
-      const { stdout } = await runCmd('lsof', ['-ti', `:${BROWSER_USE_PORT}`], 5000);
+      const { stdout } = await runCmd('lsof', ['-ti', `:${port}`], 5000);
       const pids = stdout.trim().split('\n').filter(Boolean);
       for (const pid of pids) {
         await runCmd('kill', ['-9', pid], 3000);
@@ -189,12 +229,11 @@ async function killPortProcess(): Promise<void> {
   }
 }
 
-async function ensureBrowserPageOpen(): Promise<{ ok: boolean; error?: string }> {
+async function ensureBrowserPageOpen(sessionId = 'default'): Promise<{ ok: boolean; error?: string }> {
   try {
-    // If server is reachable, let tool handlers lazily open/navigate pages.
-    // Avoid force-navigating to about:blank, which creates noisy extra tabs.
-    const statusResp = await browserUseFetch('/status', { timeoutMs: 5000 });
+    const statusResp = await browserUseFetch('/status', { timeoutMs: 5000 }, sessionId);
     if (statusResp.ok) {
+      await ensureChromeSyncFresh(sessionId);
       return { ok: true };
     }
     const errText = await statusResp.text().catch(() => '');
@@ -204,29 +243,30 @@ async function ensureBrowserPageOpen(): Promise<{ ok: boolean; error?: string }>
   }
 }
 
-export async function startBrowserUseServer(): Promise<{ ok: boolean; error?: string }> {
-  if (serverProcess && !serverProcess.killed) {
-    const alive = await isBrowserUseAlive();
+export async function startBrowserUseServer(sessionId = 'default'): Promise<{ ok: boolean; error?: string }> {
+  const runtime = await getRuntime(sessionId);
+  if (runtime.process && !runtime.process.killed) {
+    const alive = await isBrowserUseAlive(sessionId);
     if (alive) {
-      const opened = await ensureBrowserPageOpen();
+      const opened = await ensureBrowserPageOpen(sessionId);
       return opened.ok ? { ok: true } : opened;
     }
-    try { serverProcess.kill(); } catch {}
-    serverProcess = null;
-    serverReady = false;
+    try { runtime.process.kill(); } catch {}
+    runtime.process = null;
+    runtime.ready = false;
   }
 
-  if (await isBrowserUseAlive()) {
-    serverReady = true;
-    const opened = await ensureBrowserPageOpen();
+  if (await isBrowserUseAlive(sessionId)) {
+    runtime.ready = true;
+    const opened = await ensureBrowserPageOpen(sessionId);
     return opened.ok ? { ok: true } : opened;
   }
 
-  await killPortProcess();
+  await killPortProcess(runtime.port);
   await new Promise((r) => setTimeout(r, 500));
 
   const script = getServerScript();
-  const profileDir = getProfileDir();
+  const profileDir = getProfileDir(sessionId);
 
   if (!fs.existsSync(script)) {
     return { ok: false, error: `Server script not found: ${script}` };
@@ -235,10 +275,10 @@ export async function startBrowserUseServer(): Promise<{ ok: boolean; error?: st
   let earlyStderr = '';
 
   try {
-    serverProcess = spawn(getPythonCmd(), [script], {
+    runtime.process = spawn(getPythonCmd(), [script], {
       env: {
         ...process.env,
-        BROWSER_USE_PORT: String(BROWSER_USE_PORT),
+        BROWSER_USE_PORT: String(runtime.port),
         BROWSER_USE_PROFILE_DIR: profileDir,
         BROWSER_USE_AUTH_TOKEN,
       },
@@ -246,35 +286,37 @@ export async function startBrowserUseServer(): Promise<{ ok: boolean; error?: st
       windowsHide: true,
     });
 
-    serverProcess.on('exit', (code) => {
-      console.warn(`[browser-use-server] exited with code ${code}`);
-      serverProcess = null;
-      serverReady = false;
+    runtime.process.on('exit', (code) => {
+      console.warn(`[browser-use-server:${runtime.sessionId}] exited with code ${code}`);
+      runtime.process = null;
+      runtime.ready = false;
+      runtime.setupPromise = null;
+      runtime.chromeSyncPromise = null;
     });
 
-    serverProcess.stdout?.on('data', (data: Buffer) => {
+    runtime.process.stdout?.on('data', (data: Buffer) => {
       const msg = data.toString();
-      console.log('[browser-use-server]', msg.trim());
-      if (msg.includes('Starting on') || msg.includes('Running on')) serverReady = true;
+      console.log(`[browser-use-server:${runtime.sessionId}]`, msg.trim());
+      if (msg.includes('Starting on') || msg.includes('Running on')) runtime.ready = true;
     });
 
-    serverProcess.stderr?.on('data', (data: Buffer) => {
+    runtime.process.stderr?.on('data', (data: Buffer) => {
       const msg = data.toString().trim();
-      console.warn('[browser-use-server]', msg);
+      console.warn(`[browser-use-server:${runtime.sessionId}]`, msg);
       earlyStderr += msg + '\n';
     });
 
     for (let i = 0; i < 30; i++) {
       await new Promise((r) => setTimeout(r, 500));
 
-      if (!serverProcess || serverProcess.exitCode !== null) {
+      if (!runtime.process || runtime.process.exitCode !== null) {
         const errMsg = earlyStderr.trim().slice(0, 400) || 'Server crashed on startup';
         return { ok: false, error: errMsg };
       }
 
-      if (await isBrowserUseAlive()) {
-        serverReady = true;
-        const opened = await ensureBrowserPageOpen();
+      if (await isBrowserUseAlive(sessionId)) {
+        runtime.ready = true;
+        const opened = await ensureBrowserPageOpen(sessionId);
         return opened.ok ? { ok: true } : opened;
       }
     }
@@ -286,27 +328,46 @@ export async function startBrowserUseServer(): Promise<{ ok: boolean; error?: st
   }
 }
 
-export async function stopBrowserUseServer(): Promise<{ ok: boolean }> {
-  if (serverProcess && !serverProcess.killed) {
-    serverProcess.kill();
-    serverProcess = null;
+export async function stopBrowserUseServer(sessionId = 'default'): Promise<{ ok: boolean }> {
+  const runtime = await getRuntime(sessionId);
+  if (runtime.process && !runtime.process.killed) {
+    runtime.process.kill();
+    runtime.process = null;
   }
-  serverReady = false;
+  runtime.ready = false;
+  runtime.setupPromise = null;
+  runtime.chromeSyncPromise = null;
+  runtime.lastChromeSyncAt = 0;
+  runtime.lastChromeSyncKey = '';
   return { ok: true };
 }
 
-async function isBrowserUseAlive(): Promise<boolean> {
+async function stopAllBrowserUseServers(): Promise<void> {
+  await Promise.all(Array.from(browserUseRuntimes.values()).map(async (runtime) => {
+    if (runtime.process && !runtime.process.killed) {
+      runtime.process.kill();
+    }
+    runtime.process = null;
+    runtime.ready = false;
+    runtime.setupPromise = null;
+    runtime.chromeSyncPromise = null;
+    runtime.lastChromeSyncAt = 0;
+    runtime.lastChromeSyncKey = '';
+  }));
+}
+
+async function isBrowserUseAlive(sessionId = 'default'): Promise<boolean> {
   try {
-    const resp = await browserUseFetch('/status', { timeoutMs: 3000 });
+    const resp = await browserUseFetch('/status', { timeoutMs: 3000 }, sessionId);
     return resp.ok;
   } catch {
     return false;
   }
 }
 
-async function getBrowserUseServerStatus(): Promise<any | null> {
+async function getBrowserUseServerStatus(sessionId = 'default'): Promise<any | null> {
   try {
-    const resp = await browserUseFetch('/status', { timeoutMs: 5000 });
+    const resp = await browserUseFetch('/status', { timeoutMs: 5000 }, sessionId);
     if (!resp.ok) return null;
     return await resp.json();
   } catch {
@@ -314,73 +375,79 @@ async function getBrowserUseServerStatus(): Promise<any | null> {
   }
 }
 
-export async function setupBrowserUse(): Promise<{ ok: boolean; error?: string; step?: string; alreadyRunning?: boolean }> {
-  const status = await getBrowserUseServerStatus();
+export async function setupBrowserUse(sessionId = 'default'): Promise<{ ok: boolean; error?: string; step?: string; alreadyRunning?: boolean }> {
+  const status = await getBrowserUseServerStatus(sessionId);
   if (status) {
     // Server can be alive but unusable (missing browser_use package in that Python env).
     if (!status.installed) {
       const install = await installBrowserUse();
       if (!install.ok) return install;
-      await stopBrowserUseServer();
-      const started = await startBrowserUseServer();
+      await stopBrowserUseServer(sessionId);
+      const started = await startBrowserUseServer(sessionId);
       return started.ok ? { ok: true, alreadyRunning: true } : started;
     }
-    const opened = await ensureBrowserPageOpen();
+    const opened = await ensureBrowserPageOpen(sessionId);
     return opened.ok ? { ok: true, alreadyRunning: true } : opened;
   }
 
   const install = await installBrowserUse();
   if (!install.ok) return install;
 
-  return await startBrowserUseServer();
+  return await startBrowserUseServer(sessionId);
 }
 
-// ---------------------------------------------------------------------------
-// Transparent auto-setup: any tool that needs the server calls this first.
-// The user never has to click "start" — it just works.
-// ---------------------------------------------------------------------------
-
-let _setupPromise: Promise<{ ok: boolean; error?: string }> | null = null;
-
-async function ensureReady(): Promise<{ ok: boolean; error?: string }> {
-  const status = await getBrowserUseServerStatus();
+async function ensureReady(sessionId = 'default'): Promise<{ ok: boolean; error?: string }> {
+  const runtime = await getRuntime(sessionId);
+  const status = await getBrowserUseServerStatus(sessionId);
   if (status?.installed) {
-    const opened = await ensureBrowserPageOpen();
+    const opened = await ensureBrowserPageOpen(sessionId);
     if (opened.ok) return { ok: true };
   }
 
   // Coalesce concurrent setup calls so we don't spawn multiple processes
-  if (!_setupPromise) {
-    _setupPromise = setupBrowserUse().finally(() => { _setupPromise = null; });
+  if (!runtime.setupPromise) {
+    runtime.setupPromise = setupBrowserUse(sessionId).finally(() => { runtime.setupPromise = null; });
   }
-  return _setupPromise;
+  return runtime.setupPromise;
 }
 
 async function withServer<T>(
   label: string,
-  fn: () => Promise<T>,
+  args: any,
+  fn: (sessionId: string) => Promise<T>,
 ): Promise<T | { ok: false; error: string }> {
-  const ready = await ensureReady();
+  const sessionId = getBrowserUseSessionId(args);
+  const ready = await ensureReady(sessionId);
   if (!ready.ok) return { ok: false, error: `Browser not available: ${ready.error || 'setup failed'}` };
   try {
-    return await fn();
+    return await fn(sessionId);
   } catch (err: any) {
     return { ok: false, error: err.message || `${label} failed` };
   }
 }
 
-// ---------------------------------------------------------------------------
-// Tool executors
-// ---------------------------------------------------------------------------
-
-export async function execBrowserUseStatus(_args: any, _ctx: RouterContext): Promise<any> {
-  const serverAlive = await isBrowserUseAlive();
+export async function execBrowserUseStatus(args: any, _ctx: RouterContext): Promise<any> {
+  const sessionId = getBrowserUseSessionId(args);
+  const serverAlive = await isBrowserUseAlive(sessionId);
+  const settings = loadSettings();
   if (serverAlive) {
     try {
-      const resp = await browserUseFetch('/status', { timeoutMs: 5000 });
+      const resp = await browserUseFetch('/status', { timeoutMs: 5000 }, sessionId);
       if (resp.ok) {
         const data = await resp.json();
-        return { ok: true, ...data, serverAlive: true };
+        return {
+          ok: true,
+          ...data,
+          serverAlive: true,
+          sessionId,
+          chromeSyncSettings: {
+            chromeSyncEnabled: settings.chromeSyncEnabled !== false,
+            chromeSyncBrowserName: settings.chromeSyncBrowserName || 'Chrome',
+            chromeSyncProfileName: settings.chromeSyncProfileName || 'Default',
+            chromeSyncProfilePath: settings.chromeSyncProfilePath || null,
+            chromeSyncUserDataDir: settings.chromeSyncUserDataDir || null,
+          },
+        };
       }
     } catch {}
   }
@@ -396,12 +463,20 @@ export async function execBrowserUseStatus(_args: any, _ctx: RouterContext): Pro
     hasPython,
     mode: 'headed',
     profile: 'default',
-    profileDir: String(getProfileDir()),
+    profileDir: String(getProfileDir(sessionId)),
+    sessionId,
+    chromeSyncSettings: {
+      chromeSyncEnabled: settings.chromeSyncEnabled !== false,
+      chromeSyncBrowserName: settings.chromeSyncBrowserName || 'Chrome',
+      chromeSyncProfileName: settings.chromeSyncProfileName || 'Default',
+      chromeSyncProfilePath: settings.chromeSyncProfilePath || null,
+      chromeSyncUserDataDir: settings.chromeSyncUserDataDir || null,
+    },
   };
 }
 
 export async function execBrowserUseConfigure(args: any, _ctx: RouterContext): Promise<any> {
-  return withServer('Configure', async () => {
+  return withServer('Configure', args, async (sessionId) => {
     const resp = await browserUseFetch('/configure', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -410,7 +485,7 @@ export async function execBrowserUseConfigure(args: any, _ctx: RouterContext): P
         cdp_url: args?.cdp_url,
         profile: args?.profile,
       }),
-    });
+    }, sessionId);
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
       return { ok: false, error: `Configure failed: ${resp.status} ${errText}` };
@@ -420,36 +495,38 @@ export async function execBrowserUseConfigure(args: any, _ctx: RouterContext): P
 }
 
 export async function execBrowserUseTask(args: any, ctx: RouterContext): Promise<any> {
-  const task = String(args?.task || '').trim();
-  if (!task) return { ok: false, error: 'task is required' };
-  ctx.logFn?.(`[browser_use_task] Running (${task.length} chars)`);
+  ctx.logFn?.('[browser_use_task] Disabled; use browser_use_execute_script or a browser-use subagent instead');
+  return {
+    ok: false,
+    error: 'browser_use_task is disabled. Use browser_use_execute_script for complex page logic or launch a browser-use subagent for autonomous multi-step browsing.',
+  };
+}
 
-  const deps = await ensureBrowserUseTaskDependencies();
-  if (!deps.ok) return { ok: false, error: deps.error || 'Browser Use task dependencies are missing' };
+export async function execBrowserUseExecuteScript(args: any, ctx: RouterContext): Promise<any> {
+  const script = String(args?.script || '').trim();
+  if (!script) return { ok: false, error: 'script is required' };
+  ctx.logFn?.(`[browser_use_execute_script] Running (${script.length} chars)`);
 
-  return withServer('Task', async () => {
-    const maxStepsRaw = Number(args?.max_steps ?? 25);
-    const max_steps = Number.isFinite(maxStepsRaw) ? Math.max(1, Math.min(120, Math.floor(maxStepsRaw))) : 25;
-    const model = typeof args?.model === 'string' && args.model.trim()
-      ? args.model.trim()
-      : 'google/gemini-3-flash-preview';
-    const payload: Record<string, any> = {
-      task,
-      max_steps,
-      ...(model ? { model } : {}),
-    };
-    if (args?._llm_proxy_url) payload._llm_proxy_url = args._llm_proxy_url;
-    if (args?._llm_session_token) payload._llm_session_token = args._llm_session_token;
+  const timeoutRaw = Number(args?.timeout ?? 30000);
+  const timeoutMs = Number.isFinite(timeoutRaw) ? Math.max(250, Math.min(300000, Math.floor(timeoutRaw))) : 30000;
+  const scriptArgs = args?.args;
 
-    const resp = await browserUseFetch('/task', {
+  return withServer('ExecuteScript', args, async (sessionId) => {
+    const resp = await browserUseFetch('/execute-script', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      timeoutMs: 600000,
-    });
+      body: JSON.stringify({
+        script,
+        args: scriptArgs && typeof scriptArgs === 'object' && !Array.isArray(scriptArgs) ? scriptArgs : undefined,
+        wait_for_selector: args?.wait_for_selector,
+        wait_timeout: args?.wait_timeout,
+        timeout: timeoutMs,
+      }),
+      timeoutMs: timeoutMs + 5000,
+    }, sessionId);
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
-      return { ok: false, error: `Task failed: ${resp.status} ${errText}` };
+      return { ok: false, error: `Execute script failed: ${resp.status} ${errText}` };
     }
     return await resp.json();
   });
@@ -459,7 +536,7 @@ export async function execBrowserUseNavigate(args: any, _ctx: RouterContext): Pr
   const url = args?.url;
   if (!url) return { ok: false, error: 'url is required' };
 
-  return withServer('Navigation', async () => {
+  return withServer('Navigation', args, async (sessionId) => {
     const resp = await browserUseFetch('/navigate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -469,7 +546,7 @@ export async function execBrowserUseNavigate(args: any, _ctx: RouterContext): Pr
         timeout: args?.timeout,
         wait_for_selector: args?.wait_for_selector,
       }),
-    });
+    }, sessionId);
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
       return { ok: false, error: `Navigation failed: ${resp.status} ${errText}` };
@@ -479,7 +556,7 @@ export async function execBrowserUseNavigate(args: any, _ctx: RouterContext): Pr
 }
 
 export async function execBrowserUseClick(args: any, _ctx: RouterContext): Promise<any> {
-  return withServer('Click', async () => {
+  return withServer('Click', args, async (sessionId) => {
     const resp = await browserUseFetch('/click', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -489,7 +566,7 @@ export async function execBrowserUseClick(args: any, _ctx: RouterContext): Promi
         exact: args?.exact,
         timeout: args?.timeout,
       }),
-    });
+    }, sessionId);
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
       return { ok: false, error: `Click failed: ${resp.status} ${errText}` };
@@ -499,7 +576,7 @@ export async function execBrowserUseClick(args: any, _ctx: RouterContext): Promi
 }
 
 export async function execBrowserUseType(args: any, _ctx: RouterContext): Promise<any> {
-  return withServer('Type', async () => {
+  return withServer('Type', args, async (sessionId) => {
     const resp = await browserUseFetch('/type', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -509,7 +586,7 @@ export async function execBrowserUseType(args: any, _ctx: RouterContext): Promis
         clear: args?.clear,
         timeout: args?.timeout,
       }),
-    });
+    }, sessionId);
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
       return { ok: false, error: `Type failed: ${resp.status} ${errText}` };
@@ -522,7 +599,7 @@ export async function execBrowserUsePressKey(args: any, _ctx: RouterContext): Pr
   const key = String(args?.key || '').trim();
   if (!key) return { ok: false, error: 'key is required' };
 
-  return withServer('PressKey', async () => {
+  return withServer('PressKey', args, async (sessionId) => {
     const resp = await browserUseFetch('/press_key', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -530,7 +607,7 @@ export async function execBrowserUsePressKey(args: any, _ctx: RouterContext): Pr
         key,
         selector: args?.selector,
       }),
-    });
+    }, sessionId);
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
       return { ok: false, error: `Press key failed: ${resp.status} ${errText}` };
@@ -540,13 +617,13 @@ export async function execBrowserUsePressKey(args: any, _ctx: RouterContext): Pr
 }
 
 export async function execBrowserUseScreenshot(args: any, _ctx: RouterContext): Promise<any> {
-  return withServer('Screenshot', async () => {
+  return withServer('Screenshot', args, async (sessionId) => {
     const resp = await browserUseFetch('/screenshot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ full_page: args?.full_page }),
       timeoutMs: 15000,
-    });
+    }, sessionId);
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
       return { ok: false, error: `Screenshot failed: ${resp.status} ${errText}` };
@@ -556,7 +633,7 @@ export async function execBrowserUseScreenshot(args: any, _ctx: RouterContext): 
 }
 
 export async function execBrowserUseContent(args: any, _ctx: RouterContext): Promise<any> {
-  return withServer('Content', async () => {
+  return withServer('Content', args, async (sessionId) => {
     const resp = await browserUseFetch('/content', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -566,7 +643,7 @@ export async function execBrowserUseContent(args: any, _ctx: RouterContext): Pro
         wait_for_selector: args?.wait_for_selector,
         wait_timeout: args?.wait_timeout,
       }),
-    });
+    }, sessionId);
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
       return { ok: false, error: `Content failed: ${resp.status} ${errText}` };
@@ -576,7 +653,7 @@ export async function execBrowserUseContent(args: any, _ctx: RouterContext): Pro
 }
 
 export async function execBrowserUseScroll(args: any, _ctx: RouterContext): Promise<any> {
-  return withServer('Scroll', async () => {
+  return withServer('Scroll', args, async (sessionId) => {
     const resp = await browserUseFetch('/scroll', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -585,7 +662,7 @@ export async function execBrowserUseScroll(args: any, _ctx: RouterContext): Prom
         amount: args?.amount,
         selector: args?.selector,
       }),
-    });
+    }, sessionId);
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
       return { ok: false, error: `Scroll failed: ${resp.status} ${errText}` };
@@ -595,7 +672,7 @@ export async function execBrowserUseScroll(args: any, _ctx: RouterContext): Prom
 }
 
 export async function execBrowserUseTabs(args: any, _ctx: RouterContext): Promise<any> {
-  return withServer('Tabs', async () => {
+  return withServer('Tabs', args, async (sessionId) => {
     const resp = await browserUseFetch('/tabs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -604,7 +681,7 @@ export async function execBrowserUseTabs(args: any, _ctx: RouterContext): Promis
         index: args?.index,
         url: args?.url,
       }),
-    });
+    }, sessionId);
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
       return { ok: false, error: `Tabs failed: ${resp.status} ${errText}` };
@@ -614,7 +691,7 @@ export async function execBrowserUseTabs(args: any, _ctx: RouterContext): Promis
 }
 
 export async function execBrowserUseCookies(args: any, _ctx: RouterContext): Promise<any> {
-  return withServer('Cookies', async () => {
+  return withServer('Cookies', args, async (sessionId) => {
     const resp = await browserUseFetch('/cookies', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -624,7 +701,7 @@ export async function execBrowserUseCookies(args: any, _ctx: RouterContext): Pro
         urls: args?.urls,
         path: args?.path,
       }),
-    });
+    }, sessionId);
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
       return { ok: false, error: `Cookies failed: ${resp.status} ${errText}` };
@@ -633,15 +710,114 @@ export async function execBrowserUseCookies(args: any, _ctx: RouterContext): Pro
   });
 }
 
-export async function execBrowserUseClose(_args: any, _ctx: RouterContext): Promise<any> {
-  if (!(await isBrowserUseAlive())) return { ok: true, closed: true };
+export async function execBrowserUseSyncChrome(args: any, _ctx: RouterContext): Promise<any> {
+  return withServer('SyncChrome', args, async (sessionId) => {
+    const resp = await browserUseFetch('/sync-chrome', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: args?.action || 'sync',
+        browser: args?.browser,
+        browser_name: args?.browser_name,
+        profile_name: args?.profile_name,
+        profile_path: args?.profile_path,
+        user_data_dir: args?.user_data_dir,
+        force_clone: args?.force_clone,
+        restart_browser: args?.restart_browser,
+      }),
+      timeoutMs: 60000,
+    }, sessionId);
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, error: `Chrome sync failed: ${resp.status} ${errText}` };
+    }
+    return await resp.json();
+  });
+}
+
+export async function execBrowserUseListChromeProfiles(args: any, _ctx: RouterContext): Promise<any> {
+  return withServer('ListChromeProfiles', args, async (sessionId) => {
+    const resp = await browserUseFetch('/sync-chrome', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'list_profiles' }),
+      timeoutMs: 15000,
+    }, sessionId);
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, error: `List profiles failed: ${resp.status} ${errText}` };
+    }
+    return await resp.json();
+  });
+}
+
+async function autoSyncChromeCookies(sessionId = 'default'): Promise<void> {
+  const settings = loadSettings();
+  if ((settings as any).chromeSyncEnabled === false) return;
+
+  try {
+    const resp = await browserUseFetch('/sync-chrome', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'sync',
+        browser_name: (settings as any).chromeSyncBrowserName || 'Chrome',
+        profile_name: (settings as any).chromeSyncProfileName || 'Default',
+        profile_path: (settings as any).chromeSyncProfilePath || undefined,
+        user_data_dir: (settings as any).chromeSyncUserDataDir || undefined,
+      }),
+      timeoutMs: 60000,
+    }, sessionId);
+    if (resp.ok) {
+      const data = await resp.json();
+      console.log(`[chrome-sync:${sessionId}] Auto-synced ${data.synced ?? 0} cookies from Chrome`);
+    } else {
+      console.warn(`[chrome-sync:${sessionId}] Auto-sync failed:`, await resp.text().catch(() => ''));
+    }
+  } catch (err: any) {
+    console.warn(`[chrome-sync:${sessionId}] Auto-sync error:`, err.message);
+  }
+}
+
+async function ensureChromeSyncFresh(sessionId = 'default', force = false): Promise<void> {
+  const runtime = await getRuntime(sessionId);
+  const settings = loadSettings();
+  if ((settings as any).chromeSyncEnabled === false) return;
+
+  const syncKey = JSON.stringify({
+    enabled: settings.chromeSyncEnabled !== false,
+    browser: settings.chromeSyncBrowserName || 'Chrome',
+    profile: settings.chromeSyncProfileName || 'Default',
+    profilePath: settings.chromeSyncProfilePath || null,
+    userDataDir: settings.chromeSyncUserDataDir || null,
+  });
+  const now = Date.now();
+  if (!force && runtime.chromeSyncPromise) {
+    await runtime.chromeSyncPromise;
+    return;
+  }
+  if (!force && runtime.lastChromeSyncKey === syncKey && now - runtime.lastChromeSyncAt < CHROME_SYNC_MIN_INTERVAL_MS) {
+    return;
+  }
+
+  runtime.lastChromeSyncKey = syncKey;
+  runtime.lastChromeSyncAt = now;
+  runtime.chromeSyncPromise = autoSyncChromeCookies(sessionId).finally(() => {
+    runtime.chromeSyncPromise = null;
+  });
+  await runtime.chromeSyncPromise;
+}
+
+export async function execBrowserUseClose(args: any, _ctx: RouterContext): Promise<any> {
+  const sessionId = getBrowserUseSessionId(args);
+  if (!(await isBrowserUseAlive(sessionId))) return { ok: true, closed: true };
   try {
     const resp = await browserUseFetch('/close', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
       timeoutMs: 10000,
-    });
+    }, sessionId);
     if (!resp.ok) {
       return { ok: false, error: 'Close failed' };
     }

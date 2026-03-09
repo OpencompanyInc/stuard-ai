@@ -1,4 +1,4 @@
-import React, { forwardRef, useState, useEffect, useRef, useCallback, memo } from 'react';
+import React, { forwardRef, useState, useEffect, useRef, useCallback, useDeferredValue, memo } from 'react';
 import { createPortal } from 'react-dom';
 import TextareaAutosize from 'react-textarea-autosize';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -365,6 +365,73 @@ const FolderPermissionsButton: React.FC = () => {
   );
 };
 
+const normalizeQuickSearchText = (value: string): string => String(value || '')
+  .toLowerCase()
+  .replace(/[/\\]+/g, ' ')
+  .replace(/[_\-.]+/g, ' ')
+  .replace(/[^a-z0-9\s]/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+const boundedEditDistance = (a: string, b: string, maxDistance = 2): number => {
+  if (a === b) return 0;
+  if (!a.length || !b.length) return Math.max(a.length, b.length);
+  if (Math.abs(a.length - b.length) > maxDistance) return maxDistance + 1;
+
+  const m = a.length;
+  const n = b.length;
+  const row = new Array(n + 1).fill(0).map((_, i) => i);
+
+  for (let i = 1; i <= m; i++) {
+    let prev = i - 1;
+    row[0] = i;
+    let minInRow = row[0];
+    for (let j = 1; j <= n; j++) {
+      const current = row[j];
+      if (a[i - 1] === b[j - 1]) {
+        row[j] = prev;
+      } else {
+        row[j] = 1 + Math.min(prev, row[j], row[j - 1]);
+      }
+      prev = current;
+      if (row[j] < minInRow) minInRow = row[j];
+    }
+    if (minInRow > maxDistance) return maxDistance + 1;
+  }
+
+  return row[n];
+};
+
+const scoreLocalSuggestion = (label: string, query: string): number => {
+  const text = normalizeQuickSearchText(label);
+  if (!text || !query) return 0;
+  if (text === query) return 100;
+  if (text.startsWith(query)) return 86;
+  const tokens = text.split(' ').filter(Boolean);
+  if (tokens.some((token) => token === query)) return 82;
+  if (tokens.some((token) => token.startsWith(query))) return 74;
+  if (query.length >= 3 && text.includes(query)) return 58;
+  if (query.length >= 4) {
+    let best = 0;
+    for (const token of tokens) {
+      const maxDist = Math.max(query.length, token.length) >= 7 ? 2 : 1;
+      const dist = boundedEditDistance(query, token, maxDist);
+      if (dist <= maxDist) {
+        best = Math.max(best, dist === 1 ? 66 : 56);
+      }
+    }
+    return best;
+  }
+  return 0;
+};
+
+const shouldRunSemanticQuickSearch = (query: string): boolean => {
+  const normalized = normalizeQuickSearchText(query);
+  const compactLen = normalized.replace(/\s+/g, '').length;
+  const tokenCount = normalized ? normalized.split(' ').length : 0;
+  return tokenCount > 1 && compactLen >= 6;
+};
+
 const InputArea = forwardRef(function InputArea(
   {
     query, setQuery, onSend,
@@ -392,6 +459,8 @@ const InputArea = forwardRef(function InputArea(
 
   const conn = connectionStatus || 'connected';
   const isConnSpinner = conn === 'connecting';
+  const deferredQuery = useDeferredValue(query);
+  const normalizedDeferredQuery = React.useMemo(() => String(deferredQuery || '').trim(), [deferredQuery]);
 
   // Drag-over state for visual drop feedback
   const [isDragOver, setIsDragOver] = useState(false);
@@ -433,6 +502,12 @@ const InputArea = forwardRef(function InputArea(
   const semanticReqIdRef = useRef(0);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const semanticDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const quickSearchCacheRef = useRef(new Map<string, {
+    expiresAt: number;
+    apps: any[];
+    files: any[];
+    mode: 'quick' | 'hybrid';
+  }>());
 
   // Ref for File Navigator to control selection
   const fileNavRef = useRef<FileNavRef>(null);
@@ -454,6 +529,7 @@ const InputArea = forwardRef(function InputArea(
   const [marketplaceResults, setMarketplaceResults] = useState<any[]>([]);
   const [isMarketplaceSearching, setMarketplaceSearching] = useState(false);
   const marketplaceDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const marketplaceReqIdRef = useRef(0);
 
   // Quick Shortcuts / Bookmarks
   const { bookmarks, saveBookmarks, executeBookmark } = useBookmarks();
@@ -462,15 +538,20 @@ const InputArea = forwardRef(function InputArea(
   // Search Marketplace
   useEffect(() => {
     // Only search if not expanded and query length >= 2
-    if (expanded) return;
+    if (expanded) {
+      marketplaceReqIdRef.current += 1;
+      setMarketplaceSearching(false);
+      return;
+    }
 
-    const q = String(query || '').trim();
+    const q = normalizedDeferredQuery;
     if (marketplaceDebounceRef.current) {
       clearTimeout(marketplaceDebounceRef.current);
       marketplaceDebounceRef.current = null;
     }
 
-    if (q.length < 2) {
+    if (q.length < 4) {
+      marketplaceReqIdRef.current += 1;
       setMarketplaceResults([]);
       setMarketplaceSearching(false);
       return;
@@ -478,57 +559,113 @@ const InputArea = forwardRef(function InputArea(
 
     setMarketplaceSearching(true);
     marketplaceDebounceRef.current = setTimeout(async () => {
+      const reqId = ++marketplaceReqIdRef.current;
       try {
         const token = accessToken ?? null;
         const api = getMarketplaceApi(() => token);
         const res = await api.search({ query: q, limit: 3 });
+        if (marketplaceReqIdRef.current !== reqId) return;
         if (res.ok && res.results) {
           setMarketplaceResults(res.results);
         } else {
           setMarketplaceResults([]);
         }
       } catch {
+        if (marketplaceReqIdRef.current !== reqId) return;
         setMarketplaceResults([]);
       } finally {
-        setMarketplaceSearching(false);
+        if (marketplaceReqIdRef.current === reqId) setMarketplaceSearching(false);
       }
-    }, 600);
+    }, 800);
 
     return () => {
       if (marketplaceDebounceRef.current) clearTimeout(marketplaceDebounceRef.current);
     };
-  }, [query, expanded, accessToken]);
+  }, [normalizedDeferredQuery, expanded, accessToken]);
 
   const filteredLocalWorkflows = React.useMemo(() => {
-    const q = (query || '').toLowerCase().trim();
+    const q = normalizeQuickSearchText(normalizedDeferredQuery);
     if (!q || q.length < 2) return [];
-    return localWorkflows.filter(w =>
-      (w.name || '').toLowerCase().includes(q)
-    ).slice(0, 3);
-  }, [localWorkflows, query]);
+    return localWorkflows
+      .map((workflow) => ({
+        workflow,
+        score: scoreLocalSuggestion(workflow.name || '', q),
+      }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score || (a.workflow.name || '').localeCompare(b.workflow.name || ''))
+      .slice(0, 3)
+      .map((item) => item.workflow);
+  }, [localWorkflows, normalizedDeferredQuery]);
 
 
   // Quick file search by filename — uses unified search (apps + files)
   const doQuickFileSearch = useCallback(async (q: string) => {
     const api = (window as any).desktopAPI;
+    const reqId = ++searchReqIdRef.current;
+    const cacheKey = normalizeQuickSearchText(q);
+    const cached = quickSearchCacheRef.current.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      setAppResults(cached.apps);
+      setFileResults(cached.files);
+      setFileSearchMode(cached.mode);
+      setFileError('');
+      setFileLoading(false);
+      return;
+    }
     // Prefer unified search (includes app discovery + fuzzy matching)
     if (api?.unifiedSearch) {
-      const reqId = ++searchReqIdRef.current;
       setFileLoading(true);
       setFileError('');
       try {
         const res = await api.unifiedSearch(q, {
-          limit: 12,
+          limit: 8,
           includeApps: true,
           includeFiles: true,
         });
         if (searchReqIdRef.current !== reqId) return;
         if (res?.ok && Array.isArray(res.results)) {
-          const apps = res.results.filter((r: any) => r.source === 'app-discovery');
-          const files = res.results.filter((r: any) => r.source !== 'app-discovery');
+          const apps = res.results.filter((r: any) => r.source === 'app-discovery').slice(0, 4);
+          const files = res.results.filter((r: any) => r.source !== 'app-discovery').slice(0, 6);
           setAppResults(apps);
           setFileResults(files);
           setFileSearchMode('quick');
+          quickSearchCacheRef.current.set(cacheKey, {
+            expiresAt: Date.now() + 15000,
+            apps,
+            files,
+            mode: 'quick',
+          });
+
+          // Backfill indexed file results without blocking the initial fast response.
+          if (api?.execTool) {
+            void (async () => {
+              try {
+                const indexed = await api.execTool('file_search', {
+                  query: q,
+                  mode: 'quick',
+                  limit: 6,
+                });
+                if (searchReqIdRef.current !== reqId) return;
+                if (!indexed?.ok) return;
+
+                const indexedFiles = Array.isArray(indexed.results)
+                  ? indexed.results.slice(0, 6)
+                  : [];
+                if (indexedFiles.length === 0) return;
+
+                setFileResults(indexedFiles);
+                setFileSearchMode('quick');
+                quickSearchCacheRef.current.set(cacheKey, {
+                  expiresAt: Date.now() + 15000,
+                  apps,
+                  files: indexedFiles,
+                  mode: 'quick',
+                });
+              } catch {
+                // Keep the fast unified-search results if indexed backfill fails.
+              }
+            })();
+          }
         } else {
           setAppResults([]);
           setFileResults([]);
@@ -546,7 +683,6 @@ const InputArea = forwardRef(function InputArea(
     }
     // Fallback to old file-only search
     if (!api?.execTool) return;
-    const reqId = ++searchReqIdRef.current;
     setFileLoading(true);
     setFileError('');
     try {
@@ -558,9 +694,16 @@ const InputArea = forwardRef(function InputArea(
 
       if (searchReqIdRef.current !== reqId) return;
       if (res?.ok) {
-        setFileResults(Array.isArray(res.results) ? res.results : []);
+        const files = Array.isArray(res.results) ? res.results.slice(0, 6) : [];
+        setFileResults(files);
         setAppResults([]);
         setFileSearchMode('quick');
+        quickSearchCacheRef.current.set(cacheKey, {
+          expiresAt: Date.now() + 15000,
+          apps: [],
+          files,
+          mode: 'quick',
+        });
       } else {
         setFileResults([]);
         setAppResults([]);
@@ -580,7 +723,7 @@ const InputArea = forwardRef(function InputArea(
   const doSemanticRefine = useCallback(async (q: string) => {
     const token = typeof accessToken === 'string' ? accessToken : '';
     const indexed = Number(indexStats?.indexed_files || 0);
-    if (!token || indexed <= 0) return;
+    if (!token || indexed <= 0 || !shouldRunSemanticQuickSearch(q)) return;
     if (!(window as any).desktopAPI?.execTool) return;
 
     const reqId = ++semanticReqIdRef.current;
@@ -602,13 +745,22 @@ const InputArea = forwardRef(function InputArea(
         query: q,
         vector: j.embedding,
         mode: 'hybrid',
-        limit: 6,
+        limit: 4,
       });
 
       if (semanticReqIdRef.current !== reqId) return;
       if (res?.ok) {
-        setFileResults(Array.isArray(res.results) ? res.results : []);
+        const files = Array.isArray(res.results) ? res.results.slice(0, 6) : [];
+        setFileResults(files);
         setFileSearchMode('hybrid');
+        const key = normalizeQuickSearchText(q);
+        const cachedQuick = quickSearchCacheRef.current.get(key);
+        quickSearchCacheRef.current.set(key, {
+          expiresAt: Date.now() + 15000,
+          apps: cachedQuick?.apps || [],
+          files,
+          mode: 'hybrid',
+        });
       }
     } catch {
       // ignore
@@ -622,7 +774,7 @@ const InputArea = forwardRef(function InputArea(
     // Only search if not expanded and query length >= 2
     if (expanded) return;
 
-    const q = String(query || '').trim();
+    const q = normalizedDeferredQuery;
     if (searchDebounceRef.current) {
       clearTimeout(searchDebounceRef.current);
       searchDebounceRef.current = null;
@@ -633,6 +785,8 @@ const InputArea = forwardRef(function InputArea(
     }
 
     if (q.length < 2) {
+      searchReqIdRef.current += 1;
+      semanticReqIdRef.current += 1;
       setFileResults([]);
       setAppResults([]);
       setFileError('');
@@ -644,49 +798,46 @@ const InputArea = forwardRef(function InputArea(
     // Quick search (instant-ish)
     searchDebounceRef.current = setTimeout(() => {
       doQuickFileSearch(q);
-    }, 150);
+    }, 100);
 
-    // Semantic refine (slower, only if embeddings exist)
-    semanticDebounceRef.current = setTimeout(() => {
-      doSemanticRefine(q);
-    }, 650);
+    if (shouldRunSemanticQuickSearch(q)) {
+      // Semantic refine only for longer natural-language queries.
+      semanticDebounceRef.current = setTimeout(() => {
+        doSemanticRefine(q);
+      }, 900);
+    }
 
     return () => {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
       if (semanticDebounceRef.current) clearTimeout(semanticDebounceRef.current);
     };
-  }, [query, expanded, doQuickFileSearch, doSemanticRefine]);
+  }, [normalizedDeferredQuery, expanded, doQuickFileSearch, doSemanticRefine]);
 
   useEffect(() => {
     const api = (window as any).desktopAPI;
     if (!api?.getFileIcon) return;
 
-    // Build a list of (displayPath, iconSourcePath) pairs for all results that can have icons
-    const iconRequests: { displayPath: string; iconPath: string }[] = [];
-    // App results (from unified search / app-discovery)
-    for (const a of (Array.isArray(appResults) ? appResults : [])) {
+    const uniquePaths = (values: string[]) => Array.from(new Set(values.filter(Boolean)));
+
+    // Build a list of (displayPath, candidate icon source paths) pairs for visible results.
+    const iconRequests: { displayPath: string; iconPaths: string[] }[] = [];
+
+    for (const a of (Array.isArray(appResults) ? appResults.slice(0, 4) : [])) {
       if (!a) continue;
-      const filePath = String(a.path || '').trim();
-      const iconHint = String(a.iconHint || a.launchTarget || '').trim();
-      if (!filePath) continue;
-      if (iconHint || filePath) {
-        iconRequests.push({ displayPath: filePath, iconPath: iconHint || filePath });
+      const displayPath = String(a.path || a.name || '').trim();
+      if (typeof a.iconDataUrl === 'string' && a.iconDataUrl) {
+        fileIconCacheRef.current[displayPath] = a.iconDataUrl;
+        continue;
       }
-    }
-    // File results
-    for (const f of (Array.isArray(fileResults) ? fileResults : [])) {
-      if (!f) continue;
-      const kind = String(f.kind || '').toLowerCase();
-      const filePath = String(f.path || '').trim();
-      if (!filePath) continue;
-      
-      // Fetch icons for applications, executables, and any file with a target_path
-      if (kind === 'application' || kind === 'binary' || f.icon_path || f.target_path ||
-          String(f.extension || '').toLowerCase() === '.exe') {
-        // Let IPC handle .lnk resolution natively, but fallback to indexer's resolved paths if needed
-        const iconPath = String(filePath || f.icon_path || f.target_path).trim();
-        iconRequests.push({ displayPath: filePath, iconPath });
-      }
+      const iconHint = String(a.iconHint || '').trim();
+      const launchTarget = String(a.launchTarget || '').trim();
+      const candidates = uniquePaths([
+        iconHint,
+        launchTarget,
+        displayPath,
+      ]);
+      if (!displayPath || candidates.length === 0) continue;
+      iconRequests.push({ displayPath, iconPaths: candidates });
     }
     if (iconRequests.length === 0) return;
 
@@ -694,11 +845,10 @@ const InputArea = forwardRef(function InputArea(
     (async () => {
       const updates: Record<string, string> = {};
       await Promise.all(
-        iconRequests.map(async ({ displayPath, iconPath }) => {
+        iconRequests.map(async ({ displayPath, iconPaths }) => {
           if (fileIconCacheRef.current[displayPath]) return;
-          // Try the best icon source first, fall back to original path
-          const pathsToTry = iconPath !== displayPath ? [iconPath, displayPath] : [displayPath];
-          for (const p of pathsToTry) {
+          for (const p of iconPaths) {
+            if (!p) continue;
             const res = await api.getFileIcon(p, { size: 'normal' }).catch(() => null);
             if (fileIconReqIdRef.current !== reqId) return;
             if (res?.ok && typeof res.dataUrl === 'string' && res.dataUrl) {
@@ -718,7 +868,7 @@ const InputArea = forwardRef(function InputArea(
       }
       setFileIconDataUrls(prev => ({ ...prev, ...updates }));
     })();
-  }, [fileResults, appResults]);
+  }, [appResults]);
 
   // Handle launching an app from search results
   const handleLaunchApp = useCallback(async (launchTarget: string) => {
@@ -746,13 +896,19 @@ const InputArea = forwardRef(function InputArea(
         type: 'file'
       }]);
     }
+    setAppResults([]);
     setFileResults([]);
     setQuery('');
   }, [contextPaths, setContextPaths, setQuery]);
 
   // Handle opening a file
-  const handleOpenFile = useCallback((path: string) => {
-    (window as any).desktopAPI?.openPath?.(path);
+  const handleOpenFile = useCallback(async (path: string) => {
+    try {
+      const api = (window as any).desktopAPI;
+      if (api?.execTool) {
+        await api.execTool('open_file', { path });
+      }
+    } catch { }
   }, []);
 
   // Handle copying file path
@@ -1039,18 +1195,15 @@ const InputArea = forwardRef(function InputArea(
     const hasAttachments = attachments.length > 0 || (contextPaths && contextPaths.length > 0);
     const attachmentHeight = hasAttachments ? 44 : 0;
     const baseHeight = 156 + miniHeight + attachmentHeight; // 140 + 16 gap + mini output + attachments
-    const hasFileResults = fileResults.length > 0;
-    const hasAppResults = appResults.length > 0;
-    const fileResultsHeight = hasFileResults ? Math.min(fileResults.length * 60 + 40, 300) : 0;
-    const appResultsHeight = hasAppResults ? Math.min(appResults.length * 56 + 40, 240) : 0;
-
-    // Calculate workflows height
-    const hasWorkflows = filteredLocalWorkflows.length > 0 || marketplaceResults.length > 0;
-    const workflowsHeight = hasWorkflows ? ((filteredLocalWorkflows.length + marketplaceResults.length) * 60 + 40) : 0;
-
-    // Cap height to max 450px for scrolling
-    const totalContentHeight = (showWebOptions ? 440 : 380) + fileResultsHeight + appResultsHeight + workflowsHeight;
-    const dropdownHeight = Math.min(totalContentHeight, 450);
+    const searchDropdownHeight = showWebOptions ? 460 : 400;
+    const fileNavDropdownHeight = 400;
+    // Keep the dropdown height stable while typing so the compact window
+    // does not bounce around as async sections appear and disappear.
+    const dropdownHeight = showFileNav
+      ? fileNavDropdownHeight
+      : showSearchOptions
+        ? searchDropdownHeight
+        : 0;
 
     const targetHeight = needsDropdown ? baseHeight + dropdownHeight : baseHeight;
 
@@ -1100,7 +1253,7 @@ const InputArea = forwardRef(function InputArea(
         window.desktopAPI?.resize?.(targetWidth, finalHeight);
       }
     });
-  }, [expanded, showSearchOptions, showFileNav, showWebOptions, fileResults.length, calculatePlacement, showMiniOutput, miniOutputHasContent, typingActive, overlayMode]);
+  }, [expanded, showSearchOptions, showFileNav, showWebOptions, calculatePlacement, showMiniOutput, miniOutputHasContent, typingActive, overlayMode, attachments.length, contextPaths?.length]);
 
   // Update on dropdown state changes
   useEffect(() => {
@@ -1192,6 +1345,9 @@ const InputArea = forwardRef(function InputArea(
     const miniEnabled = !!(showMiniOutput && (miniOutputHasContent ?? !!(miniOutputText || '').trim()));
     const isTyping = query.trim().length > 0;
     const miniOpen = miniEnabled && !needsDropdown && !isTyping;
+    const compactSearchDropdownMaxHeight = showWebOptions ? 460 : 400;
+    const compactSearchDropdownScrollHeight = compactSearchDropdownMaxHeight - 16;
+    const compactFileNavMaxHeight = 400;
     return (
       <div className={clsx(
         "w-full h-full flex flex-col p-2 relative",
@@ -1210,8 +1366,14 @@ const InputArea = forwardRef(function InputArea(
               top: dropdownPlacement === 'bottom' ? `${inputBarHeight - 8}px` : 'auto',
             }}
           >
-            <div className="bg-theme-bg rounded-[24px] border border-theme/20 overflow-hidden backdrop-blur-3xl shadow-lg shadow-black/10">
-              <div className="p-2 space-y-1.5 max-h-[420px] overflow-y-auto custom-scrollbar">
+            <div
+              className="bg-theme-bg rounded-[24px] border border-theme/20 overflow-hidden backdrop-blur-3xl shadow-lg shadow-black/10"
+              style={{ maxHeight: compactSearchDropdownMaxHeight }}
+            >
+              <div
+                className="p-2 pr-1 space-y-1.5 overflow-y-auto custom-scrollbar"
+                style={{ maxHeight: compactSearchDropdownScrollHeight }}
+              >
                 {/* Quick Shortcuts */}
                 <QuickShortcutsGrid
                   bookmarks={bookmarks}
@@ -1219,7 +1381,7 @@ const InputArea = forwardRef(function InputArea(
                   onEdit={() => setShowBookmarkEditor(true)}
                   onAdd={() => setShowBookmarkEditor(true)}
                   maxVisible={6}
-                  filter={query}
+                  filter={normalizedDeferredQuery}
                 />
                 {/* Ask Stuard - Primary */}
                 <button
@@ -1247,7 +1409,7 @@ const InputArea = forwardRef(function InputArea(
                     </div>
                     <div className="px-1 space-y-1">
                       {appResults.map((a: any, idx: number) => {
-                        const iconUrl = a?.path ? fileIconDataUrls[String(a.path)] : undefined;
+                        const iconUrl = a?.iconDataUrl || (a?.path ? fileIconDataUrls[String(a.path)] : undefined);
                         return (
                           <button
                             key={String(a.name || idx)}
@@ -1259,7 +1421,7 @@ const InputArea = forwardRef(function InputArea(
                           >
                             <div className="w-7 h-7 rounded-lg border border-blue-500/20 bg-blue-500/10 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-all">
                               {iconUrl ? (
-                                <img src={iconUrl} alt="" className="w-5 h-5 object-contain" />
+                                <img src={iconUrl} alt="" loading="lazy" className="w-5 h-5 object-contain" />
                               ) : (
                                 <AppWindow className="w-3.5 h-3.5 text-blue-500" />
                               )}
@@ -1290,7 +1452,7 @@ const InputArea = forwardRef(function InputArea(
                         {fileSearchMode === 'hybrid' ? 'Semantic' : 'Quick'}
                       </div>
                     </div>
-                    <div className="max-h-[240px] overflow-y-auto custom-scrollbar px-1 space-y-1">
+                    <div className="px-1 space-y-1">
                       {fileResults.map((f: any, idx: number) => {
                         if (!f) return null;
 
@@ -1311,15 +1473,16 @@ const InputArea = forwardRef(function InputArea(
 
                         const cfg = getFileKindConfig(kind);
                         const Icon = cfg.icon;
-                        const iconUrl = f?.path ? fileIconDataUrls[String(f.path)] : undefined;
+                        const iconUrl = kind === 'application' && f?.path
+                          ? fileIconDataUrls[String(f.path)]
+                          : undefined;
 
                         return (
                           <button
                             key={String(f.id || f.path || idx)}
                             onClick={() => {
                               if (kind === 'application') {
-                                (window as any).desktopAPI?.openPath?.(String(f.path));
-                                (window as any).desktopAPI?.hide?.();
+                                handleLaunchApp(String(f.target_path || f.path));
                                 setQuery('');
                               } else {
                                 handleAddFileAsContext(f);
@@ -1329,7 +1492,7 @@ const InputArea = forwardRef(function InputArea(
                           >
                             <div className={clsx("w-7 h-7 rounded-lg border border-theme/20 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-all", cfg.bg, cfg.color)}>
                               {iconUrl ? (
-                                <img src={iconUrl} alt="" className="w-5 h-5 object-contain" />
+                                <img src={iconUrl} alt="" loading="lazy" className="w-5 h-5 object-contain" />
                               ) : (
                                 <Icon className="w-3.5 h-3.5" />
                               )}
@@ -1549,13 +1712,15 @@ const InputArea = forwardRef(function InputArea(
               top: dropdownPlacement === 'bottom' ? `${inputBarHeight - 8}px` : 'auto',
             }}
           >
-            <FileNavigator
-              ref={fileNavRef}
-              onSelect={handleFileSelect}
-              onClose={() => setShowFileNav(false)}
-              onNavigate={handleNavigate}
-              filter={fileNavFilter}
-            />
+            <div style={{ maxHeight: compactFileNavMaxHeight }} className="overflow-hidden">
+              <FileNavigator
+                ref={fileNavRef}
+                onSelect={handleFileSelect}
+                onClose={() => setShowFileNav(false)}
+                onNavigate={handleNavigate}
+                filter={fileNavFilter}
+              />
+            </div>
           </div>,
           document.body
         )}

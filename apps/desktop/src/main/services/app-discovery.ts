@@ -14,6 +14,7 @@ import { promisify } from "util";
 import * as path from "path";
 import * as fs from "fs";
 import { app, BrowserWindow } from "electron";
+import { warmDiscoveredAppIconCache } from "./icon-cache";
 import logger from "../utils/logger";
 
 const execAsync = promisify(exec);
@@ -47,6 +48,16 @@ let cachedApps: DiscoveredApp[] = [];
 let cacheTimestamp = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+function notifyAppsUpdated(payload: { count: number; iconsReady?: boolean }) {
+  BrowserWindow.getAllWindows().forEach((win) => {
+    try {
+      win.webContents.send("apps:updated", payload);
+    } catch {
+      // Window may already be destroyed.
+    }
+  });
+}
+
 /**
  * Return the cached list or refresh if stale.
  */
@@ -69,12 +80,12 @@ export async function getInstalledApps(forceRefresh = false): Promise<Discovered
  */
 export async function refreshAppCache(): Promise<void> {
   await getInstalledApps(true);
-  // Notify renderers that the app list has changed
-  BrowserWindow.getAllWindows().forEach((win) => {
-    try {
-      win.webContents.send("apps:updated", { count: cachedApps.length });
-    } catch { /* window may be destroyed */ }
-  });
+  notifyAppsUpdated({ count: cachedApps.length, iconsReady: false });
+  warmDiscoveredAppIconCache(cachedApps, { size: "normal" })
+    .then(() => notifyAppsUpdated({ count: cachedApps.length, iconsReady: true }))
+    .catch(() => {
+      // Discovery is still valid even if icon warming fails.
+    });
 }
 
 // ─────────────────────────────────────────────────────────
@@ -189,15 +200,30 @@ async function discoverWindows(): Promise<DiscoveredApp[]> {
       'foreach ($d in $dirs) {',
       '  if (Test-Path $d) {',
       '    Get-ChildItem $d -Recurse -Filter "*.lnk" -ErrorAction SilentlyContinue | ForEach-Object {',
-      '      try { $s = $wsh.CreateShortcut($_.FullName); if ($s.TargetPath) { $lnk[$_.BaseName.ToLower()] = $s.TargetPath } } catch {}',
+      '      try {',
+      '        $s = $wsh.CreateShortcut($_.FullName)',
+      '        $lnk[$_.BaseName.ToLower()] = [PSCustomObject]@{',
+      '          Target = ($s.TargetPath -as [string])',
+      '          Link = $_.FullName',
+      '          Icon = ($s.IconLocation -as [string])',
+      '        }',
+      '      } catch {}',
       '    }',
       '  }',
       '}',
       'Get-StartApps | Select-Object -First 2000 | ForEach-Object {',
       '  $exe = ""',
+      '  $link = ""',
+      '  $icon = ""',
       '  if ($_.AppID -match "^[a-zA-Z]:") { $exe = $_.AppID }',
-      '  else { $k = $_.Name.ToLower(); if ($lnk.ContainsKey($k)) { $exe = $lnk[$k] } }',
-      '  [PSCustomObject]@{ Name=$_.Name; AppID=$_.AppID; Exe=$exe }',
+      '  $k = $_.Name.ToLower()',
+      '  if ($lnk.ContainsKey($k)) {',
+      '    $entry = $lnk[$k]',
+      '    if ($entry.Target) { $exe = $entry.Target }',
+      '    if ($entry.Link) { $link = $entry.Link }',
+      '    if ($entry.Icon) { $icon = $entry.Icon }',
+      '  }',
+      '  [PSCustomObject]@{ Name=$_.Name; AppID=$_.AppID; Exe=$exe; Link=$link; Icon=$icon }',
       '} | ConvertTo-Json -Compress',
     ].join('\n');
 
@@ -222,6 +248,8 @@ async function discoverWindows(): Promise<DiscoveredApp[]> {
       const name = String(entry?.Name ?? "").trim();
       const appId = String(entry?.AppID ?? "").trim();
       const resolvedExe = String(entry?.Exe ?? "").trim();
+      const shortcutPath = String(entry?.Link ?? "").trim();
+      const iconLocation = String(entry?.Icon ?? "").trim();
       if (!name || !appId) continue;
       if (shouldExclude(name, appId)) continue;
 
@@ -240,19 +268,18 @@ async function discoverWindows(): Promise<DiscoveredApp[]> {
       let source: string;
 
       if (isAbsolutePath) {
-        // Direct .exe path — resolve Squirrel if needed
         launchTarget = appId;
-        iconHint = resolveSquirrelExe(appId, name);
+        // Prefer the real executable/icon resource for Win32 apps.
+        iconHint = resolveSquirrelExe(appId, name) || iconLocation || shortcutPath || appId;
         source = "win32";
       } else if (hasResolvedExe) {
-        // We resolved the actual .exe via Start Menu shortcut target
         launchTarget = `shell:AppsFolder\\${appId}`;
-        iconHint = resolveSquirrelExe(resolvedExe, name);  // resolve Squirrel Update.exe → real app exe
+        // Shortcuts are still useful as a fallback, but many return a generic blank icon.
+        iconHint = resolveSquirrelExe(resolvedExe, name) || iconLocation || shortcutPath || resolvedExe || launchTarget;
         source = "win32";
       } else {
-        // UWP / Store app — no .exe path, use shell:AppsFolder for launch
         launchTarget = `shell:AppsFolder\\${appId}`;
-        iconHint = "";  // will use fallback icon
+        iconHint = iconLocation || shortcutPath || launchTarget;
         source = "uwp";
       }
 

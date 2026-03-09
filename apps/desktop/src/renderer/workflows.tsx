@@ -33,6 +33,7 @@ import { WorkflowHeader } from "./workflows/layout/WorkflowHeader";
 import type { OpenFileTab, RightPanel, WorkflowContextMenu, WorkspaceInfo } from "./workflows/layout/types";
 import type { ChatInputRef } from "./workflows/components/chat/ChatInput";
 import type { ToolPaletteRef } from "./workflows/components/ToolPalette";
+import type { ReasoningLevel } from "./hooks/usePreferences";
 
 const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
 
@@ -184,6 +185,14 @@ function WorkflowsApp() {
       return 'auto';
     }
   });
+  const [workflowReasoningLevel, setWorkflowReasoningLevel] = useState<ReasoningLevel>(() => {
+    try {
+      const raw = window.localStorage.getItem('workflow.reasoning_level');
+      return raw === 'none' || raw === 'low' || raw === 'medium' || raw === 'high' ? raw : 'high';
+    } catch {
+      return 'high';
+    }
+  });
 
   useEffect(() => {
     try {
@@ -191,6 +200,13 @@ function WorkflowsApp() {
     } catch {
     }
   }, [workflowChatModelId]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('workflow.reasoning_level', workflowReasoningLevel);
+    } catch {
+    }
+  }, [workflowReasoningLevel]);
 
   const applyModel = useCallback((m: any) => {
     setModel(m);
@@ -291,6 +307,7 @@ function WorkflowsApp() {
     workflowId: selectedId, // Pass workflow ID for session scoping
     errors,
     selectedModelId: workflowChatModelId,
+    selectedReasoningLevel: workflowReasoningLevel,
     workspaceInfo,
   });
 
@@ -935,9 +952,11 @@ function WorkflowsApp() {
           openTabs={openTabs}
           logs={logs}
           workflowChatModelId={workflowChatModelId}
+          workflowReasoningLevel={workflowReasoningLevel}
           chat={chat}
           onApplyModel={applyModel}
           onSetWorkflowChatModelId={setWorkflowChatModelId}
+          onSetWorkflowReasoningLevel={setWorkflowReasoningLevel}
           onSetActiveTab={setActiveTab}
           onCloseFileTab={closeFileTab}
           onClearLogs={() => setLogs([])}

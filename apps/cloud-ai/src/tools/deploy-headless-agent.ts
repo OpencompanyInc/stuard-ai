@@ -10,6 +10,10 @@ const MAX_LOG_ENTRIES = 200;
 const LOG_FLUSH_MS = 750;
 const MAX_STRING = 1200;
 
+function getBrowserUseSessionId(taskId: string): string {
+  return `subagent-${taskId}`;
+}
+
 // Store abort controllers for running headless tasks
 const runningTasks = new Map<string, AbortController>();
 
@@ -121,6 +125,11 @@ export const deployHeadlessAgent = createTool({
       }
 
       const localTaskId = spawnResult.task_id || taskId;
+      const subagentSecrets = {
+        ...(secrets || {}),
+        subagentTaskId: localTaskId,
+        browserUseSessionId: getBrowserUseSessionId(localTaskId),
+      };
 
       // 2. Start the agent execution in the background (fire and forget)
       // We don't await this so the tool returns immediately
@@ -134,7 +143,7 @@ export const deployHeadlessAgent = createTool({
       // CRITICAL: Preserve the active client bridge context so the sub-agent can
       // use local tools (list_directory, read_file, etc.) via in-band WS tool execution.
       if (bridgeWs && bridgeWs.readyState === (bridgeWs as any).OPEN) {
-        withClientBridge(bridgeWs as any, run, secrets);
+        withClientBridge(bridgeWs as any, run, subagentSecrets);
       } else {
         run();
       }

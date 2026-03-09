@@ -1,7 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { generateText } from 'ai';
-import { google } from '@ai-sdk/google';
+import { google } from '../utils/models';
 import { execLocalTool, safeToolWrite } from './bridge';
 import { createTempMediaUrls, deleteTempMediaObject } from '../utils/gcs';
 

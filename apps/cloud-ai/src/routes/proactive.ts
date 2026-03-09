@@ -21,7 +21,12 @@ import { deployHeadlessAgent } from '../tools/deploy-headless-agent';
 import { get_skill_info, getSkillsFromContext } from '../tools/skill-tools';
 import { runWithSecrets } from '../tools/bridge';
 import type { ModelChoice } from '../router/model-router';
-import { buildProactiveMessageContent, filterProactiveTools } from './proactive-utils';
+import { getDefaultModelForCategory } from '../pricing';
+import { buildProactiveMessageContent, filterProactiveTools, generateWithToolRecovery } from './proactive-utils';
+import { verifyVMAuthFromRequest } from '../services/vm-tokens';
+import { telnyx_send_sms, telnyx_make_call } from '../tools/telnyx-tools';
+import { normalizeUsage } from '../utils/usage';
+import { search_past_conversations, get_conversation_context } from '../tools/device-tools';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -52,6 +57,53 @@ function writeJson(res: ServerResponse, status: number, obj: any) {
   } catch {
     try { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{"ok":false,"error":"internal"}'); } catch { }
   }
+}
+
+async function requireProactiveAuth(req: IncomingMessage, res: ServerResponse): Promise<{ userId: string } | null> {
+  const vmUserIdHeader = req.headers['x-vm-user-id'] as string | undefined;
+  if (vmUserIdHeader) {
+    try {
+      const authHeader = String(req.headers['authorization'] || '');
+      const vmAuth = await verifyVMAuthFromRequest(authHeader, vmUserIdHeader);
+      if (vmAuth?.userId) {
+        return { userId: vmAuth.userId };
+      }
+    } catch {}
+    writeJson(res, 401, { ok: false, error: 'unauthorized' });
+    return null;
+  }
+
+  const auth = await requireAuth(req, res);
+  if (!auth?.success || !auth.userId) return null;
+  return { userId: auth.userId };
+}
+
+async function deliverProactiveNotifications(
+  text: string,
+  channels: unknown,
+): Promise<Record<string, any>> {
+  const message = String(text || '').trim();
+  if (!message) return {};
+
+  const requested = new Set(
+    (Array.isArray(channels) ? channels : [])
+      .map((value) => String(value || '').trim().toLowerCase())
+      .filter(Boolean),
+  );
+
+  const results: Record<string, any> = {};
+  if (requested.has('sms')) {
+    results.sms = await (telnyx_send_sms as any).execute({
+      message: `Stuard Check-in: ${message.slice(0, 1500)}`,
+    }, {} as any);
+  }
+  if (requested.has('call')) {
+    results.call = await (telnyx_make_call as any).execute({
+      message: message.slice(0, 500),
+      voice: 'female',
+    }, {} as any);
+  }
+  return results;
 }
 
 // ─── In-Memory Kanban Tools Factory ──────────────────────────────────────────
@@ -189,7 +241,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-VM-User-Id',
       'Access-Control-Max-Age': '600',
     });
     res.end();
@@ -197,7 +249,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
   }
 
   if (req.method === 'POST' && path === '/v1/proactive/wakeup') {
-    const auth = await requireAuth(req, res);
+    const auth = await requireProactiveAuth(req, res);
     if (!auth) return true; // 401 already sent
 
     const body = await readJsonBody(req);
@@ -210,6 +262,9 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       modelId,
       context = {},
       skills: incomingSkills = [],
+      notificationChannels = [],
+      deliverNotifications = false,
+      sendNotifications = false,
     } = body;
 
     // Build in-memory kanban
@@ -232,6 +287,8 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       get_tool_schema,
       execute_tool,
       get_skill_info,
+      search_past_conversations,
+      get_conversation_context,
     };
     const tools = filterProactiveTools(availableTools, allowedTools);
 
@@ -243,6 +300,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
 
     // Set up secrets context so get_skill_info can access skills
     const secretBag: Record<string, any> = {};
+    secretBag.userId = auth.userId;
     if (Array.isArray(incomingSkills) && incomingSkills.length > 0) {
       secretBag.__skills = incomingSkills;
     }
@@ -257,10 +315,12 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       }
 
       // Select model
-      const model = getModel(
-        (modelMode || 'balanced') as ModelChoice,
-        typeof modelId === 'string' && modelId.trim() ? modelId : undefined,
-      );
+      const resolvedModelChoice = (modelMode === 'auto' ? 'balanced' : (modelMode || 'balanced')) as ModelChoice;
+      const resolvedModelId =
+        typeof modelId === 'string' && modelId.trim()
+          ? modelId.trim()
+          : getDefaultModelForCategory(resolvedModelChoice as any);
+      const model = getModel(resolvedModelChoice, resolvedModelId);
 
       const agent = new Agent({
         id: 'stuard-proactive',
@@ -297,16 +357,31 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
           setTimeout(() => reject(new Error('Proactive agent timed out after 3 minutes')), TIMEOUT_MS);
         });
 
-        const generatePromise = agent.generate(
-          [{ role: 'user', content: messageContent }],
-          { maxSteps: 20 },
-        );
+        const generatePromise = generateWithToolRecovery({
+          agent: agent as any,
+          baseMessages: [{ role: 'user', content: messageContent }],
+          maxSteps: 20,
+          maxRetries: 3,
+        });
 
         const response: any = await Promise.race([generatePromise, timeoutPromise]);
         const text = response?.text || '';
+        const usage = response?.usage ? normalizeUsage(response.usage) : undefined;
         const { taskUpdates, newTasks, deletedTaskIds } = kanban.getResults();
+        const notifications = (deliverNotifications || sendNotifications)
+          ? await deliverProactiveNotifications(text, notificationChannels)
+          : undefined;
 
-        writeJson(res, 200, { ok: true, text, taskUpdates, newTasks, deletedTaskIds });
+        writeJson(res, 200, {
+          ok: true,
+          text,
+          taskUpdates,
+          newTasks,
+          deletedTaskIds,
+          notifications,
+          usage,
+          modelId: resolvedModelId,
+        });
       } catch (e: any) {
         console.error('[proactive] Agent execution failed:', e?.message || e);
         const { taskUpdates, newTasks, deletedTaskIds } = kanban.getResults();
@@ -317,6 +392,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
           taskUpdates,
           newTasks,
           deletedTaskIds,
+          modelId: resolvedModelId,
         });
       }
     });

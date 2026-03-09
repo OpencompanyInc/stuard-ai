@@ -155,12 +155,21 @@ export const CLOUD_TOOL_ITEMS: PaletteItem[] = [
   { k: 'cloud.tool', t: 'run_parallel', label: 'Run Parallel', args: { steps: [] } },
   { k: 'cloud.tool', t: 'analyze_image', label: 'Analyze Image', args: {} },
   { k: 'cloud.tool', t: 'analyze_current_screen', label: 'Analyze Screen', args: {} },
+  { k: 'cloud.tool', t: 'find_text', label: 'Find Text', args: { text: '', context: '', start: false, region: { x: 0, y: 0, width: 800, height: 600 }, caseSensitive: false } },
+  { k: 'cloud.tool', t: 'find_and_click_text', label: 'Find & Click Text', args: { text: '', context: '', start: false, region: { x: 0, y: 0, width: 800, height: 600 }, caseSensitive: false } },
+  { k: 'cloud.tool', t: 'google_cloud_ocr', label: 'OCR Image / File', args: { path: '', imageUrl: '', base64: '', mimeType: 'image/png', captureScreen: false, region: { x: 0, y: 0, width: 800, height: 600 }, ocrMode: 'document', languageHints: [], includeWordBoxes: true } },
+  { k: 'cloud.tool', t: 'google_cloud_ocr', label: 'OCR Screenshot', args: { path: '', imageUrl: '', base64: '', mimeType: 'image/png', captureScreen: true, region: { x: 0, y: 0, width: 800, height: 600 }, ocrMode: 'text', languageHints: [], includeWordBoxes: true } },
 
   // Text-to-Speech
   { k: 'cloud.tool', t: 'text_to_speech', label: 'Text to Speech', args: { text: 'Hello!', voice_id: 'JBFqnCBsd6RMkjVDRZzb', model_id: 'eleven_multilingual_v2', language_code: '', speed: 1.0, format: 'mp3', save: true, play: false } },
   { k: 'cloud.tool', t: 'text_to_speech', label: 'Speak Text (Play)', args: { text: 'Hello!', voice_id: 'JBFqnCBsd6RMkjVDRZzb', model_id: 'eleven_multilingual_v2', language_code: '', speed: 1.0, format: 'mp3', save: false, play: true } },
   { k: 'cloud.tool', t: 'list_tts_voices', label: 'List TTS Voices', args: {} },
   { k: 'cloud.tool', t: 'get_tts_models', label: 'Get TTS Models', args: {} },
+  { k: 'cloud.tool', t: 'elevenlabs_list_agents', label: 'List ElevenLabs Agents', args: { search: '', archived: false, show_only_owned_agents: true, page_size: 20 } },
+  { k: 'cloud.tool', t: 'elevenlabs_get_signed_conversation_url', label: 'Get Conversation URL', args: { agent_id: '', include_conversation_id: true, branch_id: '' } },
+  { k: 'cloud.tool', t: 'elevenlabs_get_webrtc_token', label: 'Get WebRTC Token', args: { agent_id: '', participant_name: '', branch_id: '' } },
+  { k: 'cloud.tool', t: 'elevenlabs_list_conversations', label: 'List Conversations', args: { agent_id: '', search: '', branch_id: '', page_size: 20 } },
+  { k: 'cloud.tool', t: 'elevenlabs_twilio_outbound_call', label: 'Live Agent Call', args: { agent_id: '', agent_phone_number_id: '', to_number: '', conversation_initiation_client_data: {} } },
   {
     k: 'cloud.tool',
     t: 'cloud_ai_vision',

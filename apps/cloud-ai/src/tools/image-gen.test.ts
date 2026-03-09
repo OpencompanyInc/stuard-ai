@@ -3,15 +3,26 @@ import { describe, expect, it } from 'vitest';
 import { buildGeminiNativeRequestBody, getImageInputSupport } from './image-gen';
 
 describe('getImageInputSupport', () => {
-  it('supports Gemini image-preview and OpenAI gpt-image-1', () => {
-    expect(getImageInputSupport('gemini-3.1-flash-image-preview')).toEqual({ supported: true });
+  it('supports all GPT Image models', () => {
     expect(getImageInputSupport('gpt-image-1')).toEqual({ supported: true });
+    expect(getImageInputSupport('gpt-image-1.5')).toEqual({ supported: true });
+    expect(getImageInputSupport('gpt-image-1-mini')).toEqual({ supported: true });
   });
 
-  it('rejects unsupported model paths with clear reasons', () => {
+  it('supports Gemini image-preview models', () => {
+    expect(getImageInputSupport('gemini-3.1-flash-image-preview')).toEqual({ supported: true });
+    expect(getImageInputSupport('gemini-3.0-pro-image-preview')).toEqual({ supported: true });
+    expect(getImageInputSupport('gemini-2.5-flash-image')).toEqual({ supported: true });
+  });
+
+  it('supports grok-imagine-image', () => {
+    expect(getImageInputSupport('grok-imagine-image')).toEqual({ supported: true });
+  });
+
+  it('rejects unsupported models with clear reasons', () => {
     expect(getImageInputSupport('imagen-4.0-generate-001')).toMatchObject({ supported: false });
-    expect(getImageInputSupport('gpt-image-1.5')).toMatchObject({ supported: false });
-    expect(getImageInputSupport('grok-imagine-image')).toMatchObject({ supported: false });
+    expect(getImageInputSupport('dall-e-3')).toMatchObject({ supported: false });
+    expect(getImageInputSupport('grok-2-image')).toMatchObject({ supported: false });
   });
 });
 

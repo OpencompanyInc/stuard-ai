@@ -13,7 +13,7 @@
 import { Notification, BrowserWindow, desktopCapturer, net } from 'electron';
 import WebSocket from 'ws';
 import { proactiveService } from './proactive-service';
-import { buildLocalProactiveHiddenContext, buildLocalProactivePrompt, buildUserFacingProactiveMessage, executeAgentToolRequest, extractAgentTextFromWsMessage, extractAgentToolRequest } from './proactive-scheduler-utils';
+import { buildLocalProactiveHiddenContext, buildLocalProactivePrompt, buildUserFacingProactiveMessage, executeAgentToolRequest, extractAgentTextFromWsMessage, extractAgentToolRequest, splitProactiveStructuredContent } from './proactive-scheduler-utils';
 import { getNotificationWindow } from '../windows/window';
 import logger from '../utils/logger';
 import type { RouterContext } from '../tools/types';
@@ -78,6 +78,39 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 let isRunning = false;
 let currentRunId: string | null = null;
 
+// ─── Follow-up Conversation History (in-memory) ─────────────────────────────
+
+interface ConversationTurn {
+  role: 'agent' | 'user';
+  text: string;
+  at: string;
+}
+
+const conversationHistory = new Map<string, ConversationTurn[]>();
+const MAX_CONVERSATION_TURNS = 20;
+const CONVERSATION_TTL_MS = 30 * 60_000; // 30 minutes
+
+function getConversation(wakeUpId: string): ConversationTurn[] {
+  return conversationHistory.get(wakeUpId) || [];
+}
+
+function appendConversation(wakeUpId: string, role: 'agent' | 'user', text: string) {
+  const turns = getConversation(wakeUpId);
+  turns.push({ role, text, at: new Date().toISOString() });
+  if (turns.length > MAX_CONVERSATION_TURNS) turns.splice(0, turns.length - MAX_CONVERSATION_TURNS);
+  conversationHistory.set(wakeUpId, turns);
+}
+
+function pruneStaleConversations() {
+  const cutoff = Date.now() - CONVERSATION_TTL_MS;
+  for (const [id, turns] of conversationHistory) {
+    const lastTurn = turns[turns.length - 1];
+    if (!lastTurn || new Date(lastTurn.at).getTime() < cutoff) {
+      conversationHistory.delete(id);
+    }
+  }
+}
+
 // ─── Agent WebSocket (main process, same pattern as stuards.ts) ─────────────
 
 let agentWs: WebSocket | null = null;
@@ -87,6 +120,10 @@ function getAgentWsUrl() {
   const raw = String(process.env.AGENT_WS || '').trim();
   if (raw) return raw.endsWith('/ws') ? raw : (raw.replace(/\/$/, '') + '/ws');
   return 'ws://127.0.0.1:8765/ws';
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getCloudAiUrl(): string {
@@ -125,15 +162,47 @@ function ensureAgentWs(): Promise<WebSocket> {
       const ws = new WebSocket(url);
       const to = setTimeout(() => {
         try { ws.terminate(); } catch { }
+        agentReady = null;
+        agentWs = null;
         reject(new Error('proactive_ws_timeout'));
       }, 10_000);
 
       ws.on('open', () => { clearTimeout(to); agentWs = ws; resolve(ws); });
-      ws.on('error', (e: Error) => { clearTimeout(to); reject(e); });
+      ws.on('error', (e: Error) => {
+        clearTimeout(to);
+        agentReady = null;
+        agentWs = null;
+        reject(e);
+      });
       ws.on('close', () => { agentWs = null; agentReady = null; });
     } catch (e) { reject(e as any); }
   });
   return agentReady;
+}
+
+async function waitForAgentWs(maxWaitMs = 30_000): Promise<WebSocket> {
+  const deadline = Date.now() + maxWaitMs;
+  let lastError: unknown = null;
+
+  while (Date.now() < deadline) {
+    try {
+      return await ensureAgentWs();
+    } catch (e) {
+      lastError = e;
+      agentReady = null;
+      if (agentWs) {
+        try { agentWs.terminate(); } catch { }
+        agentWs = null;
+      }
+      const remainingMs = deadline - Date.now();
+      if (remainingMs > 0) {
+        await delay(Math.min(1000, remainingMs));
+      }
+    }
+  }
+
+  const message = String((lastError as any)?.message || 'local_agent_not_ready');
+  throw new Error(message === 'proactive_ws_timeout' ? 'local_agent_not_ready' : `local_agent_not_ready: ${message}`);
 }
 
 // ─── Stage Definitions ──────────────────────────────────────────────────────
@@ -222,20 +291,27 @@ function emitStage(logId: string, stage: ProactiveStage, detail?: string) {
 
 // ─── Notification-based Check-in ────────────────────────────────────────────
 
-function sendCheckinNotification(wakeUpId: string, agentMessage: string, screenshotUsed: boolean, tasksCompleted: number): void {
+function sendCheckinNotification(wakeUpId: string, agentMessage: string, screenshotUsed: boolean, tasksCompleted: number, isFollowUp = false): void {
   const displayMessage = buildUserFacingProactiveMessage(agentMessage);
+  const { message, structuredContent } = splitProactiveStructuredContent(displayMessage);
+
+  // Track the agent message in conversation history
+  appendConversation(wakeUpId, 'agent', message);
+
   const notifWin = getNotificationWindow();
   if (notifWin && !notifWin.isDestroyed()) {
     notifWin.webContents.send('proactive-checkin', {
       wakeUpId,
-      agentMessage: displayMessage,
+      agentMessage: message,
+      structuredContent,
       screenshotUsed,
       tasksCompleted,
+      isFollowUp,
     });
   } else {
     try {
       if (Notification.isSupported()) {
-        new Notification({ title: 'Stuard - Check-in', body: displayMessage.slice(0, 200) || '' }).show();
+        new Notification({ title: 'Stuard - Check-in', body: message.slice(0, 200) || '' }).show();
       }
     } catch { }
   }
@@ -243,41 +319,85 @@ function sendCheckinNotification(wakeUpId: string, agentMessage: string, screens
 
 /**
  * Called when the user replies to a check-in notification.
- * Sends the reply to the agent and shows the response as a new notification.
+ * Builds multi-turn conversation context and shows the response as a follow-up notification.
  */
 export async function handleProactiveReply(wakeUpId: string, text: string): Promise<{ ok: boolean; error?: string }> {
+  const replyLogId = `${wakeUpId}_reply_${Date.now()}`;
+  const startedAt = new Date().toISOString();
+
   try {
+    pruneStaleConversations();
+
     const { config } = proactiveService.getConfig();
     const token = await getAuthToken();
     const modelSelection = buildModelSelection(config);
     let reply: string;
 
+    // Log the follow-up as its own activity entry
+    proactiveService.addWakeUpLog({
+      id: replyLogId,
+      startedAt,
+      status: 'running',
+      contextUsed: ['follow-up'],
+      tasksProcessed: [],
+      executionTarget: config.executionTarget,
+      modelMode: modelSelection.model,
+      modelId: modelSelection.modelId,
+      timeoutMs: PROACTIVE_REPLY_TIMEOUT_MS,
+      timedOut: false,
+      stageHistory: [],
+      parentWakeUpId: wakeUpId,
+    });
+    broadcastUpdate({
+      type: 'wake-up-start',
+      logId: replyLogId,
+      startedAt,
+      executionTarget: config.executionTarget,
+      modelMode: modelSelection.model,
+      modelId: modelSelection.modelId,
+      timeoutMs: PROACTIVE_REPLY_TIMEOUT_MS,
+      isFollowUp: true,
+      parentWakeUpId: wakeUpId,
+    });
+    emitStage(replyLogId, 'initializing');
+
+    // Track the user message in conversation
+    appendConversation(wakeUpId, 'user', text);
+
+    // Build multi-turn conversation context
+    const turns = getConversation(wakeUpId);
+    const conversationContext = turns
+      .map(t => t.role === 'agent' ? `Stuard: ${t.text}` : `User: ${t.text}`)
+      .join('\n\n');
+
+    // Fallback: if conversation is empty (shouldn't happen), use the log
     const { logs } = proactiveService.getWakeUpLog(50);
     const prevLog = logs?.find(l => l.id === wakeUpId);
-    const prevAgentMessage = prevLog?.agentMessage || prevLog?.partialResponse || 'I just checked in with you.';
+    const fallbackContext = prevLog?.agentMessage || prevLog?.partialResponse || 'I just checked in with you.';
+    const contextToUse = conversationContext || `Stuard: ${fallbackContext}\n\nUser: ${text}`;
 
-    const cloudPrompt = `[PROACTIVE REPLY]
-Previous Check-in Message:
+    const cloudPrompt = `[PROACTIVE FOLLOW-UP CONVERSATION]
+Conversation so far:
 """
-${prevAgentMessage}
+${contextToUse}
 """
 
-User Reply:
-${text}
+Continue the conversation naturally. Be brief, warm, and helpful. This is a follow-up reply, not a new check-in. Return a normal plain markdown/text reply only. Do not use GenUI or interactive UI blocks.`;
 
-Respond briefly, warmly, and helpfully.`;
+    const localHiddenContext = `[PROACTIVE FOLLOW-UP] The user is replying in an ongoing conversation from a proactive check-in. Be helpful, friendly, and concise. Return only the final user-facing reply. Do not expose reasoning or internal planning. Return a normal plain markdown/text reply only. Do not use GenUI, interactive UI blocks, or JSON UI payloads.
 
-    const localHiddenContext = `[PROACTIVE REPLY] The user is replying to your proactive check-in. Be helpful, friendly, and concise. Return only the final user-facing reply. Do not expose reasoning or internal planning.
-
-Previous Check-in Message:
+Conversation so far:
 """
-${prevAgentMessage}
+${contextToUse}
 """`;
 
+    emitStage(replyLogId, 'connecting', config.executionTarget === 'cloud' ? 'cloud VM' : 'local agent');
+
     if (config.executionTarget === 'cloud') {
-      const result = await executeCloud(`${wakeUpId}_reply`, {
+      emitStage(replyLogId, 'thinking', 'Cloud VM processing follow-up');
+      const result = await executeCloud(replyLogId, {
         config: {
-          instructions: 'The user is replying to your proactive check-in. Be helpful, friendly, and concise.',
+          instructions: 'The user is replying in an ongoing conversation from a proactive check-in. Be helpful, friendly, and concise. Return a normal plain markdown/text reply only. Do not use GenUI or interactive UI blocks.',
           modelMode: modelSelection.model,
           modelId: modelSelection.modelId || '',
         },
@@ -287,7 +407,8 @@ ${prevAgentMessage}
       });
       reply = result.text;
     } else {
-      const ws = await ensureAgentWs();
+      emitStage(replyLogId, 'thinking', 'Local agent processing follow-up');
+      const ws = await waitForAgentWs();
       const replyId = `${wakeUpId}_reply_${Date.now()}`;
 
       reply = await new Promise<string>((resolve) => {
@@ -349,10 +470,50 @@ ${prevAgentMessage}
       });
     }
 
-    sendCheckinNotification(wakeUpId, reply, false, 0);
+    emitStage(replyLogId, 'processing');
+
+    proactiveService.updateWakeUpLog(replyLogId, {
+      completedAt: new Date().toISOString(),
+      status: 'completed',
+      agentMessage: reply,
+      timedOut: false,
+      usage: undefined,
+      modelId: modelSelection.modelId || undefined,
+    });
+    emitStage(replyLogId, 'complete');
+
+    broadcastUpdate({
+      type: 'wake-up-complete',
+      logId: replyLogId,
+      agentMessage: reply,
+      modelId: modelSelection.modelId || undefined,
+      isFollowUp: true,
+      parentWakeUpId: wakeUpId,
+    });
+
+    sendCheckinNotification(wakeUpId, reply, false, 0, true);
     return { ok: true };
   } catch (e: any) {
     logger.error('[proactive-scheduler] Reply failed:', e);
+    emitStage(replyLogId, 'failed', String(e?.message || e));
+
+    proactiveService.updateWakeUpLog(replyLogId, {
+      completedAt: new Date().toISOString(),
+      status: 'failed',
+      agentMessage: '',
+      timedOut: false,
+      failureReason: String(e?.message || e),
+    });
+
+    broadcastUpdate({
+      type: 'wake-up-complete',
+      logId: replyLogId,
+      agentMessage: '',
+      isFollowUp: true,
+      parentWakeUpId: wakeUpId,
+      error: String(e?.message || e),
+    });
+
     return { ok: false, error: String(e?.message || e) };
   }
 }
@@ -487,10 +648,12 @@ interface WakeUpExecutionResult {
   failureReason?: string;
   taskUpdates: Array<{ id: string; status: string; result?: string }>;
   newTasks: Array<{ title: string; instructions?: string; status?: string }>;
+  usage?: any;
+  modelId?: string;
 }
 
 async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutionResult> {
-  const ws = await ensureAgentWs();
+  const ws = await waitForAgentWs();
   const token = await getAuthToken();
   const modelSelection = buildModelSelection(payload?.config || {});
   const toolCtx: RouterContext = {
@@ -597,11 +760,15 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
           }
           publishPartialResponse(true);
           cleanup();
+          const finalUsage = msg?.result?.usage || msg?.usage || undefined;
+          const finalModelId = typeof msg?.model === 'string' ? msg.model : (modelSelection.modelId || undefined);
           resolve({
             text: extractAgentTextFromWsMessage(msg, chunks.join('') || ''),
             partialResponse: chunks.join('').trim() || undefined,
             taskUpdates: [],
             newTasks: [],
+            usage: finalUsage,
+            modelId: finalModelId,
           });
         }
         if (msg?.type === 'proactive_result') {
@@ -672,6 +839,8 @@ interface CloudWakeUpResult {
   deletedTaskIds: string[];
   timedOut?: boolean;
   failureReason?: string;
+  usage?: any;
+  modelId?: string;
 }
 
 async function executeCloud(logId: string, payload: any): Promise<CloudWakeUpResult> {
@@ -736,6 +905,8 @@ async function executeCloud(logId: string, payload: any): Promise<CloudWakeUpRes
       newTasks: Array.isArray(data.newTasks) ? data.newTasks : [],
       deletedTaskIds: Array.isArray(data.deletedTaskIds) ? data.deletedTaskIds : [],
       failureReason: data.ok === false ? `Cloud execution failed: ${data.error || 'Unknown error'}` : undefined,
+      usage: data.usage,
+      modelId: typeof data.modelId === 'string' ? data.modelId : undefined,
     };
   } catch (e: any) {
     clearTimeout(requestTimeout);
@@ -816,8 +987,18 @@ async function executeWakeUp() {
 
     let systemAudioData: string | null = null;
     let micAudioData: string | null = null;
+    let localAgentReadyForCapture = false;
 
     if (config.contextPermissions.systemAudio || config.contextPermissions.micAudio) {
+      try {
+        await waitForAgentWs(30_000);
+        localAgentReadyForCapture = true;
+      } catch (e: any) {
+        logger.warn(`[proactive-scheduler] local agent not ready for audio capture, skipping audio context: ${String(e?.message || e)}`);
+      }
+    }
+
+    if (localAgentReadyForCapture && (config.contextPermissions.systemAudio || config.contextPermissions.micAudio)) {
       const { execLocalTool } = await import('../tools/handlers/local');
       const fs = await import('fs/promises');
       const toolCtx: RouterContext = {
@@ -964,6 +1145,8 @@ async function executeWakeUp() {
       partialResponse: executionResult.partialResponse,
       timedOut: false,
       failureReason: undefined,
+      usage: executionResult.usage,
+      modelId: executionResult.modelId || modelSelection.modelId || undefined,
     });
 
     proactiveService.setLastWakeUp(new Date().toISOString());
@@ -982,7 +1165,13 @@ async function executeWakeUp() {
       }
     }
 
-    broadcastUpdate({ type: 'wake-up-complete', logId, agentMessage });
+    broadcastUpdate({
+      type: 'wake-up-complete',
+      logId,
+      agentMessage,
+      usage: executionResult.usage,
+      modelId: executionResult.modelId || modelSelection.modelId || undefined,
+    });
     logger.info(`[proactive-scheduler] Wake-up complete: ${agentMessage?.slice(0, 100) || '(no message)'}`);
   } catch (e: any) {
     logger.error('[proactive-scheduler] Wake-up failed:', e);

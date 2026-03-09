@@ -8,6 +8,8 @@ import { handleOutlookRoutes } from './integrations/outlook';
 import { handleDiscordRoutes } from './integrations/discord';
 import { handleRedditRoutes } from './integrations/reddit';
 import { handleTelnyxRoutes } from './integrations/telnyx';
+import { handleMetaRoutes } from './integrations/meta';
+import { handleWhatsAppRoutes } from './integrations/whatsapp';
 import { handleProfileRoutes } from './integrations/profiles';
 import { handleCalendarRoutes } from './calendar';
 import { handleInferenceRoutes } from './inference';
@@ -47,6 +49,8 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleDiscordRoutes(req, res, parsedUrl)) return true;
   if (await handleRedditRoutes(req, res, parsedUrl)) return true;
   if (await handleTelnyxRoutes(req, res, parsedUrl)) return true;
+  if (await handleMetaRoutes(req, res, parsedUrl)) return true;
+  if (await handleWhatsAppRoutes(req, res, parsedUrl)) return true;
   if (await handleProfileRoutes(req, res, parsedUrl)) return true;
   if (await handleCalendarRoutes(req, res, parsedUrl)) return true;
   if (await handleInferenceRoutes(req, res, parsedUrl)) return true;

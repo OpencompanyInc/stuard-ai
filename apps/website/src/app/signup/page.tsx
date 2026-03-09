@@ -4,9 +4,15 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuthContext } from '@/components/providers/AuthProvider';
+import { SignupOnboardingQuiz } from '@/components/auth/SignupOnboardingQuiz';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/Card';
+import {
+  DEFAULT_ONBOARDING_PROFILE,
+  ONBOARDING_PROFILE_STORAGE_KEY,
+  type OnboardingProfile,
+} from '../../../../../shared/onboardingProfile';
 
 // Force dynamic rendering to avoid SSR issues
 export const dynamic = 'force-dynamic';
@@ -16,6 +22,7 @@ export default function SignUpPage() {
   const router = useRouter();
   const [formData, setFormData] = useState({
     fullName: '',
+
     email: '',
     password: '',
     confirmPassword: '',
@@ -23,6 +30,11 @@ export default function SignUpPage() {
     smsControl: false,
     agreeToTerms: false,
     marketingEmails: false
+  });
+  const [onboardingProfile, setOnboardingProfile] = useState<OnboardingProfile>({
+    ...DEFAULT_ONBOARDING_PROFILE,
+    source: 'website_signup',
+    updatedAt: new Date().toISOString(),
   });
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -96,10 +108,16 @@ export default function SignUpPage() {
         formData.fullName,
         formData.phone || undefined,
         formData.smsControl,
-        formData.marketingEmails
+        formData.marketingEmails,
+        {
+          ...onboardingProfile,
+          source: 'website_signup',
+          updatedAt: new Date().toISOString(),
+        }
       );
 
       if (result.success) {
+        try { localStorage.removeItem(ONBOARDING_PROFILE_STORAGE_KEY); } catch { }
         // Redirect to verify-email with the user's email
         router.push(`/verify-email?email=${encodeURIComponent(formData.email)}`);
         return;
@@ -117,6 +135,16 @@ export default function SignUpPage() {
   const handleGoogleSignUp = async () => {
     setError('');
     try {
+      try {
+        localStorage.setItem(
+          ONBOARDING_PROFILE_STORAGE_KEY,
+          JSON.stringify({
+            ...onboardingProfile,
+            source: 'website_google',
+            updatedAt: new Date().toISOString(),
+          })
+        );
+      } catch { }
       const result = await signInWithGoogle();
       if (result.success) {
         // Auth redirect handled by useAuth hook
@@ -153,7 +181,7 @@ export default function SignUpPage() {
                 <div className="mt-1 bg-white/20 p-1 rounded-full">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
                 </div>
-                <span>14-day free trial, no credit card required</span>
+                <span>Start free with about 15 starter credits, no credit card required</span>
               </li>
               <li className="flex items-start gap-3">
                 <div className="mt-1 bg-white/20 p-1 rounded-full">
@@ -171,7 +199,7 @@ export default function SignUpPage() {
           </div>
 
           <div className="relative z-10 text-sm text-white/40">
-            © 2024 Stuard AI Inc.
+            &copy; 2024 Stuard AI Inc.
           </div>
         </div>
 
@@ -180,7 +208,7 @@ export default function SignUpPage() {
           <div className="max-w-md w-full">
             <div className="text-center lg:text-left mb-8">
               <h1 className="text-3xl font-bold text-gray-900 mb-2">Create an account</h1>
-              <p className="text-gray-600">Get started with your 14-day free trial today.</p>
+              <p className="text-gray-600">Get started on the free plan with about 15 starter credits.</p>
             </div>
 
             <Card className="border-none shadow-none bg-transparent lg:bg-white/80 lg:backdrop-blur-xl lg:shadow-sm lg:border lg:border-black/5 lg:rounded-3xl">
@@ -195,7 +223,7 @@ export default function SignUpPage() {
                 {/* Social Signup */}
                 <div className="grid grid-cols-2 gap-3 mb-6">
                   <Button onClick={handleGoogleSignUp} type="button" variant="outline" className="w-full bg-white">
-                    <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="none">
+                    <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="#4285F4">
                       <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
                       <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
                       <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
@@ -243,6 +271,11 @@ export default function SignUpPage() {
                     placeholder="Enter your email"
                     autoComplete="email"
                     className="bg-white"
+                  />
+
+                  <SignupOnboardingQuiz
+                    value={onboardingProfile}
+                    onChange={setOnboardingProfile}
                   />
 
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

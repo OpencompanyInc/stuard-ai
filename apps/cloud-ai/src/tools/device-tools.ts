@@ -55,7 +55,7 @@ export {
 } from './device/screen';
 
 // Google Cloud Vision OCR (Cloud-side, uses API key)
-export { find_text_on_screen, find_and_click_text } from './device/ocr';
+export { find_text, find_text_on_screen, find_and_click_text } from './device/ocr';
 
 // System & Window Management
 export {
@@ -250,12 +250,12 @@ export {
 } from './device/ollama';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// BROWSER USE — AI Browser Automation (Navigate, Click, Type, Screenshot, Tasks)
+// BROWSER USE — AI Browser Automation (Navigate, Click, Type, Screenshot, Script)
 // ═══════════════════════════════════════════════════════════════════════════════
 export {
   browser_use_status,
   browser_use_configure,
-  browser_use_task,
+  browser_use_execute_script,
   browser_use_navigate,
   browser_use_click,
   browser_use_type,

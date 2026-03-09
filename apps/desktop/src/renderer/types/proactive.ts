@@ -55,6 +55,16 @@ export interface ProactiveWakeUpLog {
   reasoningText?: string;
   toolCalls?: ProactiveWakeUpToolCall[];
   activityEvents?: ProactiveWakeUpActivityEvent[];
+  usage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    cachedPromptTokens?: number;
+    thinkingTokens?: number;
+    reasoningTokens?: number;
+    [key: string]: any;
+  };
+  parentWakeUpId?: string;
 }
 
 export interface ProactiveWakeUpStageEvent {

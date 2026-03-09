@@ -744,7 +744,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
     if (newItemType === 'canvas') {
       if (!selectedCanvasId) return;
       const canvas = availableCanvases.find(c => c.id === selectedCanvasId);
-      content = canvas?.title || 'Canvas Document';
+      content = canvas?.title || 'Quick Note';
       metadata.canvasId = selectedCanvasId;
     } else if (newItemType === 'conversation') {
       if (!selectedConversationId) return;
@@ -1126,7 +1126,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                     { id: 'snippet', label: 'Code', icon: Code },
                     { id: 'conversation', label: 'Chat', icon: MessageSquare },
                     { id: 'file', label: 'File', icon: File },
-                    { id: 'canvas', label: 'Canvas', icon: PenTool }
+                    { id: 'canvas', label: 'Quick Note', icon: PenTool }
                   ].map(t => (
                     <button
                       key={t.id}
@@ -1188,7 +1188,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
               {/* Canvas dropdown */}
               {newItemType === 'canvas' && (
                 <div>
-                  <label className="block text-xs font-medium text-theme-muted mb-2">Select Canvas</label>
+                  <label className="block text-xs font-medium text-theme-muted mb-2">Select Quick Note</label>
                   {isLoadingLinkOptions ? (
                     <div className="flex items-center justify-center py-4">
                       <Loader2 className="w-5 h-5 animate-spin text-theme-muted" />
@@ -1196,7 +1196,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                   ) : availableCanvases.length === 0 ? (
                     <div className="text-center py-4 text-sm text-theme-muted bg-theme-hover rounded-xl">
                       <PenTool className="w-6 h-6 mx-auto mb-2 opacity-50" />
-                      No canvas documents yet
+                      No quick notes yet
                     </div>
                   ) : (
                     <select
@@ -1204,7 +1204,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                       onChange={e => setSelectedCanvasId(e.target.value)}
                       className="w-full bg-theme-hover border border-theme rounded-xl px-3.5 py-2.5 text-sm text-theme-fg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all cursor-pointer"
                     >
-                      <option value="">Choose a canvas...</option>
+                      <option value="">Choose a quick note...</option>
                       {availableCanvases.map(c => (
                         <option key={c.id} value={c.id}>{c.title}</option>
                       ))}

@@ -53,6 +53,15 @@ const HIDDEN_TOOL_NAMES = new Set([
   'memory_recall',
   'memory_update',
   'memory_search',
+  'conversation_create',
+  'conversation_get',
+  'conversation_list',
+  'conversation_update',
+  'conversation_delete',
+  'conversation_search',
+  'conversation_get_spaces',
+  'message_add',
+  'message_list',
   // Agent internal tools
   'agent_todo',
   // Knowledge tools (internal)

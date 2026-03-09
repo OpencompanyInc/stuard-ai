@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -8,21 +8,42 @@ import { useAuthContext } from '@/components/providers/AuthProvider';
 import { supabase } from '@/lib/supabaseClient';
 
 type UsageEvent = {
+    credit_cost?: number | null;
     cost_usd: number | null;
     created_at: string;
     model?: string | null;
 };
 
+type CreditSummaryResponse = {
+    ok?: boolean;
+    plan?: string;
+    limit?: number;
+    used?: number;
+    remaining?: number;
+    unlimited?: boolean;
+    creditsPerUsd?: number;
+};
+
 const CREDITS_PER_USD = 33;
 const DAYS_RANGE = 14;
+const CLOUD_API_URL = process.env.NEXT_PUBLIC_CLOUD_API_URL || 'https://api.stuard.ai';
 
 export default function DashboardPage() {
     const { user, userData } = useAuthContext();
+    const userId = user?.id || '';
     const userName = userData?.displayName || user?.email?.split('@')[0] || 'User';
+    const planFallbackRef = useRef('');
+
+    useEffect(() => {
+        planFallbackRef.current = String(userData?.plan || '');
+    }, [userData?.plan]);
 
     const [stats, setStats] = useState({
         creditsUsed: 0,
         creditsLimit: 0,
+        creditsRemaining: 0,
+        unlimited: false,
+        plan: '',
         activeWorkflows: 0,
         recentActivity: [] as Array<{ action: string; target: string; time: string }>,
         usageSeries: [] as Array<{ label: string; credits: number }>,
@@ -31,37 +52,52 @@ export default function DashboardPage() {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        if (!user) return;
+        let isActive = true;
+
+        if (!userId) {
+            setLoading(false);
+            return () => {
+                isActive = false;
+            };
+        }
 
         async function loadStats() {
             try {
+                if (isActive) setLoading(true);
                 const now = new Date();
                 const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
                 const rangeStart = new Date();
                 rangeStart.setDate(rangeStart.getDate() - (DAYS_RANGE - 1));
                 rangeStart.setHours(0, 0, 0, 0);
+                const { data: sessionDataRes } = await supabase.auth.getSession();
+                const token = sessionDataRes.session?.access_token || '';
 
-                const [{ data: usageEvents }, { data: profile }, { count: workflowCount }] = await Promise.all([
+                const [{ data: usageEvents }, creditsResponse, { count: workflowCount }] = await Promise.all([
                     supabase
                         .from('usage_events')
-                        .select('cost_usd, created_at, model')
-                        .eq('user_id', user!.id)
+                        .select('cost_usd, credit_cost, created_at, model')
+                        .eq('user_id', userId)
                         .gte('created_at', startOfMonth),
-                    supabase
-                        .from('profiles')
-                        .select('monthly_token_limit')
-                        .eq('id', user!.id)
-                        .single(),
+                    token
+                        ? fetch(`${CLOUD_API_URL}/v1/credits`, {
+                            headers: { Authorization: `Bearer ${token}` },
+                        }).then((res) => res.json()).catch(() => null)
+                        : Promise.resolve(null),
                     supabase
                         .from('conversations')
                         .select('*', { count: 'exact', head: true })
-                        .eq('user_id', user!.id)
+                        .eq('user_id', userId)
                 ]);
 
                 const usageList = (usageEvents || []) as UsageEvent[];
                 const totalCostUsd = usageList.reduce((acc, curr) => acc + (curr.cost_usd || 0), 0);
-                const creditsUsed = Math.ceil(totalCostUsd * CREDITS_PER_USD);
-                const creditsLimit = Number(profile?.monthly_token_limit ?? 0);
+                const summary = (creditsResponse && (creditsResponse as CreditSummaryResponse).ok)
+                    ? creditsResponse as CreditSummaryResponse
+                    : null;
+                const creditsUsed = summary ? Number(summary.used || 0) : Math.ceil(totalCostUsd * CREDITS_PER_USD);
+                const creditsLimit = summary ? Number(summary.limit || 0) : 0;
+                const creditsRemaining = summary ? Number(summary.remaining || 0) : Math.max(0, creditsLimit - creditsUsed);
+                const unlimited = Boolean(summary?.unlimited);
 
                 const recent = usageList
                     .slice()
@@ -84,15 +120,22 @@ export default function DashboardPage() {
                     const date = new Date(event.created_at);
                     if (date >= rangeStart) {
                         const label = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                        const credits = Math.ceil((event.cost_usd || 0) * CREDITS_PER_USD);
+                        const credits = Number(event.credit_cost || 0) > 0
+                            ? Math.ceil(Number(event.credit_cost || 0))
+                            : Math.ceil((event.cost_usd || 0) * CREDITS_PER_USD);
                         seriesMap.set(label, (seriesMap.get(label) || 0) + credits);
                     }
                 });
                 const usageSeries = Array.from(seriesMap.entries()).map(([label, credits]) => ({ label, credits }));
 
+                if (!isActive) return;
+
                 setStats({
                     creditsUsed,
                     creditsLimit,
+                    creditsRemaining,
+                    unlimited,
+                    plan: String(summary?.plan || planFallbackRef.current || ''),
                     activeWorkflows: workflowCount || 0,
                     recentActivity: recent,
                     usageSeries,
@@ -101,19 +144,23 @@ export default function DashboardPage() {
             } catch (e) {
                 console.error('Failed to load dashboard stats', e);
             } finally {
-                setLoading(false);
+                if (isActive) setLoading(false);
             }
         }
 
         loadStats();
-    }, [user, userData?.plan]);
+        return () => {
+            isActive = false;
+        };
+    }, [userId]);
 
-    const planName = userData?.plan ? (userData.plan.charAt(0).toUpperCase() + userData.plan.slice(1)) : 'Free Trial';
-    const planColor = userData?.plan === 'pro' || userData?.plan === 'power' ? 'bg-indigo-500' : 'bg-emerald-500';
+    const resolvedPlan = stats.plan || userData?.plan || 'free';
+    const planName = resolvedPlan ? (resolvedPlan.charAt(0).toUpperCase() + resolvedPlan.slice(1)) : 'Free Trial';
+    const planColor = resolvedPlan === 'pro' || resolvedPlan === 'power' ? 'bg-indigo-500' : 'bg-emerald-500';
     const usagePercent = useMemo(() => {
-        if (!stats.creditsLimit) return 0;
+        if (stats.unlimited || !stats.creditsLimit) return 0;
         return Math.min(100, Math.round((stats.creditsUsed / stats.creditsLimit) * 100));
-    }, [stats.creditsUsed, stats.creditsLimit]);
+    }, [stats.creditsUsed, stats.creditsLimit, stats.unlimited]);
 
     return (
         <div className="space-y-10 max-w-6xl mx-auto">
@@ -152,13 +199,15 @@ export default function DashboardPage() {
                 <Card className="border border-black/5 shadow-sm bg-white/80 backdrop-blur-md overflow-hidden relative group hover:shadow-md transition-all">
                     <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-500" />
                     <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium text-gray-500 uppercase tracking-wider">Credits Used</CardTitle>
+                        <CardTitle className="text-sm font-medium text-gray-500 uppercase tracking-wider">Available Credits</CardTitle>
                     </CardHeader>
                     <CardContent>
                         <div className="text-3xl font-bold text-gray-900 mb-1">
-                            {loading ? '...' : stats.creditsUsed.toLocaleString()}
+                            {loading ? '...' : (stats.unlimited ? 'Unlimited' : stats.creditsRemaining.toLocaleString())}
                         </div>
-                        <p className="text-sm text-gray-400">of {stats.creditsLimit.toLocaleString()} monthly limit</p>
+                        <p className="text-sm text-gray-400">
+                            {stats.unlimited ? 'Unlimited credits available' : `${stats.creditsUsed.toLocaleString()} used of ${stats.creditsLimit.toLocaleString()} this billing period`}
+                        </p>
                         <div className="mt-4 h-2 w-full rounded-full bg-gray-100">
                             <div className="h-full rounded-full gradient-primary" style={{ width: `${usagePercent}%` }} />
                         </div>
@@ -205,12 +254,16 @@ export default function DashboardPage() {
                                     <p className="text-lg font-semibold text-gray-900">${stats.totalSpendUsd.toFixed(2)}</p>
                                 </div>
                                 <div className="rounded-2xl bg-gray-50 px-4 py-3">
-                                    <p className="text-xs uppercase text-gray-400">Credits Used</p>
-                                    <p className="text-lg font-semibold text-gray-900">{stats.creditsUsed.toLocaleString()}</p>
+                                    <p className="text-xs uppercase text-gray-400">Monthly Limit</p>
+                                    <p className="text-lg font-semibold text-gray-900">
+                                        {stats.unlimited ? 'Unlimited' : stats.creditsLimit.toLocaleString()}
+                                    </p>
                                 </div>
                                 <div className="rounded-2xl bg-gray-50 px-4 py-3">
-                                    <p className="text-xs uppercase text-gray-400">Monthly Limit</p>
-                                    <p className="text-lg font-semibold text-gray-900">{stats.creditsLimit.toLocaleString()}</p>
+                                    <p className="text-xs uppercase text-gray-400">Credits Used</p>
+                                    <p className="text-lg font-semibold text-gray-900">
+                                        {stats.creditsUsed.toLocaleString()}
+                                    </p>
                                 </div>
                             </div>
                         </CardContent>

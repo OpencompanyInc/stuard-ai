@@ -209,10 +209,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
   if (route === 'database-stats') {
     const tables = [
       'profiles', 'devices', 'usage_events',
-      'shared_spaces', 'space_shares',
+      'shared_spaces', 'space_shares', 'memory_outbox', 'external_accounts',
       'webhooks', 'webhook_events', 'webhook_providers', 'webhook_queue',
-      'marketplace_workflows', 'marketplace_ratings', 'marketplace_downloads',
-      'external_accounts', 'beta_users', 'waitlist', 'feedback', 'feedback_comments',
+      'marketplace_workflows', 'marketplace_workflow_versions', 'marketplace_ratings', 'marketplace_downloads',
+      'beta_users', 'waitlist', 'feedback', 'feedback_comments',
+      'deployments', 'cloud_engines', 'storage_usage', 'compute_billing_events', 'vm_snapshots',
+      'vm_metrics_history', 'terminal_sessions', 'vm_deployments',
     ];
     const counts: Record<string, number> = {};
     await Promise.all(tables.map(async (table) => {

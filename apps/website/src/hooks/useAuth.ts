@@ -3,6 +3,14 @@
 import { useState, useEffect } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabaseClient';
+import {
+  DEFAULT_ONBOARDING_PROFILE,
+  isOnboardingPath,
+  normalizeOnboardingProfile,
+  toOnboardingProfileRow,
+  type OnboardingPath,
+  type OnboardingProfile,
+} from '../../../../shared/onboardingProfile';
 
 interface UserData {
   uid: string;
@@ -17,6 +25,8 @@ interface UserData {
   };
   plan?: string;
   stripeCustomerId?: string | null;
+  onboardingPath?: OnboardingPath | null;
+  onboardingProfile?: OnboardingProfile | null;
 }
 
 async function fetchProfile(userId: string) {
@@ -47,6 +57,42 @@ async function upsertProfile(userId: string, row: Record<string, any>) {
     .upsert({ id: userId, ...row }, { onConflict: 'id' });
 }
 
+function getOnboardingProfileFromRow(row: Record<string, any>): OnboardingProfile | null {
+  const normalized = normalizeOnboardingProfile(row.onboarding_profile);
+  if (normalized) return normalized;
+
+  if (isOnboardingPath(row.onboarding_path)) {
+    return {
+      ...DEFAULT_ONBOARDING_PROFILE,
+      path: row.onboarding_path,
+      updatedAt: typeof row.onboarding_completed_at === 'string' ? row.onboarding_completed_at : undefined,
+    };
+  }
+
+  return null;
+}
+
+function mapUserData(user: User, data: Record<string, any>): UserData {
+  const onboardingProfile = getOnboardingProfileFromRow(data);
+
+  return {
+    uid: user.id,
+    email: data.email ?? user.email,
+    displayName: data.display_name ?? user.user_metadata?.fullName ?? user.email?.split('@')[0] ?? null,
+    phoneNumber: data.phone_number ?? null,
+    smsControlEnabled: Boolean(data.sms_control_enabled),
+    emailVerified: Boolean(user.email_confirmed_at),
+    createdAt: data.created_at ? new Date(data.created_at) : new Date(),
+    preferences: {
+      marketingEmails: Boolean(data.marketing_emails)
+    },
+    plan: data.plan || 'free',
+    stripeCustomerId: data.stripe_customer_id,
+    onboardingPath: onboardingProfile?.path ?? (isOnboardingPath(data.onboarding_path) ? data.onboarding_path : null),
+    onboardingProfile,
+  };
+}
+
 export const useAuth = () => {
   const [user, setUser] = useState<User | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
@@ -71,20 +117,7 @@ export const useAuth = () => {
           const { data, error } = await fetchProfile(user.id);
           if (!isMounted) return;
           if (!error && data) {
-            setUserData({
-              uid: user.id,
-              email: data.email ?? user.email,
-              displayName: data.display_name ?? user.user_metadata?.fullName ?? user.email?.split('@')[0] ?? null,
-              phoneNumber: data.phone_number ?? null,
-              smsControlEnabled: Boolean(data.sms_control_enabled),
-              emailVerified: Boolean(user.email_confirmed_at),
-              createdAt: data.created_at ? new Date(data.created_at) : new Date(),
-              preferences: {
-                marketingEmails: Boolean(data.marketing_emails)
-              },
-              plan: data.plan || 'free',
-              stripeCustomerId: data.stripe_customer_id
-            });
+            setUserData(mapUserData(user, data));
           }
         }
       } finally {
@@ -103,20 +136,7 @@ export const useAuth = () => {
         const { data, error } = await fetchProfile(nextUser.id);
         if (!isMounted) return;
         if (!error && data) {
-          setUserData({
-            uid: nextUser.id,
-            email: data.email ?? nextUser.email,
-            displayName: data.display_name ?? nextUser.user_metadata?.fullName ?? nextUser.email?.split('@')[0] ?? null,
-            phoneNumber: data.phone_number ?? null,
-            smsControlEnabled: Boolean(data.sms_control_enabled),
-            emailVerified: Boolean(nextUser.email_confirmed_at),
-            createdAt: data.created_at ? new Date(data.created_at) : new Date(),
-            preferences: {
-              marketingEmails: Boolean(data.marketing_emails)
-            },
-            plan: data.plan || 'free',
-            stripeCustomerId: data.stripe_customer_id
-          });
+          setUserData(mapUserData(nextUser, data));
         } else {
           setUserData(null);
         }
@@ -137,13 +157,22 @@ export const useAuth = () => {
     fullName: string,
     phone?: string,
     smsControlEnabled: boolean = false,
-    marketingEmails: boolean = false
+    marketingEmails: boolean = false,
+    onboardingProfile?: OnboardingProfile | null
   ) => {
     if (!isClient) {
       return { error: 'Not available on server side', success: false };
     }
 
     try {
+      const resolvedOnboardingProfile = onboardingProfile
+        ? {
+            ...onboardingProfile,
+            source: onboardingProfile.source ?? 'website_signup',
+            updatedAt: new Date().toISOString(),
+          }
+        : null;
+
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -153,6 +182,7 @@ export const useAuth = () => {
             phone,
             smsControlEnabled,
             marketingEmails,
+            onboardingPath: resolvedOnboardingProfile?.path ?? null,
           },
           emailRedirectTo: typeof window !== 'undefined' ? `${window.location.origin}/verify-email` : undefined,
         },
@@ -164,6 +194,7 @@ export const useAuth = () => {
 
       const newUser = data.user;
       if (newUser) {
+        const onboardingRow = resolvedOnboardingProfile ? toOnboardingProfileRow(resolvedOnboardingProfile) : null;
         const profile = {
           email,
           display_name: fullName,
@@ -171,6 +202,7 @@ export const useAuth = () => {
           sms_control_enabled: smsControlEnabled,
           marketing_emails: marketingEmails,
           created_at: new Date().toISOString(),
+          ...(onboardingRow ?? {}),
         };
         await upsertProfile(newUser.id, profile);
 
@@ -184,6 +216,8 @@ export const useAuth = () => {
           createdAt: new Date(),
           preferences: { marketingEmails },
           plan: 'free',
+          onboardingPath: resolvedOnboardingProfile?.path ?? null,
+          onboardingProfile: resolvedOnboardingProfile,
         });
       }
 
@@ -199,12 +233,17 @@ export const useAuth = () => {
     if (!isClient) {
       return { error: 'Not available on server side', success: false };
     }
+
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) return { error: error.message, success: false };
+
+      if (error) {
+        return { error: error.message, success: false };
+      }
+
       return { user: data.user, success: true };
     } catch (error: unknown) {
-      console.error('Sign in error:', error);
+      console.error('Signin error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       return { error: errorMessage, success: false };
     }
@@ -214,13 +253,23 @@ export const useAuth = () => {
     if (!isClient) {
       return { error: 'Not available on server side', success: false };
     }
+
     try {
-      const redirectTo = typeof window !== 'undefined' ? window.location.origin + '/auth' : undefined;
-      const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo } });
-      if (error) return { error: error.message, success: false };
+      const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/auth` : undefined;
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo,
+        },
+      });
+
+      if (error) {
+        return { error: error.message, success: false };
+      }
+
       return { success: true };
     } catch (error: unknown) {
-      console.error('Google sign in error:', error);
+      console.error('Google signin error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       return { error: errorMessage, success: false };
     }
@@ -230,9 +279,14 @@ export const useAuth = () => {
     if (!isClient) {
       return { error: 'Not available on server side', success: false };
     }
+
     try {
       const { error } = await supabase.auth.signOut();
-      if (error) return { error: error.message, success: false };
+      if (error) {
+        return { error: error.message, success: false };
+      }
+
+      setUser(null);
       setUserData(null);
       return { success: true };
     } catch (error: unknown) {
@@ -246,10 +300,15 @@ export const useAuth = () => {
     if (!isClient) {
       return { error: 'Not available on server side', success: false };
     }
+
     try {
       const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/reset-password` : undefined;
       const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
-      if (error) return { error: error.message, success: false };
+
+      if (error) {
+        return { error: error.message, success: false };
+      }
+
       return { success: true };
     } catch (error: unknown) {
       console.error('Reset password error:', error);
@@ -264,15 +323,24 @@ export const useAuth = () => {
     }
     if (!user) return { error: 'No user logged in', success: false };
     try {
+      const onboardingRow = updates.onboardingProfile
+        ? toOnboardingProfileRow({
+            ...updates.onboardingProfile,
+            updatedAt: new Date().toISOString(),
+          })
+        : null;
+
       const mapped = {
         ...(updates.displayName !== undefined ? { display_name: updates.displayName } : {}),
         ...(updates.phoneNumber !== undefined ? { phone_number: updates.phoneNumber } : {}),
         ...(updates.smsControlEnabled !== undefined ? { sms_control_enabled: updates.smsControlEnabled } : {}),
         ...(updates.preferences?.marketingEmails !== undefined ? { marketing_emails: updates.preferences.marketingEmails } : {}),
+        ...(onboardingRow ?? {}),
       };
       const { error } = await upsertProfile(user.id, mapped);
       if (error) return { error: error.message, success: false };
       if (userData) setUserData({ ...userData, ...updates });
+
       return { success: true };
     } catch (error: unknown) {
       console.error('Update user data error:', error);

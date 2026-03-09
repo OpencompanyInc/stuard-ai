@@ -13,7 +13,7 @@ import { buildProviderModel } from './utils/models';
 import { randomUUID } from 'crypto';
 import { generateText } from 'ai';
 import { openai } from '@ai-sdk/openai';
-import { google } from '@ai-sdk/google';
+import { google } from './utils/models';
 import { handleHttpRoutes } from './routes';
 import { PORT, ENABLE_ROUTING, REQUIRE_AUTH, MAX_STEPS_CAP, DEFAULT_MAX_STEPS, PING_INTERVAL_MS } from './utils/config';
 import { writeLog } from './utils/logger';
@@ -23,7 +23,13 @@ import { modelSupportsMultimodal } from './routes/models';
 import { buildKnowledgeContext } from './knowledge/retrieval';
 import { ensureToolEmbeddings } from './tools/meta-tools';
 import * as memoryService from './memory/conversations';
-import { compactHistory } from './memory/context-compactor';
+import {
+  compactHistory,
+  emergencyTruncate,
+  getRecentWithinBudget,
+  pruneToolOutputs,
+} from './memory/context-compactor';
+import { computeBudget, estimateTokens, shouldCompact } from './memory/token-budget';
 import { registerWebhookClient, deliverQueuedWebhooks } from './webhooks/dispatch';
 import { getOrCreateQueryEmbedding } from './utils/shared-embedding';
 import { getRankedToolNames } from './utils/tool-ranking';
@@ -35,8 +41,9 @@ import { getAgentForQuery } from './agents/stuard/index';
 
 import { startVMHealthMonitor } from './services/vm-health';
 import { registerConnection, getDesktopWs, getConnectionInfo } from './services/vm-bridge';
-import { verifyVMToken } from './services/vm-tokens';
+import { verifyVMToken, mintVMToken } from './services/vm-tokens';
 import { handleDesktopRelayResult } from './routes/desktop-tool-relay';
+import { resolveVMBaseUrl, resolveVMSecret } from './services/vm-command';
 
 // Configuration moved to utils/config
 
@@ -78,6 +85,40 @@ function isSISMetaTool(toolName: string): boolean {
     toolName === 'sis_list_categories' ||
     toolName === 'search_past_conversations' ||
     toolName === 'segment_search';
+}
+
+function truncateHistoryToolResult(result: unknown): unknown {
+  if (typeof result !== 'string') return result;
+  if (result.length <= 2000) return result;
+  return result.slice(0, 1800) + `\n...[truncated, ${result.length} chars total]`;
+}
+
+function normalizeResponseHistoryMessage(msg: any): { role: 'assistant' | 'tool'; content: any } | null {
+  if (!msg || typeof msg !== 'object') return null;
+  const role = msg.role === 'assistant' || msg.role === 'tool' ? msg.role : null;
+  if (!role) return null;
+
+  if (typeof msg.content === 'string') {
+    const text = msg.content.trim();
+    return text ? { role, content: text } : null;
+  }
+
+  if (Array.isArray(msg.content)) {
+    const content = msg.content
+      .map((part: any) => {
+        if (typeof part === 'string') return part;
+        if (!part || typeof part !== 'object') return null;
+        if (part.type === 'tool-result') {
+          return { ...part, result: truncateHistoryToolResult(part.result) };
+        }
+        return { ...part };
+      })
+      .filter((part: any) => part !== null);
+
+    return content.length > 0 ? { role, content } : null;
+  }
+
+  return null;
 }
 
 type IncomingSkillStep = {
@@ -179,6 +220,17 @@ const server = http.createServer(async (req, res) => {
 
 const WS_MAX_PAYLOAD = Number(process.env.CLOUD_WS_MAX_PAYLOAD || 868435456);
 const wss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD });
+const vmProxyWss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD });
+
+function buildVmProxyUrl(baseUrl: string, token: string): string {
+  const trimmed = String(baseUrl || '').replace(/\/+$/, '');
+  const wsBase = trimmed.startsWith('https://')
+    ? `wss://${trimmed.slice('https://'.length)}`
+    : trimmed.startsWith('http://')
+      ? `ws://${trimmed.slice('http://'.length)}`
+      : trimmed;
+  return `${wsBase}/ws?token=${encodeURIComponent(token)}`;
+}
 
 // WS keepalive: periodically ping clients; terminate if no pong
 // PING_INTERVAL_MS is imported from utils/config
@@ -209,6 +261,40 @@ server.on('upgrade', (req, socket, head) => {
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req);
     });
+  } else if (url === '/vm/ws' || url.startsWith('/vm/ws?')) {
+    (async () => {
+      try {
+        const parsed = new URL(url, 'http://localhost');
+        const token = parsed.searchParams.get('token') || '';
+        const authResult = token ? await verifyAccessToken(token) : null;
+        if (!authResult?.success || !authResult.userId) {
+          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+
+        const baseUrl = await resolveVMBaseUrl(authResult.userId);
+        const vmSecret = await resolveVMSecret(authResult.userId);
+        if (!baseUrl || !vmSecret) {
+          socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+
+        const vmToken = mintVMToken(vmSecret, authResult.userId, 'cloud-ai-vm-ws');
+        (req as any).__vmProxy = {
+          userId: authResult.userId,
+          vmUrl: buildVmProxyUrl(baseUrl, vmToken),
+        };
+
+        vmProxyWss.handleUpgrade(req, socket, head, (ws) => {
+          vmProxyWss.emit('connection', ws, req);
+        });
+      } catch {
+        try { socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n'); } catch {}
+        socket.destroy();
+      }
+    })();
   } else if (url === '/speech' || url.startsWith('/speech?')) {
     wss.handleUpgrade(req, socket, head, (ws) => {
       handleSpeechConnection(ws, req);
@@ -220,6 +306,105 @@ server.on('upgrade', (req, socket, head) => {
   } else {
     socket.destroy();
   }
+});
+
+vmProxyWss.on('connection', (clientWs: WebSocket, req: any) => {
+  const vmUrl = String(req?.__vmProxy?.vmUrl || '').trim();
+  if (!vmUrl) {
+    try {
+      clientWs.send(JSON.stringify({ type: 'error', message: 'vm_not_reachable' }));
+      clientWs.close(1011, 'vm_not_reachable');
+    } catch {}
+    return;
+  }
+
+  const upstreamWs = new WebSocket(vmUrl, { maxPayload: WS_MAX_PAYLOAD });
+  const pendingFrames: Array<{ data: Buffer; isBinary: boolean }> = [];
+  let upstreamOpen = false;
+
+  const flushPending = () => {
+    if (!upstreamOpen) return;
+    while (pendingFrames.length > 0) {
+      const frame = pendingFrames.shift();
+      if (!frame) continue;
+      upstreamWs.send(frame.data, { binary: frame.isBinary });
+    }
+  };
+
+  const closeClient = (code?: number, reason?: string) => {
+    try {
+      if (clientWs.readyState === WebSocket.OPEN || clientWs.readyState === WebSocket.CONNECTING) {
+        clientWs.close(code, reason);
+      }
+    } catch {
+      try { clientWs.terminate(); } catch {}
+    }
+  };
+
+  const closeUpstream = () => {
+    try {
+      if (upstreamWs.readyState === WebSocket.OPEN || upstreamWs.readyState === WebSocket.CONNECTING) {
+        upstreamWs.close();
+      }
+    } catch {
+      try { upstreamWs.terminate(); } catch {}
+    }
+  };
+
+  clientWs.on('message', (data, isBinary) => {
+    const frame = Buffer.isBuffer(data)
+      ? data
+      : Array.isArray(data)
+        ? Buffer.concat(data)
+        : Buffer.from(data as ArrayBuffer);
+    if (upstreamOpen && upstreamWs.readyState === WebSocket.OPEN) {
+      upstreamWs.send(frame, { binary: isBinary });
+      return;
+    }
+    if (upstreamWs.readyState === WebSocket.CONNECTING) {
+      pendingFrames.push({ data: frame, isBinary });
+      return;
+    }
+    closeClient(1011, 'vm_proxy_unavailable');
+  });
+
+  clientWs.on('close', () => {
+    closeUpstream();
+  });
+
+  clientWs.on('error', () => {
+    closeUpstream();
+  });
+
+  upstreamWs.on('open', () => {
+    upstreamOpen = true;
+    flushPending();
+  });
+
+  upstreamWs.on('message', (data, isBinary) => {
+    try {
+      if (clientWs.readyState === WebSocket.OPEN) {
+        clientWs.send(data, { binary: isBinary });
+      }
+    } catch {
+      closeUpstream();
+      closeClient();
+    }
+  });
+
+  upstreamWs.on('close', (code, reason) => {
+    closeClient(code, reason.toString());
+  });
+
+  upstreamWs.on('error', (err: any) => {
+    try {
+      if (clientWs.readyState === WebSocket.OPEN) {
+        clientWs.send(JSON.stringify({ type: 'error', message: `vm_proxy_failed: ${String(err?.message || err)}` }));
+      }
+    } catch {}
+    closeClient(1011, 'vm_proxy_failed');
+    closeUpstream();
+  });
 });
 
 server.listen(PORT, () => {
@@ -543,12 +728,33 @@ wss.on('connection', (ws: WebSocket, req: any) => {
       let routedTier: ModelChoice = 'balanced';
       let chosenModelId: string | undefined;
       let conversationId: string | null = null;
+      let modelLabel: string | undefined;
+      let latestUsage: ReturnType<typeof normalizeUsage> | undefined;
       // Hoisted so the outer catch block can persist partial work on error
       let authUser: { userId: string; email?: string } | null = null;
       let requestedMode: TierChoice = 'balanced';
       const toolCallsMap = new Map<string, any>();
       type StreamChunk = { type: 'text'; content: string } | { type: 'reasoning'; content: string } | { type: 'tool'; tool: any };
       const streamChunks: StreamChunk[] = [];
+      let aggregatedReasoning = '';
+      let reasoningStartTime: number | null = null;
+      const buildAssistantMetadata = (finishReasonOverride?: string) => {
+        const filteredToolCalls = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
+        const reasoningDuration = reasoningStartTime && aggregatedReasoning
+          ? Math.max(0, (Date.now() - reasoningStartTime) / 1000)
+          : undefined;
+        return {
+          mode: requestedMode,
+          tier: routedTier,
+          modelId: modelLabel || chosenModelId,
+          reasoning: aggregatedReasoning || undefined,
+          reasoningDuration,
+          toolCalls: filteredToolCalls.length > 0 ? filteredToolCalls : undefined,
+          streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+          finishReason: finishReasonOverride,
+          usage: latestUsage,
+        };
+      };
       try {
         const messages = normalizeMessages(msg);
         const providedMessages = Array.isArray((msg as any)?.messages) ? (msg as any).messages : undefined;
@@ -709,6 +915,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         const rawAgentLower = rawAgent.toLowerCase().trim();
         const clientType = typeof (ws as any)?.__clientType === 'string' ? String((ws as any).__clientType).toLowerCase().trim() : '';
         const ctxMode = typeof (msg as any)?.context?.mode === 'string' ? String((msg as any).context.mode).toLowerCase().trim() : '';
+        const hiddenContextRaw = typeof (msg as any)?.hiddenContext === 'string' ? String((msg as any).hiddenContext) : '';
 
         const inferredWorkflow =
           clientType === 'workflow_ui' ||
@@ -739,6 +946,15 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                   ? 'skill'
                   : 'stuard';
 
+        const conversationSource: 'stuard' | 'workflow' | 'skill' | 'proactive' =
+          hiddenContextRaw.includes('[PROACTIVE MODE]') || hiddenContextRaw.includes('[PROACTIVE FOLLOW-UP]')
+            ? 'proactive'
+            : agentType === 'workflow'
+              ? 'workflow'
+              : agentType === 'skill'
+                ? 'skill'
+                : 'stuard';
+
         const workflowModelId = agentType === 'workflow'
           ? (
             (typeof (msg as any)?.modelId === 'string' && String((msg as any).modelId).trim())
@@ -754,7 +970,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               : (process.env.WORKFLOW_MODEL_ID || 'google/gemini-3-pro-preview')
           )
           : undefined;
-        const modelLabel = agentType === 'workflow'
+        modelLabel = agentType === 'workflow'
           ? (workflowModelId || 'google/gemini-3-pro-preview')
           : agentType === 'skill'
             ? (skillModelIdForLabel || 'google/gemini-3-pro-preview')
@@ -969,11 +1185,12 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         }
 
         let conversationCreatedNow = false;
+        const resetRequested = !!(msg as any)?.resetConversation;
+        if (resetRequested) {
+          try { wsConversations.delete(ws); } catch { }
+          try { anonThreads.delete(ws); } catch { }
+        }
         if (authUser) {
-          const resetRequested = !!(msg as any)?.resetConversation;
-          if (resetRequested) {
-            try { wsConversations.delete(ws); } catch { }
-          }
           const requestedId = typeof (msg as any)?.conversationId === 'string' ? String((msg as any).conversationId).trim() : '';
           if (requestedId) {
             conversationId = requestedId;
@@ -983,7 +1200,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               prompt,
               modelLabel,
               { mode: requestedMode, tier: routedTier, modelId: chosenModelId, contextPaths: contextPathsForMeta },
-              agentType === 'workflow' ? 'workflow' : 'stuard'
+              conversationSource
             ) as any;
             if (conversationId) {
               conversationCreatedNow = true;
@@ -1026,9 +1243,28 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           thread = incomingMem.thread.trim();
         }
 
-        const recentHistory = history.slice(-50) as any[];
+        if (conversationSource === 'stuard' && !conversationId && thread) {
+          send(ws, { type: 'conversation', conversationId: thread }, requestId);
+        }
+
+        const budgetModelId = modelLabel || chosenModelId || routedTier;
+        const budget = computeBudget(budgetModelId);
+        const historySource = (providedMessages && providedMessages.length > 0)
+          ? (providedMessages as any[])
+          : (history as any[]);
+
+        pruneToolOutputs(historySource, budget);
+
+        if (!providedMessages || providedMessages.length === 0) {
+          const preEstimate = estimateTokens(history as any[]);
+          if (preEstimate.totalTokens > budget.historyBudget) {
+            emergencyTruncate(history as any[], budget);
+          }
+        }
+
+        const recentHistory = getRecentWithinBudget(historySource, budget) as any[];
         let inputMessages: any[] = (providedMessages && providedMessages.length > 0)
-          ? [...providedMessages]
+          ? [...recentHistory]
           : [...recentHistory, { role: 'user', content: prompt }];
 
         // If attachments or images are present, attach them to the last user message as multimodal parts
@@ -1127,10 +1363,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         let sawAnyTextDelta = false;
         let sawToolCall = false;
         aggregatedText = '';
-
-        // Track metadata for persistence (reasoning, tools, stream chunks)
-        let aggregatedReasoning = '';
-        let reasoningStartTime: number | null = null;
         // toolCallsMap and streamChunks are hoisted above the try block
 
         // Persist this user turn for ongoing conversations (first turn already stored on creation)
@@ -1331,7 +1563,15 @@ ${skillLines}`;
         // ---------- Google Gemini thinking ----------
         // Enable thinking for Google Gemini models that support it (2.5+, 3+).
         // Gemini 3 models require thought parts to be preserved and passed back with function responses.
+        const resolvedGoogleModelId =
+          typeof workflowModelId === 'string' && workflowModelId.startsWith('google/')
+            ? workflowModelId
+            : (chosenModelId?.startsWith('google/') ? chosenModelId : (modelLabel?.startsWith('google/') ? modelLabel : ''));
+        const isGemini3 = resolvedGoogleModelId.includes('google/gemini-3');
+        const isGemini25 = resolvedGoogleModelId.includes('google/gemini-2.5');
         const isGeminiThinking =
+          isGemini3 ||
+          isGemini25 ||
           (agentType === 'workflow' && typeof workflowModelId === 'string' && (workflowModelId.includes('google/gemini-3') || workflowModelId.includes('google/gemini-2.5'))) ||
           chosenModelId?.includes('google/gemini-3') ||
           chosenModelId?.includes('google/gemini-2.5') ||
@@ -1341,12 +1581,27 @@ ${skillLines}`;
           modelLabel?.includes('gemini-2.5');
 
         if (isGeminiThinking) {
-          providerOptions.google = {
-            thinkingConfig: {
-              includeThoughts: reasoningLevel !== 'none',
-              thinkingLevel: reasoningLevel as 'none' | 'low' | 'medium' | 'high',
-            },
-          };
+          if (isGemini25) {
+            const gemini25Budget: Record<'none' | 'low' | 'medium' | 'high', number> = {
+              none: 0,
+              low: 1024,
+              medium: 8192,
+              high: 24576,
+            };
+            providerOptions.google = {
+              thinkingConfig: {
+                includeThoughts: reasoningLevel !== 'none',
+                thinkingBudget: gemini25Budget[reasoningLevel as 'none' | 'low' | 'medium' | 'high'],
+              },
+            };
+          } else if (isGemini3 && reasoningLevel !== 'none') {
+            providerOptions.google = {
+              thinkingConfig: {
+                includeThoughts: true,
+                thinkingLevel: reasoningLevel as 'low' | 'medium' | 'high',
+              },
+            };
+          }
         }
 
         // ---------- Anthropic thinking ----------
@@ -1381,13 +1636,12 @@ ${skillLines}`;
           chosenModelId?.includes('openai/') ||
           modelLabel?.includes('openai/')
         ) {
-          // Only set for models known to support reasoning effort (o-series, gpt-5-pro, gpt-5.1+)
           const modelPart = (chosenModelId || modelLabel || '').split('/').pop() || '';
-          const supportsEffort = /^(o[1-9]|gpt-5-pro|gpt-5\.1)/.test(modelPart);
-          if (supportsEffort && reasoningLevel !== 'none') {
+          const supportsEffort = /^(o[1-9]|gpt-5(?:$|[-.]))/.test(modelPart);
+          if (supportsEffort) {
             providerOptions.openai = {
               ...(providerOptions.openai || {}),
-              reasoningEffort: reasoningLevel as 'low' | 'medium' | 'high',
+              reasoningEffort: reasoningLevel as 'none' | 'low' | 'medium' | 'high',
             };
           }
         }
@@ -1425,7 +1679,7 @@ ${skillLines}`;
           maxSteps,
           providerOptions,
           abortSignal: abortController.signal,
-          onFinish: async ({ text, steps, finishReason, usage }: any) => {
+          onFinish: async ({ text, steps, finishReason, usage, response }: any) => {
             if (didSendFinal) {
               try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
               return;
@@ -1433,6 +1687,7 @@ ${skillLines}`;
             didSendFinal = true;
             try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
             const normalizedUsage = normalizeUsage(usage);
+            latestUsage = normalizedUsage;
             try {
               console.log('[cloud-ai] onFinish reason:', finishReason, 'usage:', normalizedUsage);
             } catch { }
@@ -1442,66 +1697,89 @@ ${skillLines}`;
             }
             writeLog('stream_finish', { finishReason, usage: normalizedUsage, textLength: finalText.length, sawToolCall, sawAnyTextDelta });
 
-            // ── Persist tool calls + results in history so the LLM remembers what it did ──
-            const completedToolCalls = Array.from(toolCallsMap.values()).filter(tc => tc.status === 'completed');
-            if (completedToolCalls.length > 0) {
-              // Build AI SDK-compatible tool-call / tool-result message pairs
-              // This lets the LLM see its own previous actions in subsequent turns
-              const toolCallParts = completedToolCalls.map(tc => ({
-                type: 'tool-call' as const,
-                toolCallId: tc.id,
-                toolName: tc.tool,
-                args: tc.args || {},
-              }));
-              history.push({ role: 'assistant', content: toolCallParts });
+            // Persist the provider-generated response messages when available.
+            // This preserves structured assistant content such as reasoning parts
+            // and provider-specific tool-call continuity data across turns.
+            const responseMessages = Array.isArray(response?.messages)
+              ? response.messages
+                .map((msg: any) => normalizeResponseHistoryMessage(msg))
+                .filter((msg: { role: 'assistant' | 'tool'; content: any } | null): msg is { role: 'assistant' | 'tool'; content: any } => !!msg)
+              : [];
 
-              for (const tc of completedToolCalls) {
-                // Truncate large results to avoid blowing up the context window
-                let resultStr = typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result ?? '');
-                if (resultStr.length > 2000) {
-                  resultStr = resultStr.slice(0, 1800) + '\n...[truncated, ' + resultStr.length + ' chars total]';
+            if (responseMessages.length > 0) {
+              history.push(...responseMessages);
+            } else {
+              // Fallback: persist tool activity plus the reasoning/text we observed
+              // from the stream so later turns can still see prior internal work.
+              const completedToolCalls = Array.from(toolCallsMap.values()).filter(tc => tc.status === 'completed');
+              if (completedToolCalls.length > 0) {
+                const toolCallParts = completedToolCalls.map(tc => ({
+                  type: 'tool-call' as const,
+                  toolCallId: tc.id,
+                  toolName: tc.tool,
+                  args: tc.args || {},
+                }));
+                history.push({ role: 'assistant', content: toolCallParts });
+
+                for (const tc of completedToolCalls) {
+                  let resultStr = typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result ?? '');
+                  resultStr = String(truncateHistoryToolResult(resultStr));
+                  history.push({
+                    role: 'tool',
+                    content: [{ type: 'tool-result', toolCallId: tc.id, toolName: tc.tool, result: resultStr }],
+                  });
                 }
-                history.push({
-                  role: 'tool',
-                  content: [{ type: 'tool-result', toolCallId: tc.id, toolName: tc.tool, result: resultStr }],
-                });
+              }
+
+              const assistantParts: any[] = [];
+              if (aggregatedReasoning) {
+                assistantParts.push({ type: 'reasoning', text: aggregatedReasoning });
+              }
+              if (finalText) {
+                assistantParts.push({ type: 'text', text: finalText });
+              }
+
+              if (assistantParts.length === 1 && assistantParts[0]?.type === 'text') {
+                history.push({ role: 'assistant', content: finalText });
+              } else if (assistantParts.length > 0) {
+                history.push({ role: 'assistant', content: assistantParts });
               }
             }
 
-            // Final assistant text
-            if (finalText) {
-              history.push({ role: 'assistant', content: finalText });
+            // Layer 0 always runs after each turn, even when full summarization is unnecessary.
+            const compactionModelId = modelLabel || chosenModelId || routedTier;
+            const compactionBudget = computeBudget(compactionModelId);
+            pruneToolOutputs(history as any[], compactionBudget);
+
+            if (estimateTokens(history as any[]).totalTokens > compactionBudget.historyBudget) {
+              emergencyTruncate(history as any[], compactionBudget);
             }
 
-            // Auto-compact: summarize older messages, truncate large tool results
-            // This runs asynchronously — fire-and-forget since we already have the final text
-            compactHistory(history).then(() => {
+            const compactionCheck = shouldCompact(history as any[], compactionModelId);
+            if (compactionCheck.shouldCompact) {
+              compactHistory(history, compactionModelId).then(() => {
+                conversations.set(ws, history);
+                console.log(`[compactor] Compacted: ${estimateTokens(history as any[]).totalTokens} tokens remaining`);
+              }).catch((err) => {
+                console.warn('[cloud-ai] Compaction failed, emergency truncating:', err);
+                emergencyTruncate(history as any[], compactionCheck.budget);
+                conversations.set(ws, history);
+              });
+            } else {
               conversations.set(ws, history);
-            }).catch((err) => {
-              console.warn('[cloud-ai] Compaction failed:', err);
-              // Fallback: hard cap at 60
-              if (history.length > 60) history.splice(0, history.length - 60);
-              conversations.set(ws, history);
-            });
+            }
             if (authUser && conversationId) {
               // Build metadata for persistence
-              const toolCallsList = Array.from(toolCallsMap.values());
-              // Filter out SIS meta-tools from saved metadata
-              const filteredToolCalls = toolCallsList.filter(tc => !isSISMetaTool(tc.tool));
-              const metadata = {
-                mode: requestedMode,
-                tier: routedTier,
-                modelId: chosenModelId,
-                toolCalls: filteredToolCalls.length > 0 ? filteredToolCalls : undefined,
-                streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
-              };
+              const metadata = buildAssistantMetadata(finishReason);
               try { await addAssistantMessage(authUser.userId, conversationId, finalText, metadata); } catch { }
             }
 
             const stepsSafe = typeof steps !== 'undefined' ? sanitizeSteps(steps) : steps;
             send(ws, { type: 'final', origin: 'cloud-ai', model: chosenModelId || routedTier, conversationId, result: { text: finalText, steps: stepsSafe, finishReason, usage: normalizedUsage } }, requestId);
-            if (authUser && conversationId && conversationCreatedNow) {
-              // Only generate title for new conversations
+            const titleConversationId = conversationId || (conversationSource === 'stuard' ? thread : '');
+            const shouldGenerateTitle = !!(titleConversationId && (conversationCreatedNow || (conversationSource === 'stuard' && resetRequested)));
+            if (shouldGenerateTitle) {
+              // Only generate title for newly-started conversations/threads
               try {
                 const titlePrompt = `You will create a short, descriptive chat thread title from the user's question and the assistant's answer. At most 6 words. No quotes or punctuation.
 User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
@@ -1510,9 +1788,17 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                 const tRes = await generateText({ model: titleModel as any, prompt: titlePrompt, temperature: 0.2 });
                 let title = String((tRes as any)?.text || '').trim();
                 title = title.replace(/^"+|"+$/g, '').replace(/[\.\!?]+$/g, '').slice(0, 80);
-                await setConversationTitle(authUser.userId, conversationId, title);
+                if (authUser && conversationId) {
+                  await setConversationTitle(authUser.userId, conversationId, title);
+                }
+                if (conversationSource === 'stuard') {
+                  try {
+                    await memoryService.ensureLocalConversation(titleConversationId, modelLabel, conversationSource);
+                    await memoryService.updateConversation(titleConversationId, { title });
+                  } catch { }
+                }
                 // Send title update to client
-                send(ws, { type: 'title', conversationId, title }, requestId);
+                send(ws, { type: 'title', conversationId: titleConversationId, title }, requestId);
               } catch { }
             }
             if (authUser) { try { await logUsageEvent(authUser.userId, conversationId, chosenModelId || routedTier, normalizedUsage); } catch { } try { if (conversationId) await finishRun(authUser.userId, conversationId, finalText || ''); } catch { } }
@@ -1547,30 +1833,42 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
 
             // Local Memory Storage - store conversation locally with encryption
             try {
-              const localConvId = conversationId || resource;
+              if (conversationSource === 'stuard') {
+                const localConvId = conversationId || thread;
 
-              // Store the user message locally
-              if (prompt) {
-                memoryService.storeMessageLocally(localConvId, 'user', prompt).catch((err) => {
-                  console.error('[cloud-ai] Failed to store user message locally:', err);
+                // Store the user message locally
+                if (prompt) {
+                  await memoryService.storeMessageLocally(localConvId, 'user', prompt, {
+                    metadata: {
+                      mode: requestedMode,
+                      tier: routedTier,
+                      modelId: chosenModelId,
+                      contextPaths: contextPathsForMeta,
+                    },
+                    model: modelLabel,
+                    source: conversationSource,
+                  });
+                }
+
+                // Store the assistant response locally
+                if (finalText) {
+                  await memoryService.storeMessageLocally(localConvId, 'assistant', finalText, {
+                    metadata: buildAssistantMetadata(finishReason),
+                    model: modelLabel,
+                    source: conversationSource,
+                  });
+                }
+
+                // Process conversation turn (segmentation, embeddings, etc.)
+                const fullHistory = [...history];
+                memoryService.processConversationTurn(localConvId, fullHistory).catch((err) => {
+                  console.error('[cloud-ai] Local memory processing failed:', err);
                 });
               }
-
-              // Store the assistant response locally
-              if (finalText) {
-                memoryService.storeMessageLocally(localConvId, 'assistant', finalText).catch((err) => {
-                  console.error('[cloud-ai] Failed to store assistant message locally:', err);
-                });
-              }
-
-              // Process conversation turn (segmentation, embeddings, etc.)
-              const fullHistory = [...history];
-              memoryService.processConversationTurn(localConvId, fullHistory).catch((err) => {
-                console.error('[cloud-ai] Local memory processing failed:', err);
-              });
             } catch (memoryErr) {
               console.error('[cloud-ai] Local memory storage import failed:', memoryErr);
             }
+
           },
         };
 
@@ -1632,6 +1930,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                   // Reasoning/Thinking events - forward to client for display
                   case 'reasoning-start':
                   case 'thinking-start': {
+                    if (!reasoningStartTime) reasoningStartTime = Date.now();
                     send(ws, { type: 'progress', event: 'reasoning_start', data: { id: (chunk as any)?.payload?.id } }, requestId);
                     handledChunk = true;
                     break;
@@ -1641,6 +1940,14 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                   case 'thinking-delta': {
                     const reasoningText = (chunk as any)?.payload?.text || (chunk as any)?.textDelta || (typeof (chunk as any)?.payload === 'string' ? (chunk as any).payload : '');
                     if (reasoningText) {
+                      if (!reasoningStartTime) reasoningStartTime = Date.now();
+                      aggregatedReasoning += reasoningText;
+                      const lastReasoningChunk = streamChunks[streamChunks.length - 1];
+                      if (lastReasoningChunk?.type === 'reasoning') {
+                        lastReasoningChunk.content += reasoningText;
+                      } else {
+                        streamChunks.push({ type: 'reasoning', content: reasoningText });
+                      }
                       send(ws, { type: 'progress', event: 'reasoning', data: { text: reasoningText } }, requestId);
                     }
                     handledChunk = true;
@@ -1821,13 +2128,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
           // Persist partial work (tool calls, text) even on error
           if (authUser && conversationId) {
             try {
-              const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
-              const metadata = {
-                mode: requestedMode, tier: routedTier, modelId: chosenModelId,
-                toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
-                streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
-                finishReason: 'error',
-              };
+              const metadata = buildAssistantMetadata('error');
               await addAssistantMessage(authUser.userId, conversationId, errorFinalText, metadata);
             } catch { }
           }
@@ -1873,13 +2174,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
           // Persist partial work even on abort so conversation history isn't lost
           if (authUser && conversationId && partialText) {
             try {
-              const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
-              const metadata = {
-                mode: requestedMode, tier: routedTier, modelId: chosenModelId,
-                toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
-                streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
-                finishReason: 'aborted',
-              };
+              const metadata = buildAssistantMetadata('aborted');
               await addAssistantMessage(authUser.userId, conversationId, partialText, metadata);
             } catch { }
           }
@@ -1954,13 +2249,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
             // Persist partial work on abort
             if (authUser && conversationId && partialText) {
               try {
-                const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
-                const metadata = {
-                  mode: requestedMode, tier: routedTier, modelId: chosenModelId,
-                  toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
-                  streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
-                  finishReason: 'aborted',
-                };
+                const metadata = buildAssistantMetadata('aborted');
                 await addAssistantMessage(authUser.userId, conversationId, partialText, metadata);
               } catch { }
             }
@@ -2024,13 +2313,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
             didSendFinal = true;
             if (authUser && conversationId) {
               try {
-                const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
-                const metadata = {
-                  mode: requestedMode, tier: routedTier, modelId: chosenModelId,
-                  toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
-                  streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
-                  finishReason: 'error',
-                };
+                const metadata = buildAssistantMetadata('error');
                 await addAssistantMessage(authUser.userId, conversationId, finalText, metadata);
               } catch { }
             }
@@ -2107,13 +2390,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
             didSendFinal = true;
             if (authUser && conversationId) {
               try {
-                const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
-                const metadata = {
-                  mode: requestedMode, tier: routedTier, modelId: chosenModelId,
-                  toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
-                  streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
-                  finishReason: 'error',
-                };
+                const metadata = buildAssistantMetadata('error');
                 await addAssistantMessage(authUser.userId, conversationId, errorText, metadata);
               } catch { }
             }
@@ -2131,13 +2408,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
           didSendFinal = true;
           try {
             const errorText = aggregatedText ? aggregatedText.trim() : `Error: ${e?.message || String(e)}`;
-            const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
-            const metadata = {
-              mode: requestedMode, tier: routedTier, modelId: chosenModelId,
-              toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
-              streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
-              finishReason: 'error',
-            };
+            const metadata = buildAssistantMetadata('error');
             await addAssistantMessage(authUser.userId, conversationId, errorText, metadata);
           } catch { }
         }

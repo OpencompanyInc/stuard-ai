@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { generateText, generateObject, embed, embedMany } from 'ai';
 import { openai } from '@ai-sdk/openai';
-import { google } from '@ai-sdk/google';
+import { google } from '../utils/models';
 import { z } from 'zod';
 import { verifyToken } from '../supabase';
 import { CORS_ALLOWED_ORIGINS, IS_DEVELOPMENT } from '../utils/config';
@@ -211,7 +211,7 @@ function pickModelProvider() {
   // Prefer OpenAI if available; otherwise fall back to Gemini; if both fail, caller should handle.
   const prefer = (process.env.WORKFLOW_INFER_PROVIDER || '').toLowerCase();
   const hasOpenAI = !!process.env.OPENAI_API_KEY;
-  const hasGemini = !!process.env.GOOGLE_GENERATIVE_AI_API_KEY || !!process.env.GEMINI_API_KEY;
+  const hasGemini = !!process.env.GOOGLE_GENERATIVE_AI_API_KEY || !!process.env.GEMINI_API_KEY || !!process.env.GOOGLE_API_KEY;
   if ((prefer === 'openai' && hasOpenAI) || (hasOpenAI && !hasGemini)) return { kind: 'openai' as const, model: 'gpt-4.1-mini' };
   if (hasGemini) return { kind: 'google' as const, model: 'gemini-1.5-flash' };
   // default to openai id (may fail; handled by try/catch in callers)

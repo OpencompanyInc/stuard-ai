@@ -3,6 +3,7 @@
  */
 import React, { useState, useMemo } from "react";
 import { MousePointer2, ZoomIn, ZoomOut, Maximize2, Trash2, LayoutGrid } from "lucide-react";
+import { DiscoverTips } from "./DiscoverTips";
 import { WorkflowNode } from "./WorkflowNodeCard";
 import type { DesignerModel, DesignerWire } from "../types";
 import type { StepExecutionStatus } from "./WorkflowNodeCard";
@@ -908,14 +909,38 @@ export function WorkflowCanvas({
           {/* Empty State */}
           {model.triggers.length === 0 && model.nodes.length === 0 && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="text-center">
+              <div className="text-center max-w-md px-4">
                 <div className="w-16 h-16 bg-white/[0.05] rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/[0.08]">
                   <MousePointer2 className="w-6 h-6 text-white/30" />
                 </div>
                 <h3 className="text-lg font-semibold text-white/60">Start building</h3>
-                <p className="text-sm text-white/30 mt-1 max-w-xs mx-auto">
+                <p className="text-sm text-white/30 mt-1 max-w-xs mx-auto mb-4">
                   Drag tools from the palette or ask the AI to design a workflow for you.
                 </p>
+                <div className="pointer-events-auto">
+                  <DiscoverTips
+                    compact
+                    title="Discover workflows"
+                    className="text-left"
+                    tips={[
+                      {
+                        id: "canvas-ai",
+                        title: "Use AI when you know the goal, not the wiring",
+                        description: "Ask for the result you want, then fine-tune the generated workflow visually.",
+                      },
+                      {
+                        id: "canvas-ui",
+                        title: "Custom UI can turn a workflow into a mini tool",
+                        description: "Forms and status views help workflows feel interactive instead of hidden in the background.",
+                      },
+                      {
+                        id: "canvas-start",
+                        title: "Start with one useful action, then expand",
+                        description: "The best workflows usually begin with a single repeated task and grow from there.",
+                      },
+                    ]}
+                  />
+                </div>
               </div>
             </div>
           )}

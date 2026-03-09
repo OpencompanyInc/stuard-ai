@@ -4,6 +4,7 @@ export * from "./file-indexing";
 export * from "./app-discovery";
 export * from "./app-search";
 export * from "./browser-server";
+export * from "./icon-cache";
 export * from "./polar";
 export * from "./unified-tasks";
 export * from "./offline-calendar";

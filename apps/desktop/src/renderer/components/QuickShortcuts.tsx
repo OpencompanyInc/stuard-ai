@@ -8,7 +8,8 @@ import {
   FileText,
   Zap,
   MessageSquare,
-  Layout,
+  NotebookPen,
+  Terminal,
   Plus,
   X,
   Pencil,
@@ -20,22 +21,16 @@ import {
   Sparkles,
   ListTodo,
   Keyboard,
-  RotateCcw
 } from 'lucide-react';
 
 export interface Bookmark {
   id: string;
   name: string;
-  type: 'url' | 'app' | 'file' | 'folder' | 'workflow' | 'space' | 'canvas' | 'dashboard' | 'tasks';
+  type: 'url' | 'app' | 'file' | 'folder' | 'workflow' | 'space' | 'canvas' | 'dashboard' | 'tasks' | 'terminal' | 'overlay';
   target: string;
   icon?: string;
   color?: string;
   keybind?: string; // Electron accelerator e.g. "Ctrl+Shift+K"
-}
-
-interface QuickShortcutsProps {
-  onClose?: () => void;
-  compact?: boolean;
 }
 
 const BOOKMARK_TYPES = [
@@ -45,7 +40,9 @@ const BOOKMARK_TYPES = [
   { type: 'folder', label: 'Folder', icon: Folder, color: 'text-yellow-500', bg: 'bg-yellow-500/10', description: 'Open a folder' },
   { type: 'workflow', label: 'Workflow', icon: Zap, color: 'text-amber-500', bg: 'bg-amber-500/10', description: 'Run a Stuard workflow' },
   { type: 'space', label: 'Space', icon: MessageSquare, color: 'text-cyan-500', bg: 'bg-cyan-500/10', description: 'Open a conversation space' },
-  { type: 'canvas', label: 'Canvas', icon: Layout, color: 'text-pink-500', bg: 'bg-pink-500/10', description: 'Open a canvas document' },
+  { type: 'canvas', label: 'Quick Note', icon: NotebookPen, color: 'text-pink-500', bg: 'bg-pink-500/10', description: 'Open a note in Quick Notes' },
+  { type: 'terminal', label: 'Terminal', icon: Terminal, color: 'text-orange-500', bg: 'bg-orange-500/10', description: 'Open the built-in terminal' },
+  { type: 'overlay', label: 'Overlay', icon: Sparkles, color: 'text-violet-500', bg: 'bg-violet-500/10', description: 'Open the Stuard overlay' },
   { type: 'dashboard', label: 'Dashboard', icon: Settings2, color: 'text-indigo-500', bg: 'bg-indigo-500/10', description: 'Open Dashboard tab' },
   { type: 'tasks', label: 'Tasks', icon: ListTodo, color: 'text-emerald-500', bg: 'bg-emerald-500/10', description: 'Open tasks (To-Do or Agent)' },
 ] as const;
@@ -56,6 +53,9 @@ const QUICK_PRESETS = [
   { name: 'YouTube', type: 'url' as const, target: 'https://youtube.com', icon: Globe },
   { name: 'GitHub', type: 'url' as const, target: 'https://github.com', icon: Globe },
   { name: 'ChatGPT', type: 'url' as const, target: 'https://chat.openai.com', icon: Sparkles },
+  { name: 'Quick Note', type: 'canvas' as const, target: '_new', icon: NotebookPen },
+  { name: 'Terminal', type: 'terminal' as const, target: 'terminal', icon: Terminal },
+  { name: 'Overlay', type: 'overlay' as const, target: 'overlay', icon: Sparkles },
   { name: 'Planner', type: 'dashboard' as const, target: 'planner', icon: Settings2 },
   { name: 'Memories', type: 'dashboard' as const, target: 'memories', icon: Settings2 },
   { name: 'Tasks', type: 'tasks' as const, target: 'todo', icon: ListTodo },
@@ -63,6 +63,68 @@ const QUICK_PRESETS = [
 
 export const getTypeConfig = (type: string) => {
   return BOOKMARK_TYPES.find(t => t.type === type) || BOOKMARK_TYPES[0];
+};
+
+const TYPES_WITH_DEFAULT_TARGET = new Set<Bookmark['type']>(['space', 'canvas', 'tasks', 'terminal', 'overlay']);
+
+const getDefaultBookmarkTarget = (type?: Bookmark['type'] | null): string => {
+  switch (type) {
+    case 'space':
+      return 'spaces';
+    case 'canvas':
+      return '_new';
+    case 'tasks':
+      return 'todo';
+    case 'terminal':
+      return 'terminal';
+    case 'overlay':
+      return 'overlay';
+    default:
+      return '';
+  }
+};
+
+const findKeybindConflict = (keybind: string | undefined, bookmarks: Bookmark[], excludeId?: string): Bookmark | null => {
+  const normalized = String(keybind || '').trim().toLowerCase();
+  if (!normalized) return null;
+  return bookmarks.find((bookmark) => bookmark.id !== excludeId && String(bookmark.keybind || '').trim().toLowerCase() === normalized) || null;
+};
+
+const normalizeShortcutSearchText = (value: string): string => String(value || '')
+  .toLowerCase()
+  .replace(/[/\\]+/g, ' ')
+  .replace(/[_\-.]+/g, ' ')
+  .replace(/[^a-z0-9\s]/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+const boundedShortcutDistance = (a: string, b: string, maxDistance = 2): number => {
+  if (a === b) return 0;
+  if (!a.length || !b.length) return Math.max(a.length, b.length);
+  if (Math.abs(a.length - b.length) > maxDistance) return maxDistance + 1;
+
+  const m = a.length;
+  const n = b.length;
+  const row = new Array(n + 1).fill(0).map((_, i) => i);
+
+  for (let i = 1; i <= m; i++) {
+    let prev = i - 1;
+    row[0] = i;
+    let minInRow = row[0];
+    for (let j = 1; j <= n; j++) {
+      const current = row[j];
+      if (a[i - 1] === b[j - 1]) {
+        row[j] = prev;
+      } else {
+        row[j] = 1 + Math.min(prev, row[j], row[j - 1]);
+      }
+      prev = current;
+      if (row[j] < minInRow) minInRow = row[j];
+    }
+    if (minInRow > maxDistance) return maxDistance + 1;
+  }
+
+  return row[n];
 };
 
 // =============================================================================
@@ -188,7 +250,7 @@ function KeybindRecorder({
           {parts.map((p, i) => (
             <React.Fragment key={`${p}-${i}`}>
               <span className={clsx(
-                "px-1.5 py-0.5 bg-theme-bg border border-theme/15 rounded font-mono font-semibold text-theme-fg shadow-sm",
+                "px-1.5 py-0.5 bg-theme-hover/80 border border-theme/10 rounded font-mono font-semibold text-theme-muted leading-none",
                 compact ? "text-[9px]" : "text-[10px]"
               )}>
                 {displayKey(p)}
@@ -261,13 +323,13 @@ export function QuickShortcutsGrid({
   const visibleBookmarks = React.useMemo(() => {
     if (!filter || !filter.trim()) return bookmarks.slice(0, maxVisible);
 
-    const q = filter.toLowerCase().trim();
+    const q = normalizeShortcutSearchText(filter);
     // Filter and score
     const scored = bookmarks.map(b => {
       let score = 0;
-      const name = b.name.toLowerCase();
-      const target = b.target.toLowerCase();
-      const type = b.type.toLowerCase();
+      const name = normalizeShortcutSearchText(b.name);
+      const target = normalizeShortcutSearchText(b.target);
+      const type = normalizeShortcutSearchText(b.type);
 
       if (name === q) score += 100;
       else if (name.startsWith(q)) score += 50;
@@ -277,6 +339,20 @@ export function QuickShortcutsGrid({
       else if (target.includes(q)) score += 10;
 
       if (type.includes(q)) score += 5;
+
+      if (score === 0 && q.length >= 4) {
+        const tokens = Array.from(new Set([
+          ...name.split(' ').filter(Boolean),
+          ...target.split(' ').filter(Boolean),
+        ]));
+        for (const token of tokens) {
+          const maxDist = Math.max(q.length, token.length) >= 7 ? 2 : 1;
+          const dist = boundedShortcutDistance(q, token, maxDist);
+          if (dist <= maxDist) {
+            score = Math.max(score, dist === 1 ? 42 : 30);
+          }
+        }
+      }
 
       return { bookmark: b, score };
     }).filter(item => item.score > 0);
@@ -315,7 +391,7 @@ export function QuickShortcutsGrid({
         <div className="flex items-center gap-2">
           <Zap className="w-3.5 h-3.5 text-amber-500" />
           <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">
-            {filter ? 'Matching Shortcuts' : 'Quick Actions'}
+            {filter ? 'Matching Shortcuts' : 'Quick Actions & Hotkeys'}
           </span>
         </div>
         {!filter && (
@@ -354,13 +430,11 @@ export function QuickShortcutsGrid({
               <span className="text-[10px] font-semibold text-theme-fg truncate w-full text-center leading-tight px-0.5">
                 {bookmark.name}
               </span>
+              <span className="text-[8px] text-theme-muted truncate w-full text-center opacity-80">
+                {cfg.label}
+              </span>
               {bookmark.keybind && !filter && (
                 <KeybindBadge keybind={bookmark.keybind} />
-              )}
-              {filter && (
-                 <span className="text-[8px] text-theme-muted truncate w-full text-center opacity-70">
-                   {cfg.label}
-                 </span>
               )}
             </button>
           );
@@ -404,8 +478,7 @@ export function BookmarkEditor({
   bookmarks,
   onSave,
   workflows = [],
-  canvasDocuments = [],
-  spaces = []
+  canvasDocuments = []
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -413,13 +486,13 @@ export function BookmarkEditor({
   onSave: (bookmarks: Bookmark[]) => void;
   workflows?: Array<{ id: string; name: string }>;
   canvasDocuments?: Array<{ id: string; title: string }>;
-  spaces?: Array<{ id: string; name: string }>;
 }) {
   const [localBookmarks, setLocalBookmarks] = useState<Bookmark[]>(bookmarks);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [view, setView] = useState<'list' | 'add' | 'type-select'>('list');
   const [selectedType, setSelectedType] = useState<Bookmark['type'] | null>(null);
   const [newBookmark, setNewBookmark] = useState<Partial<Bookmark>>({});
+  const newBookmarkConflict = findKeybindConflict(newBookmark.keybind, localBookmarks);
 
   // Load canvas documents on mount
   const [loadedCanvasDocs, setLoadedCanvasDocs] = useState<Array<{ id: string; title: string }>>([]);
@@ -427,7 +500,7 @@ export function BookmarkEditor({
     if (isOpen && canvasDocuments.length === 0) {
       (window as any).desktopAPI?.canvasListDocuments?.().then((res: any) => {
         if (res?.ok && Array.isArray(res.documents)) {
-          setLoadedCanvasDocs(res.documents.map((d: any) => ({ id: d.id, title: d.title || 'Untitled' })));
+          setLoadedCanvasDocs(res.documents.map((d: any) => ({ id: d.id, title: d.title || 'Quick Note' })));
         }
       }).catch(() => {});
     }
@@ -458,14 +531,15 @@ export function BookmarkEditor({
 
   const handleSelectType = (type: Bookmark['type']) => {
     setSelectedType(type);
-    setNewBookmark({ type, name: '', target: '' });
+    setNewBookmark({ type, name: '', target: getDefaultBookmarkTarget(type) });
     setView('add');
   };
 
   const handleSaveNew = () => {
-    if (newBookmark.name && (newBookmark.target || newBookmark.type === 'space' || newBookmark.type === 'canvas' || newBookmark.type === 'tasks')) {
+    if (newBookmarkConflict) return;
+    if (newBookmark.name && (newBookmark.target || TYPES_WITH_DEFAULT_TARGET.has((newBookmark.type || 'url') as Bookmark['type']))) {
       const id = `bm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      const target = newBookmark.target || (newBookmark.type === 'space' ? 'spaces' : newBookmark.type === 'tasks' ? 'todo' : 'canvas');
+      const target = newBookmark.target || getDefaultBookmarkTarget(newBookmark.type as Bookmark['type']);
       const updated = [...localBookmarks, { ...newBookmark, id, target } as Bookmark];
       setLocalBookmarks(updated);
       onSave(updated);
@@ -489,8 +563,8 @@ export function BookmarkEditor({
 
   const handleBrowseFile = async () => {
     const result = await (window as any).desktopAPI?.selectFiles?.();
-    if (result?.paths?.[0]) {
-      const path = result.paths[0];
+    const path = Array.isArray(result) ? result[0]?.path : result?.files?.[0]?.path;
+    if (path) {
       const name = path.split(/[/\\]/).pop() || 'File';
       setNewBookmark(prev => ({ ...prev, target: path, name: prev.name || name }));
     }
@@ -498,8 +572,8 @@ export function BookmarkEditor({
 
   const handleBrowseFolder = async () => {
     const result = await (window as any).desktopAPI?.selectFolder?.();
-    if (result?.paths?.[0]) {
-      const path = result.paths[0];
+    const path = Array.isArray(result) ? result[0]?.path : result?.folders?.[0]?.path;
+    if (path) {
       const name = path.split(/[/\\]/).pop() || 'Folder';
       setNewBookmark(prev => ({ ...prev, target: path, name: prev.name || name }));
     }
@@ -556,6 +630,7 @@ export function BookmarkEditor({
                     const cfg = getTypeConfig(bookmark.type);
                     const Icon = cfg.icon;
                     const isEditing = editingId === bookmark.id;
+                    const keybindConflict = findKeybindConflict(bookmark.keybind, localBookmarks, bookmark.id);
 
                     return (
                       <div
@@ -565,7 +640,7 @@ export function BookmarkEditor({
                           isEditing ? "bg-primary/10 ring-1 ring-primary/30" : "bg-theme-hover/40 hover:bg-theme-hover/60"
                         )}
                       >
-                        <div className={clsx("w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0", cfg.bg, cfg.color)}>
+                        <div className={clsx("w-9 h-9 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform", cfg.bg, cfg.color)}>
                           <Icon className="w-4 h-4" />
                         </div>
                         
@@ -593,6 +668,11 @@ export function BookmarkEditor({
                                 Done
                               </button>
                             </div>
+                            {keybindConflict && (
+                              <div className="text-[10px] text-amber-500">
+                                This hotkey is already used by "{keybindConflict.name}".
+                              </div>
+                            )}
                           </div>
                         ) : (
                           <>
@@ -616,7 +696,13 @@ export function BookmarkEditor({
                                 )}
                               </div>
                             </div>
-                            <div className="flex items-center gap-0.5">
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => setEditingId(bookmark.id)}
+                                className="px-2.5 py-1 rounded-lg bg-theme-bg hover:bg-theme-active text-[10px] font-semibold text-theme-muted hover:text-theme-fg transition-all"
+                              >
+                                {bookmark.keybind ? 'Hotkey' : 'Map Hotkey'}
+                              </button>
                               <button
                                 onClick={() => setEditingId(bookmark.id)}
                                 className="w-7 h-7 rounded-lg hover:bg-theme-active flex items-center justify-center text-theme-muted hover:text-theme-fg transition-all"
@@ -647,7 +733,7 @@ export function BookmarkEditor({
               {/* Quick presets */}
               {localBookmarks.length < 3 && (
                 <div className="mb-4">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-2 px-1">Quick Add</div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-2">Quick Add</div>
                   <div className="flex flex-wrap gap-1.5">
                     {QUICK_PRESETS.filter(p => !localBookmarks.some(b => b.target === p.target)).slice(0, 4).map((preset) => (
                       <button
@@ -734,16 +820,16 @@ export function BookmarkEditor({
               {/* Canvas selector */}
               {selectedType === 'canvas' && (
                 <>
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-theme-muted mb-2">Select Canvas</div>
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-theme-muted mb-2">Select Note</div>
                   <button
-                    onClick={() => setNewBookmark({ ...newBookmark, target: '_new', name: newBookmark.name || 'New Canvas' })}
+                    onClick={() => setNewBookmark({ ...newBookmark, target: '_new', name: newBookmark.name || 'New Quick Note' })}
                     className={clsx(
                       "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left mb-2",
                       newBookmark.target === '_new' ? "bg-primary/15 ring-1 ring-primary/40" : "bg-theme-hover/40 hover:bg-theme-hover"
                     )}
                   >
                     <Plus className={clsx("w-4 h-4", newBookmark.target === '_new' ? "text-primary" : "text-pink-500")} />
-                    <span className="text-[13px] font-medium text-theme-fg">Open Canvas (New)</span>
+                    <span className="text-[13px] font-medium text-theme-fg">Create Fresh Quick Note</span>
                     {newBookmark.target === '_new' && <Check className="w-4 h-4 text-primary ml-auto" />}
                   </button>
                   {canvasDocs.length > 0 && (
@@ -757,7 +843,7 @@ export function BookmarkEditor({
                             newBookmark.target === d.id ? "bg-primary/15 ring-1 ring-primary/40" : "bg-theme-hover/40 hover:bg-theme-hover"
                           )}
                         >
-                          <Layout className={clsx("w-4 h-4", newBookmark.target === d.id ? "text-primary" : "text-pink-500")} />
+                          <NotebookPen className={clsx("w-4 h-4", newBookmark.target === d.id ? "text-primary" : "text-pink-500")} />
                           <span className="text-[13px] font-medium text-theme-fg truncate">{d.title}</span>
                           {newBookmark.target === d.id && <Check className="w-4 h-4 text-primary ml-auto" />}
                         </button>
@@ -772,15 +858,15 @@ export function BookmarkEditor({
                 <>
                   <div className="text-[11px] font-bold uppercase tracking-wider text-theme-muted mb-2">Select Space</div>
                   <button
-                    onClick={() => setNewBookmark({ ...newBookmark, target: '_open', name: newBookmark.name || 'Open Spaces' })}
+                    onClick={() => setNewBookmark({ ...newBookmark, target: 'spaces', name: newBookmark.name || 'Open Spaces' })}
                     className={clsx(
                       "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left",
-                      newBookmark.target === '_open' ? "bg-primary/15 ring-1 ring-primary/40" : "bg-theme-hover/40 hover:bg-theme-hover"
+                      newBookmark.target === 'spaces' ? "bg-primary/15 ring-1 ring-primary/40" : "bg-theme-hover/40 hover:bg-theme-hover"
                     )}
                   >
-                    <MessageSquare className={clsx("w-4 h-4", newBookmark.target === '_open' ? "text-primary" : "text-cyan-500")} />
+                    <MessageSquare className={clsx("w-4 h-4", newBookmark.target === 'spaces' ? "text-primary" : "text-cyan-500")} />
                     <span className="text-[13px] font-medium text-theme-fg">Open Spaces Sidebar</span>
-                    {newBookmark.target === '_open' && <Check className="w-4 h-4 text-primary ml-auto" />}
+                    {newBookmark.target === 'spaces' && <Check className="w-4 h-4 text-primary ml-auto" />}
                   </button>
                 </>
               )}
@@ -848,6 +934,48 @@ export function BookmarkEditor({
                       {newBookmark.target === 'agent' && <Check className="w-4 h-4 text-primary" />}
                     </button>
                   </div>
+                </>
+              )}
+
+              {/* Terminal selector */}
+              {selectedType === 'terminal' && (
+                <>
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-theme-muted mb-2">Open</div>
+                  <button
+                    onClick={() => setNewBookmark({ ...newBookmark, target: 'terminal', name: newBookmark.name || 'Terminal' })}
+                    className={clsx(
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left",
+                      newBookmark.target === 'terminal' ? "bg-primary/15 ring-1 ring-primary/40" : "bg-theme-hover/40 hover:bg-theme-hover"
+                    )}
+                  >
+                    <Terminal className={clsx("w-4 h-4", newBookmark.target === 'terminal' ? "text-primary" : "text-orange-500")} />
+                    <div className="flex-1">
+                      <span className="text-[13px] font-medium text-theme-fg">Open Terminal</span>
+                      <p className="text-[10px] text-theme-muted">Jump straight into the built-in terminal</p>
+                    </div>
+                    {newBookmark.target === 'terminal' && <Check className="w-4 h-4 text-primary" />}
+                  </button>
+                </>
+              )}
+
+              {/* Overlay selector */}
+              {selectedType === 'overlay' && (
+                <>
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-theme-muted mb-2">Open</div>
+                  <button
+                    onClick={() => setNewBookmark({ ...newBookmark, target: 'overlay', name: newBookmark.name || 'Stuard Overlay' })}
+                    className={clsx(
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left",
+                      newBookmark.target === 'overlay' ? "bg-primary/15 ring-1 ring-primary/40" : "bg-theme-hover/40 hover:bg-theme-hover"
+                    )}
+                  >
+                    <Sparkles className={clsx("w-4 h-4", newBookmark.target === 'overlay' ? "text-primary" : "text-violet-500")} />
+                    <div className="flex-1">
+                      <span className="text-[13px] font-medium text-theme-fg">Open Overlay</span>
+                      <p className="text-[10px] text-theme-muted">Bring the main Stuard overlay to the front</p>
+                    </div>
+                    {newBookmark.target === 'overlay' && <Check className="w-4 h-4 text-primary" />}
+                  </button>
                 </>
               )}
 
@@ -921,7 +1049,12 @@ export function BookmarkEditor({
                   onChange={(accel) => setNewBookmark({ ...newBookmark, keybind: accel })}
                   onClear={() => setNewBookmark({ ...newBookmark, keybind: undefined })}
                 />
-                <p className="text-[10px] text-theme-muted mt-1.5 px-1">Press a modifier (Ctrl, Alt, Shift) + a key to set a global hotkey</p>
+                <p className="text-[10px] text-theme-muted mt-1.5 px-1">Map a global hotkey so you can launch this shortcut instantly.</p>
+                {newBookmarkConflict && (
+                  <p className="text-[10px] text-amber-500 mt-1.5 px-1">
+                    This hotkey is already used by "{newBookmarkConflict.name}".
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -939,7 +1072,7 @@ export function BookmarkEditor({
               </button>
               <button
                 onClick={handleSaveNew}
-                disabled={!newBookmark.name || (!newBookmark.target && selectedType !== 'space' && selectedType !== 'canvas')}
+                disabled={!newBookmark.name || (!newBookmark.target && !TYPES_WITH_DEFAULT_TARGET.has((selectedType || 'url') as Bookmark['type'])) || !!newBookmarkConflict}
                 className="px-4 py-2 text-[12px] font-bold bg-primary text-primary-fg rounded-lg hover:bg-primary/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
               >
                 <Check className="w-3.5 h-3.5" />

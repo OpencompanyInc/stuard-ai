@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { clsx } from 'clsx';
 import { Layers, PenTool, Terminal, X, GripVertical, Maximize2, Minimize2 } from 'lucide-react';
 import { SpacesSidebar } from '../SpacesSidebar';
 import { XTerminalPanel } from '../XTerminalPanel';
-import { CanvasPanel } from './CanvasPanel';
+import { QuickNotesPanel } from './QuickNotesPanel';
 
 interface SidebarViewProps {
   activeTab: 'spaces' | 'canvas' | 'terminal' | 'cloud';
@@ -64,7 +64,7 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
           />
           <TabButton
             icon={PenTool}
-            label="Canvas"
+            label="Notes"
             isActive={activeTab === 'canvas'}
             onClick={() => onTabChange('canvas')}
           />
@@ -110,7 +110,7 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
           />
         )}
         {activeTab === 'canvas' && (
-          <CanvasPanel
+          <QuickNotesPanel
             className="w-full h-full"
             selectedDocumentId={selectedItem?.type === 'canvas' ? selectedItem.id : undefined}
             onSelectedDocumentHandled={selectedItem?.type === 'canvas' ? onSelectedItemHandled : undefined}
@@ -140,7 +140,7 @@ const TabButton: React.FC<TabButtonProps> = ({ icon: Icon, label, isActive, onCl
     className={clsx(
       "flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] font-semibold transition-all",
       isActive
-        ? "bg-primary/20 text-white"
+        ? "bg-theme-card text-theme-fg shadow-sm ring-1 ring-theme/10"
         : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
     )}
   >

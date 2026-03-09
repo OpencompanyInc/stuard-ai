@@ -9,6 +9,8 @@ import { ModelSelector } from '../ModelSelector';
 import { FileNavRef } from '../FileNavigator';
 import { FolderPermissionsPopover } from './FolderPermissionsPopover';
 import type { ReasoningLevel } from '../../hooks/usePreferences';
+import type { ContextUsageMetrics } from '../../utils/contextUsage';
+import { ContextUsageIndicator } from '../ContextUsageIndicator';
 
 interface ChatInputAreaProps {
   query: string;
@@ -22,6 +24,7 @@ interface ChatInputAreaProps {
   onRemoveAttachment?: (index: number) => void;
   onAttachFiles?: () => void;
   onAttachImages?: () => void;
+  onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
   onDrop?: (e: React.DragEvent<HTMLDivElement>) => void;
   queueDepth?: number;
   queuedMessages?: any[];
@@ -29,6 +32,7 @@ interface ChatInputAreaProps {
   statusText?: string;
   connectionStatus?: 'connected' | 'connecting' | 'disconnected' | 'error';
   displayModelName: string;
+  contextMetrics?: ContextUsageMetrics | null;
   translucentMode?: boolean;
   showFileNav: boolean;
   textareaRef: React.RefObject<HTMLTextAreaElement>;
@@ -51,6 +55,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   onRemoveAttachment,
   onAttachFiles,
   onAttachImages,
+  onPaste,
   onDrop,
   queueDepth = 0,
   queuedMessages = [],
@@ -58,6 +63,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   statusText = 'Online',
   connectionStatus = 'connected',
   displayModelName,
+  contextMetrics,
   translucentMode = false,
   showFileNav,
   textareaRef,
@@ -165,6 +171,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <ContextUsageIndicator metrics={contextMetrics} compact />
           <CheckpointManager />
           <span className="text-[11px] font-bold uppercase tracking-widest text-theme-muted truncate max-w-[240px]">{displayModelName}</span>
         </div>
@@ -222,6 +229,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             placeholder={showFileNav ? "Type to filter context..." : "Just ask Stuard"}
             value={query}
             onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
+            onPaste={onPaste}
             onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
               if ((e.nativeEvent as any)?.isComposing) return;
 

@@ -1,7 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { generateText } from 'ai';
-import { google } from '@ai-sdk/google';
+import { google } from '../utils/models';
 
 export const analyzeYouTubeVideoTool = createTool({
   id: 'analyze_youtube_video',

@@ -10,6 +10,20 @@ interface IntegrationProfile {
   scopes_csv?: string | null;
 }
 
+interface BrowserUseChromeProfileBrowser {
+  browser: string;
+  userDataDir: string;
+  profiles: Array<{ name: string; path: string }>;
+}
+
+interface BrowserUseChromeSyncSettings {
+  chromeSyncEnabled: boolean;
+  chromeSyncBrowserName?: string | null;
+  chromeSyncProfileName?: string | null;
+  chromeSyncProfilePath?: string | null;
+  chromeSyncUserDataDir?: string | null;
+}
+
 interface IntegrationsViewProps {
   connectedCount: number;
   filteredIntegrations: any[];
@@ -60,13 +74,26 @@ interface IntegrationsViewProps {
   telnyxRequestCode: (phone: string) => Promise<{ ok: boolean; error?: string }>;
   telnyxVerifyCode: (code: string) => Promise<{ ok: boolean; phone?: string; error?: string }>;
   telnyxDisconnect: () => Promise<void>;
+  whatsappPhone: string | null;
+  whatsappConnecting: boolean;
+  whatsappLinking: boolean;
+  whatsappLinkCode: string | null;
+  whatsappBotNumber: string | null;
+  whatsappConnect: (phone: string) => Promise<{ ok: boolean; error?: string }>;
+  whatsappInitiateLink: () => Promise<{ ok: boolean; error?: string }>;
+  whatsappDisconnect: () => Promise<void>;
   browserUseStatus?: any;
   browserUseChecking?: boolean;
   browserUseSetupProgress?: string | null;
+  browserUseChromeProfiles?: BrowserUseChromeProfileBrowser[];
+  browserUseSyncSettings?: BrowserUseChromeSyncSettings;
+  browserUseSyncSaving?: boolean;
   refreshBrowserUseStatus?: () => Promise<void> | void;
+  refreshBrowserUseProfiles?: () => Promise<void> | void;
   setupBrowserUse?: () => Promise<void> | void;
   stopBrowserUse?: () => Promise<void> | void;
   uninstallBrowserUse?: () => Promise<void> | void;
+  updateBrowserUseSyncSettings?: (updates: Partial<BrowserUseChromeSyncSettings>) => Promise<any> | void;
 }
 
 /** Map integration slug → backend provider name */
@@ -75,6 +102,9 @@ function slugToProvider(slug: string): string | null {
   if (slug === "outlook") return "outlook";
   if (slug === "discord") return "discord";
   if (slug === "reddit") return "reddit";
+  if (slug === "facebook") return "facebook";
+  if (slug === "instagram") return "instagram";
+  if (slug === "threads") return "threads";
   if (slug.startsWith("google-") || slug === "gmail") return "google";
   return null;
 }
@@ -85,6 +115,11 @@ function isOAuthSlug(slug: string): boolean {
 
 function isGoogleSlug(slug: string): boolean {
   return slug.startsWith("google-") || slug === "gmail";
+}
+
+function isGenericChromiumProfileName(value?: string | null): boolean {
+  const normalized = String(value || '').trim().toLowerCase();
+  return !normalized || normalized === 'default' || normalized === 'your chrome' || /^profile\s+\d+$/i.test(normalized) || /^person\s+\d+$/i.test(normalized);
 }
 
 const GOOGLE_SLUGS = ['google-drive', 'google-calendar', 'gmail', 'google-sheets', 'google-docs'];
@@ -101,6 +136,9 @@ function getIntegrationIcon(slug: string, size = "w-5 h-5") {
     case 'github': return <Github className={size} />;
     case 'discord': return <Users className={size} />;
     case 'reddit': return <ArrowUpRight className={size} />;
+    case 'facebook': return <Globe className={size} />;
+    case 'instagram': return <MessageSquare className={size} />;
+    case 'threads': return <Users className={size} />;
     case 'google-drive': return <HardDrive className={size} />;
     case 'webhooks': return <Webhook className={size} />;
     case 'google-calendar': return <Calendar className={size} />;
@@ -577,6 +615,197 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
   );
 };
 
+interface WhatsAppCardProps {
+  isConnected: boolean;
+  phone: string | null;
+  connecting: boolean;
+  linking: boolean;
+  linkCode: string | null;
+  botNumber: string | null;
+  connect: (phone: string) => Promise<{ ok: boolean; error?: string }>;
+  initiateLink: () => Promise<{ ok: boolean; error?: string }>;
+  disconnect: () => Promise<void>;
+}
+
+const WA_ICON = (
+  <svg viewBox="0 0 24 24" fill="currentColor">
+    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+  </svg>
+);
+
+const WhatsAppCard: React.FC<WhatsAppCardProps> = ({
+  isConnected, phone, connecting, linking, linkCode, botNumber, connect, initiateLink, disconnect,
+}) => {
+  const [step, setStep] = useState<'idle' | 'enter-phone'>('idle');
+  const [phoneInput, setPhoneInput] = useState('');
+  const [error, setError] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const handleConnect = async () => {
+    setError('');
+    setSending(true);
+    const result = await connect(phoneInput);
+    setSending(false);
+    if (result.ok) {
+      setStep('idle');
+      setPhoneInput('');
+    } else {
+      setError(result.error || 'Failed to connect.');
+    }
+  };
+
+  const handleDisconnect = async () => {
+    await disconnect();
+    setStep('idle');
+    setPhoneInput('');
+    setError('');
+  };
+
+  const waLink = linkCode && botNumber
+    ? `https://wa.me/${botNumber}?text=${encodeURIComponent(linkCode)}`
+    : null;
+
+  return (
+    <div className={clsx(
+      "bg-theme-card rounded-theme-card border shadow-sm transition-all duration-300",
+      isConnected ? "border-[#25D366]/30" : "border-theme hover:border-theme-hover"
+    )}>
+      <div className="p-5">
+        {/* Header */}
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className={clsx(
+              "w-10 h-10 rounded-lg border shadow-sm flex items-center justify-center",
+              isConnected ? "bg-[#25D366]/15 border-[#25D366]/30" : "bg-theme-hover border-theme"
+            )}>
+              <span className={clsx("w-5 h-5", isConnected ? "text-[#25D366]" : "text-theme-muted")}>
+                {WA_ICON}
+              </span>
+            </div>
+            <div>
+              <h3 className="font-bold text-[14px] text-theme-fg">WhatsApp</h3>
+              {isConnected && phone ? (
+                <span className="text-[11px] text-[#25D366] font-medium">{phone}</span>
+              ) : linking ? (
+                <span className="text-[11px] text-theme-muted">Waiting for confirmation…</span>
+              ) : (
+                <span className="text-[11px] text-theme-muted">Connect your WhatsApp number</span>
+              )}
+            </div>
+          </div>
+          {isConnected && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#25D366]/10 text-[#25D366] text-[10px] font-bold border border-[#25D366]/25 uppercase">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#25D366] animate-pulse" />
+              Linked
+            </span>
+          )}
+        </div>
+
+        <p className="text-[12px] text-theme-muted mb-4 leading-relaxed">
+          Receive WhatsApp messages, voice notes, images, and files from Stuard. Enter your number — we'll send a confirmation message.
+        </p>
+
+        {isConnected ? (
+          /* Connected */
+          <div className="flex items-center gap-2">
+            <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-md bg-theme-bg border border-theme text-[12px]">
+              <span className="w-4 h-4 text-[#25D366] shrink-0">{WA_ICON}</span>
+              <span className="text-theme-fg font-medium">{phone}</span>
+            </div>
+            <button
+              onClick={handleDisconnect}
+              className="px-3 py-2 rounded-md bg-red-900/20 text-red-400 text-[11px] font-bold border border-red-900/30 hover:bg-red-900/30 transition-colors"
+            >
+              Remove
+            </button>
+          </div>
+        ) : linking && linkCode ? (
+          /* Webhook linking — code flow (bonus, when webhook is configured) */
+          <div className="space-y-3">
+            <div className="rounded-lg border border-[#25D366]/25 bg-[#25D366]/5 p-3">
+              <p className="text-[10px] text-theme-muted font-medium uppercase tracking-wider mb-2">Message Stuard this code on WhatsApp</p>
+              <div className="flex items-center gap-2">
+                <span className="flex-1 font-mono text-[18px] font-black text-theme-fg tracking-[0.2em]">{linkCode}</span>
+                <button
+                  onClick={() => { try { navigator.clipboard.writeText(linkCode); } catch {} }}
+                  className="p-1.5 rounded-md bg-theme-hover border border-theme hover:bg-theme-active transition-colors text-theme-muted hover:text-theme-fg"
+                  title="Copy"
+                >
+                  <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            {waLink ? (
+              <button
+                className="flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-lg bg-[#25D366] text-white text-[12px] font-bold hover:bg-[#20b855] transition-colors"
+                onClick={() => { try { (window as any).desktopAPI?.openExternal?.(waLink); } catch { window.open(waLink, '_blank'); } }}
+              >
+                <span className="w-4 h-4">{WA_ICON}</span>
+                Open WhatsApp &amp; Send Code
+              </button>
+            ) : (
+              <p className="text-[11px] text-theme-muted">Open WhatsApp and send the code above to Stuard's business number.</p>
+            )}
+            <div className="flex items-center gap-2 text-[10px] text-theme-muted">
+              <Loader2 className="w-3 h-3 animate-spin text-[#25D366]" />
+              Waiting… code expires in 15 min
+            </div>
+          </div>
+        ) : step === 'idle' ? (
+          /* Idle — primary CTA */
+          <div className="space-y-2">
+            {error && <p className="text-[11px] text-red-400">{error}</p>}
+            <button
+              onClick={() => { setStep('enter-phone'); setError(''); }}
+              disabled={connecting}
+              className="w-full px-4 py-2.5 rounded-lg bg-[#25D366] text-white text-[12px] font-bold hover:bg-[#20b855] transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <span className="w-4 h-4">{WA_ICON}</span>
+              Connect WhatsApp
+            </button>
+          </div>
+        ) : (
+          /* Enter phone number */
+          <div className="space-y-3">
+            <div>
+              <label className="block text-[11px] text-theme-muted font-medium mb-1.5">Your WhatsApp Number</label>
+              <input
+                type="tel"
+                value={phoneInput}
+                onChange={(e) => setPhoneInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && phoneInput.trim()) handleConnect(); }}
+                placeholder="+1 (555) 123-4567"
+                className="w-full px-3 py-2.5 rounded-lg bg-theme-bg border border-theme text-[13px] text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-[#25D366]/50 transition-colors"
+                autoFocus
+              />
+              <p className="text-[10px] text-theme-muted mt-1.5">Include country code. We'll send a WhatsApp message to confirm.</p>
+            </div>
+            {error && <p className="text-[11px] text-red-400">{error}</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setStep('idle'); setError(''); setPhoneInput(''); }}
+                className="px-4 py-2 rounded-md bg-theme-hover text-theme-fg text-[11px] font-bold border border-theme hover:bg-theme-active transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConnect}
+                disabled={sending || !phoneInput.trim()}
+                className="flex-1 px-4 py-2 rounded-md bg-[#25D366] text-white text-[11px] font-bold hover:bg-[#20b855] transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {sending ? <Loader2 className="w-3 h-3 animate-spin" /> : <span className="w-3 h-3">{WA_ICON}</span>}
+                Connect
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // ─── Standard Integration Card ───────────────────────────────────────────────
 
 interface StandardCardProps {
@@ -610,10 +839,15 @@ interface StandardCardProps {
   browserUseStatus?: any;
   browserUseChecking?: boolean;
   browserUseSetupProgress?: string | null;
+  browserUseChromeProfiles?: BrowserUseChromeProfileBrowser[];
+  browserUseSyncSettings?: BrowserUseChromeSyncSettings;
+  browserUseSyncSaving?: boolean;
   refreshBrowserUseStatus?: () => Promise<void> | void;
+  refreshBrowserUseProfiles?: () => Promise<void> | void;
   setupBrowserUse?: () => Promise<void> | void;
   stopBrowserUse?: () => Promise<void> | void;
   uninstallBrowserUse?: () => Promise<void> | void;
+  updateBrowserUseSyncSettings?: (updates: Partial<BrowserUseChromeSyncSettings>) => Promise<any> | void;
 }
 
 const StandardCard: React.FC<StandardCardProps> = ({
@@ -632,7 +866,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
   mpStatus, mpInstalling, refreshMediapipeStatus,
   browserStatus, refreshBrowserStatus,
   ollamaStatus, ollamaChecking, refreshOllamaStatus, startOllama,
-  browserUseStatus, browserUseChecking, browserUseSetupProgress, refreshBrowserUseStatus, setupBrowserUse, stopBrowserUse, uninstallBrowserUse,
+  browserUseStatus, browserUseChecking, browserUseSetupProgress, browserUseChromeProfiles, browserUseSyncSettings, browserUseSyncSaving, refreshBrowserUseStatus, refreshBrowserUseProfiles, setupBrowserUse, stopBrowserUse, uninstallBrowserUse, updateBrowserUseSyncSettings,
 }) => {
   const [showProfiles, setShowProfiles] = useState(false);
   const [addingProfile, setAddingProfile] = useState(false);
@@ -655,6 +889,24 @@ const StandardCard: React.FC<StandardCardProps> = ({
   const ollamaInstalled = !!(ollamaStatus && (ollamaStatus as any).installed);
   const ollamaRunning = !!(ollamaStatus && (ollamaStatus as any).running);
   const ollamaModels: any[] = (ollamaStatus as any)?.models || [];
+  const browserSyncSettings = browserUseSyncSettings || {
+    chromeSyncEnabled: true,
+    chromeSyncBrowserName: 'Chrome',
+    chromeSyncProfileName: 'Default',
+    chromeSyncProfilePath: null,
+    chromeSyncUserDataDir: null,
+  };
+  const browserSyncBrowsers = browserUseChromeProfiles || [];
+  const selectedBrowserEntry = browserSyncBrowsers.find((entry: BrowserUseChromeProfileBrowser) => entry.browser === (browserSyncSettings.chromeSyncBrowserName || 'Chrome'))
+    || browserSyncBrowsers[0]
+    || null;
+  const selectedProfileEntry = selectedBrowserEntry?.profiles.find((profile: { name: string; path: string }) => profile.path === browserSyncSettings.chromeSyncProfilePath)
+    || selectedBrowserEntry?.profiles.find((profile: { name: string; path: string }) => profile.name === browserSyncSettings.chromeSyncProfileName)
+    || selectedBrowserEntry?.profiles[0]
+    || null;
+  const mirroredProfileName = !isGenericChromiumProfileName(browserUseStatus?.chromeSync?.sourceProfileName)
+    ? browserUseStatus?.chromeSync?.sourceProfileName
+    : selectedProfileEntry?.name || browserSyncSettings.chromeSyncProfileName || null;
 
   const confirmAddProfile = async () => {
     const label = newProfileName.trim();
@@ -1062,6 +1314,98 @@ const StandardCard: React.FC<StandardCardProps> = ({
               </p>
             </div>
           )}
+
+          <div className="pt-3 border-t border-theme/40 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-semibold text-theme-fg">Mirror your existing browser login</div>
+                <div className="text-[10px] text-theme-muted">Stuard clones your selected Chromium profile before launch and keeps cookies refreshed automatically.</div>
+              </div>
+              <button
+                onClick={() => updateBrowserUseSyncSettings?.({ chromeSyncEnabled: !browserSyncSettings.chromeSyncEnabled })}
+                disabled={browserUseSyncSaving}
+                className={clsx(
+                  'h-7 px-3 rounded-md border text-[10px] font-bold transition-all disabled:opacity-50',
+                  browserSyncSettings.chromeSyncEnabled
+                    ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10'
+                    : 'border-theme text-theme-muted hover:bg-theme-hover'
+                )}
+              >
+                {browserSyncSettings.chromeSyncEnabled ? 'Auto Sync On' : 'Auto Sync Off'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <label className="space-y-1">
+                <span className="text-[10px] font-semibold text-theme-muted uppercase tracking-wide">Browser</span>
+                <select
+                  value={selectedBrowserEntry?.browser || ''}
+                  onChange={(e) => {
+                    const nextBrowser = browserSyncBrowsers.find((entry: BrowserUseChromeProfileBrowser) => entry.browser === e.target.value);
+                    const nextProfile = nextBrowser?.profiles?.[0] || null;
+                    updateBrowserUseSyncSettings?.({
+                      chromeSyncBrowserName: nextBrowser?.browser || 'Chrome',
+                      chromeSyncProfileName: nextProfile?.name || 'Default',
+                      chromeSyncProfilePath: nextProfile?.path || null,
+                      chromeSyncUserDataDir: nextBrowser?.userDataDir || null,
+                    });
+                  }}
+                  disabled={browserUseSyncSaving || browserSyncBrowsers.length === 0}
+                  className="w-full px-3 py-2 rounded-md border border-theme bg-theme-card text-theme-fg text-[11px] focus:outline-none focus:border-primary disabled:opacity-50"
+                >
+                  {browserSyncBrowsers.length === 0 ? (
+                    <option value="">No Chromium profiles found</option>
+                  ) : (
+                    browserSyncBrowsers.map((entry) => (
+                      <option key={`${entry.browser}:${entry.userDataDir}`} value={entry.browser}>{entry.browser}</option>
+                    ))
+                  )}
+                </select>
+              </label>
+
+              <label className="space-y-1">
+                <span className="text-[10px] font-semibold text-theme-muted uppercase tracking-wide">Profile</span>
+                <select
+                  value={selectedProfileEntry?.path || ''}
+                  onChange={(e) => {
+                    const nextProfile = selectedBrowserEntry?.profiles.find((profile: { name: string; path: string }) => profile.path === e.target.value) || null;
+                    updateBrowserUseSyncSettings?.({
+                      chromeSyncBrowserName: selectedBrowserEntry?.browser || browserSyncSettings.chromeSyncBrowserName || 'Chrome',
+                      chromeSyncProfileName: nextProfile?.name || null,
+                      chromeSyncProfilePath: nextProfile?.path || null,
+                      chromeSyncUserDataDir: selectedBrowserEntry?.userDataDir || null,
+                    });
+                  }}
+                  disabled={browserUseSyncSaving || !selectedBrowserEntry || selectedBrowserEntry.profiles.length === 0}
+                  className="w-full px-3 py-2 rounded-md border border-theme bg-theme-card text-theme-fg text-[11px] focus:outline-none focus:border-primary disabled:opacity-50"
+                >
+                  {!selectedBrowserEntry?.profiles?.length ? (
+                    <option value="">No profiles found</option>
+                  ) : (
+                    selectedBrowserEntry.profiles.map((profile: { name: string; path: string }) => (
+                      <option key={profile.path} value={profile.path}>{profile.name}</option>
+                    ))
+                  )}
+                </select>
+              </label>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => refreshBrowserUseProfiles?.()}
+                disabled={browserUseSyncSaving || browserUseChecking}
+                className="h-7 px-3 flex items-center justify-center gap-1.5 rounded-md border border-theme text-theme-muted text-[10px] font-bold hover:bg-theme-hover transition-all disabled:opacity-50"
+              >
+                <RefreshCw className={clsx('w-3 h-3', (browserUseSyncSaving || browserUseChecking) && 'animate-spin')} />
+                Refresh Profiles
+              </button>
+              {mirroredProfileName && (
+                <span className="text-[10px] text-theme-muted truncate" title={browserUseStatus?.chromeSync?.sourceProfilePath || ''}>
+                  Current mirror: {mirroredProfileName}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -1267,13 +1611,26 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     telnyxRequestCode,
     telnyxVerifyCode,
     telnyxDisconnect,
+    whatsappPhone,
+    whatsappConnecting,
+    whatsappLinking,
+    whatsappLinkCode,
+    whatsappBotNumber,
+    whatsappConnect,
+    whatsappInitiateLink,
+    whatsappDisconnect,
     browserUseStatus,
     browserUseChecking,
     browserUseSetupProgress,
+    browserUseChromeProfiles,
+    browserUseSyncSettings,
+    browserUseSyncSaving,
     refreshBrowserUseStatus,
+    refreshBrowserUseProfiles,
     setupBrowserUse,
     stopBrowserUse,
     uninstallBrowserUse,
+    updateBrowserUseSyncSettings,
   } = props;
 
   // Load profiles on mount
@@ -1287,11 +1644,15 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     [filteredIntegrations]
   );
   const nonGoogleIntegrations = useMemo(
-    () => filteredIntegrations.filter(i => !isGoogleSlug(i.slug) && i.slug !== 'telnyx' && i.slug !== 'browser'),
+    () => filteredIntegrations.filter(i => !isGoogleSlug(i.slug) && i.slug !== 'telnyx' && i.slug !== 'whatsapp' && i.slug !== 'browser'),
     [filteredIntegrations]
   );
   const showTelnyxCard = useMemo(
     () => filteredIntegrations.some(i => i.slug === 'telnyx'),
+    [filteredIntegrations]
+  );
+  const showWhatsAppCard = useMemo(
+    () => filteredIntegrations.some(i => i.slug === 'whatsapp'),
     [filteredIntegrations]
   );
 
@@ -1396,6 +1757,21 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
             />
           )}
 
+          {/* WhatsApp card */}
+          {showWhatsAppCard && (
+            <WhatsAppCard
+              isConnected={!!connectedMap.whatsapp}
+              phone={whatsappPhone}
+              connecting={whatsappConnecting}
+              linking={whatsappLinking}
+              linkCode={whatsappLinkCode}
+              botNumber={whatsappBotNumber}
+              connect={whatsappConnect}
+              initiateLink={whatsappInitiateLink}
+              disconnect={whatsappDisconnect}
+            />
+          )}
+
           {/* Non-Google integrations */}
           {nonGoogleIntegrations.map((i: any) => {
             const isBrowserUseSlug = i.slug === 'browser-use';
@@ -1436,10 +1812,15 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
                 browserUseStatus={browserUseStatus}
                 browserUseChecking={browserUseChecking}
                 browserUseSetupProgress={browserUseSetupProgress}
+                browserUseChromeProfiles={browserUseChromeProfiles}
+                browserUseSyncSettings={browserUseSyncSettings}
+                browserUseSyncSaving={browserUseSyncSaving}
                 refreshBrowserUseStatus={refreshBrowserUseStatus}
+                refreshBrowserUseProfiles={refreshBrowserUseProfiles}
                 setupBrowserUse={setupBrowserUse}
                 stopBrowserUse={stopBrowserUse}
                 uninstallBrowserUse={uninstallBrowserUse}
+                updateBrowserUseSyncSettings={updateBrowserUseSyncSettings}
               />
             );
           })}

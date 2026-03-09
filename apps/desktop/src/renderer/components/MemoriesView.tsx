@@ -12,6 +12,7 @@ import { TopicsView } from './memories/TopicsView';
 import { StickyNotes } from './memories/StickyNotes';
 import { TimelineJourney } from './memories/TimelineJourney';
 import { SecuritySettings } from './memories/SecuritySettings';
+import { MemoryLockGate } from './MemoryLockGate';
 
 const AGENT_HTTP = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
 
@@ -195,6 +196,14 @@ function TimelineTab() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export function MemoriesView() {
+  return (
+    <MemoryLockGate label="Memories Locked">
+      <MemoriesContent />
+    </MemoryLockGate>
+  );
+}
+
+function MemoriesContent() {
   const [activeTab, setActiveTab] = useState<MemoriesTab>('topics');
 
   const tabs: { id: MemoriesTab; label: string; icon: any }[] = [

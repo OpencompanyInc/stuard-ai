@@ -12,6 +12,9 @@ import {
 } from "lucide-react";
 import { clsx } from 'clsx';
 import { SubAgentDetails } from "./SubAgentDetails";
+import { useModelRegistry } from '../hooks/useModelRegistry';
+import { ContextUsageIndicator } from './ContextUsageIndicator';
+import { buildContextUsageMetrics } from '../utils/contextUsage';
 
 const AGENT_HTTP = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
 
@@ -36,6 +39,7 @@ interface SubAgentsViewProps {
 type FilterType = 'all' | 'running' | 'completed' | 'failed';
 
 export const SubAgentsView: React.FC<SubAgentsViewProps> = ({ parentId, compact }) => {
+  const { modelById } = useModelRegistry();
   const [tasks, setTasks] = useState<SubAgentTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedTask, setSelectedTask] = useState<SubAgentTask | null>(null);
@@ -175,6 +179,7 @@ export const SubAgentsView: React.FC<SubAgentsViewProps> = ({ parentId, compact 
                 task={task}
                 onClick={() => setSelectedTask(task)}
                 compact={compact}
+                modelById={modelById}
               />
             ))}
           </div>
@@ -184,38 +189,53 @@ export const SubAgentsView: React.FC<SubAgentsViewProps> = ({ parentId, compact 
   );
 };
 
-const TaskCard = ({ task, onClick, compact }: { task: SubAgentTask; onClick: () => void; compact?: boolean }) => {
+const TaskCard = ({
+  task,
+  onClick,
+  compact,
+  modelById,
+}: {
+  task: SubAgentTask;
+  onClick: () => void;
+  compact?: boolean;
+  modelById?: Map<string, any>;
+}) => {
   const statusConfig = {
     running: {
       icon: Loader2,
-      color: "text-amber-400",
-      bg: "bg-amber-400/5",
-      border: "border-amber-400/20",
+      color: "text-blue-500",
+      bg: "bg-blue-500/10",
+      border: "border-blue-500/20",
       label: "Running"
     },
     completed: {
       icon: CheckCircle2,
-      color: "text-emerald-400",
-      bg: "bg-emerald-400/5",
-      border: "border-emerald-400/20",
+      color: "text-emerald-500",
+      bg: "bg-emerald-500/10",
+      border: "border-emerald-500/20",
       label: "Completed"
     },
     failed: {
       icon: XCircle,
-      color: "text-red-400",
-      bg: "bg-red-400/5",
-      border: "border-red-400/20",
+      color: "text-red-500",
+      bg: "bg-red-500/10",
+      border: "border-red-500/20",
       label: "Failed"
     }
   }[task.status] || {
     icon: Clock,
-    color: "text-slate-400",
-    bg: "bg-slate-400/5",
-    border: "border-slate-400/20",
+    color: "text-theme-muted",
+    bg: "bg-theme-bg",
+    border: "border-theme-border",
     label: task.status
   };
 
   const StatusIcon = statusConfig.icon;
+  const contextMetrics = useMemo(() => buildContextUsageMetrics({
+    usage: task.result?.usage,
+    modelId: task.model,
+    modelById,
+  }), [modelById, task.model, task.result?.usage]);
 
   return (
     <div
@@ -223,14 +243,14 @@ const TaskCard = ({ task, onClick, compact }: { task: SubAgentTask; onClick: () 
       className={clsx(
         "group relative bg-theme-card rounded-xl border transition-all cursor-pointer overflow-hidden",
         "hover:border-theme-fg/30 hover:shadow-md",
-        task.status === 'running' ? "border-amber-500/30 shadow-[0_0_15px_-3px_rgba(251,191,36,0.1)]" : "border-theme shadow-sm",
+        task.status === 'running' ? "border-blue-500/30 shadow-[0_0_15px_-3px_rgba(59,130,246,0.1)]" : "border-theme shadow-sm",
         compact ? "p-3" : "p-4"
       )}
     >
       {/* Progress Bar for Running */}
       {task.status === 'running' && (
-        <div className="absolute top-0 left-0 right-0 h-[2px] bg-amber-500/20 overflow-hidden">
-          <div className="h-full bg-amber-500/50 w-1/3 animate-[shimmer_2s_infinite_linear]" />
+        <div className="absolute top-0 left-0 right-0 h-[2px] bg-blue-500/20 overflow-hidden">
+          <div className="h-full bg-blue-500/60 w-1/3 animate-[shimmer_2s_infinite_linear]" />
         </div>
       )}
 
@@ -239,17 +259,18 @@ const TaskCard = ({ task, onClick, compact }: { task: SubAgentTask; onClick: () 
           {/* Header Row */}
           <div className="flex items-center gap-2 mb-1.5">
             <span className={clsx(
-              "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border",
+              "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border shadow-sm",
               statusConfig.color, statusConfig.bg, statusConfig.border
             )}>
-              <StatusIcon className={clsx("w-3 h-3", task.status === 'running' && "animate-spin")} />
+              <StatusIcon className={clsx("w-3 h-3", task.status === 'running' && "animate-[pulse_1.5s_ease-in-out_infinite]")} />
               {statusConfig.label}
             </span>
 
-            <span className="text-[10px] text-theme-muted font-mono flex items-center gap-1 opacity-70">
+            <span className="text-[10px] text-theme-muted font-mono flex items-center gap-1 opacity-70 bg-theme-bg px-2 py-0.5 rounded-md border border-theme-border shadow-sm">
               <Cpu className="w-3 h-3" />
               {task.model}
             </span>
+            <ContextUsageIndicator metrics={contextMetrics} compact />
 
             <span className="text-[10px] text-theme-muted ml-auto font-medium opacity-60">
               {new Date(task.created_at).toLocaleString(undefined, {

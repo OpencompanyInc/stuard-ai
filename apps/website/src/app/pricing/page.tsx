@@ -108,7 +108,7 @@ export default function PricingPage() {
           {/* Pricing Preview */}
           <div className="text-center mb-12">
             <h3 className="text-2xl font-bold text-gray-900 mb-4">Pay What You Want</h3>
-            <p className="text-gray-600">The more you contribute, the cheaper your credits become.</p>
+            <p className="text-gray-600">Your monthly payment funds a rolling credit ledger, and larger amounts unlock better credit multipliers.</p>
           </div>
 
           <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-8">
@@ -116,7 +116,7 @@ export default function PricingPage() {
               <CardHeader>
                 <CardTitle className="text-2xl">Pick your monthly amount</CardTitle>
                 <CardDescription>
-                  Drag the slider or tap a quick amount. Minimum $5. Credits roll over for 30 days.
+                  Drag the slider or tap a quick amount. Minimum $5. Subscription credits are added to your ledger and unused credits roll over for 30 days.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-8">
@@ -250,13 +250,13 @@ export default function PricingPage() {
               <Card className="p-6">
                 <h4 className="font-semibold text-gray-900 mb-2">How do credits work?</h4>
                 <p className="text-gray-600">
-                  Credits are used for AI interactions. Simple text messages use 1-2 credits, while complex tasks like document analysis use more. You can see the credit cost before each action.
+                  Credits are stored in a ledger and are used for AI interactions, workflow runs, and other billable usage. Your monthly subscription adds a recurring pool, and add-on purchases can top you up whenever you need more.
                 </p>
               </Card>
               <Card className="p-6">
                 <h4 className="font-semibold text-gray-900 mb-2">What happens if I run out of credits?</h4>
                 <p className="text-gray-600">
-                  You can purchase extra credits starting at $5 for 500 credits, or upgrade to a higher plan for more monthly credits with rollover.
+                  You can increase your monthly amount for a larger recurring allowance, or purchase add-on credits from your billing dashboard to keep going without waiting for your next renewal.
                 </p>
               </Card>
               <Card className="p-6">
@@ -280,7 +280,7 @@ export default function PricingPage() {
               <Card className="p-6">
                 <h4 className="font-semibold text-gray-900 mb-2">Is there a free trial?</h4>
                 <p className="text-gray-600">
-                  Yes! All waitlist members will receive a 14-day free trial with 500 credits to experience Stuard AI.
+                  Yes. New accounts start on the free plan with about 15 starter credits so you can try Stuard AI before upgrading.
                 </p>
               </Card>
             </div>

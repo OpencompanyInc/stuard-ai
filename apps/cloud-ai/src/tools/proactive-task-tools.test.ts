@@ -4,6 +4,7 @@ import { hasProactiveModeMarker, mergeForcedToolNames, PROACTIVE_TASK_TOOL_NAMES
 describe('proactive task tools helpers', () => {
   it('detects proactive mode markers in hidden context', () => {
     expect(hasProactiveModeMarker('[PROACTIVE MODE] hello')).toBe(true);
+    expect(hasProactiveModeMarker('[PROACTIVE FOLLOW-UP] hello')).toBe(true);
     expect(hasProactiveModeMarker('plain chat')).toBe(false);
   });
 

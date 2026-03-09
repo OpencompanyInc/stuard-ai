@@ -30,6 +30,7 @@ const CORE_TOOLS = new Set([
   // Memory/knowledge
   'memory_retrieval',
   'search_past_conversations',
+  'get_conversation_context',
   'ensure_space_path',
   'list_space_path',
   'add_to_space_path',

@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { estimateCostUsd, monthlyCreditLimitForPlan, creditsFromUsd, creditsPerUsd } from './pricing';
+import { estimateCostUsd, monthlyCreditLimitForPlan, creditsPerUsd } from './pricing';
 import { DEV_MODE, SYNC_ACCOUNTS_FALLBACK } from './utils/config';
 import { normalizeUsage } from './utils/usage';
 import { embedMany } from 'ai';
@@ -15,7 +15,6 @@ import {
 } from './store/local-accounts';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
-// Prefer new key names, fall back to legacy
 const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || '';
 const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
@@ -29,8 +28,70 @@ if (SUPABASE_URL && SUPABASE_SECRET_KEY) {
   supabaseService = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
 }
 
+export interface CreditGrant {
+  id: string;
+  user_id: string;
+  source_type: string;
+  source_ref: string;
+  plan?: string | null;
+  amount_usd?: number | null;
+  total_credits: number;
+  remaining_credits: number;
+  expires_at?: string | null;
+  metadata?: any;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface CreditSummary {
+  plan: string;
+  limit: number;
+  used: number;
+  remaining: number;
+  unlimited: boolean;
+  includedCredits: number;
+  includedRemaining: number;
+  addonCredits: number;
+  addonRemaining: number;
+  currentPeriodStart: string | null;
+  currentPeriodEnd: string | null;
+}
+
+function roundCredits(value: number): number {
+  const safe = Number(value || 0);
+  return Number(Math.max(0, safe).toFixed(4));
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+let usageEventsSupportsCreditCost: boolean | null = null;
+
+function currentBillingPeriod(profile?: { current_period_start?: string | null; current_period_end?: string | null } | null): { start: Date; end: Date } {
+  const startFromProfile = profile?.current_period_start ? new Date(profile.current_period_start) : null;
+  const endFromProfile = profile?.current_period_end ? new Date(profile.current_period_end) : null;
+  if (startFromProfile && endFromProfile && Number.isFinite(startFromProfile.getTime()) && Number.isFinite(endFromProfile.getTime())) {
+    return { start: startFromProfile, end: endFromProfile };
+  }
+  const now = new Date();
+  return {
+    start: new Date(now.getFullYear(), now.getMonth(), 1),
+    end: new Date(now.getFullYear(), now.getMonth() + 1, 1),
+  };
+}
+
+function creditLimitFromProfile(plan: string, monthlyTokenLimit?: number | null): number {
+  const explicit = Number(monthlyTokenLimit || 0);
+  if (explicit > 0) return explicit;
+  return monthlyCreditLimitForPlan(plan);
+}
+
+function isIncludedGrant(sourceType: string): boolean {
+  return ['subscription_cycle', 'legacy_plan', 'trial'].includes(String(sourceType || ''));
+}
+
 export async function setConversationTitle(userId: string, conversationId: string, title: string): Promise<void> {
   if (!supabaseService) return;
+  const prefs = await getSyncPreferences(userId);
+  if (!prefs.sync_conversations) return;
   const t = String(title || '').trim().slice(0, 80);
   if (!t) return;
   try {
@@ -42,7 +103,6 @@ export async function setConversationTitle(userId: string, conversationId: strin
   } catch {}
 }
 
-// Enqueue a memory job for the desktop to consume via Realtime
 export async function enqueueMemoryJob(input: {
   userId: string;
   texts: string[];
@@ -51,22 +111,16 @@ export async function enqueueMemoryJob(input: {
   deviceId?: string | null;
 }): Promise<void> {
   if (!supabaseService) return;
-
-  // Respect sync_memories preference — skip cloud memory storage when disabled
   const prefs = await getSyncPreferences(input.userId);
   if (!prefs.sync_memories) {
     console.log('[sync] sync_memories disabled — skipping cloud memory enqueue');
     return;
   }
-
   const texts = Array.isArray(input.texts) ? input.texts.filter((s) => typeof s === 'string' && s.trim()) : [];
   if (texts.length === 0) return;
   try {
     const modelId = DEFAULT_EMBEDDER.replace('openai/', '');
-    const { embeddings } = await embedMany({ 
-      model: openai.embedding(modelId), 
-      values: texts 
-    });
+    const { embeddings } = await embedMany({ model: openai.embedding(modelId), values: texts });
     const items = texts.map((t, i) => ({
       text: String(t),
       vector: embeddings[i] as number[],
@@ -79,7 +133,6 @@ export async function enqueueMemoryJob(input: {
   } catch {}
 }
 
-// External accounts (OAuth tokens) -------------------------------------------
 export type ExternalAccount = {
   id: string;
   user_id: string;
@@ -113,12 +166,8 @@ function chooseFresherAccount(preferredOnTie: ExternalAccount, other: ExternalAc
   return preferredTs >= otherTs ? preferredOnTie : other;
 }
 
-/** Resolve whether integration accounts should be synced to Supabase for this user.
- *  Enabled when either sync_accounts or sync_integrations is true.
- *  Caches per-user result for 60s to avoid hitting Supabase on every operation.
- *  Falls back to SYNC_ACCOUNTS_FALLBACK env var when the DB query fails. */
 const _syncCache = new Map<string, { val: boolean; ts: number }>();
-const SYNC_CACHE_TTL = 60_000; // 60 seconds
+const SYNC_CACHE_TTL = 60_000;
 
 async function shouldSyncAccounts(userId: string): Promise<boolean> {
   const now = Date.now();
@@ -130,24 +179,18 @@ async function shouldSyncAccounts(userId: string): Promise<boolean> {
     _syncCache.set(userId, { val: result, ts: now });
     return result;
   } catch {
-    // When the DB query fails, use the env-var fallback and stale cache
     if (cached) return cached.val;
     return SYNC_ACCOUNTS_FALLBACK;
   }
 }
 
-/** Invalidate the sync-accounts cache for a user (e.g. after toggling sync_integrations). */
 export function invalidateSyncCache(userId: string): void {
   _syncCache.delete(userId);
 }
 
-/**
- * Migrate all local encrypted accounts to Supabase.
- * Called when a user enables sync_integrations so existing local tokens carry over.
- * Idempotent — Supabase upserts by (user_id, provider, profile_label).
- */
 export async function migrateLocalAccountsToSupabase(userId: string): Promise<{ migrated: number; errors: number }> {
-  let migrated = 0, errors = 0;
+  let migrated = 0;
+  let errors = 0;
   try {
     const locals = await localListExternalAccounts(userId);
     for (const acc of locals) {
@@ -162,7 +205,7 @@ export async function migrateLocalAccountsToSupabase(userId: string): Promise<{ 
           meta: acc.meta ?? null,
           profileLabel: acc.profile_label,
           accountEmail: acc.account_email ?? null,
-          is_default: acc.is_default, // Preserve the local default flag
+          is_default: acc.is_default,
         });
         migrated++;
       } catch {
@@ -175,15 +218,6 @@ export async function migrateLocalAccountsToSupabase(userId: string): Promise<{ 
   return { migrated, errors };
 }
 
-/**
- * Get a single external account. If profileLabel is provided, fetches that specific
- * profile. Otherwise returns the default profile for the provider.
- *
- * Read strategy:
- *   sync ON  → read both Supabase + local, then use the freshest record
- *              (local wins ties as source-of-truth).
- *   sync OFF → read from local only.
- */
 export async function getExternalAccount(
   userId: string,
   provider: string,
@@ -191,7 +225,6 @@ export async function getExternalAccount(
 ): Promise<ExternalAccount | null> {
   const local = await localGetExternalAccount(userId, provider, profileLabel);
   if (!(await shouldSyncAccounts(userId))) return local;
-
   const hot = await _supabaseGetExternalAccount(userId, provider, profileLabel);
   if (!hot) return local;
   if (!local) return hot;
@@ -207,6 +240,7 @@ async function _supabaseGetExternalAccount(
   try {
     const cols = 'id, user_id, provider, profile_label, is_default, account_email, scopes, access_token, refresh_token, expires_at, meta, created_at, updated_at';
     if (profileLabel) {
+      // Try matching by profile_label first
       const { data, error } = await supabaseService
         .from('external_accounts')
         .select(cols)
@@ -214,10 +248,18 @@ async function _supabaseGetExternalAccount(
         .eq('provider', provider)
         .eq('profile_label', profileLabel)
         .single();
-      if (error || !data) return null;
-      return data as any;
+      if (!error && data) return data as any;
+      // Fallback: match by account_email (AI may pass email instead of label)
+      const { data: byEmail } = await supabaseService
+        .from('external_accounts')
+        .select(cols)
+        .eq('user_id', userId)
+        .eq('provider', provider)
+        .eq('account_email', profileLabel)
+        .single();
+      if (byEmail) return byEmail as any;
+      return null;
     }
-    // Fetch default profile
     const { data, error } = await supabaseService
       .from('external_accounts')
       .select(cols)
@@ -226,7 +268,6 @@ async function _supabaseGetExternalAccount(
       .eq('is_default', true)
       .single();
     if (!error && data) return data as any;
-    // Fallback: if no default flag, get oldest (original) entry
     const { data: fallback } = await supabaseService
       .from('external_accounts')
       .select(cols)
@@ -241,13 +282,6 @@ async function _supabaseGetExternalAccount(
   }
 }
 
-/**
- * List all connected profiles for a provider (or all providers if omitted).
- *
- * Read strategy:
- *   sync ON  → merge Supabase + local, preferring fresher local records on conflicts.
- *   sync OFF → read from local only.
- */
 export async function listExternalAccounts(
   userId: string,
   provider?: string,
@@ -257,17 +291,12 @@ export async function listExternalAccounts(
     _supabaseListExternalAccounts(userId, provider),
     localListExternalAccounts(userId, provider),
   ]);
-
   if (hot.length === 0) return local;
   if (local.length === 0) return hot;
-
   const merged = new Map<string, ExternalAccount>();
-
   for (const acc of hot) {
-    const key = `${acc.provider}::${acc.profile_label}`;
-    merged.set(key, acc);
+    merged.set(`${acc.provider}::${acc.profile_label}`, acc);
   }
-
   for (const acc of local) {
     const key = `${acc.provider}::${acc.profile_label}`;
     const existing = merged.get(key);
@@ -277,7 +306,6 @@ export async function listExternalAccounts(
     }
     merged.set(key, chooseFresherAccount(acc, existing));
   }
-
   return Array.from(merged.values()).sort((a, b) => {
     if (a.is_default !== b.is_default) return a.is_default ? -1 : 1;
     return toMs(a.created_at) - toMs(b.created_at);
@@ -306,17 +334,11 @@ async function _supabaseListExternalAccounts(
   }
 }
 
-/**
- * Set a profile as the default for its provider. Clears is_default on all
- * other profiles for the same (user_id, provider).
- * Dual-write: always update local, also update Supabase when sync is on.
- */
 export async function setDefaultExternalAccount(
   userId: string,
   provider: string,
   profileLabel: string,
 ): Promise<boolean> {
-  // Always update local (cold store = source of truth)
   const localOk = await localSetDefaultExternalAccount(userId, provider, profileLabel);
   if (await shouldSyncAccounts(userId)) {
     try { await _supabaseSetDefaultExternalAccount(userId, provider, profileLabel); } catch {}
@@ -331,14 +353,12 @@ async function _supabaseSetDefaultExternalAccount(
 ): Promise<boolean> {
   if (!supabaseService) return false;
   try {
-    // Unset current default(s)
     await supabaseService
       .from('external_accounts')
       .update({ is_default: false, updated_at: new Date().toISOString() })
       .eq('user_id', userId)
       .eq('provider', provider)
       .eq('is_default', true);
-    // Set new default
     const { error } = await supabaseService
       .from('external_accounts')
       .update({ is_default: true, updated_at: new Date().toISOString() })
@@ -351,10 +371,6 @@ async function _supabaseSetDefaultExternalAccount(
   }
 }
 
-/**
- * Delete a specific profile. If it was the default, promote the next one.
- * Dual-write: always delete from local, also delete from Supabase when sync is on.
- */
 export async function deleteExternalAccount(
   userId: string,
   provider: string,
@@ -382,7 +398,6 @@ async function _supabaseDeleteExternalAccount(
       .eq('profile_label', profileLabel)
       .select('is_default')
       .single();
-    // If deleted was default, promote next oldest
     if ((deleted as any)?.is_default) {
       const { data: next } = await supabaseService
         .from('external_accounts')
@@ -407,14 +422,6 @@ async function _supabaseDeleteExternalAccount(
   }
 }
 
-/**
- * Upsert an external account (OAuth token).
- *
- * Write strategy (dual-write):
- *   Always write to local (cold store = source of truth).
- *   When sync is on, also write to Supabase (hot store).
- *   This prevents data loss when Supabase is temporarily unreachable.
- */
 export async function upsertExternalAccount(input: {
   userId: string;
   provider: string;
@@ -426,9 +433,7 @@ export async function upsertExternalAccount(input: {
   profileLabel?: string;
   accountEmail?: string | null;
 }): Promise<void> {
-  // Always write to local first (cold store = source of truth)
   await localUpsertExternalAccount(input);
-  // Also write to Supabase when sync is enabled
   if (await shouldSyncAccounts(input.userId)) {
     try { await _supabaseUpsertExternalAccount(input); } catch {}
   }
@@ -444,19 +449,15 @@ async function _supabaseUpsertExternalAccount(input: {
   meta?: any;
   profileLabel?: string;
   accountEmail?: string | null;
-  /** When explicitly provided (e.g., during migration), use this value for is_default. */
   is_default?: boolean;
 }): Promise<void> {
   if (!supabaseService) return;
   try {
     const profileLabel = input.profileLabel || 'default';
-
-    // Determine is_default: use explicit value if provided, otherwise compute
     let isDefault: boolean;
     if (typeof input.is_default === 'boolean') {
       isDefault = input.is_default;
     } else {
-      // Check if this exact profile already exists (in which case keep its current is_default)
       const { data: existingRow } = await supabaseService
         .from('external_accounts')
         .select('is_default')
@@ -465,10 +466,8 @@ async function _supabaseUpsertExternalAccount(input: {
         .eq('profile_label', profileLabel)
         .single();
       if (existingRow) {
-        // Updating existing row — keep its current is_default
         isDefault = !!(existingRow as any).is_default;
       } else {
-        // New row — set as default only if no other profiles exist for this provider
         const { data: siblings } = await supabaseService
           .from('external_accounts')
           .select('profile_label')
@@ -493,8 +492,6 @@ async function _supabaseUpsertExternalAccount(input: {
       updated_at: new Date().toISOString(),
     };
 
-    // If we're about to set is_default=true, clear any other default first
-    // to avoid violating the partial unique index (idx_external_accounts_one_default)
     if (isDefault) {
       await supabaseService
         .from('external_accounts')
@@ -505,7 +502,6 @@ async function _supabaseUpsertExternalAccount(input: {
         .neq('profile_label', profileLabel);
     }
 
-    // Upsert by (user_id, provider, profile_label)
     const { error } = await supabaseService
       .from('external_accounts')
       .upsert(values, { onConflict: 'user_id,provider,profile_label' });
@@ -514,19 +510,18 @@ async function _supabaseUpsertExternalAccount(input: {
       throw new Error(`Supabase upsert failed: ${error.message}`);
     }
   } catch (e: any) {
-    console.error(`[supabase] upsertExternalAccount error:`, e?.message || e);
+    console.error('[supabase] upsertExternalAccount error:', e?.message || e);
     throw e;
   }
 }
 
-/**
- * Get the access token for a provider. Uses the specified profile or the default.
- */
 export async function getExternalAccessToken(
   userId: string,
   provider: string,
   profileLabel?: string,
 ): Promise<string | null> {
+  const localToken = await localGetExternalAccessToken(userId, provider, profileLabel);
+  if (localToken) return localToken;
   const acc = await getExternalAccount(userId, provider, profileLabel);
   return acc?.access_token || null;
 }
@@ -542,25 +537,20 @@ export async function verifyToken(token: string): Promise<{ userId: string; emai
   }
 }
 
-// Start a new automation run and record the user's first message
 export async function createConversation(
   userId: string,
   firstMessage: string,
   model: string,
   firstMessageMetadata?: MessageMetadata,
-  source: 'stuard' | 'workflow' = 'stuard'
+  source: 'stuard' | 'workflow' | 'skill' | 'proactive' = 'stuard'
 ): Promise<string | null> {
   if (!supabaseService) return null;
-
-  // Respect sync_conversations preference — skip cloud storage when disabled
   const prefs = await getSyncPreferences(userId);
   if (!prefs.sync_conversations) {
     console.log('[sync] sync_conversations disabled — skipping cloud conversation storage');
     return null;
   }
-
   try {
-    // Create a conversation and attach the first user message
     const { data: conv, error: convErr } = await supabaseService
       .from('conversations')
       .insert([{ user_id: userId, model, source, status: 'started' }])
@@ -586,10 +576,18 @@ export async function createConversation(
 export interface MessageMetadata {
   reasoning?: string;
   reasoningDuration?: number;
-  // Model selection context (persisted so history reload can display what was requested/used)
   mode?: string;
   tier?: string;
   modelId?: string;
+  usage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    cachedPromptTokens?: number;
+    thinkingTokens?: number;
+    reasoningTokens?: number;
+    [key: string]: any;
+  };
   contextPaths?: Array<{ path: string; name: string; isDirectory: boolean }>;
   toolCalls?: Array<{
     id: string;
@@ -607,18 +605,20 @@ export interface MessageMetadata {
 }
 
 export async function addAssistantMessage(
-  userId: string, 
-  conversationId: string, 
+  userId: string,
+  conversationId: string,
   text: string,
   metadata?: MessageMetadata
 ): Promise<void> {
   if (!supabaseService) return;
+  const prefs = await getSyncPreferences(userId);
+  if (!prefs.sync_conversations) return;
   try {
     await supabaseService.from('messages').insert([
-      { 
-        conversation_id: conversationId, 
-        user_id: userId, 
-        role: 'assistant', 
+      {
+        conversation_id: conversationId,
+        user_id: userId,
+        role: 'assistant',
         content: text,
         metadata: metadata || null,
       },
@@ -633,6 +633,8 @@ export async function addUserMessage(
   metadata?: MessageMetadata
 ): Promise<void> {
   if (!supabaseService) return;
+  const prefs = await getSyncPreferences(userId);
+  if (!prefs.sync_conversations) return;
   try {
     await supabaseService.from('messages').insert([
       {
@@ -646,6 +648,75 @@ export async function addUserMessage(
   } catch {}
 }
 
+async function resolveUsageConversationId(userId: string, conversationId: string | null): Promise<string | null> {
+  if (!supabaseService) return null;
+  const trimmed = typeof conversationId === 'string' ? conversationId.trim() : '';
+  if (!trimmed || !UUID_RE.test(trimmed)) return null;
+  try {
+    const { data, error } = await supabaseService
+      .from('conversations')
+      .select('id')
+      .eq('id', trimmed)
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (error || !data?.id) return null;
+    return String((data as any).id);
+  } catch {
+    return null;
+  }
+}
+
+function isMissingCreditCostColumnError(error: any): boolean {
+  const message = String(error?.message || error?.details || error?.hint || '');
+  return /credit_cost/i.test(message) && /(column|schema cache|does not exist|unknown|could not find)/i.test(message);
+}
+
+async function insertUsageEvent(row: {
+  user_id: string;
+  conversation_id: string | null;
+  model: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  credit_cost: number;
+  raw: any;
+}): Promise<string | null> {
+  if (!supabaseService) return null;
+  const baseRow = {
+    user_id: row.user_id,
+    conversation_id: row.conversation_id,
+    model: row.model,
+    prompt_tokens: row.prompt_tokens,
+    completion_tokens: row.completion_tokens,
+    total_tokens: row.total_tokens,
+    cost_usd: row.cost_usd,
+    raw: row.raw,
+  };
+  const includeCreditCost = usageEventsSupportsCreditCost !== false;
+  let { data, error } = await supabaseService
+    .from('usage_events')
+    .insert([
+      includeCreditCost
+        ? { ...baseRow, credit_cost: row.credit_cost }
+        : baseRow,
+    ])
+    .select('id')
+    .single();
+  if (error && includeCreditCost && isMissingCreditCostColumnError(error)) {
+    usageEventsSupportsCreditCost = false;
+    ({ data, error } = await supabaseService
+      .from('usage_events')
+      .insert([baseRow])
+      .select('id')
+      .single());
+  } else if (!error && usageEventsSupportsCreditCost === null) {
+    usageEventsSupportsCreditCost = includeCreditCost;
+  }
+  if (error) throw error;
+  return data?.id ? String((data as any).id) : null;
+}
+
 export async function logUsageEvent(userId: string, conversationId: string | null, model: string, usage: any): Promise<void> {
   if (!supabaseService) return;
   try {
@@ -653,7 +724,6 @@ export async function logUsageEvent(userId: string, conversationId: string | nul
     const promptTokens = u.promptTokens;
     const completionTokens = u.completionTokens;
     const totalTokens = u.totalTokens;
-    // Attempt to read cached input tokens from various possible fields
     let cachedPromptTokens = 0;
     try {
       const candidates: any[] = [
@@ -666,12 +736,8 @@ export async function logUsageEvent(userId: string, conversationId: string | nul
         u.inputTokensCached,
         u.cache_read_input_tokens,
       ];
-      if (u?.inputTokenDetails && typeof u.inputTokenDetails.cached === 'number') {
-        candidates.push(u.inputTokenDetails.cached);
-      }
-      if (u?.tokenDetails && typeof u.tokenDetails.cacheReadInputTokens === 'number') {
-        candidates.push(u.tokenDetails.cacheReadInputTokens);
-      }
+      if (u?.inputTokenDetails && typeof u.inputTokenDetails.cached === 'number') candidates.push(u.inputTokenDetails.cached);
+      if (u?.tokenDetails && typeof u.tokenDetails.cacheReadInputTokens === 'number') candidates.push(u.tokenDetails.cacheReadInputTokens);
       for (const c of candidates) {
         const n = Number(c);
         if (!isNaN(n) && n > cachedPromptTokens) cachedPromptTokens = n;
@@ -684,43 +750,48 @@ export async function logUsageEvent(userId: string, conversationId: string | nul
     const costUsd = Number.isFinite(explicitCostUsd) && explicitCostUsd >= 0
       ? Number(explicitCostUsd.toFixed(8))
       : estimateCostUsd(model, promptTokens, completionTokens, cachedPromptTokens);
-    await supabaseService.from('usage_events').insert([
-      {
-        user_id: userId,
-        conversation_id: conversationId,
-        model,
-        prompt_tokens: promptTokens,
-        completion_tokens: completionTokens,
-        total_tokens: totalTokens,
-        cost_usd: costUsd,
-        raw: u,
-      },
-    ]);
-  } catch {}
+    const creditCost = roundCredits(costUsd * creditsPerUsd());
+    const persistedConversationId = await resolveUsageConversationId(userId, conversationId);
+    const usageEventId = await insertUsageEvent({
+      user_id: userId,
+      conversation_id: persistedConversationId,
+      model,
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: totalTokens,
+      cost_usd: costUsd,
+      credit_cost: creditCost,
+      raw: u,
+    });
+    if (creditCost > 0 && usageEventId) {
+      const sourceType = String((u as any).sourceType || (u as any).source_type || model || 'usage');
+      await debitCredits(userId, {
+        sourceType,
+        sourceRef: `usage_event:${usageEventId}`,
+        credits: creditCost,
+        amountUsd: costUsd,
+        metadata: { conversationId, model },
+      });
+    }
+  } catch (error: any) {
+    console.error('[supabase] logUsageEvent error:', error?.message || error, { userId, conversationId, model });
+  }
 }
 
 export function hasSupabase(): boolean {
   return !!supabaseAnon && !!supabaseService;
 }
 
-/**
- * Admin / service-role Supabase client for server-side operations
- * (deploy-manager, cloud-engine ops, etc.).
- * Returns null when Supabase credentials are not configured (local dev).
- */
 export function getSupabaseAdmin(): SupabaseClient | null {
   return supabaseService;
 }
 
-/** Alias kept for backwards-compat with deploy-manager & other services */
 export const supabaseAdmin = {
   from: (...args: Parameters<SupabaseClient['from']>) => {
     if (!supabaseService) throw new Error('Supabase service client not initialised (missing SUPABASE_URL / SUPABASE_SECRET_KEY)');
     return supabaseService.from(...args);
   },
 };
-
-// ── Sync Preferences ────────────────────────────────────────────────────────
 
 export interface SyncPreferences {
   sync_accounts: boolean;
@@ -730,9 +801,8 @@ export interface SyncPreferences {
   timezone: string | null;
 }
 
-const defaultSyncPrefs: SyncPreferences = { sync_accounts: false, sync_conversations: true, sync_memories: false, sync_integrations: false, timezone: null };
+const defaultSyncPrefs: SyncPreferences = { sync_accounts: false, sync_conversations: false, sync_memories: false, sync_integrations: false, timezone: null };
 
-/** Read sync preferences from the user's profile row. */
 export async function getSyncPreferences(userId: string): Promise<SyncPreferences> {
   if (!supabaseService) return defaultSyncPrefs;
   try {
@@ -744,7 +814,7 @@ export async function getSyncPreferences(userId: string): Promise<SyncPreference
     if (error || !data) return defaultSyncPrefs;
     return {
       sync_accounts: !!(data as any).sync_accounts,
-      sync_conversations: (data as any).sync_conversations !== false, // default true
+      sync_conversations: !!(data as any).sync_conversations,
       sync_memories: !!(data as any).sync_memories,
       sync_integrations: !!(data as any).sync_integrations,
       timezone: (data as any).timezone || null,
@@ -754,7 +824,6 @@ export async function getSyncPreferences(userId: string): Promise<SyncPreference
   }
 }
 
-/** Update sync preferences on the user's profile row. */
 export async function updateSyncPreferences(userId: string, prefs: Partial<SyncPreferences>): Promise<boolean> {
   if (!supabaseService) return false;
   try {
@@ -763,7 +832,7 @@ export async function updateSyncPreferences(userId: string, prefs: Partial<SyncP
     if (typeof prefs.sync_conversations === 'boolean') updates.sync_conversations = prefs.sync_conversations;
     if (typeof prefs.sync_memories === 'boolean') updates.sync_memories = prefs.sync_memories;
     if (typeof prefs.sync_integrations === 'boolean') updates.sync_integrations = prefs.sync_integrations;
-    if (prefs.timezone !== undefined) updates.timezone = prefs.timezone; // null clears override
+    if (prefs.timezone !== undefined) updates.timezone = prefs.timezone;
     const { error } = await supabaseService
       .from('profiles')
       .update(updates)
@@ -774,12 +843,23 @@ export async function updateSyncPreferences(userId: string, prefs: Partial<SyncP
   }
 }
 
-export async function getProfile(userId: string): Promise<{ plan: string; daily_limit: number; daily_used: number } | null> {
+export async function getProfile(userId: string): Promise<{
+  plan: string;
+  daily_limit: number;
+  daily_used: number;
+  monthly_token_limit?: number | null;
+  billing_customer_id?: string | null;
+  billing_subscription_id?: string | null;
+  billing_product_id?: string | null;
+  billing_subscription_status?: string | null;
+  current_period_start?: string | null;
+  current_period_end?: string | null;
+} | null> {
   if (!supabaseService) return null;
   try {
     const { data, error } = await supabaseService
       .from('profiles')
-      .select('plan, monthly_token_limit')
+      .select('plan, monthly_token_limit, billing_customer_id, billing_subscription_id, billing_product_id, billing_subscription_status, current_period_start, current_period_end')
       .eq('user_id', userId)
       .single();
     if (error || !data) return null;
@@ -787,6 +867,13 @@ export async function getProfile(userId: string): Promise<{ plan: string; daily_
       plan: String((data as any)?.plan || 'Free'),
       daily_limit: 25,
       daily_used: 0,
+      monthly_token_limit: Number((data as any)?.monthly_token_limit ?? 0) || 0,
+      billing_customer_id: (data as any)?.billing_customer_id || null,
+      billing_subscription_id: (data as any)?.billing_subscription_id || null,
+      billing_product_id: (data as any)?.billing_product_id || null,
+      billing_subscription_status: (data as any)?.billing_subscription_status || null,
+      current_period_start: (data as any)?.current_period_start || null,
+      current_period_end: (data as any)?.current_period_end || null,
     };
   } catch {
     return null;
@@ -815,55 +902,287 @@ export async function getMonthlyUsageCredits(userId: string, monthStart?: Date):
     const start = monthStart || new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     const { data, error } = await supabaseService
       .from('usage_events')
-      .select('model, prompt_tokens, completion_tokens, input_tokens, output_tokens, cost_usd, raw, created_at')
+      .select('model, prompt_tokens, completion_tokens, total_tokens, cost_usd, raw, created_at')
       .eq('user_id', userId)
       .gte('created_at', start.toISOString());
     if (error || !data) return 0;
-    // Avoid per-event rounding: sum USD first, then convert once
-    let totalUsd = 0;
+    let totalCredits = 0;
     for (const r of data as any[]) {
-      const model = String(r.model || '');
-      // Prefer new columns, fallback to legacy input/output token columns
-      const pt = (Number(r.prompt_tokens) || 0) || (Number(r.input_tokens) || 0);
-      const ct = (Number(r.completion_tokens) || 0) || (Number(r.output_tokens) || 0);
-      // Try to detect cached input tokens from raw payload if present
-      let cachedPt = 0;
-      try {
-        const raw = r.raw;
-        const cands: any[] = [];
-        if (raw && typeof raw === 'object') {
-          const td = (raw as any).tokenDetails || (raw as any).token_details || {};
-          const it = (raw as any).inputTokenDetails || (raw as any).input_token_details || {};
-          cands.push((raw as any).cachedPromptTokens);
-          cands.push((raw as any).cacheReadInputTokens);
-          cands.push((raw as any).promptTokensCached);
-          cands.push((raw as any).inputCachedTokens);
-          cands.push((raw as any).inputTokensCached);
-          cands.push((raw as any).cache_read_input_tokens);
-          if (typeof it.cached === 'number') cands.push(it.cached);
-          if (typeof td.cacheReadInputTokens === 'number') cands.push(td.cacheReadInputTokens);
-        }
-        for (const c of cands) {
-          const n = Number(c);
-          if (!isNaN(n) && n > cachedPt) cachedPt = n;
-        }
-        if (!isFinite(cachedPt) || cachedPt < 0) cachedPt = 0;
-      } catch { cachedPt = 0; }
-      const explicitUsd = Number((r as any).cost_usd);
+      const raw = (r as any).raw && typeof (r as any).raw === 'object' ? (r as any).raw : {};
+      const normalized = normalizeUsage({
+        ...raw,
+        promptTokens: (r as any).prompt_tokens,
+        completionTokens: (r as any).completion_tokens,
+        totalTokens: (r as any).total_tokens,
+      });
+      const model = String((r as any).model || (raw as any).model || '');
+      const pt = normalized.promptTokens;
+      const ct = normalized.completionTokens;
+      const cachedPt = Math.max(0, Number(normalized.cachedPromptTokens || 0));
+      const explicitUsd = Number((r as any).cost_usd ?? (raw as any).costUsd ?? (raw as any).cost_usd);
       const usd = Number.isFinite(explicitUsd) && explicitUsd >= 0
         ? explicitUsd
         : estimateCostUsd(model, pt, ct, cachedPt);
-      if (typeof usd === 'number' && isFinite(usd) && usd > 0) totalUsd += usd;
+      if (typeof usd === 'number' && isFinite(usd) && usd > 0) totalCredits += roundCredits(usd * creditsPerUsd());
     }
-    const credits = totalUsd * creditsPerUsd();
-    // Ceil so even small usage (> $0) is reflected as at least 1 credit
-    return Math.max(0, Math.ceil(credits));
+    return Math.max(0, Math.ceil(totalCredits));
   } catch {
     return 0;
   }
 }
 
-// Memory outbox helpers -------------------------------------------------
+export async function getActiveCreditGrants(userId: string, asOf = new Date(), options?: { includeSpent?: boolean }): Promise<CreditGrant[]> {
+  if (!supabaseService) return [];
+  try {
+    let query = supabaseService
+      .from('credit_grants')
+      .select('id, user_id, source_type, source_ref, plan, amount_usd, total_credits, remaining_credits, expires_at, metadata, created_at, updated_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: true });
+    if (!options?.includeSpent) query = query.gt('remaining_credits', 0);
+    const { data, error } = await query;
+    if (error || !data) return [];
+    return (data as any[])
+      .filter((grant) => {
+        const expiresAt = grant.expires_at ? Date.parse(grant.expires_at) : 0;
+        return !expiresAt || expiresAt > asOf.getTime();
+      })
+      .sort((a, b) => {
+        const aExpiry = a.expires_at ? Date.parse(a.expires_at) : Number.MAX_SAFE_INTEGER;
+        const bExpiry = b.expires_at ? Date.parse(b.expires_at) : Number.MAX_SAFE_INTEGER;
+        if (aExpiry !== bExpiry) return aExpiry - bExpiry;
+        return Date.parse(a.created_at || '') - Date.parse(b.created_at || '');
+      }) as CreditGrant[];
+  } catch {
+    return [];
+  }
+}
+
+export async function upsertCreditGrant(input: {
+  userId: string;
+  sourceType: string;
+  sourceRef: string;
+  plan?: string | null;
+  amountUsd?: number | null;
+  totalCredits: number;
+  expiresAt?: string | null;
+  metadata?: any;
+}): Promise<CreditGrant | null> {
+  if (!supabaseService) return null;
+  const totalCredits = roundCredits(input.totalCredits);
+  if (totalCredits <= 0) return null;
+  try {
+    const { data: existing } = await supabaseService
+      .from('credit_grants')
+      .select('id, total_credits, remaining_credits')
+      .eq('user_id', input.userId)
+      .eq('source_type', input.sourceType)
+      .eq('source_ref', input.sourceRef)
+      .maybeSingle();
+    let grant: CreditGrant | null = null;
+    if (existing?.id) {
+      const consumed = roundCredits((Number((existing as any).total_credits) || 0) - (Number((existing as any).remaining_credits) || 0));
+      const remainingCredits = roundCredits(Math.max(0, totalCredits - consumed));
+      const { data } = await supabaseService
+        .from('credit_grants')
+        .update({
+          plan: input.plan || null,
+          amount_usd: input.amountUsd ?? null,
+          total_credits: totalCredits,
+          remaining_credits: remainingCredits,
+          expires_at: input.expiresAt ?? null,
+          metadata: input.metadata || {},
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id)
+        .select('id, user_id, source_type, source_ref, plan, amount_usd, total_credits, remaining_credits, expires_at, metadata, created_at, updated_at')
+        .single();
+      grant = (data as any) || null;
+    } else {
+      const { data } = await supabaseService
+        .from('credit_grants')
+        .insert({
+          user_id: input.userId,
+          source_type: input.sourceType,
+          source_ref: input.sourceRef,
+          plan: input.plan || null,
+          amount_usd: input.amountUsd ?? null,
+          total_credits: totalCredits,
+          remaining_credits: totalCredits,
+          expires_at: input.expiresAt ?? null,
+          metadata: input.metadata || {},
+        })
+        .select('id, user_id, source_type, source_ref, plan, amount_usd, total_credits, remaining_credits, expires_at, metadata, created_at, updated_at')
+        .single();
+      grant = (data as any) || null;
+    }
+    if (grant?.id) {
+      await supabaseService
+        .from('credit_transactions')
+        .upsert({
+          user_id: input.userId,
+          grant_id: grant.id,
+          entry_type: 'grant',
+          source_type: input.sourceType,
+          source_ref: input.sourceRef,
+          credits: totalCredits,
+          amount_usd: input.amountUsd ?? null,
+          metadata: input.metadata || {},
+        }, { onConflict: 'user_id,grant_id,entry_type,source_type,source_ref' });
+    }
+    return grant;
+  } catch (e: any) {
+    console.error('[supabase] upsertCreditGrant error:', e?.message || e);
+    return null;
+  }
+}
+
+export async function ensureLegacyPlanGrant(userId: string, profile?: Awaited<ReturnType<typeof getProfile>> | null): Promise<void> {
+  const resolvedProfile = profile || await getProfile(userId);
+  const plan = String(resolvedProfile?.plan || 'free');
+  const limitCredits = creditLimitFromProfile(plan, resolvedProfile?.monthly_token_limit ?? null);
+  if (limitCredits <= 0) return;
+  const period = currentBillingPeriod(resolvedProfile || null);
+  await upsertCreditGrant({
+    userId,
+    sourceType: 'legacy_plan',
+    sourceRef: `${plan}:${period.start.toISOString().slice(0, 7)}`,
+    plan,
+    totalCredits: limitCredits,
+    expiresAt: period.end.toISOString(),
+    metadata: {
+      periodStart: period.start.toISOString(),
+      periodEnd: period.end.toISOString(),
+      billingSubscriptionId: resolvedProfile?.billing_subscription_id || null,
+    },
+  });
+}
+
+export async function debitCredits(userId: string, input: {
+  sourceType: string;
+  sourceRef: string;
+  credits: number;
+  amountUsd?: number | null;
+  metadata?: any;
+}): Promise<{ allocatedCredits: number; unallocatedCredits: number }> {
+  if (!supabaseService) return { allocatedCredits: 0, unallocatedCredits: roundCredits(input.credits) };
+  const targetCredits = roundCredits(input.credits);
+  if (targetCredits <= 0) return { allocatedCredits: 0, unallocatedCredits: 0 };
+  let grants = await getActiveCreditGrants(userId);
+  if (grants.length === 0) {
+    const profile = await getProfile(userId);
+    const limitCredits = creditLimitFromProfile(String(profile?.plan || 'free'), profile?.monthly_token_limit ?? null);
+    if (limitCredits > 0) {
+      await ensureLegacyPlanGrant(userId, profile);
+      grants = await getActiveCreditGrants(userId);
+    }
+  }
+  let remainingToAllocate = targetCredits;
+  for (const grant of grants) {
+    if (remainingToAllocate <= 0) break;
+    const available = roundCredits(Number(grant.remaining_credits) || 0);
+    if (available <= 0) continue;
+    const appliedCredits = roundCredits(Math.min(available, remainingToAllocate));
+    if (appliedCredits <= 0) continue;
+    await supabaseService
+      .from('credit_grants')
+      .update({
+        remaining_credits: roundCredits(available - appliedCredits),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', grant.id);
+    await supabaseService
+      .from('credit_transactions')
+      .upsert({
+        user_id: userId,
+        grant_id: grant.id,
+        entry_type: 'debit',
+        source_type: input.sourceType,
+        source_ref: input.sourceRef,
+        credits: appliedCredits,
+        amount_usd: input.amountUsd ?? null,
+        metadata: {
+          ...(input.metadata || {}),
+          grantSourceType: grant.source_type,
+          grantSourceRef: grant.source_ref,
+        },
+      }, { onConflict: 'user_id,grant_id,entry_type,source_type,source_ref' });
+    remainingToAllocate = roundCredits(remainingToAllocate - appliedCredits);
+  }
+  return {
+    allocatedCredits: roundCredits(targetCredits - remainingToAllocate),
+    unallocatedCredits: remainingToAllocate,
+  };
+}
+
+export async function getCurrentPeriodDebitedCredits(userId: string, monthStart?: Date): Promise<number> {
+  if (!supabaseService) return 0;
+  try {
+    const start = (monthStart || new Date(new Date().getFullYear(), new Date().getMonth(), 1)).toISOString();
+    const { data, error } = await supabaseService
+      .from('credit_transactions')
+      .select('credits')
+      .eq('user_id', userId)
+      .eq('entry_type', 'debit')
+      .gte('created_at', start);
+    if (error || !data) return 0;
+    return Math.max(0, Math.ceil((data as any[]).reduce((sum, row) => sum + (Number(row.credits) || 0), 0)));
+  } catch {
+    return 0;
+  }
+}
+
+export async function getCreditSummary(userId: string): Promise<CreditSummary> {
+  const profile = await getProfile(userId);
+  const plan = String(profile?.plan || 'free');
+  const fallbackLimit = creditLimitFromProfile(plan, profile?.monthly_token_limit ?? null);
+  const unlimited = fallbackLimit < 0;
+  const period = currentBillingPeriod(profile || null);
+  let grants = unlimited ? [] : await getActiveCreditGrants(userId, new Date(), { includeSpent: true });
+  if (!unlimited && fallbackLimit > 0 && !grants.some((grant) => isIncludedGrant(grant.source_type))) {
+    await ensureLegacyPlanGrant(userId, profile);
+    grants = await getActiveCreditGrants(userId, new Date(), { includeSpent: true });
+  }
+  let includedCredits = 0;
+  let includedRemaining = 0;
+  let addonCredits = 0;
+  let addonRemaining = 0;
+  for (const grant of grants) {
+    if (isIncludedGrant(grant.source_type)) {
+      includedCredits += Number(grant.total_credits) || 0;
+      includedRemaining += Number(grant.remaining_credits) || 0;
+    } else {
+      addonCredits += Number(grant.total_credits) || 0;
+      addonRemaining += Number(grant.remaining_credits) || 0;
+    }
+  }
+  const fallbackUsed = await getMonthlyUsageCredits(userId, period.start);
+  const debitedCredits = await getCurrentPeriodDebitedCredits(userId, period.start);
+  const used = Math.max(fallbackUsed, debitedCredits);
+  const grantedCredits = includedCredits + addonCredits;
+  const remainingCredits = includedRemaining + addonRemaining;
+  const fallbackRemaining = unlimited ? -1 : Math.max(0, Math.floor(fallbackLimit - fallbackUsed));
+  const remaining = unlimited
+    ? -1
+    : Math.max(0, Math.floor(grantedCredits > 0 ? remainingCredits : fallbackRemaining));
+  const limit = unlimited
+    ? -1
+    : Math.max(0, Math.floor(grantedCredits > 0 ? grantedCredits : fallbackLimit));
+  return {
+    plan,
+    limit,
+    used,
+    remaining,
+    unlimited,
+    includedCredits: Math.max(0, Math.floor(includedCredits || Math.max(0, fallbackLimit))),
+    includedRemaining: Math.max(0, Math.floor(includedRemaining || Math.max(0, fallbackRemaining))),
+    addonCredits: Math.max(0, Math.floor(addonCredits)),
+    addonRemaining: Math.max(0, Math.floor(addonRemaining)),
+    currentPeriodStart: period.start.toISOString(),
+    currentPeriodEnd: period.end.toISOString(),
+  };
+}
+
 export async function addMemoryOutbox(
   userId: string,
   payload: any,
@@ -871,11 +1190,8 @@ export async function addMemoryOutbox(
   last_error?: string | null,
 ): Promise<void> {
   if (!supabaseService) return;
-
-  // Respect sync_memories preference
   const prefs = await getSyncPreferences(userId);
   if (!prefs.sync_memories) return;
-
   try {
     await supabaseService
       .from('memory_outbox')
@@ -902,7 +1218,6 @@ export async function listPendingMemoryOutbox(limit = 50): Promise<any[]> {
 export async function markMemoryOutbox(id: string, status: 'pending' | 'delivered' | 'failed', last_error?: string): Promise<void> {
   if (!supabaseService) return;
   try {
-    // Increment attempts on non-delivered updates
     let attempts = 0;
     try {
       const { data } = await supabaseService
@@ -923,26 +1238,17 @@ export async function markMemoryOutbox(id: string, status: 'pending' | 'delivere
 }
 
 export async function checkAccess(userId: string): Promise<{ allowed: boolean; reason?: string; plan?: string; limit?: number; used?: number }> {
-  // Bypass credit checking in dev mode
   if (DEV_MODE) {
     return { allowed: true, plan: 'dev', limit: -1, used: 0 };
   }
-
-  const profile = await getProfile(userId);
-  const plan = (profile?.plan || 'free').toString();
-  const limitCredits = monthlyCreditLimitForPlan(plan);
-  if (limitCredits >= 0) {
-    const usedCredits = await getMonthlyUsageCredits(userId);
-    if (usedCredits >= limitCredits) {
-      return { allowed: false, reason: 'monthly_credit_limit_exceeded', plan, limit: limitCredits, used: usedCredits };
-    }
-    return { allowed: true, plan, limit: limitCredits, used: usedCredits };
+  const summary = await getCreditSummary(userId);
+  if (!summary.unlimited && summary.remaining <= 0) {
+    return { allowed: false, reason: 'monthly_credit_limit_exceeded', plan: summary.plan, limit: summary.limit, used: summary.used };
   }
-  return { allowed: true, plan, limit: -1, used: 0 };
+  return { allowed: true, plan: summary.plan, limit: summary.limit, used: summary.used };
 }
 
 export async function incrementDailyRequestCounter(_userId: string): Promise<void> {
-  // No-op with current schema; implement later if daily counters are added
   return;
 }
 
@@ -966,7 +1272,6 @@ export async function setConversationTitleIfEmpty(userId: string, conversationId
   const t = String(title || '').trim().slice(0, 80);
   if (!t) return;
   try {
-    // Fetch current title; update only if null/empty
     const { data, error } = await supabaseService
       .from('conversations')
       .select('id, user_id, title')
@@ -1167,6 +1472,18 @@ export async function insertBillingEvent(
       }, { onConflict: 'user_id,event_type,billing_hour' });
     if (error) {
       console.error('[supabase] insertBillingEvent error:', error.message);
+    } else if (creditsDeducted > 0) {
+      const timeKey = (billingHour || new Date()).toISOString();
+      const amountUsd = Number(details?.hourlyUsd ?? details?.hourly_usd ?? details?.monthly_usd ?? 0) || null;
+      await debitCredits(userId, {
+        sourceType: `billing_${eventType}`,
+        sourceRef: eventType === 'storage_purchase'
+          ? `${eventType}:${details?.plan_id || 'plan'}:${timeKey}`
+          : `${eventType}:${timeKey}`,
+        credits: creditsDeducted,
+        amountUsd,
+        metadata: details,
+      });
     }
   } catch {}
 }

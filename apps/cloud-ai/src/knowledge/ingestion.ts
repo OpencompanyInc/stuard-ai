@@ -28,6 +28,12 @@ async function getEmbedding(text: string): Promise<number[]> {
   }
 }
 
+const SILENT_LOCAL_TOOL_OPTIONS = { silent: true } as const;
+
+async function execSilentLocalTool(tool: string, args: any, timeoutMs: number): Promise<any> {
+  return execLocalTool(tool, args, undefined, timeoutMs, SILENT_LOCAL_TOOL_OPTIONS);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // EXECUTION PIPELINE
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -99,27 +105,27 @@ async function executeAction(action: KnowledgeAction, skipEmbeddings: boolean): 
 
 async function executeUpdateProfile(key: string, value: string, skipEmbeddings: boolean): Promise<any> {
   const vector = skipEmbeddings ? [] : await getEmbedding(`${key}: ${value}`);
-  return execLocalTool('knowledge_upsert_core', { key, value, vector }, undefined, 10000);
+  return execSilentLocalTool('knowledge_upsert_core', { key, value, vector }, 10000);
 }
 
 async function executeAddBio(value: string, skipEmbeddings: boolean): Promise<any> {
   const vector = skipEmbeddings ? [] : await getEmbedding(value);
-  return execLocalTool('knowledge_add_fact', {
+  return execSilentLocalTool('knowledge_add_fact', {
     category: 'personal',
     subtype: 'bio',
     text: value,
     vector,
-  }, undefined, 10000);
+  }, 10000);
 }
 
 async function executeAddInstruction(value: string, skipEmbeddings: boolean): Promise<any> {
   const vector = skipEmbeddings ? [] : await getEmbedding(value);
-  return execLocalTool('knowledge_add_fact', {
+  return execSilentLocalTool('knowledge_add_fact', {
     category: 'instruction',
     subtype: 'system',
     text: value,
     vector,
-  }, undefined, 10000);
+  }, 10000);
 }
 
 async function executeAddFact(
@@ -129,27 +135,27 @@ async function executeAddFact(
   skipEmbeddings?: boolean
 ): Promise<any> {
   // First, find or create the entity
-  let entity = await execLocalTool('knowledge_find_entity', { name: entityName }, undefined, 5000);
+  let entity = await execSilentLocalTool('knowledge_find_entity', { name: entityName }, 5000);
   
   if (!entity?.id) {
     // Create entity if not found
     const entityVector = skipEmbeddings ? [] : await getEmbedding(entityName);
-    entity = await execLocalTool('knowledge_create_entity', {
+    entity = await execSilentLocalTool('knowledge_create_entity', {
       name: entityName,
       type: entityType || 'topic',
       vector: entityVector,
-    }, undefined, 5000);
+    }, 5000);
   }
   
   // Add fact linked to entity
   const vector = skipEmbeddings ? [] : await getEmbedding(value);
-  return execLocalTool('knowledge_add_fact', {
+  return execSilentLocalTool('knowledge_add_fact', {
     category: 'project',
     subtype: 'detail',
     text: value,
     entity_id: entity?.id,
     vector,
-  }, undefined, 10000);
+  }, 10000);
 }
 
 async function executeAddProcedural(
@@ -161,35 +167,35 @@ async function executeAddProcedural(
   let entityId: string | undefined;
   
   if (entityName) {
-    const entity = await execLocalTool('knowledge_find_entity', { name: entityName }, undefined, 5000);
+    const entity = await execSilentLocalTool('knowledge_find_entity', { name: entityName }, 5000);
     entityId = entity?.id;
   }
   
   const vector = skipEmbeddings ? [] : await getEmbedding(`${key}: ${value}`);
-  return execLocalTool('knowledge_upsert_procedural', {
+  return execSilentLocalTool('knowledge_upsert_procedural', {
     key,
     value,
     entity_id: entityId,
     vector,
-  }, undefined, 10000);
+  }, 10000);
 }
 
 async function executeLogEvent(value: string, entityName?: string, skipEmbeddings?: boolean): Promise<any> {
   let entityId: string | undefined;
   
   if (entityName) {
-    const entity = await execLocalTool('knowledge_find_entity', { name: entityName }, undefined, 5000);
+    const entity = await execSilentLocalTool('knowledge_find_entity', { name: entityName }, 5000);
     entityId = entity?.id;
   }
   
   const vector = skipEmbeddings ? [] : await getEmbedding(value);
-  return execLocalTool('knowledge_add_fact', {
+  return execSilentLocalTool('knowledge_add_fact', {
     category: 'event',
     subtype: 'history',
     text: value,
     entity_id: entityId,
     vector,
-  }, undefined, 10000);
+  }, 10000);
 }
 
 async function executeCreateEntity(
@@ -199,18 +205,18 @@ async function executeCreateEntity(
   skipEmbeddings?: boolean
 ): Promise<any> {
   // Check if entity already exists
-  const existing = await execLocalTool('knowledge_find_entity', { name }, undefined, 5000);
+  const existing = await execSilentLocalTool('knowledge_find_entity', { name }, 5000);
   if (existing?.id) {
     return { skipped: true, reason: 'Entity already exists', entity: existing };
   }
 
   const vector = skipEmbeddings ? [] : await getEmbedding(`${name} ${summary || ''}`);
-  return execLocalTool('knowledge_create_entity', {
+  return execSilentLocalTool('knowledge_create_entity', {
     name,
     type,
     summary: summary || '',
     vector,
-  }, undefined, 5000);
+  }, 5000);
 }
 
 async function executeAddPending(
@@ -221,14 +227,14 @@ async function executeAddPending(
   proposedKey?: string,
   entityName?: string
 ): Promise<any> {
-  return execLocalTool('pending_memory_create', {
+  return execSilentLocalTool('pending_memory_create', {
     original_text: originalText,
     proposed_action: proposedAction,
     proposed_value: proposedValue,
     confidence_reason: confidenceReason,
     proposed_key: proposedKey,
     entity_name: entityName,
-  }, undefined, 5000);
+  }, 5000);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -267,7 +273,7 @@ export async function ingestConversationTurn(
     console.log('[knowledge] Fetching existing context...');
     
     // Fetch profile (identity lens)
-    const profileResult = await execLocalTool('knowledge_get_identity', {}, undefined, 5000);
+    const profileResult = await execSilentLocalTool('knowledge_get_identity', {}, 5000);
     const profileFacts: any[] = Array.isArray(profileResult)
       ? profileResult
       : Array.isArray((profileResult as any)?.facts)
@@ -287,7 +293,7 @@ export async function ingestConversationTurn(
     }
     
     // Fetch entities
-    const entitiesResult = await execLocalTool('knowledge_list_entities', { limit: 50 }, undefined, 5000);
+    const entitiesResult = await execSilentLocalTool('knowledge_list_entities', { limit: 50 }, 5000);
     const entitiesList: any[] = Array.isArray(entitiesResult)
       ? entitiesResult
       : Array.isArray((entitiesResult as any)?.entities)
@@ -307,7 +313,7 @@ export async function ingestConversationTurn(
     }
     
     // Fetch recent facts (bio + recent project facts)
-    const bioResult = await execLocalTool('knowledge_get_bio', { limit: 20 }, undefined, 5000);
+    const bioResult = await execSilentLocalTool('knowledge_get_bio', { limit: 20 }, 5000);
     const bioFacts: any[] = Array.isArray(bioResult)
       ? bioResult
       : Array.isArray((bioResult as any)?.facts)

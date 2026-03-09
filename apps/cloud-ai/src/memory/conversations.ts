@@ -15,6 +15,7 @@ import { openai } from '@ai-sdk/openai';
 import { z } from 'zod';
 import { execLocalTool } from '../tools/bridge';
 import { writeLog } from '../utils/logger';
+import { contentToText } from '../utils/messages';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -32,6 +33,7 @@ export interface Conversation {
   sync_id?: string | null;
   synced_at?: string | null;
   needs_sync?: boolean;
+  source?: 'stuard' | 'workflow' | 'skill' | 'proactive';
 }
 
 export interface Message {
@@ -44,6 +46,7 @@ export interface Message {
   tool_calls?: any[];
   tool_results?: any[];
   attachments?: any[];
+  metadata?: Record<string, any>;
 }
 
 export interface ConversationSegment {
@@ -89,6 +92,17 @@ export interface SpaceItem {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const EMBEDDING_MODEL = 'text-embedding-3-large';
+
+function normalizeConversationContent(content: unknown): string {
+  const text = contentToText(content);
+  if (text) return text;
+  if (typeof content === 'string') return content;
+  try {
+    return JSON.stringify(content ?? '');
+  } catch {
+    return String(content ?? '');
+  }
+}
 
 export async function generateEmbedding(text: string): Promise<number[]> {
   try {
@@ -136,12 +150,12 @@ export async function getSpaceTree(spaceId: string): Promise<any[] | null> {
 }
 
 export async function generateConversationEmbedding(
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: any }>
 ): Promise<number[]> {
   // Create a condensed representation of the conversation
   const text = messages
     .filter(m => m.role === 'user' || m.role === 'assistant')
-    .map(m => `${m.role}: ${m.content}`)
+    .map(m => `${m.role}: ${normalizeConversationContent(m.content)}`)
     .join('\n')
     .slice(0, 12000);
   
@@ -171,14 +185,14 @@ const SegmentSchema = z.object({
 });
 
 export async function analyzeConversationSegment(
-  messages: Array<{ role: string; content: string }>,
+  messages: Array<{ role: string; content: any }>,
   previousSummary?: string,
   previousTopics?: string[]
 ): Promise<{ action: AnalysisAction; summary: string; topics: string[]; reason: string }> {
   try {
     const conversationText = messages
       .filter(m => m.role === 'user' || m.role === 'assistant')
-      .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+      .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${normalizeConversationContent(m.content)}`)
       .join('\n\n');
 
     const previousContext = previousSummary
@@ -223,13 +237,13 @@ Rules:
 }
 
 export async function generateConversationTitle(
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: any }>
 ): Promise<string> {
   try {
     const firstMessages = messages.slice(0, 4);
     const text = firstMessages
       .filter(m => m.role === 'user')
-      .map(m => m.content)
+      .map(m => normalizeConversationContent(m.content))
       .join(' ')
       .slice(0, 500);
 
@@ -256,13 +270,15 @@ export async function generateConversationTitle(
 export async function createConversation(
   title?: string,
   model?: string,
-  conversationId?: string
+  conversationId?: string,
+  source: 'stuard' | 'workflow' | 'skill' | 'proactive' = 'stuard'
 ): Promise<Conversation | null> {
   try {
     const result = await execLocalTool('conversation_create', {
       title,
       model,
       conversation_id: conversationId,
+      source,
     });
     
     if (result?.ok && result.conversation) {
@@ -313,6 +329,7 @@ export async function listConversations(options?: {
   status?: 'active' | 'archived' | null;
   limit?: number;
   offset?: number;
+  source?: 'stuard' | 'workflow' | 'skill' | 'proactive';
 }): Promise<Conversation[]> {
   try {
     const result = await execLocalTool('conversation_list', options || {});
@@ -360,6 +377,7 @@ export async function addMessage(
     tool_calls?: any[];
     tool_results?: any[];
     attachments?: any[];
+    metadata?: Record<string, any>;
     embedding?: number[];
   }
 ): Promise<Message | null> {
@@ -869,7 +887,8 @@ export async function getMemoryStats(): Promise<{
  */
 export async function ensureLocalConversation(
   conversationId: string,
-  model?: string
+  model?: string,
+  source: 'stuard' | 'workflow' | 'skill' | 'proactive' = 'stuard'
 ): Promise<Conversation | null> {
   try {
     // Check if conversation exists locally
@@ -877,7 +896,7 @@ export async function ensureLocalConversation(
     
     if (!conversation) {
       // Create it locally
-      conversation = await createConversation(undefined, model, conversationId);
+      conversation = await createConversation(undefined, model, conversationId, source);
       writeLog('local_conversation_created', { conversationId });
     }
     
@@ -898,11 +917,15 @@ export async function storeMessageLocally(
   options?: {
     tool_calls?: any[];
     tool_results?: any[];
+    attachments?: any[];
+    metadata?: Record<string, any>;
+    model?: string;
+    source?: 'stuard' | 'workflow' | 'skill' | 'proactive';
   }
 ): Promise<boolean> {
   try {
     // Ensure conversation exists first
-    const conversation = await ensureLocalConversation(conversationId);
+    const conversation = await ensureLocalConversation(conversationId, options?.model, options?.source || 'stuard');
     if (!conversation) {
       writeLog('store_message_no_conversation', { conversationId });
       return false;
@@ -923,7 +946,7 @@ export async function storeMessageLocally(
 
 export async function processConversationTurn(
   conversationId: string,
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: any }>
 ): Promise<void> {
   try {
     // Ensure conversation exists locally first

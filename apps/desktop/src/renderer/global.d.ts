@@ -186,6 +186,37 @@ declare global {
       // Global Hotkey
       setGlobalHotkey: (accelerator: string) => Promise<{ ok: boolean; error?: string }>;
       getGlobalHotkey: () => Promise<{ ok: boolean; hotkey?: string }>;
+      browserUseGetChromeSyncSettings: () => Promise<{ ok: boolean; settings?: { chromeSyncEnabled: boolean; chromeSyncBrowserName?: string | null; chromeSyncProfileName?: string | null; chromeSyncProfilePath?: string | null; chromeSyncUserDataDir?: string | null }; error?: string }>;
+      browserUseListChromeProfiles: () => Promise<{ ok: boolean; browsers?: Array<{ browser: string; userDataDir: string; profiles: Array<{ name: string; path: string }> }>; error?: string }>;
+      browserUseUpdateChromeSyncSettings: (updates: { chromeSyncEnabled?: boolean; chromeSyncBrowserName?: string | null; chromeSyncProfileName?: string | null; chromeSyncProfilePath?: string | null; chromeSyncUserDataDir?: string | null }) => Promise<{ ok: boolean; settings?: { chromeSyncEnabled: boolean; chromeSyncBrowserName?: string | null; chromeSyncProfileName?: string | null; chromeSyncProfilePath?: string | null; chromeSyncUserDataDir?: string | null }; error?: string }>;
+
+      // Security & Privacy
+      securityGetSettings: () =>
+        Promise<{ ok: boolean; settings?: { memory_lock_enabled: boolean; vault_lock_enabled: boolean; lock_timeout_minutes: number; has_password: boolean; biometric_enabled: boolean; sync_enabled: boolean; last_sync_at?: string }; error?: string }>;
+      securitySetPassword: (password: string, currentPassword?: string) =>
+        Promise<{ ok: boolean; error?: string }>;
+      securityVerifyPassword: (password: string) =>
+        Promise<{ ok: boolean; valid?: boolean; message?: string; error?: string }>;
+      securityUpdateSettings: (updates: { memory_lock_enabled?: boolean; vault_lock_enabled?: boolean; lock_timeout_minutes?: number }) =>
+        Promise<{ ok: boolean; error?: string }>;
+      securityRemovePassword: (currentPassword: string) =>
+        Promise<{ ok: boolean; error?: string }>;
+
+      // Secure Vault (Credential Management)
+      vaultList: (options?: { category?: string; search?: string; favorites_only?: boolean; tag?: string; limit?: number; offset?: number }) =>
+        Promise<{ ok: boolean; entries?: Array<{ id: string; name: string; category: string; service?: string; created_at: string; updated_at: string; last_used_at?: string; favorite: boolean; tags?: string[]; has_url?: boolean; has_username?: boolean; has_password?: boolean; has_notes?: boolean; has_metadata?: boolean }>; total?: number; error?: string }>;
+      vaultGet: (id: string) =>
+        Promise<{ ok: boolean; entry?: { id: string; name: string; category: string; service?: string; url?: string; username?: string; password?: string; notes?: string; metadata?: Record<string, any>; created_at: string; updated_at: string; last_used_at?: string; favorite: boolean; tags?: string[] }; error?: string }>;
+      vaultAdd: (entry: { name: string; category?: string; service?: string; url?: string; username?: string; password?: string; notes?: string; metadata?: Record<string, any>; favorite?: boolean; tags?: string[] }) =>
+        Promise<{ ok: boolean; id?: string; created_at?: string; error?: string }>;
+      vaultUpdate: (id: string, fields: Record<string, any>) =>
+        Promise<{ ok: boolean; updated_at?: string; error?: string }>;
+      vaultDelete: (id: string) =>
+        Promise<{ ok: boolean; deleted?: string; error?: string }>;
+      vaultSearch: (query: string) =>
+        Promise<{ ok: boolean; entries?: Array<{ id: string; name: string; category: string; service?: string; favorite: boolean; tags?: string[] }>; count?: number; error?: string }>;
+      vaultStats: () =>
+        Promise<{ ok: boolean; total?: number; by_category?: Record<string, number>; favorites?: number; categories?: string[]; error?: string }>;
     };
   }
 }

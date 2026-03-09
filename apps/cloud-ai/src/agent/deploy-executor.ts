@@ -91,7 +91,6 @@ export class DeployExecutor extends EventEmitter {
   async start(config: DeployConfig): Promise<{ pid: number | null; dir: string }> {
     const deployDir = path.join(DEPLOY_ROOT, config.deployId);
     const bundlePath = path.join(deployDir, 'bundle.json');
-    const logFile = path.join(deployDir, 'deploy.log');
 
     // Create deploy directory
     fs.mkdirSync(deployDir, { recursive: true });
@@ -101,30 +100,7 @@ export class DeployExecutor extends EventEmitter {
 
     // Parse bundle
     const bundle = JSON.parse(fs.readFileSync(bundlePath, 'utf-8'));
-    const payload = bundle.payload;
-
-    // ── Workflow deployments use the real engine (not a shell stub) ──
-    if (config.kind === 'workflow') {
-      return this.startWorkflowEngine(config, deployDir, payload, logFile);
-    }
-
-    // ── Script / Project deployments still use shell runners ──
-    let entrypoint: string;
-    switch (config.kind) {
-      case 'script':
-        entrypoint = await this.prepareScript(deployDir, payload, config.envVars);
-        break;
-      case 'project':
-        entrypoint = await this.prepareProject(deployDir, payload, config.envVars);
-        break;
-      default:
-        throw new Error(`Unknown deploy kind: ${config.kind}`);
-    }
-
-    // Start the process
-    const pid = this.spawnProcess(config.deployId, config.kind, config.name, deployDir, entrypoint, config.envVars, config.autoRestart, logFile);
-
-    return { pid, dir: deployDir };
+    return this.startFromBundle(config, deployDir, bundle);
   }
 
   /**
@@ -216,6 +192,73 @@ export class DeployExecutor extends EventEmitter {
     } catch { /* ignore */ }
 
     return result;
+  }
+
+  /**
+   * Restore previously extracted long-lived deployments after cold-storage restore.
+   * One-shot workflow bundles are skipped to avoid replaying arbitrary actions on boot.
+   */
+  async restoreAll(): Promise<{ restored: string[]; skipped: string[]; failed: Array<{ id: string; error: string }> }> {
+    const restored: string[] = [];
+    const skipped: string[] = [];
+    const failed: Array<{ id: string; error: string }> = [];
+
+    let dirs: fs.Dirent[] = [];
+    try {
+      dirs = fs.readdirSync(DEPLOY_ROOT, { withFileTypes: true });
+    } catch {
+      return { restored, skipped, failed };
+    }
+
+    for (const dirent of dirs) {
+      if (!dirent.isDirectory()) continue;
+      const deployDir = path.join(DEPLOY_ROOT, dirent.name);
+      const bundlePath = path.join(deployDir, 'bundle.json');
+      if (!fs.existsSync(bundlePath)) continue;
+      if (this.running.has(dirent.name) || this.engine.isRunning(dirent.name)) {
+        skipped.push(dirent.name);
+        continue;
+      }
+
+      try {
+        const bundle = JSON.parse(fs.readFileSync(bundlePath, 'utf-8'));
+        const kind = String(bundle?.kind || '').toLowerCase() as DeployConfig['kind'];
+        const autoRestart = bundle?.autoRestart !== false;
+
+        if (!autoRestart) {
+          skipped.push(dirent.name);
+          continue;
+        }
+
+        // Current workflow deploys behave like bundle-and-run, not a durable trigger runtime.
+        // Skip them during restore so a VM reboot does not replay side effects.
+        if (kind === 'workflow') {
+          skipped.push(dirent.name);
+          this.appendLog(deployDir, `[restore] Skipped workflow restore for ${dirent.name} (cloud workflow trigger runtime is not yet durable on VM restore)`);
+          continue;
+        }
+
+        await this.startFromBundle({
+          deployId: String(bundle?.id || dirent.name),
+          downloadUrl: '',
+          kind,
+          name: String(bundle?.name || dirent.name),
+          envVars: bundle?.envVars && typeof bundle.envVars === 'object' ? bundle.envVars : {},
+          autoRestart,
+          schedule: typeof bundle?.schedule === 'string' ? bundle.schedule : null,
+        }, deployDir, bundle);
+
+        restored.push(dirent.name);
+        this.appendLog(deployDir, `[restore] Restored deployment ${dirent.name}`);
+      } catch (e: any) {
+        failed.push({ id: dirent.name, error: String(e?.message || e) });
+        try {
+          this.appendLog(deployDir, `[restore] Failed to restore ${dirent.name}: ${String(e?.message || e)}`);
+        } catch { /* ignore */ }
+      }
+    }
+
+    return { restored, skipped, failed };
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -339,6 +382,34 @@ export class DeployExecutor extends EventEmitter {
     runWorkflow();
 
     return { pid: null, dir: deployDir };
+  }
+
+  private async startFromBundle(
+    config: DeployConfig,
+    deployDir: string,
+    bundle: any,
+  ): Promise<{ pid: number | null; dir: string }> {
+    const logFile = path.join(deployDir, 'deploy.log');
+    const payload = bundle?.payload;
+
+    if (config.kind === 'workflow') {
+      return this.startWorkflowEngine(config, deployDir, payload, logFile);
+    }
+
+    let entrypoint: string;
+    switch (config.kind) {
+      case 'script':
+        entrypoint = await this.prepareScript(deployDir, payload, config.envVars);
+        break;
+      case 'project':
+        entrypoint = await this.prepareProject(deployDir, payload, config.envVars);
+        break;
+      default:
+        throw new Error(`Unknown deploy kind: ${config.kind}`);
+    }
+
+    const pid = this.spawnProcess(config.deployId, config.kind, config.name, deployDir, entrypoint, config.envVars, config.autoRestart, logFile);
+    return { pid, dir: deployDir };
   }
 
   // ─────────────────────────────────────────────────────────────────────────

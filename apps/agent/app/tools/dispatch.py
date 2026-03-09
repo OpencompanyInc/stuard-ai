@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Callable, Awaitable
 
-from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http, streams, database, folder_limiter, mediapipe_tools, utils
+from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http, streams, database, folder_limiter, mediapipe_tools, utils, vault
 
 
 # Tool metadata for discovery (category and description)
@@ -319,6 +319,16 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "math_slice": ("math", "Slice a tensor"),
     "math_get_index": ("math", "Get element at index"),
     "math_set_index": ("math", "Set element at index"),
+
+    # Secure Vault (Credential Management)
+    "vault_list": ("vault", "List stored credentials (secrets masked)"),
+    "vault_get": ("vault", "Get a vault entry with decrypted secrets"),
+    "vault_add": ("vault", "Add a new credential to the secure vault"),
+    "vault_update": ("vault", "Update an existing vault entry"),
+    "vault_delete": ("vault", "Delete a vault entry"),
+    "vault_get_credential": ("vault", "Get credential (username/password) for agent use"),
+    "vault_search": ("vault", "Search vault entries by service name"),
+    "vault_stats": ("vault", "Get vault statistics"),
 
     # Folder Permissions
     "folder_permission_add": ("system", "Add a folder to the allowed access list with read/write/both permission"),
@@ -674,6 +684,16 @@ _HANDLERS = {
     "math_slice": math_ops.math_slice,
     "math_get_index": math_ops.math_get_index,
     "math_set_index": math_ops.math_set_index,
+
+    # Secure Vault (Credential Management)
+    "vault_list": vault.vault_list,
+    "vault_get": vault.vault_get,
+    "vault_add": vault.vault_add,
+    "vault_update": vault.vault_update,
+    "vault_delete": vault.vault_delete,
+    "vault_get_credential": vault.vault_get_credential,
+    "vault_search": vault.vault_search,
+    "vault_stats": vault.vault_stats,
 
     # Folder Permissions
     "folder_permission_add": folder_limiter.folder_permission_add,

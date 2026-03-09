@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { getMarketplaceApi, MarketplaceWorkflow, MarketplaceCategory, MarketplaceVersion, MarketplaceUpdate } from "../../utils/cloud";
+import { getMarketplaceApi, MarketplaceWorkflow, MarketplaceCategory, MarketplaceVersion, MarketplaceUpdate, MarketplaceCreatorProfile, MarketplaceWorkflowMedia } from "../../utils/cloud";
 import { supabase } from "../../lib/supabaseClient";
-import { Search, Download, Star, Tag, User, Calendar, X, AlertCircle, Loader2, Globe, Check, ChevronRight, Hash, Sparkles, Rocket, Plus, CheckCircle2, Pencil, Trash2, Clock, History, ArrowUpCircle, Package, Lock, Unlock, RefreshCw, ExternalLink, Info, Eye, EyeOff } from "lucide-react";
+import { Search, Download, Star, Tag, User, Calendar, X, AlertCircle, Loader2, Globe, Check, ChevronRight, Hash, Sparkles, Rocket, Plus, CheckCircle2, Pencil, Trash2, Clock, History, ArrowUpCircle, Package, Lock, Unlock, RefreshCw, ExternalLink, Info, Eye, EyeOff, Upload, ImagePlus, PlayCircle, Users } from "lucide-react";
 import "../../scrollbar.css";
 
 // Helper to get token from Supabase auth
@@ -12,6 +12,48 @@ async function getToken(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+async function getCurrentUserId(): Promise<string | null> {
+  try {
+    const { data } = await supabase.auth.getUser();
+    return data?.user?.id || null;
+  } catch {
+    return null;
+  }
+}
+
+async function uploadMarketplaceAsset(file: File, kind: 'thumbnail' | 'cover' | 'media'): Promise<string> {
+  const userId = await getCurrentUserId();
+  if (!userId) {
+    throw new Error('Please sign in to upload marketplace media');
+  }
+
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, '-');
+  const path = `${userId}/${kind}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeName}`;
+
+  const { error } = await supabase.storage
+    .from('marketplace-media')
+    .upload(path, file, { upsert: false, contentType: file.type || undefined });
+
+  if (error) {
+    throw new Error(error.message || 'Failed to upload media');
+  }
+
+  const { data } = supabase.storage.from('marketplace-media').getPublicUrl(path);
+  if (!data?.publicUrl) {
+    throw new Error('Failed to get uploaded media URL');
+  }
+
+  return data.publicUrl;
+}
+
+function getMediaPreviewUrl(item: MarketplaceWorkflowMedia): string {
+  return item.thumbnail_url || item.url;
+}
+
+function isVideoMedia(item: MarketplaceWorkflowMedia): boolean {
+  return item.media_type === 'video';
 }
 
 // Toast notification component
@@ -45,14 +87,14 @@ function ModalShell({
   maxWidth?: string;
 }) {
   return (
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 backdrop-blur-md p-4 animate-in fade-in duration-200">
-      <div className={`w-full ${maxWidth} bg-white/[0.04] rounded-2xl border border-white/[0.08] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200`}>
-        <div className="px-5 py-4 border-b border-white/[0.08] flex items-center justify-between shrink-0 bg-slate-50/50">
-          <div className="text-[15px] font-semibold text-white">{title}</div>
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-white/90 backdrop-blur-md p-4 animate-in fade-in duration-200">
+      <div className={`w-full ${maxWidth} bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200`}>
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
+          <div className="text-[15px] font-semibold text-slate-900">{title}</div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1 rounded-md text-white/40 hover:text-white/80 hover:bg-white/[0.1] transition-colors"
+            className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -80,7 +122,7 @@ function TagInput({ tags, onChange }: { tags: string[], onChange: (tags: string[
   };
 
   return (
-    <div className="flex flex-wrap gap-2 p-2 border border-white/[0.12] rounded-lg focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:border-indigo-500 bg-white/[0.04] min-h-[42px] transition-all">
+    <div className="flex flex-wrap gap-2 p-2 border border-slate-200 rounded-lg focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:border-indigo-500 bg-white min-h-[42px] transition-all">
       {tags.map(tag => (
         <span key={tag} className="flex items-center gap-1 pl-2 pr-1 py-1 bg-indigo-50 text-indigo-700 text-xs font-medium rounded-md border border-indigo-100 animate-in zoom-in-95 duration-200">
           {tag}
@@ -105,7 +147,7 @@ function TagInput({ tags, onChange }: { tags: string[], onChange: (tags: string[
             setInput("");
           }
         }}
-        className="flex-1 min-w-[120px] text-sm outline-none bg-transparent placeholder:text-white/40"
+        className="flex-1 min-w-[120px] text-sm outline-none bg-transparent placeholder:text-slate-400"
         placeholder={tags.length === 0 ? "Add tags (press Enter)..." : ""}
       />
     </div>
@@ -126,11 +168,27 @@ export function PublishModal({
   const [success, setSuccess] = useState(false);
   const [name, setName] = useState(model.name || "");
   const [description, setDescription] = useState("");
+  const [shortDescription, setShortDescription] = useState("");
   const [category, setCategory] = useState("general");
   const [tags, setTags] = useState<string[]>([]);
   const [locked, setLocked] = useState(false);
+  const [thumbnailUrl, setThumbnailUrl] = useState("");
+  const [coverImageUrl, setCoverImageUrl] = useState("");
+  const [media, setMedia] = useState<MarketplaceWorkflowMedia[]>([]);
+  const [creatorProfile, setCreatorProfile] = useState<Partial<MarketplaceCreatorProfile>>({
+    display_name: "",
+    handle: "",
+    bio: "",
+    website_url: "",
+    avatar_url: "",
+    hero_image_url: "",
+  });
+  const [uploadingAsset, setUploadingAsset] = useState<'thumbnail' | 'cover' | 'media' | null>(null);
   const [categories, setCategories] = useState<MarketplaceCategory[]>([]);
   const [fetchingCats, setFetchingCats] = useState(true);
+  const thumbnailInputRef = useRef<HTMLInputElement | null>(null);
+  const coverInputRef = useRef<HTMLInputElement | null>(null);
+  const mediaInputRef = useRef<HTMLInputElement | null>(null);
 
   // State for handling existing published workflows
   const [existingWorkflow, setExistingWorkflow] = useState<MarketplaceWorkflow | null>(null);
@@ -158,8 +216,21 @@ export function PublishModal({
             // Pre-fill form if we decide to publish as new, but mostly for "update" context
             setName(found.name);
             setDescription(found.description);
+            setShortDescription(found.short_description || "");
             setCategory(found.category || "general");
             if (found.tags) setTags(found.tags);
+            setThumbnailUrl(found.thumbnail_url || "");
+            setCoverImageUrl(found.cover_image_url || "");
+            setMedia(found.media || []);
+            setLocked(Boolean(found.locked));
+            setCreatorProfile(found.creator || {
+              display_name: found.publisher_name,
+              handle: "",
+              bio: "",
+              website_url: "",
+              avatar_url: "",
+              hero_image_url: "",
+            });
           }
         }
       } catch (e) {
@@ -190,6 +261,47 @@ export function PublishModal({
     })();
   }, []);
 
+  const handleUploadFiles = useCallback(async (files: FileList | null, kind: 'thumbnail' | 'cover' | 'media') => {
+    if (!files || files.length === 0) return;
+    setUploadingAsset(kind);
+    setError(null);
+
+    try {
+      if (kind === 'media') {
+        const uploaded = await Promise.all(
+          Array.from(files).map(async (file, index) => {
+            const url = await uploadMarketplaceAsset(file, 'media');
+            const mediaType: 'image' | 'video' = file.type.startsWith('video/') ? 'video' : 'image';
+            return {
+              media_type: mediaType,
+              url,
+              thumbnail_url: mediaType === 'image' ? url : undefined,
+              alt_text: file.name,
+              sort_order: media.length + index,
+            } as MarketplaceWorkflowMedia;
+          })
+        );
+        setMedia(prev => [...prev, ...uploaded].map((item, index) => ({ ...item, sort_order: index })));
+      } else {
+        const file = files[0];
+        const url = await uploadMarketplaceAsset(file, kind);
+        if (kind === 'thumbnail') setThumbnailUrl(url);
+        if (kind === 'cover') setCoverImageUrl(url);
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Failed to upload asset');
+    } finally {
+      setUploadingAsset(null);
+      if (thumbnailInputRef.current) thumbnailInputRef.current.value = '';
+      if (coverInputRef.current) coverInputRef.current.value = '';
+      if (mediaInputRef.current) mediaInputRef.current.value = '';
+    }
+  }, [media.length]);
+
+  const removeMediaAt = useCallback((index: number) => {
+    setMedia(prev => prev.filter((_, itemIndex) => itemIndex !== index).map((item, itemIndex) => ({ ...item, sort_order: itemIndex })));
+  }, []);
+
   const handlePublish = async () => {
     if (!name.trim() || !description.trim()) {
       setError("Name and description are required.");
@@ -208,10 +320,15 @@ export function PublishModal({
       const res = await api.publish({
         name,
         description,
+        shortDescription: shortDescription.trim() || undefined,
         spec: model,
         category,
         tags,
         icon: undefined, // TODO: Add icon picker
+        thumbnailUrl: thumbnailUrl || undefined,
+        coverImageUrl: coverImageUrl || undefined,
+        media,
+        creatorProfile,
         locked,
       });
 
@@ -276,8 +393,8 @@ export function PublishModal({
           <div className="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mb-6 animate-in zoom-in duration-300">
             <CheckCircle2 className="w-10 h-10 text-emerald-600" />
           </div>
-          <h3 className="text-xl font-bold text-white mb-2">Successfully Published!</h3>
-          <p className="text-sm text-white/70 max-w-xs">
+          <h3 className="text-xl font-bold text-slate-900 mb-2">Successfully Published!</h3>
+          <p className="text-sm text-slate-600 max-w-xs">
             Your workflow "{name}" is now live on the Stuard Marketplace and available for others to discover.
           </p>
         </div>
@@ -301,14 +418,14 @@ export function PublishModal({
     return (
       <ModalShell title="Manage Published Workflow" onClose={onClose}>
         <div className="p-6 space-y-6">
-          <div className="bg-white/[0.06] border border-white/[0.04] rounded-xl p-5 flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-indigo-600 shadow-sm">
+          <div className="bg-white border border-slate-200 rounded-xl p-5 flex items-start gap-4 shadow-sm">
+            <div className="w-12 h-12 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-sm">
               <Globe className="w-6 h-6" />
             </div>
             <div className="flex-1">
-              <h3 className="font-bold text-white text-lg">{existingWorkflow.name}</h3>
-              <p className="text-sm text-white/50 mt-1 line-clamp-2">{existingWorkflow.description}</p>
-              <div className="flex items-center gap-3 mt-3 text-xs text-white/40 font-medium">
+              <h3 className="font-bold text-slate-900 text-lg">{existingWorkflow.name}</h3>
+              <p className="text-sm text-slate-500 mt-1 line-clamp-2">{existingWorkflow.description}</p>
+              <div className="flex items-center gap-3 mt-3 text-xs text-slate-500 font-medium">
                 <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-100">
                   v{existingWorkflow.version}
                 </span>
@@ -345,32 +462,32 @@ export function PublishModal({
             <button
               onClick={handleUnpublish}
               disabled={unpublishLoading}
-              className="flex items-center justify-between p-4 rounded-xl border border-white/[0.08] hover:border-rose-200 hover:bg-rose-50/30 text-left group transition-all disabled:opacity-50"
+              className="flex items-center justify-between p-4 rounded-xl border border-slate-200 hover:border-rose-200 hover:bg-rose-50 text-left group transition-all disabled:opacity-50"
             >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-white/[0.06] text-white/50 flex items-center justify-center group-hover:bg-rose-100 group-hover:text-rose-500 transition-colors">
+                <div className="w-10 h-10 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center group-hover:bg-rose-100 group-hover:text-rose-500 transition-colors">
                   {unpublishLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 className="w-5 h-5" />}
                 </div>
                 <div>
-                  <div className="font-semibold text-white group-hover:text-rose-700">Unpublish from Marketplace</div>
-                  <div className="text-xs text-white/50 group-hover:text-rose-600/70">Remove this workflow permanently from the store</div>
+                  <div className="font-semibold text-slate-900 group-hover:text-rose-700">Unpublish from Marketplace</div>
+                  <div className="text-xs text-slate-500 group-hover:text-rose-600/70">Remove this workflow permanently from the store</div>
                 </div>
               </div>
             </button>
           </div>
         </div>
 
-        <div className="p-5 border-t border-white/[0.08] bg-white/[0.06] rounded-b-2xl flex justify-between gap-3">
+        <div className="p-5 border-t border-slate-200 bg-white rounded-b-2xl flex justify-between gap-3">
           <button
             onClick={() => setExistingWorkflow(null)}
-            className="text-xs text-white/40 hover:text-white/70 font-medium px-2"
+            className="text-xs text-slate-500 hover:text-slate-700 font-medium px-2"
           >
             Publish as new instead
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-lg text-sm border border-white/[0.12] text-white/80 hover:bg-white/[0.04] hover:shadow-sm font-medium transition-all"
+            className="px-4 py-2 rounded-lg text-sm border border-slate-300 text-slate-700 hover:bg-slate-50 hover:shadow-sm font-medium transition-all"
           >
             Close
           </button>
@@ -383,6 +500,28 @@ export function PublishModal({
   return (
     <ModalShell title="Publish to Marketplace" onClose={onClose}>
       <div className="p-6 space-y-6">
+        <input
+          ref={thumbnailInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => void handleUploadFiles(e.target.files, 'thumbnail')}
+        />
+        <input
+          ref={coverInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => void handleUploadFiles(e.target.files, 'cover')}
+        />
+        <input
+          ref={mediaInputRef}
+          type="file"
+          accept="image/*,video/*"
+          multiple
+          className="hidden"
+          onChange={(e) => void handleUploadFiles(e.target.files, 'media')}
+        />
         <div className="bg-indigo-50/50 rounded-xl p-4 border border-indigo-100/50">
           <h3 className="text-sm font-semibold text-indigo-900 mb-1">Share your workflow</h3>
           <p className="text-xs text-indigo-700/80 leading-relaxed">
@@ -398,59 +537,235 @@ export function PublishModal({
           </div>
         )}
 
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium text-white/80">Workflow Name</label>
-          <input
-            type="text"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            className="w-full px-3 py-2 border border-white/[0.12] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
-            placeholder="e.g., Email Summarizer"
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium text-white/80">Description</label>
-          <textarea
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-            className="w-full px-3 py-2 border border-white/[0.12] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm min-h-[100px] resize-none transition-all"
-            placeholder="Describe what your workflow does, how it works, and any requirements..."
-          />
-          <div className="flex justify-end">
-            <span className="text-xs text-white/40">{description.length} chars</span>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-slate-700">Workflow Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+              placeholder="e.g., Smart Inbox Assistant"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-slate-700">Short Store Description</label>
+            <input
+              type="text"
+              maxLength={160}
+              value={shortDescription}
+              onChange={e => setShortDescription(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+              placeholder="A concise one-line summary shown on cards"
+            />
+            <div className="flex justify-end">
+              <span className="text-xs text-slate-400">{shortDescription.length}/160</span>
+            </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-slate-700">Description</label>
+          <textarea
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm min-h-[110px] resize-none transition-all"
+            placeholder="Describe what your workflow does, how it works, and any setup users should know about..."
+          />
+          <div className="flex justify-end">
+            <span className="text-xs text-slate-400">{description.length} chars</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-white/80">Category</label>
+            <label className="text-sm font-medium text-slate-700">Category</label>
             <div className="relative">
               <select
                 value={category}
                 onChange={e => setCategory(e.target.value)}
                 disabled={fetchingCats}
-                className="w-full px-3 py-2 border border-white/[0.12] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm bg-white/[0.04] appearance-none pr-8 transition-all"
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm bg-white text-slate-900 appearance-none pr-8 transition-all"
               >
                 <option value="general">General</option>
                 {categories.map(c => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-white/40">
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
                 <ChevronRight className="w-4 h-4 rotate-90" />
               </div>
             </div>
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-white/80">Tags</label>
+            <label className="text-sm font-medium text-slate-700">Tags</label>
             <TagInput tags={tags} onChange={setTags} />
           </div>
         </div>
 
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-4 shadow-sm">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <Users className="w-4 h-4 text-indigo-400" />
+            Creator Profile
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-slate-700">Display Name</label>
+              <input
+                type="text"
+                value={creatorProfile.display_name || ''}
+                onChange={e => setCreatorProfile(prev => ({ ...prev, display_name: e.target.value }))}
+                className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+                placeholder="How your name appears in the store"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-slate-500">Handle</label>
+              <input
+                type="text"
+                value={creatorProfile.handle || ''}
+                onChange={e => setCreatorProfile(prev => ({ ...prev, handle: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-') }))}
+                className="w-full px-3 py-2 border border-slate-200 bg-white text-slate-500 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+                placeholder="creator-name"
+              />
+            </div>
+            <div className="space-y-1.5 md:col-span-2">
+              <label className="text-sm font-medium text-slate-500">Creator Bio</label>
+              <textarea
+                value={creatorProfile.bio || ''}
+                onChange={e => setCreatorProfile(prev => ({ ...prev, bio: e.target.value }))}
+                className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm min-h-[72px] resize-none transition-all"
+                placeholder="Tell people what kind of workflows you build"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-slate-700">Website</label>
+              <input
+                type="url"
+                value={creatorProfile.website_url || ''}
+                onChange={e => setCreatorProfile(prev => ({ ...prev, website_url: e.target.value }))}
+                className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+                placeholder="https://your-site.com"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-slate-700">Avatar URL</label>
+              <input
+                type="url"
+                value={creatorProfile.avatar_url || ''}
+                onChange={e => setCreatorProfile(prev => ({ ...prev, avatar_url: e.target.value }))}
+                className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+                placeholder="Optional avatar image URL"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-4 shadow-sm">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <div className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                <ImagePlus className="w-4 h-4 text-indigo-400" />
+                Store Artwork & Media
+              </div>
+              <p className="text-xs text-slate-500 mt-1">Add thumbnail art, a cover image, and screenshots or videos like a store listing.</p>
+            </div>
+            {uploadingAsset && (
+              <div className="flex items-center gap-2 text-xs text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-full border border-indigo-100">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Uploading {uploadingAsset}...
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <button
+              type="button"
+              onClick={() => thumbnailInputRef.current?.click()}
+              className="group rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 p-4 text-left hover:border-indigo-300 hover:bg-indigo-50/60 transition-all"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
+                  <Upload className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">Thumbnail</div>
+                  <div className="text-xs text-slate-500">Used on search cards and compact listings</div>
+                </div>
+              </div>
+              {thumbnailUrl && (
+                <img src={thumbnailUrl} alt="Thumbnail" className="mt-4 w-full h-28 object-cover rounded-xl border border-slate-200" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => coverInputRef.current?.click()}
+              className="group rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 p-4 text-left hover:border-indigo-300 hover:bg-indigo-50/60 transition-all"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100">
+                  <ImagePlus className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">Hero Cover</div>
+                  <div className="text-xs text-slate-500">Large banner shown on the detail page</div>
+                </div>
+              </div>
+              {coverImageUrl && (
+                <img src={coverImageUrl} alt="Cover" className="mt-4 w-full h-28 object-cover rounded-xl border border-slate-200" />
+              )}
+            </button>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">Gallery</div>
+                <div className="text-xs text-slate-500">Upload screenshots or short preview videos</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => mediaInputRef.current?.click()}
+                className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                Add Media
+              </button>
+            </div>
+            {media.length > 0 ? (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {media.map((item, index) => (
+                  <div key={`${item.url}-${index}`} className="relative rounded-2xl overflow-hidden border border-slate-200 bg-white group shadow-sm">
+                    {isVideoMedia(item) ? (
+                      <div className="h-28 flex items-center justify-center bg-slate-900 text-white/70">
+                        <PlayCircle className="w-8 h-8" />
+                      </div>
+                    ) : (
+                      <img src={getMediaPreviewUrl(item)} alt={item.alt_text || `Media ${index + 1}`} className="w-full h-28 object-cover" />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeMediaAt(index)}
+                      className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/65 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                    <div className="p-2 text-[11px] text-slate-500 truncate">{item.alt_text || item.media_type}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+                Add screenshots or preview clips so your workflow looks like a proper store listing.
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Lock workflow toggle */}
-        <div className={`rounded-xl p-4 border transition-all ${locked ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50/50 border-white/[0.08]'}`}>
+        <div className={`rounded-xl p-4 border transition-all ${locked ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50/50 border-slate-200'}`}>
           <div className="flex items-start gap-3">
             <button
               type="button"
@@ -458,16 +773,16 @@ export function PublishModal({
               className={`mt-0.5 w-10 h-6 rounded-full transition-all flex items-center px-1 ${locked ? 'bg-amber-500' : 'bg-slate-300'
                 }`}
             >
-              <div className={`w-4 h-4 rounded-full bg-white/[0.04] shadow-sm transition-transform ${locked ? 'translate-x-4' : 'translate-x-0'}`} />
+              <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${locked ? 'translate-x-4' : 'translate-x-0'}`} />
             </button>
             <div className="flex-1">
               <div className="flex items-center gap-2">
-                {locked ? <Lock className="w-4 h-4 text-amber-600" /> : <Unlock className="w-4 h-4 text-white/40" />}
-                <span className={`text-sm font-semibold ${locked ? 'text-amber-900' : 'text-white/80'}`}>
+                {locked ? <Lock className="w-4 h-4 text-amber-600" /> : <Unlock className="w-4 h-4 text-slate-400" />}
+                <span className={`text-sm font-semibold ${locked ? 'text-amber-900' : 'text-slate-800'}`}>
                   {locked ? 'Locked Workflow' : 'Open Workflow'}
                 </span>
               </div>
-              <p className={`text-xs mt-1 leading-relaxed ${locked ? 'text-amber-700/80' : 'text-white/50'}`}>
+              <p className={`text-xs mt-1 leading-relaxed ${locked ? 'text-amber-700/80' : 'text-slate-500'}`}>
                 {locked
                   ? 'Users who download this workflow will not be able to view the code, use AI to modify it, or manually edit it. They can only run the workflow and wait for your updates.'
                   : 'Users can view, modify, and customize this workflow after downloading.'}
@@ -477,11 +792,11 @@ export function PublishModal({
         </div>
       </div>
 
-      <div className="p-5 border-t border-white/[0.08] bg-white/[0.06] rounded-b-2xl flex justify-end gap-3">
+      <div className="p-5 border-t border-slate-200 bg-white rounded-b-2xl flex justify-end gap-3">
         <button
           type="button"
           onClick={onClose}
-          className="px-4 py-2 rounded-lg text-sm border border-white/[0.12] text-white/80 hover:bg-white/[0.04] hover:shadow-sm font-medium transition-all"
+          className="px-4 py-2 rounded-lg text-sm border border-slate-300 text-slate-700 hover:bg-slate-50 hover:shadow-sm font-medium transition-all"
         >
           Cancel
         </button>
@@ -519,12 +834,29 @@ export function UpdateWorkflowModal({
   const [success, setSuccess] = useState(false);
   const [name, setName] = useState(workflow.name);
   const [description, setDescription] = useState(workflow.description);
+  const [shortDescription, setShortDescription] = useState(workflow.short_description || "");
   const [category, setCategory] = useState(workflow.category || "general");
   const [tags, setTags] = useState<string[]>(workflow.tags || []);
   const [changelog, setChangelog] = useState("");
+  const [locked, setLocked] = useState(Boolean(workflow.locked));
+  const [thumbnailUrl, setThumbnailUrl] = useState(workflow.thumbnail_url || "");
+  const [coverImageUrl, setCoverImageUrl] = useState(workflow.cover_image_url || "");
+  const [media, setMedia] = useState<MarketplaceWorkflowMedia[]>(workflow.media || []);
+  const [creatorProfile, setCreatorProfile] = useState<Partial<MarketplaceCreatorProfile>>(workflow.creator || {
+    display_name: workflow.publisher_name,
+    handle: "",
+    bio: "",
+    website_url: "",
+    avatar_url: "",
+    hero_image_url: "",
+  });
+  const [uploadingAsset, setUploadingAsset] = useState<'thumbnail' | 'cover' | 'media' | null>(null);
   const [categories, setCategories] = useState<MarketplaceCategory[]>([]);
   const [versions, setVersions] = useState<MarketplaceVersion[]>([]);
   const [fetchingData, setFetchingData] = useState(true);
+  const thumbnailInputRef = useRef<HTMLInputElement | null>(null);
+  const coverInputRef = useRef<HTMLInputElement | null>(null);
+  const mediaInputRef = useRef<HTMLInputElement | null>(null);
 
   // Fetch categories and versions on mount
   useEffect(() => {
@@ -548,6 +880,47 @@ export function UpdateWorkflowModal({
     })();
   }, [workflow.slug]);
 
+  const handleUploadFiles = useCallback(async (files: FileList | null, kind: 'thumbnail' | 'cover' | 'media') => {
+    if (!files || files.length === 0) return;
+    setUploadingAsset(kind);
+    setError(null);
+
+    try {
+      if (kind === 'media') {
+        const uploaded = await Promise.all(
+          Array.from(files).map(async (file, index) => {
+            const url = await uploadMarketplaceAsset(file, 'media');
+            const mediaType: 'image' | 'video' = file.type.startsWith('video/') ? 'video' : 'image';
+            return {
+              media_type: mediaType,
+              url,
+              thumbnail_url: mediaType === 'image' ? url : undefined,
+              alt_text: file.name,
+              sort_order: media.length + index,
+            } as MarketplaceWorkflowMedia;
+          })
+        );
+        setMedia(prev => [...prev, ...uploaded].map((item, index) => ({ ...item, sort_order: index })));
+      } else {
+        const file = files[0];
+        const url = await uploadMarketplaceAsset(file, kind);
+        if (kind === 'thumbnail') setThumbnailUrl(url);
+        if (kind === 'cover') setCoverImageUrl(url);
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Failed to upload asset');
+    } finally {
+      setUploadingAsset(null);
+      if (thumbnailInputRef.current) thumbnailInputRef.current.value = '';
+      if (coverInputRef.current) coverInputRef.current.value = '';
+      if (mediaInputRef.current) mediaInputRef.current.value = '';
+    }
+  }, [media.length]);
+
+  const removeMediaAt = useCallback((index: number) => {
+    setMedia(prev => prev.filter((_, itemIndex) => itemIndex !== index).map((item, itemIndex) => ({ ...item, sort_order: itemIndex })));
+  }, []);
+
   const handleUpdate = async () => {
     setLoading(true);
     setError(null);
@@ -561,10 +934,16 @@ export function UpdateWorkflowModal({
       const res = await api.update(workflow.slug, {
         name: name !== workflow.name ? name : undefined,
         description: description !== workflow.description ? description : undefined,
+        shortDescription: shortDescription !== (workflow.short_description || "") ? shortDescription : undefined,
         spec: newSpec,
         category: category !== workflow.category ? category : undefined,
         tags: JSON.stringify(tags) !== JSON.stringify(workflow.tags) ? tags : undefined,
+        thumbnailUrl: thumbnailUrl !== (workflow.thumbnail_url || "") ? thumbnailUrl : undefined,
+        coverImageUrl: coverImageUrl !== (workflow.cover_image_url || "") ? coverImageUrl : undefined,
+        media: JSON.stringify(media) !== JSON.stringify(workflow.media || []) ? media : undefined,
+        creatorProfile: creatorProfile,
         changelog: changelog.trim() || undefined,
+        locked: locked !== Boolean(workflow.locked) ? locked : undefined,
       });
 
       if (res.ok) {
@@ -589,8 +968,8 @@ export function UpdateWorkflowModal({
           <div className="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mb-6 animate-in zoom-in duration-300">
             <ArrowUpCircle className="w-10 h-10 text-emerald-600" />
           </div>
-          <h3 className="text-xl font-bold text-white mb-2">Successfully Updated!</h3>
-          <p className="text-sm text-white/70 max-w-xs">
+          <h3 className="text-xl font-bold text-slate-900 mb-2">Successfully Updated!</h3>
+          <p className="text-sm text-slate-600 max-w-xs">
             Your workflow "{name}" has been updated to a new version and is now live on the marketplace.
           </p>
         </div>
@@ -601,6 +980,28 @@ export function UpdateWorkflowModal({
   return (
     <ModalShell title="Update Published Workflow" onClose={onClose}>
       <div className="p-6 space-y-6">
+        <input
+          ref={thumbnailInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => void handleUploadFiles(e.target.files, 'thumbnail')}
+        />
+        <input
+          ref={coverInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => void handleUploadFiles(e.target.files, 'cover')}
+        />
+        <input
+          ref={mediaInputRef}
+          type="file"
+          accept="image/*,video/*"
+          multiple
+          className="hidden"
+          onChange={(e) => void handleUploadFiles(e.target.files, 'media')}
+        />
         <div className="bg-amber-50/50 rounded-xl p-4 border border-amber-100/50">
           <h3 className="text-sm font-semibold text-amber-900 mb-1 flex items-center gap-2">
             <ArrowUpCircle className="w-4 h-4" />
@@ -619,80 +1020,274 @@ export function UpdateWorkflowModal({
           </div>
         )}
 
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium text-white/80">Workflow Name</label>
-          <input
-            type="text"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            className="w-full px-3 py-2 border border-white/[0.12] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
-          />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-slate-700">Workflow Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-slate-700">Short Store Description</label>
+            <input
+              type="text"
+              maxLength={160}
+              value={shortDescription}
+              onChange={e => setShortDescription(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+            />
+            <div className="flex justify-end">
+              <span className="text-xs text-slate-400">{shortDescription.length}/160</span>
+            </div>
+          </div>
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-white/80">Description</label>
+          <label className="text-sm font-medium text-slate-700">Description</label>
           <textarea
             value={description}
             onChange={e => setDescription(e.target.value)}
-            className="w-full px-3 py-2 border border-white/[0.12] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm min-h-[100px] resize-none transition-all"
+            className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm min-h-[100px] resize-none transition-all"
           />
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-white/80">What's New (Changelog)</label>
+          <label className="text-sm font-medium text-slate-700">What's New (Changelog)</label>
           <textarea
             value={changelog}
             onChange={e => setChangelog(e.target.value)}
-            className="w-full px-3 py-2 border border-white/[0.12] rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-sm min-h-[80px] resize-none transition-all bg-amber-50/30"
+            className="w-full px-3 py-2 border border-amber-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-sm text-slate-900 min-h-[80px] resize-none transition-all bg-amber-50/60"
             placeholder="Describe what changed in this update..."
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-white/80">Category</label>
+            <label className="text-sm font-medium text-slate-700">Category</label>
             <div className="relative">
               <select
                 value={category}
                 onChange={e => setCategory(e.target.value)}
                 disabled={fetchingData}
-                className="w-full px-3 py-2 border border-white/[0.12] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm bg-white/[0.04] appearance-none pr-8 transition-all"
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm bg-white text-slate-900 appearance-none pr-8 transition-all"
               >
                 <option value="general">General</option>
                 {categories.map(c => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-white/40">
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
                 <ChevronRight className="w-4 h-4 rotate-90" />
               </div>
             </div>
           </div>
-
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-white/80">Tags</label>
+            <label className="text-sm font-medium text-slate-700">Tags</label>
             <TagInput tags={tags} onChange={setTags} />
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-4 shadow-sm">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <Users className="w-4 h-4 text-indigo-400" />
+            Creator Profile
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-slate-700">Display Name</label>
+              <input
+                type="text"
+                value={creatorProfile.display_name || ''}
+                onChange={e => setCreatorProfile(prev => ({ ...prev, display_name: e.target.value }))}
+                className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-slate-700">Handle</label>
+              <input
+                type="text"
+                value={creatorProfile.handle || ''}
+                onChange={e => setCreatorProfile(prev => ({ ...prev, handle: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-') }))}
+                className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+              />
+            </div>
+            <div className="space-y-1.5 md:col-span-2">
+              <label className="text-sm font-medium text-slate-700">Creator Bio</label>
+              <textarea
+                value={creatorProfile.bio || ''}
+                onChange={e => setCreatorProfile(prev => ({ ...prev, bio: e.target.value }))}
+                className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm min-h-[72px] resize-none transition-all"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-slate-700">Website</label>
+              <input
+                type="url"
+                value={creatorProfile.website_url || ''}
+                onChange={e => setCreatorProfile(prev => ({ ...prev, website_url: e.target.value }))}
+                className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-slate-700">Avatar URL</label>
+              <input
+                type="url"
+                value={creatorProfile.avatar_url || ''}
+                onChange={e => setCreatorProfile(prev => ({ ...prev, avatar_url: e.target.value }))}
+                className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-4 shadow-sm">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <div className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                <ImagePlus className="w-4 h-4 text-indigo-400" />
+                Store Artwork & Media
+              </div>
+              <p className="text-xs text-slate-500 mt-1">Refresh your cover art, thumbnails, screenshots, or preview clips.</p>
+            </div>
+            {uploadingAsset && (
+              <div className="flex items-center gap-2 text-xs text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-full border border-indigo-100">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Uploading {uploadingAsset}...
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <button
+              type="button"
+              onClick={() => thumbnailInputRef.current?.click()}
+              className="group rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 p-4 text-left hover:border-indigo-300 hover:bg-indigo-50/60 transition-all"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
+                  <Upload className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">Thumbnail</div>
+                  <div className="text-xs text-slate-500">Updated compact card artwork</div>
+                </div>
+              </div>
+              {thumbnailUrl && (
+                <img src={thumbnailUrl} alt="Thumbnail" className="mt-4 w-full h-28 object-cover rounded-xl border border-slate-200" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => coverInputRef.current?.click()}
+              className="group rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 p-4 text-left hover:border-indigo-300 hover:bg-indigo-50/60 transition-all"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100">
+                  <ImagePlus className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">Hero Cover</div>
+                  <div className="text-xs text-slate-500">Update your detail page banner</div>
+                </div>
+              </div>
+              {coverImageUrl && (
+                <img src={coverImageUrl} alt="Cover" className="mt-4 w-full h-28 object-cover rounded-xl border border-slate-200" />
+              )}
+            </button>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">Gallery</div>
+                <div className="text-xs text-slate-500">Keep your listing fresh with media previews</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => mediaInputRef.current?.click()}
+                className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                Add Media
+              </button>
+            </div>
+            {media.length > 0 ? (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {media.map((item, index) => (
+                  <div key={`${item.url}-${index}`} className="relative rounded-2xl overflow-hidden border border-slate-200 bg-white group shadow-sm">
+                    {isVideoMedia(item) ? (
+                      <div className="h-28 flex items-center justify-center bg-slate-900 text-white/70">
+                        <PlayCircle className="w-8 h-8" />
+                      </div>
+                    ) : (
+                      <img src={getMediaPreviewUrl(item)} alt={item.alt_text || `Media ${index + 1}`} className="w-full h-28 object-cover" />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeMediaAt(index)}
+                      className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/65 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                    <div className="p-2 text-[11px] text-slate-500 truncate">{item.alt_text || item.media_type}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+                Add screenshots or preview clips for your updated listing.
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className={`rounded-xl p-4 border transition-all ${locked ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50/50 border-slate-200'}`}>
+          <div className="flex items-start gap-3">
+            <button
+              type="button"
+              onClick={() => setLocked(!locked)}
+              className={`mt-0.5 w-10 h-6 rounded-full transition-all flex items-center px-1 ${locked ? 'bg-amber-500' : 'bg-slate-300'}`}
+            >
+              <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${locked ? 'translate-x-4' : 'translate-x-0'}`} />
+            </button>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                {locked ? <Lock className="w-4 h-4 text-amber-600" /> : <Unlock className="w-4 h-4 text-slate-400" />}
+                <span className={`text-sm font-semibold ${locked ? 'text-amber-900' : 'text-slate-800'}`}>
+                  {locked ? 'Locked Workflow' : 'Open Workflow'}
+                </span>
+              </div>
+              <p className={`text-xs mt-1 leading-relaxed ${locked ? 'text-amber-700/80' : 'text-slate-500'}`}>
+                {locked
+                  ? 'Downloaders will only be able to run this workflow and receive updates from you.'
+                  : 'Downloaders can inspect and customize the workflow after installing it.'}
+              </p>
+            </div>
           </div>
         </div>
 
         {versions.length > 1 && (
           <div className="space-y-2">
-            <label className="text-sm font-medium text-white/80 flex items-center gap-2">
-              <History className="w-4 h-4 text-white/40" />
+            <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
+              <History className="w-4 h-4 text-slate-400" />
               Version History
             </label>
-            <div className="bg-white/[0.06] rounded-lg border border-white/[0.08] p-3 max-h-32 overflow-y-auto">
+            <div className="bg-white rounded-lg border border-slate-200 p-3 max-h-32 overflow-y-auto shadow-sm">
               {versions.slice(0, 5).map((v, i) => (
-                <div key={v.version + i} className={`flex items-center justify-between py-1.5 ${i > 0 ? 'border-t border-white/[0.04]' : ''}`}>
+                <div key={v.version + i} className={`flex items-center justify-between py-1.5 ${i > 0 ? 'border-t border-slate-100' : ''}`}>
                   <div className="flex items-center gap-2">
-                    <span className={`text-xs font-mono font-semibold ${v.current ? 'text-indigo-600' : 'text-white/50'}`}>
+                    <span className={`text-xs font-mono font-semibold ${v.current ? 'text-indigo-600' : 'text-slate-500'}`}>
                       v{v.version}
                     </span>
                     {v.current && (
                       <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-medium">Current</span>
                     )}
                   </div>
-                  <span className="text-xs text-white/40">
+                  <span className="text-xs text-slate-400">
                     {new Date(v.created_at).toLocaleDateString()}
                   </span>
                 </div>
@@ -702,11 +1297,11 @@ export function UpdateWorkflowModal({
         )}
       </div>
 
-      <div className="p-5 border-t border-white/[0.08] bg-white/[0.06] rounded-b-2xl flex justify-end gap-3">
+      <div className="p-5 border-t border-slate-200 bg-white rounded-b-2xl flex justify-end gap-3">
         <button
           type="button"
           onClick={onClose}
-          className="px-4 py-2 rounded-lg text-sm border border-white/[0.12] text-white/80 hover:bg-white/[0.04] hover:shadow-sm font-medium transition-all"
+          className="px-4 py-2 rounded-lg text-sm border border-slate-300 text-slate-700 hover:bg-slate-50 hover:shadow-sm font-medium transition-all"
         >
           Cancel
         </button>
@@ -807,7 +1402,7 @@ export function MyPublishedWorkflowsModal({
       <ModalShell title="My Published Workflows" onClose={onClose} maxWidth="max-w-3xl">
         <div className="min-h-[400px] flex flex-col">
           {loading ? (
-            <div className="flex-1 flex flex-col items-center justify-center gap-3 text-white/40">
+            <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-500">
               <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
               <span className="text-sm">Loading your workflows...</span>
             </div>
@@ -817,8 +1412,8 @@ export function MyPublishedWorkflowsModal({
                 <AlertCircle className="w-8 h-8 text-rose-400" />
               </div>
               <div className="text-center">
-                <p className="font-medium text-white">Something went wrong</p>
-                <p className="text-sm text-white/50 mt-1">{error}</p>
+                <p className="font-medium text-slate-900">Something went wrong</p>
+                <p className="text-sm text-slate-500 mt-1">{error}</p>
                 <button
                   onClick={loadWorkflows}
                   className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
@@ -833,8 +1428,8 @@ export function MyPublishedWorkflowsModal({
                 <Package className="w-10 h-10 text-blue-500" />
               </div>
               <div>
-                <h3 className="text-lg font-bold text-white mb-2">No published workflows yet</h3>
-                <p className="text-sm text-white/70 max-w-sm leading-relaxed">
+                <h3 className="text-lg font-bold text-slate-900 mb-2">No published workflows yet</h3>
+                <p className="text-sm text-slate-600 max-w-sm leading-relaxed">
                   Share your workflows with the community! Open a workflow and click "Publish to Marketplace" to get started.
                 </p>
               </div>
@@ -843,9 +1438,9 @@ export function MyPublishedWorkflowsModal({
             <div className="p-5 space-y-5">
               {/* Stats Summary */}
               <div className="grid grid-cols-3 gap-3">
-                <div className="bg-white/[0.06] rounded-xl p-4 border border-white/[0.04]">
-                  <div className="text-2xl font-bold text-white">{workflows.length}</div>
-                  <div className="text-xs text-white/50 font-medium mt-1">Published</div>
+                <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+                  <div className="text-2xl font-bold text-slate-900">{workflows.length}</div>
+                  <div className="text-xs text-slate-500 font-medium mt-1">Published</div>
                 </div>
 <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
                   <div className="text-2xl font-bold text-blue-600">{totalStats.downloads}</div>
@@ -857,7 +1452,7 @@ export function MyPublishedWorkflowsModal({
                 </div>
               </div>
 
-              <div className="h-px bg-white/[0.06]" />
+              <div className="h-px bg-slate-200" />
 
               <div className="space-y-3">
                 {workflows.map(w => {
@@ -865,9 +1460,9 @@ export function MyPublishedWorkflowsModal({
                   return (
                     <div
                       key={w.id}
-                      className={`bg-white/[0.04] border rounded-xl transition-all overflow-hidden ${w.status === 'published'
-                        ? 'border-white/[0.08] hover:border-blue-200 hover:shadow-md'
-                        : 'border-white/[0.04] bg-white/[0.06] opacity-60'
+                      className={`bg-white border rounded-xl transition-all overflow-hidden ${w.status === 'published'
+                        ? 'border-slate-200 hover:border-blue-200 hover:shadow-md'
+                        : 'border-slate-200 bg-slate-50 opacity-70'
                         }`}
                     >
                       <div className="p-4">
@@ -878,8 +1473,8 @@ export function MyPublishedWorkflowsModal({
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <h3 className="font-semibold text-white truncate">{w.name}</h3>
-                                <span className="text-xs font-mono text-white/40 bg-white/[0.06] px-1.5 py-0.5 rounded">
+                                <h3 className="font-semibold text-slate-900 truncate">{w.name}</h3>
+                                <span className="text-xs font-mono text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
                                   v{w.version}
                                 </span>
                                 {w.locked && (
@@ -888,13 +1483,13 @@ export function MyPublishedWorkflowsModal({
                                   </span>
                                 )}
                                 {w.status !== 'published' && (
-                                  <span className="text-[10px] bg-slate-200 text-white/70 px-1.5 py-0.5 rounded font-medium uppercase">
+                                  <span className="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-medium uppercase">
                                     {w.status}
                                   </span>
                                 )}
                               </div>
-                              <p className="text-sm text-white/50 mt-0.5 line-clamp-1">{w.description}</p>
-                              <div className="flex items-center gap-4 mt-2 text-xs text-white/40">
+                              <p className="text-sm text-slate-500 mt-0.5 line-clamp-1">{w.description}</p>
+                              <div className="flex items-center gap-4 mt-2 text-xs text-slate-500">
                                 <div className="flex items-center gap-1">
                                   <Download className="w-3.5 h-3.5" />
                                   {w.download_count} downloads
@@ -916,7 +1511,7 @@ export function MyPublishedWorkflowsModal({
                           <div className="flex items-center gap-2 shrink-0">
                             <button
                               onClick={() => setExpandedId(isExpanded ? null : w.id)}
-                              className="p-2 rounded-lg border border-white/[0.08] text-white/40 hover:bg-white/[0.06] hover:text-white/70 transition-colors"
+                              className="p-2 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-700 transition-colors"
                               title={isExpanded ? "Hide details" : "Show details"}
                             >
                               <ChevronRight className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
@@ -924,7 +1519,7 @@ export function MyPublishedWorkflowsModal({
                             {w.status === 'published' && onUpdateWorkflow && (
                               <button
                                 onClick={() => onUpdateWorkflow(w)}
-                                className="p-2 rounded-lg border border-white/[0.08] text-white/70 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600 transition-colors"
+                                className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600 transition-colors"
                                 title="Push an update"
                               >
                                 <ArrowUpCircle className="w-4 h-4" />
@@ -933,7 +1528,7 @@ export function MyPublishedWorkflowsModal({
                             <button
                               onClick={() => handleDelete(w.slug, w.name)}
                               disabled={deletingSlug === w.slug}
-                              className="p-2 rounded-lg border border-white/[0.08] text-white/70 hover:bg-rose-50 hover:border-rose-200 hover:text-rose-600 transition-colors disabled:opacity-50"
+                              className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-rose-50 hover:border-rose-200 hover:text-rose-600 transition-colors disabled:opacity-50"
                               title="Unpublish workflow"
                             >
                               {deletingSlug === w.slug ? (
@@ -948,19 +1543,19 @@ export function MyPublishedWorkflowsModal({
 
                       {/* Expanded Details */}
                       {isExpanded && (
-                        <div className="px-4 pb-4 pt-2 border-t border-white/[0.04] bg-slate-50/50 animate-in slide-in-from-top-2 duration-200">
+                        <div className="px-4 pb-4 pt-2 border-t border-slate-200 bg-slate-50/70 animate-in slide-in-from-top-2 duration-200">
                           <div className="grid grid-cols-2 gap-4">
                             <div>
-                              <div className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1">Category</div>
-                              <div className="text-sm text-white/80 capitalize">{w.category || 'General'}</div>
+                              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Category</div>
+                              <div className="text-sm text-slate-800 capitalize">{w.category || 'General'}</div>
                             </div>
                             <div>
-                              <div className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1">Slug</div>
-                              <div className="text-xs font-mono text-white/50 bg-white/[0.04] px-2 py-1 rounded border border-white/[0.08] truncate">{w.slug}</div>
+                              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Slug</div>
+                              <div className="text-xs font-mono text-slate-500 bg-white px-2 py-1 rounded border border-slate-200 truncate">{w.slug}</div>
                             </div>
                             {w.tags && w.tags.length > 0 && (
                               <div className="col-span-2">
-                                <div className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1.5">Tags</div>
+                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Tags</div>
                                 <div className="flex flex-wrap gap-1.5">
                                   {w.tags.map(tag => (
                                     <span key={tag} className="text-xs px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full border border-indigo-100">
@@ -971,8 +1566,8 @@ export function MyPublishedWorkflowsModal({
                               </div>
                             )}
                             <div className="col-span-2">
-                              <div className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1">Description</div>
-                              <p className="text-sm text-white/70 leading-relaxed">{w.description}</p>
+                              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Description</div>
+                              <p className="text-sm text-slate-600 leading-relaxed">{w.description}</p>
                             </div>
                           </div>
                         </div>
@@ -1204,56 +1799,81 @@ export function WorkflowUpdateModal({
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function WorkflowCard({ workflow, onClick }: { workflow: MarketplaceWorkflow; onClick: () => void }) {
+  const heroMedia = workflow.media?.[0];
+  const cover = workflow.thumbnail_url || workflow.cover_image_url || (heroMedia ? getMediaPreviewUrl(heroMedia) : null);
+  const creatorName = workflow.creator?.display_name || workflow.publisher_name;
+
   return (
     <button
       onClick={onClick}
-      className="flex flex-col text-left bg-white/[0.04] border border-white/[0.08] rounded-xl p-4 hover:border-blue-300 hover:shadow-lg hover:shadow-blue-100/50 transition-all group h-full relative overflow-hidden"
+      className="flex h-full flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-white text-left shadow-sm transition-all hover:-translate-y-1 hover:border-blue-300 hover:shadow-xl"
     >
-      <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
-        <div className="bg-blue-50 text-blue-600 rounded-lg p-1">
-          <ChevronRight className="w-4 h-4" />
+      <div className="relative aspect-[16/10] overflow-hidden bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-700">
+        {cover ? (
+          <img src={cover} alt={workflow.name} className="h-full w-full object-cover transition-transform duration-500 hover:scale-105" />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-white/90">
+            {workflow.icon ? <span className="text-5xl">{workflow.icon}</span> : <Globe className="h-10 w-10" />}
+          </div>
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/10 to-transparent" />
+        <div className="absolute left-4 right-4 top-4 flex items-start justify-between gap-3">
+          <div className="rounded-full bg-white/90 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-700 shadow-sm">
+            {workflow.category || 'General'}
+          </div>
+          <div className="flex items-center gap-2">
+            {workflow.locked && (
+              <div className="rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-semibold text-amber-700 shadow-sm">
+                Locked
+              </div>
+            )}
+            <div className="rounded-full bg-black/45 px-2.5 py-1 text-[10px] font-semibold text-white shadow-sm">
+              v{workflow.version}
+            </div>
+          </div>
+        </div>
+        <div className="absolute inset-x-0 bottom-0 p-4 text-white">
+          <div className="line-clamp-1 text-lg font-semibold">{workflow.name}</div>
+          <div className="mt-1 line-clamp-2 text-sm text-white/85">{workflow.short_description || workflow.description}</div>
         </div>
       </div>
 
-      <div className="flex items-start justify-between w-full mb-4">
+      <div className="flex flex-1 flex-col gap-4 p-4">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-50 to-white border border-blue-100 flex items-center justify-center text-blue-600 shadow-sm group-hover:scale-105 transition-transform duration-300">
-            {workflow.icon ? <span className="text-2xl">{workflow.icon}</span> : <Globe className="w-6 h-6" />}
+          <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-slate-100 text-slate-700 shadow-inner">
+            {workflow.creator?.avatar_url ? (
+              <img src={workflow.creator.avatar_url} alt={creatorName} className="h-full w-full object-cover" />
+            ) : (
+              <span className="text-sm font-semibold">{creatorName.slice(0, 1).toUpperCase()}</span>
+            )}
           </div>
           <div>
-            <div className="font-semibold text-white line-clamp-1 group-hover:text-blue-600 transition-colors">
-              {workflow.name}
-            </div>
-            <div className="text-xs text-white/50 flex items-center gap-1.5 mt-0.5">
-              <User className="w-3 h-3" />
-              {workflow.publisher_name}
+            <div className="text-sm font-semibold text-slate-900">{creatorName}</div>
+            <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
+              <span>@{workflow.creator?.handle || creatorName.toLowerCase().replace(/\s+/g, '')}</span>
+              {workflow.creator?.follower_count ? <span>{workflow.creator.follower_count} followers</span> : null}
             </div>
           </div>
         </div>
-      </div>
 
-      <p className="text-sm text-white/70 line-clamp-2 mb-4 flex-1 leading-relaxed">
-        {workflow.description}
-      </p>
-
-      <div className="flex items-center justify-between w-full pt-3 border-t border-slate-50 mt-auto">
-        <div className="flex items-center gap-3 text-xs text-white/50 font-medium">
+        <div className="mt-auto flex items-center justify-between border-t border-slate-100 pt-3 text-xs font-medium text-slate-500">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1">
+              <Download className="h-3.5 w-3.5" />
+              {workflow.download_count}
+            </div>
+            <div className="flex items-center gap-1">
+              <Calendar className="h-3.5 w-3.5" />
+              {new Date(workflow.created_at).toLocaleDateString()}
+            </div>
+          </div>
           {workflow.rating_avg > 0 && (
-            <div className="flex items-center gap-1 text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md">
-              <Star className="w-3 h-3 fill-current" />
+            <div className="flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-amber-700">
+              <Star className="h-3.5 w-3.5 fill-current" />
               {Number(workflow.rating_avg).toFixed(1)}
             </div>
           )}
-          <div className="flex items-center gap-1" title={`${workflow.download_count} downloads`}>
-            <Download className="w-3.5 h-3.5" />
-            {workflow.download_count}
-          </div>
         </div>
-        {workflow.category && (
-          <div className="text-[10px] uppercase tracking-wider font-semibold text-white/40 bg-white/[0.06] border border-white/[0.04] px-2 py-0.5 rounded-full">
-            {workflow.category}
-          </div>
-        )}
       </div>
     </button>
   );
@@ -1263,17 +1883,32 @@ function WorkflowDetail({
   workflow,
   onBack,
   onImport,
-  onRate
+  onRate,
+  onOpenCreator,
+  onToggleFollow,
+  followLoading,
 }: {
   workflow: MarketplaceWorkflow;
   onBack: () => void;
   onImport: (w: MarketplaceWorkflow) => void;
   onRate: (rating: number, review?: string) => Promise<void>;
+  onOpenCreator: (handle: string) => void;
+  onToggleFollow: (creator: MarketplaceCreatorProfile) => Promise<void>;
+  followLoading: boolean;
 }) {
   const [rating, setRating] = useState(0);
   const [hoverRating, setHoverRating] = useState(0);
   const [isRating, setIsRating] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [activeMediaIndex, setActiveMediaIndex] = useState(0);
+
+  const creator = workflow.creator;
+  const gallery = workflow.media && workflow.media.length > 0
+    ? workflow.media
+    : workflow.cover_image_url || workflow.thumbnail_url
+      ? [{ media_type: 'image', url: workflow.cover_image_url || workflow.thumbnail_url || '', thumbnail_url: workflow.thumbnail_url || workflow.cover_image_url || '', alt_text: workflow.name } as MarketplaceWorkflowMedia]
+      : [];
+  const activeMedia = gallery[activeMediaIndex] || gallery[0] || null;
 
   const handleImport = async () => {
     setImporting(true);
@@ -1297,111 +1932,258 @@ function WorkflowDetail({
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-50/30">
-      <div className="p-6 border-b border-white/[0.08] bg-white/[0.04] sticky top-0 z-10 shadow-sm">
-        <button
-          onClick={onBack}
-          className="text-xs font-medium text-white/50 hover:text-white/90 mb-6 flex items-center gap-1 transition-colors"
-        >
-          <ChevronRight className="w-3 h-3 rotate-180" />
-          Back to browsing
-        </button>
+    <div className="flex h-full flex-col bg-slate-100">
+      <div className="relative overflow-hidden border-b border-slate-200 bg-slate-950 text-white">
+        {workflow.cover_image_url || workflow.thumbnail_url ? (
+          <img src={workflow.cover_image_url || workflow.thumbnail_url || ''} alt={workflow.name} className="absolute inset-0 h-full w-full object-cover" />
+        ) : null}
+        <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/85 to-slate-950/40" />
+        <div className="relative p-6 md:p-8">
+          <button
+            onClick={onBack}
+            className="mb-6 flex items-center gap-1 text-xs font-medium text-white/70 transition-colors hover:text-white"
+          >
+            <ChevronRight className="h-3 w-3 rotate-180" />
+            Back to browsing
+          </button>
 
-        <div className="flex items-start justify-between gap-6">
-          <div className="flex gap-5">
-            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-50 to-white border border-blue-100 flex items-center justify-center text-blue-600 shrink-0 shadow-sm">
-              {workflow.icon ? <span className="text-4xl">{workflow.icon}</span> : <Globe className="w-10 h-10" />}
-            </div>
-            <div>
-              <h2 className="text-2xl font-bold text-white tracking-tight">{workflow.name}</h2>
-              <div className="flex items-center gap-5 mt-3 text-sm text-white/70">
-                <div className="flex items-center gap-1.5 bg-white/[0.06] px-2.5 py-1 rounded-full text-xs font-medium">
-                  <User className="w-3.5 h-3.5" />
-                  {workflow.publisher_name}
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="flex max-w-3xl gap-5">
+              <div className="flex h-20 w-20 items-center justify-center rounded-[24px] bg-white/10 text-white shadow-xl backdrop-blur">
+                {workflow.icon ? <span className="text-4xl">{workflow.icon}</span> : <Globe className="h-10 w-10" />}
+              </div>
+              <div>
+                <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/70">
+                  <span className="rounded-full bg-white/10 px-3 py-1">{workflow.category || 'General'}</span>
+                  {workflow.locked ? <span className="rounded-full bg-amber-400/15 px-3 py-1 text-amber-200">Locked</span> : null}
                 </div>
-                <div className="flex items-center gap-1.5 text-xs font-medium">
-                  <Download className="w-3.5 h-3.5" />
-                  {workflow.download_count} downloads
-                </div>
-                <div className="flex items-center gap-1.5 text-xs font-medium text-white/40">
-                  <Calendar className="w-3.5 h-3.5" />
-                  {new Date(workflow.created_at).toLocaleDateString()}
+                <h2 className="text-3xl font-bold tracking-tight">{workflow.name}</h2>
+                <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/80">{workflow.short_description || workflow.description}</p>
+                <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-white/75">
+                  <span className="flex items-center gap-1.5"><Download className="h-3.5 w-3.5" />{workflow.download_count} downloads</span>
+                  <span className="flex items-center gap-1.5"><Star className="h-3.5 w-3.5 fill-current text-amber-300" />{workflow.rating_count ? Number(workflow.rating_avg).toFixed(1) : 'New'}{workflow.rating_count ? ` · ${workflow.rating_count} ratings` : ''}</span>
+                  <span className="flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5" />{new Date(workflow.created_at).toLocaleDateString()}</span>
                 </div>
               </div>
             </div>
-          </div>
 
-          <button
-            onClick={handleImport}
-            disabled={importing}
-            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold shadow-lg shadow-blue-200 flex items-center gap-2.5 transition-all active:scale-95 disabled:opacity-70 hover:-translate-y-0.5"
-          >
-            {importing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
-            Import Workflow
-          </button>
+            <button
+              onClick={handleImport}
+              disabled={importing}
+              className="inline-flex items-center justify-center gap-2.5 rounded-2xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 transition-all hover:-translate-y-0.5 hover:bg-blue-700 disabled:opacity-70"
+            >
+              {importing ? <Loader2 className="h-5 w-5 animate-spin" /> : <Download className="h-5 w-5" />}
+              Import Workflow
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-8 space-y-8">
-        <div className="bg-white/[0.04] rounded-2xl p-6 border border-white/[0.08] shadow-sm">
-          <h3 className="text-sm font-semibold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
-            <div className="w-1 h-4 bg-blue-500 rounded-full" />
-            About this workflow
-          </h3>
-          <p className="text-white/70 leading-relaxed whitespace-pre-wrap text-sm">{workflow.description}</p>
-        </div>
+      <div className="flex-1 overflow-y-auto p-6 md:p-8">
+        <div className="mx-auto grid max-w-6xl gap-6 xl:grid-cols-[minmax(0,1.4fr)_360px]">
+          <div className="space-y-6">
+            {activeMedia ? (
+              <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                <div className="aspect-[16/9] bg-slate-900">
+                  {isVideoMedia(activeMedia) ? (
+                    <video src={activeMedia.url} controls poster={activeMedia.thumbnail_url || undefined} className="h-full w-full object-cover" />
+                  ) : (
+                    <img src={getMediaPreviewUrl(activeMedia)} alt={activeMedia.alt_text || workflow.name} className="h-full w-full object-cover" />
+                  )}
+                </div>
+                {gallery.length > 1 ? (
+                  <div className="flex gap-3 overflow-x-auto border-t border-slate-100 p-4">
+                    {gallery.map((item, index) => (
+                      <button
+                        key={`${item.url}-${index}`}
+                        type="button"
+                        onClick={() => setActiveMediaIndex(index)}
+                        className={`relative h-20 w-32 shrink-0 overflow-hidden rounded-2xl border transition-all ${index === activeMediaIndex ? 'border-blue-500 ring-2 ring-blue-100' : 'border-slate-200 hover:border-blue-300'}`}
+                      >
+                        {isVideoMedia(item) ? (
+                          <div className="flex h-full w-full items-center justify-center bg-slate-900 text-white/80"><PlayCircle className="h-8 w-8" /></div>
+                        ) : (
+                          <img src={getMediaPreviewUrl(item)} alt={item.alt_text || `Media ${index + 1}`} className="h-full w-full object-cover" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
-        <div className="grid grid-cols-2 gap-6">
-          <div className="bg-white/[0.04] rounded-2xl p-6 border border-white/[0.08] shadow-sm">
-            <h3 className="text-sm font-semibold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
-              <div className="w-1 h-4 bg-emerald-500 rounded-full" />
-              Tags & Category
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {workflow.category && (
-                <span className="px-3 py-1.5 rounded-lg bg-white/[0.06] text-white/80 text-xs font-semibold border border-white/[0.08]">
-                  {workflow.category}
-                </span>
-              )}
-              {workflow.tags?.map(tag => (
-                <span key={tag} className="px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-medium border border-indigo-100 flex items-center gap-1.5">
-                  <Hash className="w-3 h-3 opacity-50" />
-                  {tag}
-                </span>
+            <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">About this workflow</h3>
+              <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-slate-700">{workflow.description}</p>
+            </div>
+
+            <div className="grid gap-6 md:grid-cols-2">
+              <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+                <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Tags & category</h3>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {workflow.category ? <span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700">{workflow.category}</span> : null}
+                  {workflow.tags?.map(tag => (
+                    <span key={tag} className="flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700">
+                      <Hash className="h-3 w-3 opacity-60" />
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+                <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Rate this workflow</h3>
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-1">
+                    {[1, 2, 3, 4, 5].map((r) => (
+                      <button
+                        key={r}
+                        onMouseEnter={() => setHoverRating(r)}
+                        onMouseLeave={() => setHoverRating(0)}
+                        onClick={() => handleRate(r)}
+                        disabled={isRating}
+                        className="p-1 transition-transform hover:scale-110 active:scale-95"
+                      >
+                        <Star className={`h-8 w-8 transition-colors ${(hoverRating || rating || Math.round(workflow.rating_avg)) >= r ? 'fill-amber-400 text-amber-400' : 'text-slate-300'}`} />
+                      </button>
+                    ))}
+                  </div>
+                  <div className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-600">{workflow.rating_count} ratings</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Creator</h3>
+              <div className="mt-4 flex items-start gap-4">
+                <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-3xl bg-slate-100 text-slate-700 shadow-inner">
+                  {creator?.avatar_url ? <img src={creator.avatar_url} alt={creator.display_name} className="h-full w-full object-cover" /> : <span className="text-xl font-semibold">{(creator?.display_name || workflow.publisher_name).slice(0, 1).toUpperCase()}</span>}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <button
+                    type="button"
+                    onClick={() => creator?.handle && onOpenCreator(creator.handle)}
+                    className="text-left text-lg font-semibold text-slate-900 hover:text-blue-600"
+                  >
+                    {creator?.display_name || workflow.publisher_name}
+                  </button>
+                  <div className="mt-1 text-sm text-slate-500">@{creator?.handle || workflow.publisher_name.toLowerCase().replace(/\s+/g, '')}</div>
+                  <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
+                    <span>{creator?.follower_count || 0} followers</span>
+                    <span>{creator?.workflow_count || 1} workflows</span>
+                  </div>
+                </div>
+              </div>
+              {creator?.bio ? <p className="mt-4 text-sm leading-6 text-slate-600">{creator.bio}</p> : null}
+              <div className="mt-4 flex flex-wrap gap-3">
+                {creator?.handle ? (
+                  <button
+                    type="button"
+                    onClick={() => onToggleFollow(creator)}
+                    disabled={followLoading}
+                    className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition-colors ${creator.is_following ? 'bg-slate-900 text-white hover:bg-slate-800' : 'bg-blue-600 text-white hover:bg-blue-700'} disabled:opacity-60`}
+                  >
+                    {followLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
+                    {creator.is_following ? 'Following' : 'Follow creator'}
+                  </button>
+                ) : null}
+                {creator?.website_url ? (
+                  <a href={creator.website_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:border-blue-300 hover:text-blue-600">
+                    <ExternalLink className="h-4 w-4" />
+                    Website
+                  </a>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Store details</h3>
+              <dl className="mt-4 space-y-3 text-sm text-slate-600">
+                <div className="flex items-center justify-between gap-3"><dt>Version</dt><dd className="font-medium text-slate-900">{workflow.version}</dd></div>
+                <div className="flex items-center justify-between gap-3"><dt>Downloads</dt><dd className="font-medium text-slate-900">{workflow.download_count}</dd></div>
+                <div className="flex items-center justify-between gap-3"><dt>Published</dt><dd className="font-medium text-slate-900">{new Date(workflow.created_at).toLocaleDateString()}</dd></div>
+                <div className="flex items-center justify-between gap-3"><dt>Access</dt><dd className="font-medium text-slate-900">{workflow.locked ? 'Locked listing' : 'Open listing'}</dd></div>
+              </dl>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CreatorDetail({
+  creator,
+  workflows,
+  onBack,
+  onSelectWorkflow,
+  onToggleFollow,
+  followLoading,
+}: {
+  creator: MarketplaceCreatorProfile;
+  workflows: MarketplaceWorkflow[];
+  onBack: () => void;
+  onSelectWorkflow: (workflow: MarketplaceWorkflow) => void;
+  onToggleFollow: (creator: MarketplaceCreatorProfile) => Promise<void>;
+  followLoading: boolean;
+}) {
+  return (
+    <div className="flex h-full flex-col bg-slate-100">
+      <div className="relative overflow-hidden border-b border-slate-200 bg-slate-950 text-white">
+        {creator.hero_image_url ? <img src={creator.hero_image_url} alt={creator.display_name} className="absolute inset-0 h-full w-full object-cover" /> : null}
+        <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/85 to-slate-950/30" />
+        <div className="relative p-6 md:p-8">
+          <button onClick={onBack} className="mb-6 flex items-center gap-1 text-xs font-medium text-white/70 hover:text-white"><ChevronRight className="h-3 w-3 rotate-180" />Back to marketplace</button>
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="flex gap-5">
+              <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-[28px] bg-white/10 shadow-xl backdrop-blur">
+                {creator.avatar_url ? <img src={creator.avatar_url} alt={creator.display_name} className="h-full w-full object-cover" /> : <span className="text-3xl font-semibold">{creator.display_name.slice(0, 1).toUpperCase()}</span>}
+              </div>
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-white/65">Creator</div>
+                <h2 className="mt-2 text-3xl font-bold tracking-tight">{creator.display_name}</h2>
+                <div className="mt-2 text-sm text-white/75">@{creator.handle}</div>
+                <div className="mt-4 flex flex-wrap gap-4 text-xs text-white/75">
+                  <span>{creator.follower_count} followers</span>
+                  <span>{creator.workflow_count} workflows</span>
+                </div>
+                {creator.bio ? <p className="mt-4 max-w-2xl text-sm leading-7 text-white/80">{creator.bio}</p> : null}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => onToggleFollow(creator)}
+                disabled={followLoading}
+                className={`inline-flex items-center gap-2 rounded-2xl px-5 py-3 text-sm font-semibold transition-colors ${creator.is_following ? 'bg-white text-slate-900 hover:bg-slate-100' : 'bg-blue-600 text-white hover:bg-blue-700'} disabled:opacity-60`}
+              >
+                {followLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
+                {creator.is_following ? 'Following' : 'Follow creator'}
+              </button>
+              {creator.website_url ? <a href={creator.website_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-2xl border border-white/20 px-5 py-3 text-sm font-medium text-white hover:bg-white/10"><ExternalLink className="h-4 w-4" />Website</a> : null}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-6 md:p-8">
+        <div className="mx-auto max-w-6xl">
+          <div className="mb-6 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-xl font-semibold text-slate-900">Published by {creator.display_name}</h3>
+              <p className="mt-1 text-sm text-slate-500">Browse this creator’s workflow catalog.</p>
+            </div>
+          </div>
+          {workflows.length > 0 ? (
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+              {workflows.map((workflow) => (
+                <WorkflowCard key={workflow.id} workflow={workflow} onClick={() => onSelectWorkflow(workflow)} />
               ))}
             </div>
-          </div>
-
-          <div className="bg-white/[0.04] rounded-2xl p-6 border border-white/[0.08] shadow-sm">
-            <h3 className="text-sm font-semibold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
-              <div className="w-1 h-4 bg-amber-500 rounded-full" />
-              Rate this workflow
-            </h3>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-1">
-                {[1, 2, 3, 4, 5].map((r) => (
-                  <button
-                    key={r}
-                    onMouseEnter={() => setHoverRating(r)}
-                    onMouseLeave={() => setHoverRating(0)}
-                    onClick={() => handleRate(r)}
-                    disabled={isRating}
-                    className="p-1 focus:outline-none transition-transform hover:scale-110 active:scale-95"
-                  >
-                    <Star
-                      className={`w-8 h-8 transition-colors ${(hoverRating || rating || Math.round(workflow.rating_avg)) >= r
-                        ? "fill-amber-400 text-amber-400"
-                        : "text-slate-200"
-                        }`}
-                    />
-                  </button>
-                ))}
-              </div>
-              <div className="text-sm font-medium text-white/50 bg-white/[0.06] px-3 py-1.5 rounded-lg">
-                {workflow.rating_count} ratings
-              </div>
-            </div>
-          </div>
+          ) : (
+            <div className="rounded-[28px] border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">This creator hasn’t published anything yet.</div>
+          )}
         </div>
       </div>
     </div>
@@ -1423,6 +2205,9 @@ export function MarketplaceBrowser({
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<string>("all");
   const [selectedWorkflow, setSelectedWorkflow] = useState<MarketplaceWorkflow | null>(null);
+  const [selectedCreator, setSelectedCreator] = useState<MarketplaceCreatorProfile | null>(null);
+  const [creatorWorkflows, setCreatorWorkflows] = useState<MarketplaceWorkflow[]>([]);
+  const [followLoading, setFollowLoading] = useState(false);
   const [categories, setCategories] = useState<MarketplaceCategory[]>([]);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [initialLoad, setInitialLoad] = useState(true);
@@ -1446,6 +2231,7 @@ export function MarketplaceBrowser({
       const api = getMarketplaceApi(() => token);
       const res = await api.getWorkflow(slug);
       if (res.ok && res.workflow) {
+        setSelectedCreator(null);
         setSelectedWorkflow(res.workflow);
       } else {
         setError(res.error || 'Failed to load workflow');
@@ -1459,6 +2245,89 @@ export function MarketplaceBrowser({
       setInitialLoad(false);
     }
   };
+
+  const syncCreatorState = useCallback((creator: MarketplaceCreatorProfile) => {
+    setSelectedCreator(prev => (prev && prev.id === creator.id ? creator : prev));
+    setSelectedWorkflow(prev => {
+      if (!prev) return prev;
+      const creatorId = prev.creator?.id || prev.publisher_id;
+      if (creatorId !== creator.id) return prev;
+      return {
+        ...prev,
+        creator,
+        publisher_name: creator.display_name || prev.publisher_name,
+      };
+    });
+    setWorkflows(prev => prev.map((workflow) => {
+      const creatorId = workflow.creator?.id || workflow.publisher_id;
+      if (creatorId !== creator.id) return workflow;
+      return {
+        ...workflow,
+        creator,
+        publisher_name: creator.display_name || workflow.publisher_name,
+      };
+    }));
+    setCreatorWorkflows(prev => prev.map((workflow) => {
+      const creatorId = workflow.creator?.id || workflow.publisher_id;
+      if (creatorId !== creator.id) return workflow;
+      return {
+        ...workflow,
+        creator,
+        publisher_name: creator.display_name || workflow.publisher_name,
+      };
+    }));
+  }, []);
+
+  const handleOpenCreator = useCallback(async (handle: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const token = await getToken();
+      const api = getMarketplaceApi(() => token);
+      const res = await api.getCreator(handle);
+      if (res.ok && res.creator) {
+        setSelectedWorkflow(null);
+        setSelectedCreator(res.creator);
+        setCreatorWorkflows(res.workflows || []);
+      } else {
+        setToast({ message: res.error || 'Failed to load creator', type: 'error' });
+      }
+    } catch (e: any) {
+      console.error(e);
+      setToast({ message: e?.message || 'Failed to load creator', type: 'error' });
+    } finally {
+      setLoading(false);
+      setInitialLoad(false);
+    }
+  }, []);
+
+  const handleToggleFollow = useCallback(async (creator: MarketplaceCreatorProfile) => {
+    setFollowLoading(true);
+    try {
+      const token = await getToken();
+      if (!token) {
+        setToast({ message: 'Please sign in to follow creators', type: 'error' });
+        return;
+      }
+
+      const api = getMarketplaceApi(() => token);
+      const res = creator.is_following
+        ? await api.unfollowCreator(creator.handle)
+        : await api.followCreator(creator.handle);
+
+      if (res.ok && res.creator) {
+        syncCreatorState(res.creator);
+        setToast({ message: res.creator.is_following ? `Following ${res.creator.display_name}` : `Unfollowed ${res.creator.display_name}`, type: 'success' });
+      } else {
+        setToast({ message: res.error || 'Failed to update follow status', type: 'error' });
+      }
+    } catch (e: any) {
+      console.error(e);
+      setToast({ message: e?.message || 'Failed to update follow status', type: 'error' });
+    } finally {
+      setFollowLoading(false);
+    }
+  }, [syncCreatorState]);
 
   const loadCategories = async () => {
     try {
@@ -1477,6 +2346,7 @@ export function MarketplaceBrowser({
       const api = getMarketplaceApi(() => token);
       const res = await api.getFeatured();
       if (res.ok) {
+        setSelectedCreator(null);
         setWorkflows(res.workflows);
       } else {
         setError(res.error || 'Failed to load workflows');
@@ -1498,6 +2368,7 @@ export function MarketplaceBrowser({
 
     setLoading(true);
     setError(null);
+    setSelectedCreator(null);
     try {
       const token = await getToken();
       const api = getMarketplaceApi(() => token);
@@ -1603,28 +2474,53 @@ export function MarketplaceBrowser({
     }
   };
 
+  const featuredHero = !search.trim() && category === 'all' ? workflows[0] : null;
+  const browseWorkflows = featuredHero ? workflows.slice(1) : workflows;
+
   return (
     <>
-      <ModalShell title="Workflow Marketplace" onClose={onClose} maxWidth="max-w-5xl">
-        {selectedWorkflow ? (
+      <ModalShell title="Workflow Marketplace" onClose={onClose} maxWidth="max-w-6xl">
+        {selectedCreator ? (
+          <CreatorDetail
+            creator={selectedCreator}
+            workflows={creatorWorkflows}
+            onBack={() => setSelectedCreator(null)}
+            onSelectWorkflow={(workflow) => {
+              setSelectedCreator(null);
+              setSelectedWorkflow(workflow);
+            }}
+            onToggleFollow={handleToggleFollow}
+            followLoading={followLoading}
+          />
+        ) : selectedWorkflow ? (
           <WorkflowDetail
             workflow={selectedWorkflow}
             onBack={() => setSelectedWorkflow(null)}
             onImport={handleImportWorkflow}
             onRate={handleRateWorkflow}
+            onOpenCreator={handleOpenCreator}
+            onToggleFollow={handleToggleFollow}
+            followLoading={followLoading}
           />
         ) : (
-          <div className="flex flex-col h-[70vh]">
+          <div className="flex flex-col h-[74vh] bg-slate-100">
             {/* Search Header */}
-            <div className="p-5 border-b border-white/[0.08] bg-white/[0.04] space-y-4 shrink-0">
+            <div className="shrink-0 border-b border-slate-200 bg-white px-6 py-5 shadow-sm">
+              <div className="mb-4 flex items-center justify-between gap-4">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-600">Stuard Store</div>
+                  <h2 className="mt-1 text-2xl font-bold text-slate-900">Discover workflows from creators</h2>
+                  <p className="mt-1 text-sm text-slate-500">Browse featured automations, follow creators, and install polished workflows.</p>
+                </div>
+              </div>
               <div className="flex gap-4">
                 <div className="relative flex-1">
-                  <Search className="absolute left-3 top-2.5 w-5 h-5 text-white/40" />
+                  <Search className="absolute left-3 top-2.5 w-5 h-5 text-slate-400" />
                   <input
                     type="text"
                     value={search}
                     onChange={e => setSearch(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 border border-white/[0.08] rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm shadow-sm transition-all"
+                    className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm text-slate-900 shadow-sm transition-all focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                     placeholder="Search for workflows..."
                   />
                 </div>
@@ -1632,23 +2528,23 @@ export function MarketplaceBrowser({
                   <select
                     value={category}
                     onChange={e => setCategory(e.target.value)}
-                    className="px-4 py-2.5 border border-white/[0.08] rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm bg-white/[0.04] shadow-sm min-w-[150px] appearance-none pr-8 cursor-pointer hover:bg-white/[0.06] transition-colors"
+                    className="min-w-[170px] appearance-none rounded-xl border border-slate-200 bg-white px-4 py-2.5 pr-8 text-sm text-slate-900 shadow-sm transition-colors focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                   >
                     <option value="all">All Categories</option>
                     {categories.map(c => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
-                  <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-white/40">
+                  <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
                     <ChevronRight className="w-4 h-4 rotate-90" />
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+              <div className="mt-4 flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
                 <button
                   onClick={() => { setCategory('all'); setSearch(''); }}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium border whitespace-nowrap transition-all ${category === 'all' && !search ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white/[0.04] text-white/70 border-white/[0.08] hover:border-indigo-200 hover:text-indigo-600'}`}
+                  className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium transition-all ${category === 'all' && !search ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-indigo-600'}`}
                 >
                   All
                 </button>
@@ -1656,7 +2552,7 @@ export function MarketplaceBrowser({
                   <button
                     key={c.id}
                     onClick={() => setCategory(c.id)}
-                    className={`px-3 py-1.5 rounded-full text-xs font-medium border whitespace-nowrap transition-all ${category === c.id ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white/[0.04] text-white/70 border-white/[0.08] hover:border-indigo-200 hover:text-indigo-600'}`}
+                    className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium transition-all ${category === c.id ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-indigo-600'}`}
                   >
                     {c.name}
                   </button>
@@ -1665,9 +2561,9 @@ export function MarketplaceBrowser({
             </div>
 
             {/* Results Grid */}
-            <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
+            <div className="flex-1 overflow-y-auto p-6 md:p-8">
               {loading ? (
-                <div className="flex flex-col items-center justify-center h-full gap-3 text-white/40">
+                <div className="flex h-full flex-col items-center justify-center gap-3 text-slate-500">
                   <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
                   <span className="text-sm">{initialLoad ? 'Loading marketplace...' : 'Searching...'}</span>
                 </div>
@@ -1677,38 +2573,79 @@ export function MarketplaceBrowser({
                     <AlertCircle className="w-8 h-8 text-rose-400" />
                   </div>
                   <div className="text-center">
-                    <p className="font-medium text-white">Something went wrong</p>
-                    <p className="text-sm text-white/50 mt-1 max-w-xs">{error}</p>
+                    <p className="font-medium text-slate-900">Something went wrong</p>
+                    <p className="mt-1 max-w-xs text-sm text-slate-500">{error}</p>
                     <button
                       onClick={loadFeatured}
-className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                      className="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
                     >
                       Try again
                     </button>
                   </div>
                 </div>
               ) : workflows.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                  {workflows.map(w => (
-                    <WorkflowCard
-                      key={w.id}
-                      workflow={w}
-                      onClick={() => setSelectedWorkflow(w)}
-                    />
-                  ))}
+                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  {featuredHero ? (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedWorkflow(featuredHero)}
+                      className="relative overflow-hidden rounded-[32px] border border-slate-200 bg-slate-950 text-left text-white shadow-xl"
+                    >
+                      {featuredHero.cover_image_url || featuredHero.thumbnail_url ? (
+                        <img src={featuredHero.cover_image_url || featuredHero.thumbnail_url || ''} alt={featuredHero.name} className="absolute inset-0 h-full w-full object-cover" />
+                      ) : null}
+                      <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/80 to-slate-950/35" />
+                      <div className="relative grid gap-6 p-8 lg:grid-cols-[1.3fr_0.7fr] lg:items-end">
+                        <div className="max-w-2xl">
+                          <div className="mb-3 inline-flex rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/80">Featured workflow</div>
+                          <h3 className="text-3xl font-bold tracking-tight">{featuredHero.name}</h3>
+                          <p className="mt-3 text-sm leading-7 text-white/85">{featuredHero.description}</p>
+                          <div className="mt-5 flex flex-wrap items-center gap-4 text-sm text-white/80">
+                            <span className="flex items-center gap-1.5"><User className="h-4 w-4" />{featuredHero.creator?.display_name || featuredHero.publisher_name}</span>
+                            <span className="flex items-center gap-1.5"><Download className="h-4 w-4" />{featuredHero.download_count} installs</span>
+                            <span className="flex items-center gap-1.5"><Star className="h-4 w-4 fill-current text-amber-300" />{featuredHero.rating_count ? Number(featuredHero.rating_avg).toFixed(1) : 'New'}</span>
+                          </div>
+                        </div>
+                        <div className="flex justify-end">
+                          <div className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold shadow-lg shadow-blue-500/25">
+                            View listing
+                            <ChevronRight className="h-4 w-4" />
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  ) : null}
+
+                  <div>
+                    <div className="mb-4 flex items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-900">{search.trim() || category !== 'all' ? 'Results' : 'Popular workflows'}</h3>
+                        <p className="mt-1 text-sm text-slate-500">Discover ready-to-install automations from the Stuard community.</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+                      {browseWorkflows.map(w => (
+                        <WorkflowCard
+                          key={w.id}
+                          workflow={w}
+                          onClick={() => setSelectedWorkflow(w)}
+                        />
+                      ))}
+                    </div>
+                  </div>
                 </div>
               ) : search.trim() || category !== 'all' ? (
                 // Search with no results
-                <div className="flex flex-col items-center justify-center h-full gap-4 text-white/40">
-                  <div className="w-16 h-16 rounded-full bg-white/[0.06] flex items-center justify-center">
+                <div className="flex h-full flex-col items-center justify-center gap-4 text-slate-500">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm">
                     <Search className="w-8 h-8 text-slate-300" />
                   </div>
                   <div className="text-center">
-                    <p className="font-medium text-white">No workflows found</p>
-                    <p className="text-sm mt-1">Try different search terms or browse all categories</p>
+                    <p className="font-medium text-slate-900">No workflows found</p>
+                    <p className="mt-1 text-sm">Try different search terms or browse all categories</p>
                     <button
                       onClick={() => { setSearch(''); setCategory('all'); }}
-                      className="mt-4 px-4 py-2 border border-white/[0.12] text-white/80 rounded-lg text-sm font-medium hover:bg-white/[0.04] hover:shadow-sm transition-all"
+                      className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-all hover:border-indigo-200 hover:text-indigo-600"
                     >
                       Clear filters
                     </button>
@@ -1716,13 +2653,13 @@ className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium 
                 </div>
               ) : (
                 // Empty marketplace - encourage publishing
-                <div className="flex flex-col items-center justify-center h-full gap-6 text-center px-8">
-                  <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-indigo-100 to-violet-50 flex items-center justify-center shadow-sm border border-indigo-100">
+                <div className="flex h-full flex-col items-center justify-center gap-6 px-8 text-center">
+                  <div className="flex h-24 w-24 items-center justify-center rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-100 to-violet-50 shadow-sm">
                     <Rocket className="w-12 h-12 text-indigo-500" />
                   </div>
                   <div>
-                    <h3 className="text-xl font-bold text-white mb-2">The marketplace is waiting for you!</h3>
-                    <p className="text-sm text-white/70 max-w-md leading-relaxed">
+                    <h3 className="mb-2 text-xl font-bold text-slate-900">The marketplace is waiting for you!</h3>
+                    <p className="max-w-md text-sm leading-relaxed text-slate-500">
                       Be the first to share your workflows with the community.
                       Create powerful automations and help others save time.
                     </p>

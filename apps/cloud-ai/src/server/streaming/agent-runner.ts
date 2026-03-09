@@ -7,6 +7,13 @@ import { withClientBridge } from '../../tools/bridge';
 import { routeModel, ModelChoice } from '../../router/model-router';
 import { writeLog } from '../../utils/logger';
 import { normalizeUsage } from '../../utils/usage';
+import { computeBudget, estimateTokens } from '../../memory/token-budget';
+import {
+  emergencyTruncate,
+  generateMidTurnSummary,
+  getRecentWithinBudget,
+  pruneToolOutputs,
+} from '../../memory/context-compactor';
 
 /** Max retries when the model calls a bad/missing tool or sends invalid args */
 const MAX_TOOL_ERROR_RETRIES = 3;
@@ -168,6 +175,12 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
     (typeof message.modelId === 'string' && message.modelId.trim())
       ? message.modelId.trim()
       : pickDefaultModelId(message.modelConfig, model);
+  const budget = computeBudget(chosenModelId || model);
+  pruneToolOutputs(history as any[], budget);
+  if (estimateTokens(history as any[]).totalTokens > budget.historyBudget) {
+    emergencyTruncate(history as any[], budget);
+  }
+  const effectiveHistory = getRecentWithinBudget(history as any[], budget);
 
   // Notify UI of final model decision (tier + optional concrete provider modelId)
   try {
@@ -209,8 +222,8 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       const userContent = contextPrefix + message.text;
       const buildInput = (extraMessages?: Array<{ role: string; content: string }>) => {
         const extra = extraMessages || [];
-        if (history.length > 0 || extra.length > 0) {
-          const base = [...history, ...extra, { role: 'user', content: userContent }];
+        if (effectiveHistory.length > 0 || extra.length > 0) {
+          const base = [...effectiveHistory, ...extra, { role: 'user', content: userContent }];
           if (agentType === 'workflow') {
             return [{ role: 'system', content: WORKFLOW_SYSTEM_PROMPT }, ...base];
           }
@@ -234,9 +247,46 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       // Build stream options
       // Workflow agent needs more steps for tool discovery and testing
       const maxToolSteps = (agentType === 'workflow' || agentType === 'skill') ? 60 : 40;
+      let cumulativeInputTokens = 0;
+      let currentTurnStartIndex = 0;
+      let midTurnCompacted = false;
       const streamOptions: any = {
         maxSteps: maxToolSteps,
         abortSignal: abortController.signal,
+        prepareStep: async ({ messages, stepNumber }: any) => {
+          if (!Array.isArray(messages) || stepNumber <= 1 || midTurnCompacted) {
+            return {};
+          }
+
+          const estimate = estimateTokens(messages as any[]);
+          if (estimate.totalTokens < budget.historyBudget * 0.85) {
+            return {};
+          }
+
+          const safeCurrentTurnStart = Math.max(1, Math.min(currentTurnStartIndex, messages.length));
+          const preTurnMessages = messages.slice(0, safeCurrentTurnStart) as any[];
+          if (preTurnMessages.length < 4) {
+            return {};
+          }
+
+          try {
+            console.log(`[compactor] Mid-turn compaction at step ${stepNumber}: ${estimate.totalTokens} tokens`);
+            const summary = await generateMidTurnSummary(preTurnMessages);
+            messages.splice(0, safeCurrentTurnStart, { role: 'system', content: summary });
+            midTurnCompacted = true;
+            console.log(`[compactor] Mid-turn compacted: ${estimateTokens(messages as any[]).totalTokens} tokens remaining`);
+          } catch (err) {
+            console.warn('[compactor] Mid-turn summarization failed, falling back to pruning:', err);
+            pruneToolOutputs(messages as any[], budget);
+          }
+
+          return {};
+        },
+        onStepFinish: ({ usage: stepUsage }: any) => {
+          if (!stepUsage) return;
+          const normalized = normalizeUsage(stepUsage);
+          cumulativeInputTokens += normalized.promptTokens;
+        },
       };
 
       // Enable thinking/reasoning streams for supported providers.
@@ -244,13 +294,31 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         (['none', 'low', 'medium', 'high'].includes(message.reasoningLevel || '') ? message.reasoningLevel : 'high') as any;
 
       // ---------- Google Gemini thinking ----------
-      if (chosenModelId?.includes('google/gemini-3') || chosenModelId?.includes('google/gemini-2.5')) {
+      const isGemini3 = chosenModelId?.includes('google/gemini-3');
+      const isGemini25 = chosenModelId?.includes('google/gemini-2.5');
+      if (isGemini25) {
+        const gemini25Budget: Record<'none' | 'low' | 'medium' | 'high', number> = {
+          none: 0,
+          low: 1024,
+          medium: 8192,
+          high: 24576,
+        };
         streamOptions.providerOptions = {
           ...(streamOptions.providerOptions || {}),
           google: {
             thinkingConfig: {
-              thinkingLevel: reasoningLevel,
+              thinkingBudget: gemini25Budget[reasoningLevel],
               includeThoughts: reasoningLevel !== 'none',
+            },
+          },
+        };
+      } else if (isGemini3 && reasoningLevel !== 'none') {
+        streamOptions.providerOptions = {
+          ...(streamOptions.providerOptions || {}),
+          google: {
+            thinkingConfig: {
+              thinkingLevel: reasoningLevel as 'low' | 'medium' | 'high',
+              includeThoughts: true,
             },
           },
         };
@@ -287,8 +355,8 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       // ---------- OpenAI reasoning effort ----------
       if (chosenModelId?.includes('openai/')) {
         const modelPart = (chosenModelId || '').split('/').pop() || '';
-        const supportsEffort = /^(o[1-9]|gpt-5-pro|gpt-5\.1)/.test(modelPart);
-        if (supportsEffort && reasoningLevel !== 'none') {
+        const supportsEffort = /^(o[1-9]|gpt-5(?:$|[-.]))/.test(modelPart);
+        if (supportsEffort) {
           streamOptions.providerOptions = {
             ...(streamOptions.providerOptions || {}),
             openai: {
@@ -309,7 +377,9 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
             ? [{ role: 'assistant', content: fullText || 'I tried to use a tool.' },
                { role: 'user', content: `[System: Tool call failed] ${toolErrorHistory[toolErrorHistory.length - 1]}. Please use only the tools available to you. Do NOT invent or guess tool names.` }]
             : undefined;
-          const input = buildInput(extraMessages);
+          const input = buildInput(extraMessages) as any;
+          currentTurnStartIndex = Array.isArray(input) ? input.length : 1;
+          midTurnCompacted = false;
 
           // Get stream result from Mastra
           const streamResult: any = await agent.stream(input, streamOptions);
@@ -447,11 +517,27 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         }
       }
 
+      if (usage) {
+        const promptTokens = Math.max(usage.promptTokens || 0, cumulativeInputTokens);
+        usage = {
+          ...usage,
+          promptTokens,
+          totalTokens: Math.max(usage.totalTokens || 0, promptTokens + (usage.completionTokens || 0)),
+        };
+      } else if (cumulativeInputTokens > 0) {
+        usage = {
+          promptTokens: cumulativeInputTokens,
+          completionTokens: 0,
+          totalTokens: cumulativeInputTokens,
+        };
+      }
+
       // Send final message
       send(ws, {
         type: 'final',
-        result: { text: fullText, response: fullText, usage },
-        usage
+        model: chosenModelId || model,
+        result: { text: fullText, response: fullText, usage, modelId: chosenModelId || model },
+        usage,
       });
 
       resultText = fullText;
@@ -462,7 +548,8 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         console.log('[AgentRunner] Stream aborted by user');
         send(ws, {
           type: 'final',
-          result: { text: fullText || '(Stopped)', response: fullText || '(Stopped)' },
+          model: chosenModelId || model,
+          result: { text: fullText || '(Stopped)', response: fullText || '(Stopped)', modelId: chosenModelId || model },
           aborted: true
         });
         resultText = fullText || '(Stopped)';
@@ -516,7 +603,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
             : (isHallucination
               ? `I attempted to use a tool called "${toolError.toolName}" that doesn't exist. Please try rephrasing your request, and I'll use only the tools available to me.`
               : `The tool "${toolError.toolName}" failed: ${toolError.message}. Let me try a different approach.`);
-          send(ws, { type: 'final', result: { text: errorText, response: errorText } });
+          send(ws, { type: 'final', model: chosenModelId || model, result: { text: errorText, response: errorText, modelId: chosenModelId || model } });
           resultText = errorText;
           return;
         }
@@ -555,14 +642,14 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
           } catch { }
 
           const finalText = `Tool call failed: ${errMsg}. Please retry.`;
-          send(ws, { type: 'final', result: { text: finalText, response: finalText } });
+          send(ws, { type: 'final', model: chosenModelId || model, result: { text: finalText, response: finalText, modelId: chosenModelId || model } });
           resultText = finalText;
           return;
         }
 
         // Send what we have if any
         if (fullText) {
-          send(ws, { type: 'final', result: { text: fullText, response: fullText } });
+          send(ws, { type: 'final', model: chosenModelId || model, result: { text: fullText, response: fullText, modelId: chosenModelId || model } });
           resultText = fullText;
         } else {
           send(ws, { type: 'error', message: error.message || 'Agent execution failed' });

@@ -9,6 +9,7 @@ import { web_search } from './perplexity-tools';
 import { scrape_url } from './tavily-tools';
 import * as deviceTools from './device-tools';
 import * as googleTools from './google-tools';
+import * as ocrTools from './ocr-tools';
 import * as httpTools from './http-tools';
 import * as marketplaceTools from './marketplace-tools';
 import * as ttsTools from './tts-tools';
@@ -16,7 +17,7 @@ import { generate_image } from './image-gen';
 import { ask_user } from './ask-user';
 import { generateText, generateObject } from 'ai';
 import { openai } from '@ai-sdk/openai';
-import { google } from '@ai-sdk/google';
+import { google } from '../utils/models';
 import { writeLog } from '../utils/logger';
 import { getToolRegistry, getToolMetadata } from './tool-registry';
 
@@ -170,6 +171,12 @@ function getCloudTools(): Map<string, any> {
     }
   }
   for (const v of Object.values(googleTools as any)) {
+    const maybe = v as any;
+    if (maybe && typeof maybe === 'object' && typeof maybe.execute === 'function' && typeof maybe.name === 'string') {
+      add(maybe);
+    }
+  }
+  for (const v of Object.values(ocrTools as any)) {
     const maybe = v as any;
     if (maybe && typeof maybe === 'object' && typeof maybe.execute === 'function' && typeof maybe.name === 'string') {
       add(maybe);

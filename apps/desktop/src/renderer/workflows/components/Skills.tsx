@@ -15,6 +15,8 @@ import { TOOL_SCHEMAS, getCategories } from "../constants/tool-schemas";
 import { ChatHistory } from "./chat/ChatHistory";
 import { ChatInput, ChatInputRef } from "./chat/ChatInput";
 import { useSkillChat } from "../hooks/useSkillChat";
+import { useModelRegistry } from "../../hooks/useModelRegistry";
+import { buildContextUsageMetrics } from "../../utils/contextUsage";
 
 // ============================================================================
 // TYPES
@@ -311,7 +313,7 @@ export function SkillsLibrary({
             <Brain className="w-4 h-4 text-slate-600" />
           </div>
           <div className="flex items-baseline gap-1.5">
-            <span className="text-sm text-white font-medium">
+            <span className="text-sm text-slate-800 font-medium">
               {skills.filter(s => s.isActive).length} active
             </span>
             <span className="text-xs text-slate-500">
@@ -364,7 +366,7 @@ export function SkillsLibrary({
                         <IconComponent className={`w-5 h-5 ${colorClasses.icon}`} />
                       </div>
                       <div>
-                        <h3 className="font-semibold text-white text-sm">{skill.name}</h3>
+                        <h3 className="font-semibold text-slate-800 text-sm">{skill.name}</h3>
                         <div className="flex items-center gap-2 mt-0.5">
                           <span className="text-xs text-slate-500">{skill.steps.length} steps</span>
                         </div>
@@ -464,6 +466,12 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp }: SkillEdito
     onApplySkill: applySkillUpdates,
     cloudAiHttp,
   });
+  const { modelById } = useModelRegistry();
+  const skillContextMetrics = useMemo(() => buildContextUsageMetrics({
+    usage: skillChat.latestUsage,
+    modelId: skillChat.latestModelId,
+    modelById,
+  }), [modelById, skillChat.latestModelId, skillChat.latestUsage]);
 
   const updateSkill = (updates: Partial<Skill>) => {
     setEditedSkill(prev => ({ ...prev, ...updates }));
@@ -511,7 +519,7 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp }: SkillEdito
   const colorClasses = getSkillColorClasses(editedSkill.color);
 
   return (
-    <div className="flex-1 flex bg-[#F4F4F5] h-screen w-screen overflow-hidden text-white font-sans">
+    <div className="flex-1 flex bg-[#F4F4F5] h-screen w-screen overflow-hidden text-slate-900 font-sans">
       
       {/* Left Panel - Skill Settings */}
       <div className="w-[320px] flex flex-col bg-white border-r border-slate-200 overflow-hidden shrink-0 z-10">
@@ -558,7 +566,7 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp }: SkillEdito
               type="text"
               value={editedSkill.name}
               onChange={(e) => updateSkill({ name: e.target.value })}
-              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-md text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 placeholder-slate-400"
+              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-md text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 placeholder-slate-400"
               placeholder="e.g., Code Reviewer"
             />
           </div>
@@ -570,7 +578,7 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp }: SkillEdito
               value={editedSkill.description}
               onChange={(e) => updateSkill({ description: e.target.value })}
               rows={3}
-              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-md text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none placeholder-slate-400"
+              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-md text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none placeholder-slate-400"
               placeholder="What does this skill do..."
             />
           </div>
@@ -584,7 +592,7 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp }: SkillEdito
               value={editedSkill.trigger}
               onChange={(e) => updateSkill({ trigger: e.target.value })}
               rows={2}
-              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-md text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none placeholder-slate-400 font-mono text-xs"
+              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-md text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none placeholder-slate-400 font-mono text-xs"
               placeholder="When the user asks to..."
             />
             <p className="text-[10px] text-slate-500">Natural language trigger instruction for the orchestrator agent.</p>
@@ -599,7 +607,7 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp }: SkillEdito
                   <button
                     key={name}
                     onClick={() => updateSkill({ icon: name })}
-                    className={`p-2 rounded-md border transition-colors ${editedSkill.icon === name ? 'bg-slate-50 border-slate-400 text-white' : 'bg-white border-transparent text-slate-500 hover:bg-slate-50'}`}
+                    className={`p-2 rounded-md border transition-colors ${editedSkill.icon === name ? 'bg-slate-50 border-slate-400 text-slate-800 shadow-sm' : 'bg-white border-transparent text-slate-500 hover:bg-slate-50'}`}
                   >
                     <Icon className="w-4 h-4" />
                   </button>
@@ -783,7 +791,7 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp }: SkillEdito
                                           setToolSearchOpen(null);
                                           setToolSearch("");
                                         }}
-                                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-colors ${step.toolName === tool.id ? 'bg-slate-50 text-white' : 'text-slate-700/80 hover:bg-slate-50'}`}
+                                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-colors ${step.toolName === tool.id ? 'bg-indigo-50 text-slate-900' : 'text-slate-700/80 hover:bg-slate-50'}`}
                                       >
                                         <tool.icon className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                                         <span className="font-medium text-xs truncate">{tool.name}</span>
@@ -857,13 +865,13 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp }: SkillEdito
                 <Bot className="w-3.5 h-3.5 text-indigo-400" />
               </div>
               <div>
-                <h3 className="text-[13px] font-semibold text-slate-800">Skill Architect</h3>
+                <h3 className="text-[13px] font-semibold text-white">Skill Architect</h3>
                 <p className="text-[10px] text-slate-400">Describe your skill or ask for changes</p>
               </div>
             </div>
             <button
               onClick={() => setShowAI(false)}
-              className="p-1.5 rounded-md text-white/30 hover:text-slate-900/60 hover:bg-slate-50 transition-colors"
+              className="p-1.5 rounded-md text-white/40 hover:text-white hover:bg-white/10 transition-colors"
             >
               <X className="w-4 h-4" />
             </button>
@@ -886,6 +894,7 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp }: SkillEdito
               onSend={skillChat.sendMessage}
               busy={skillChat.busy}
               onStop={skillChat.stopGeneration}
+              contextMetrics={skillContextMetrics}
             />
           </div>
         </div>

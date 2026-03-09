@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { supabase, getValidAccessToken, ensureFreshToken, setupAutoRefresh } from '../auth/authManager';
+import { supabase, getValidAccessToken, getFastAccessToken, ensureFreshToken, setupAutoRefresh } from '../auth/authManager';
+import { fetchRendererSyncPrefs } from '../utils/syncPrefs';
+import { agentFetchJson, resolveAgentEndpoints } from '../utils/agentEndpoints';
 import type { ChatMode, ChatModelsConfig } from './usePreferences';
 
 const DEFAULT_TAB_CHAT_MODE: ChatMode = 'auto';
@@ -34,6 +36,11 @@ const HIDDEN_TOOL_NAMES = new Set([
   'knowledge_list_entities',
   'knowledge_search_facts',
   'knowledge_get_entity_context',
+  'knowledge_add_fact',
+  'knowledge_upsert_core',
+  'knowledge_find_entity',
+  'knowledge_create_entity',
+  'knowledge_upsert_procedural',
 
   // Pending memories (shown in dedicated UI, should not appear as tool pills)
   'pending_memory_create',
@@ -255,6 +262,64 @@ function normalizeChatError(input: { code?: any; message?: any; data?: any }): {
   };
 }
 
+function getLoadedConversationTime(value: { created_at?: string; timestamp?: number } | null | undefined): number {
+  const direct = typeof value?.timestamp === 'number' ? value.timestamp : NaN;
+  if (Number.isFinite(direct)) return direct;
+  const parsed = Date.parse(String(value?.created_at || ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function repairLoadedConversationRows<T extends { role?: string; turn_index?: number; created_at?: string; timestamp?: number }>(rows: T[]): T[] {
+  const sorted = [...rows].sort((a, b) => {
+    const aTurn = Number(a?.turn_index);
+    const bTurn = Number(b?.turn_index);
+    const aHasTurn = Number.isFinite(aTurn);
+    const bHasTurn = Number.isFinite(bTurn);
+
+    if (aHasTurn || bHasTurn) {
+      if (aHasTurn && bHasTurn && aTurn !== bTurn) return aTurn - bTurn;
+      if (aHasTurn !== bHasTurn) return aHasTurn ? -1 : 1;
+    }
+
+    return getLoadedConversationTime(a) - getLoadedConversationTime(b);
+  });
+
+  const messageIndices = sorted
+    .map((row, index) => ({
+      index,
+      role: row?.role === 'assistant' || row?.role === 'user' ? row.role : null,
+    }))
+    .filter((item): item is { index: number; role: 'assistant' | 'user' } => item.role === 'assistant' || item.role === 'user');
+
+  if (messageIndices.length < 2 || messageIndices[0].role !== 'assistant' || messageIndices[1].role !== 'user') {
+    return sorted;
+  }
+
+  let checkedPairs = 0;
+  let reversedPairs = 0;
+  for (let i = 0; i + 1 < messageIndices.length; i += 2) {
+    checkedPairs += 1;
+    if (messageIndices[i].role === 'assistant' && messageIndices[i + 1].role === 'user') {
+      reversedPairs += 1;
+    }
+  }
+
+  if (reversedPairs < Math.max(1, Math.ceil(checkedPairs / 2))) {
+    return sorted;
+  }
+
+  const repaired = [...sorted];
+  for (let i = 0; i + 1 < messageIndices.length; i += 2) {
+    const first = messageIndices[i];
+    const second = messageIndices[i + 1];
+    if (first.role === 'assistant' && second.role === 'user') {
+      [repaired[first.index], repaired[second.index]] = [repaired[second.index], repaired[first.index]];
+    }
+  }
+
+  return repaired;
+}
+
 interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -263,6 +328,8 @@ interface Message {
   reasoningDuration?: number; // in seconds
   toolCalls?: ToolCall[]; // Tool calls made during this response
   streamChunks?: StreamChunk[]; // Interleaved chunks for display
+  usage?: Record<string, any>;
+  modelId?: string;
   timestamp?: number;
   contextPaths?: ContextPath[]; // Files/folders attached via @ mention
   modifiedFiles?: string[]; // Paths of files modified during this turn
@@ -493,6 +560,7 @@ export function useAgent(options?: string | UseAgentOptions) {
   const reasoningStartTimeRef = useRef<number | null>(null); // Track when reasoning started
   const modifiedFilesRef = useRef<Set<string>>(new Set()); // Track files modified in current turn
   const turnCheckpointIdRef = useRef<string | null>(null); // Checkpoint ID for current turn
+  const turnCheckpointPromiseRef = useRef<Promise<string | null> | null>(null);
 
   // File-modifying tool names
   const FILE_MODIFYING_TOOLS = new Set([
@@ -500,6 +568,37 @@ export function useAgent(options?: string | UseAgentOptions) {
     'create_directory', 'edit_and_apply', 'edit_file', 'file_edit', 'patch_file',
     'run_command', 'run_system_command', 'run_python_script', 'run_node_script',
   ]);
+
+  const ensureTurnCheckpoint = useCallback(async (): Promise<string | null> => {
+    if (turnCheckpointIdRef.current) {
+      return turnCheckpointIdRef.current;
+    }
+    if (turnCheckpointPromiseRef.current) {
+      return await turnCheckpointPromiseRef.current;
+    }
+
+    const promise = (async () => {
+      try {
+        if ((window as any).desktopAPI?.execTool) {
+          const cpResult = await (window as any).desktopAPI.execTool('checkpoint_create', { name: 'auto_turn' });
+          if (cpResult?.ok && cpResult?.id) {
+            turnCheckpointIdRef.current = cpResult.id;
+            return cpResult.id as string;
+          }
+        }
+      } catch (e) {
+        console.warn('[agent] Failed to create turn checkpoint:', e);
+      }
+      return null;
+    })();
+
+    turnCheckpointPromiseRef.current = promise;
+    const id = await promise;
+    if (turnCheckpointPromiseRef.current === promise) {
+      turnCheckpointPromiseRef.current = null;
+    }
+    return id;
+  }, []);
 
   // Tab Management
   const addTab = useCallback((tab: Partial<ConversationTab> = {}) => {
@@ -707,14 +806,15 @@ export function useAgent(options?: string | UseAgentOptions) {
 
   const deleteConversation = useCallback(async (id: string) => {
     try {
-      const target = customAgentUrl ? customAgentUrl.replace('/ws', '') : 'http://127.0.0.1:8765';
-      const resp = await fetch(`${target}/v1/memory/conversations/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
-      const result = await resp.json();
+      const agentEndpoints = resolveAgentEndpoints(customAgentUrl);
+      const result = await agentFetchJson(
+        agentEndpoints,
+        `/v1/memory/conversations/${encodeURIComponent(id)}`,
+        {
+          method: 'DELETE',
+          accessToken: agentEndpoints.usesVmRelay ? await getValidAccessToken() : null,
+        },
+      );
       if (result.ok) {
         // If the deleted conversation is in a tab, clear it or close it
         setTabs(prev => {
@@ -763,6 +863,7 @@ export function useAgent(options?: string | UseAgentOptions) {
   const tryDequeueAndSend = useCallback(() => {
     try {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+      if (runningTabsRef.current.size > 0) return;
 
       // Find the next queued item for a tab that isn't already running
       const nextIdx = outboundQueueRef.current.findIndex(item => !runningTabsRef.current.has(item.tabId));
@@ -799,9 +900,6 @@ export function useAgent(options?: string | UseAgentOptions) {
       setTabs(prev => prev.map(t =>
         t.id === targetTabId ? { ...t, aiState: { phase: 'routing', statusText: 'Thinking…' } } : t
       ));
-
-      // Try to send more messages for other tabs (parallel processing)
-      tryDequeueAndSend();
     } catch { }
   }, []);
 
@@ -813,28 +911,13 @@ export function useAgent(options?: string | UseAgentOptions) {
     setAI({ phase: 'connecting', statusText: 'Connecting…' });
 
     try {
-      const w: any = window as any;
-      const hintedWs = String(w.__AGENT_WS__ || '').trim();
-      const hintedHttp = String(w.__AGENT_HTTP__ || '').trim();
-      const httpToWs = (httpUrl: string) => {
-        try {
-          let wsBase = httpUrl.replace(/\/+$/, '');
-          if (wsBase.startsWith('https://')) wsBase = 'wss://' + wsBase.slice('https://'.length);
-          else if (wsBase.startsWith('http://')) wsBase = 'ws://' + wsBase.slice('http://'.length);
-          if (!wsBase.endsWith('/ws')) wsBase = wsBase + '/ws';
-          return wsBase;
-        } catch {
-          return '';
-        }
-      };
-      const hinted = hintedWs || (hintedHttp ? httpToWs(hintedHttp) : '');
-      const target = customAgentUrl || hinted || 'ws://127.0.0.1:8765/ws';
+      const target = resolveAgentEndpoints(customAgentUrl).wsUrl;
       // Append auth token to WS URL so the server can immediately register
       // this connection for webhook delivery (Gmail Pub/Sub, Drive, etc.)
       // without waiting for a chat message to be sent.
       let wsUrl = target;
       try {
-        const token = await getValidAccessToken();
+        const token = await getFastAccessToken();
         if (token) {
           const sep = wsUrl.includes('?') ? '&' : '?';
           wsUrl = `${wsUrl}${sep}client=desktop&token=${encodeURIComponent(token)}`;
@@ -880,9 +963,21 @@ export function useAgent(options?: string | UseAgentOptions) {
             setTabs(prev => prev.map(t => t.id === id ? updater(t) : t));
           };
 
+          const setStreamingState = (fn: AgentState | ((prev: AgentState) => AgentState)) => {
+            updateStreamingTab(t => ({ ...t, agentState: typeof fn === 'function' ? fn(t.agentState) : fn }));
+          };
+
           const setStreamingAI = (fn: AIStatus | ((prev: AIStatus) => AIStatus)) => {
             updateStreamingTab(t => ({ ...t, aiState: typeof fn === 'function' ? fn(t.aiState) : fn }));
           };
+
+          const hasTrackedRequestId = typeof msg.requestId === 'string' && requestIdToTabRef.current.has(msg.requestId);
+          const isStrictlyRoutedStreamMessage = msg.type === 'progress' || msg.type === 'final' || msg.type === 'error' || msg.type === 'stopped';
+
+          if (isStrictlyRoutedStreamMessage && !hasTrackedRequestId) {
+            console.log('[agent] Ignoring untracked stream message:', msg.type, msg.requestId || '(no requestId)');
+            return;
+          }
 
           if (msg.type === 'handshake') {
             console.log('[agent] Handshake:', msg.message);
@@ -890,7 +985,7 @@ export function useAgent(options?: string | UseAgentOptions) {
             // for webhook delivery (Gmail Pub/Sub, Drive triggers, etc.)
             (async () => {
               try {
-                const token = await getValidAccessToken();
+                const token = await getFastAccessToken();
                 if (token && wsRef.current?.readyState === WebSocket.OPEN) {
                   wsRef.current.send(JSON.stringify({ type: 'auth', accessToken: token }));
                 }
@@ -956,6 +1051,10 @@ export function useAgent(options?: string | UseAgentOptions) {
             if (id && tool) {
               (async () => {
                 try {
+                  if (FILE_MODIFYING_TOOLS.has(String(tool)) && !turnCheckpointIdRef.current) {
+                    await ensureTurnCheckpoint();
+                  }
+
                   // Execute via Main process
                   let result: any = {
                     ok: false,
@@ -1067,7 +1166,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                 if (prev.phase === 'tool' || prev.phase === 'responding') return prev;
                 return { phase: 'routing', model: typeof modelIndex === 'number' ? String(modelIndex) : undefined, statusText: 'Thinking…' };
               });
-              setState((s) => ({ ...s, status: s.status.startsWith('tool:') ? s.status : 'routing' }));
+              setStreamingState((s) => ({ ...s, status: s.status.startsWith('tool:') ? s.status : 'routing' }));
             } else if (evt.event === 'model') {
               const modelId = typeof evt.data?.modelId === 'string' ? evt.data.modelId : undefined;
               const tier = typeof evt.data?.tier === 'string' ? evt.data.tier : undefined;
@@ -1077,22 +1176,11 @@ export function useAgent(options?: string | UseAgentOptions) {
               }
             } else if (evt.event === 'start') {
               streamingConversationIdRef.current = conversationIdRef.current;
-              // Reset file tracking for new turn and create a checkpoint
+              // Reset per-turn file tracking. Checkpoints are created lazily only
+              // when a file-modifying tool is actually invoked.
               modifiedFilesRef.current = new Set();
               turnCheckpointIdRef.current = null;
-              // Create a checkpoint for this turn (async, non-blocking)
-              (async () => {
-                try {
-                  if ((window as any).desktopAPI?.execTool) {
-                    const cpResult = await (window as any).desktopAPI.execTool('checkpoint_create', { name: 'auto_turn' });
-                    if (cpResult?.ok && cpResult?.id) {
-                      turnCheckpointIdRef.current = cpResult.id;
-                    }
-                  }
-                } catch (e) {
-                  console.warn('[agent] Failed to create turn checkpoint:', e);
-                }
-              })();
+              turnCheckpointPromiseRef.current = null;
               // Promote appropriate user message into chat when processing actually starts
               if (waitingQueuedStartRef.current && queueDepthRef.current > 0) {
                 const first = queuedMessagesRef.current[0];
@@ -1126,7 +1214,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                 if (prev.phase === 'tool') return prev;
                 return { ...prev, phase: 'responding', statusText: 'Processing…' };
               });
-              setState((s) => ({ ...s, status: 'processing' }));
+              setStreamingState((s) => ({ ...s, status: 'processing' }));
             } else if (evt.event === 'reasoning_start') {
               // Reasoning started - track timing
               console.log('[agent] Reasoning started');
@@ -1135,7 +1223,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                 if (prev.phase === 'tool') return prev;
                 return { ...prev, phase: 'responding', statusText: 'Thinking…' };
               });
-              setState((s) => ({ ...s, status: 'reasoning' }));
+              setStreamingState((s) => ({ ...s, status: 'reasoning' }));
             } else if (evt.event === 'reasoning') {
               // Set start time if not set (in case reasoning_start wasn't received)
               if (!reasoningStartTimeRef.current) {
@@ -1174,7 +1262,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                 if (prev.phase === 'tool') return prev;
                 return { ...prev, phase: 'responding', statusText: 'Thinking…' };
               });
-              setState((s) => ({ ...s, status: 'reasoning' }));
+              setStreamingState((s) => ({ ...s, status: 'reasoning' }));
             } else if (evt.event === 'reasoning_end') {
               // Reasoning ended
               console.log('[agent] Reasoning ended');
@@ -1322,7 +1410,7 @@ export function useAgent(options?: string | UseAgentOptions) {
 
                     emitSyntheticTool(stepTool, syntheticId, 'called', evt.data?.args);
                     setStreamingAI({ phase: 'tool', tool: stepTool, toolStatus: 'running', statusText: `🔧 ${humanizeToolName(stepTool)} running…` });
-                    setState((s) => ({ ...s, status: `tool:running` }));
+                    setStreamingState((s) => ({ ...s, status: `tool:running` }));
                   } else if (normalizedStatus === 'step_completed' || normalizedStatus === 'step_error') {
                     const syntheticId = typeof isParallelIndex === 'number'
                       ? `wrap-${wrapperKey}:${isParallelIndex}`
@@ -1496,7 +1584,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                 } else {
                   setStreamingAI({ phase: 'tool', tool, toolStatus, statusText: `🔧 ${humanTool} ${actionText}` });
                 }
-                setState((s) => ({ ...s, status: `tool:${toolStatus}` }));
+                setStreamingState((s) => ({ ...s, status: `tool:${toolStatus}` }));
               }
             } else if (evt.event === 'delta') {
               // Ignore deltas if we've explicitly stopped - the abort signal was sent
@@ -1511,7 +1599,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                 }
                 return { ...prev, phase: 'responding', statusText: 'Responding…' };
               });
-              setState((s) => ({ ...s, status: 'responding' }));
+              setStreamingState((s) => ({ ...s, status: 'responding' }));
               const chunk = typeof evt.data?.text === 'string' ? evt.data.text : '';
               if (chunk) {
                 streamingRef.current = true;
@@ -1530,7 +1618,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                 });
               }
             } else {
-              setState((s) => ({ ...s, status: evt.event }));
+              setStreamingState((s) => ({ ...s, status: evt.event }));
             }
           } else if (msg.type === 'queued') {
             const pos = Number(msg.position || 0);
@@ -1553,11 +1641,17 @@ export function useAgent(options?: string | UseAgentOptions) {
               return nextList;
             });
             setStreamingAI((prev) => ({ ...prev, statusText: (Number.isFinite(pos) && pos > 0) ? `Queued (${pos})` : 'Queued' }));
-            setState((s) => ({ ...s, status: 'queued' }));
+            setStreamingState((s) => ({ ...s, status: 'queued' }));
           } else if (msg.type === 'final') {
             const result = msg.result || {};
             const isAborted = msg.aborted === true || result.finishReason === 'aborted';
             const text = result.response || result.text || '';
+            const finalUsage = result.usage && typeof result.usage === 'object' ? result.usage : undefined;
+            const finalModelId = typeof result.modelId === 'string'
+              ? result.modelId
+              : typeof msg.model === 'string'
+                ? msg.model
+                : undefined;
 
             // Calculate reasoning duration if we have a start time
             const reasoningDuration = reasoningStartTimeRef.current
@@ -1584,6 +1678,7 @@ export function useAgent(options?: string | UseAgentOptions) {
             // Reset tracking for next turn
             modifiedFilesRef.current = new Set();
             turnCheckpointIdRef.current = null;
+            turnCheckpointPromiseRef.current = null;
 
             // Always commit accumulated work into a message - even when text is empty
             // but tools were called or chunks streamed, so users see what happened.
@@ -1617,6 +1712,8 @@ export function useAgent(options?: string | UseAgentOptions) {
                   reasoningDuration: t.currentReasoning ? reasoningDuration : undefined,
                   toolCalls: finalizedToolCalls.length > 0 ? finalizedToolCalls : undefined,
                   streamChunks: finalizedStreamChunks.length > 0 ? finalizedStreamChunks : undefined,
+                  usage: finalUsage,
+                  modelId: finalModelId || t.aiState.model,
                   timestamp: Date.now(),
                   aborted: isAborted,
                   modifiedFiles: turnModifiedFiles,
@@ -1630,7 +1727,7 @@ export function useAgent(options?: string | UseAgentOptions) {
               };
             });
 
-            setState((s) => ({ ...s, status: 'idle' }));
+            setStreamingState((s) => ({ ...s, status: 'idle' }));
 
             refreshPendingMemories();
 
@@ -1638,6 +1735,9 @@ export function useAgent(options?: string | UseAgentOptions) {
             const completedTabId = getTargetTabId();
             if (msg.requestId) {
               requestIdToTabRef.current.delete(msg.requestId);
+              if (activeRequestIdRef.current === msg.requestId) {
+                activeRequestIdRef.current = null;
+              }
             }
             // Also remove from legacy FIFO queue if present
             const fifoIdx = pendingResponseTabsRef.current.indexOf(completedTabId);
@@ -1720,7 +1820,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                 data: { ...(msg.data || {}), message: normalizedError.userMessage, rawMessage: normalizedError.rawMessage }
               });
             }
-            setState((s) => ({ ...s, status: 'error' }));
+            setStreamingState((s) => ({ ...s, status: 'error' }));
 
             // Preserve any accumulated tool calls, stream chunks, and partial text
             // by committing them as an error assistant message instead of discarding them.
@@ -1776,6 +1876,9 @@ export function useAgent(options?: string | UseAgentOptions) {
             const completedTabId = getTargetTabId();
             if (msg.requestId) {
               requestIdToTabRef.current.delete(msg.requestId);
+              if (activeRequestIdRef.current === msg.requestId) {
+                activeRequestIdRef.current = null;
+              }
             }
             const fifoIdx = pendingResponseTabsRef.current.indexOf(completedTabId);
             if (fifoIdx !== -1) pendingResponseTabsRef.current.splice(fifoIdx, 1);
@@ -1909,8 +2012,8 @@ export function useAgent(options?: string | UseAgentOptions) {
         ));
       }
 
-      // Use auth manager to get a fresh token (proactively refreshes if expiring soon)
-      const accessToken = await getValidAccessToken();
+      const accessTokenPromise = getFastAccessToken();
+      const skillsPromise = window.desktopAPI?.skillsList?.().catch(() => null);
 
       const payload: any = {
         type: 'chat',
@@ -1951,7 +2054,10 @@ export function useAgent(options?: string | UseAgentOptions) {
       // Inject active skills into context for agent system prompt + tool execution.
       // Include steps so cloud get_skill_info can return actionable skill flows.
       try {
-        const skillsRes = await window.desktopAPI?.skillsList?.();
+        const skillsRes = await Promise.race([
+          skillsPromise,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 150)),
+        ]);
         if (skillsRes?.ok && Array.isArray(skillsRes.skills)) {
           const active = skillsRes.skills
             .filter((s: any) => s?.isActive)
@@ -2006,9 +2112,11 @@ export function useAgent(options?: string | UseAgentOptions) {
         payload.conversationId = targetConversationId;
         payload.memory = { ...(payload.memory || {}), thread: targetConversationId };
       }
-      if (resetConversationNextRef.current) {
+      const shouldResetConversation = resetConversationNextRef.current || (!targetConversationId && (currentTab?.messages.length ?? 0) <= 1);
+      if (shouldResetConversation) {
         payload.resetConversation = true;
       }
+      const accessToken = await accessTokenPromise;
       if (accessToken) {
         payload.auth = { accessToken };
       }
@@ -2092,6 +2200,10 @@ export function useAgent(options?: string | UseAgentOptions) {
     setTabs(prev => prev.map(t =>
       t.id === tab.id ? { ...t, messages: truncated } : t
     ));
+    // Sync ref immediately so sendMessage reads the truncated history (setTabs is async)
+    tabsRef.current = tabsRef.current.map(t =>
+      t.id === tab.id ? { ...t, messages: truncated } : t
+    );
 
     // Resend with the new text, preserving original context
     await sendMessage({
@@ -2132,10 +2244,9 @@ export function useAgent(options?: string | UseAgentOptions) {
     }
   }, []);
 
-  const loadConversation = useCallback(async (id: string) => {
+  const loadConversation = useCallback(async (id: string, titleHint?: string) => {
     console.log('[useAgent] loadConversation called with id:', id);
 
-    // Check if already open
     const existing = tabsRef.current.find(t => t.serverId === id);
     if (existing) {
       console.log('[useAgent] Conversation already open, switching to tab:', existing.id);
@@ -2143,43 +2254,58 @@ export function useAgent(options?: string | UseAgentOptions) {
       return;
     }
 
-    // Open a tab immediately so the click always has visible effect,
-    // then hydrate messages/title in the background.
-    const openedTabId = addTab({ serverId: id, title: 'Chat', messages: [] });
+    const initialTitle = typeof titleHint === 'string' && titleHint.trim() ? titleHint.trim() : 'Loading…';
+    const openedTabId = addTab({ serverId: id, title: initialTitle, messages: [] });
     console.log('[useAgent] Created new tab:', openedTabId);
 
-    const target = customAgentUrl ? customAgentUrl.replace('/ws', '') : 'http://127.0.0.1:8765';
+    const agentEndpoints = resolveAgentEndpoints(customAgentUrl);
     let loaded = false;
 
-    // Try local agent first (works offline, no auth required)
+    const buildLoadedMessages = (rows: any[]): { hist: Message[]; lastModelLabel?: string } => {
+      const orderedRows = repairLoadedConversationRows(rows);
+      let lastModelLabel: string | undefined;
+      const hist: Message[] = orderedRows.map((r: any) => {
+        const meta = r.metadata || {};
+        try {
+          const label = (typeof meta?.modelId === 'string' && meta.modelId.trim())
+            ? meta.modelId.trim()
+            : (typeof meta?.tier === 'string' && meta.tier.trim())
+              ? meta.tier.trim()
+              : undefined;
+          if (label) lastModelLabel = label;
+        } catch { }
+        return {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          role: (r.role === 'assistant' ? 'assistant' : r.role === 'system' ? 'system' : 'user'),
+          text: String(r.content || ''),
+          reasoning: meta.reasoning,
+          reasoningDuration: meta.reasoningDuration,
+          toolCalls: meta.toolCalls,
+          streamChunks: meta.streamChunks,
+          usage: meta.usage && typeof meta.usage === 'object' ? meta.usage : undefined,
+          modelId: typeof meta?.modelId === 'string'
+            ? meta.modelId
+            : typeof meta?.tier === 'string'
+              ? meta.tier
+              : undefined,
+          contextPaths: Array.isArray(meta?.contextPaths) ? meta.contextPaths : undefined,
+          timestamp: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+        };
+      });
+      return { hist, lastModelLabel };
+    };
+
     try {
       console.log('[useAgent] Fetching messages from local agent for conversation:', id);
-      const resp = await fetch(`${target}/v1/memory/conversations/${id}/messages?limit=200`);
-      const json = await resp.json();
+      const json = await agentFetchJson(
+        agentEndpoints,
+        `/v1/memory/conversations/${encodeURIComponent(id)}/messages?limit=200`,
+        {
+          accessToken: agentEndpoints.usesVmRelay ? await getValidAccessToken() : null,
+        },
+      );
       if (json.ok && Array.isArray(json.messages)) {
-        let lastModelLabel: string | undefined;
-        const hist: Message[] = json.messages.map((r: any) => {
-          const meta = r.metadata || {};
-          try {
-            const label = (typeof meta?.modelId === 'string' && meta.modelId.trim())
-              ? meta.modelId.trim()
-              : (typeof meta?.tier === 'string' && meta.tier.trim())
-                ? meta.tier.trim()
-                : undefined;
-            if (label) lastModelLabel = label;
-          } catch { }
-          return {
-            id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-            role: (r.role === 'assistant' ? 'assistant' : r.role === 'system' ? 'system' : 'user'),
-            text: String(r.content || ''),
-            reasoning: meta.reasoning,
-            reasoningDuration: meta.reasoningDuration,
-            toolCalls: meta.toolCalls,
-            streamChunks: meta.streamChunks,
-            contextPaths: Array.isArray(meta?.contextPaths) ? meta.contextPaths : undefined,
-            timestamp: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
-          };
-        });
+        const { hist, lastModelLabel } = buildLoadedMessages(json.messages as any[]);
         console.log('[useAgent] Loaded', hist.length, 'messages from local agent');
         setTabs(prev => prev.map(t => t.id === openedTabId ? { ...t, messages: hist, aiState: { ...t.aiState, model: lastModelLabel } } : t));
         loaded = true;
@@ -2188,11 +2314,11 @@ export function useAgent(options?: string | UseAgentOptions) {
       console.warn('[useAgent] Local agent messages fetch failed, trying Supabase:', e);
     }
 
-    // Fallback to Supabase if local agent didn't have the conversation
     if (!loaded) {
       try {
         const sessionToken = await getValidAccessToken();
-        if (sessionToken) {
+        const syncPrefs = await fetchRendererSyncPrefs();
+        if (sessionToken && syncPrefs.sync_conversations) {
           const { data, error } = await supabase
             .from('messages')
             .select('role, content, metadata, created_at')
@@ -2200,29 +2326,7 @@ export function useAgent(options?: string | UseAgentOptions) {
             .order('created_at', { ascending: true })
             .limit(200);
           if (!error && Array.isArray(data)) {
-            let lastModelLabel: string | undefined;
-            const hist: Message[] = (data as any[]).map((r: any) => {
-              const meta = r.metadata || {};
-              try {
-                const label = (typeof meta?.modelId === 'string' && meta.modelId.trim())
-                  ? meta.modelId.trim()
-                  : (typeof meta?.tier === 'string' && meta.tier.trim())
-                    ? meta.tier.trim()
-                    : undefined;
-                if (label) lastModelLabel = label;
-              } catch { }
-              return {
-                id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                role: (r.role === 'assistant' ? 'assistant' : r.role === 'system' ? 'system' : 'user'),
-                text: String(r.content || ''),
-                reasoning: meta.reasoning,
-                reasoningDuration: meta.reasoningDuration,
-                toolCalls: meta.toolCalls,
-                streamChunks: meta.streamChunks,
-                contextPaths: Array.isArray(meta?.contextPaths) ? meta.contextPaths : undefined,
-                timestamp: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
-              };
-            });
+            const { hist, lastModelLabel } = buildLoadedMessages(data as any[]);
             console.log('[useAgent] Loaded', hist.length, 'messages from Supabase');
             setTabs(prev => prev.map(t => t.id === openedTabId ? { ...t, messages: hist, aiState: { ...t.aiState, model: lastModelLabel } } : t));
           }
@@ -2232,22 +2336,27 @@ export function useAgent(options?: string | UseAgentOptions) {
       }
     }
 
-    // Load title — try local agent first, then Supabase
     try {
-      const convResp = await fetch(`${target}/v1/memory/conversations/${id}`);
-      const convJson = await convResp.json();
+      const convJson = await agentFetchJson(
+        agentEndpoints,
+        `/v1/memory/conversations/${encodeURIComponent(id)}`,
+        {
+          accessToken: agentEndpoints.usesVmRelay ? await getValidAccessToken() : null,
+        },
+      );
       if (convJson.ok && convJson.conversation?.title) {
         const title = String(convJson.conversation.title).trim();
         if (title) {
           setTabs(prev => prev.map(t => t.id === openedTabId ? { ...t, title } : t));
-          return; // Got title from local agent, done
+          return;
         }
       }
     } catch { }
-    // Fallback title from Supabase
+
     try {
       const sessionToken = await getValidAccessToken();
-      if (sessionToken) {
+      const syncPrefs = await fetchRendererSyncPrefs();
+      if (sessionToken && syncPrefs.sync_conversations) {
         const { data: conv } = await supabase
           .from('conversations')
           .select('title')

@@ -24,11 +24,11 @@ export default function FAQ() {
     },
     {
       question: 'How does the memory system work?',
-      answer: 'Stuard remembers just enough to make your life easierlike how you like files organized or which inboxes matterand stores that information encrypted on your device. It uses this to reduce repetitive setup without you having to repeat yourself every time.',
+      answer: 'Stuard remembers just enough to make your life easier—like how you like files organized or which inboxes matter—and stores that information encrypted on your device. It uses this to reduce repetitive setup without you having to repeat yourself every time.',
     },
     {
       question: 'Is there a free trial?',
-      answer: 'All waitlist members will receive a 14-day free trial with full access to all features. No credit card required to start your trial.',
+      answer: 'New accounts start on the free plan with about 15 starter credits. No credit card is required to get started.',
     },
     {
       question: 'What if I need help or have questions?',

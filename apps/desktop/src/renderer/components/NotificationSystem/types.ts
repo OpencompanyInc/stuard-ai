@@ -26,6 +26,8 @@ export interface NotificationInputConfig {
     onSubmit?: (value: string) => void;
     /** Callback when input is cancelled */
     onCancel?: () => void;
+    /** If true, don't dismiss notification after submit (for multi-turn conversations) */
+    keepAfterSubmit?: boolean;
 }
 
 export interface NotificationAction {
@@ -35,6 +37,8 @@ export interface NotificationAction {
     onClick: () => void;
     /** Button variant */
     variant?: 'primary' | 'secondary' | 'danger';
+    /** If true, don't dismiss notification when clicked */
+    keepNotification?: boolean;
 }
 
 export interface NotificationConfig {
@@ -44,6 +48,11 @@ export interface NotificationConfig {
     title: string;
     /** Notification message/body */
     message?: string;
+    /** Optional structured GenUI payload rendered below the message */
+    structuredContent?: {
+        toolName: string;
+        args: any;
+    };
     /** Visual variant */
     variant?: NotificationVariant;
     /** Duration in milliseconds (0 for persistent) */
@@ -72,6 +81,10 @@ export interface NotificationConfig {
 
 export interface NotificationState extends Required<Pick<NotificationConfig, 'id' | 'title' | 'variant' | 'position' | 'dismissible'>> {
     message?: string;
+    structuredContent?: {
+        toolName: string;
+        args: any;
+    };
     image?: string;
     sound?: NotificationSound | boolean;
     input?: NotificationInputConfig;

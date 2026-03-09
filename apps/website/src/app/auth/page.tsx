@@ -4,6 +4,11 @@ import { useEffect, useMemo, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Header from '@/components/layout/Header';
 import { supabase } from '@/lib/supabaseClient';
+import {
+  normalizeOnboardingProfile,
+  ONBOARDING_PROFILE_STORAGE_KEY,
+  toOnboardingProfileRow,
+} from '../../../../../shared/onboardingProfile';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,6 +45,64 @@ function AuthPageContent() {
       supabase.auth.exchangeCodeForSession(code).catch(() => {});
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const persistPendingOnboardingProfile = async () => {
+      let raw: string | null = null;
+      try {
+        raw = window.localStorage.getItem(ONBOARDING_PROFILE_STORAGE_KEY);
+      } catch {
+        raw = null;
+      }
+
+      if (!raw) return;
+
+      let parsed = null;
+      try {
+        parsed = normalizeOnboardingProfile(JSON.parse(raw));
+      } catch {
+        parsed = null;
+      }
+
+      if (!parsed) {
+        try { window.localStorage.removeItem(ONBOARDING_PROFILE_STORAGE_KEY); } catch { }
+        return;
+      }
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!isActive || !session?.user) return;
+
+      const onboardingRow = toOnboardingProfileRow({
+        ...parsed,
+        source: parsed.source ?? 'website_google',
+        updatedAt: new Date().toISOString(),
+      });
+
+      if (!onboardingRow) return;
+
+      await supabase
+        .from('profiles')
+        .upsert({ user_id: session.user.id, ...onboardingRow }, { onConflict: 'user_id' });
+
+      if (!isActive) return;
+      try { window.localStorage.removeItem(ONBOARDING_PROFILE_STORAGE_KEY); } catch { }
+    };
+
+    void persistPendingOnboardingProfile();
+
+    const { data: sub } = supabase.auth.onAuthStateChange((evt) => {
+      if (evt === 'SIGNED_IN') {
+        void persistPendingOnboardingProfile();
+      }
+    });
+
+    return () => {
+      isActive = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
 
   // When signed in, broadcast tokens to the desktop app and finish
   useEffect(() => {

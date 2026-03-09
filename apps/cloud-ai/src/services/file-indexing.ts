@@ -11,7 +11,7 @@
  */
 
 import { embed, embedMany, generateText } from 'ai';
-import { google } from '@ai-sdk/google';
+import { google } from '../utils/models';
 import { openai } from '@ai-sdk/openai';
 import { buildProviderModel } from '../utils/models';
 import { getDefaultModelForCategory } from '../pricing';

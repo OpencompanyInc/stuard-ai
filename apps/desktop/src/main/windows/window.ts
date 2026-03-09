@@ -55,7 +55,7 @@ function captureWindowSnapshotByHandle(handle: string): SplitTargetSnapshot | nu
   if (process.platform !== "win32") return null;
   if (!handle || handle === "0") return null;
   try {
-    const { execSync } = require("child_process");
+    const { execFileSync } = require("child_process");
     const tmpDir = require("os").tmpdir();
     const scriptPath = path.join(tmpDir, "stuard_get_bounds.ps1");
     const ps = `
@@ -84,7 +84,11 @@ $isMin = [Win32Bounds]::IsIconic($h)
 Write-Output "x=$($rect.Left) y=$($rect.Top) w=$w h=$hgt max=$isMax min=$isMin"
 `;
     fs.writeFileSync(scriptPath, ps, "utf8");
-    const out = execSync(`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`, { encoding: "utf8", timeout: 2000 }).trim();
+    const out = execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath], {
+      encoding: "utf8",
+      timeout: 2000,
+      windowsHide: true,
+    }).trim();
     try { fs.unlinkSync(scriptPath); } catch { }
 
     const m = /x=([-\d]+)\s+y=([-\d]+)\s+w=(\d+)\s+h=(\d+)\s+max=(True|False)\s+min=(True|False)/.exec(out);
@@ -134,7 +138,7 @@ if (${snapshot.wasMaximized ? '$true' : '$false'}) {
 }
 `;
     fs.writeFileSync(scriptPath, ps, 'utf8');
-    execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], () => {
+    execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], { windowsHide: true }, () => {
       try { fs.unlinkSync(scriptPath); } catch { }
     });
   } catch { }
@@ -157,7 +161,7 @@ function getNativeWindowHandleString(target: BrowserWindow | null) {
 function captureForegroundWindowHandle(excludeHandles?: Array<string | null>) {
   if (process.platform !== "win32") return null;
   try {
-    const { execSync } = require("child_process");
+    const { execFileSync } = require("child_process");
     const tmpDir = require("os").tmpdir();
     const getHandleScript = path.join(tmpDir, "stuard_get_handle.ps1");
     const excludes = (excludeHandles || [])
@@ -211,7 +215,11 @@ $target.ToInt64()
 
     let capturedHandle: string | null = null;
     try {
-      const result = execSync(`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${getHandleScript}"`, { encoding: "utf8", timeout: 2000 });
+      const result = execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", getHandleScript], {
+        encoding: "utf8",
+        timeout: 2000,
+        windowsHide: true,
+      });
       capturedHandle = result.trim();
     } catch (e) {
       logger.warn("Failed to capture foreground window handle:", e);
@@ -593,15 +601,18 @@ export function openOnboardingWindow() {
     return;
   }
 
-  const WIDTH = 560;
-  const HEIGHT = 720;
+  const { workArea } = screen.getPrimaryDisplay();
+  const WIDTH = Math.min(1120, Math.max(560, workArea.width - 80));
+  const HEIGHT = Math.min(780, Math.max(620, workArea.height - 80));
+  const MIN_WIDTH = Math.min(WIDTH, 920);
+  const MIN_HEIGHT = Math.min(HEIGHT, 700);
 
   onboardingWin = new BrowserWindow({
     width: WIDTH,
     height: HEIGHT,
-    minWidth: 480,
-    minHeight: 600,
-    maxWidth: 700,
+    minWidth: MIN_WIDTH,
+    minHeight: MIN_HEIGHT,
+    maxWidth: 1280,
     maxHeight: 900,
     show: false, // Show after ready-to-show for smoother appearance
     frame: false,
@@ -632,7 +643,6 @@ export function openOnboardingWindow() {
   }
 
   // Center on screen
-  const { workArea } = screen.getPrimaryDisplay();
   const x = Math.round(workArea.x + (workArea.width - WIDTH) / 2);
   const y = Math.round(workArea.y + (workArea.height - HEIGHT) / 2);
   onboardingWin.setPosition(x, y);

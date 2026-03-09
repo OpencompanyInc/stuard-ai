@@ -19,6 +19,9 @@ import {
 } from "lucide-react";
 import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
+import { useModelRegistry } from '../hooks/useModelRegistry';
+import { ContextUsageIndicator } from './ContextUsageIndicator';
+import { buildContextUsageMetrics } from '../utils/contextUsage';
 
 const AGENT_HTTP = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
 
@@ -127,13 +130,13 @@ const TraceItem = ({ step, isLast }: { step: TraceStep, isLast: boolean }) => {
                 {/* Timeline Dot/Icon */}
                 <div className={clsx(
                     "absolute -left-[27px] top-1 w-6 h-6 rounded-full border flex items-center justify-center z-10 box-border transition-colors duration-300",
-                    step.status === 'running' ? "bg-theme-bg border-amber-500 text-amber-500 shadow-[0_0_10px_-2px_rgba(245,158,11,0.3)]" :
-                        step.status === 'completed' ? "bg-theme-bg border-theme-border text-emerald-500" :
+                    step.status === 'running' ? "bg-theme-bg border-blue-500 text-blue-500 shadow-[0_0_10px_-2px_rgba(59,130,246,0.3)]" :
+                        step.status === 'completed' ? "bg-theme-bg border-emerald-500 text-emerald-500" :
                             step.status === 'failed' ? "bg-theme-bg border-red-500 text-red-500" :
                                 "bg-theme-bg border-theme-border text-theme-muted"
                 )}>
                     {step.status === 'running' ? (
-                        <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                        <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
                     ) : (
                         <StepIcon className="w-3 h-3" />
                     )}
@@ -393,6 +396,12 @@ const LogItem = ({ log }: { log: any }) => {
 
 export const SubAgentDetails: React.FC<SubAgentDetailsProps> = ({ task, onBack, onUpdate, compact }) => {
     const [activeTab, setActiveTab] = useState<'trace' | 'logs' | 'result'>('trace');
+    const { modelById } = useModelRegistry();
+    const contextMetrics = useMemo(() => buildContextUsageMetrics({
+        usage: task.result?.usage,
+        modelId: task.model,
+        modelById,
+    }), [modelById, task.model, task.result?.usage]);
 
     // Auto-refresh
     useEffect(() => {
@@ -442,7 +451,7 @@ export const SubAgentDetails: React.FC<SubAgentDetailsProps> = ({ task, onBack, 
                         <div className="flex items-center gap-3">
                             <span className={clsx(
                                 "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border shadow-sm",
-                                task.status === 'running' ? "text-amber-500 bg-amber-500/10 border-amber-500/20" :
+                                task.status === 'running' ? "text-blue-500 bg-blue-500/10 border-blue-500/20" :
                                     task.status === 'completed' ? "text-emerald-500 bg-emerald-500/10 border-emerald-500/20" :
                                         "text-red-500 bg-red-500/10 border-red-500/20"
                             )}>
@@ -453,6 +462,7 @@ export const SubAgentDetails: React.FC<SubAgentDetailsProps> = ({ task, onBack, 
                                 <Cpu className="w-3 h-3" />
                                 {task.model}
                             </span>
+                            <ContextUsageIndicator metrics={contextMetrics} compact />
                             <span className="text-[10px] text-theme-muted font-mono opacity-50 ml-auto">
                                 ID: {task.id.slice(0, 8)}
                             </span>
@@ -523,8 +533,11 @@ export const SubAgentDetails: React.FC<SubAgentDetailsProps> = ({ task, onBack, 
                                     {task.result.usage && (
                                         <div className="col-span-2 pt-4 border-t border-white/5">
                                             <div className="uppercase tracking-wider opacity-50 mb-2 font-bold">Token Usage</div>
-                                            <div className="font-mono bg-black/20 p-2 rounded border border-white/5 inline-block">
-                                                {JSON.stringify(task.result.usage, null, 2)}
+                                            <div className="flex flex-col gap-3">
+                                                <ContextUsageIndicator metrics={contextMetrics} />
+                                                <div className="font-mono bg-black/20 p-2 rounded border border-white/5 inline-block max-w-full overflow-x-auto">
+                                                    {JSON.stringify(task.result.usage, null, 2)}
+                                                </div>
                                             </div>
                                         </div>
                                     )}

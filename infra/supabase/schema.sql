@@ -63,6 +63,7 @@ create table if not exists public.usage_events (
   completion_tokens integer,
   total_tokens integer,
   cost_usd numeric,
+  credit_cost numeric(12,4) not null default 0,
   raw jsonb,
   created_at timestamptz not null default now()
 );

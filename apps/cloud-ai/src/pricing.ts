@@ -28,7 +28,7 @@ export const PLAN_CONFIG: Record<PlanType, {
   isRecurring: boolean;
   allModels: boolean;
 }> = {
-  FREE_TRIAL: { priceUsd: 0, budgetUsd: 0.50, isRecurring: false, allModels: false },
+  FREE_TRIAL: { priceUsd: 0, budgetUsd: 0.45, isRecurring: false, allModels: false },
   STARTER: { priceUsd: 10, budgetUsd: 6.50, isRecurring: true, allModels: true },
   PRO: { priceUsd: 45, budgetUsd: 29.25, isRecurring: true, allModels: true },
   POWER: { priceUsd: 100, budgetUsd: 65, isRecurring: true, allModels: true },
@@ -150,7 +150,7 @@ export function estimateCostUsd(model: string, promptTokens: number, completionT
 }
 
 export function creditsPerUsd(): number {
-  return envNumber('CREDITS_PER_USD', 100);
+  return envNumber('CREDITS_PER_USD', 33);
 }
 
 export function creditsFromUsd(usd: number): number {
@@ -177,7 +177,7 @@ export function monthlyCreditLimitForPlan(plan: string): number {
 
   // Legacy plan support
   if (key === 'FREE') {
-    const freeUsd = envNumber('PLAN_FREE_PRICE_USD', 0.5);
+    const freeUsd = envNumber('PLAN_FREE_PRICE_USD', 0.45);
     return creditsFromUsd(freeUsd);
   }
   const priceKey = `PLAN_${key}_PRICE_USD`;

@@ -204,6 +204,34 @@ export async function getValidAccessToken(): Promise<string | null> {
 }
 
 /**
+ * Get an access token quickly for latency-sensitive flows like opening the
+ * chat socket or sending the first message. If the token is still usable,
+ * return it immediately and refresh in the background when it's close to
+ * expiring. Only block on a refresh when the token is already expired or
+ * missing.
+ */
+export async function getFastAccessToken(): Promise<string | null> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token || null;
+    if (!token) {
+      return await getValidAccessToken();
+    }
+
+    const info = parseToken(token);
+    if (!info || !info.isExpired) {
+      if (info?.isExpiringSoon) {
+        ensureFreshToken().catch(() => { });
+      }
+      return token;
+    }
+  } catch {
+  }
+
+  return await getValidAccessToken();
+}
+
+/**
  * Sign out and clear all auth state
  */
 export async function signOut(): Promise<{ success: boolean; error?: string }> {

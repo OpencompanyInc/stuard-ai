@@ -426,6 +426,37 @@ async function execGenerateImage(args: any, ctx: RouterContext): Promise<any> {
 
     ctx.logFn(`Image Gen: "${prompt.slice(0, 60)}${prompt.length > 60 ? '...' : ''}" (model=${model})`);
 
+    // Encode local input_images to base64 before sending to cloud
+    // Cloud can't access local desktop file paths
+    const cloudArgs = { ...args };
+    if (Array.isArray(args.input_images) && args.input_images.length > 0) {
+      const encodedImages: Array<{ path: string; filename?: string; contentType?: string; data?: string }> = [];
+      for (const img of args.input_images) {
+        const filePath = String(img?.path || '').trim();
+        if (!filePath) continue;
+        try {
+          const buf = fs.readFileSync(filePath);
+          const ext = path.extname(filePath).toLowerCase();
+          const mimeMap: Record<string, string> = {
+            '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+            '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp', '.avif': 'image/avif',
+          };
+          const mimeType = img.contentType || mimeMap[ext] || 'image/png';
+          encodedImages.push({
+            path: filePath,
+            filename: img.filename || path.basename(filePath),
+            contentType: mimeType,
+            data: buf.toString('base64'),
+          });
+          ctx.logFn(`Image Gen: Encoded input ${path.basename(filePath)} (${mimeType}, ${Math.round(buf.length / 1024)}KB)`);
+        } catch (e: any) {
+          ctx.logFn(`Image Gen: Failed to read input image ${filePath}: ${e?.message}`);
+          return { ok: false, error: `failed_to_read_input_image: ${filePath}` };
+        }
+      }
+      cloudArgs.input_images = encodedImages;
+    }
+
     // Call cloud to generate image
     const url = `${ctx.cloudAiUrl}/tools/generate_image`;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -436,7 +467,7 @@ async function execGenerateImage(args: any, ctx: RouterContext): Promise<any> {
     const resp = await net.fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(args),
+      body: JSON.stringify(cloudArgs),
     });
 
     if (!resp.ok) {

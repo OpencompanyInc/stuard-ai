@@ -2,6 +2,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import * as deviceTools from './device-tools';
 import * as googleTools from './google-tools';
+import * as ocrTools from './ocr-tools';
 import { web_search } from './perplexity-tools';
 import { scrape_url } from './tavily-tools';
 import * as outlookTools from './outlook-tools';
@@ -104,6 +105,26 @@ const MEMORY_AI_TOOL_IDS = new Set([
 ]);
 
 const MEMORY_AI_ALLOWLIST = new Set(['search_past_conversations', 'get_conversation_context']);
+
+const LEGACY_BROWSER_EXTENSION_TOOL_IDS = new Set([
+   'browser_get_content',
+   'browser_click_element',
+   'browser_type_text',
+   'browser_find_text',
+   'browser_get_element_position',
+   'browser_find_clickable',
+   'browser_hover',
+   'browser_select_option',
+   'browser_press_key',
+   'browser_get_form_fields',
+   'browser_fill_form',
+   'browser_wait_for_element',
+   'browser_scroll_to',
+   'browser_get_page_info',
+   'browser_upload_file',
+   'browser_set_toggle',
+   'browser_execute_script',
+ ]);
 
 let _syncPromise: Promise<void> | null = null;
 let _initialized = false;
@@ -345,6 +366,10 @@ Object.values(deviceTools).forEach(t => {
     const name = (t as any)?.id || (t as any)?.name;
     if (!name) return;
 
+    if (LEGACY_BROWSER_EXTENSION_TOOL_IDS.has(name)) {
+        return;
+    }
+
     if (MEMORY_AI_TOOL_IDS.has(name) && !MEMORY_AI_ALLOWLIST.has(name)) {
         return;
     }
@@ -359,7 +384,7 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'System');
     } else if (['get_datetime', 'math_eval', 'generate_uuid', 'random_number', 'random_choice', 'get_env_var', 'get_system_info', 'hash_string', 'base64_encode', 'base64_decode', 'json_parse', 'json_stringify', 'sleep', 'regex_match', 'regex_replace'].includes(name)) {
         registerTool(t, 'Utils');
-    } else if (['computer_use', 'computer_use_agent', 'click_at_coordinates', 'double_click_at_coordinates', 'type_text', 'send_hotkey', 'scroll', 'drag_and_drop', 'take_screenshot', 'capture_screen_to_file', 'find_and_click_text', 'get_screen_text', 'read_image_optimized', 'find_text_on_screen', 'move_cursor', 'get_mouse_position'].includes(name)) {
+    } else if (['computer_use', 'computer_use_agent', 'click_at_coordinates', 'double_click_at_coordinates', 'type_text', 'send_hotkey', 'scroll', 'drag_and_drop', 'take_screenshot', 'capture_screen_to_file', 'find_text', 'find_and_click_text', 'get_screen_text', 'read_image_optimized', 'find_text_on_screen', 'move_cursor', 'get_mouse_position'].includes(name)) {
         registerTool(t, 'GUI');
     } else if (['capture_media', 'stop_capture', 'list_active_captures', 'describe_media_capture_capabilities', 'stream_speech', 'stop_stream_speech'].includes(name)) {
         registerTool(t, 'Media');
@@ -413,6 +438,7 @@ registerTool(web_search, 'Search');
 registerTool(scrape_url, 'Search');
 
 Object.values(googleTools).forEach(t => registerTool(t, 'Google'));
+Object.values(ocrTools).forEach(t => registerTool(t, 'AI'));
 // Backward compatibility alias
 if (googleTools.gmail_send_message) {
     registerTool(googleTools.gmail_send_message, 'Google');

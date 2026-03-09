@@ -152,10 +152,13 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'stop_screen_capture', category: 'vision', kind: 'local', description: 'Stop an active screen capture session', argsTemplate: { sessionId: '' }, outputSchema: { ok: 'boolean', sessionId: 'string', wasActive: 'boolean', filePath: 'string', audioFilePath: 'string' } },
   { id: 'describe_screen_capture_capabilities', category: 'vision', kind: 'local', description: 'List available monitors and windows for screen capture', argsTemplate: {}, outputSchema: { monitors: 'any[]', windows: 'any[]' } },
   { id: 'capture_system_audio', category: 'vision', kind: 'local', description: 'Record system audio output (what you hear from speakers). Uses WASAPI loopback on Windows.', argsTemplate: { mode: 'fixed', stream: false, durationMs: 5000, device: '', filePath: '', sessionId: '', maxDurationMs: 7200000, format: 'wav' }, outputSchema: { ok: 'boolean', filePath: 'string', mimeType: 'string', sessionId: 'string', streamId: 'string', stoppedBy: 'string', mode: 'string', status: 'string', durationMs: 'number' } },
-  { id: 'stop_system_audio', category: 'vision', kind: 'local', description: 'Stop an active system audio capture session', argsTemplate: { sessionId: '' }, outputSchema: { ok: 'boolean', sessionId: 'string', wasActive: 'boolean', filePath: 'string' } },
+  { id: 'stop_system_audio', category: 'vision', kind: 'local', description: 'Stop an active system audio capture session', argsTemplate: { sessionId: '' }, outputSchema: { ok: 'boolean', sessionId: 'string', wasActive: 'boolean' } },
   { id: 'describe_system_audio_capabilities', category: 'vision', kind: 'local', description: 'List available loopback devices and check platform support', argsTemplate: {}, outputSchema: { supported: 'boolean', platform: 'string', devices: 'any[]', note: 'string' } },
   { id: 'analyze_image', category: 'vision', kind: 'cloud', description: 'Analyze an image file with AI vision', argsTemplate: { imagePath: '', prompt: '' }, outputSchema: { text: 'string' } },
   { id: 'analyze_current_screen', category: 'vision', kind: 'cloud', description: 'Capture and analyze the current screen', argsTemplate: { mode: 'text', prompt: '', booleanKey: '' }, outputSchema: { text: 'string', json: 'any', boolean: 'boolean' } },
+  { id: 'find_text', category: 'vision', kind: 'cloud', description: 'Find text on screen with OCR and return coordinates for the best match plus all detected matches.', argsTemplate: { text: '', context: '', start: false, region: { x: 0, y: 0, width: 800, height: 600 }, caseSensitive: false }, outputSchema: { ok: 'boolean', found: 'boolean', ambiguous: 'boolean', matchCount: 'number', matchedText: 'string', x: 'number', y: 'number', centerX: 'number', centerY: 'number', boundingBox: 'object', matches: 'any[]', allMatches: 'any[]', fullText: 'string', error: 'string' } },
+  { id: 'find_and_click_text', category: 'vision', kind: 'cloud', description: 'Find matching text on screen with OCR and click only when there is a single unambiguous match.', argsTemplate: { text: '', context: '', start: false, region: { x: 0, y: 0, width: 800, height: 600 }, caseSensitive: false }, outputSchema: { ok: 'boolean', found: 'boolean', clicked: 'boolean', ambiguous: 'boolean', matchCount: 'number', matchedText: 'string', x: 'number', y: 'number', centerX: 'number', centerY: 'number', boundingBox: 'object', matches: 'any[]', allMatches: 'any[]', fullText: 'string', error: 'string' } },
+  { id: 'google_cloud_ocr', category: 'vision', kind: 'cloud', description: 'Extract text from an image file, URL, or fresh screenshot using Google Cloud Vision OCR.', argsTemplate: { path: '', imageUrl: '', base64: '', mimeType: 'image/png', captureScreen: false, region: { x: 0, y: 0, width: 800, height: 600 }, ocrMode: 'document', languageHints: [], includeWordBoxes: true }, outputSchema: { ok: 'boolean', text: 'string', wordCount: 'number', words: 'any[]', detectedLanguages: 'string[]', source: 'object', mimeType: 'string', screenshotPath: 'string', error: 'string' } },
   { id: 'analyze_media', category: 'vision', kind: 'cloud', description: 'Analyze video/audio files or transcribe audio. The task determines the output - use task="transcribe" for transcription.', argsTemplate: { task: 'Summarize this media', sources: [{ path: '' }], mode: 'fast' }, outputSchema: { summary: 'string' } },
   { id: 'stream_speech', category: 'vision', kind: 'local', description: 'Stream microphone audio to the cloud speech proxy', argsTemplate: { accessToken: '', device: '', busId: 'default', durationMs: 60000, sampleRate: 16000 }, outputSchema: { ok: 'boolean', sessionId: 'string' } },
   { id: 'stop_stream_speech', category: 'vision', kind: 'local', description: 'Stop an active stream_speech audio session', argsTemplate: { busId: 'default' }, outputSchema: { ok: 'boolean', busId: 'string' } },
@@ -190,6 +193,12 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'text_to_speech', category: 'vision', kind: 'cloud', description: 'Convert text to speech audio using ElevenLabs TTS with language support', argsTemplate: { text: '', voice_id: 'JBFqnCBsd6RMkjVDRZzb', model_id: 'eleven_multilingual_v2', language_code: '', speed: 1.0, format: 'mp3', save: true, play: false, outputPath: '' }, outputSchema: { ok: 'boolean', filePath: 'string', format: 'string', voice_id: 'string', textLength: 'number', played: 'boolean', error: 'string' } },
   { id: 'list_tts_voices', category: 'vision', kind: 'cloud', description: 'List all available ElevenLabs text-to-speech voices', argsTemplate: {}, outputSchema: { ok: 'boolean', voices: 'any[]' } },
   { id: 'get_tts_models', category: 'vision', kind: 'cloud', description: 'List available ElevenLabs TTS models', argsTemplate: {}, outputSchema: { ok: 'boolean', models: 'any[]' } },
+  { id: 'elevenlabs_list_agents', category: 'vision', kind: 'cloud', description: 'List ElevenLabs conversational AI agents for live voice sessions', argsTemplate: { search: '', archived: false, show_only_owned_agents: true, page_size: 20 }, outputSchema: { ok: 'boolean', agents: 'any[]', nextCursor: 'string', hasMore: 'boolean', error: 'string' } },
+  { id: 'elevenlabs_get_signed_conversation_url', category: 'vision', kind: 'cloud', description: 'Get a signed ElevenLabs live conversation URL for launching an authenticated voice session', argsTemplate: { agent_id: '', include_conversation_id: true, branch_id: '' }, outputSchema: { ok: 'boolean', agentId: 'string', signedUrl: 'string', includeConversationId: 'boolean', error: 'string' } },
+  { id: 'elevenlabs_get_webrtc_token', category: 'vision', kind: 'cloud', description: 'Get an ElevenLabs WebRTC token for low-latency live voice conversations', argsTemplate: { agent_id: '', participant_name: '', branch_id: '' }, outputSchema: { ok: 'boolean', agentId: 'string', token: 'string', participantName: 'string', error: 'string' } },
+  { id: 'elevenlabs_list_conversations', category: 'vision', kind: 'cloud', description: 'List ElevenLabs live conversation sessions for an agent', argsTemplate: { agent_id: '', search: '', branch_id: '', page_size: 20 }, outputSchema: { ok: 'boolean', conversations: 'any[]', nextCursor: 'string', hasMore: 'boolean', error: 'string' } },
+  { id: 'elevenlabs_get_conversation', category: 'vision', kind: 'cloud', description: 'Get detailed metadata for an ElevenLabs conversation session', argsTemplate: { conversation_id: '' }, outputSchema: { ok: 'boolean', conversation: 'any', error: 'string' } },
+  { id: 'elevenlabs_twilio_outbound_call', category: 'vision', kind: 'cloud', description: 'Start a live outbound call through ElevenLabs conversational AI using its Twilio bridge', argsTemplate: { agent_id: '', agent_phone_number_id: '', to_number: '', conversation_initiation_client_data: {} }, outputSchema: { ok: 'boolean', success: 'boolean', message: 'string', conversationId: 'string', callSid: 'string', error: 'string' } },
 
   // --- DATA / AI ---
   { id: 'ai_inference', category: 'data', kind: 'cloud', description: 'Run AI inference on text. Returns plain text, structured JSON, or vector embeddings.', argsTemplate: { prompt: '', input: '', mode: 'json', schema: {}, model: 'openai/gpt-4.1-mini', temperature: 0.3 }, outputSchema: { ok: 'boolean', text: 'string', json: 'any', embedding: 'number[]', model: 'string' } },
@@ -217,24 +226,24 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
 
   // --- INTEGRATIONS ---
   { id: 'google_get_userinfo', category: 'integrations', kind: 'cloud', description: 'Get Google account profile via oauth2 v3 userinfo (Current user profile info).', argsTemplate: { profile: 'default' }, outputSchema: { me: 'object' } },
-  { id: 'google_list_profiles', category: 'integrations', kind: 'cloud', description: 'List all connected Google profiles/accounts for the current user. Returns the profile labels (e.g., "default", "work", "personal") which can be passed to other Google tools.', argsTemplate: {}, outputSchema: { profiles: 'any[]' } },
-  { id: 'gmail_send_message', category: 'integrations', kind: 'cloud', description: 'Send an email via Gmail with optional file attachments', argsTemplate: { to: [], subject: '', body: '', contentType: 'text/plain', from: '', cc: [], bcc: [], attachments: [] }, outputSchema: { message: 'object', attachmentCount: 'number' } },
-  { id: 'gmail_list_messages', category: 'integrations', kind: 'cloud', description: 'List Gmail messages', argsTemplate: { q: '', labelIds: [], maxResults: 10, includeSpamTrash: false }, outputSchema: { items: 'any[]', count: 'number', nextPageToken: 'string' } },
-  { id: 'gmail_get_message_brief', category: 'integrations', kind: 'cloud', description: 'Get a Gmail message brief', argsTemplate: { id: '' }, outputSchema: { message: 'object' } },
-  { id: 'gmail_get_message_full', category: 'integrations', kind: 'cloud', description: 'Get a Gmail message with full content', argsTemplate: { id: '' }, outputSchema: { message: 'object' } },
-  { id: 'gmail_modify_message', category: 'integrations', kind: 'cloud', description: 'Modify Gmail message labels', argsTemplate: { id: '', addLabelIds: [], removeLabelIds: [] }, outputSchema: { message: 'object' } },
-  { id: 'gmail_delete_message', category: 'integrations', kind: 'cloud', description: 'Delete a Gmail message permanently', argsTemplate: { id: '' }, outputSchema: { ok: 'boolean' } },
-  { id: 'gmail_archive_message', category: 'integrations', kind: 'cloud', description: 'Archive a Gmail message', argsTemplate: { id: '' }, outputSchema: { message: 'object' } },
-  { id: 'gmail_mark_as_read', category: 'integrations', kind: 'cloud', description: 'Mark a Gmail message as read', argsTemplate: { id: '' }, outputSchema: { message: 'object' } },
-  { id: 'gmail_mark_as_unread', category: 'integrations', kind: 'cloud', description: 'Mark a Gmail message as unread', argsTemplate: { id: '' }, outputSchema: { message: 'object' } },
-  { id: 'drive_list_files', category: 'integrations', kind: 'cloud', description: 'List Google Drive files', argsTemplate: { query: '', pageSize: 20, orderBy: '' }, outputSchema: { files: 'any[]', count: 'number', nextPageToken: 'string' } },
-  { id: 'calendar_list_events', category: 'integrations', kind: 'cloud', description: 'List Google Calendar events', argsTemplate: { calendarId: 'primary', timeMin: '', timeMax: '', maxResults: 10 }, outputSchema: { items: 'any[]', count: 'number', nextPageToken: 'string' } },
-  { id: 'calendar_create_event', category: 'integrations', kind: 'cloud', description: 'Create a Google Calendar event', argsTemplate: { calendarId: 'primary', summary: '', description: '', start: '', end: '', timeZone: '' }, outputSchema: { event: 'object' } },
-  { id: 'sheets_read_range', category: 'integrations', kind: 'cloud', description: 'Read a range from Google Sheets', argsTemplate: { spreadsheetId: '', range: '' }, outputSchema: { values: 'any[]', range: 'string' } },
-  { id: 'docs_get_document', category: 'integrations', kind: 'cloud', description: 'Get a Google Docs document', argsTemplate: { documentId: '' }, outputSchema: { document: 'object' } },
-  { id: 'docs_create_document', category: 'integrations', kind: 'cloud', description: 'Create a new Google Doc', argsTemplate: { title: '' }, outputSchema: { document: 'object' } },
-  { id: 'docs_write_text', category: 'integrations', kind: 'cloud', description: 'Write text to a Google Doc', argsTemplate: { documentId: '', text: '' }, outputSchema: { result: 'object' } },
-  { id: 'tasks_list', category: 'integrations', kind: 'cloud', description: 'List Google Tasks', argsTemplate: { tasklist: '', maxResults: 10 }, outputSchema: { items: 'any[]', count: 'number' } },
+  { id: 'google_list_profiles', category: 'integrations', kind: 'cloud', description: 'List all connected Google profiles/accounts for the current user. Returns profile labels and emails. Call this first when the user has multiple Google accounts to determine which profile label to pass to other Google tools.', argsTemplate: {}, outputSchema: { profiles: 'any[]' } },
+  { id: 'gmail_send_message', category: 'integrations', kind: 'cloud', description: 'Send an email via Gmail with optional file attachments', argsTemplate: { to: [], subject: '', body: '', contentType: 'text/plain', from: '', cc: [], bcc: [], attachments: [], profile: '' }, outputSchema: { message: 'object', attachmentCount: 'number' } },
+  { id: 'gmail_list_messages', category: 'integrations', kind: 'cloud', description: 'List Gmail messages', argsTemplate: { q: '', labelIds: [], maxResults: 10, includeSpamTrash: false, profile: '' }, outputSchema: { items: 'any[]', count: 'number', nextPageToken: 'string' } },
+  { id: 'gmail_get_message_brief', category: 'integrations', kind: 'cloud', description: 'Get a Gmail message brief', argsTemplate: { id: '', profile: '' }, outputSchema: { message: 'object' } },
+  { id: 'gmail_get_message_full', category: 'integrations', kind: 'cloud', description: 'Get a Gmail message with full content', argsTemplate: { id: '', profile: '' }, outputSchema: { message: 'object' } },
+  { id: 'gmail_modify_message', category: 'integrations', kind: 'cloud', description: 'Modify Gmail message labels', argsTemplate: { id: '', addLabelIds: [], removeLabelIds: [], profile: '' }, outputSchema: { message: 'object' } },
+  { id: 'gmail_delete_message', category: 'integrations', kind: 'cloud', description: 'Delete a Gmail message permanently', argsTemplate: { id: '', profile: '' }, outputSchema: { ok: 'boolean' } },
+  { id: 'gmail_archive_message', category: 'integrations', kind: 'cloud', description: 'Archive a Gmail message', argsTemplate: { id: '', profile: '' }, outputSchema: { message: 'object' } },
+  { id: 'gmail_mark_as_read', category: 'integrations', kind: 'cloud', description: 'Mark a Gmail message as read', argsTemplate: { id: '', profile: '' }, outputSchema: { message: 'object' } },
+  { id: 'gmail_mark_as_unread', category: 'integrations', kind: 'cloud', description: 'Mark a Gmail message as unread', argsTemplate: { id: '', profile: '' }, outputSchema: { message: 'object' } },
+  { id: 'drive_list_files', category: 'integrations', kind: 'cloud', description: 'List Google Drive files', argsTemplate: { query: '', pageSize: 20, orderBy: '', profile: '' }, outputSchema: { files: 'any[]', count: 'number', nextPageToken: 'string' } },
+  { id: 'calendar_list_events', category: 'integrations', kind: 'cloud', description: 'List Google Calendar events', argsTemplate: { calendarId: 'primary', timeMin: '', timeMax: '', maxResults: 10, profile: '' }, outputSchema: { items: 'any[]', count: 'number', nextPageToken: 'string' } },
+  { id: 'calendar_create_event', category: 'integrations', kind: 'cloud', description: 'Create a Google Calendar event', argsTemplate: { calendarId: 'primary', summary: '', description: '', start: '', end: '', timeZone: '', profile: '' }, outputSchema: { event: 'object' } },
+  { id: 'sheets_read_range', category: 'integrations', kind: 'cloud', description: 'Read a range from Google Sheets', argsTemplate: { spreadsheetId: '', range: '', profile: '' }, outputSchema: { values: 'any[]', range: 'string' } },
+  { id: 'docs_get_document', category: 'integrations', kind: 'cloud', description: 'Get a Google Docs document', argsTemplate: { documentId: '', profile: '' }, outputSchema: { document: 'object' } },
+  { id: 'docs_create_document', category: 'integrations', kind: 'cloud', description: 'Create a new Google Doc', argsTemplate: { title: '', profile: '' }, outputSchema: { document: 'object' } },
+  { id: 'docs_write_text', category: 'integrations', kind: 'cloud', description: 'Write text to a Google Doc', argsTemplate: { documentId: '', text: '', profile: '' }, outputSchema: { result: 'object' } },
+  { id: 'tasks_list', category: 'integrations', kind: 'cloud', description: 'List Google Tasks', argsTemplate: { tasklist: '', maxResults: 10, profile: '' }, outputSchema: { items: 'any[]', count: 'number' } },
   // Telnyx (SMS / Voice — verified number only)
   { id: 'telnyx_send_sms', category: 'integrations', kind: 'cloud', description: 'Send an SMS to the user\'s verified phone number', argsTemplate: { message: '' }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
   { id: 'telnyx_make_call', category: 'integrations', kind: 'cloud', description: 'Call the user\'s verified phone and speak a message via TTS', argsTemplate: { message: '', voice: 'female' }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', error: 'string' } },
@@ -421,6 +430,8 @@ const MODEL_OPTIONS: ArgOption[] = [
   { value: 'google/gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview', description: 'Google Gemini 3.1 Pro Preview' },
   { value: 'anthropic/claude-sonnet-4-20250514', label: 'Claude Sonnet 4', description: 'Anthropic Claude Sonnet 4' },
   { value: 'anthropic/claude-3.5-haiku', label: 'Claude 3.5 Haiku', description: 'Anthropic Claude 3.5 Haiku — fast' },
+  { value: 'openai/gpt-5.4', label: 'GPT-5.4', description: 'OpenAI GPT-5.4' },
+  { value: 'openai/gpt-5.2', label: 'GPT-5.2', description: 'OpenAI GPT-5.2' },
 ];
 
 const SCREEN_TARGET_OPTIONS: ArgOption[] = [
@@ -1113,6 +1124,12 @@ if (TOOL_SCHEMAS['gmail_send_message']) {
       label: 'Attachments',
       description: 'Files to attach to the email. Select local files to include.',
     },
+    profile: {
+      type: 'string',
+      label: 'Google Profile',
+      description: 'OAuth profile label to use (e.g. "work", "personal"). Leave empty to use the default profile.',
+      placeholder: 'default',
+    },
   };
 }
 
@@ -1576,7 +1593,7 @@ if (TOOL_SCHEMAS['generate_image']) {
     input_images: {
       type: 'files',
       label: 'Input Images',
-      description: 'Optional reference/source images for image-to-image or editing. Best supported by Gemini image-preview models and OpenAI gpt-image-1.',
+      description: 'Optional reference/source images for image-to-image or editing. Supported by: all GPT Image models, Gemini image-preview models, and Grok Imagine (up to 3). Not supported by DALL-E, Imagen, or Grok 2 Image.',
       default: [],
     },
     model: {

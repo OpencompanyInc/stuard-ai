@@ -20,6 +20,10 @@
 import http from 'http';
 import { randomUUID } from 'crypto';
 import { createHmac, timingSafeEqual } from 'crypto';
+import fs from 'fs';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
+import { WebSocketServer, WebSocket } from 'ws';
 import { collectMetrics, initMetrics } from './metrics-collector';
 import { ShellExecutor } from './shell-executor';
 import { DeployExecutor } from './deploy-executor';
@@ -40,6 +44,7 @@ const AGENT_VERSION = '2.0.0';
 
 const shellExecutor = new ShellExecutor();
 const deployExecutor = new DeployExecutor();
+const LOCAL_AGENT_WS_URL = process.env.STUARD_LOCAL_AGENT_WS || 'ws://127.0.0.1:8765/ws';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth — verify HMAC bearer token on each request
@@ -96,6 +101,18 @@ function verifyBearerToken(authHeader: string | undefined): boolean {
   }
 }
 
+function authHeaderFromRequest(req: http.IncomingMessage): string | undefined {
+  const header = req.headers.authorization;
+  if (header) return header;
+  try {
+    const parsed = new URL(req.url || '/', 'http://localhost');
+    const token = parsed.searchParams.get('token');
+    return token ? `Bearer ${token}` : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // HTTP Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -126,6 +143,34 @@ async function readBody(req: http.IncomingMessage, maxBytes = 10 * 1024 * 1024):
     });
     req.on('error', reject);
   });
+}
+
+async function uploadArchive(uploadUrl: string, archivePath: string): Promise<void> {
+  const stats = fs.statSync(archivePath);
+  const response = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': String(stats.size),
+    },
+    body: fs.createReadStream(archivePath) as any,
+    duplex: 'half' as any,
+  });
+  if (!response.ok) {
+    throw new Error(`gcs_upload_http_${response.status}`);
+  }
+}
+
+async function downloadArchive(downloadUrl: string, outputPath: string): Promise<number> {
+  const response = await fetch(downloadUrl);
+  if (!response.ok) {
+    throw new Error(`gcs_download_http_${response.status}`);
+  }
+  if (!response.body) {
+    throw new Error('gcs_download_empty_body');
+  }
+  await pipeline(Readable.fromWeb(response.body as any), fs.createWriteStream(outputPath));
+  return fs.statSync(outputPath).size;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -369,7 +414,6 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const fs = require('fs');
       const { execFileSync } = require('child_process');
       const workspacePath = process.env.STUARD_WORKSPACE || '/home/stuard';
       const archivePath = `/tmp/sync-upload-${Date.now()}.tar.gz`;
@@ -380,21 +424,11 @@ const server = http.createServer(async (req, res) => {
       const stats = fs.statSync(archivePath);
       console.log(`[vm-agent] Archive created: ${stats.size} bytes`);
 
-      // Upload to GCS via signed URL
-      const archiveData = fs.readFileSync(archivePath);
-      const uploadResp = await fetch(uploadUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/octet-stream' },
-        body: archiveData,
-      });
+      // Upload to GCS via signed URL without buffering the full archive in memory
+      await uploadArchive(uploadUrl, archivePath);
 
       // Cleanup temp file
       try { fs.unlinkSync(archivePath); } catch {}
-
-      if (!uploadResp.ok) {
-        json(res, 500, { ok: false, error: `gcs_upload_http_${uploadResp.status}` });
-        return;
-      }
 
       console.log(`[vm-agent] Sync upload complete: ${objectName} (${stats.size} bytes)`);
       json(res, 200, { ok: true, objectName, bytes: stats.size });
@@ -415,23 +449,14 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const fs = require('fs');
       const { execFileSync } = require('child_process');
       const workspacePath = process.env.STUARD_WORKSPACE || '/home/stuard';
       const tempPath = `/tmp/sync-download-${Date.now()}.tar.gz`;
 
-      // Download from GCS via signed URL
+      // Download from GCS via signed URL without materializing the full archive in memory
       console.log(`[vm-agent] Downloading backup ${objectName} for restore...`);
-      const downloadResp = await fetch(downloadUrl);
-      if (!downloadResp.ok) {
-        json(res, 500, { ok: false, error: `gcs_download_http_${downloadResp.status}` });
-        return;
-      }
-
-      const arrayBuf = await downloadResp.arrayBuffer();
-      fs.writeFileSync(tempPath, Buffer.from(arrayBuf));
-      const stats = fs.statSync(tempPath);
-      console.log(`[vm-agent] Downloaded ${stats.size} bytes`);
+      const bytes = await downloadArchive(downloadUrl, tempPath);
+      console.log(`[vm-agent] Downloaded ${bytes} bytes`);
 
       // Ensure workspace dir exists
       fs.mkdirSync(workspacePath, { recursive: true });
@@ -440,8 +465,15 @@ const server = http.createServer(async (req, res) => {
       execFileSync('tar', ['-xzf', tempPath, '-C', workspacePath], { timeout: 600_000 });
       try { fs.unlinkSync(tempPath); } catch {}
 
+      // Bring back long-lived non-workflow deploys after cold restore.
+      const restoredDeploys = await deployExecutor.restoreAll().catch((e: any) => ({
+        restored: [] as string[],
+        skipped: [] as string[],
+        failed: [{ id: 'restore_all', error: String(e?.message || e) }],
+      }));
+
       console.log(`[vm-agent] Sync restore complete: ${objectName}`);
-      json(res, 200, { ok: true, objectName, bytes: stats.size });
+      json(res, 200, { ok: true, objectName, bytes, restoredDeploys });
     } catch (e: any) {
       console.error('[vm-agent] sync/download error:', e?.message);
       json(res, 500, { ok: false, error: e?.message || 'sync_download_failed' });
@@ -450,6 +482,119 @@ const server = http.createServer(async (req, res) => {
   }
 
   json(res, 404, { ok: false, error: 'not_found' });
+});
+
+const proxyWss = new WebSocketServer({ noServer: true });
+
+proxyWss.on('connection', (clientWs) => {
+  const upstreamWs = new WebSocket(LOCAL_AGENT_WS_URL);
+  const pendingFrames: Array<{ data: Buffer; isBinary: boolean }> = [];
+  let upstreamOpen = false;
+
+  const flushPending = () => {
+    if (!upstreamOpen) return;
+    while (pendingFrames.length > 0) {
+      const frame = pendingFrames.shift();
+      if (!frame) continue;
+      upstreamWs.send(frame.data, { binary: frame.isBinary });
+    }
+  };
+
+  const closeClient = (code?: number, reason?: string) => {
+    try {
+      if (clientWs.readyState === WebSocket.OPEN || clientWs.readyState === WebSocket.CONNECTING) {
+        clientWs.close(code, reason);
+      }
+    } catch {
+      try { clientWs.terminate(); } catch {}
+    }
+  };
+
+  const closeUpstream = () => {
+    try {
+      if (upstreamWs.readyState === WebSocket.OPEN || upstreamWs.readyState === WebSocket.CONNECTING) {
+        upstreamWs.close();
+      }
+    } catch {
+      try { upstreamWs.terminate(); } catch {}
+    }
+  };
+
+  clientWs.on('message', (data, isBinary) => {
+    const frame = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+    if (upstreamOpen && upstreamWs.readyState === WebSocket.OPEN) {
+      upstreamWs.send(frame, { binary: isBinary });
+      return;
+    }
+    if (upstreamWs.readyState === WebSocket.CONNECTING) {
+      pendingFrames.push({ data: frame, isBinary });
+      return;
+    }
+    closeClient(1011, 'vm_local_agent_unavailable');
+  });
+
+  clientWs.on('close', () => {
+    closeUpstream();
+  });
+
+  clientWs.on('error', () => {
+    closeUpstream();
+  });
+
+  upstreamWs.on('open', () => {
+    upstreamOpen = true;
+    flushPending();
+  });
+
+  upstreamWs.on('message', (data, isBinary) => {
+    try {
+      if (clientWs.readyState === WebSocket.OPEN) {
+        clientWs.send(data, { binary: isBinary });
+      }
+    } catch {
+      closeUpstream();
+      closeClient();
+    }
+  });
+
+  upstreamWs.on('close', (code, reason) => {
+    closeClient(code, reason.toString());
+  });
+
+  upstreamWs.on('error', (err: any) => {
+    try {
+      if (clientWs.readyState === WebSocket.OPEN) {
+        clientWs.send(JSON.stringify({ type: 'error', message: `vm_local_agent_proxy_failed: ${String(err?.message || err)}` }));
+      }
+    } catch {}
+    closeClient(1011, 'vm_local_agent_proxy_failed');
+    closeUpstream();
+  });
+});
+
+server.on('upgrade', (req, socket, head) => {
+  let parsed: URL;
+  try {
+    parsed = new URL(req.url || '/', 'http://localhost');
+  } catch {
+    socket.destroy();
+    return;
+  }
+
+  if (parsed.pathname !== '/ws') {
+    socket.destroy();
+    return;
+  }
+
+  if (!verifyBearerToken(authHeaderFromRequest(req))) {
+    try { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); } catch {}
+    socket.destroy();
+    return;
+  }
+
+  proxyWss.handleUpgrade(req, socket, head, (ws) => {
+    proxyWss.emit('connection', ws, req);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -465,6 +610,15 @@ export function startAgent(): void {
 
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`[vm-agent] Listening on http://0.0.0.0:${PORT}`);
+    deployExecutor.restoreAll()
+      .then((summary) => {
+        if (summary.restored.length > 0 || summary.failed.length > 0) {
+          console.log(`[vm-agent] Deploy restore summary: restored=${summary.restored.length} skipped=${summary.skipped.length} failed=${summary.failed.length}`);
+        }
+      })
+      .catch((e: any) => {
+        console.warn(`[vm-agent] Initial deploy restore failed: ${String(e?.message || e)}`);
+      });
   });
 
   // Graceful shutdown

@@ -1,7 +1,5 @@
-import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { makeLocalTool, execLocalTool, hasClientBridge, getBridgeSecrets } from './shared';
-import { PUBLIC_BASE_URL } from '../../utils/config';
+import { makeLocalTool } from './shared';
 
 // ─── browser_use_status ─────────────────────────────────────────────────────
 
@@ -45,58 +43,33 @@ export const browser_use_configure = makeLocalTool(
   { noFallback: true },
 );
 
-// ─── browser_use_task ───────────────────────────────────────────────────────
+// ─── browser_use_execute_script ─────────────────────────────────────────────
 
-export const browser_use_task = createTool({
-  id: 'browser_use_task',
-  description: 'Give a natural language task to the browser-use AI agent for autonomous web browsing. The agent will navigate, click, type, and extract data as needed to complete the task. Best for complex multi-step web tasks like "find the cheapest flight from NYC to LA on Google Flights" or "fill out this form with my information".',
-  inputSchema: z.object({
-    task: z.string().describe('Natural language description of the web task to accomplish'),
-    max_steps: z.number().optional().describe('Maximum number of browser actions the agent can take (default: 25)'),
-    model: z.string().optional().describe('LLM model for the browser agent (uses default if not specified)'),
+export const browser_use_execute_script = makeLocalTool(
+  'browser_use_execute_script',
+  'Execute JavaScript inside the current browser-use page context. Best for complex extraction, DOM transformation, or page logic where one script is cleaner than many tool calls. The script runs inside an async function and should return JSON-serializable data.',
+  z.object({
+    script: z.string().describe('JavaScript body to execute in the page context. The script runs inside an async function with an `args` object in scope; return a JSON-serializable value.'),
+    args: z.record(z.string(), z.any()).optional().describe('Named arguments exposed to the script as `args`'),
+    wait_for_selector: z.string().optional().describe('Optional CSS selector to wait for before running the script'),
+    wait_timeout: z.number().optional().describe('Wait timeout in ms for wait_for_selector (default: 5000)'),
+    timeout: z.number().optional().describe('Maximum script execution time in ms (default: 30000)'),
   }),
-  outputSchema: z.object({
+  z.object({
     ok: z.boolean(),
-    result: z.string().optional().describe('The agent\'s final result/answer'),
-    task: z.string().optional(),
+    result: z.any().optional().describe('JSON-serializable value returned by the script'),
+    url: z.string().optional(),
+    title: z.string().optional(),
+    elapsedMs: z.number().optional(),
     error: z.string().optional(),
   }),
-  execute: async (inputData, { writer }) => {
-    if (!hasClientBridge()) {
-      return { ok: false, error: 'No desktop bridge available. browser_use_task requires the Stuard desktop app.' };
-    }
-    const raw = (inputData as any) || {};
-    const task = String(raw.task || '').trim();
-    if (!task) return { ok: false, error: 'task is required' };
-
-    const args: Record<string, any> = {
-      task: task.slice(0, 10000),
-    };
-    if (Number.isFinite(raw.max_steps)) {
-      args.max_steps = Math.max(1, Math.min(120, Math.floor(Number(raw.max_steps))));
-    }
-    if (typeof raw.model === 'string' && /^[a-z0-9._/-]{1,120}$/i.test(raw.model.trim())) {
-      args.model = raw.model.trim();
-    }
-
-    // Send cloud proxy URL + user's session token so the local Python server
-    // calls back to our cloud for LLM inference. No API keys leave the server.
-    const proxyUrl = PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 8082}`;
-    const secrets = getBridgeSecrets();
-    const sessionToken = secrets?.accessToken || '';
-
-    if (proxyUrl && sessionToken) {
-      args._llm_proxy_url = proxyUrl;
-      args._llm_session_token = sessionToken;
-    }
-
-    if (!args.model) {
-      args.model = 'google/gemini-3-flash-preview';
-    }
-
-    return execLocalTool('browser_use_task', args, writer as any, 600000, { noFallback: true });
+  (inputData) => {
+    const rawTimeout = Number((inputData as any)?.timeout ?? 30000);
+    const timeout = Number.isFinite(rawTimeout) ? Math.max(1000, Math.min(300000, Math.floor(rawTimeout))) : 30000;
+    return timeout + 5000;
   },
-});
+  { noFallback: true },
+);
 
 // ─── browser_use_navigate ───────────────────────────────────────────────────
 
@@ -181,13 +154,14 @@ export const browser_use_press_key = makeLocalTool(
 
 export const browser_use_screenshot = makeLocalTool(
   'browser_use_screenshot',
-  'Take a screenshot of the current browser page. Returns a base64-encoded PNG image.',
+  'Take a screenshot of the current browser page. Returns the saved PNG image path.',
   z.object({
     full_page: z.boolean().optional().describe('Capture the full scrollable page instead of just the viewport (default: false)'),
   }),
   z.object({
     ok: z.boolean(),
-    screenshot: z.string().optional().describe('Base64-encoded PNG screenshot'),
+    image_path: z.string().optional().describe('Absolute path to the saved PNG screenshot'),
+    screenshot_path: z.string().optional().describe('Alias of image_path for compatibility'),
     format: z.string().optional(),
     url: z.string().optional(),
     width: z.number().optional(),

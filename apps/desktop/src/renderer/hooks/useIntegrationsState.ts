@@ -16,6 +16,20 @@ interface IntegrationProfile {
   scopes_csv?: string | null;
 }
 
+interface BrowserUseChromeProfileBrowser {
+  browser: string;
+  userDataDir: string;
+  profiles: Array<{ name: string; path: string }>;
+}
+
+interface BrowserUseChromeSyncSettings {
+  chromeSyncEnabled: boolean;
+  chromeSyncBrowserName?: string | null;
+  chromeSyncProfileName?: string | null;
+  chromeSyncProfilePath?: string | null;
+  chromeSyncUserDataDir?: string | null;
+}
+
 export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: UseIntegrationsStateArgs) {
   const [connectedMap, setConnectedMap] = useState<Record<string, boolean>>({});
   const [intQuery, setIntQuery] = useState("");
@@ -38,8 +52,22 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   const [browserUseStatus, setBrowserUseStatus] = useState<any | null>(null);
   const [browserUseChecking, setBrowserUseChecking] = useState<boolean>(false);
   const [browserUseSetupProgress, setBrowserUseSetupProgress] = useState<string | null>(null);
+  const [browserUseChromeProfiles, setBrowserUseChromeProfiles] = useState<BrowserUseChromeProfileBrowser[]>([]);
+  const [browserUseSyncSettings, setBrowserUseSyncSettings] = useState<BrowserUseChromeSyncSettings>({
+    chromeSyncEnabled: true,
+    chromeSyncBrowserName: 'Chrome',
+    chromeSyncProfileName: 'Default',
+    chromeSyncProfilePath: null,
+    chromeSyncUserDataDir: null,
+  });
+  const [browserUseSyncSaving, setBrowserUseSyncSaving] = useState<boolean>(false);
   const [telnyxPhone, setTelnyxPhone] = useState<string | null>(null);
   const [telnyxVerifying, setTelnyxVerifying] = useState(false);
+  const [whatsappPhone, setWhatsappPhone] = useState<string | null>(null);
+  const [whatsappConnecting, setWhatsappConnecting] = useState(false);
+  const [whatsappLinking, setWhatsappLinking] = useState(false);
+  const [whatsappLinkCode, setWhatsappLinkCode] = useState<string | null>(null);
+  const [whatsappBotNumber, setWhatsappBotNumber] = useState<string | null>(null);
 
   // ── Profile state ──
   const [profiles, setProfiles] = useState<IntegrationProfile[]>([]);
@@ -93,7 +121,11 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=docs`, "google-docs"),
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/discord/status`, "discord"),
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/reddit/status`, "reddit"),
+        fetchStatus(`${CLOUD_AI_HTTP}/integrations/facebook/status`, "facebook"),
+        fetchStatus(`${CLOUD_AI_HTTP}/integrations/instagram/status`, "instagram"),
+        fetchStatus(`${CLOUD_AI_HTTP}/integrations/threads/status`, "threads"),
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/telnyx/status`, "telnyx"),
+        fetchStatus(`${CLOUD_AI_HTTP}/integrations/whatsapp/status`, "whatsapp"),
       ]);
 
       setConnectedMap((prev) => {
@@ -146,6 +178,9 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       { slug: "github", name: "GitHub", description: "Read repos and issues.", category: "Development", homepage: "https://github.com/", available: true },
       { slug: "discord", name: "Discord", description: "Read and send messages, list servers and DMs.", category: "Communication", homepage: "https://discord.com/", available: true },
       { slug: "reddit", name: "Reddit", description: "Browse, search, post, and comment on Reddit.", category: "Communication", homepage: "https://reddit.com/", available: true },
+      { slug: "facebook", name: "Facebook", description: "Connect your Facebook account with OAuth for social automations and account access.", category: "Communication", homepage: "https://www.facebook.com/", available: true },
+      { slug: "instagram", name: "Instagram", description: "Connect Instagram with OAuth and securely store access tokens for account-based features.", category: "Communication", homepage: "https://www.instagram.com/", available: true },
+      { slug: "threads", name: "Threads", description: "Connect your Threads account with OAuth for identity and future publishing workflows.", category: "Communication", homepage: "https://www.threads.net/", available: true },
       { slug: "google-drive", name: "Google Drive", description: "Access and search files.", category: "Files", homepage: "https://drive.google.com/", available: true },
       { slug: "webhooks", name: "Webhooks", description: "Trigger custom workflows via HTTP callbacks.", category: "Automation", homepage: "https://webhook.site/", available: true },
       { slug: "google-calendar", name: "Google Calendar", description: "Manage events and reminders.", category: "Productivity", homepage: "https://calendar.google.com/", available: true },
@@ -153,6 +188,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       { slug: "google-sheets", name: "Google Sheets", description: "Read spreadsheet ranges.", category: "Data", homepage: "https://sheets.google.com/", available: true },
       { slug: "google-docs", name: "Google Docs", description: "Read document content.", category: "Files", homepage: "https://docs.google.com/", available: true },
       { slug: "telnyx", name: "Phone (SMS/Call)", description: "Verify your phone number to receive SMS and voice call notifications from Stuard.", category: "Communication", homepage: "https://telnyx.com/", available: true },
+      { slug: "whatsapp", name: "WhatsApp", description: "Connect your WhatsApp number to receive messages, voice notes, images, and files from Stuard.", category: "Communication", homepage: "https://business.whatsapp.com/", available: true },
     ],
     []
   );
@@ -265,6 +301,45 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     }
   };
 
+  const refreshBrowserUseProfiles = async () => {
+    try {
+      const res = await (window as any).desktopAPI?.browserUseListChromeProfiles?.();
+      if (res?.ok && Array.isArray(res.browsers)) {
+        setBrowserUseChromeProfiles(res.browsers);
+      }
+    } catch {}
+  };
+
+  const refreshBrowserUseSyncSettings = async () => {
+    try {
+      const res = await (window as any).desktopAPI?.browserUseGetChromeSyncSettings?.();
+      if (res?.ok && res.settings) {
+        setBrowserUseSyncSettings(res.settings);
+      }
+    } catch {}
+  };
+
+  const updateBrowserUseSyncSettings = async (updates: Partial<BrowserUseChromeSyncSettings>) => {
+    const next = {
+      ...browserUseSyncSettings,
+      ...updates,
+      chromeSyncEnabled: updates.chromeSyncEnabled ?? browserUseSyncSettings.chromeSyncEnabled,
+    };
+    setBrowserUseSyncSaving(true);
+    try {
+      const res = await (window as any).desktopAPI?.browserUseUpdateChromeSyncSettings?.(next);
+      if (res?.ok && res.settings) {
+        setBrowserUseSyncSettings(res.settings);
+      } else if (res?.ok) {
+        setBrowserUseSyncSettings(next);
+      }
+      await refreshBrowserUseStatus();
+      return res;
+    } finally {
+      setBrowserUseSyncSaving(false);
+    }
+  };
+
   useEffect(() => {
     (async () => {
       try {
@@ -320,7 +395,12 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     setBrowserUseChecking(true);
     try {
       const res = await (window as any).desktopAPI?.execTool?.('browser_use_status', {});
-      if (res && typeof res === 'object') setBrowserUseStatus(res);
+      if (res && typeof res === 'object') {
+        setBrowserUseStatus(res);
+        if ((res as any).chromeSyncSettings) {
+          setBrowserUseSyncSettings((res as any).chromeSyncSettings);
+        }
+      }
 
       const running = !!(res && (res as any).running);
       const installed = !!(res && (res as any).installed);
@@ -424,6 +504,8 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     (async () => {
       try {
         await refreshBrowserUseStatus();
+        await refreshBrowserUseSyncSettings();
+        await refreshBrowserUseProfiles();
       } catch {}
     })();
   }, []);
@@ -545,6 +627,11 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   const slugToProvider = (slug: string): string | null => {
     if (slug === "github") return "github";
     if (slug === "outlook") return "outlook";
+    if (slug === "discord") return "discord";
+    if (slug === "reddit") return "reddit";
+    if (slug === "facebook") return "facebook";
+    if (slug === "instagram") return "instagram";
+    if (slug === "threads") return "threads";
     if (slug.startsWith("google-") || slug === "gmail") return "google";
     return null;
   };
@@ -699,6 +786,117 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     } catch {}
   }, [session?.access_token, CLOUD_AI_HTTP]);
 
+  const whatsappConnect = async (phone: string): Promise<{ ok: boolean; error?: string }> => {
+    const token = session?.access_token;
+    if (!token) return { ok: false, error: 'Not signed in.' };
+    try {
+      const resp = await fetch(`${CLOUD_AI_HTTP}/integrations/whatsapp/connect`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone }),
+      });
+      const j = await resp.json().catch(() => null) as any;
+      if (j?.ok) {
+        setWhatsappPhone(j.phone || null);
+        setConnectedMap((prev) => {
+          const next = { ...prev, whatsapp: true };
+          try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
+          emitConnectedChanged();
+          return next;
+        });
+      }
+      return { ok: !!j?.ok, error: j?.error };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  };
+
+  const whatsappInitiateLink = async (): Promise<{ ok: boolean; error?: string }> => {
+    const token = session?.access_token;
+    if (!token) return { ok: false, error: 'Not signed in.' };
+    try {
+      setWhatsappConnecting(true);
+      const resp = await fetch(`${CLOUD_AI_HTTP}/integrations/whatsapp/initiate-link`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const j = await resp.json().catch(() => null) as any;
+      if (j?.ok) {
+        setWhatsappLinkCode(j.code || null);
+        setWhatsappBotNumber(j.botNumber || null);
+        setWhatsappLinking(true);
+      }
+      return { ok: !!j?.ok, error: j?.error };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    } finally {
+      setWhatsappConnecting(false);
+    }
+  };
+
+  const whatsappDisconnect = async (): Promise<void> => {
+    const token = session?.access_token;
+    if (!token) return;
+    try {
+      await fetch(`${CLOUD_AI_HTTP}/integrations/whatsapp/disconnect`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setWhatsappPhone(null);
+      setConnectedMap((prev) => {
+        const next = { ...prev };
+        delete next.whatsapp;
+        try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
+        emitConnectedChanged();
+        return next;
+      });
+    } catch {}
+  };
+
+  const refreshWhatsAppStatus = useCallback(async (): Promise<boolean> => {
+    const token = session?.access_token;
+    if (!token) return false;
+    try {
+      const resp = await fetch(`${CLOUD_AI_HTTP}/integrations/whatsapp/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const j = await resp.json().catch(() => null) as any;
+      if (j?.ok && j?.connected) {
+        setWhatsappPhone(j.phone || null);
+        setConnectedMap((prev) => {
+          const next = { ...prev, whatsapp: true };
+          try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
+          emitConnectedChanged();
+          return next;
+        });
+        return true;
+      }
+    } catch {}
+    return false;
+  }, [session?.access_token, CLOUD_AI_HTTP]);
+
+  // Poll for WhatsApp link confirmation while waiting for the user to send the code
+  useEffect(() => {
+    if (!whatsappLinking || !session?.access_token) return;
+    let cancelled = false;
+    const poll = async () => {
+      while (!cancelled) {
+        await new Promise((r) => setTimeout(r, 2500));
+        if (cancelled) break;
+        const connected = await refreshWhatsAppStatus();
+        if (connected) {
+          if (!cancelled) {
+            setWhatsappLinking(false);
+            setWhatsappLinkCode(null);
+          }
+          break;
+        }
+      }
+    };
+    poll();
+    return () => { cancelled = true; };
+  }, [whatsappLinking, session?.access_token, refreshWhatsAppStatus]);
+
   const handleLearnMore = (url: string) => {
     if (typeof url === "string" && url.startsWith("http")) {
       try {
@@ -772,6 +970,11 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
 
     if (slug === "telnyx") {
       await refreshTelnyxStatus();
+      return;
+    }
+
+    if (slug === "whatsapp") {
+      await refreshWhatsAppStatus();
       return;
     }
 
@@ -857,6 +1060,39 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       return;
     }
 
+    if (slug === "facebook") {
+      const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
+      const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
+      const url = `${CLOUD_AI_HTTP}/integrations/facebook/connect?token=${encodeURIComponent(token)}${profileParam}`;
+      openExternal(url);
+      await pollStatus(`${CLOUD_AI_HTTP}/integrations/facebook/status${statusProfileParam}`, "facebook");
+      await refreshProfiles('facebook');
+      await syncConnectedFromServer(token);
+      return;
+    }
+
+    if (slug === "instagram") {
+      const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
+      const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
+      const url = `${CLOUD_AI_HTTP}/integrations/instagram/connect?token=${encodeURIComponent(token)}${profileParam}`;
+      openExternal(url);
+      await pollStatus(`${CLOUD_AI_HTTP}/integrations/instagram/status${statusProfileParam}`, "instagram");
+      await refreshProfiles('instagram');
+      await syncConnectedFromServer(token);
+      return;
+    }
+
+    if (slug === "threads") {
+      const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
+      const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
+      const url = `${CLOUD_AI_HTTP}/integrations/threads/connect?token=${encodeURIComponent(token)}${profileParam}`;
+      openExternal(url);
+      await pollStatus(`${CLOUD_AI_HTTP}/integrations/threads/status${statusProfileParam}`, "threads");
+      await refreshProfiles('threads');
+      await syncConnectedFromServer(token);
+      return;
+    }
+
     if (slug === "google-drive" || slug === "google-calendar" || slug === "gmail" || slug === "google-sheets" || slug === "google-docs") {
       const target = slug === "google-drive" ? "drive"
         : slug === "google-calendar" ? "calendar"
@@ -911,8 +1147,16 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     browserUseStatus,
     browserUseChecking,
     browserUseSetupProgress,
+    browserUseChromeProfiles,
+    browserUseSyncSettings,
+    browserUseSyncSaving,
     telnyxPhone,
     telnyxVerifying,
+    whatsappPhone,
+    whatsappConnecting,
+    whatsappLinking,
+    whatsappLinkCode,
+    whatsappBotNumber,
     // profiles
     profiles,
     profilesLoading,
@@ -931,10 +1175,12 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     refreshOllamaStatus,
     startOllama,
     refreshBrowserUseStatus,
+    refreshBrowserUseProfiles,
     setupBrowserUse,
     startBrowserUse,
     stopBrowserUse,
     uninstallBrowserUse,
+    updateBrowserUseSyncSettings,
     setupPython,
     setupFfmpeg,
     setupMediapipe,
@@ -949,5 +1195,10 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     telnyxVerifyCode,
     telnyxDisconnect,
     refreshTelnyxStatus,
+    // whatsapp
+    whatsappConnect,
+    whatsappInitiateLink,
+    whatsappDisconnect,
+    refreshWhatsAppStatus,
   };
 }

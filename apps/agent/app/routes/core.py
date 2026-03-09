@@ -435,11 +435,13 @@ async def http_memory_stats() -> JSONResponse:
 
 
 @router.get("/memory/conversations")
-async def http_memory_conversations_list(status: str | None = None, limit: int = 50, offset: int = 0) -> JSONResponse:
+async def http_memory_conversations_list(status: str | None = None, limit: int = 50, offset: int = 0, source: str | None = None) -> JSONResponse:
     try:
         params: Dict[str, Any] = {"limit": limit, "offset": offset}
         if status:
             params["status"] = status
+        if source:
+            params["source"] = source
         res = await memory_tools.conversation_list(params)
         return JSONResponse({"ok": True, "conversations": res.get("conversations", [])})
     except Exception as e:

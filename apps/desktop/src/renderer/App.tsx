@@ -13,6 +13,7 @@ import 'simplebar-react/dist/simplebar.min.css';
 import './scrollbar.css';
 import { supabase } from './lib/supabaseClient';
 import { startBrowserSignIn } from './auth/browserSignIn';
+import { fetchRendererSyncPrefs } from './utils/syncPrefs';
 import OnboardingFlow from './components/onboarding/OnboardingFlow';
 import { OnboardingProvider, OnboardingTooltipContainer } from './components/onboarding';
 import EnvironmentBadge from './components/EnvironmentBadge';
@@ -46,7 +47,9 @@ import {
 } from "lucide-react";
 
 import { useWorkflows } from './workflows/hooks/useWorkflows';
+import { agentFetchJson, resolveAgentEndpoints } from './utils/agentEndpoints';
 import { getMarketplaceApi } from './utils/cloud';
+import { getLatestAssistantContext } from './utils/contextUsage';
 
 export default function App() {
   // Refs
@@ -135,8 +138,8 @@ export default function App() {
   const [attachments, setAttachments] = useState<Array<{ type: 'image' | 'file'; name: string; data: string; mimeType: string }>>([]);
   const [approvalPrompt, setApprovalPrompt] = useState<{ id: string; tool: string; args?: Record<string, any>; description?: string } | null>(null);
   const [contextPaths, setContextPaths] = useState<ContextItem[]>([]);
-
   const [showMiniOutput, setShowMiniOutput] = useState(true);
+  const activeConversationIdRef = useRef<string | null>(null);
 
   const overlayModeRef = useRef<'compact' | 'sidebar' | 'window'>(overlayMode);
   const prevOverlayModeRef = useRef<'compact' | 'sidebar' | 'window'>(overlayMode);
@@ -169,7 +172,9 @@ export default function App() {
         return [{ id: cid, title, created_at: new Date().toISOString() }, ...prev];
       }
     });
-    setConversationTitle(title);
+    if (String(activeConversationIdRef.current || '') === String(cid)) {
+      setConversationTitle(title);
+    }
   }, []);
 
   // Agent Hook
@@ -184,11 +189,17 @@ export default function App() {
     activeGenUITools, respondToGenUI
   } = useAgent({ onTitleUpdate: handleTitleUpdate, initialChatMode: defaultChatMode, initialChatModels: defaultChatModels }) as any;
 
+  useEffect(() => {
+    activeConversationIdRef.current = conversationId || null;
+  }, [conversationId]);
+
   // Speech Hook
   const { isRecording, transcript, interimTranscript, startRecording, stopRecording, clearTranscript, error: speechError } = useSpeechToText();
 
   // Planner Hook
   const plannerData = usePlannerData(accessToken);
+
+  const latestAgentContext = useMemo(() => getLatestAssistantContext(messages as any[]), [messages]);
 
   // Track when reasoning/thinking starts
   useEffect(() => {
@@ -620,15 +631,19 @@ export default function App() {
         if (!conversationId) { setConversationTitle(null); return; }
         // Try local agent first
         try {
-          const resp = await fetch(`http://127.0.0.1:8765/v1/memory/conversations/${conversationId}`);
-          const json = await resp.json();
+          const json = await agentFetchJson(
+            resolveAgentEndpoints(),
+            `/v1/memory/conversations/${encodeURIComponent(conversationId)}`,
+            { accessToken },
+          );
           if (json.ok && json.conversation?.title) {
             setConversationTitle(String(json.conversation.title).trim() || null);
             return;
           }
         } catch { }
         // Fallback to Supabase if signed in
-        if (signedIn) {
+        const syncPrefs = await fetchRendererSyncPrefs();
+        if (signedIn && syncPrefs.sync_conversations) {
           const { data, error } = await supabase
             .from('conversations')
             .select('title')
@@ -644,18 +659,20 @@ export default function App() {
     loadTitle();
     timer = setTimeout(loadTitle, 2000);
     return () => { if (timer) clearTimeout(timer); };
-  }, [conversationId, signedIn]);
+  }, [accessToken, conversationId, signedIn]);
 
   // Fetch Conversations from local agent (works offline, no sign-in required)
   const fetchConversations = async () => {
     setLoadingConvs(true);
     try {
       // Primary: fetch from local agent which stores everything locally
-      const resp = await fetch('http://127.0.0.1:8765/v1/memory/conversations?limit=20');
-      const json = await resp.json();
+      const json = await agentFetchJson(
+        resolveAgentEndpoints(),
+        '/v1/memory/conversations?limit=20&source=stuard',
+        { accessToken },
+      );
       if (json.ok && Array.isArray(json.conversations)) {
         const convs = json.conversations
-          .filter((c: any) => c.source !== 'workflow')
           .map((c: any) => ({ id: c.id || c.conversation_id, title: c.title, created_at: c.created_at || c.updated_at }))
           .sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
           .slice(0, 20);
@@ -668,11 +685,12 @@ export default function App() {
     }
     // Fallback: try Supabase if signed in
     try {
-      if (signedIn) {
+      const syncPrefs = await fetchRendererSyncPrefs();
+      if (signedIn && syncPrefs.sync_conversations) {
         const { data, error } = await supabase
           .from('conversations')
           .select('id, title, created_at')
-          .neq('source', 'workflow')
+          .eq('source', 'stuard')
           .order('created_at', { ascending: false })
           .limit(20);
         if (!error) { setConvList(Array.isArray(data) ? data : []); }
@@ -704,11 +722,15 @@ export default function App() {
   }, [newChat]);
 
   const handleSelectConversation = useCallback((id: string) => {
+    let titleHint: string | undefined;
     try {
       const item = convList.find((c: any) => String(c.id) === String(id));
-      if (item && typeof item.title === 'string' && item.title.trim()) setConversationTitle(item.title.trim());
+      if (item && typeof item.title === 'string' && item.title.trim()) {
+        titleHint = item.title.trim();
+        setConversationTitle(item.title.trim());
+      }
     } catch { }
-    loadConversation(id);
+    loadConversation(id, titleHint);
     setChatMenuOpen(false);
   }, [convList, loadConversation]);
 
@@ -718,7 +740,8 @@ export default function App() {
       await deleteConversation(id);
 
       // 2. Delete from Supabase if signed in
-      if (signedIn) {
+      const syncPrefs = await fetchRendererSyncPrefs();
+      if (signedIn && syncPrefs.sync_conversations) {
         await supabase.from('conversations').delete().eq('id', id);
       }
 
@@ -1391,6 +1414,8 @@ export default function App() {
                     onChatMenuOpenChange={setChatMenuOpen}
                     statusText={chatStatusText}
                     modelName={typeof (ai as any)?.model === 'string' ? (ai as any).model : ''}
+                    contextUsage={latestAgentContext.usage}
+                    contextModelId={latestAgentContext.modelId || (typeof (ai as any)?.model === 'string' ? (ai as any).model : undefined)}
                     connectionStatus={connectionStatus}
                     chatMode={chatMode}
                     onChatModeChange={setChatMode as any}
@@ -1419,6 +1444,7 @@ export default function App() {
                     onRemoveAttachment={handleRemoveAttachment}
                     onAttachFiles={handleAttachFiles}
                     onAttachImages={handleAttachImages}
+                    onPaste={handlePaste}
                     onDrop={handleDrop}
                     queueDepth={queueDepth}
                     queuedMessages={queuedMessages}
@@ -1444,6 +1470,7 @@ export default function App() {
                     connectionStatus={connectionStatus}
                     onMicClick={handleMicClick}
                     isRecording={isRecording}
+                    onPaste={handlePaste}
                     accessToken={accessToken}
                     overlayMode={overlayMode}
                     conversations={convList}
@@ -1453,6 +1480,8 @@ export default function App() {
                     onChatMenuOpenChange={setChatMenuOpen}
                     onNewChat={handleNewChat}
                     onOpenDashboard={handleOpenDashboard}
+                    onCollapse={handleShowCompact}
+                    onDeleteConversation={handleDeleteConversation}
                     onToggleExpand={handleShowWindow}
                     onToggleSidebar={handleToggleInternalSidebar}
                     sidebarOpen={internalSidebarOpen}
@@ -1464,6 +1493,11 @@ export default function App() {
                     onChatModelsChange={setChatModels as any}
                     reasoningLevel={reasoningLevel}
                     onReasoningLevelChange={setReasoningLevel}
+                    tabs={tabs}
+                    activeTabId={activeTabId}
+                    onSwitchTab={switchTab}
+                    onCloseTab={closeTab}
+                    onAddTab={addTab}
 
                     // Internal Sidebar
                     activeSidebarTab={activeSidebarTab}

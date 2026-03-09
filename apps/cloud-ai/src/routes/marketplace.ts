@@ -44,6 +44,266 @@ function generateSlug(name: string, id?: string): string {
   return base + suffix;
 }
 
+function sanitizeHandle(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[-_]+|[-_]+$/g, '')
+    .slice(0, 32);
+}
+
+function buildShortDescription(description: string, shortDescription?: string | null): string {
+  const normalized = (shortDescription || description || '').replace(/\s+/g, ' ').trim();
+  return normalized.slice(0, 160);
+}
+
+function normalizeWorkflowMedia(media: any): Array<{
+  media_type: 'image' | 'video';
+  url: string;
+  thumbnail_url: string | null;
+  alt_text: string | null;
+  sort_order: number;
+}> {
+  if (!Array.isArray(media)) return [];
+  return media
+    .map((item: any, index) => {
+      const mediaType = item?.media_type === 'video' ? 'video' : item?.media_type === 'image' ? 'image' : null;
+      const url = typeof item?.url === 'string' ? item.url.trim() : '';
+      if (!mediaType || !url) return null;
+      return {
+        media_type: mediaType,
+        url,
+        thumbnail_url: typeof item?.thumbnail_url === 'string' && item.thumbnail_url.trim() ? item.thumbnail_url.trim() : null,
+        alt_text: typeof item?.alt_text === 'string' && item.alt_text.trim() ? item.alt_text.trim() : null,
+        sort_order: Number.isFinite(Number(item?.sort_order)) ? Number(item.sort_order) : index,
+      };
+    })
+    .filter(Boolean) as Array<{
+      media_type: 'image' | 'video';
+      url: string;
+      thumbnail_url: string | null;
+      alt_text: string | null;
+      sort_order: number;
+    }>;
+}
+
+function inferPrimaryImage(media: Array<{ media_type: 'image' | 'video'; url: string; thumbnail_url: string | null }>): string | null {
+  const firstImage = media.find((item) => item.media_type === 'image');
+  return firstImage?.thumbnail_url || firstImage?.url || null;
+}
+
+async function ensureUniqueCreatorHandle(supabase: any, requestedHandle: string, userId: string): Promise<string> {
+  const base = sanitizeHandle(requestedHandle) || `creator-${userId.slice(0, 6)}`;
+  let candidate = base;
+
+  for (let i = 0; i < 20; i++) {
+    const { data } = await supabase
+      .from('marketplace_creators')
+      .select('user_id')
+      .eq('handle', candidate)
+      .maybeSingle();
+
+    if (!data || data.user_id === userId) {
+      return candidate;
+    }
+
+    const suffix = `${i + 2}`;
+    candidate = `${base.slice(0, Math.max(3, 31 - suffix.length))}${suffix}`;
+  }
+
+  return `${base.slice(0, 24)}-${userId.slice(0, 6)}`;
+}
+
+async function ensureCreatorProfile(
+  supabase: any,
+  user: { userId: string; email?: string | null },
+  publisherName?: string,
+  creatorProfile?: any
+) {
+  const { data: existingCreator } = await supabase
+    .from('marketplace_creators')
+    .select('user_id, handle, display_name, bio, avatar_url, hero_image_url, website_url, verified, follower_count, workflow_count')
+    .eq('user_id', user.userId)
+    .maybeSingle();
+
+  const displayName = (creatorProfile?.display_name || existingCreator?.display_name || publisherName || user.email?.split('@')[0] || 'Anonymous').trim();
+  const requestedHandle = creatorProfile?.handle || existingCreator?.handle || displayName || user.email?.split('@')[0] || user.userId.slice(0, 8);
+  const handle = await ensureUniqueCreatorHandle(supabase, requestedHandle, user.userId);
+
+  const payload = {
+    user_id: user.userId,
+    handle,
+    display_name: displayName,
+    bio: typeof creatorProfile?.bio === 'string' ? creatorProfile.bio.trim() || null : existingCreator?.bio || null,
+    avatar_url: typeof creatorProfile?.avatar_url === 'string' ? creatorProfile.avatar_url.trim() || null : existingCreator?.avatar_url || null,
+    hero_image_url: typeof creatorProfile?.hero_image_url === 'string' ? creatorProfile.hero_image_url.trim() || null : existingCreator?.hero_image_url || null,
+    website_url: typeof creatorProfile?.website_url === 'string' ? creatorProfile.website_url.trim() || null : existingCreator?.website_url || null,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data, error } = await supabase
+    .from('marketplace_creators')
+    .upsert(payload, { onConflict: 'user_id' })
+    .select('user_id, handle, display_name, bio, avatar_url, hero_image_url, website_url, verified, follower_count, workflow_count')
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
+async function replaceWorkflowMedia(supabase: any, workflowId: string, media: any) {
+  const normalizedMedia = normalizeWorkflowMedia(media);
+
+  const { error: deleteError } = await supabase
+    .from('marketplace_workflow_media')
+    .delete()
+    .eq('workflow_id', workflowId);
+
+  if (deleteError) {
+    throw deleteError;
+  }
+
+  if (normalizedMedia.length === 0) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from('marketplace_workflow_media')
+    .insert(normalizedMedia.map((item) => ({ ...item, workflow_id: workflowId })))
+    .select('id, workflow_id, media_type, url, thumbnail_url, alt_text, sort_order');
+
+  if (error) {
+    throw error;
+  }
+
+  return data || [];
+}
+
+async function getFollowingCreatorIds(supabase: any, viewerUserId: string | undefined, creatorIds: string[]) {
+  if (!viewerUserId || creatorIds.length === 0) {
+    return new Set<string>();
+  }
+
+  const { data } = await supabase
+    .from('marketplace_creator_follows')
+    .select('creator_id')
+    .eq('follower_id', viewerUserId)
+    .in('creator_id', creatorIds);
+
+  return new Set((data || []).map((item: any) => item.creator_id));
+}
+
+async function enrichWorkflows(supabase: any, workflows: any[], viewerUserId?: string) {
+  if (!Array.isArray(workflows) || workflows.length === 0) {
+    return [];
+  }
+
+  const creatorIds = Array.from(new Set(workflows.map((workflow) => workflow.publisher_id).filter(Boolean)));
+  const workflowIds = workflows.map((workflow) => workflow.id).filter(Boolean);
+
+  const [{ data: creators }, { data: media }, followingIds] = await Promise.all([
+    creatorIds.length
+      ? supabase
+          .from('marketplace_creators')
+          .select('user_id, handle, display_name, bio, avatar_url, hero_image_url, website_url, verified, follower_count, workflow_count')
+          .in('user_id', creatorIds)
+      : Promise.resolve({ data: [] }),
+    workflowIds.length
+      ? supabase
+          .from('marketplace_workflow_media')
+          .select('id, workflow_id, media_type, url, thumbnail_url, alt_text, sort_order')
+          .in('workflow_id', workflowIds)
+          .order('sort_order', { ascending: true })
+          .order('created_at', { ascending: true })
+      : Promise.resolve({ data: [] }),
+    getFollowingCreatorIds(supabase, viewerUserId, creatorIds),
+  ]);
+
+  const creatorMap = new Map(
+    (creators || []).map((creator: any) => [
+      creator.user_id,
+      {
+        id: creator.user_id,
+        handle: creator.handle,
+        display_name: creator.display_name,
+        bio: creator.bio,
+        avatar_url: creator.avatar_url,
+        hero_image_url: creator.hero_image_url,
+        website_url: creator.website_url,
+        verified: Boolean(creator.verified),
+        follower_count: creator.follower_count || 0,
+        workflow_count: creator.workflow_count || 0,
+        is_following: followingIds.has(creator.user_id),
+      },
+    ])
+  );
+
+  const mediaMap = new Map<string, any[]>();
+  for (const item of media || []) {
+    const existing = mediaMap.get(item.workflow_id) || [];
+    existing.push(item);
+    mediaMap.set(item.workflow_id, existing);
+  }
+
+  return workflows.map((workflow) => ({
+    ...workflow,
+    short_description: workflow.short_description || buildShortDescription(workflow.description || '', workflow.short_description),
+    creator: workflow.publisher_id ? creatorMap.get(workflow.publisher_id) : undefined,
+    media: mediaMap.get(workflow.id) || [],
+  }));
+}
+
+async function hydrateWorkflowRows(supabase: any, workflowIds: string[], viewerUserId?: string) {
+  if (!workflowIds.length) {
+    return [];
+  }
+
+  const { data } = await supabase
+    .from('marketplace_workflows')
+    .select('id, slug, name, description, short_description, version, spec, category, tags, icon, thumbnail_url, cover_image_url, rating_avg, rating_count, download_count, publisher_id, publisher_name, created_at, updated_at, published_at, status, locked')
+    .in('id', workflowIds);
+
+  const ordered = workflowIds
+    .map((workflowId) => (data || []).find((workflow: any) => workflow.id === workflowId))
+    .filter(Boolean);
+
+  return enrichWorkflows(supabase, ordered, viewerUserId);
+}
+
+async function getCreatorProfileByHandle(supabase: any, handle: string, viewerUserId?: string) {
+  const normalizedHandle = sanitizeHandle(decodeURIComponent(handle));
+  const { data } = await supabase
+    .from('marketplace_creators')
+    .select('user_id, handle, display_name, bio, avatar_url, hero_image_url, website_url, verified, follower_count, workflow_count')
+    .eq('handle', normalizedHandle)
+    .maybeSingle();
+
+  if (!data) {
+    return null;
+  }
+
+  const followingIds = await getFollowingCreatorIds(supabase, viewerUserId, [data.user_id]);
+
+  return {
+    id: data.user_id,
+    handle: data.handle,
+    display_name: data.display_name,
+    bio: data.bio,
+    avatar_url: data.avatar_url,
+    hero_image_url: data.hero_image_url,
+    website_url: data.website_url,
+    verified: Boolean(data.verified),
+    follower_count: data.follower_count || 0,
+    workflow_count: data.workflow_count || 0,
+    is_following: followingIds.has(data.user_id),
+  };
+}
+
 export async function handleMarketplaceRoutes(
   req: IncomingMessage,
   res: ServerResponse,
@@ -63,7 +323,21 @@ export async function handleMarketplaceRoutes(
     }
 
     const body = await readBody(req);
-    const { name, description, spec, category, tags, icon, publisherName } = body;
+    const {
+      name,
+      description,
+      shortDescription,
+      spec,
+      category,
+      tags,
+      icon,
+      publisherName,
+      thumbnailUrl,
+      coverImageUrl,
+      media,
+      creatorProfile,
+      locked,
+    } = body;
 
     if (!name || !description || !spec) {
       res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -127,26 +401,38 @@ export async function handleMarketplaceRoutes(
     try {
       // Generate embedding from description (non-blocking - we can still publish without it)
       let embedding: number[] | null = null;
+      let creator: any = null;
+      const normalizedMedia = normalizeWorkflowMedia(media);
       try {
         embedding = await generateWorkflowEmbedding(name, description, tags || []);
       } catch (embeddingError) {
         console.warn('[marketplace] embedding generation skipped:', embeddingError);
         // Continue without embedding - search will fall back to text matching
       }
+
+      try {
+        creator = await ensureCreatorProfile(supabase, user, publisherName, creatorProfile);
+      } catch (creatorError) {
+        console.warn('[marketplace] creator profile upsert skipped:', creatorError);
+      }
       
       const slug = generateSlug(name);
 
       const insertData: any = {
         publisher_id: user.userId,
-        publisher_name: publisherName || user.email?.split('@')[0] || 'Anonymous',
+        publisher_name: creator?.display_name || publisherName || user.email?.split('@')[0] || 'Anonymous',
         slug,
         name,
         description,
+        short_description: buildShortDescription(description, shortDescription),
         version: spec.version || '1',
         spec,
         category: category || 'general',
         tags: tags || [],
         icon: icon || null,
+        thumbnail_url: thumbnailUrl || inferPrimaryImage(normalizedMedia),
+        cover_image_url: coverImageUrl || inferPrimaryImage(normalizedMedia),
+        locked: Boolean(locked),
         status: 'published',
         published_at: new Date().toISOString(),
         security_score: securityAnalysis?.overallScore ?? null,
@@ -178,9 +464,17 @@ export async function handleMarketplaceRoutes(
         return true;
       }
 
+      try {
+        await replaceWorkflowMedia(supabase, data.id, normalizedMedia);
+      } catch (mediaError) {
+        console.warn('[marketplace] workflow media save skipped:', mediaError);
+      }
+
+      const [workflow] = await hydrateWorkflowRows(supabase, [data.id], user.userId);
+
       console.log('[marketplace] published workflow:', data?.slug);
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ ok: true, workflow: data }));
+      res.end(JSON.stringify({ ok: true, workflow: workflow || data }));
     } catch (e: any) {
       console.error('[marketplace] publish exception:', e);
       res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -195,6 +489,8 @@ export async function handleMarketplaceRoutes(
     const category = parsedUrl.searchParams.get('category');
     const limit = Math.min(parseInt(parsedUrl.searchParams.get('limit') || '20', 10), 50);
     const offset = parseInt(parsedUrl.searchParams.get('offset') || '0', 10);
+    const auth = req.headers.authorization?.replace('Bearer ', '');
+    const user = auth ? await verifyToken(auth) : null;
 
     const supabase = getSupabaseService();
     if (!supabase) {
@@ -244,7 +540,7 @@ export async function handleMarketplaceRoutes(
             .from('marketplace_workflows')
             .select('id, slug, name, description, category, tags, icon, rating_avg, rating_count, download_count, publisher_name, created_at')
             .eq('status', 'published')
-            .or(`name.ilike.%${query}%,description.ilike.%${query}%`);
+            .or(`name.ilike.%${query}%,description.ilike.%${query}%,publisher_name.ilike.%${query}%`);
           
           if (category) {
             queryBuilder = queryBuilder.eq('category', category);
@@ -282,6 +578,17 @@ export async function handleMarketplaceRoutes(
         results = data || [];
       }
 
+      const workflowIds = results.map((workflow) => workflow.id).filter(Boolean);
+      if (workflowIds.length > 0) {
+        const hydrated = await hydrateWorkflowRows(supabase, workflowIds, user?.userId);
+        if (results.some((workflow) => typeof workflow.similarity === 'number')) {
+          const similarityMap = new Map(results.map((workflow) => [workflow.id, workflow.similarity]));
+          results = hydrated.map((workflow) => ({ ...workflow, similarity: similarityMap.get(workflow.id) }));
+        } else {
+          results = hydrated;
+        }
+      }
+
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ ok: true, results, count: results.length }));
     } catch (e: any) {
@@ -293,8 +600,10 @@ export async function handleMarketplaceRoutes(
   }
 
   // GET /v1/marketplace/workflow/:slug - Get a single workflow
-  if (pathname.startsWith('/v1/marketplace/workflow/') && method === 'GET') {
+  if (pathname.match(/^\/v1\/marketplace\/workflow\/[^/]+$/) && method === 'GET') {
     const slug = pathname.replace('/v1/marketplace/workflow/', '');
+    const auth = req.headers.authorization?.replace('Bearer ', '');
+    const user = auth ? await verifyToken(auth) : null;
     
     const supabase = getSupabaseService();
     if (!supabase) {
@@ -306,10 +615,10 @@ export async function handleMarketplaceRoutes(
     try {
       const { data, error } = await supabase
         .from('marketplace_workflows')
-        .select('id, slug, name, description, version, spec, category, tags, icon, rating_avg, rating_count, download_count, publisher_name, created_at, published_at')
+        .select('id')
         .eq('slug', slug)
         .eq('status', 'published')
-        .single();
+        .maybeSingle();
 
       if (error || !data) {
         res.writeHead(404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET', 'Access-Control-Allow-Headers': 'Content-Type, Authorization' });
@@ -317,8 +626,16 @@ export async function handleMarketplaceRoutes(
         return true;
       }
 
+      const [workflow] = await hydrateWorkflowRows(supabase, [data.id], user?.userId);
+
+      if (!workflow) {
+        res.writeHead(404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET', 'Access-Control-Allow-Headers': 'Content-Type, Authorization' });
+        res.end(JSON.stringify({ error: 'Workflow not found' }));
+        return true;
+      }
+
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET', 'Access-Control-Allow-Headers': 'Content-Type, Authorization' });
-      res.end(JSON.stringify({ ok: true, workflow: data }));
+      res.end(JSON.stringify({ ok: true, workflow }));
     } catch (e: any) {
       res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET', 'Access-Control-Allow-Headers': 'Content-Type, Authorization' });
       res.end(JSON.stringify({ error: e.message || 'Failed to fetch workflow' }));
@@ -492,7 +809,7 @@ export async function handleMarketplaceRoutes(
     try {
       const { data, error } = await supabase
         .from('marketplace_workflows')
-        .select('id, slug, name, description, version, category, tags, icon, status, rating_avg, rating_count, download_count, created_at, published_at')
+        .select('id')
         .eq('publisher_id', user.userId)
         .order('created_at', { ascending: false });
 
@@ -502,8 +819,10 @@ export async function handleMarketplaceRoutes(
         return true;
       }
 
+      const workflows = await hydrateWorkflowRows(supabase, (data || []).map((item: any) => item.id), user.userId);
+
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ ok: true, workflows: data || [] }));
+      res.end(JSON.stringify({ ok: true, workflows }));
     } catch (e: any) {
       res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ error: e.message || 'Failed to fetch workflows' }));
@@ -524,7 +843,22 @@ export async function handleMarketplaceRoutes(
     }
 
     const body = await readBody(req);
-    const { name, description, spec, category, tags, icon, changelog, version } = body;
+    const {
+      name,
+      description,
+      shortDescription,
+      spec,
+      category,
+      tags,
+      icon,
+      thumbnailUrl,
+      coverImageUrl,
+      media,
+      creatorProfile,
+      changelog,
+      version,
+      locked,
+    } = body;
 
     if (!spec) {
       res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -543,7 +877,7 @@ export async function handleMarketplaceRoutes(
       // Get existing workflow and verify ownership
       const { data: existing, error: fetchError } = await supabase
         .from('marketplace_workflows')
-        .select('id, publisher_id, version, spec')
+        .select('id, publisher_id, version, spec, name, description, tags')
         .eq('slug', slug)
         .single();
 
@@ -590,15 +924,24 @@ export async function handleMarketplaceRoutes(
 
       // Generate new embedding if description changed
       let embedding: number[] | null = null;
+      const normalizedMedia = media !== undefined ? normalizeWorkflowMedia(media) : null;
       if (description || name || tags) {
         try {
           embedding = await generateWorkflowEmbedding(
-            name || '',
-            description || '',
-            tags || []
+            name || existing.name || '',
+            description || existing.description || '',
+            tags || existing.tags || []
           );
         } catch {
           // Continue without embedding
+        }
+      }
+
+      if (creatorProfile) {
+        try {
+          await ensureCreatorProfile(supabase, user, name || existing.name, creatorProfile);
+        } catch (creatorError) {
+          console.warn('[marketplace] creator profile update skipped:', creatorError);
         }
       }
 
@@ -611,9 +954,24 @@ export async function handleMarketplaceRoutes(
 
       if (name) updateData.name = name;
       if (description) updateData.description = description;
+      if (creatorProfile?.display_name) updateData.publisher_name = creatorProfile.display_name;
+      if (description || shortDescription !== undefined) {
+        updateData.short_description = buildShortDescription(description || existing.description || '', shortDescription);
+      }
       if (category) updateData.category = category;
       if (tags) updateData.tags = tags;
       if (icon !== undefined) updateData.icon = icon;
+      if (locked !== undefined) updateData.locked = Boolean(locked);
+      if (thumbnailUrl !== undefined) {
+        updateData.thumbnail_url = thumbnailUrl || inferPrimaryImage(normalizedMedia || []);
+      } else if (normalizedMedia) {
+        updateData.thumbnail_url = inferPrimaryImage(normalizedMedia);
+      }
+      if (coverImageUrl !== undefined) {
+        updateData.cover_image_url = coverImageUrl || inferPrimaryImage(normalizedMedia || []);
+      } else if (normalizedMedia) {
+        updateData.cover_image_url = inferPrimaryImage(normalizedMedia);
+      }
       if (embedding) updateData.embedding = embedding;
 
       const { data, error } = await supabase
@@ -630,9 +988,19 @@ export async function handleMarketplaceRoutes(
         return true;
       }
 
+      if (normalizedMedia) {
+        try {
+          await replaceWorkflowMedia(supabase, existing.id, normalizedMedia);
+        } catch (mediaError) {
+          console.warn('[marketplace] workflow media update skipped:', mediaError);
+        }
+      }
+
+      const [workflow] = await hydrateWorkflowRows(supabase, [existing.id], user.userId);
+
       console.log('[marketplace] updated workflow:', data?.slug, 'to version', newVersion);
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ ok: true, workflow: data, previousVersion: oldVersion }));
+      res.end(JSON.stringify({ ok: true, workflow: workflow || data, previousVersion: oldVersion }));
     } catch (e: any) {
       console.error('[marketplace] update exception:', e);
       res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -688,6 +1056,150 @@ export async function handleMarketplaceRoutes(
     } catch (e: any) {
       res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ error: e.message || 'Failed to fetch versions' }));
+    }
+    return true;
+  }
+
+  // GET /v1/marketplace/creator/:handle - Get creator profile and published workflows
+  if (pathname.match(/^\/v1\/marketplace\/creator\/[^/]+$/) && method === 'GET') {
+    const handle = pathname.replace('/v1/marketplace/creator/', '');
+    const auth = req.headers.authorization?.replace('Bearer ', '');
+    const user = auth ? await verifyToken(auth) : null;
+
+    const supabase = getSupabaseService();
+    if (!supabase) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ error: 'Database not available' }));
+      return true;
+    }
+
+    try {
+      const creator = await getCreatorProfileByHandle(supabase, handle, user?.userId);
+      if (!creator) {
+        res.writeHead(404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ error: 'Creator not found' }));
+        return true;
+      }
+
+      const { data } = await supabase
+        .from('marketplace_workflows')
+        .select('id')
+        .eq('publisher_id', creator.id)
+        .eq('status', 'published')
+        .order('featured', { ascending: false })
+        .order('download_count', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      const workflows = await hydrateWorkflowRows(supabase, (data || []).map((item: any) => item.id), user?.userId);
+
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: true, creator, workflows }));
+    } catch (e: any) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ error: e.message || 'Failed to fetch creator' }));
+    }
+    return true;
+  }
+
+  // POST /v1/marketplace/creator/:handle/follow - Follow a creator
+  if (pathname.match(/^\/v1\/marketplace\/creator\/[^/]+\/follow$/) && method === 'POST') {
+    const handle = pathname.replace('/v1/marketplace/creator/', '').replace('/follow', '');
+    const auth = req.headers.authorization?.replace('Bearer ', '');
+    const user = auth ? await verifyToken(auth) : null;
+
+    if (!user) {
+      res.writeHead(401, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      return true;
+    }
+
+    const supabase = getSupabaseService();
+    if (!supabase) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ error: 'Database not available' }));
+      return true;
+    }
+
+    try {
+      const creator = await getCreatorProfileByHandle(supabase, handle, user.userId);
+      if (!creator) {
+        res.writeHead(404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ error: 'Creator not found' }));
+        return true;
+      }
+
+      if (creator.id === user.userId) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ error: 'You cannot follow yourself' }));
+        return true;
+      }
+
+      const { error } = await supabase
+        .from('marketplace_creator_follows')
+        .upsert({ creator_id: creator.id, follower_id: user.userId }, { onConflict: 'creator_id,follower_id' });
+
+      if (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ error: 'Failed to follow creator' }));
+        return true;
+      }
+
+      const updatedCreator = await getCreatorProfileByHandle(supabase, handle, user.userId);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: true, creator: updatedCreator }));
+    } catch (e: any) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ error: e.message || 'Follow failed' }));
+    }
+    return true;
+  }
+
+  // DELETE /v1/marketplace/creator/:handle/follow - Unfollow a creator
+  if (pathname.match(/^\/v1\/marketplace\/creator\/[^/]+\/follow$/) && method === 'DELETE') {
+    const handle = pathname.replace('/v1/marketplace/creator/', '').replace('/follow', '');
+    const auth = req.headers.authorization?.replace('Bearer ', '');
+    const user = auth ? await verifyToken(auth) : null;
+
+    if (!user) {
+      res.writeHead(401, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      return true;
+    }
+
+    const supabase = getSupabaseService();
+    if (!supabase) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ error: 'Database not available' }));
+      return true;
+    }
+
+    try {
+      const creator = await getCreatorProfileByHandle(supabase, handle, user.userId);
+      if (!creator) {
+        res.writeHead(404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ error: 'Creator not found' }));
+        return true;
+      }
+
+      const { error } = await supabase
+        .from('marketplace_creator_follows')
+        .delete()
+        .eq('creator_id', creator.id)
+        .eq('follower_id', user.userId);
+
+      if (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ error: 'Failed to unfollow creator' }));
+        return true;
+      }
+
+      const updatedCreator = await getCreatorProfileByHandle(supabase, handle, user.userId);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: true, creator: updatedCreator }));
+    } catch (e: any) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ error: e.message || 'Unfollow failed' }));
     }
     return true;
   }
@@ -825,6 +1337,8 @@ export async function handleMarketplaceRoutes(
 
   // GET /v1/marketplace/featured - Get featured workflows (falls back to popular if none)
   if (pathname === '/v1/marketplace/featured' && method === 'GET') {
+    const auth = req.headers.authorization?.replace('Bearer ', '');
+    const user = auth ? await verifyToken(auth) : null;
     const supabase = getSupabaseService();
     if (!supabase) {
       res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -836,7 +1350,7 @@ export async function handleMarketplaceRoutes(
       // First try to get featured workflows
       const { data: featured } = await supabase
         .from('marketplace_workflows')
-        .select('id, slug, name, description, category, tags, icon, rating_avg, rating_count, download_count, publisher_name, created_at')
+        .select('id')
         .eq('status', 'published')
         .eq('featured', true)
         .order('rating_avg', { ascending: false })
@@ -844,23 +1358,26 @@ export async function handleMarketplaceRoutes(
 
       // If we have featured workflows, return them
       if (featured && featured.length > 0) {
+        const workflows = await hydrateWorkflowRows(supabase, featured.map((item: any) => item.id), user?.userId);
         res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-        res.end(JSON.stringify({ ok: true, workflows: featured }));
+        res.end(JSON.stringify({ ok: true, workflows }));
         return true;
       }
 
       // Otherwise, return popular workflows (sorted by downloads, then rating)
       const { data: popular } = await supabase
         .from('marketplace_workflows')
-        .select('id, slug, name, description, category, tags, icon, rating_avg, rating_count, download_count, publisher_name, created_at')
+        .select('id')
         .eq('status', 'published')
         .order('download_count', { ascending: false })
         .order('rating_avg', { ascending: false })
         .order('created_at', { ascending: false })
         .limit(12);
 
+      const workflows = await hydrateWorkflowRows(supabase, (popular || []).map((item: any) => item.id), user?.userId);
+
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ ok: true, workflows: popular || [] }));
+      res.end(JSON.stringify({ ok: true, workflows }));
     } catch (e: any) {
       console.error('[marketplace] featured error:', e);
       res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });

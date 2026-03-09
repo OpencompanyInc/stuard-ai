@@ -54,7 +54,7 @@ export const ChatHeaderActions: React.FC<ChatHeaderActionsProps> = ({
             "w-8 h-8 rounded-lg flex items-center justify-center hover:bg-theme-hover transition-colors border border-theme/10",
             sidebarOpen ? "bg-primary/10 text-primary border-primary/20" : "bg-theme-card/80 text-theme-muted"
           )}
-          title="Sidebar (Spaces, Canvas, Terminal)"
+          title="Sidebar (Spaces, Notes, Terminal)"
         >
           <PanelLeftClose className="w-3.5 h-3.5" />
         </button>

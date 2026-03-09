@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../../lib/supabaseClient';
+import type { ReasoningLevel } from '../../hooks/usePreferences';
 import { StreamItem, ToolEvent } from '../components/ChatPanel';
 import { specToDesignerModel } from '../utils/conversions';
 import {
@@ -19,6 +20,9 @@ export interface Message {
   images?: Array<{ path: string; name: string; dataUrl?: string; data?: string; mimeType?: string }>;
   parts?: StreamItem[];
   reasoning?: string;
+  draft?: boolean;
+  usage?: Record<string, any>;
+  modelId?: string;
 }
 
 interface WorkspaceInfoForChat {
@@ -35,6 +39,7 @@ interface UseWorkflowChatProps {
   initialMessages?: Message[];
   errors?: any[];
   selectedModelId?: string | 'auto';
+  selectedReasoningLevel?: ReasoningLevel;
   workspaceInfo?: WorkspaceInfoForChat | null;
 }
 
@@ -70,6 +75,7 @@ export function useWorkflowChat({
   initialMessages = [],
   errors = [],
   selectedModelId = 'auto',
+  selectedReasoningLevel = 'high',
   workspaceInfo,
 }: UseWorkflowChatProps) {
   const [messages, setMessages] = useState<Message[]>(initialMessages);
@@ -104,18 +110,42 @@ export function useWorkflowChat({
 
   // Save messages to current session whenever they change
   useEffect(() => {
-    if (!currentSessionId || messages.length <= 1) return; // Don't save just the welcome message
-    // Convert to storable format (strip parts/images for storage)
-    const storableMessages = messages.map(m => ({
+    if (!currentSessionId) return;
+
+    const hasStreamingDraft = busy && (streamItems.length > 0 || reasoningText.trim().length > 0);
+    const draftContent = streamItems
+      .filter((item): item is Extract<StreamItem, { type: 'text' }> => item.type === 'text')
+      .map(item => item.content)
+      .join('');
+
+    const persistedMessages: Message[] = hasStreamingDraft
+      ? [...messages, {
+        role: 'assistant',
+        content: draftContent,
+        parts: streamItems.length > 0 ? [...streamItems] : undefined,
+        reasoning: reasoningText || undefined,
+        draft: true,
+      }]
+      : messages;
+
+    if (persistedMessages.length <= 1) return;
+
+    const storableMessages = persistedMessages.map(m => ({
       role: m.role,
-      content: m.content
+      content: m.content,
+      images: m.images,
+      parts: m.parts,
+      reasoning: m.reasoning,
+      draft: m.draft,
+      usage: m.usage,
+      modelId: m.modelId,
     }));
     saveSession(currentSessionId, storableMessages);
     // Refresh past sessions list
     if (workflowId) {
       setPastSessions(getSessionsForWorkflow(workflowId));
     }
-  }, [messages, currentSessionId, workflowId]);
+  }, [messages, currentSessionId, workflowId, streamItems, reasoningText, busy]);
 
   // Create a new chat session for current workflow
   const newSession = useCallback(() => {
@@ -123,6 +153,9 @@ export function useWorkflowChat({
     const session = createSession(workflowId);
     setCurrentSessionId(session.id);
     setMessages([{ role: 'assistant', content: 'Hi! I\'m your Workflow Architect. Describe what you want to change or add to this workflow.' }]);
+    setStreamItems([]);
+    setReasoningText('');
+    setBusy(false);
     setPastSessions(getSessionsForWorkflow(workflowId));
     setShowSessionHistory(false);
   }, [workflowId]);
@@ -135,11 +168,20 @@ export function useWorkflowChat({
     // Restore messages (add parts/images placeholders)
     const restoredMessages: Message[] = session.messages.map(m => ({
       role: m.role as 'user' | 'assistant' | 'system',
-      content: m.content
+      content: m.content,
+      images: m.images,
+      parts: m.parts as StreamItem[] | undefined,
+      reasoning: m.reasoning,
+      draft: m.draft,
+      usage: m.usage,
+      modelId: m.modelId,
     }));
     setMessages(restoredMessages.length > 0 ? restoredMessages : [
       { role: 'assistant', content: 'Hi! I\'m your Workflow Architect. Describe what you want to change or add to this workflow.' }
     ]);
+    setStreamItems([]);
+    setReasoningText('');
+    setBusy(false);
     setShowSessionHistory(false);
   }, []);
 
@@ -154,6 +196,9 @@ export function useWorkflowChat({
       const session = createSession(workflowId);
       setCurrentSessionId(session.id);
       setMessages([{ role: 'assistant', content: 'Hi! I\'m your Workflow Architect. Describe what you want to change or add to this workflow.' }]);
+      setStreamItems([]);
+      setReasoningText('');
+      setBusy(false);
     }
   }, [currentSessionId, workflowId]);
 
@@ -186,6 +231,8 @@ export function useWorkflowChat({
     let fullText = "";
     let currentItems: StreamItem[] = [];
     let currentReasoning = "";
+    let finalUsage: Record<string, any> | undefined;
+    let finalModelId: string | undefined;
 
     try {
       // Build context prompts (reused from ChatPanel)
@@ -330,6 +377,9 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
 
             if (selectedModelId && selectedModelId !== 'auto') {
               payload.modelId = selectedModelId;
+            }
+            if (selectedReasoningLevel && typeof selectedReasoningLevel === 'string') {
+              payload.reasoningLevel = selectedReasoningLevel;
             }
             if (accessToken) payload.auth = { accessToken };
             if (attachedImages.length > 0) {
@@ -600,6 +650,12 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
               const result = msg.result || {};
               const textFinal = typeof result.text === 'string' && result.text.trim().length > 0 ? result.text : fullText;
               if (textFinal) fullText = textFinal;
+              finalUsage = result.usage && typeof result.usage === 'object' ? result.usage : undefined;
+              finalModelId = typeof result.modelId === 'string'
+                ? result.modelId
+                : typeof msg.model === 'string'
+                  ? msg.model
+                  : undefined;
               done = true;
               try { ws.close(); } catch { }
               resolve();
@@ -667,7 +723,9 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
         role: 'assistant',
         content: responseText,
         parts: currentItems.length > 0 ? currentItems : undefined,
-        reasoning: currentReasoning || undefined
+        reasoning: currentReasoning || undefined,
+        usage: finalUsage,
+        modelId: finalModelId,
       }]);
 
     } catch (e: any) {
@@ -685,7 +743,23 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
       setReasoningText('');
       setBusy(false);
     }
-  }, [messages, busy, model, errors, cloudAiHttp, onApplyModel]);
+  }, [messages, busy, model, errors, cloudAiHttp, onApplyModel, selectedModelId, selectedReasoningLevel, workspaceInfo]);
+
+  const latestAssistantContext = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message?.role === 'assistant' && message?.usage) {
+        return {
+          usage: message.usage,
+          modelId: message.modelId,
+        };
+      }
+    }
+    return {
+      usage: undefined,
+      modelId: undefined,
+    };
+  }, [messages]);
 
   const stopGeneration = useCallback(() => {
     abortedRef.current = true;
@@ -717,5 +791,7 @@ ${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors s
     newSession,
     loadSession,
     deleteSession,
-  }), [messages, streamItems, reasoningText, busy, sendMessage, stopGeneration, showReasoning, currentSessionId, pastSessions, showSessionHistory, newSession, loadSession, deleteSession]);
+    latestUsage: latestAssistantContext.usage,
+    latestModelId: latestAssistantContext.modelId,
+  }), [messages, streamItems, reasoningText, busy, sendMessage, stopGeneration, showReasoning, currentSessionId, pastSessions, showSessionHistory, newSession, loadSession, deleteSession, latestAssistantContext]);
 }

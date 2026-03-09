@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+import { GenUIContainer, GenUIErrorBoundary } from '../genui';
 import {
     X,
     Info,
@@ -49,7 +50,11 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
         if (notification.input?.onSubmit) {
             notification.input.onSubmit(inputValue);
         }
-        handleDismiss();
+        if (notification.input?.keepAfterSubmit) {
+            setInputValue('');
+        } else {
+            handleDismiss();
+        }
     }, [inputValue, notification.input, handleDismiss]);
 
     // Handle input cancel
@@ -222,7 +227,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                     )}
 
                     {/* Text content */}
-                    <div className="flex-1 min-w-0">
+                    <div className="flex-1 min-w-0 max-h-[68vh] overflow-y-auto custom-scrollbar pr-1">
                         <h4 className="font-semibold text-[13px] text-gray-900 leading-tight truncate">
                             {notification.title}
                         </h4>
@@ -313,6 +318,20 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                             </div>
                         )}
 
+                        {notification.structuredContent && (
+                            <div className="mt-2.5 max-h-[320px] overflow-y-auto custom-scrollbar rounded-lg border border-gray-200 bg-gray-50/70 p-2">
+                                <GenUIErrorBoundary componentName={notification.structuredContent.toolName}>
+                                    <GenUIContainer
+                                        toolName={notification.structuredContent.toolName}
+                                        args={notification.structuredContent.args}
+                                        isCompleted={true}
+                                        result={{ displayed: true }}
+                                        onResult={() => { }}
+                                    />
+                                </GenUIErrorBoundary>
+                            </div>
+                        )}
+
                         {/* Custom progress bar (for progress notifications) */}
                         {typeof notification.progress === 'number' && (
                             <div className="mt-2.5 h-1.5 bg-gray-100 rounded-full overflow-hidden">
@@ -372,7 +391,9 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                                             key={index}
                                             onClick={() => {
                                                 action.onClick();
-                                                handleDismiss();
+                                                if (!action.keepNotification) {
+                                                    handleDismiss();
+                                                }
                                             }}
                                             className={btnStyles.className}
                                             style={btnStyles.style}

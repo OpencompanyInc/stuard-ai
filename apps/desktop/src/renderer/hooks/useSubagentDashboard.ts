@@ -45,19 +45,36 @@ export function useSubagentDashboard(parentId?: string): UseSubagentDashboardRet
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchTasks = useCallback(async () => {
+    if (!parentId) {
+      setTasks([]);
+      setLoading(false);
+      return;
+    }
+
     try {
-      let url = `${AGENT_HTTP}/v1/subagents/list?limit=50`;
-      if (parentId) url += `&parent_id=${parentId}`;
-      const res = await fetch(url);
+      const params = new URLSearchParams();
+      params.set('limit', '50');
+      params.set('parent_id', parentId);
+      const res = await fetch(`${AGENT_HTTP}/v1/subagents/list?${params.toString()}`);
       const data = await res.json();
       if (data.ok && Array.isArray(data.tasks)) {
         setTasks(data.tasks);
+      } else {
+        setTasks([]);
       }
     } catch (err) {
       console.error('[SubagentDashboard] fetch failed', err);
     } finally {
       setLoading(false);
     }
+  }, [parentId]);
+
+  useEffect(() => {
+    setTasks([]);
+    setActiveTaskId(null);
+    setCollapsed(false);
+    setDismissed(false);
+    setDismissedTaskIds(new Set());
   }, [parentId]);
 
   // Initial fetch
@@ -69,6 +86,11 @@ export function useSubagentDashboard(parentId?: string): UseSubagentDashboardRet
   // Poll periodically — fast (2s) when tasks are running, slow (10s) otherwise
   // This prevents the bug where initial fetch returns empty and then never polls again
   useEffect(() => {
+    if (!parentId) {
+      if (pollRef.current) clearInterval(pollRef.current);
+      return;
+    }
+
     const hasRunning = tasks.some(t => t.status === 'running');
     const interval = hasRunning ? 2000 : 10000;
     pollRef.current = setInterval(() => {
@@ -77,7 +99,7 @@ export function useSubagentDashboard(parentId?: string): UseSubagentDashboardRet
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [tasks, fetchTasks]);
+  }, [parentId, tasks, fetchTasks]);
 
   // Auto-show when a new running task appears
   useEffect(() => {

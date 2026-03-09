@@ -35,6 +35,10 @@ function getElevenLabsClient(): ElevenLabsClient {
   return _client;
 }
 
+function errorMessage(e: any, fallback: string): string {
+  return String(e?.body?.detail || e?.body?.message || e?.message || fallback);
+}
+
 async function streamToBuffer(stream: ReadableStream<Uint8Array>): Promise<Buffer> {
   const chunks: Uint8Array[] = [];
   const reader = stream.getReader();
@@ -230,6 +234,232 @@ export const get_tts_models = createTool({
         description: id.includes('turbo') ? 'Fast, lower quality' : id.includes('multilingual') ? 'Supports multiple languages' : 'High quality English',
       }));
       return { ok: true, models: fallbackModels };
+    }
+  },
+});
+
+export const elevenlabs_list_agents = createTool({
+  id: 'elevenlabs_list_agents',
+  description: 'List available ElevenLabs Conversational AI agents for live voice conversations, workflow hooks, and telephony bridges.',
+  inputSchema: z.object({
+    cursor: z.string().optional(),
+    search: z.string().optional(),
+    archived: z.boolean().optional(),
+    show_only_owned_agents: z.boolean().optional(),
+    sort_by: z.string().optional(),
+    sort_direction: z.enum(['asc', 'desc']).optional(),
+    page_size: z.number().int().min(1).max(100).optional(),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    agents: z.array(z.any()),
+    nextCursor: z.string().optional(),
+    hasMore: z.boolean().optional(),
+    error: z.string().optional(),
+  }),
+  execute: async (inputData) => {
+    try {
+      const client = getElevenLabsClient();
+      const response = await client.conversationalAi.agents.list({
+        cursor: inputData.cursor,
+        search: inputData.search,
+        archived: inputData.archived,
+        showOnlyOwnedAgents: inputData.show_only_owned_agents,
+        sortBy: inputData.sort_by as any,
+        sortDirection: inputData.sort_direction as any,
+        pageSize: inputData.page_size,
+      });
+
+      return {
+        ok: true,
+        agents: response?.agents || [],
+        nextCursor: response?.nextCursor,
+        hasMore: response?.hasMore,
+      };
+    } catch (e: any) {
+      console.error('[tts-tools] elevenlabs_list_agents error:', e);
+      return { ok: false, agents: [], error: errorMessage(e, 'Failed to list ElevenLabs agents') };
+    }
+  },
+});
+
+export const elevenlabs_get_signed_conversation_url = createTool({
+  id: 'elevenlabs_get_signed_conversation_url',
+  description: 'Create a signed ElevenLabs live conversation URL for launching an authenticated voice session from custom UIs, apps, or external voice bridges.',
+  inputSchema: z.object({
+    agent_id: z.string().min(1).describe('ElevenLabs Conversational AI agent ID'),
+    include_conversation_id: z.boolean().optional().default(true),
+    branch_id: z.string().optional(),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    agentId: z.string().optional(),
+    signedUrl: z.string().optional(),
+    includeConversationId: z.boolean().optional(),
+    error: z.string().optional(),
+  }),
+  execute: async (inputData) => {
+    try {
+      const client = getElevenLabsClient();
+      const response = await client.conversationalAi.conversations.getSignedUrl({
+        agentId: inputData.agent_id,
+        includeConversationId: inputData.include_conversation_id,
+        branchId: inputData.branch_id,
+      });
+
+      return {
+        ok: true,
+        agentId: inputData.agent_id,
+        signedUrl: response?.signedUrl,
+        includeConversationId: inputData.include_conversation_id,
+      };
+    } catch (e: any) {
+      console.error('[tts-tools] elevenlabs_get_signed_conversation_url error:', e);
+      return { ok: false, error: errorMessage(e, 'Failed to create signed conversation URL') };
+    }
+  },
+});
+
+export const elevenlabs_get_webrtc_token = createTool({
+  id: 'elevenlabs_get_webrtc_token',
+  description: 'Create an ElevenLabs WebRTC token for low-latency live voice conversations in custom clients or embedded workflow UIs.',
+  inputSchema: z.object({
+    agent_id: z.string().min(1).describe('ElevenLabs Conversational AI agent ID'),
+    participant_name: z.string().optional(),
+    branch_id: z.string().optional(),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    agentId: z.string().optional(),
+    token: z.string().optional(),
+    participantName: z.string().optional(),
+    error: z.string().optional(),
+  }),
+  execute: async (inputData) => {
+    try {
+      const client = getElevenLabsClient();
+      const response = await client.conversationalAi.conversations.getWebrtcToken({
+        agentId: inputData.agent_id,
+        participantName: inputData.participant_name,
+        branchId: inputData.branch_id,
+      });
+
+      return {
+        ok: true,
+        agentId: inputData.agent_id,
+        token: response?.token,
+        participantName: inputData.participant_name,
+      };
+    } catch (e: any) {
+      console.error('[tts-tools] elevenlabs_get_webrtc_token error:', e);
+      return { ok: false, error: errorMessage(e, 'Failed to create WebRTC token') };
+    }
+  },
+});
+
+export const elevenlabs_list_conversations = createTool({
+  id: 'elevenlabs_list_conversations',
+  description: 'List ElevenLabs conversation sessions for an agent so workflows can inspect recent live calls or voice chats.',
+  inputSchema: z.object({
+    cursor: z.string().optional(),
+    agent_id: z.string().optional(),
+    search: z.string().optional(),
+    branch_id: z.string().optional(),
+    page_size: z.number().int().min(1).max(100).optional(),
+    summary_mode: z.string().optional(),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    conversations: z.array(z.any()),
+    nextCursor: z.string().optional(),
+    hasMore: z.boolean().optional(),
+    error: z.string().optional(),
+  }),
+  execute: async (inputData) => {
+    try {
+      const client = getElevenLabsClient();
+      const response = await client.conversationalAi.conversations.list({
+        cursor: inputData.cursor,
+        agentId: inputData.agent_id,
+        search: inputData.search,
+        branchId: inputData.branch_id,
+        pageSize: inputData.page_size,
+        summaryMode: inputData.summary_mode as any,
+      });
+
+      return {
+        ok: true,
+        conversations: response?.conversations || [],
+        nextCursor: response?.nextCursor,
+        hasMore: response?.hasMore,
+      };
+    } catch (e: any) {
+      console.error('[tts-tools] elevenlabs_list_conversations error:', e);
+      return { ok: false, conversations: [], error: errorMessage(e, 'Failed to list conversations') };
+    }
+  },
+});
+
+export const elevenlabs_get_conversation = createTool({
+  id: 'elevenlabs_get_conversation',
+  description: 'Get detailed metadata for a specific ElevenLabs conversation session.',
+  inputSchema: z.object({
+    conversation_id: z.string().min(1),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    conversation: z.any().optional(),
+    error: z.string().optional(),
+  }),
+  execute: async (inputData) => {
+    try {
+      const client = getElevenLabsClient();
+      const conversation = await client.conversationalAi.conversations.get(inputData.conversation_id);
+      return { ok: true, conversation };
+    } catch (e: any) {
+      console.error('[tts-tools] elevenlabs_get_conversation error:', e);
+      return { ok: false, error: errorMessage(e, 'Failed to get conversation') };
+    }
+  },
+});
+
+export const elevenlabs_twilio_outbound_call = createTool({
+  id: 'elevenlabs_twilio_outbound_call',
+  description: 'Start an outbound phone call through ElevenLabs Conversational AI using its Twilio bridge. Useful when you want a live voice agent instead of one-shot TTS playback.',
+  inputSchema: z.object({
+    agent_id: z.string().min(1),
+    agent_phone_number_id: z.string().min(1),
+    to_number: z.string().min(1),
+    conversation_initiation_client_data: z.record(z.string(), z.any()).optional(),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    success: z.boolean().optional(),
+    message: z.string().optional(),
+    conversationId: z.string().optional(),
+    callSid: z.string().optional(),
+    error: z.string().optional(),
+  }),
+  execute: async (inputData) => {
+    try {
+      const client = getElevenLabsClient();
+      const response = await client.conversationalAi.twilio.outboundCall({
+        agentId: inputData.agent_id,
+        agentPhoneNumberId: inputData.agent_phone_number_id,
+        toNumber: inputData.to_number,
+        conversationInitiationClientData: inputData.conversation_initiation_client_data as any,
+      });
+
+      return {
+        ok: true,
+        success: response?.success,
+        message: response?.message,
+        conversationId: response?.conversationId,
+        callSid: response?.callSid,
+      };
+    } catch (e: any) {
+      console.error('[tts-tools] elevenlabs_twilio_outbound_call error:', e);
+      return { ok: false, error: errorMessage(e, 'Failed to start ElevenLabs Twilio outbound call') };
     }
   },
 });

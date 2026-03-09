@@ -85,6 +85,7 @@ class Conversation:
     needs_sync: bool = False
     parent_id: Optional[str] = None
     type: ConversationType = 'chat'
+    source: ConversationSource = 'stuard'
     
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -103,6 +104,7 @@ class Message:
     tool_calls: Optional[List[Dict]] = None
     tool_results: Optional[List[Dict]] = None
     attachments: Optional[List[Dict]] = None
+    metadata: Optional[Dict[str, Any]] = None
     embedding: Optional[List[float]] = None
     
     def to_dict(self) -> Dict[str, Any]:
@@ -176,6 +178,7 @@ class SpaceItem:
 @dataclass
 class SecuritySettings:
     memory_lock_enabled: bool = False
+    vault_lock_enabled: bool = False
     lock_timeout_minutes: int = 5
     password_hash: Optional[str] = None
     biometric_enabled: bool = False
@@ -310,7 +313,8 @@ class MemoryDB:
                     synced_at TEXT,
                     needs_sync INTEGER DEFAULT 0,
                     parent_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
-                    type TEXT DEFAULT 'chat' CHECK(type IN ('chat', 'subagent'))
+                    type TEXT DEFAULT 'chat' CHECK(type IN ('chat', 'subagent')),
+                    source TEXT DEFAULT 'stuard' CHECK(source IN ('stuard', 'workflow', 'skill', 'proactive'))
                 )
             """)
             
@@ -323,6 +327,14 @@ class MemoryDB:
                 cur.execute("ALTER TABLE conversations ADD COLUMN type TEXT DEFAULT 'chat' CHECK(type IN ('chat', 'subagent'))")
             except sqlite3.OperationalError:
                 pass  # Column already exists
+            try:
+                cur.execute("ALTER TABLE conversations ADD COLUMN source TEXT DEFAULT 'stuard'")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            try:
+                cur.execute("UPDATE conversations SET source = 'stuard' WHERE source IS NULL OR TRIM(source) = ''")
+            except sqlite3.OperationalError:
+                pass
             
             # Messages
             cur.execute("""
@@ -336,9 +348,16 @@ class MemoryDB:
                     tool_calls_enc TEXT,
                     tool_results_enc TEXT,
                     attachments_enc TEXT,
+                    metadata_enc TEXT,
                     embedding BLOB
                 )
             """)
+            
+            # Add metadata column to messages table if missing
+            try:
+                cur.execute("ALTER TABLE messages ADD COLUMN metadata_enc TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
             
             # Conversation segments
             cur.execute("""
@@ -538,6 +557,8 @@ class MemoryDB:
             key, value = row['key'], row['value']
             if key == 'memory_lock_enabled':
                 settings.memory_lock_enabled = value == '1'
+            elif key == 'vault_lock_enabled':
+                settings.vault_lock_enabled = value == '1'
             elif key == 'lock_timeout_minutes':
                 settings.lock_timeout_minutes = int(value)
             elif key == 'password_hash':
@@ -578,7 +599,8 @@ class MemoryDB:
         model: Optional[str] = None,
         conversation_id: Optional[str] = None,
         parent_id: Optional[str] = None,
-        conv_type: ConversationType = 'chat'
+        conv_type: ConversationType = 'chat',
+        source: ConversationSource = 'stuard'
     ) -> Conversation:
         """Create a new conversation or sub-agent."""
         cid = conversation_id or str(uuid.uuid4())
@@ -591,9 +613,9 @@ class MemoryDB:
         with self._get_conn() as conn:
             try:
                 conn.execute(
-                    """INSERT INTO conversations (id, title_enc, model, created_at, updated_at, parent_id, type)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (cid, title_enc, model, now, now, parent_id, conv_type)
+                    """INSERT INTO conversations (id, title_enc, model, created_at, updated_at, parent_id, type, source)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (cid, title_enc, model, now, now, parent_id, conv_type, source)
                 )
                 conn.commit()
                 inserted = True
@@ -607,7 +629,7 @@ class MemoryDB:
             return Conversation(
                 id=cid, title=title, model=model,
                 created_at=now, updated_at=now,
-                parent_id=parent_id, type=conv_type
+                parent_id=parent_id, type=conv_type, source=source
             )
 
         existing = self.get_conversation(cid)
@@ -631,6 +653,7 @@ class MemoryDB:
         # Handle old rows without parent_id/type columns
         parent_id = row['parent_id'] if 'parent_id' in row.keys() else None
         conv_type = row['type'] if 'type' in row.keys() else 'chat'
+        source = row['source'] if 'source' in row.keys() else 'stuard'
         
         return Conversation(
             id=row['id'],
@@ -645,7 +668,8 @@ class MemoryDB:
             synced_at=row['synced_at'],
             needs_sync=bool(row['needs_sync']),
             parent_id=parent_id,
-            type=conv_type or 'chat'
+            type=conv_type or 'chat',
+            source=source or 'stuard'
         )
     
     def list_conversations(
@@ -653,7 +677,8 @@ class MemoryDB:
         status: Optional[ConversationStatus] = 'active',
         limit: int = 50,
         offset: int = 0,
-        conv_type: Optional[ConversationType] = None
+        conv_type: Optional[ConversationType] = None,
+        source: Optional[ConversationSource] = None
     ) -> List[Conversation]:
         """List conversations. By default excludes sub-agents unless conv_type specified."""
         with self._get_conn() as conn:
@@ -671,6 +696,10 @@ class MemoryDB:
             else:
                 conditions.append("(type = 'chat' OR type IS NULL)")
             
+            if source:
+                conditions.append("source = ?")
+                params.append(source)
+            
             where_clause = " AND ".join(conditions) if conditions else "1=1"
             params.extend([limit, offset])
             
@@ -685,6 +714,7 @@ class MemoryDB:
             title = _decrypt_content(row['title_enc'], self._crypto) if row['title_enc'] else None
             parent_id = row['parent_id'] if 'parent_id' in row.keys() else None
             row_type = row['type'] if 'type' in row.keys() else 'chat'
+            row_source = row['source'] if 'source' in row.keys() else 'stuard'
             result.append(Conversation(
                 id=row['id'],
                 title=title,
@@ -698,7 +728,8 @@ class MemoryDB:
                 synced_at=row['synced_at'],
                 needs_sync=bool(row['needs_sync']),
                 parent_id=parent_id,
-                type=row_type or 'chat'
+                type=row_type or 'chat',
+                source=row_source or 'stuard'
             ))
         
         return result
@@ -839,6 +870,7 @@ class MemoryDB:
         tool_calls: Optional[List[Dict]] = None,
         tool_results: Optional[List[Dict]] = None,
         attachments: Optional[List[Dict]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         embedding: Optional[List[float]] = None
     ) -> Message:
         """Add a message to a conversation."""
@@ -856,8 +888,8 @@ class MemoryDB:
             conn.execute(
                 """INSERT INTO messages 
                    (id, conversation_id, role, content_enc, turn_index, created_at, 
-                    tool_calls_enc, tool_results_enc, attachments_enc, embedding)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    tool_calls_enc, tool_results_enc, attachments_enc, metadata_enc, embedding)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     mid, conversation_id, role,
                     _encrypt_content(content, self._crypto),
@@ -865,6 +897,7 @@ class MemoryDB:
                     _encrypt_json(tool_calls, self._crypto),
                     _encrypt_json(tool_results, self._crypto),
                     _encrypt_json(attachments, self._crypto),
+                    _encrypt_json(metadata, self._crypto),
                     _serialize_vector(embedding)
                 )
             )
@@ -890,6 +923,7 @@ class MemoryDB:
             tool_calls=tool_calls,
             tool_results=tool_results,
             attachments=attachments,
+            metadata=metadata,
             embedding=embedding
         )
     
@@ -932,6 +966,7 @@ class MemoryDB:
                 tool_calls=_decrypt_json(row['tool_calls_enc'], self._crypto),
                 tool_results=_decrypt_json(row['tool_results_enc'], self._crypto),
                 attachments=_decrypt_json(row['attachments_enc'], self._crypto),
+                metadata=_decrypt_json(row['metadata_enc'], self._crypto) if 'metadata_enc' in row.keys() else None,
                 embedding=None  # Don't load embeddings by default
             ))
         

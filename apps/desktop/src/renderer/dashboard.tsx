@@ -4,6 +4,7 @@ import "./styles.css";
 import "./scrollbar.css";
 import { supabase } from "./lib/supabaseClient";
 import { startBrowserSignIn } from "./auth/browserSignIn";
+import { fetchRendererSyncPrefs } from "./utils/syncPrefs";
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { usePreferences } from "./hooks/usePreferences";
 import { useIntegrationsState } from "./hooks/useIntegrationsState";
@@ -18,6 +19,8 @@ import { TasksView } from "./components/TasksView";
 import { CloudEngineDashboard } from "./components/CloudEngineDashboard";
 import { StorageView } from "./components/StorageView";
 import { ProactiveView } from "./components/ProactiveView";
+import { VaultView } from "./components/VaultView";
+import { MemoryLockGate } from "./components/MemoryLockGate";
 import {
   LayoutDashboard,
   Clock,
@@ -32,11 +35,13 @@ import {
   ListTodo,
   Cloud,
   HardDrive,
-  Sparkles
+  Sparkles,
+  Shield
 } from "lucide-react";
 import { clsx } from 'clsx';
 import 'katex/dist/katex.min.css';
 import EnvironmentBadge from './components/EnvironmentBadge';
+import { agentFetchJson, resolveAgentEndpoints } from './utils/agentEndpoints';
 
 const AGENT_HTTP = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
 const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
@@ -51,6 +56,64 @@ function parseLocalDateOrIso(value: string): Date {
     return new Date(y, mo - 1, d, 0, 0, 0, 0);
   }
   return new Date(s);
+}
+
+function getConversationMessageTime(value: { created_at?: string; timestamp?: number } | null | undefined): number {
+  const direct = typeof value?.timestamp === 'number' ? value.timestamp : NaN;
+  if (Number.isFinite(direct)) return direct;
+  const parsed = Date.parse(String(value?.created_at || ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function repairConversationMessageRows<T extends { role?: string; turn_index?: number; created_at?: string; timestamp?: number }>(rows: T[]): T[] {
+  const sorted = [...rows].sort((a, b) => {
+    const aTurn = Number(a?.turn_index);
+    const bTurn = Number(b?.turn_index);
+    const aHasTurn = Number.isFinite(aTurn);
+    const bHasTurn = Number.isFinite(bTurn);
+
+    if (aHasTurn || bHasTurn) {
+      if (aHasTurn && bHasTurn && aTurn !== bTurn) return aTurn - bTurn;
+      if (aHasTurn !== bHasTurn) return aHasTurn ? -1 : 1;
+    }
+
+    return getConversationMessageTime(a) - getConversationMessageTime(b);
+  });
+
+  const messageIndices = sorted
+    .map((row, index) => ({
+      index,
+      role: row?.role === 'assistant' || row?.role === 'user' ? row.role : null,
+    }))
+    .filter((item): item is { index: number; role: 'assistant' | 'user' } => item.role === 'assistant' || item.role === 'user');
+
+  if (messageIndices.length < 2 || messageIndices[0].role !== 'assistant' || messageIndices[1].role !== 'user') {
+    return sorted;
+  }
+
+  let checkedPairs = 0;
+  let reversedPairs = 0;
+  for (let i = 0; i + 1 < messageIndices.length; i += 2) {
+    checkedPairs += 1;
+    if (messageIndices[i].role === 'assistant' && messageIndices[i + 1].role === 'user') {
+      reversedPairs += 1;
+    }
+  }
+
+  if (reversedPairs < Math.max(1, Math.ceil(checkedPairs / 2))) {
+    return sorted;
+  }
+
+  const repaired = [...sorted];
+  for (let i = 0; i + 1 < messageIndices.length; i += 2) {
+    const first = messageIndices[i];
+    const second = messageIndices[i + 1];
+    if (first.role === 'assistant' && second.role === 'user') {
+      [repaired[first.index], repaired[second.index]] = [repaired[second.index], repaired[first.index]];
+    }
+  }
+
+  return repaired;
 }
 
 function formatLocalDateKey(d: Date): string {
@@ -169,7 +232,7 @@ function DashboardApp() {
     try {
       const params = new URLSearchParams(window.location.search);
       const initialTab = params.get('tab');
-      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'proactive', 'memories', 'automations', 'integrations', 'settings', 'cloud', 'storage'].includes(initialTab)) {
+      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'proactive', 'memories', 'automations', 'integrations', 'settings', 'cloud', 'storage', 'vault'].includes(initialTab)) {
         return initialTab;
       }
     } catch { }
@@ -231,10 +294,15 @@ function DashboardApp() {
     browserUseStatus,
     browserUseChecking,
     browserUseSetupProgress,
+    browserUseChromeProfiles,
+    browserUseSyncSettings,
+    browserUseSyncSaving,
     refreshBrowserUseStatus,
+    refreshBrowserUseProfiles,
     setupBrowserUse,
     stopBrowserUse,
     uninstallBrowserUse,
+    updateBrowserUseSyncSettings,
     setupPython,
     installPython,
     runPython,
@@ -251,6 +319,15 @@ function DashboardApp() {
     telnyxVerifyCode,
     telnyxDisconnect,
     refreshTelnyxStatus,
+    // whatsapp
+    whatsappPhone,
+    whatsappConnecting,
+    whatsappLinking,
+    whatsappLinkCode,
+    whatsappBotNumber,
+    whatsappConnect,
+    whatsappInitiateLink,
+    whatsappDisconnect,
   } = useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP });
 
   // Local automations (Deployed Stuards)
@@ -332,7 +409,7 @@ function DashboardApp() {
   // Listen for navigation events from main process (when dashboard is already open)
   useEffect(() => {
     const unsub = window.desktopAPI?.onDashboardNavigate?.((data) => {
-      if (data?.tab && ['overview', 'history', 'planner', 'memories', 'automations', 'integrations', 'settings'].includes(data.tab)) {
+      if (data?.tab && ['overview', 'history', 'planner', 'memories', 'automations', 'integrations', 'settings', 'vault'].includes(data.tab)) {
         setTab(data.tab);
       }
     });
@@ -384,8 +461,11 @@ function DashboardApp() {
     try {
       // Fetch conversations from local agent (works without sign-in)
       try {
-        const resp = await fetch(`${AGENT_HTTP}/v1/memory/conversations?limit=20`);
-        const json = await resp.json();
+        const json = await agentFetchJson(
+          resolveAgentEndpoints(),
+          '/v1/memory/conversations?limit=20&source=stuard',
+          { accessToken: session?.access_token || null },
+        );
         if (json.ok && Array.isArray(json.conversations)) {
           const convs = json.conversations
             .map((c: any) => ({ ...c, id: c.id || c.conversation_id }))
@@ -449,16 +529,21 @@ function DashboardApp() {
     try {
       // 1. Delete from local agent
       try {
-        await fetch(`${AGENT_HTTP}/v1/memory/conversations/${id}`, {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' }
-        });
+        await agentFetchJson(
+          resolveAgentEndpoints(),
+          `/v1/memory/conversations/${encodeURIComponent(id)}`,
+          {
+            method: 'DELETE',
+            accessToken: session?.access_token || null,
+          },
+        );
       } catch (err) {
         console.error('Failed to delete from local agent:', err);
       }
 
       // 2. Delete from Supabase
-      if (session) {
+      const syncPrefs = await fetchRendererSyncPrefs();
+      if (session && syncPrefs.sync_conversations) {
         await supabase.from('conversations').delete().eq('id', id);
       }
 
@@ -476,12 +561,10 @@ function DashboardApp() {
   };
 
   useEffect(() => {
-    if (!session) return;
     fetchData();
   }, [session]);
 
   useEffect(() => {
-    if (!session) return;
     if (tab === 'overview' || tab === 'history') {
       fetchData();
     }
@@ -740,22 +823,26 @@ function DashboardApp() {
     try {
       // Try local agent first
       try {
-        const resp = await fetch(`${AGENT_HTTP}/v1/memory/conversations/${id}/messages?limit=500`);
-        const json = await resp.json();
+        const json = await agentFetchJson(
+          resolveAgentEndpoints(),
+          `/v1/memory/conversations/${encodeURIComponent(id)}/messages?limit=500`,
+          { accessToken: session?.access_token || null },
+        );
         if (json.ok && Array.isArray(json.messages)) {
-          setConvMessages(json.messages);
+          setConvMessages(repairConversationMessageRows(json.messages as any[]));
           return;
         }
       } catch { }
       // Fallback to Supabase
-      if (session) {
+      const syncPrefs = await fetchRendererSyncPrefs();
+      if (session && syncPrefs.sync_conversations) {
         const { data, error } = await supabase
           .from('messages')
           .select('role, content, metadata, created_at')
           .eq('conversation_id', id)
           .order('created_at', { ascending: true })
           .limit(500);
-        if (!error && Array.isArray(data)) setConvMessages(data as any[]);
+        if (!error && Array.isArray(data)) setConvMessages(repairConversationMessageRows(data as any[]));
       }
     } finally {
       setConvLoading(false);
@@ -982,6 +1069,7 @@ function DashboardApp() {
 
             <div className="text-[10px] font-black text-theme-muted uppercase tracking-[0.2em] px-4 mt-6 mb-2 opacity-40">Cloud</div>
             <SidebarItem id="cloud" label="Cloud Engine" icon={Cloud} current={tab} onClick={setTab} />
+            <SidebarItem id="vault" label="Vault" icon={Shield} current={tab} onClick={setTab} />
             <SidebarItem id="storage" label="Storage" icon={HardDrive} current={tab} onClick={setTab} />
 
             <div className="text-[10px] font-black text-theme-muted uppercase tracking-[0.2em] px-4 mt-6 mb-2 opacity-40">System</div>
@@ -1029,7 +1117,7 @@ function DashboardApp() {
               </div>
             ) : (
               <main className="flex-1 overflow-y-auto custom-scrollbar p-10 pt-16">
-                <div className="max-w-6xl mx-auto h-full">
+                <div className={clsx("mx-auto h-full", tab === 'proactive' ? "max-w-7xl" : "max-w-6xl")}>
                   {!userEmail && !['planner', 'automations'].includes(tab) ? (
                     <div className="flex flex-col items-center justify-center h-[70vh] text-center space-y-8 animate-in fade-in zoom-in duration-700">
                       <div className="h-32 w-32 rounded-[2.5rem] bg-theme-card/50 flex items-center justify-center mb-4 shadow-2xl border border-theme backdrop-blur-xl relative group">
@@ -1054,7 +1142,7 @@ function DashboardApp() {
                     <ErrorBoundary>
                       <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 h-full">
                         {/* Global Actions Header Area */}
-                        {!['automations', 'integrations', 'settings'].includes(tab) && (
+                        {!['automations', 'integrations', 'settings', 'proactive'].includes(tab) && (
                           <div className="flex items-center justify-between mb-8">
                             <div className="space-y-1">
                               <h1 className="text-3xl font-black text-theme-fg tracking-tight capitalize font-stuard">
@@ -1091,15 +1179,17 @@ function DashboardApp() {
                           )}
 
                           {tab === 'history' && userEmail && (
-                            <HistoryView
-                              usage={usage}
-                              conversations={conversations}
-                              selectedConversation={selectedConversation}
-                              setSelectedConversation={setSelectedConversation}
-                              convMessages={convMessages}
-                              convLoading={convLoading}
-                              onDeleteConversation={handleDeleteConversation}
-                            />
+                            <MemoryLockGate label="History Locked">
+                              <HistoryView
+                                usage={usage}
+                                conversations={conversations}
+                                selectedConversation={selectedConversation}
+                                setSelectedConversation={setSelectedConversation}
+                                convMessages={convMessages}
+                                convLoading={convLoading}
+                                onDeleteConversation={handleDeleteConversation}
+                              />
+                            </MemoryLockGate>
                           )}
 
                           {tab === 'planner' && (
@@ -1174,6 +1264,10 @@ function DashboardApp() {
                             <CloudEngineDashboard />
                           )}
 
+                          {tab === 'vault' && (
+                            <VaultView />
+                          )}
+
                           {tab === 'storage' && (
                             <StorageView />
                           )}
@@ -1230,13 +1324,26 @@ function DashboardApp() {
                                 telnyxRequestCode={telnyxRequestCode}
                                 telnyxVerifyCode={telnyxVerifyCode}
                                 telnyxDisconnect={telnyxDisconnect}
+                                whatsappPhone={whatsappPhone}
+                                whatsappConnecting={whatsappConnecting}
+                                whatsappLinking={whatsappLinking}
+                                whatsappLinkCode={whatsappLinkCode}
+                                whatsappBotNumber={whatsappBotNumber}
+                                whatsappConnect={whatsappConnect}
+                                whatsappInitiateLink={whatsappInitiateLink}
+                                whatsappDisconnect={whatsappDisconnect}
                                 browserUseStatus={browserUseStatus}
                                 browserUseChecking={browserUseChecking}
                                 browserUseSetupProgress={browserUseSetupProgress}
+                                browserUseChromeProfiles={browserUseChromeProfiles}
+                                browserUseSyncSettings={browserUseSyncSettings}
+                                browserUseSyncSaving={browserUseSyncSaving}
                                 refreshBrowserUseStatus={refreshBrowserUseStatus}
+                                refreshBrowserUseProfiles={refreshBrowserUseProfiles}
                                 setupBrowserUse={setupBrowserUse}
                                 stopBrowserUse={stopBrowserUse}
                                 uninstallBrowserUse={uninstallBrowserUse}
+                                updateBrowserUseSyncSettings={updateBrowserUseSyncSettings}
                               />
                             </>
                           )}

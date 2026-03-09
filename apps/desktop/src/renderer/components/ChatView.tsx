@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useRef, useState, useEffect } from 'react';
+import React, { memo, useCallback, useMemo, useRef, useState, useEffect } from 'react';
 import { clsx } from 'clsx';
 import { X, Sparkles } from 'lucide-react';
 import MessageList from './MessageList';
@@ -14,6 +14,7 @@ import { TasksView, TaskSubTab } from './TasksView';
 import { SubagentDashboard } from './chat-view/SubagentDashboard';
 import { AskUserPrompt } from './chat-view/AskUserPrompt';
 import { useSubagentDashboard } from '../hooks/useSubagentDashboard';
+import { buildContextUsageMetrics } from '../utils/contextUsage';
 
 interface ChatViewProps {
   messages: any[];
@@ -47,6 +48,7 @@ interface ChatViewProps {
   onRemoveAttachment?: (index: number) => void;
   onAttachFiles?: () => void;
   onAttachImages?: () => void;
+  onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
   onDrop?: (e: React.DragEvent<HTMLDivElement>) => void;
 
   // Queue
@@ -65,6 +67,8 @@ interface ChatViewProps {
   // Status/Model
   statusText?: string;
   modelName?: string;
+  contextUsage?: Record<string, any>;
+  contextModelId?: string;
   connectionStatus?: 'connected' | 'connecting' | 'disconnected' | 'error';
 
   chatMode?: ChatMode;
@@ -152,6 +156,8 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   onDeleteConversation,
   statusText = 'Online',
   modelName = '',
+  contextUsage,
+  contextModelId,
   connectionStatus = 'connected',
   chatMode = 'auto',
   onChatModeChange,
@@ -178,6 +184,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   onRemoveAttachment,
   onAttachFiles,
   onAttachImages,
+  onPaste,
   onDrop,
   queueDepth = 0,
   queuedMessages = [],
@@ -202,7 +209,8 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   const [tasksSubTab, setTasksSubTab] = useState<TaskSubTab>('todo');
 
   // Subagent Dashboard (pinned panel in chat)
-  const subagentDash = useSubagentDashboard();
+  const activeChatTab = tabs.find((tab: any) => tab?.id === activeTabId) || tabs[0];
+  const subagentDash = useSubagentDashboard(activeChatTab?.serverId || undefined);
 
   // Listen for view mode change events (e.g., from bookmark shortcuts)
   useEffect(() => {
@@ -236,6 +244,12 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
     const m = modelById.get(selectedModelId);
     return m ? m.name : selectedModelId;
   })();
+
+  const contextMetrics = useMemo(() => buildContextUsageMetrics({
+    usage: contextUsage,
+    modelId: contextModelId,
+    modelById,
+  }), [contextUsage, contextModelId, modelById]);
 
   const displayModelName = (() => {
     const serverChosen = (modelName || '').trim();
@@ -553,6 +567,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               onRemoveAttachment={onRemoveAttachment}
               onAttachFiles={onAttachFiles}
               onAttachImages={onAttachImages}
+              onPaste={onPaste}
               onDrop={onDrop}
               queueDepth={queueDepth}
               queuedMessages={queuedMessages}
@@ -560,6 +575,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               statusText={statusText}
               connectionStatus={connectionStatus}
               displayModelName={displayModelName}
+              contextMetrics={contextMetrics}
               translucentMode={translucentMode}
               showFileNav={showFileNav}
               textareaRef={textareaRef}
@@ -732,6 +748,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               onRemoveAttachment={onRemoveAttachment}
               onAttachFiles={onAttachFiles}
               onAttachImages={onAttachImages}
+              onPaste={onPaste}
               onDrop={onDrop}
               queueDepth={queueDepth}
               queuedMessages={queuedMessages}
@@ -739,6 +756,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               statusText={statusText}
               connectionStatus={connectionStatus}
               displayModelName={displayModelName}
+              contextMetrics={contextMetrics}
               translucentMode={translucentMode}
               showFileNav={showFileNav}
               textareaRef={textareaRef}

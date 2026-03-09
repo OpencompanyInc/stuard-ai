@@ -492,6 +492,9 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   // Global Hotkey
   setGlobalHotkey: (accelerator: string) => ipcRenderer.invoke('system:setGlobalHotkey', accelerator),
   getGlobalHotkey: () => ipcRenderer.invoke('system:getGlobalHotkey'),
+  browserUseGetChromeSyncSettings: () => ipcRenderer.invoke('browserUse:getChromeSyncSettings'),
+  browserUseListChromeProfiles: () => ipcRenderer.invoke('browserUse:listChromeProfiles'),
+  browserUseUpdateChromeSyncSettings: (updates: any) => ipcRenderer.invoke('browserUse:updateChromeSyncSettings', updates),
 
   // View mode change events (for shortcuts to switch views)
   onViewModeChange: (cb: (data: { mode: 'chat' | 'tasks'; subTab?: 'todo' | 'agent' }) => void) => {
@@ -530,6 +533,26 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('permission:response', handler);
     return () => { try { ipcRenderer.off('permission:response', handler); } catch { } };
   },
+
+  // Security & Privacy
+  securityGetSettings: () => ipcRenderer.invoke('security:getSettings'),
+  securitySetPassword: (password: string, currentPassword?: string) =>
+    ipcRenderer.invoke('security:setPassword', password, currentPassword),
+  securityVerifyPassword: (password: string) => ipcRenderer.invoke('security:verifyPassword', password),
+  securityUpdateSettings: (updates: { memory_lock_enabled?: boolean; vault_lock_enabled?: boolean; lock_timeout_minutes?: number }) =>
+    ipcRenderer.invoke('security:updateSettings', updates),
+  securityRemovePassword: (currentPassword: string) => ipcRenderer.invoke('security:removePassword', currentPassword),
+
+  // Secure Vault (Credential Management)
+  vaultList: (options?: { category?: string; search?: string; favorites_only?: boolean; tag?: string; limit?: number; offset?: number }) =>
+    ipcRenderer.invoke('vault:list', options),
+  vaultGet: (id: string) => ipcRenderer.invoke('vault:get', id),
+  vaultAdd: (entry: { name: string; category?: string; service?: string; url?: string; username?: string; password?: string; notes?: string; metadata?: Record<string, any>; favorite?: boolean; tags?: string[] }) =>
+    ipcRenderer.invoke('vault:add', entry),
+  vaultUpdate: (id: string, fields: Record<string, any>) => ipcRenderer.invoke('vault:update', id, fields),
+  vaultDelete: (id: string) => ipcRenderer.invoke('vault:delete', id),
+  vaultSearch: (query: string) => ipcRenderer.invoke('vault:search', query),
+  vaultStats: () => ipcRenderer.invoke('vault:stats'),
 
   setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => ipcRenderer.send('window:ignore-mouse-events', ignore, options),
 });

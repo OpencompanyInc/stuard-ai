@@ -28,6 +28,16 @@ interface VisionResponse {
   }>;
 }
 
+interface ScreenTextMatch {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  centerX: number;
+  centerY: number;
+}
+
 function getBoundingBox(vertices: VisionVertex[]): { x: number; y: number; width: number; height: number } {
   const xs = vertices.map(v => v.x ?? 0);
   const ys = vertices.map(v => v.y ?? 0);
@@ -45,12 +55,180 @@ function getBoundingBox(vertices: VisionVertex[]): { x: number; y: number; width
   };
 }
 
+function normalizeTextForMatching(
+  value: string,
+  caseSensitive: boolean,
+  stripPunctuation = false,
+): string {
+  let normalized = value.replace(/\s+/g, ' ').trim();
+
+  if (stripPunctuation) {
+    normalized = normalized.replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim();
+  }
+
+  return caseSensitive ? normalized : normalized.toLowerCase();
+}
+
+function isCompatibleText(candidateText: string, searchText: string, caseSensitive: boolean): boolean {
+  const candidate = normalizeTextForMatching(candidateText, caseSensitive);
+  const search = normalizeTextForMatching(searchText, caseSensitive);
+  const candidateWordCount = candidate.split(/\s+/).filter(Boolean).length;
+  const searchWordCount = search.split(/\s+/).filter(Boolean).length;
+  const allowReversePartial = candidateWordCount <= 1 && searchWordCount <= 1;
+
+  if (!candidate || !search) {
+    return false;
+  }
+
+  if (candidate === search || candidate.includes(search)) {
+    return true;
+  }
+
+  const minimumReverseLength = Math.max(3, Math.ceil(search.length * 0.7));
+  if (allowReversePartial && search.includes(candidate) && candidate.length >= minimumReverseLength) {
+    return true;
+  }
+
+  const candidateLoose = normalizeTextForMatching(candidateText, caseSensitive, true);
+  const searchLoose = normalizeTextForMatching(searchText, caseSensitive, true);
+
+  if (!candidateLoose || !searchLoose) {
+    return false;
+  }
+
+  if (candidateLoose === searchLoose || candidateLoose.includes(searchLoose)) {
+    return true;
+  }
+
+  return allowReversePartial && searchLoose.includes(candidateLoose) && candidateLoose.length >= Math.max(3, Math.ceil(searchLoose.length * 0.7));
+}
+
+function buildMatchFromAnnotations(
+  annotations: Array<{ description: string; boundingPoly: { vertices: VisionVertex[] } }>,
+): { text: string; x: number; y: number; width: number; height: number } {
+  const text = annotations.map((annotation) => annotation.description).join(' ');
+  const allVertices = annotations.flatMap((annotation) => annotation.boundingPoly.vertices ?? []);
+  const bbox = getBoundingBox(allVertices);
+
+  return {
+    text,
+    ...bbox,
+  };
+}
+
+function dedupeMatches(
+  matches: Array<{ text: string; x: number; y: number; width: number; height: number }>,
+) {
+  const seen = new Set<string>();
+
+  return matches.filter((match) => {
+    const key = [
+      normalizeTextForMatching(match.text, false),
+      Math.round(match.x),
+      Math.round(match.y),
+      Math.round(match.width),
+      Math.round(match.height),
+    ].join('|');
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function preferMostSpecificMatches(
+  matches: Array<{ text: string; x: number; y: number; width: number; height: number }>,
+  searchText: string,
+  caseSensitive: boolean,
+) {
+  const exactMatches = matches.filter((match) => (
+    normalizeTextForMatching(match.text, caseSensitive) === normalizeTextForMatching(searchText, caseSensitive)
+  ));
+
+  if (exactMatches.length > 0) {
+    return dedupeMatches(exactMatches);
+  }
+
+  const looseExactMatches = matches.filter((match) => (
+    normalizeTextForMatching(match.text, caseSensitive, true) ===
+    normalizeTextForMatching(searchText, caseSensitive, true)
+  ));
+
+  if (looseExactMatches.length > 0) {
+    return dedupeMatches(looseExactMatches);
+  }
+
+  return dedupeMatches(matches);
+}
+
+export function findOcrTextMatches(input: {
+  fullText: string;
+  searchText: string;
+  caseSensitive?: boolean;
+  wordAnnotations: Array<{ description: string; boundingPoly: { vertices: VisionVertex[] } }>;
+}): Array<{ text: string; x: number; y: number; width: number; height: number }> {
+  const { fullText, searchText, wordAnnotations } = input;
+  const caseSensitive = input.caseSensitive ?? false;
+  const searchWords = searchText.trim().split(/\s+/).filter(Boolean);
+  const isSingleWordSearch = searchWords.length <= 1;
+  const matches: Array<{ text: string; x: number; y: number; width: number; height: number }> = [];
+
+  if (isSingleWordSearch) {
+    for (const annotation of wordAnnotations) {
+      if (isCompatibleText(annotation.description, searchText, caseSensitive)) {
+        matches.push(buildMatchFromAnnotations([annotation]));
+      }
+    }
+  }
+
+  if (!isCompatibleText(fullText, searchText, caseSensitive)) {
+    return preferMostSpecificMatches(matches, searchText, caseSensitive);
+  }
+
+  const maxWindowSize = Math.min(
+    wordAnnotations.length,
+    Math.max(searchWords.length + 3, searchWords.length || 1),
+  );
+
+  for (let startIndex = 0; startIndex < wordAnnotations.length; startIndex += 1) {
+    const candidateWords: Array<{ description: string; boundingPoly: { vertices: VisionVertex[] } }> = [];
+
+    for (
+      let endIndex = startIndex;
+      endIndex < Math.min(wordAnnotations.length, startIndex + maxWindowSize);
+      endIndex += 1
+    ) {
+      candidateWords.push(wordAnnotations[endIndex]);
+      const candidateText = candidateWords.map((word) => word.description).join(' ');
+      const hasEnoughWords = isSingleWordSearch || candidateWords.length >= Math.max(1, searchWords.length - 1);
+
+      if (hasEnoughWords && isCompatibleText(candidateText, searchText, caseSensitive)) {
+        matches.push(buildMatchFromAnnotations(candidateWords));
+        break;
+      }
+
+      if (
+        candidateWords.length >= searchWords.length &&
+        normalizeTextForMatching(candidateText, caseSensitive).length > searchText.trim().length * 1.5
+      ) {
+        break;
+      }
+    }
+  }
+
+  return preferMostSpecificMatches(matches, searchText, caseSensitive);
+}
+
 /**
  * Shared logic to capture screen, run OCR, and find text coordinates
  */
 async function locateTextOnScreen(
   inputData: {
-    context: string;
+    text?: string;
+    context?: string;
     start?: false | string;
     region?: { x: number; y: number; width: number; height: number };
     caseSensitive?: boolean;
@@ -58,13 +236,23 @@ async function locateTextOnScreen(
   },
   writer: any
 ) {
-  const { context, start, region, caseSensitive, toolName } = inputData;
+  const { start, region, caseSensitive, toolName } = inputData;
+  const searchText = String(inputData.text ?? inputData.context ?? '').trim();
+
+  if (!searchText) {
+    return {
+      ok: false,
+      found: false,
+      error: 'Provide `text` or `context` to search for.',
+    };
+  }
 
   await safeToolWrite(writer, {
     type: 'tool_event',
     tool: toolName,
     status: 'started',
-    context,
+    text: searchText,
+    context: searchText,
     start,
   });
 
@@ -195,59 +383,20 @@ async function locateTextOnScreen(
   const wordAnnotations = textAnnotations.slice(1);
 
   // 5. Search for the context in the detected text
-  const searchContext = caseSensitive ? context : context.toLowerCase();
-  
-  // Find matching words or phrases
-  const matches: Array<{ text: string; x: number; y: number; width: number; height: number }> = [];
-  
-  // First, try to find exact word matches
-  for (const annotation of wordAnnotations) {
-    const wordText = caseSensitive ? annotation.description : annotation.description.toLowerCase();
-    
-    if (wordText.includes(searchContext) || searchContext.includes(wordText)) {
-      const bbox = getBoundingBox(annotation.boundingPoly.vertices);
-      matches.push({
-        text: annotation.description,
-        ...bbox,
-      });
-    }
-  }
-
-  // If no word matches, try to find the phrase by combining adjacent words
-  if (matches.length === 0) {
-    const fullTextLower = caseSensitive ? fullText : fullText.toLowerCase();
-    if (fullTextLower.includes(searchContext)) {
-      const contextWords = context.split(/\s+/);
-      
-      for (let i = 0; i <= wordAnnotations.length - contextWords.length; i++) {
-        const candidateWords = wordAnnotations.slice(i, i + contextWords.length);
-        const candidateText = candidateWords.map(w => w.description).join(' ');
-        const candidateTextNorm = caseSensitive ? candidateText : candidateText.toLowerCase();
-        
-        if (candidateTextNorm.includes(searchContext) || searchContext.includes(candidateTextNorm)) {
-          const allVertices = candidateWords.flatMap(w => w.boundingPoly.vertices);
-          const xs = allVertices.map(v => v.x ?? 0);
-          const ys = allVertices.map(v => v.y ?? 0);
-          
-          matches.push({
-            text: candidateText,
-            x: Math.min(...xs),
-            y: Math.min(...ys),
-            width: Math.max(...xs) - Math.min(...xs),
-            height: Math.max(...ys) - Math.min(...ys),
-          });
-          break;
-        }
-      }
-    }
-  }
+  const matches = findOcrTextMatches({
+    fullText,
+    searchText,
+    caseSensitive,
+    wordAnnotations,
+  });
 
   if (matches.length === 0) {
     await safeToolWrite(writer, {
       type: 'tool_event',
       tool: toolName,
       status: 'not_found',
-      context,
+      text: searchText,
+      context: searchText,
       fullTextLength: fullText.length,
     });
 
@@ -296,35 +445,53 @@ async function locateTextOnScreen(
     }
   }
 
+  const normalizedMatches: ScreenTextMatch[] = matches.map((match) => ({
+    ...match,
+    centerX: Math.round(match.x + match.width / 2),
+    centerY: Math.round(match.y + match.height / 2),
+  }));
+  const primaryResolvedMatch = normalizedMatches[0];
+  const resolvedTargetX = Math.round(targetX);
+  const resolvedTargetY = Math.round(targetY);
+  const ambiguous = normalizedMatches.length > 1;
+
   await safeToolWrite(writer, {
     type: 'tool_event',
     tool: toolName,
     status: 'found',
-    context,
-    matchCount: matches.length,
-    x: Math.round(targetX),
-    y: Math.round(targetY),
+    text: searchText,
+    context: searchText,
+    matchCount: normalizedMatches.length,
+    x: resolvedTargetX,
+    y: resolvedTargetY,
   });
 
   return {
     ok: true,
     found: true,
-    x: Math.round(targetX),
-    y: Math.round(targetY),
+    ambiguous,
+    matchCount: normalizedMatches.length,
+    matchedText: primaryResolvedMatch.text,
+    x: resolvedTargetX,
+    y: resolvedTargetY,
+    centerX: primaryResolvedMatch.centerX,
+    centerY: primaryResolvedMatch.centerY,
     boundingBox: {
-      x: primaryMatch.x,
-      y: primaryMatch.y,
-      width: primaryMatch.width,
-      height: primaryMatch.height,
+      x: primaryResolvedMatch.x,
+      y: primaryResolvedMatch.y,
+      width: primaryResolvedMatch.width,
+      height: primaryResolvedMatch.height,
     },
-    allMatches: matches,
+    matches: normalizedMatches,
+    allMatches: normalizedMatches,
     fullText,
   };
 }
 
 // Input schema shared by both tools
 const ocrInputSchema = z.object({
-  context: z.string().describe('The text/words to find on screen'),
+  text: z.string().optional().describe('The text/words to find on screen'),
+  context: z.string().optional().describe('Backward-compatible alias for `text`.'),
   start: z.union([
     z.literal(false),
     z.string(),
@@ -336,6 +503,54 @@ const ocrInputSchema = z.object({
     height: z.number().positive(),
   }).optional().describe('Optional region to search within'),
   caseSensitive: z.boolean().optional().default(false).describe('Match case-sensitively'),
+}).refine((value) => {
+  return String(value.text || value.context || '').trim().length > 0;
+}, {
+  message: 'Provide `text` or `context` to search for.',
+  path: ['text'],
+});
+
+const textMatchSchema = z.object({
+  text: z.string(),
+  x: z.number(),
+  y: z.number(),
+  width: z.number(),
+  height: z.number(),
+  centerX: z.number(),
+  centerY: z.number(),
+});
+
+const locatedTextOutputSchema = z.object({
+  ok: z.boolean(),
+  found: z.boolean(),
+  ambiguous: z.boolean().optional(),
+  matchCount: z.number().optional(),
+  matchedText: z.string().optional(),
+  x: z.number().optional(),
+  y: z.number().optional(),
+  centerX: z.number().optional(),
+  centerY: z.number().optional(),
+  boundingBox: z.object({
+    x: z.number(),
+    y: z.number(),
+    width: z.number(),
+    height: z.number(),
+  }).optional(),
+  matches: z.array(textMatchSchema).optional(),
+  allMatches: z.array(textMatchSchema).optional(),
+  fullText: z.string().optional(),
+  error: z.string().optional(),
+});
+
+export const find_text = createTool({
+  id: 'find_text',
+  description: `Find text on screen using Google Cloud Vision OCR and return precise pixel coordinates.
+Use this to inspect matches and get center coordinates before clicking.`,
+  inputSchema: ocrInputSchema,
+  outputSchema: locatedTextOutputSchema,
+  execute: async (inputData: any, { writer }: any) => {
+    return await locateTextOnScreen({ ...inputData, toolName: 'find_text' }, writer);
+  },
 });
 
 export const find_text_on_screen = createTool({
@@ -343,27 +558,7 @@ export const find_text_on_screen = createTool({
   description: `Find text on screen using Google Cloud Vision OCR and return precise pixel coordinates.
 Use this to locate text for clicking or inserting content at specific positions.`,
   inputSchema: ocrInputSchema,
-  outputSchema: z.object({
-    ok: z.boolean(),
-    found: z.boolean(),
-    x: z.number().optional(),
-    y: z.number().optional(),
-    boundingBox: z.object({
-      x: z.number(),
-      y: z.number(),
-      width: z.number(),
-      height: z.number(),
-    }).optional(),
-    allMatches: z.array(z.object({
-      text: z.string(),
-      x: z.number(),
-      y: z.number(),
-      width: z.number(),
-      height: z.number(),
-    })).optional(),
-    fullText: z.string().optional(),
-    error: z.string().optional(),
-  }),
+  outputSchema: locatedTextOutputSchema,
   execute: async (inputData: any, { writer }: any) => {
     return await locateTextOnScreen({ ...inputData, toolName: 'find_text_on_screen' }, writer);
   },
@@ -374,16 +569,28 @@ export const find_and_click_text = createTool({
   description: `Find text on screen via Google Cloud Vision OCR and click it.
 Combines screenshot capture, cloud-based OCR, coordinate calculation, and mouse click action.`,
   inputSchema: ocrInputSchema,
-  outputSchema: z.object({
-    ok: z.boolean(),
-    found: z.boolean(),
-    x: z.number().optional(),
-    y: z.number().optional(),
-    matchedText: z.string().optional(),
-    error: z.string().optional(),
+  outputSchema: locatedTextOutputSchema.extend({
+    clicked: z.boolean().optional(),
   }),
   execute: async (inputData: any, { writer }: any) => {
     const result = await locateTextOnScreen({ ...inputData, toolName: 'find_and_click_text' }, writer);
+
+    if (result.ok && result.found && result.ambiguous) {
+      await safeToolWrite(writer, {
+        type: 'tool_event',
+        tool: 'find_and_click_text',
+        status: 'ambiguous',
+        text: result.matchedText,
+        matchCount: result.matchCount,
+      });
+
+      return {
+        ...result,
+        ok: false,
+        clicked: false,
+        error: `Found ${result.matchCount || 0} matches. Refusing to click automatically. Use find_text to inspect coordinates first.`,
+      };
+    }
     
     if (result.ok && result.found && result.x !== undefined && result.y !== undefined) {
       // Perform the click action
@@ -398,18 +605,14 @@ Combines screenshot capture, cloud-based OCR, coordinate calculation, and mouse 
       await execLocalTool('click_at_coordinates', { x: result.x, y: result.y }, writer);
 
       return {
-        ok: true,
-        found: true,
-        x: result.x,
-        y: result.y,
-        matchedText: result.allMatches?.[0]?.text,
+        ...result,
+        clicked: true,
       };
     }
 
     return {
-      ok: result.ok,
-      found: result.found,
-      error: result.error,
+      ...result,
+      clicked: false,
     };
   },
 });

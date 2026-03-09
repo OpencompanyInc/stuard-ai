@@ -1,9 +1,9 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { verifyToken, getProfile, getMonthlyUsageCredits } from '../supabase';
-import { monthlyCreditLimitForPlan, creditsPerUsd } from '../pricing';
+import { verifyToken, getCreditSummary } from '../supabase';
+import { creditsPerUsd } from '../pricing';
 
 export async function handleCredits(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
-  if (req.method === 'GET' && (req.url || '') === '/v1/credits') {
+  if (req.method === 'GET' && parsedUrl.pathname === '/v1/credits') {
     try {
       const auth = String(req.headers['authorization'] || '');
       const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
@@ -13,13 +13,8 @@ export async function handleCredits(req: IncomingMessage, res: ServerResponse, p
         res.end(JSON.stringify({ ok: false, error: 'unauthorized' }));
         return true;
       }
-      const profile = await getProfile(authUser.userId);
-      const plan = (profile?.plan || 'free').toString();
-      const limit = monthlyCreditLimitForPlan(plan);
-      const used = await getMonthlyUsageCredits(authUser.userId);
-      const unlimited = limit < 0;
-      const remaining = unlimited ? -1 : Math.max(0, (limit || 0) - (used || 0));
-      const body = JSON.stringify({ ok: true, plan, limit, used, remaining, unlimited, creditsPerUsd: creditsPerUsd() });
+      const summary = await getCreditSummary(authUser.userId);
+      const body = JSON.stringify({ ok: true, ...summary, creditsPerUsd: creditsPerUsd() });
       res.writeHead(200, {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),

@@ -169,19 +169,46 @@ export function getSharedSpacesApi(getToken: () => string | null): SharedSpacesA
 // MARKETPLACE API
 // ═══════════════════════════════════════════════════════════════════════════════
 
+export interface MarketplaceCreatorProfile {
+  id: string;
+  handle: string;
+  display_name: string;
+  bio?: string | null;
+  avatar_url?: string | null;
+  hero_image_url?: string | null;
+  website_url?: string | null;
+  verified: boolean;
+  follower_count: number;
+  workflow_count: number;
+  is_following?: boolean;
+}
+
+export interface MarketplaceWorkflowMedia {
+  id?: string;
+  media_type: 'image' | 'video';
+  url: string;
+  thumbnail_url?: string | null;
+  alt_text?: string | null;
+  sort_order?: number;
+}
+
 export interface MarketplaceWorkflow {
   id: string;
   slug: string;
   name: string;
   description: string;
+  short_description?: string | null;
   version: string;
   spec?: any;
   category: string;
   tags: string[];
   icon: string | null;
+  thumbnail_url?: string | null;
+  cover_image_url?: string | null;
   rating_avg: number;
   rating_count: number;
   download_count: number;
+  publisher_id?: string;
   publisher_name: string;
   created_at: string;
   published_at?: string;
@@ -190,6 +217,8 @@ export interface MarketplaceWorkflow {
   status?: string;
   /** When true, downloaders cannot view code or modify the workflow */
   locked?: boolean;
+  creator?: MarketplaceCreatorProfile;
+  media?: MarketplaceWorkflowMedia[];
 }
 
 export interface MarketplaceCategory {
@@ -218,11 +247,16 @@ export interface MarketplaceApi {
   publish(data: {
     name: string;
     description: string;
+    shortDescription?: string;
     spec: any;
     category?: string;
     tags?: string[];
     icon?: string;
+    thumbnailUrl?: string;
+    coverImageUrl?: string;
+    media?: MarketplaceWorkflowMedia[];
     publisherName?: string;
+    creatorProfile?: Partial<MarketplaceCreatorProfile>;
     /** When true, downloaders cannot view code or modify the workflow */
     locked?: boolean;
   }): Promise<{ ok: boolean; workflow?: MarketplaceWorkflow; error?: string }>;
@@ -230,12 +264,19 @@ export interface MarketplaceApi {
   update(slug: string, data: {
     name?: string;
     description?: string;
+    shortDescription?: string;
     spec: any;
     category?: string;
     tags?: string[];
     icon?: string;
+    thumbnailUrl?: string;
+    coverImageUrl?: string;
+    media?: MarketplaceWorkflowMedia[];
+    creatorProfile?: Partial<MarketplaceCreatorProfile>;
     changelog?: string;
     version?: string;
+    /** When true, downloaders cannot view code or modify the workflow */
+    locked?: boolean;
   }): Promise<{ ok: boolean; workflow?: MarketplaceWorkflow; previousVersion?: string; error?: string }>;
 
   search(params: {
@@ -260,6 +301,12 @@ export interface MarketplaceApi {
   getFeatured(): Promise<{ ok: boolean; workflows: MarketplaceWorkflow[]; error?: string }>;
 
   getVersions(slug: string): Promise<{ ok: boolean; versions: MarketplaceVersion[]; error?: string }>;
+
+  getCreator(handle: string): Promise<{ ok: boolean; creator?: MarketplaceCreatorProfile; workflows?: MarketplaceWorkflow[]; error?: string }>;
+
+  followCreator(handle: string): Promise<{ ok: boolean; creator?: MarketplaceCreatorProfile; error?: string }>;
+
+  unfollowCreator(handle: string): Promise<{ ok: boolean; creator?: MarketplaceCreatorProfile; error?: string }>;
 
   checkUpdates(workflows: Array<{ slug: string; version: string }>): Promise<{ ok: boolean; updates: MarketplaceUpdate[]; error?: string }>;
 }
@@ -339,6 +386,18 @@ export function createMarketplaceApi(getToken: () => string | null): Marketplace
 
     async getVersions(slug) {
       return request('GET', `/v1/marketplace/workflow/${slug}/versions`);
+    },
+
+    async getCreator(handle) {
+      return request('GET', `/v1/marketplace/creator/${encodeURIComponent(handle)}`);
+    },
+
+    async followCreator(handle) {
+      return request('POST', `/v1/marketplace/creator/${encodeURIComponent(handle)}/follow`);
+    },
+
+    async unfollowCreator(handle) {
+      return request('DELETE', `/v1/marketplace/creator/${encodeURIComponent(handle)}/follow`);
     },
 
     async checkUpdates(workflows) {

@@ -67,6 +67,15 @@ function buildStartupScript(userId: string, vmSecret: string, vmToken?: string):
   const bucket = CLOUD_ENGINE_BUCKET || 'stuard-user-data';
   // Cloud-ai URL — the VM engine calls cloud tools + desktop relay via this
   const cloudAiUrl = CLOUD_PUBLIC_URL || 'https://api.stuard.ai';
+  const cloudAiWsUrl = (() => {
+    const trimmed = cloudAiUrl.replace(/\/+$/, '');
+    if (trimmed.startsWith('wss://') || trimmed.startsWith('ws://')) {
+      return trimmed.endsWith('/ws') ? trimmed : `${trimmed}/ws`;
+    }
+    if (trimmed.startsWith('https://')) return `wss://${trimmed.slice('https://'.length)}/ws`;
+    if (trimmed.startsWith('http://')) return `ws://${trimmed.slice('http://'.length)}/ws`;
+    return `wss://${trimmed.replace(/^\/+/, '')}/ws`;
+  })();
 
   return `#!/bin/bash
 set -eo pipefail
@@ -86,8 +95,16 @@ STUARD_GCS_BUCKET=${bucket}
 STUARD_VM_TOKEN=${token}
 VM_TOKEN_SECRET=${vmSecret}
 CLOUD_AI_URL=${cloudAiUrl}
+CLOUD_AI_WS=${cloudAiWsUrl}
 STUARD_VM_ROOT=/home/stuard
 STUARD_AGENT_PORT=7400
+AGENT_HOST=127.0.0.1
+AGENT_PORT=8765
+AGENT_HTTP=http://127.0.0.1:8765
+AGENT_WS=ws://127.0.0.1:8765/ws
+AGENT_WS_URL=ws://127.0.0.1:8765/ws
+STUARD_WS_HOST=127.0.0.1
+STUARD_WS_PORT=8765
 ENVEOF
 
 # Also write to /etc/environment so interactive shells see them

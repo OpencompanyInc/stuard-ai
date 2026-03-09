@@ -1,29 +1,16 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
-  Clipboard,
   LayoutGrid,
-  Home,
-  Clock,
-  Maximize2,
   Mic,
-  Power,
   Plus,
   Video,
   X,
   Calendar,
   Bell,
-  ChevronRight,
-  FolderPlus,
   Folder,
   File as FileIcon,
-  Search,
-  RefreshCw,
   Loader2,
-  Copy,
-  ExternalLink,
-  Wand2,
   Image as ImageIcon,
   Music,
   Code as CodeIcon,
@@ -33,16 +20,11 @@ import {
   FileText,
   Sparkles,
   Zap,
-  ArrowRight,
   MessageCircle,
-  Settings,
   Grid3X3,
-  Send,
   FolderSearch,
   MessageSquare,
   ListTodo,
-  PanelRight,
-  PanelLeft,
   CheckCircle
 } from 'lucide-react';
 import type { UsePlannerDataResult, NextUpItem, PlannerTask } from '../hooks/usePlannerData';
@@ -52,7 +34,10 @@ import type { ChatMode, ChatModelsConfig, ReasoningLevel } from '../hooks/usePre
 import { ModelSelector } from './ModelSelector';
 import { useModelRegistry } from '../hooks/useModelRegistry';
 import { SidebarTabsPanel } from './SidebarTabsPanel';
+import { ChatTabs } from './chat-view/ChatTabs';
+import { ChatHeaderActions } from './chat-view/ChatHeaderActions';
 import { QuickShortcutsGrid, BookmarkEditor, useBookmarks, getTypeConfig, type Bookmark } from './QuickShortcuts';
+import { TasksView, type TaskSubTab } from './TasksView';
 
 interface LauncherViewProps {
   query: string;
@@ -63,6 +48,7 @@ interface LauncherViewProps {
   connectionStatus?: 'connected' | 'connecting' | 'disconnected' | 'error';
   onMicClick?: () => void;
   isRecording?: boolean;
+  onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
   accessToken?: string | null;
   overlayMode?: 'compact' | 'sidebar' | 'window';
 
@@ -75,6 +61,8 @@ interface LauncherViewProps {
   onNewChat: () => void;
   onOpenDashboard: () => void;
   onToggleExpand: () => void;
+  onCollapse?: () => void;
+  onDeleteConversation?: (id: string) => void;
 
   // Sidebar
   onToggleSidebar?: () => void;
@@ -92,6 +80,13 @@ interface LauncherViewProps {
   onChatModelsChange?: (cfg: ChatModelsConfig) => void;
   reasoningLevel?: ReasoningLevel;
   onReasoningLevelChange?: (level: ReasoningLevel) => void;
+
+  // Tabs
+  tabs?: any[];
+  activeTabId?: string;
+  onSwitchTab?: (id: string) => void;
+  onCloseTab?: (id: string) => void;
+  onAddTab?: () => void;
 
   // Internal Sidebar
   activeSidebarTab?: 'spaces' | 'canvas' | 'terminal';
@@ -129,6 +124,21 @@ const getNextUpTextColor = (item: NextUpItem) => {
   return 'text-theme-fg';
 };
 
+const normalizeLauncherSearchText = (value: string): string => String(value || '')
+  .toLowerCase()
+  .replace(/[/\\]+/g, ' ')
+  .replace(/[_\-.]+/g, ' ')
+  .replace(/[^a-z0-9\s]/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+const shouldRunLauncherSemanticSearch = (query: string): boolean => {
+  const normalized = normalizeLauncherSearchText(query);
+  const compactLen = normalized.replace(/\s+/g, '').length;
+  const tokenCount = normalized ? normalized.split(' ').length : 0;
+  return tokenCount > 1 && compactLen >= 6;
+};
+
 // Quick action card data
 const quickActions = [
   { id: 'chat', label: 'Chat', icon: MessageCircle, color: 'from-violet-500 to-purple-600', bgLight: 'bg-primary/10', textColor: 'text-primary', description: 'Start a conversation' },
@@ -148,6 +158,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   connectionStatus = 'connected',
   onMicClick,
   isRecording,
+  onPaste,
   accessToken,
   overlayMode,
   conversations,
@@ -155,9 +166,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   onSelectConversation,
   chatMenuOpen,
   onChatMenuOpenChange,
-  onNewChat,
   onOpenDashboard,
-  onToggleExpand,
   onToggleSidebar,
   sidebarOpen = false,
   plannerData,
@@ -168,6 +177,13 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   onChatModelsChange,
   reasoningLevel,
   onReasoningLevelChange,
+  onCollapse,
+  onDeleteConversation,
+  tabs = [],
+  activeTabId,
+  onSwitchTab,
+  onCloseTab,
+  onAddTab,
 
   // Internal Sidebar
   activeSidebarTab = 'spaces',
@@ -176,6 +192,8 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 }) => {
   const { modelById } = useModelRegistry();
   const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
+  const deferredQuery = useDeferredValue(query);
+  const normalizedDeferredQuery = useMemo(() => String(deferredQuery || '').trim(), [deferredQuery]);
 
   const selectedModelId: string | 'auto' = (typeof chatMode === 'string' && chatMode.trim()) ? (chatMode.trim() as any) : 'auto';
   const selectedModelLabel = (() => {
@@ -183,16 +201,14 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
     const m = modelById.get(selectedModelId);
     return m ? m.name : selectedModelId;
   })();
-  const filteredCommands = commands.filter(c =>
-    c.title.toLowerCase().includes(query.toLowerCase()) ||
-    (c.group && c.group.toLowerCase().includes(query.toLowerCase()))
-  ).slice(0, 8);
+  const filteredCommands = useMemo(() => commands.filter(c =>
+    c.title.toLowerCase().includes(normalizedDeferredQuery.toLowerCase()) ||
+    (c.group && c.group.toLowerCase().includes(normalizedDeferredQuery.toLowerCase()))
+  ).slice(0, 8), [commands, normalizedDeferredQuery]);
 
   const nextUp = plannerData?.nextUp;
-  const tasksCount = plannerData?.tasksCount ?? 0;
-  const tasks = plannerData?.tasks ?? [];
-
-  const showConnSpinner = connectionStatus === 'connecting';
+  const [viewMode, setViewMode] = useState<'chat' | 'tasks'>('chat');
+  const [tasksSubTab, setTasksSubTab] = useState<TaskSubTab>('todo');
 
   // Bookmarks
   const { bookmarks, saveBookmarks, executeBookmark } = useBookmarks();
@@ -237,10 +253,11 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 
   useEffect(() => {
     refreshIndexMeta();
-    // Load discovered apps for quick shortcuts & pre-warm cache
-    const loadApps = async () => {
+    // Load discovered apps for quick shortcuts and refresh again once
+    // the startup icon warm-up completes in the main process.
+    const loadApps = async (forceRefresh = false) => {
       try {
-        const res = await (window as any).desktopAPI?.listApps?.();
+        const res = await (window as any).desktopAPI?.listApps?.(forceRefresh);
         const apps = res?.apps ?? res;  // IPC returns { ok, apps } wrapper
         if (Array.isArray(apps) && apps.length > 0) {
           // Sort apps: prioritize popular/well-known apps, then alphabetical
@@ -262,6 +279,10 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
       } catch {}
     };
     loadApps();
+    const unsub = (window as any).desktopAPI?.onAppsUpdated?.((data: any) => {
+      if (data?.iconsReady) loadApps(false);
+    });
+    return () => { try { unsub?.(); } catch {} };
   }, [refreshIndexMeta]);
 
   /** Unified search: hits app-discovery + file index in one call */
@@ -279,7 +300,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
         });
         if (searchReqIdRef.current !== reqId) return;
         if (res?.ok) {
-          setFileResults(Array.isArray(res.results) ? res.results : []);
+          setFileResults(Array.isArray(res.results) ? res.results.slice(0, 6) : []);
           setAppResults([]);
           setFileSearchMode('quick');
         } else {
@@ -312,11 +333,37 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
       if (searchReqIdRef.current !== reqId) return;
       if (res?.ok && Array.isArray(res.results)) {
         // Split results: apps vs files
-        const apps = res.results.filter((r: any) => r.source === 'app-discovery');
-        const files = res.results.filter((r: any) => r.source !== 'app-discovery');
+        const apps = res.results.filter((r: any) => r.source === 'app-discovery').slice(0, 5);
+        const files = res.results.filter((r: any) => r.source !== 'app-discovery').slice(0, 8);
         setAppResults(apps);
         setFileResults(files);
         setFileSearchMode('quick');
+
+        // Backfill indexed file results without delaying the instant app response.
+        if (api?.execTool) {
+          void (async () => {
+            try {
+              const indexed = await api.execTool('file_search', {
+                query: q,
+                mode: 'quick',
+                limit: 8,
+                root_id: rootId || undefined,
+              });
+              if (searchReqIdRef.current !== reqId) return;
+              if (!indexed?.ok) return;
+
+              const indexedFiles = Array.isArray(indexed.results)
+                ? indexed.results.slice(0, 8)
+                : [];
+              if (indexedFiles.length === 0) return;
+
+              setFileResults(indexedFiles);
+              setFileSearchMode('quick');
+            } catch {
+              // Keep the fast unified-search results if indexed backfill fails.
+            }
+          })();
+        }
       } else {
         setAppResults([]);
         setFileResults([]);
@@ -335,7 +382,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   const doSemanticRefine = useCallback(async (q: string, rootId?: string) => {
     const token = typeof accessToken === 'string' ? accessToken : '';
     const indexed = Number(indexStats?.indexed_files || 0);
-    if (!token || indexed <= 0) return;
+    if (!token || indexed <= 0 || !shouldRunLauncherSemanticSearch(q)) return;
     if (!(window as any).desktopAPI?.execTool) return;
 
     const reqId = ++semanticReqIdRef.current;
@@ -357,13 +404,13 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
         query: q,
         vector: j.embedding,
         mode: 'hybrid',
-        limit: 6,
+        limit: 4,
         root_id: rootId || undefined,
       });
 
       if (semanticReqIdRef.current !== reqId) return;
       if (res?.ok) {
-        setFileResults(Array.isArray(res.results) ? res.results : []);
+        setFileResults(Array.isArray(res.results) ? res.results.slice(0, 8) : []);
         setFileSearchMode('hybrid');
       }
     } catch {
@@ -374,7 +421,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   }, [CLOUD_AI_HTTP, accessToken, indexStats?.indexed_files]);
 
   useEffect(() => {
-    const q = String(query || '').trim();
+    const q = normalizedDeferredQuery;
     if (searchDebounceRef.current) {
       clearTimeout(searchDebounceRef.current);
       searchDebounceRef.current = null;
@@ -385,6 +432,8 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
     }
 
     if (q.length < 2) {
+      searchReqIdRef.current += 1;
+      semanticReqIdRef.current += 1;
       setAppResults([]);
       setFileResults([]);
       setFileError('');
@@ -395,57 +444,55 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 
     searchDebounceRef.current = setTimeout(() => {
       doUnifiedSearch(q, selectedRootId || undefined);
-    }, 120);
+    }, 100);
 
-    semanticDebounceRef.current = setTimeout(() => {
-      doSemanticRefine(q, selectedRootId || undefined);
-    }, 650);
+    if (shouldRunLauncherSemanticSearch(q)) {
+      semanticDebounceRef.current = setTimeout(() => {
+        doSemanticRefine(q, selectedRootId || undefined);
+      }, 900);
+    }
 
     return () => {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
       if (semanticDebounceRef.current) clearTimeout(semanticDebounceRef.current);
     };
-  }, [query, selectedRootId, doUnifiedSearch, doSemanticRefine]);
+  }, [normalizedDeferredQuery, selectedRootId, doUnifiedSearch, doSemanticRefine]);
 
   useEffect(() => {
     const api = (window as any).desktopAPI;
     if (!api?.getFileIcon) return;
 
-    // Build icon requests for applications, exes, and files with resolved targets
-    const iconRequests: { displayPath: string; iconPath: string }[] = [];
-    // Include app results (from app-discovery)
-    for (const a of (Array.isArray(appResults) ? appResults : [])) {
+    const uniquePaths = (values: string[]) => Array.from(new Set(values.filter(Boolean)));
+
+    const iconRequests: { displayPath: string; iconPaths: string[] }[] = [];
+    for (const a of (Array.isArray(appResults) ? appResults.slice(0, 5) : [])) {
       if (!a) continue;
-      const filePath = String(a.path || '').trim();
-      const iconHint = String(a.iconHint || a.launchTarget || '').trim();
-      if (!filePath) continue;
-      if (iconHint || filePath) {
-        iconRequests.push({ displayPath: filePath, iconPath: iconHint || filePath });
+      const displayPath = String(a.path || a.name || '').trim();
+      if (typeof a.iconDataUrl === 'string' && a.iconDataUrl) {
+        fileIconCacheRef.current[displayPath] = a.iconDataUrl;
+        continue;
       }
+      const iconHint = String(a.iconHint || '').trim();
+      const launchTarget = String(a.launchTarget || '').trim();
+      const candidates = uniquePaths([
+        iconHint,
+        launchTarget,
+        displayPath,
+      ]);
+      if (!displayPath || candidates.length === 0) continue;
+      iconRequests.push({ displayPath, iconPaths: candidates });
     }
-    // Include file results
-    for (const f of (Array.isArray(fileResults) ? fileResults : [])) {
-      if (!f) continue;
-      const kind = String(f.kind || '').toLowerCase();
-      const filePath = String(f.path || '').trim();
-      if (!filePath) continue;
-      
-      if (kind === 'application' || kind === 'binary' || f.icon_path || f.target_path ||
-          String(f.extension || '').toLowerCase() === '.exe') {
-        const iconPath = String(filePath || f.icon_path || f.target_path).trim();
-        iconRequests.push({ displayPath: filePath, iconPath });
-      }
-    }
+
     if (iconRequests.length === 0) return;
 
     const reqId = ++fileIconReqIdRef.current;
     (async () => {
       const updates: Record<string, string> = {};
       await Promise.all(
-        iconRequests.map(async ({ displayPath, iconPath }) => {
+        iconRequests.map(async ({ displayPath, iconPaths }) => {
           if (fileIconCacheRef.current[displayPath]) return;
-          const pathsToTry = iconPath !== displayPath ? [iconPath, displayPath] : [displayPath];
-          for (const p of pathsToTry) {
+          for (const p of iconPaths) {
+            if (!p) continue;
             const res = await api.getFileIcon(p, { size: 'normal' }).catch(() => null);
             if (fileIconReqIdRef.current !== reqId) return;
             if (res?.ok && typeof res.dataUrl === 'string' && res.dataUrl) {
@@ -465,7 +512,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
       }
       setFileIconDataUrls(prev => ({ ...prev, ...updates }));
     })();
-  }, [fileResults, appResults]);
+  }, [appResults]);
 
   // Resolve icons for discovered apps shown in quick shortcuts
   useEffect(() => {
@@ -478,6 +525,10 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
         discoveredApps.slice(0, 8).map(async (da: any) => {
           const key = String(da.id || '');
           if (!key || fileIconCacheRef.current[key]) return;
+          if (typeof da.iconDataUrl === 'string' && da.iconDataUrl) {
+            updates[key] = da.iconDataUrl;
+            return;
+          }
           const iconPath = String(da.iconHint || da.launchTarget || da.id || '').trim();
           if (!iconPath) return;
           try {
@@ -579,242 +630,41 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
             ? "bg-theme-bg backdrop-blur-xl border border-theme/5"
             : "bg-theme-card border border-theme/10 shadow-sm"
         )}>
-          {/* Top Bar */}
-          <div className="flex items-center justify-between px-3 py-2 shrink-0">
-            {/* Status */}
-            <button
-              type="button"
-              onClick={() => nextUp && window.desktopAPI?.openDashboard?.({ tab: 'planner' })}
-              className={clsx(
-                "flex items-center gap-2 min-w-0",
-                nextUp && "cursor-pointer hover:opacity-80 transition-opacity"
-              )}
-              title={nextUp ? 'View in Planner' : undefined}
-            >
-              <div className={clsx(
-                "w-5 h-5 rounded-full flex items-center justify-center transition-all",
-                nextUp ? getNextUpBgColor(nextUp) : (
-                  connectionStatus === 'connected' ? 'bg-primary' :
-                    connectionStatus === 'connecting' ? 'bg-amber-500 animate-pulse' :
-                      connectionStatus === 'error' ? 'bg-red-500' :
-                        'bg-theme-muted/50'
-                )
-              )}>
-                {nextUp ? <NextUpIcon type={nextUp.icon} /> : (
-                  showConnSpinner ? <div className="w-3 h-3 border-2 border-white/90 border-t-transparent rounded-full animate-spin" /> :
-                    <CheckCircle className="w-3 h-3 text-white" />
-                )}
-              </div>
-              <span className={clsx(
-                "font-semibold text-[13px] truncate transition-colors",
-                nextUp ? getNextUpTextColor(nextUp) : (
-                  connectionStatus === 'connected' ? 'text-theme-fg' :
-                    connectionStatus === 'connecting' ? 'text-amber-700 dark:text-amber-500' :
-                      connectionStatus === 'error' ? 'text-red-600' :
-                        'text-theme-muted'
-                )
-              )}>
-                {displayStatus}
-              </span>
-            </button>
-
-            {/* Right Actions */}
-            <div className="flex items-center gap-2">
-              {/* Internal Sidebar toggle for window/sidebar modes */}
-              {(overlayMode === 'window' || overlayMode === 'sidebar') && onToggleSidebar && (
-                <button
-                  onClick={onToggleSidebar}
-                  className={clsx(
-                    "p-2 rounded-xl hover:scale-105 transition-transform border border-theme/10",
-                    sidebarOpen ? "bg-primary/10 text-primary border-primary/20" : "bg-theme-card text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
-                  )}
-                  title="Sidebar (Spaces, Canvas, Terminal)"
-                >
-                  <PanelLeft className="w-4 h-4" />
-                </button>
-              )}
-
-              {overlayMode !== 'sidebar' && (
-                <button
-                  onClick={() => window.desktopAPI.setMode('sidebar')}
-                  className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
-                  title="Sidebar Mode"
-                >
-                  <PanelRight className="w-4 h-4" />
-                </button>
-              )}
-
-              {overlayMode !== 'window' && (
-                <button
-                  onClick={onToggleExpand}
-                  className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
-                  title="Window Mode"
-                >
-                  <AppWindow className="w-4 h-4" />
-                </button>
-              )}
-
-              <button
-                onClick={() => (window as any).desktopAPI?.openWorkflows?.()}
-                className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
-                title="Workflows"
-              >
-                <Wand2 className="w-4 h-4" />
-              </button>
-
-              <button
-                onClick={onOpenDashboard}
-                className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
-                title="Dashboard"
-              >
-                <Home className="w-4 h-4" />
-              </button>
-
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger asChild>
-                  <button className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-theme-fg hover:bg-theme-hover relative" title="Tasks">
-                    <ListTodo className="w-4 h-4" />
-                    {tasksCount > 0 && <span className="absolute -top-1 -right-1 bg-primary text-primary-fg text-[9px] px-1 rounded-full min-w-[14px] text-center font-bold">{tasksCount}</span>}
-                  </button>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content className="DropdownContent z-[10002] w-80 bg-theme-bg rounded-xl border border-theme/20 p-3 shadow-lg shadow-black/10 backdrop-blur-xl" sideOffset={8} align="end">
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="text-[11px] font-bold text-theme-muted uppercase tracking-wider">Active Tasks</span>
-                      <button
-                        onClick={() => window.desktopAPI?.openDashboard?.({ tab: 'tasks' })}
-                        className="text-[10px] font-bold text-primary hover:text-primary/80 transition-colors"
-                      >
-                        View All
-                      </button>
-                    </div>
-                    <div className="max-h-[280px] overflow-y-auto custom-scrollbar space-y-1.5">
-                      {tasks.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-8 text-center">
-                          <div className="w-12 h-12 bg-theme-muted/5 rounded-full flex items-center justify-center mb-3">
-                            <ListTodo className="w-6 h-6 text-theme-muted/30" />
-                          </div>
-                          <p className="text-[12px] text-theme-muted">No pending tasks</p>
-                          <p className="text-[10px] text-theme-muted/70 mt-1">Add tasks from the dashboard</p>
-                        </div>
-                      ) : tasks.slice(0, 6).map(task => {
-                        const isOverdue = task.due && new Date(task.due) < new Date();
-                        const priorityColors: Record<string, string> = {
-                          urgent: 'text-red-500 bg-red-500/10',
-                          high: 'text-orange-500 bg-orange-500/10',
-                          normal: 'text-blue-500 bg-blue-500/10',
-                          low: 'text-theme-muted bg-theme-muted/10',
-                        };
-                        return (
-                          <div 
-                            key={task.id} 
-                            className="flex items-start gap-3 p-2.5 rounded-xl hover:bg-theme-hover/50 transition-all group/task border border-transparent hover:border-theme/10"
-                          >
-                            <div className={clsx(
-                              "mt-0.5 w-4 h-4 rounded-full border-[1.5px] flex items-center justify-center shrink-0 transition-colors",
-                              "border-theme-muted/30 hover:border-primary cursor-pointer"
-                            )}>
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-0.5">
-                                <span className="text-[12px] text-theme-fg font-semibold truncate">
-                                  {task.title}
-                                </span>
-                                {task.priority && task.priority !== 'normal' && task.priority !== 'low' && (
-                                  <span className={clsx(
-                                    "text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase",
-                                    priorityColors[task.priority] || priorityColors.normal
-                                  )}>
-                                    {task.priority}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-2 text-[10px] text-theme-muted">
-                                {task.due && (
-                                  <span className={clsx(
-                                    "flex items-center gap-1",
-                                    isOverdue && "text-red-500"
-                                  )}>
-                                    <Calendar className="w-3 h-3" />
-                                    {new Date(task.due).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                                  </span>
-                                )}
-                                {(task.subTodosTotal || 0) > 0 && (
-                                  <span className="flex items-center gap-1">
-                                    <ListTodo className="w-3 h-3" />
-                                    {task.subTodosCompleted || 0}/{task.subTodosTotal}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {tasks.length > 6 && (
-                        <button
-                          onClick={() => window.desktopAPI?.openDashboard?.({ tab: 'tasks' })}
-                          className="w-full text-center text-[11px] font-semibold text-primary hover:text-primary/80 py-2 transition-colors"
-                        >
-                          +{tasks.length - 6} more tasks
-                        </button>
-                      )}
-                    </div>
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
-
-              <DropdownMenu.Root open={chatMenuOpen} onOpenChange={onChatMenuOpenChange}>
-                <DropdownMenu.Trigger asChild>
-                  <button
-                    className={clsx(
-                      "p-2 rounded-xl border border-theme/10 transition-all hover:scale-105",
-                      chatMenuOpen ? "bg-theme-active text-theme-fg" : "bg-theme-card text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
-                    )}
-                    title="History"
-                  >
-                    <Clock className="w-4 h-4" />
-                  </button>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content className="DropdownContent z-[10002] w-72 bg-theme-bg rounded-xl border border-theme/20 p-2 shadow-lg shadow-black/10 backdrop-blur-xl" sideOffset={8} align="end" collisionPadding={10}>
-                    <DropdownMenu.Item
-                      onSelect={onNewChat}
-                      className="text-[13px] text-primary font-semibold flex items-center gap-2 px-3 py-2.5 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors mb-1"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>New chat</span>
-                    </DropdownMenu.Item>
-                    <div className="h-px bg-theme opacity-50 my-1" />
-                    <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
-                      {loadingConversations ? (
-                        <div className="px-3 py-2 text-[12px] text-theme-muted">Loading...</div>
-                      ) : conversations.length === 0 ? (
-                        <div className="px-3 py-2 text-[12px] text-theme-muted italic">No recent chats</div>
-                      ) : (
-                        conversations.map(c => (
-                          <DropdownMenu.Item
-                            key={c.id}
-                            onSelect={() => onSelectConversation(String(c.id))}
-                            className="text-[13px] text-theme-fg flex flex-col px-3 py-2.5 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors border-l-2 border-transparent hover:border-primary/50"
-                          >
-                            <span className="truncate w-full font-semibold">{c.title || 'Untitled Chat'}</span>
-                            <span className="text-[10px] text-theme-muted font-medium mt-0.5">{c.created_at ? new Date(c.created_at).toLocaleDateString() : ''}</span>
-                          </DropdownMenu.Item>
-                        ))
-                      )}
-                    </div>
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
-
-              <button onClick={() => (window as any).desktopAPI?.hide?.()} className="p-2 bg-theme-card border border-theme/10 rounded-xl hover:scale-105 transition-transform text-theme-muted hover:text-red-500 hover:bg-red-500/10" title="Close">
-                <Power className="w-4 h-4" />
-              </button>
+          {/* Top Header */}
+          <div className="flex items-center justify-between px-2 py-2 border-b border-theme/10 bg-theme-hover/40 backdrop-blur-sm w-full min-w-0 shrink-0">
+            <div className="flex-1 w-0 min-w-0 overflow-hidden mr-2">
+              <ChatTabs
+                tabs={tabs}
+                activeTabId={activeTabId}
+                onSwitchTab={onSwitchTab}
+                onCloseTab={onCloseTab}
+                onAddTab={onAddTab}
+              />
             </div>
+            <ChatHeaderActions
+              onToggleSidebar={onToggleSidebar}
+              sidebarOpen={sidebarOpen}
+              onOpenDashboard={onOpenDashboard}
+              onCollapse={onCollapse || (() => { })}
+              overlayMode={overlayMode}
+              chatMenuOpen={chatMenuOpen}
+              onChatMenuOpenChange={onChatMenuOpenChange}
+              conversations={conversations}
+              loadingConversations={loadingConversations}
+              onSelectConversation={onSelectConversation}
+              onDeleteConversation={onDeleteConversation}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+            />
           </div>
 
           {/* Main Content Area */}
           <div className="flex-1 flex flex-col items-center px-4 pb-3 overflow-y-auto custom-scrollbar">
+            {viewMode === 'tasks' ? (
+              <div className="w-full flex-1 min-h-0 overflow-y-auto custom-scrollbar pt-3">
+                <TasksView compact defaultSubTab={tasksSubTab} onSubTabChange={setTasksSubTab} />
+              </div>
+            ) : (
             <div className="w-full max-w-xl flex flex-col flex-1">
               {/* Greeting */}
               <div className="text-center pt-4 pb-2 shrink-0">
@@ -880,12 +730,12 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                       </div>
                       <div className="space-y-1">
                         {appResults.map((a: any) => {
-                          const iconUrl = a?.path ? fileIconDataUrls[String(a.path)] : undefined;
+                          const iconUrl = a?.iconDataUrl || (a?.path ? fileIconDataUrls[String(a.path)] : undefined);
                           return (
                             <button key={a.path || a.name} onClick={() => handleLaunchApp(a.launchTarget || a.path)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-theme-hover transition-all group/app text-left border border-transparent hover:border-blue-500/30">
                               <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-blue-500/10 text-blue-500 border border-theme/20">
                                 {iconUrl ? (
-                                  <img src={iconUrl} alt="" className="w-5 h-5 object-contain" />
+                                  <img src={iconUrl} alt="" loading="lazy" className="w-5 h-5 object-contain" />
                                 ) : (
                                   <AppWindow className="w-3.5 h-3.5" />
                                 )}
@@ -912,12 +762,14 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                       <div className="space-y-1">
                         {fileResults.map((f: any) => {
                           const cfg = getFileKindConfig(String(f.kind || 'other').toLowerCase());
-                          const iconUrl = f?.path ? fileIconDataUrls[String(f.path)] : undefined;
+                          const iconUrl = String(f.kind || 'other').toLowerCase() === 'application' && f?.path
+                            ? fileIconDataUrls[String(f.path)]
+                            : undefined;
                           return (
                             <button key={f.path} onClick={() => handleOpenIndexedFile(f.path)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-theme-hover transition-all group/file text-left border border-transparent hover:border-theme/30">
                               <div className={clsx("w-7 h-7 rounded-lg flex items-center justify-center border border-theme/20", cfg.bg, cfg.color)}>
                                 {iconUrl ? (
-                                  <img src={iconUrl} alt="" className="w-5 h-5 object-contain" />
+                                  <img src={iconUrl} alt="" loading="lazy" className="w-5 h-5 object-contain" />
                                 ) : (
                                   <cfg.icon className="w-3.5 h-3.5" />
                                 )}
@@ -935,6 +787,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                 </div>
               )}
             </div>
+            )}
           </div>
 
           {/* Bottom Input Area - Integrated into the single card */}
@@ -944,7 +797,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
               <div className="flex items-center gap-1.5 mb-2 overflow-x-auto scrollbar-none">
                 {/* Discovered apps — always shown first */}
                 {discoveredApps.slice(0, 4).map((da: any) => {
-                  const iconUrl = fileIconDataUrls[String(da.id || '')];
+                  const iconUrl = da?.iconDataUrl || fileIconDataUrls[String(da.id || '')];
                   return (
                     <button
                       key={da.id}
@@ -953,7 +806,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                       title={da.name}
                     >
                       {iconUrl ? (
-                        <img src={iconUrl} alt="" className="w-3.5 h-3.5 object-contain" />
+                        <img src={iconUrl} alt="" loading="lazy" className="w-3.5 h-3.5 object-contain" />
                       ) : (
                         <AppWindow className="w-3.5 h-3.5 text-blue-500" />
                       )}
@@ -986,44 +839,94 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                 </button>
               </div>
             )}
-            <div className="flex items-center gap-2 bg-theme-hover/50 rounded-[24px] p-1.5 pr-2 focus-within:ring-2 focus-within:ring-primary/10 transition-all border border-theme/5">
-              <div className="flex-1 relative rounded-xl transition-all flex items-center">
-                <TextareaAutosize
-                  className="w-full bg-transparent outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-semibold min-w-0 resize-none leading-5 py-2 overflow-y-auto custom-scrollbar px-3"
-                  placeholder="Just ask Stuard"
-                  value={query}
-                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
-                  onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-                    if ((e.nativeEvent as any)?.isComposing) return;
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      onSend();
-                    }
-                  }}
-                  minRows={1}
-                  maxRows={3}
-                  autoFocus
-                />
-              </div>
-
-              <ModelSelector
-                selectedModelId={selectedModelId}
-                onSelectModel={(id) => onChatModeChange?.(id as any)}
-                reasoningLevel={reasoningLevel}
-                onReasoningLevelChange={onReasoningLevelChange}
-                side="top"
-                align="end"
-              />
-
+            <div
+              className={clsx(
+                "rounded-[28px] p-1 flex flex-col gap-1 shrink-0",
+                translucentMode ? "bg-theme-bg backdrop-blur-xl" : "bg-theme-card"
+              )}
+            >
               <button
-                onClick={onMicClick}
+                type="button"
+                onClick={() => nextUp && window.desktopAPI?.openDashboard?.({ tab: 'planner' })}
                 className={clsx(
-                  "h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0",
-                  isRecording ? "bg-red-500 text-white animate-pulse" : "bg-primary text-primary-fg hover:opacity-90"
+                  "flex items-center justify-between gap-3 px-3 py-1 text-left",
+                  nextUp && "cursor-pointer hover:opacity-80 transition-opacity"
                 )}
+                title={nextUp ? 'View in Planner' : undefined}
               >
-                <Mic className="w-5 h-5" />
+                <div className="flex items-center gap-2 min-w-0">
+                  {nextUp ? (
+                    <div className={clsx(
+                      "w-5 h-5 rounded-full flex items-center justify-center shrink-0",
+                      getNextUpBgColor(nextUp)
+                    )}>
+                      <NextUpIcon type={nextUp.icon} />
+                    </div>
+                  ) : connectionStatus === 'connecting' ? (
+                    <div className="w-3.5 h-3.5 border-2 border-theme-muted/70 border-t-transparent rounded-full animate-spin shrink-0" />
+                  ) : (
+                    <CheckCircle className={clsx(
+                      "w-3.5 h-3.5 shrink-0",
+                      connectionStatus === 'error' ? 'text-red-500' : 'text-theme-muted'
+                    )} />
+                  )}
+                  <span className={clsx(
+                    "text-[11px] font-bold uppercase tracking-widest truncate",
+                    nextUp ? getNextUpTextColor(nextUp) : (
+                      connectionStatus === 'connected' ? 'text-theme-muted' :
+                        connectionStatus === 'connecting' ? 'text-amber-700 dark:text-amber-500' :
+                          connectionStatus === 'error' ? 'text-red-600' :
+                            'text-theme-muted'
+                    )
+                  )}>
+                    {displayStatus}
+                  </span>
+                </div>
+                <span className="text-[11px] font-bold uppercase tracking-widest text-theme-muted truncate max-w-[180px]">
+                  {selectedModelLabel}
+                </span>
               </button>
+
+              <div className="flex items-center gap-2 bg-theme-hover/50 rounded-[24px] p-1.5 pr-2 focus-within:ring-2 focus-within:ring-primary/10 transition-all border border-theme/5">
+                <div className="flex-1 relative rounded-xl transition-all flex items-center">
+                  <TextareaAutosize
+                    className="w-full bg-transparent outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-semibold min-w-0 resize-none leading-5 py-2 overflow-y-auto custom-scrollbar px-3"
+                    placeholder="Just ask Stuard"
+                    value={query}
+                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
+                    onPaste={onPaste}
+                    onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+                      if ((e.nativeEvent as any)?.isComposing) return;
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        onSend();
+                      }
+                    }}
+                    minRows={1}
+                    maxRows={3}
+                    autoFocus
+                  />
+                </div>
+
+                <ModelSelector
+                  selectedModelId={selectedModelId}
+                  onSelectModel={(id) => onChatModeChange?.(id as any)}
+                  reasoningLevel={reasoningLevel}
+                  onReasoningLevelChange={onReasoningLevelChange}
+                  side="top"
+                  align="end"
+                />
+
+                <button
+                  onClick={onMicClick}
+                  className={clsx(
+                    "h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0",
+                    isRecording ? "bg-red-500 text-white animate-pulse" : "bg-primary text-primary-fg hover:opacity-90"
+                  )}
+                >
+                  <Mic className="w-5 h-5" />
+                </button>
+              </div>
             </div>
           </div>
         </div>

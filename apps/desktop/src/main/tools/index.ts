@@ -17,7 +17,7 @@ import {
   execCanvasDelete,
 } from './handlers/canvas';
 import { execOllamaStatus, execOllamaStart, execOllamaChat, execOllamaGenerate, execOllamaVision, execOllamaEmbeddings, execOllamaModels } from './handlers/ollama';
-import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse } from './handlers/browser-use';
+import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseExecuteScript, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, execBrowserUseSyncChrome, execBrowserUseListChromeProfiles, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse } from './handlers/browser-use';
 import {
   execBrowserGetContent,
   execBrowserClickElement,
@@ -153,6 +153,7 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'browser_use_status') return execBrowserUseStatus(args, ctx);
       if (toolName === 'browser_use_configure') return execBrowserUseConfigure(args, ctx);
       if (toolName === 'browser_use_task') return execBrowserUseTask(args, ctx);
+      if (toolName === 'browser_use_execute_script') return execBrowserUseExecuteScript(args, ctx);
       if (toolName === 'browser_use_navigate') return execBrowserUseNavigate(args, ctx);
       if (toolName === 'browser_use_click') return execBrowserUseClick(args, ctx);
       if (toolName === 'browser_use_type') return execBrowserUseType(args, ctx);
@@ -162,6 +163,8 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'browser_use_scroll') return execBrowserUseScroll(args, ctx);
       if (toolName === 'browser_use_tabs') return execBrowserUseTabs(args, ctx);
       if (toolName === 'browser_use_cookies') return execBrowserUseCookies(args, ctx);
+      if (toolName === 'browser_use_sync_chrome') return execBrowserUseSyncChrome(args, ctx);
+      if (toolName === 'browser_use_list_chrome_profiles') return execBrowserUseListChromeProfiles(args, ctx);
       if (toolName === 'proactive_task_list') return execProactiveTaskList(args, ctx);
       if (toolName === 'proactive_task_update') return execProactiveTaskUpdate(args, ctx);
       if (toolName === 'proactive_task_create') return execProactiveTaskCreate(args, ctx);

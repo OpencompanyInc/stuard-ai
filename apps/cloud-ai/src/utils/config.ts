@@ -79,6 +79,22 @@ export const TELNYX_FROM_NUMBER = clean(process.env.TELNYX_FROM_NUMBER || '');
 export const TELNYX_MESSAGING_PROFILE_ID = clean(process.env.TELNYX_MESSAGING_PROFILE_ID || '');
 export const TELNYX_SIP_CONNECTION_ID = clean(process.env.TELNYX_SIP_CONNECTION_ID || '');
 
+export const META_APP_ID = clean(process.env.META_APP_ID || process.env.INSTAGRAM_APP_ID || '');
+export const META_APP_SECRET = clean(process.env.META_APP_SECRET || process.env.INSTAGRAM_APP_SECRET || '');
+export const FACEBOOK_APP_ID = clean(process.env.FACEBOOK_APP_ID || META_APP_ID || '');
+export const FACEBOOK_APP_SECRET = clean(process.env.FACEBOOK_APP_SECRET || META_APP_SECRET || '');
+export const FACEBOOK_REDIRECT_PATH = clean(process.env.FACEBOOK_REDIRECT_PATH || '/integrations/facebook/callback');
+export const INSTAGRAM_APP_ID = clean(process.env.INSTAGRAM_APP_ID || META_APP_ID || '');
+export const INSTAGRAM_APP_SECRET = clean(process.env.INSTAGRAM_APP_SECRET || META_APP_SECRET || '');
+export const INSTAGRAM_REDIRECT_PATH = clean(process.env.INSTAGRAM_REDIRECT_PATH || '/integrations/instagram/callback');
+export const THREADS_APP_ID = clean(process.env.THREADS_APP_ID || META_APP_ID || '');
+export const THREADS_APP_SECRET = clean(process.env.THREADS_APP_SECRET || META_APP_SECRET || '');
+export const THREADS_REDIRECT_PATH = clean(process.env.THREADS_REDIRECT_PATH || '/integrations/threads/callback');
+
+export const WA_PHONE_NUMBER_ID = clean(process.env.WA_PHONE_NUMBER_ID || '');
+export const WA_ACCESS_TOKEN = clean(process.env.WA_ACCESS_TOKEN || '');
+export const WA_WEBHOOK_VERIFY_TOKEN = clean(process.env.WA_WEBHOOK_VERIFY_TOKEN || '');
+
 export const PING_INTERVAL_MS = Number(clean(process.env.CLOUD_WS_PING_INTERVAL_MS || 30000));
 
 export const LOG_DIR = clean(process.env.CLOUD_LOG_DIR || './logs');

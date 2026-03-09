@@ -9,6 +9,8 @@ const PROACTIVE_CORE_TOOLS = [
   'get_tool_schema',
   'execute_tool',
   'get_skill_info',
+  'search_past_conversations',
+  'get_conversation_context',
 ] as const;
 
 interface TaskSnapshot {
@@ -114,6 +116,130 @@ export function buildProactiveMessageContent(args: { prompt?: string; taskCount:
   }
 
   return content;
+}
+
+type RetryableToolErrorType = 'no_such_tool' | 'invalid_args' | 'tool_not_found' | 'tool_execution_error';
+
+type RetryableToolError = {
+  toolName: string;
+  type: RetryableToolErrorType;
+  message: string;
+};
+
+function extractToolName(message: string): string | undefined {
+  const direct = message.match(/[Tt]ool\s+['"`]?([A-Za-z0-9_:-]+)['"`]?\s+(?:not found|does not exist|is not a tool)/);
+  if (direct?.[1]) return direct[1];
+  const fallback = message.match(/tool_not_found:\s*([A-Za-z0-9_:-]+)/i);
+  return fallback?.[1];
+}
+
+export function detectRetryableToolError(error: any, seen: Set<any> = new Set()): RetryableToolError | null {
+  if (!error || typeof error !== 'object') return null;
+  if (seen.has(error)) return null;
+  seen.add(error);
+
+  const name = String(error.name || '');
+  const message = String(error.message || '');
+
+  if (name === 'AI_NoSuchToolError' || name === 'NoSuchToolError' || message.includes('is not a tool')) {
+    return {
+      toolName: error.toolName || extractToolName(message) || 'unknown',
+      type: 'no_such_tool',
+      message: message || 'The model tried to call a tool that does not exist.',
+    };
+  }
+
+  if (name === 'AI_InvalidToolArgumentsError' || name === 'InvalidToolArgumentsError') {
+    return {
+      toolName: error.toolName || extractToolName(message) || 'unknown',
+      type: 'invalid_args',
+      message: message || 'The model generated invalid arguments for a tool call.',
+    };
+  }
+
+  if (name === 'AI_ToolExecutionError' || name === 'ToolExecutionError') {
+    return {
+      toolName: error.toolName || extractToolName(message) || 'unknown',
+      type: 'tool_execution_error',
+      message: message || 'Tool execution failed.',
+    };
+  }
+
+  const lower = message.toLowerCase();
+  if (
+    (lower.includes('tool') && (lower.includes('not found') || lower.includes('does not exist') || lower.includes('unknown tool'))) ||
+    lower.includes('no such tool')
+  ) {
+    return {
+      toolName: error.toolName || extractToolName(message) || 'unknown',
+      type: 'tool_not_found',
+      message,
+    };
+  }
+
+  if (lower.includes('tool') && (lower.includes('failed') || lower.includes('error') || lower.includes('timeout'))) {
+    return {
+      toolName: error.toolName || extractToolName(message) || 'unknown',
+      type: 'tool_execution_error',
+      message,
+    };
+  }
+
+  const nested = detectRetryableToolError(error.error, seen) || detectRetryableToolError(error.cause, seen);
+  if (nested) return nested;
+
+  return null;
+}
+
+export async function generateWithToolRecovery(args: {
+  agent: { generate: (messages: any[], options?: Record<string, any>) => Promise<any> };
+  baseMessages: any[];
+  maxSteps?: number;
+  maxRetries?: number;
+}): Promise<any> {
+  const { agent, baseMessages, maxSteps = 20, maxRetries = 3 } = args;
+  const toolErrorHistory: string[] = [];
+  let attempt = 0;
+
+  while (attempt <= maxRetries) {
+    const messages = toolErrorHistory.length > 0
+      ? [
+          ...baseMessages,
+          { role: 'assistant', content: 'I tried to use a tool.' },
+          {
+            role: 'user',
+            content: `[System: Tool call failed] ${toolErrorHistory[toolErrorHistory.length - 1]}. Please use only the tools available to you. Do NOT invent or guess tool names.`,
+          },
+        ]
+      : baseMessages;
+
+    try {
+      return await agent.generate(messages, { maxSteps });
+    } catch (error: any) {
+      const toolError = detectRetryableToolError(error);
+      if (!toolError || attempt >= maxRetries) {
+        throw error;
+      }
+
+      attempt++;
+      const isHallucination = toolError.type === 'no_such_tool' || toolError.type === 'tool_not_found';
+      if (isHallucination) {
+        toolErrorHistory.push(
+          `The tool "${toolError.toolName}" does not exist and cannot be called directly. Use search_tools to find available tools, or use execute_tool({ tool_name: "...", args: {...} }) to run tools by name. Do NOT invent tool names — only use tools you can verify exist.`
+        );
+      } else if (toolError.type === 'invalid_args') {
+        toolErrorHistory.push(
+          `Tool "${toolError.toolName}" received invalid arguments: ${toolError.message}. Use get_tool_schema({ tool_name: "${toolError.toolName}" }) to see the correct argument format before retrying.`
+        );
+      } else {
+        toolErrorHistory.push(
+          `Tool "${toolError.toolName}" failed during execution: ${toolError.message}. Try a different approach or use a different tool.`
+        );
+      }
+    }
+  }
+
+  throw new Error('Agent execution failed');
 }
 
 export function filterProactiveTools<T extends Record<string, any>>(tools: T, allowedTools: unknown): T {

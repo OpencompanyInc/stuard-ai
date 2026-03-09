@@ -79,7 +79,7 @@ function VerifyEmailContent() {
                   <ul className="text-xs text-gray-600 space-y-1">
                     <li>• Download the Stuard AI app for Windows</li>
                     <li>• Set up the mobile app for remote control</li>
-                    <li>• Start your 14-day free trial</li>
+                    <li>• Start with about 15 free plan credits</li>
                   </ul>
                 </div>
 
@@ -149,7 +149,6 @@ function VerifyEmailContent() {
 
 export default function VerifyEmailPage() {
   return (
-    // @ts-expect-error React types conflict in monorepo
     <Suspense fallback={
       <div className="min-h-screen  flex items-center justify-center">
         <div className="text-center">

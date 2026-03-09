@@ -36,7 +36,8 @@ async def conversation_create(args: Dict[str, Any]) -> Dict[str, Any]:
         conv = db.create_conversation(
             title=args.get("title"),
             model=args.get("model"),
-            conversation_id=args.get("conversation_id")
+            conversation_id=args.get("conversation_id"),
+            source=args.get("source", "stuard")
         )
         return {"ok": True, "conversation": conv.to_dict()}
     except Exception as e:
@@ -70,11 +71,13 @@ async def conversation_list(args: Dict[str, Any]) -> Dict[str, Any]:
         status = args.get("status", "active")
         limit = min(int(args.get("limit", 50)), 200)
         offset = int(args.get("offset", 0))
+        source = args.get("source")
         
         conversations = db.list_conversations(
             status=status if status else None,
             limit=limit,
-            offset=offset
+            offset=offset,
+            source=source if source else None
         )
         
         return {
@@ -185,6 +188,7 @@ async def message_add(args: Dict[str, Any]) -> Dict[str, Any]:
             tool_calls=args.get("tool_calls"),
             tool_results=args.get("tool_results"),
             attachments=args.get("attachments"),
+            metadata=args.get("metadata"),
             embedding=args.get("embedding")
         )
         
@@ -999,6 +1003,7 @@ async def security_get_settings(args: Dict[str, Any]) -> Dict[str, Any]:
             "ok": True,
             "settings": {
                 "memory_lock_enabled": settings.memory_lock_enabled,
+                "vault_lock_enabled": settings.vault_lock_enabled,
                 "lock_timeout_minutes": settings.lock_timeout_minutes,
                 "has_password": settings.password_hash is not None,
                 "biometric_enabled": settings.biometric_enabled,
@@ -1068,6 +1073,8 @@ async def security_update_settings(args: Dict[str, Any]) -> Dict[str, Any]:
         updates = {}
         if "memory_lock_enabled" in args:
             updates["memory_lock_enabled"] = args["memory_lock_enabled"]
+        if "vault_lock_enabled" in args:
+            updates["vault_lock_enabled"] = args["vault_lock_enabled"]
         if "lock_timeout_minutes" in args:
             updates["lock_timeout_minutes"] = args["lock_timeout_minutes"]
         if "biometric_enabled" in args:

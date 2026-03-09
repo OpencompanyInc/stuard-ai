@@ -1,11 +1,20 @@
 /**
  * Chat History Storage for Workflow Assistant
- * Stores chat sessions per workflow in localStorage
  */
+
+export type StoredStreamItem =
+  | { type: 'text'; content: string }
+  | { type: 'tool'; event: any };
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
+  images?: Array<{ path: string; name: string; dataUrl?: string; data?: string; mimeType?: string }>;
+  parts?: StoredStreamItem[];
+  reasoning?: string;
+  draft?: boolean;
+  usage?: Record<string, any>;
+  modelId?: string;
 }
 
 export interface ChatSession {
@@ -20,6 +29,46 @@ export interface ChatSession {
 const STORAGE_KEY = 'stuard_workflow_chat_sessions';
 const MAX_SESSIONS_PER_WORKFLOW = 10;
 
+function normalizeMessage(message: any): ChatMessage {
+  return {
+    role: message?.role === 'assistant' || message?.role === 'system' ? message.role : 'user',
+    content: typeof message?.content === 'string' ? message.content : '',
+    images: Array.isArray(message?.images) ? message.images : undefined,
+    parts: Array.isArray(message?.parts)
+      ? message.parts
+        .map((part: any) => {
+          if (part?.type === 'tool') {
+            return { type: 'tool', event: part?.event } satisfies StoredStreamItem;
+          }
+          if (part?.type === 'text') {
+            return { type: 'text', content: typeof part?.content === 'string' ? part.content : '' } satisfies StoredStreamItem;
+          }
+          return null;
+        })
+        .filter((part: StoredStreamItem | null): part is StoredStreamItem => part !== null)
+      : undefined,
+    reasoning: typeof message?.reasoning === 'string' ? message.reasoning : undefined,
+    draft: message?.draft === true ? true : undefined,
+    usage: message?.usage && typeof message.usage === 'object' ? message.usage : undefined,
+    modelId: typeof message?.modelId === 'string' ? message.modelId : undefined,
+  };
+}
+
+function normalizeSession(session: any): ChatSession | null {
+  if (!session || typeof session !== 'object' || typeof session.id !== 'string' || typeof session.workflowId !== 'string') {
+    return null;
+  }
+
+  return {
+    id: session.id,
+    workflowId: session.workflowId,
+    messages: Array.isArray(session.messages) ? session.messages.map(normalizeMessage) : [],
+    createdAt: typeof session.createdAt === 'string' ? session.createdAt : new Date().toISOString(),
+    updatedAt: typeof session.updatedAt === 'string' ? session.updatedAt : new Date().toISOString(),
+    title: typeof session.title === 'string' ? session.title : undefined,
+  };
+}
+
 /**
  * Get all stored chat sessions
  */
@@ -27,7 +76,11 @@ export function getAllSessions(): ChatSession[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map(normalizeSession)
+      .filter((session): session is ChatSession => session !== null);
   } catch {
     return [];
   }

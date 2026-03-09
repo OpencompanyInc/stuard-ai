@@ -20,7 +20,12 @@ const INTERNAL_PLANNING_PATTERNS = [
 ];
 
 function normalizeLine(value: string): string {
-  return value.replace(/\s+/g, ' ').trim();
+  // Preserve leading whitespace for markdown indentation (nested lists, code blocks)
+  const match = value.match(/^(\s*)(.*)/);
+  if (!match) return value.trim();
+  const leading = match[1];
+  const rest = match[2].replace(/\s+/g, ' ').trim();
+  return rest ? leading + rest : '';
 }
 
 function isUiArtifactLine(line: string): boolean {
@@ -67,6 +72,91 @@ export function buildUserFacingProactiveMessage(rawText: string, fallback = DEFA
   }
 
   return filteredText;
+}
+
+export function splitProactiveStructuredContent(text: string): {
+  message: string;
+  structuredContent?: { toolName: 'show_table' | 'show_json'; args: any };
+} {
+  const source = String(text || '').trim();
+  if (!source) return { message: '' };
+
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let best: { start: number; end: number; value: any } | null = null;
+
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i];
+
+    if (start === -1) {
+      if (ch === '{') {
+        start = i;
+        depth = 1;
+        inString = false;
+        escape = false;
+      }
+      continue;
+    }
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+
+    if (ch === '\\' && inString) {
+      escape = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (ch === '{') {
+      depth += 1;
+      continue;
+    }
+
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        const candidate = source.slice(start, i + 1).trim();
+        try {
+          const value = JSON.parse(candidate);
+          if (value && typeof value === 'object' && !Array.isArray(value)) {
+            best = { start, end: i + 1, value };
+          }
+        } catch { }
+        start = -1;
+      }
+    }
+  }
+
+  if (!best) {
+    return { message: source };
+  }
+
+  const value = best.value;
+  const toolName = Array.isArray(value?.columns) && Array.isArray(value?.data)
+    ? 'show_table'
+    : 'show_json';
+  const args = toolName === 'show_table'
+    ? value
+    : { title: value?.title || 'Details', data: value };
+
+  const before = source.slice(0, best.start).trim();
+  const after = source.slice(best.end).trim();
+  const message = [before, after].filter(Boolean).join('\n\n').trim() || 'Here are the details.';
+
+  return {
+    message,
+    structuredContent: { toolName, args },
+  };
 }
 
 export function extractAgentTextFromWsMessage(msg: any, fallback = ''): string {
@@ -173,6 +263,7 @@ export function buildLocalProactiveHiddenContext(payload: any): string {
   const lines = [
     LOCAL_PROACTIVE_MARKER,
     'This is a proactive wake-up. You MUST actively work on tasks — not just list or acknowledge them.',
+    'Return a normal plain markdown/text reply only. Do NOT use GenUI, interactive UI blocks, JSON UI payloads, or code fences unless the user explicitly asks for code.',
     '',
     'CRITICAL: For each queued/in-progress task you MUST:',
     '1. Call proactive_task_update(task_id, "in_progress") to claim it',

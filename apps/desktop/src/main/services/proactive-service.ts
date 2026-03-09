@@ -81,6 +81,16 @@ interface WakeUpLog {
   reasoningText?: string;
   toolCalls?: WakeUpToolCall[];
   activityEvents?: WakeUpActivityEvent[];
+  usage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    cachedPromptTokens?: number;
+    thinkingTokens?: number;
+    reasoningTokens?: number;
+    [key: string]: any;
+  };
+  parentWakeUpId?: string;
 }
 
 interface ProactiveData {
@@ -120,6 +130,7 @@ function loadData(): ProactiveData {
             reasoningText: typeof log?.reasoningText === 'string' ? log.reasoningText : '',
             toolCalls: Array.isArray(log?.toolCalls) ? log.toolCalls : [],
             activityEvents: Array.isArray(log?.activityEvents) ? log.activityEvents : [],
+            usage: log?.usage && typeof log.usage === 'object' ? log.usage : undefined,
           }))
           : [],
       };
