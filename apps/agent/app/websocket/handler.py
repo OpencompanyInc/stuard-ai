@@ -54,7 +54,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 continue
 
             kind = (msg.get("type") or "").lower()
-            logger.info("ws_message kind=%s", kind)
+            logger.debug("ws_message kind=%s", kind)
             
             if kind == "chat":
                 t = asyncio.create_task(handle_chat(msg, session))

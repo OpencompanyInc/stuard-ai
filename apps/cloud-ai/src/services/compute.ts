@@ -236,8 +236,24 @@ chmod 750 /home/stuard
 # Disable sudo for stuard (belt-and-suspenders — user shouldn't be in sudoers)
 grep -q '^stuard' /etc/sudoers 2>/dev/null && sed -i '/^stuard/d' /etc/sudoers 2>/dev/null || true
 
-# ── 5. Firewall — only allow agent port (7400) from external, lock down rest ─
-# Drop metadata server access from stuard user (prevent SSRF to GCE metadata)
+# ── 5. DNS — ensure reliable DNS before any network-dependent step ────────────
+# Debian 12 on GCE sometimes relies on 169.254.169.254 as the sole nameserver.
+# Add Google Public DNS as a fallback so stuard processes can always resolve.
+if ! grep -q '8.8.8.8' /etc/resolv.conf 2>/dev/null; then
+  echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+  echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+fi
+# Warm the DNS cache for storage.googleapis.com (used by deploy downloads)
+for i in 1 2 3; do
+  if getent hosts storage.googleapis.com >/dev/null 2>&1; then break; fi
+  sleep 2
+done
+
+# ── 6. Firewall — only allow agent port (7400) from external, lock down rest ─
+# Block metadata server for stuard user (prevent SSRF), but allow DNS (port 53)
+# so the agent can still resolve hostnames through the metadata DNS proxy.
+iptables -A OUTPUT -m owner --uid-owner stuard -d 169.254.169.254 -p tcp --dport 53 -j ACCEPT 2>/dev/null || true
+iptables -A OUTPUT -m owner --uid-owner stuard -d 169.254.169.254 -p udp --dport 53 -j ACCEPT 2>/dev/null || true
 iptables -A OUTPUT -m owner --uid-owner stuard -d 169.254.169.254 -j DROP 2>/dev/null || true
 # Allow agent port from cloud-ai
 iptables -I INPUT -p tcp --dport 7400 -j ACCEPT 2>/dev/null || true

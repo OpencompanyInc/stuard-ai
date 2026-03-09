@@ -17,39 +17,61 @@ def _now_iso() -> str:
 
 
 def _calculate_next_occurrence(last_dt: datetime, recurrence: Dict[str, Any]) -> Optional[datetime]:
+    import calendar as _cal
     freq = str(recurrence.get("frequency") or "daily").lower()
     interval = int(recurrence.get("interval") or 1)
     days = recurrence.get("days")  # List[int] 0=Mon, 6=Sun
+    until_str = recurrence.get("until")
+
+    next_dt: Optional[datetime] = None
 
     if freq == "daily":
-        return last_dt + timedelta(days=interval)
-    
-    if freq == "weekly":
+        next_dt = last_dt + timedelta(days=interval)
+
+    elif freq == "weekly":
         if days and isinstance(days, list) and len(days) > 0:
             current_weekday = last_dt.weekday()
             sorted_days = sorted([int(d) % 7 for d in days])
-            
-            # Find next day in this week
-            next_day = next((d for d in sorted_days if d > current_weekday), None)
-            
-            if next_day is not None:
-                delta = next_day - current_weekday
-                return last_dt + timedelta(days=delta)
-            else:
-                # Jump to next week's first day
-                first_day = sorted_days[0]
-                delta = (7 - current_weekday) + first_day
-                # Add (interval - 1) weeks
-                delta += (7 * max(0, interval - 1))
-                return last_dt + timedelta(days=delta)
-        else:
-            return last_dt + timedelta(weeks=interval)
 
-    if freq == "monthly":
-        # Approximating 30 days
-        return last_dt + timedelta(days=30 * interval)
-        
-    return None
+            next_day = next((d for d in sorted_days if d > current_weekday), None)
+            if next_day is not None:
+                next_dt = last_dt + timedelta(days=next_day - current_weekday)
+            else:
+                first_day = sorted_days[0]
+                delta = (7 - current_weekday) + first_day + (7 * max(0, interval - 1))
+                next_dt = last_dt + timedelta(days=delta)
+        else:
+            next_dt = last_dt + timedelta(weeks=interval)
+
+    elif freq == "monthly":
+        month = last_dt.month + interval
+        year = last_dt.year + (month - 1) // 12
+        month = ((month - 1) % 12) + 1
+        max_day = _cal.monthrange(year, month)[1]
+        next_dt = last_dt.replace(year=year, month=month, day=min(last_dt.day, max_day))
+
+    elif freq == "yearly":
+        try:
+            next_dt = last_dt.replace(year=last_dt.year + interval)
+        except ValueError:
+            # Feb 29 in non-leap year → use Feb 28
+            next_dt = last_dt.replace(year=last_dt.year + interval, day=28)
+
+    if next_dt is None:
+        return None
+
+    # Check 'until' constraint
+    if until_str:
+        try:
+            until_dt = datetime.fromisoformat(str(until_str).replace('Z', '+00:00'))
+            if until_dt.tzinfo is None:
+                until_dt = until_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+            if next_dt.astimezone(timezone.utc) > until_dt.astimezone(timezone.utc):
+                return None
+        except Exception:
+            pass
+
+    return next_dt
 
 
 def _parse_when_to_datetime(when: Any) -> datetime:
@@ -239,25 +261,42 @@ async def task_reminders(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
                     pass
             
             # Handle recurrence or finish
-            next_dt = _calculate_next_occurrence(target_dt, recurrence) if recurrence else None
-            
-            if next_dt:
+            updated_recurrence: Optional[Dict] = None
+            next_dt_val: Optional[datetime] = None
+
+            if recurrence:
+                # Check count: if count is set, decrement and stop when exhausted
+                count = recurrence.get("count")
+                if count is not None:
+                    remaining = int(count) - 1
+                    if remaining <= 0:
+                        next_dt_val = None
+                    else:
+                        updated_recurrence = dict(recurrence)
+                        updated_recurrence["count"] = remaining
+                        next_dt_val = _calculate_next_occurrence(target_dt, updated_recurrence)
+                else:
+                    updated_recurrence = recurrence
+                    next_dt_val = _calculate_next_occurrence(target_dt, recurrence)
+
+            if next_dt_val:
                 # Reschedule in Unified Tasks
-                next_iso = next_dt.astimezone().isoformat()
+                next_iso = next_dt_val.astimezone().isoformat()
                 try:
                     await manager.send_request("unified_tasks_update_agent_assignment", {
                         "taskId": task_id,
                         "assignmentId": assignment_id,
                         "updates": {
                             "scheduledAt": next_iso,
-                            "status": "pending" 
+                            "recurring": updated_recurrence,
+                            "status": "pending"
                         }
                     })
                 except Exception:
                     pass
-                
+
                 # Schedule next run in memory
-                t = asyncio.create_task(_fire_logic(assignment_id, task_id, message, next_dt, recurrence))
+                t = asyncio.create_task(_fire_logic(assignment_id, task_id, message, next_dt_val, updated_recurrence))
                 _REMINDER_TASKS[assignment_id] = t
             else:
                 # Mark completed

@@ -15,17 +15,27 @@ export const task_crud = makeLocalTool(
   z.object({ action: z.string(), data: z.any().optional() }),
 );
 
+const recurrenceSchema = z.object({
+  frequency: z.enum(['daily', 'weekly', 'monthly', 'yearly']).describe('How often to repeat.'),
+  interval: z.number().int().min(1).optional().describe('Every N units, e.g. 2 for every 2 weeks (default 1).'),
+  days: z.array(z.number().int().min(0).max(6)).optional().describe('Days of week to fire: 0=Mon..6=Sun. Only used when frequency is "weekly".'),
+  until: z.string().optional().describe('ISO 8601 date/time after which recurrence stops.'),
+  count: z.number().int().min(1).optional().describe('Maximum number of times the reminder fires before stopping.'),
+}).describe('Recurrence rule. Omit entirely for a one-time reminder.');
+
 export const task_reminders = makeLocalTool(
   'task_reminders',
-  'Schedule, update, cancel/delete, list, and resume Stuard local reminders.',
+  'Schedule, update, cancel/delete, list, and resume local (Stuard) reminders. Supports one-time and recurring reminders.',
   z.object({
-    action: z.enum(['schedule', 'update', 'cancel', 'delete', 'list', 'resume']),
-    when: z.string().optional().describe('When to fire the reminder (ISO8601 or relative seconds, for schedule).'),
-    scheduledAt: z.string().optional().describe('Explicit reminder datetime (ISO8601), primarily for update.'),
-    message: z.string().optional().describe('Reminder message (for schedule).'),
-    taskId: z.string().optional().describe('Optional associated task ID (for schedule).'),
-    id: z.string().optional().describe('Reminder ID (for cancel).'),
-    recurrence: z.any().optional().describe('Optional recurrence object for repeating reminders.'),
+    action: z.enum(['schedule', 'update', 'cancel', 'delete', 'list', 'resume']).describe(
+      'schedule: create a new reminder | update: modify an existing reminder | cancel/delete: remove a reminder | list: list all pending reminders | resume: restart pending reminders after agent restart'
+    ),
+    when: z.string().optional().describe('When to fire: ISO 8601 datetime or relative seconds (e.g. "300" = 5 min from now). Required for schedule.'),
+    scheduledAt: z.string().optional().describe('Explicit ISO 8601 datetime. Alternative to "when", primarily used in update.'),
+    message: z.string().optional().describe('Reminder message text. Required for schedule.'),
+    taskId: z.string().optional().describe('Optional task ID to associate with this reminder.'),
+    id: z.string().optional().describe('Reminder ID. Required for update, cancel, and delete.'),
+    recurrence: recurrenceSchema.optional().describe('Make this reminder repeat. Omit for one-time. Pass null/undefined in update to remove recurrence.'),
   }),
 );
 

@@ -155,8 +155,9 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   // Calendar/Tasks
   calendar_crud: ['calendar', 'events', 'schedule', 'appointments'],
   calendar_delete_event: ['delete calendar event', 'remove event', 'cancel meeting', 'cancel event', 'delete meeting'],
+  calendar_update_event: ['update calendar event', 'edit event', 'reschedule meeting', 'modify event', 'change event time', 'recurring event'],
   task_crud: ['tasks', 'todos', 'reminders'],
-  task_reminders: ['reminder', 'notification', 'alert'],
+  task_reminders: ['reminder', 'set reminder', 'recurring reminder', 'repeat reminder', 'notification', 'alert'],
 
   // Window Management
   list_open_windows: ['windows', 'active apps', 'running programs'],

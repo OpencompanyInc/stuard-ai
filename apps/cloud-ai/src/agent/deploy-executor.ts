@@ -61,6 +61,7 @@ const RETRYABLE_DOWNLOAD_ERROR_CODES = new Set([
   'ECONNREFUSED',
   'EPIPE',
 ]);
+const DNS_ERROR_CODES = new Set(['EAI_AGAIN', 'ENOTFOUND']);
 const RETRYABLE_DOWNLOAD_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 /** Env vars that must NEVER leak into deploy child processes or logs */
@@ -87,7 +88,13 @@ export function isRetryableDownloadError(error: any): boolean {
   return /EAI_AGAIN|ENOTFOUND|ECONNRESET|ETIMEDOUT|socket hang up|network timeout|storage\.googleapis\.com/i.test(message);
 }
 
-async function withDownloadRetry<T>(label: string, fn: () => Promise<T>, maxAttempts = 4): Promise<T> {
+function isDnsError(error: any): boolean {
+  const code = String(error?.code || error?.cause?.code || '').toUpperCase();
+  const message = String(error?.message || error?.cause?.message || '');
+  return DNS_ERROR_CODES.has(code) || /EAI_AGAIN|ENOTFOUND/i.test(message);
+}
+
+async function withDownloadRetry<T>(label: string, fn: () => Promise<T>, maxAttempts = 6): Promise<T> {
   let lastError: any;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -97,8 +104,11 @@ async function withDownloadRetry<T>(label: string, fn: () => Promise<T>, maxAtte
       if (attempt >= maxAttempts || !isRetryableDownloadError(error)) {
         throw error;
       }
-      const delayMs = Math.min(750 * Math.pow(2, attempt - 1) + Math.round(Math.random() * 250), 5000);
-      console.warn(`[deploy-executor] ${label} attempt ${attempt}/${maxAttempts} failed: ${error?.message || error}. Retrying in ${delayMs}ms...`);
+      const dnsFailure = isDnsError(error);
+      const baseMs = dnsFailure ? 3000 : 750;
+      const maxMs = dnsFailure ? 15000 : 5000;
+      const delayMs = Math.min(baseMs * Math.pow(2, attempt - 1) + Math.round(Math.random() * 500), maxMs);
+      console.warn(`[deploy-executor] ${label} attempt ${attempt}/${maxAttempts} failed (${dnsFailure ? 'DNS' : 'network'}): ${error?.message || error}. Retrying in ${delayMs}ms...`);
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
@@ -139,6 +149,10 @@ export class DeployExecutor extends EventEmitter {
 
     // Create deploy directory
     fs.mkdirSync(deployDir, { recursive: true });
+
+    // Wait for DNS to be ready before attempting the download.
+    // On freshly booted VMs the resolver can take a few seconds.
+    await this.waitForDns(deployDir);
 
     // Download bundle
     this.appendLog(deployDir, `[deploy] Downloading bundle for ${config.name}`);
@@ -698,6 +712,28 @@ ${startCmd}
         fs.writeFileSync(logFile, `[log truncated]\n${truncated}`);
       }
     } catch { /* ignore */ }
+  }
+
+  private async waitForDns(deployDir: string, maxWaitMs = 30_000): Promise<void> {
+    const { lookup } = await import('dns');
+    const start = Date.now();
+    let attempt = 0;
+    while (Date.now() - start < maxWaitMs) {
+      attempt++;
+      const ok = await new Promise<boolean>((resolve) => {
+        lookup('storage.googleapis.com', (err) => resolve(!err));
+      });
+      if (ok) {
+        if (attempt > 1) {
+          this.appendLog(deployDir, `[deploy] DNS ready after ${attempt} attempts (${Date.now() - start}ms)`);
+        }
+        return;
+      }
+      const delay = Math.min(2000 * attempt, 8000);
+      this.appendLog(deployDir, `[deploy] DNS not ready (attempt ${attempt}), waiting ${delay}ms...`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+    this.appendLog(deployDir, `[deploy] DNS still not ready after ${maxWaitMs}ms — proceeding anyway`);
   }
 
   private downloadFile(url: string, destPath: string): Promise<void> {

@@ -9,6 +9,56 @@ function ok(data: Record<string, unknown>, status = 200) {
   return NextResponse.json({ ok: true, ...data }, { status });
 }
 
+type FeedbackRow = Record<string, unknown>;
+type FeedbackCommentRow = Record<string, unknown>;
+
+function normalizePriority(row: FeedbackRow): string {
+  const severity = typeof row.severity === 'string' ? row.severity : null;
+  const priority = typeof row.priority === 'string' ? row.priority : null;
+  return (priority || severity || 'medium').toLowerCase();
+}
+
+function normalizeFeedbackItem(row: FeedbackRow): Record<string, unknown> {
+  const metadata = (row.metadata && typeof row.metadata === 'object') ? (row.metadata as Record<string, unknown>) : {};
+  const reporterEmail = typeof row.reporter_email === 'string'
+    ? row.reporter_email
+    : (typeof metadata.reporter_email === 'string' ? metadata.reporter_email : null);
+  const assignedTo = typeof row.assigned_to === 'string'
+    ? row.assigned_to
+    : (typeof metadata.assigned_to === 'string' ? metadata.assigned_to : null);
+  const resolvedAt = typeof row.resolved_at === 'string'
+    ? row.resolved_at
+    : (typeof metadata.resolved_at === 'string' ? metadata.resolved_at : null);
+
+  return {
+    id: row.id,
+    type: row.type,
+    status: row.status,
+    priority: normalizePriority(row),
+    title: row.title,
+    description: row.description,
+    reporter_email: reporterEmail,
+    assigned_to: assignedTo,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    resolved_at: resolvedAt,
+  };
+}
+
+function normalizeFeedbackComment(comment: FeedbackCommentRow): Record<string, unknown> {
+  let author = 'user';
+  if (typeof comment.author === 'string' && comment.author.trim()) author = comment.author;
+  else if (comment.is_admin === true) author = 'ops-console';
+  else if (typeof comment.user_id === 'string' && comment.user_id.trim()) author = comment.user_id;
+
+  return {
+    id: comment.id,
+    author,
+    content: comment.content,
+    created_at: comment.created_at,
+  };
+}
+
 // ── GET handler ──────────────────────────────────────────────────────────
 export async function GET(req: NextRequest, { params }: { params: Promise<{ slug: string[] }> }) {
   if (!verifyOpsToken(req)) return err(401, 'unauthorized');
@@ -348,7 +398,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
 
     let query = supabase
       .from('feedback')
-      .select('id, type, status, priority, title, description, reporter_email, assigned_to, created_at, updated_at, resolved_at', { count: 'exact' })
+      // Select full row to avoid coupling to a single schema variant.
+      .select('*', { count: 'exact' })
       .order('created_at', { ascending: false });
 
     if (type) query = query.eq('type', type);
@@ -358,7 +409,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
     if (error) return err(500, error.message);
 
     // Stats summary
-    const { data: allFeedback } = await supabase.from('feedback').select('type, status, priority');
+    const { data: allFeedback } = await supabase.from('feedback').select('*');
     const stats = {
       total: allFeedback?.length || 0,
       openBugs: allFeedback?.filter(f => f.type === 'bug' && f.status === 'open').length || 0,
@@ -366,10 +417,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
       inProgress: allFeedback?.filter(f => f.status === 'in_progress').length || 0,
       resolved: allFeedback?.filter(f => f.status === 'resolved' || f.status === 'closed').length || 0,
       byPriority: {
-        critical: allFeedback?.filter(f => f.priority === 'critical').length || 0,
-        high: allFeedback?.filter(f => f.priority === 'high').length || 0,
-        medium: allFeedback?.filter(f => f.priority === 'medium').length || 0,
-        low: allFeedback?.filter(f => f.priority === 'low').length || 0,
+        critical: allFeedback?.filter(f => normalizePriority(f) === 'critical').length || 0,
+        high: allFeedback?.filter(f => normalizePriority(f) === 'high').length || 0,
+        medium: allFeedback?.filter(f => normalizePriority(f) === 'medium').length || 0,
+        low: allFeedback?.filter(f => normalizePriority(f) === 'low').length || 0,
       },
     };
 
@@ -382,7 +433,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
     }
 
     return ok({
-      items: (data || []).map(d => ({ ...d, commentCount: commentCounts[d.id] || 0 })),
+      items: (data || []).map(d => ({ ...normalizeFeedbackItem(d), commentCount: commentCounts[String(d.id)] || 0 })),
       total: count || 0,
       limit,
       offset,
@@ -398,11 +449,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
 
     const { data: comments } = await supabase
       .from('feedback_comments')
-      .select('id, author, content, created_at')
+      .select('*')
       .eq('feedback_id', feedbackId)
       .order('created_at', { ascending: true });
 
-    return ok({ item, comments: comments || [] });
+    return ok({ item: normalizeFeedbackItem(item as FeedbackRow), comments: (comments || []).map(normalizeFeedbackComment) });
   }
 
   return err(404, 'Unknown ops route');
@@ -468,20 +519,36 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
     if (!type || !['bug', 'feature'].includes(type)) return err(400, 'type must be bug or feature');
     if (!title?.trim()) return err(400, 'title_required');
 
-    const { data, error } = await supabase
+    const sharedPayload = {
+      type,
+      status: 'open',
+      title: title.trim(),
+      description: description || '',
+    };
+
+    const modernInsert = await supabase
       .from('feedback')
       .insert({
-        type,
-        status: 'open',
+        ...sharedPayload,
+        severity: priority || 'medium',
+        metadata: reporter_email ? { reporter_email } : {},
+      })
+      .select()
+      .single();
+
+    if (!modernInsert.error) return ok({ item: normalizeFeedbackItem(modernInsert.data as FeedbackRow) }, 201);
+
+    const legacyInsert = await supabase
+      .from('feedback')
+      .insert({
+        ...sharedPayload,
         priority: priority || 'medium',
-        title: title.trim(),
-        description: description || null,
         reporter_email: reporter_email || null,
       })
       .select()
       .single();
-    if (error) return err(500, error.message);
-    return ok({ item: data }, 201);
+    if (legacyInsert.error) return err(500, modernInsert.error.message);
+    return ok({ item: normalizeFeedbackItem(legacyInsert.data as FeedbackRow) }, 201);
   }
 
   // ── feedback/:id/comments (add comment) ──
@@ -490,13 +557,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
     const { content, author } = body;
     if (!content?.trim()) return err(400, 'content_required');
 
-    const { data, error } = await supabase
+    const modernInsert = await supabase
+      .from('feedback_comments')
+      .insert({ feedback_id: feedbackId, content: content.trim(), is_admin: true })
+      .select()
+      .single();
+
+    if (!modernInsert.error) return ok({ comment: normalizeFeedbackComment(modernInsert.data as FeedbackCommentRow) }, 201);
+
+    const legacyInsert = await supabase
       .from('feedback_comments')
       .insert({ feedback_id: feedbackId, content: content.trim(), author: author || 'ops-console' })
       .select()
       .single();
-    if (error) return err(500, error.message);
-    return ok({ comment: data }, 201);
+    if (legacyInsert.error) return err(500, modernInsert.error.message);
+    return ok({ comment: normalizeFeedbackComment(legacyInsert.data as FeedbackCommentRow) }, 201);
   }
 
   // ── deployments (record) ──
@@ -559,19 +634,37 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sl
   // ── feedback/:id (update status, assignment, priority) ──
   if (slug[0] === 'feedback' && slug[1]) {
     const feedbackId = slug[1];
-    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    const now = new Date().toISOString();
+    const updates: Record<string, unknown> = { updated_at: now };
+    const metadataUpdates: Record<string, unknown> = {};
     if (body.status) {
       updates.status = body.status;
-      if (['resolved', 'closed'].includes(body.status)) updates.resolved_at = new Date().toISOString();
+      if (['resolved', 'closed'].includes(body.status)) metadataUpdates.resolved_at = now;
     }
-    if (body.priority) updates.priority = body.priority;
-    if (body.assigned_to !== undefined) updates.assigned_to = body.assigned_to;
+    if (body.priority) updates.severity = body.priority;
+    if (body.assigned_to !== undefined) metadataUpdates.assigned_to = body.assigned_to;
     if (body.title) updates.title = body.title;
     if (body.description !== undefined) updates.description = body.description;
+    if (Object.keys(metadataUpdates).length > 0) {
+      updates.metadata = metadataUpdates;
+    }
 
-    const { data, error } = await supabase.from('feedback').update(updates).eq('id', feedbackId).select().single();
-    if (error) return err(500, error.message);
-    return ok({ item: data });
+    const modernUpdate = await supabase.from('feedback').update(updates).eq('id', feedbackId).select().single();
+    if (!modernUpdate.error) return ok({ item: normalizeFeedbackItem(modernUpdate.data as FeedbackRow) });
+
+    const legacyUpdates: Record<string, unknown> = { updated_at: now };
+    if (body.status) {
+      legacyUpdates.status = body.status;
+      if (['resolved', 'closed'].includes(body.status)) legacyUpdates.resolved_at = now;
+    }
+    if (body.priority) legacyUpdates.priority = body.priority;
+    if (body.assigned_to !== undefined) legacyUpdates.assigned_to = body.assigned_to;
+    if (body.title) legacyUpdates.title = body.title;
+    if (body.description !== undefined) legacyUpdates.description = body.description;
+
+    const legacyUpdate = await supabase.from('feedback').update(legacyUpdates).eq('id', feedbackId).select().single();
+    if (legacyUpdate.error) return err(500, modernUpdate.error.message);
+    return ok({ item: normalizeFeedbackItem(legacyUpdate.data as FeedbackRow) });
   }
 
   // ── deployments/:id ──
