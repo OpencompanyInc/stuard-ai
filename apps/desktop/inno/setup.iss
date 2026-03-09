@@ -97,8 +97,6 @@ begin
     WizardForm.WelcomeLabel2.Caption := 'A new version of {#MyAppName} is being installed. Please wait while the update completes.';
     // Change the "Installing" page text
     WizardForm.StatusLabel.Caption := 'Updating...';
-    WizardForm.InstallingPage.Caption := 'Updating {#MyAppName}';
-    WizardForm.InstallingPage.Description := 'Please wait while {#MyAppName} is updated to the latest version.';
     WizardForm.WizardBitmapImage.Visible := False;
     WizardForm.WizardBitmapImage2.Visible := False;
   end;
@@ -111,6 +109,8 @@ begin
     // Override the "Installing" page labels dynamically
     if CurPageID = wpInstalling then
     begin
+      WizardForm.PageNameLabel.Caption := 'Updating {#MyAppName}';
+      WizardForm.PageDescriptionLabel.Caption := 'Please wait while {#MyAppName} is updated to the latest version.';
       WizardForm.StatusLabel.Caption := 'Updating {#MyAppName}...';
     end;
     // Override "Setup completed" page  
