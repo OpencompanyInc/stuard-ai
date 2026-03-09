@@ -32,7 +32,11 @@ vi.mock('@ai-sdk/openai', () => {
 
 vi.mock('@ai-sdk/google', () => {
   return {
-    google: () => ({}),
+    createGoogleGenerativeAI: () => {
+      const provider = ((modelId?: string) => ({ modelId })) as any;
+      provider.textEmbeddingModel = (modelId?: string) => ({ modelId });
+      return provider;
+    },
   };
 });
 
