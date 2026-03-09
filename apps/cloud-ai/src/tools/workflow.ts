@@ -7,7 +7,7 @@
 
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { safeToolWrite } from './bridge';
+import { safeToolWrite, getBridgeState, setBridgeState } from './bridge';
 import { workflowMap } from './workflow-system';
 import { writeLog } from '../utils/logger';
 
@@ -391,25 +391,37 @@ function setPath(obj: any, path: string, value: any): void {
 // ============================================================================
 
 // Session-scoped workflow storage - allows modify_workflow to work without passing full JSON
-// The server pre-stores the workflow here before the agent runs
-let _sessionWorkflow: Workflow | null = null;
+// Uses AsyncLocalStorage (via bridge state) for per-request isolation to prevent
+// cross-tab bleeding when concurrent requests share the same server process.
+// Module-level fallback is kept for non-request contexts (tests, direct calls).
+const _BRIDGE_KEY = '__sessionWorkflow';
+let _sessionWorkflowFallback: Workflow | null = null;
 
 export function setSessionWorkflow(wf: any): void {
   if (wf && typeof wf === 'object') {
-    _sessionWorkflow = cloneWorkflow(wf);
-    if (_sessionWorkflow.id) {
-      workflowMap.set(_sessionWorkflow.id, _sessionWorkflow);
+    const cloned = cloneWorkflow(wf);
+    // Per-request isolation via AsyncLocalStorage
+    setBridgeState(_BRIDGE_KEY, cloned);
+    // Module-level fallback for non-request contexts
+    _sessionWorkflowFallback = cloned;
+    if (cloned.id) {
+      workflowMap.set(cloned.id, cloned);
     }
-    log('session_workflow_set', { id: _sessionWorkflow.id });
+    log('session_workflow_set', { id: cloned.id });
   }
 }
 
 export function getSessionWorkflow(): Workflow | null {
-  return _sessionWorkflow;
+  // Prefer ALS (per-request isolation) to prevent cross-tab bleeding
+  const alsWorkflow = getBridgeState<Workflow>(_BRIDGE_KEY);
+  if (alsWorkflow) return alsWorkflow;
+  // Fallback to module-level for non-request contexts
+  return _sessionWorkflowFallback;
 }
 
 export function clearSessionWorkflow(): void {
-  _sessionWorkflow = null;
+  setBridgeState(_BRIDGE_KEY, null);
+  _sessionWorkflowFallback = null;
 }
 
 export const workflowModifyTool = createTool({
@@ -523,9 +535,9 @@ STUARD FILE TARGETING:
       if (fromMap) {
         workflow = fromMap;
         log('resolved_from_workflowId', { workflowId });
-      } else if (_sessionWorkflow) {
-        workflow = _sessionWorkflow;
-        log('workflowId_not_found_using_session', { workflowId, sessionId: _sessionWorkflow.id });
+      } else if (getSessionWorkflow()) {
+        workflow = getSessionWorkflow();
+        log('workflowId_not_found_using_session', { workflowId, sessionId: workflow?.id });
       } else {
         return { ok: false, error: `Workflow not found by ID: ${workflowId}` };
       }
@@ -541,9 +553,9 @@ STUARD FILE TARGETING:
         try {
           workflow = JSON.parse(wfId);
         } catch {
-          if (_sessionWorkflow) {
-            workflow = _sessionWorkflow;
-            log('workflow_string_not_found_using_session', { wfId, sessionId: _sessionWorkflow.id });
+          if (getSessionWorkflow()) {
+            workflow = getSessionWorkflow();
+            log('workflow_string_not_found_using_session', { wfId, sessionId: workflow?.id });
           } else {
             return { ok: false, error: `Workflow not found: ${wfId}` };
           }
@@ -551,9 +563,9 @@ STUARD FILE TARGETING:
       }
     }
     // PRIORITY 4: Use session workflow (pre-stored by server)
-    else if (_sessionWorkflow) {
-      workflow = _sessionWorkflow;
-      log('using_session_workflow', { id: workflow.id });
+    else if (getSessionWorkflow()) {
+      workflow = getSessionWorkflow();
+      log('using_session_workflow', { id: workflow?.id });
     }
     // PRIORITY 5: No workflow available
     else {
@@ -806,9 +818,10 @@ STUARD FILE TARGETING:
           return { ok: false, error: `Unknown operation: ${op}` };
       }
 
-      // Store in memory
+      // Store in memory (per-request via ALS + global map)
       workflowMap.set(wf.id, wf);
-      _sessionWorkflow = wf;
+      setBridgeState(_BRIDGE_KEY, wf);
+      _sessionWorkflowFallback = wf;
 
       // Generate diagram for visual understanding
       const diagram = generateWorkflowDiagram(wf);

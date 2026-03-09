@@ -21,6 +21,18 @@ import { supabaseAdmin, hasSupabase } from '../supabase';
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
+const RETRYABLE_STORAGE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const RETRYABLE_STORAGE_ERROR_CODES = new Set([
+  'EAI_AGAIN',
+  'ENOTFOUND',
+  'ECONNRESET',
+  'ECONNABORTED',
+  'ETIMEDOUT',
+  'EHOSTUNREACH',
+  'ECONNREFUSED',
+  'EPIPE',
+]);
+
 export type DeployKind = 'workflow' | 'script' | 'project';
 export type DeployStatus = 'pending' | 'uploading' | 'deploying' | 'running' | 'stopped' | 'failed' | 'completed';
 
@@ -72,6 +84,40 @@ function getStorage(): Storage {
   return _storage;
 }
 
+export function isRetryableStorageError(error: any): boolean {
+  const code = String(error?.code || error?.cause?.code || '').toUpperCase();
+  const statusCode = Number(
+    error?.statusCode
+    || error?.status
+    || error?.response?.status
+    || error?.cause?.statusCode
+    || error?.cause?.status
+    || 0,
+  );
+  const message = String(error?.message || error?.cause?.message || '');
+  if (RETRYABLE_STORAGE_STATUS_CODES.has(statusCode)) return true;
+  if (RETRYABLE_STORAGE_ERROR_CODES.has(code)) return true;
+  return /EAI_AGAIN|ENOTFOUND|ECONNRESET|ETIMEDOUT|socket hang up|network timeout|storage\.googleapis\.com/i.test(message);
+}
+
+async function withStorageRetry<T>(label: string, fn: () => Promise<T>, maxAttempts = 4): Promise<T> {
+  let lastError: any;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      lastError = error;
+      if (attempt >= maxAttempts || !isRetryableStorageError(error)) {
+        throw error;
+      }
+      const delayMs = Math.min(750 * Math.pow(2, attempt - 1) + Math.round(Math.random() * 250), 5000);
+      console.warn(`[deploy-manager] ${label} attempt ${attempt}/${maxAttempts} failed: ${error?.message || error}. Retrying in ${delayMs}ms...`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastError;
+}
+
 function deployObjectName(userId: string, deployId: string): string {
   return `deploys/${userId}/${deployId}/bundle.json`;
 }
@@ -81,18 +127,18 @@ async function uploadDeployBundle(userId: string, deployId: string, payload: any
   const bucket = getStorage().bucket(CLOUD_ENGINE_BUCKET);
   const file = bucket.file(objectName);
   const content = JSON.stringify(payload, null, 2);
-  await file.save(content, { contentType: 'application/json', resumable: false });
+  await withStorageRetry('upload deploy bundle', () => file.save(content, { contentType: 'application/json', resumable: false }));
   return objectName;
 }
 
 async function getSignedDeployUrl(objectName: string): Promise<string> {
   const bucket = getStorage().bucket(CLOUD_ENGINE_BUCKET);
   const file = bucket.file(objectName);
-  const [url] = await file.getSignedUrl({
+  const [url] = await withStorageRetry('generate deploy signed url', () => file.getSignedUrl({
     version: 'v4',
     action: 'read',
     expires: Date.now() + 30 * 60 * 1000,
-  });
+  }));
   return url;
 }
 

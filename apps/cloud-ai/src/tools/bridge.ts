@@ -7,7 +7,9 @@ const AGENT_WS_MAX_PAYLOAD = Number(process.env.AGENT_WS_MAX_PAYLOAD || 26843545
 
 // Per-connection bridge context using AsyncLocalStorage, so tools can reuse the same WS
 // and read ephemeral secrets (e.g., service access tokens) without logging them.
-type BridgeStore = { ws: WebSocket; secrets?: Record<string, any> };
+// `state` provides per-request mutable storage to prevent cross-tab data bleeding
+// (e.g., sessionWorkflow, sessionSkill) when concurrent requests share the same process.
+type BridgeStore = { ws: WebSocket; secrets?: Record<string, any>; state: Map<string, any> };
 const bridgeALS = new AsyncLocalStorage<BridgeStore>();
 
 // Pending tool requests per client WS
@@ -23,7 +25,7 @@ function getPending(ws: WebSocket) {
 export function withClientBridge(ws: WebSocket, fn: () => Promise<any> | any, secrets?: Record<string, any>) {
   // Ensure pending tool map is cleaned up when the WS closes
   ensureBridgeCleanupListener(ws);
-  return bridgeALS.run({ ws, secrets }, fn as any);
+  return bridgeALS.run({ ws, secrets, state: new Map() }, fn as any);
 }
 
 // Track which WS connections already have a cleanup listener to avoid duplicate listeners
@@ -46,7 +48,7 @@ function ensureBridgeCleanupListener(ws: WebSocket) {
 
 export function runWithSecrets<T>(secrets: Record<string, any>, fn: () => T): T {
   // Pass null as any for ws since we only care about secrets in this context
-  return bridgeALS.run({ ws: null as any, secrets }, fn);
+  return bridgeALS.run({ ws: null as any, secrets, state: new Map() }, fn);
 }
 
 export function getBridgeWs(): WebSocket | undefined {
@@ -55,6 +57,15 @@ export function getBridgeWs(): WebSocket | undefined {
 
 export function getBridgeSecrets(): Record<string, any> | undefined {
   try { return bridgeALS.getStore()?.secrets; } catch { return undefined; }
+}
+
+// Per-request mutable state (prevents cross-tab bleeding for sessionWorkflow, sessionSkill, etc.)
+export function getBridgeState<T = any>(key: string): T | undefined {
+  try { return bridgeALS.getStore()?.state?.get(key) as T | undefined; } catch { return undefined; }
+}
+
+export function setBridgeState(key: string, value: any): void {
+  try { bridgeALS.getStore()?.state?.set(key, value); } catch { }
 }
 
 export function hasClientBridge(): boolean {

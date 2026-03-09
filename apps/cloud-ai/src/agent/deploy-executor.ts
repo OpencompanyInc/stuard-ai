@@ -51,6 +51,17 @@ const MAX_RESTARTS = 5;
 const RESTART_DELAY_MS = 3_000;
 const MAX_LOG_SIZE = 2 * 1024 * 1024; // 2 MB tail limit
 const DOWNLOAD_TIMEOUT_MS = 60_000;
+const RETRYABLE_DOWNLOAD_ERROR_CODES = new Set([
+  'EAI_AGAIN',
+  'ENOTFOUND',
+  'ECONNRESET',
+  'ECONNABORTED',
+  'ETIMEDOUT',
+  'EHOSTUNREACH',
+  'ECONNREFUSED',
+  'EPIPE',
+]);
+const RETRYABLE_DOWNLOAD_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 /** Env vars that must NEVER leak into deploy child processes or logs */
 const SENSITIVE_ENV_KEYS = new Set([
@@ -59,6 +70,40 @@ const SENSITIVE_ENV_KEYS = new Set([
   'GOOGLE_APPLICATION_CREDENTIALS',
   'GCP_KEY_FILE',
 ]);
+
+export function isRetryableDownloadError(error: any): boolean {
+  const code = String(error?.code || error?.cause?.code || '').toUpperCase();
+  const statusCode = Number(
+    error?.statusCode
+    || error?.status
+    || error?.response?.status
+    || error?.cause?.statusCode
+    || error?.cause?.status
+    || 0,
+  );
+  const message = String(error?.message || error?.cause?.message || '');
+  if (RETRYABLE_DOWNLOAD_STATUS_CODES.has(statusCode)) return true;
+  if (RETRYABLE_DOWNLOAD_ERROR_CODES.has(code)) return true;
+  return /EAI_AGAIN|ENOTFOUND|ECONNRESET|ETIMEDOUT|socket hang up|network timeout|storage\.googleapis\.com/i.test(message);
+}
+
+async function withDownloadRetry<T>(label: string, fn: () => Promise<T>, maxAttempts = 4): Promise<T> {
+  let lastError: any;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      lastError = error;
+      if (attempt >= maxAttempts || !isRetryableDownloadError(error)) {
+        throw error;
+      }
+      const delayMs = Math.min(750 * Math.pow(2, attempt - 1) + Math.round(Math.random() * 250), 5000);
+      console.warn(`[deploy-executor] ${label} attempt ${attempt}/${maxAttempts} failed: ${error?.message || error}. Retrying in ${delayMs}ms...`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastError;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Deploy Executor
@@ -96,7 +141,14 @@ export class DeployExecutor extends EventEmitter {
     fs.mkdirSync(deployDir, { recursive: true });
 
     // Download bundle
-    await this.downloadFile(config.downloadUrl, bundlePath);
+    this.appendLog(deployDir, `[deploy] Downloading bundle for ${config.name}`);
+    try {
+      await this.downloadFile(config.downloadUrl, bundlePath);
+      this.appendLog(deployDir, `[deploy] Bundle downloaded to ${bundlePath}`);
+    } catch (error: any) {
+      this.appendLog(deployDir, `[deploy] Bundle download failed: ${error?.message || error}`);
+      throw error;
+    }
 
     // Parse bundle
     const bundle = JSON.parse(fs.readFileSync(bundlePath, 'utf-8'));
@@ -649,13 +701,15 @@ ${startCmd}
   }
 
   private downloadFile(url: string, destPath: string): Promise<void> {
-    return new Promise((resolve, reject) => {
+    return withDownloadRetry('download deploy bundle', () => new Promise((resolve, reject) => {
       const mod = url.startsWith('https') ? https : http;
       const file = fs.createWriteStream(destPath);
       const req = mod.get(url, (res) => {
         if (res.statusCode !== 200) {
           try { fs.unlinkSync(destPath); } catch {}
-          return reject(new Error(`Download failed: HTTP ${res.statusCode}`));
+          const error: any = new Error(`Download failed: HTTP ${res.statusCode}`);
+          error.statusCode = res.statusCode;
+          return reject(error);
         }
         res.pipe(file);
         file.on('finish', () => { file.close(); resolve(); });
@@ -664,8 +718,12 @@ ${startCmd}
         try { fs.unlinkSync(destPath); } catch {}
         reject(e);
       });
-      req.setTimeout(DOWNLOAD_TIMEOUT_MS, () => { req.destroy(); reject(new Error('Download timeout')); });
-    });
+      req.setTimeout(DOWNLOAD_TIMEOUT_MS, () => {
+        const error: any = new Error('Download timeout');
+        error.code = 'ETIMEDOUT';
+        req.destroy(error);
+      });
+    }));
   }
 
   /**

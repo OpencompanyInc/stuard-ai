@@ -10,7 +10,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { buildProviderModel } from '../utils/models';
 import { writeLog } from '../utils/logger';
-import { safeToolWrite } from '../tools/bridge';
+import { safeToolWrite, getBridgeState, setBridgeState } from '../tools/bridge';
 import { search_tools } from '../tools/meta-tools';
 import { retrieveToolFormat } from '../tools/workflow-system';
 import { web_search } from '../tools/perplexity-tools';
@@ -23,23 +23,35 @@ const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY || '';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SESSION SKILL STORAGE
+// Uses AsyncLocalStorage (via bridge state) for per-request isolation to prevent
+// cross-tab bleeding when concurrent requests share the same server process.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-let _sessionSkill: any | null = null;
+const _SKILL_BRIDGE_KEY = '__sessionSkill';
+let _sessionSkillFallback: any | null = null;
 
 export function setSessionSkill(skill: any): void {
     if (skill && typeof skill === 'object') {
-        _sessionSkill = JSON.parse(JSON.stringify(skill));
-        log('session_skill_set', { id: _sessionSkill?.id, name: _sessionSkill?.name });
+        const cloned = JSON.parse(JSON.stringify(skill));
+        // Per-request isolation via AsyncLocalStorage
+        setBridgeState(_SKILL_BRIDGE_KEY, cloned);
+        // Module-level fallback for non-request contexts
+        _sessionSkillFallback = cloned;
+        log('session_skill_set', { id: cloned?.id, name: cloned?.name });
     }
 }
 
 export function getSessionSkill(): any | null {
-    return _sessionSkill;
+    // Prefer ALS (per-request isolation) to prevent cross-tab bleeding
+    const alsSkill = getBridgeState(_SKILL_BRIDGE_KEY);
+    if (alsSkill) return alsSkill;
+    // Fallback to module-level for non-request contexts
+    return _sessionSkillFallback;
 }
 
 export function clearSessionSkill(): void {
-    _sessionSkill = null;
+    setBridgeState(_SKILL_BRIDGE_KEY, null);
+    _sessionSkillFallback = null;
 }
 
 function log(event: string, data?: any) {
@@ -115,8 +127,9 @@ UPDATE_METADATA - Update skill settings (name, description, trigger, icon, color
         const ctx = inputData as any;
         const { op } = ctx;
 
-        // Get current skill from session
-        let skill = _sessionSkill ? JSON.parse(JSON.stringify(_sessionSkill)) : null;
+        // Get current skill from session (per-request isolated via ALS)
+        const currentSkill = getSessionSkill();
+        let skill = currentSkill ? JSON.parse(JSON.stringify(currentSkill)) : null;
 
         if (!skill && op !== 'set_skill') {
             return { ok: false, error: 'No skill loaded in session. Use set_skill to create a new skill first.' };
@@ -283,8 +296,9 @@ UPDATE_METADATA - Update skill settings (name, description, trigger, icon, color
                     return { ok: false, error: `Unknown operation: ${op}` };
             }
 
-            // Store in session
-            _sessionSkill = skill;
+            // Store in session (per-request via ALS + fallback)
+            setBridgeState(_SKILL_BRIDGE_KEY, skill);
+            _sessionSkillFallback = skill;
 
             const result = { ok: true as const, skill, message };
 

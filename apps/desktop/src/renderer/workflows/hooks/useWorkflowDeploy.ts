@@ -194,7 +194,11 @@ export function useWorkflowDeploy({ selectedId, model }: UseWorkflowDeployProps)
         }),
       });
 
-      if (res.ok && res.deployment) {
+      if (res.ok && res.deployment?.status === 'failed') {
+        setCloudDeployState('error');
+        setCloudDeployError(res.deployment?.error_message || res.error || res.message || 'Deploy failed');
+        setCloudDeployId(res.deployment?.id || null);
+      } else if (res.ok && res.deployment) {
         setCloudDeployState('success');
         setCloudDeployId(res.deployment.id);
       } else {

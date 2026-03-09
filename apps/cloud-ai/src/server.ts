@@ -438,10 +438,19 @@ try {
   (server as any).headersTimeout = Number(process.env.CLOUD_HTTP_HEADERS_TIMEOUT_MS || 120000);
 } catch { }
 
-// Store conversation history per connection
-const conversations = new WeakMap<WebSocket, Array<any>>();
-// Persist conversationId per connection for authenticated users
-const wsConversations = new WeakMap<WebSocket, string>();
+// Store conversation history per connection per conversation.
+// Keyed by WS -> Map<conversationKey, messages[]> so multiple tabs on the same
+// persistent WebSocket don't bleed history into each other.
+const conversations = new WeakMap<WebSocket, Map<string, Array<any>>>();
+
+function getConversationHistory(ws: WebSocket, convKey: string): Array<any> {
+  let convMap = conversations.get(ws);
+  if (!convMap) { convMap = new Map(); conversations.set(ws, convMap); }
+  let history = convMap.get(convKey);
+  if (!history) { history = []; convMap.set(convKey, history); }
+  return history;
+}
+
 // Anonymous resource/thread IDs per connection for memory when not authenticated
 const anonResources = new WeakMap<WebSocket, string>();
 const anonThreads = new WeakMap<WebSocket, string>();
@@ -532,7 +541,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
   }
 
   send(ws, { type: 'handshake', origin: 'cloud-ai', message: 'connected' });
-  conversations.set(ws, []);
+  conversations.set(ws, new Map());
   writeLog('ws_connected');
   try { wsAlive.set(ws, true); } catch { }
   try { ws.on('pong', () => { try { wsAlive.set(ws, true); } catch { } }); } catch { }
@@ -550,7 +559,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
       } catch { }
       // Clear conversation history reference
       try { conversations.delete(ws); } catch { }
-      try { wsConversations.delete(ws); } catch { }
       try { anonResources.delete(ws); } catch { }
       try { anonThreads.delete(ws); } catch { }
     });
@@ -881,8 +889,11 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           if (!enabledIntegrations.includes(ci)) enabledIntegrations.push(ci);
         }
 
-        // Get conversation history for this connection
-        const history = conversations.get(ws) || [];
+        // Get conversation history keyed by conversationId (per-tab isolation).
+        // Falls back to requestId or default key for anonymous/legacy clients.
+        const clientConvId = typeof (msg as any)?.conversationId === 'string' ? String((msg as any).conversationId).trim() : '';
+        const historyKey = clientConvId || requestId || '__default__';
+        const history = getConversationHistory(ws, historyKey);
 
         // Add new user messages to history
         const newUserMsgs = messages.filter(m => m.role === 'user');
@@ -1187,8 +1198,14 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         let conversationCreatedNow = false;
         const resetRequested = !!(msg as any)?.resetConversation;
         if (resetRequested) {
-          try { wsConversations.delete(ws); } catch { }
+          // Clear this conversation's history (not other tabs)
+          try {
+            const convMap = conversations.get(ws);
+            if (convMap && historyKey) convMap.delete(historyKey);
+          } catch { }
           try { anonThreads.delete(ws); } catch { }
+          // Re-fetch a clean history array after reset
+          history.length = 0;
         }
         if (authUser) {
           const requestedId = typeof (msg as any)?.conversationId === 'string' ? String((msg as any).conversationId).trim() : '';
@@ -1758,15 +1775,12 @@ ${skillLines}`;
             const compactionCheck = shouldCompact(history as any[], compactionModelId);
             if (compactionCheck.shouldCompact) {
               compactHistory(history, compactionModelId).then(() => {
-                conversations.set(ws, history);
+                // history array is mutated in-place, already stored in the per-conversation Map
                 console.log(`[compactor] Compacted: ${estimateTokens(history as any[]).totalTokens} tokens remaining`);
               }).catch((err) => {
                 console.warn('[cloud-ai] Compaction failed, emergency truncating:', err);
                 emergencyTruncate(history as any[], compactionCheck.budget);
-                conversations.set(ws, history);
               });
-            } else {
-              conversations.set(ws, history);
             }
             if (authUser && conversationId) {
               // Build metadata for persistence
