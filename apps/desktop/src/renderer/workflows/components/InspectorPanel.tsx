@@ -3,7 +3,7 @@
  * Redesigned for beginner-friendliness and Scratch-like UX
  */
 import React, { useMemo, useState, useEffect, useCallback } from "react";
-import { X, Settings, Trash2, ArrowRight, Sparkles, Info, ChevronDown, ChevronRight, Hash, Activity, GitBranch, GitMerge, FileText, Zap, Power, Repeat, RotateCw, List, Plus, GripVertical, Package, ArrowRightFromLine } from "lucide-react";
+import { X, Settings, Trash2, ArrowRight, Sparkles, Info, ChevronDown, ChevronRight, Hash, Activity, GitBranch, GitMerge, FileText, Zap, Power, Repeat, RotateCw, List, Plus, GripVertical, Package, ArrowRightFromLine, Copy, Globe, Check } from "lucide-react";
 import { ToolArgsEditor, TextInputWithVariables, type UpstreamNode } from "./SmartArgEditor";
 import { getToolSchema, getToolOutputs } from "../constants/tool-schemas";
 import { getToolIcon, getToolColor, CATEGORY_COLORS } from "../constants/paletteCategories";
@@ -14,6 +14,95 @@ import { isBackEdge as isBackEdgeCycle } from "../utils/graphUtils";
 // UIBuilderModal is now handled inside ToolArgsEditor for custom_ui/update_custom_ui tools
 
 // Back edge (cycle) detection is in ../utils/graphUtils.ts
+
+const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || 'http://127.0.0.1:8082';
+
+function WebhookUrlInfo({ mode, flowId }: { mode: 'cloud' | 'local'; flowId: string }) {
+  const [url, setUrl] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (mode === 'local') {
+      const api = (window as any).desktopAPI;
+      if (api?.webhooksLocalUrl) {
+        api.webhooksLocalUrl(flowId).then((res: any) => {
+          if (res?.url) setUrl(res.url);
+          else setUrl(`http://127.0.0.1:18080/webhooks/incoming/${flowId}`);
+        }).catch(() => {
+          setUrl(`http://127.0.0.1:18080/webhooks/incoming/${flowId}`);
+        });
+      } else {
+        setUrl(`http://127.0.0.1:18080/webhooks/incoming/${flowId}`);
+      }
+    } else {
+      // Cloud webhook URL
+      const base = CLOUD_AI_HTTP.replace(/\/+$/, '');
+      setUrl(`${base}/webhooks/incoming/${flowId}`);
+    }
+  }, [mode, flowId]);
+
+  const handleCopy = () => {
+    if (!url) return;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  };
+
+  const isCloud = mode === 'cloud';
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-sm font-bold text-white/80">Webhook URL</span>
+        <div className="h-px bg-white/[0.08] flex-1" />
+      </div>
+      <div className={`border rounded-xl overflow-hidden ${isCloud ? 'border-blue-500/30 bg-blue-500/10' : 'border-emerald-500/30 bg-emerald-500/10'}`}>
+        <div className="px-3 py-2.5 flex items-center gap-2">
+          <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${isCloud ? 'bg-blue-500/20 text-blue-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+            <Globe className="w-4 h-4" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-semibold text-white/90">
+              {isCloud ? 'Cloud Endpoint' : 'Local Endpoint'}
+            </div>
+            <div className="text-[10px] text-white/50">
+              {isCloud ? 'External services POST here' : 'Local network POST here'}
+            </div>
+          </div>
+        </div>
+        {url && (
+          <div className={`px-3 py-2 border-t ${isCloud ? 'border-blue-500/20' : 'border-emerald-500/20'} bg-black/20`}>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 text-[11px] text-white/80 font-mono bg-black/30 px-2 py-1.5 rounded-lg break-all select-all leading-relaxed">
+                {url}
+              </code>
+              <button
+                onClick={handleCopy}
+                className={`p-1.5 rounded-lg transition-all shrink-0 ${
+                  copied
+                    ? 'bg-green-500/20 text-green-400'
+                    : `${isCloud ? 'hover:bg-blue-500/20 text-blue-400/60 hover:text-blue-400' : 'hover:bg-emerald-500/20 text-emerald-400/60 hover:text-emerald-400'}`
+                }`}
+                title="Copy URL"
+              >
+                {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+            <div className={`flex items-start gap-1.5 text-[10px] mt-2 ${isCloud ? 'text-blue-400/70' : 'text-emerald-400/70'}`}>
+              <Info className="w-3 h-3 mt-0.5 shrink-0" />
+              <span>
+                {isCloud
+                  ? 'Send a POST request with JSON body to this URL to trigger this workflow.'
+                  : 'Send a POST request with JSON body from your local network to trigger this workflow.'}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 interface InspectorPanelProps {
   model: DesignerModel;
@@ -439,6 +528,14 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
               />
             </div>
           </div>
+
+          {/* Webhook URL Info - show URL for webhook triggers */}
+          {isTrigger && (toolName === 'webhook' || toolName === 'webhook.cloud' || toolName === 'webhook.local') && (() => {
+            const webhookMode: 'cloud' | 'local' = toolName === 'webhook.local' ? 'local' :
+              toolName === 'webhook.cloud' ? 'cloud' :
+              (item?.args?.mode === 'local' ? 'local' : 'cloud');
+            return <WebhookUrlInfo mode={webhookMode} flowId={model.id} />;
+          })()}
 
           {/* Input Parameters - for triggers (workflow-as-function) */}
           {isTrigger && (

@@ -109,8 +109,9 @@ const PROVIDERS: ProviderConfig[] = [
     clientId: INSTAGRAM_APP_ID,
     clientSecret: INSTAGRAM_APP_SECRET,
     redirectPath: INSTAGRAM_REDIRECT_PATH,
-    authorizeUrl: 'https://api.instagram.com/oauth/authorize',
-    requestedScopes: () => process.env.INSTAGRAM_SCOPES || 'user_profile,user_media',
+    // New Instagram API with Instagram Login (replaces deprecated Basic Display API)
+    authorizeUrl: 'https://www.instagram.com/oauth/authorize/',
+    requestedScopes: () => process.env.INSTAGRAM_SCOPES || 'instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments',
     exchangeCode: async (code, redirectUri) => {
       const res = await fetch('https://api.instagram.com/oauth/access_token', {
         method: 'POST',
@@ -151,8 +152,8 @@ const PROVIDERS: ProviderConfig[] = [
       };
     },
     fetchProfile: async (accessToken) => {
-      const profileUrl = new URL('https://graph.instagram.com/me');
-      profileUrl.searchParams.set('fields', 'id,username,account_type');
+      const profileUrl = new URL('https://graph.instagram.com/v22.0/me');
+      profileUrl.searchParams.set('fields', 'user_id,username,name,account_type,profile_picture_url');
       profileUrl.searchParams.set('access_token', accessToken);
       const res = await fetch(profileUrl.toString());
       const body = await res.json().catch(() => null) as any;
@@ -173,7 +174,7 @@ const PROVIDERS: ProviderConfig[] = [
     clientSecret: THREADS_APP_SECRET,
     redirectPath: THREADS_REDIRECT_PATH,
     authorizeUrl: 'https://threads.net/oauth/authorize',
-    requestedScopes: () => process.env.THREADS_SCOPES || 'threads_basic',
+    requestedScopes: () => process.env.THREADS_SCOPES || 'threads_basic,threads_content_publish,threads_manage_replies',
     exchangeCode: async (code, redirectUri) => {
       const res = await fetch('https://graph.threads.net/oauth/access_token', {
         method: 'POST',

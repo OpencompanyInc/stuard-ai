@@ -10,7 +10,11 @@
     "typecheck": "turbo run typecheck",
     "clean": "turbo run clean --parallel",
     "version:bump": "node scripts/version-bump.js",
-    "dev:stack": "concurrently -k -n CLOUD,AGENT,DESKTOP,OPS,WEB \"pnpm -F @stuardai/cloud-ai dev\" \"node scripts/run-agent.js\" \"npm --prefix apps/desktop run dev\" \"pnpm -F ops-console dev\" \"pnpm -F stuard-ai-website dev\""
+    "dev:stack": "concurrently -k -n CLOUD,AGENT,DESKTOP,OPS,WEB \"pnpm -F @stuardai/cloud-ai dev\" \"node scripts/run-agent.js\" \"npm --prefix apps/desktop run dev\" \"pnpm -F ops-console dev\" \"pnpm -F stuard-ai-website dev\"",
+    "dev:stack:remote": "node scripts/run-dev-stack-remote.js",
+    "dev:stack:beta": "node scripts/run-dev-stack-remote.js beta",
+    "dev:stack:staging": "node scripts/run-dev-stack-remote.js staging",
+    "dev:stack:prod": "node scripts/run-dev-stack-remote.js prod"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

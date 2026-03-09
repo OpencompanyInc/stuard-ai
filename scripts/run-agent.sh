@@ -28,6 +28,6 @@ echo "[agent] Ensuring pip..."
 echo "[agent] Ensuring dependencies..."
 "$VENV_PYTHON" -m pip install -r requirements.txt
 
-export CLOUD_AI_WS="ws://127.0.0.1:8082/ws"
+export CLOUD_AI_WS="${CLOUD_AI_WS:-ws://127.0.0.1:8082/ws}"
 echo "[agent] Starting agent with CLOUD_AI_WS=$CLOUD_AI_WS"
 "$VENV_PYTHON" -m app.main

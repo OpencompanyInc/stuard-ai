@@ -332,8 +332,9 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
 const TRIGGER_DEFINITIONS = [
   { type: 'manual', description: 'Manual trigger - user clicks run. Supports inputParams for user input forms.', argsTemplate: {}, inputParams: [] },
   { type: 'function', description: 'Function trigger - allows this workflow to be called from other workflows with input parameters', argsTemplate: {}, inputParams: [] },
-  { type: 'webhook.local', description: 'Local webhook trigger', argsTemplate: {} },
-  { type: 'webhook.cloud', description: 'Cloud webhook trigger', argsTemplate: {} },
+  { type: 'webhook', description: 'Webhook trigger - receive HTTP POST requests to trigger this workflow', argsTemplate: { mode: 'cloud' } },
+  { type: 'webhook.local', description: 'Local webhook trigger (legacy)', argsTemplate: { mode: 'local' } },
+  { type: 'webhook.cloud', description: 'Cloud webhook trigger (legacy)', argsTemplate: { mode: 'cloud' } },
   { type: 'gmail.new_email', description: 'Native Gmail push trigger for new emails (Google watch/PubSub)', argsTemplate: { profile: 'default', labelIds: ['INBOX'] } },
   { type: 'drive.new_file', description: 'Native Google Drive push trigger for newly uploaded files', argsTemplate: { profile: 'default', onlyNew: true, includeFolders: false } },
   { type: 'schedule.cron', description: 'Cron schedule trigger', argsTemplate: { cron: '* * * * *' } },
@@ -800,6 +801,69 @@ if (TOOL_SCHEMAS['schedule.cron']) {
       description: 'Configure when this workflow should run automatically',
       required: true,
       default: '*/5 * * * *',
+    },
+  };
+}
+
+// Webhook Trigger - unified mode selector
+for (const trigType of ['webhook', 'webhook.cloud', 'webhook.local']) {
+  if (TOOL_SCHEMAS[trigType]) {
+    TOOL_SCHEMAS[trigType].args = {
+      mode: {
+        type: 'select',
+        label: 'Endpoint',
+        description: 'Where to receive webhook requests',
+        required: true,
+        default: trigType === 'webhook.local' ? 'local' : 'cloud',
+        options: [
+          { value: 'cloud', label: 'Cloud', description: 'Public URL — accessible from the internet' },
+          { value: 'local', label: 'Local', description: 'Local network only (localhost)' },
+        ],
+      },
+    };
+  }
+}
+
+// Gmail Native Trigger - profile and label selection
+if (TOOL_SCHEMAS['gmail.new_email']) {
+  TOOL_SCHEMAS['gmail.new_email'].args = {
+    profile: {
+      type: 'string',
+      label: 'Gmail Profile',
+      description: 'Which connected Gmail account to watch',
+      default: 'default',
+      placeholder: 'default',
+    },
+    labelIds: {
+      type: 'array',
+      label: 'Label IDs',
+      description: 'Gmail label IDs to watch (e.g. INBOX, UNREAD)',
+      default: ['INBOX'],
+    },
+  };
+}
+
+// Drive Native Trigger - profile and filter options
+if (TOOL_SCHEMAS['drive.new_file']) {
+  TOOL_SCHEMAS['drive.new_file'].args = {
+    profile: {
+      type: 'string',
+      label: 'Drive Profile',
+      description: 'Which connected Google Drive account to watch',
+      default: 'default',
+      placeholder: 'default',
+    },
+    onlyNew: {
+      type: 'boolean',
+      label: 'Only New Files',
+      description: 'Only trigger for newly created files (not edits)',
+      default: true,
+    },
+    includeFolders: {
+      type: 'boolean',
+      label: 'Include Folders',
+      description: 'Also trigger when folders are created',
+      default: false,
     },
   };
 }

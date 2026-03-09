@@ -52,7 +52,7 @@ const REVERSE_TOOL_ALIASES: Record<string, string> = Object.fromEntries(
 );
 
 const TRIGGER_ALIASES: Record<string, string> = {
-  'webhook': 'webhook.local',
+  'webhook': 'webhook',
   'hotkey': 'hotkey',
   'schedule': 'schedule.cron',
   'file': 'fs.watch',
@@ -283,7 +283,7 @@ export function generateQuickFormat(model: DesignerModel): string {
     const alias = REVERSE_TRIGGER_ALIASES[t.type] || t.type;
     if (t.type === 'hotkey' && t.args?.accelerator) {
       header += ` on ${alias} "${t.args.accelerator}"`;
-    } else if (t.type !== 'webhook.local' && t.type !== 'manual') {
+    } else if (t.type !== 'webhook' && t.type !== 'webhook.local' && t.type !== 'manual') {
       header += ` on ${alias}`;
     }
   }

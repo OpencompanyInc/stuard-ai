@@ -633,7 +633,25 @@ export async function handleGoogleNativeTriggerRoutes(
       sendJson(res, 400, { ok: false, error: 'unsupported_trigger_type' });
       return true;
     } catch (e: any) {
-      sendJson(res, 400, { ok: false, error: String(e?.message || 'register_failed') });
+      const msg = String(e?.message || 'register_failed');
+      console.error(`[NativeTriggers] register ${type} failed for user=${auth.userId} workflow=${workflowId}:`, msg);
+      const detail: Record<string, any> = { ok: false, error: msg };
+      if (msg === 'gmail_pubsub_topic_not_configured') {
+        detail.hint = 'Set GOOGLE_GMAIL_PUBSUB_TOPIC env var on the cloud server (e.g. projects/my-project/topics/gmail-push)';
+      } else if (msg === 'missing_gmail_scope') {
+        detail.hint = 'Reconnect your Google account with Gmail permissions enabled';
+      } else if (msg === 'missing_drive_scope') {
+        detail.hint = 'Reconnect your Google account with Google Drive permissions enabled';
+      } else if (msg === 'google_not_connected') {
+        detail.hint = 'Connect a Google account in Settings > Integrations first';
+      } else if (msg === 'google_access_token_missing') {
+        detail.hint = 'Google token refresh failed — try reconnecting your Google account';
+      } else if (msg === 'google_account_email_missing') {
+        detail.hint = 'Google account is missing email — reconnect with email scope';
+      } else if (msg.toLowerCase().includes('pub/sub') || msg.toLowerCase().includes('pubsub') || msg.toLowerCase().includes('topic')) {
+        detail.hint = 'Check that gmail-api-push@system.gserviceaccount.com has Pub/Sub Publisher role on your topic';
+      }
+      sendJson(res, 400, detail);
       return true;
     }
   }

@@ -632,12 +632,13 @@ export const listAllToolFormats = createTool({
   execute: async () => {
     const triggers = [
       { type: 'manual', description: 'Manual trigger - run workflow on demand', argsTemplate: {} },
-      { type: 'webhook.local', description: 'Local webhook trigger', argsTemplate: {} },
-      { type: 'webhook.cloud', description: 'Cloud webhook trigger', argsTemplate: {} },
+      { type: 'webhook', description: 'Webhook trigger - receive HTTP POST requests. Set mode to "cloud" for public URL or "local" for localhost.', argsTemplate: { mode: 'cloud' } },
       { type: 'schedule.cron', description: 'Cron schedule trigger', argsTemplate: { cron: '0 9 * * *' } },
       { type: 'hotkey', description: 'Global hotkey trigger', argsTemplate: { accelerator: 'Ctrl+Alt+K' } },
       { type: 'keystroke', description: 'Keystroke sequence trigger', argsTemplate: { sequence: 'stuard' } },
       { type: 'fs.watch', description: 'Filesystem watch trigger', argsTemplate: { path: 'C:/path', pattern: '*.*' } },
+      { type: 'gmail.new_email', description: 'Native Gmail push trigger for new emails', argsTemplate: { profile: 'default', labelIds: ['INBOX'] } },
+      { type: 'drive.new_file', description: 'Native Google Drive push trigger for new files', argsTemplate: { profile: 'default', onlyNew: true } },
     ];
 
     const registry = getToolRegistry();

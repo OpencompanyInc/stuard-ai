@@ -315,6 +315,56 @@ function getCloudAiHttpBase(): string {
   ).trim().replace(/\/+$/, '');
 }
 
+/**
+ * Ensure a cloud webhook entry exists for a workflow so the incoming URL works.
+ * Uses the flowId as the slug. Silently succeeds if already created.
+ */
+async function ensureCloudWebhook(flowId: string, flowName: string, triggerId?: string) {
+  try {
+    const token = await getRendererAccessToken();
+    if (!token) return;
+    const base = getCloudAiHttpBase();
+    // Check if webhook already exists by listing and matching slug
+    const listRes = await net.fetch(`${base}/v1/webhooks`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (listRes.ok) {
+      const listBody = await listRes.json() as any;
+      const existing = (listBody?.webhooks || []).find((w: any) => w.slug === flowId);
+      if (existing) {
+        // Already exists, just make sure it's active and pointing to this workflow
+        if (!existing.is_active || existing.target_workflow_id !== flowId) {
+          await net.fetch(`${base}/v1/webhooks/${existing.id}`, {
+            method: 'PUT',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              is_active: true,
+              target_workflow_id: flowId,
+              target_workflow_trigger_id: triggerId || null,
+            }),
+          }).catch(() => {});
+        }
+        return;
+      }
+    }
+    // Create new webhook with flowId as slug
+    await net.fetch(`${base}/v1/webhooks`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: `Webhook: ${flowName}`,
+        slug: flowId,
+        type: 'workflow',
+        workflowId: flowId,
+        triggerId: triggerId || undefined,
+      }),
+    });
+    console.log(`[Workflows] Cloud webhook registered for ${flowId}`);
+  } catch (e: any) {
+    console.warn(`[Workflows] Failed to register cloud webhook for ${flowId}:`, e?.message);
+  }
+}
+
 async function registerGoogleNativeTrigger(
   flowId: string,
   triggerId: string,
@@ -350,8 +400,9 @@ async function registerGoogleNativeTrigger(
       const out: any = await resp.json().catch(() => ({}));
       if (!resp.ok || !out?.ok) {
         const err = String(out?.error || `http_${resp.status}`);
-        logFlow(flowId, `Google trigger '${type}' registration failed: ${err}`);
-        return { ok: false, error: err };
+        const hint = out?.hint ? ` (${out.hint})` : '';
+        logFlow(flowId, `Google trigger '${type}' registration failed: ${err}${hint}`);
+        return { ok: false, error: err, hint: out?.hint };
       }
       return { ok: true };
     } catch (e: any) {
@@ -1008,11 +1059,18 @@ export function startFlowRuntime(id: string) {
         rt.cronJobs.push(job);
         started++;
       } catch { }
-    } else if (type === 'webhook.local') {
-      webhookEnabledFlows.set(safe, triggerId);
-      started++;
-    } else if (type === 'webhook.cloud') {
-      cloudWebhookEnabledFlows.set(safe, triggerId);
+    } else if (type === 'webhook' || type === 'webhook.local' || type === 'webhook.cloud') {
+      // Unified webhook trigger: check args.mode to determine cloud vs local
+      const webhookMode = type === 'webhook.local' ? 'local' :
+                          type === 'webhook.cloud' ? 'cloud' :
+                          String(args?.mode || 'cloud');
+      if (webhookMode === 'local') {
+        webhookEnabledFlows.set(safe, triggerId);
+      } else {
+        cloudWebhookEnabledFlows.set(safe, triggerId);
+        // Auto-register cloud webhook endpoint so the URL works
+        ensureCloudWebhook(safe, model?.name || safe, triggerId).catch(() => {});
+      }
       started++;
     } else if (type === 'hotkey') {
       const accel = String(args?.accelerator || 'CommandOrControl+Alt+K');

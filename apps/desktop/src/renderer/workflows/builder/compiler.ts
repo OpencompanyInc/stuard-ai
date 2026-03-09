@@ -212,10 +212,9 @@ function generateBuilderCode(model: DesignerModel): string {
       lines.push(`  .onHotkey("${trigger.args.accelerator}")`);
     } else if (type === 'schedule.cron' && trigger.args?.cron) {
       lines.push(`  .onSchedule("${trigger.args.cron}")`);
-    } else if (type === 'webhook.local') {
-      lines.push(`  .onWebhook()`);
-    } else if (type === 'webhook.cloud') {
-      lines.push(`  .onWebhook(true)`);
+    } else if (type === 'webhook' || type === 'webhook.local' || type === 'webhook.cloud') {
+      const wMode = type === 'webhook.local' ? 'local' : type === 'webhook.cloud' ? 'cloud' : (trigger.args?.mode || 'cloud');
+      lines.push(`  .onWebhook(${wMode === 'cloud' ? 'true' : ''})`);
     } else if (type === 'gmail.new_email') {
       lines.push(`  .onGmailNewEmail(${JSON.stringify(trigger.args || {})})`);
     } else if (type === 'drive.new_file') {
@@ -264,8 +263,8 @@ function generateSimpleFormat(model: DesignerModel): string {
       lines.push(`trigger: hotkey ${trigger.args.accelerator}`);
     } else if (trigger.type === 'schedule.cron' && trigger.args?.cron) {
       lines.push(`trigger: schedule "${trigger.args.cron}"`);
-    } else if (trigger.type === 'webhook.local') {
-      lines.push(`trigger: webhook`);
+    } else if (trigger.type === 'webhook' || trigger.type === 'webhook.local' || trigger.type === 'webhook.cloud') {
+      lines.push(`trigger: webhook ${trigger.args?.mode || (trigger.type === 'webhook.local' ? 'local' : 'cloud')}`);
     } else if (trigger.type === 'gmail.new_email') {
       lines.push(`trigger: gmail.new_email`);
     } else if (trigger.type === 'drive.new_file') {

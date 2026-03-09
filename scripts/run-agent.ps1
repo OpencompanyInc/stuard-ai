@@ -27,6 +27,6 @@ Write-Host "[agent] Ensuring pip..."
 Write-Host "[agent] Ensuring dependencies..."
 & $venvPython -m pip install -r requirements.txt | Out-Host
 
-$env:CLOUD_AI_WS = "ws://127.0.0.1:8082/ws"
+$env:CLOUD_AI_WS = if ($env:CLOUD_AI_WS) { $env:CLOUD_AI_WS } else { "ws://127.0.0.1:8082/ws" }
 Write-Host "[agent] Starting agent with CLOUD_AI_WS=$($env:CLOUD_AI_WS)"
 & $venvPython -m app.main

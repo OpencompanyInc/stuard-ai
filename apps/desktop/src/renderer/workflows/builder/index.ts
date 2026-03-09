@@ -130,9 +130,12 @@ export class WorkflowBuilder {
       case 'schedule':
       case 'schedule.cron':
         return { cron: shortcut };
+      case 'webhook':
+        return { mode: 'cloud' };
       case 'webhook.local':
+        return { mode: 'local' };
       case 'webhook.cloud':
-        return {};
+        return { mode: 'cloud' };
       case 'fs.watch':
         return { path: shortcut };
       case 'gmail.new_email':

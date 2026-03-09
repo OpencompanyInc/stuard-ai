@@ -3,8 +3,7 @@ import type { PaletteItem } from "../types";
 export const TRIGGER_ITEMS: PaletteItem[] = [
   { k: 'trigger', t: 'fs.watch', label: 'File/Folder Watch', args: { path: '', pattern: '*.*', recursive: true } },
   { k: 'trigger', t: 'schedule.cron', label: 'Schedule', args: { cron: '*/5 * * * *' } },
-  { k: 'trigger', t: 'webhook.local', label: 'Webhook (Local)', args: {} },
-  { k: 'trigger', t: 'webhook.cloud', label: 'Webhook (Cloud)', args: {} },
+  { k: 'trigger', t: 'webhook', label: 'Webhook', args: { mode: 'cloud' } },
   { k: 'trigger', t: 'gmail.new_email', label: 'Gmail: New Email', args: { profile: 'default', labelIds: ['INBOX'] } },
   { k: 'trigger', t: 'drive.new_file', label: 'Drive: New File', args: { profile: 'default', onlyNew: true, includeFolders: false } },
   { k: 'trigger', t: 'hotkey', label: 'Hotkey', args: { accelerator: 'Ctrl+Alt+C' } },
