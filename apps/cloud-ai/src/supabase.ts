@@ -1028,7 +1028,7 @@ export async function enqueueSmsInboxItem(input: {
   if (!supabaseService) return null;
   try {
     const state = await getSmsUserState(input.userId);
-    const row = {
+    const row: Record<string, any> = {
       user_id: input.userId,
       provider: String(input.provider || 'telnyx'),
       provider_message_id: input.providerMessageId || null,
@@ -1039,8 +1039,8 @@ export async function enqueueSmsInboxItem(input: {
       preferred_model: normalizeSmsPreferredModel(input.preferredModel ?? state.preferred_model),
       conversation_id: input.conversationId !== undefined ? input.conversationId : state.conversation_id,
       metadata: input.metadata ?? {},
-      expires_at: input.expiresAt || undefined,
     };
+    if (input.expiresAt) row.expires_at = input.expiresAt;
     if (!row.message_text) return null;
     const { data, error } = await supabaseService
       .from('sms_inbox_queue')
@@ -1090,6 +1090,11 @@ export async function enqueueSmsInboxItem(input: {
         });
         return null;
       }
+      console.log('[sms-queue] enqueueSmsInboxItem fallback insert succeeded:', {
+        userId: input.userId,
+        queueId: (fallbackData as any)?.id || null,
+        providerMessageId: input.providerMessageId || null,
+      });
       return fallbackData as SmsQueueItem;
     }
     return data as SmsQueueItem;
