@@ -1,5 +1,11 @@
 /**
- * SMS Chat — thin router to the real Stuard agent + command dispatcher
+ * SMS Chat — Stuard agent over SMS
+ *
+ * Privacy model:
+ *   All conversation history is stored LOCALLY on the user's desktop/VM.
+ *   Supabase is used ONLY for phone number lookup (telnyx account).
+ *   When the desktop is offline, sessions are ephemeral (in-memory, 30-min TTL).
+ *   When the desktop is online, history is loaded from and saved to local memory.
  *
  * Session modes:
  *   proactive — last interaction was an automated proactive notification;
@@ -15,11 +21,13 @@
  * Call sendWelcomeSms(phone) after primary phone verification.
  */
 
-import { runWithSecrets } from '../tools/bridge';
+import { runWithSecrets, withClientBridge, hasClientBridge } from '../tools/bridge';
 import { getAgentForQuery } from '../agents/stuard';
 import { getExternalAccount } from '../supabase';
 import { TELNYX_API_KEY, TELNYX_FROM_NUMBER, TELNYX_MESSAGING_PROFILE_ID } from '../utils/config';
 import { generateWithToolRecovery } from './proactive-utils';
+import { getDesktopWs } from '../services/vm-bridge';
+import * as localMemory from '../memory/conversations';
 
 const TELNYX_API = 'https://api.telnyx.com/v2';
 
@@ -51,6 +59,8 @@ interface SmsSession {
   messages: SmsMessage[];
   mode: SmsMode;
   lastActivity: number;
+  /** Local memory conversation ID — only set when desktop was online at session start */
+  conversationId?: string | null;
 }
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
@@ -70,6 +80,7 @@ export function appendSmsSession(
   role: 'user' | 'assistant',
   content: string,
   mode?: SmsMode,
+  conversationId?: string | null,
 ): void {
   const existing = getSession(userId);
   const messages = [...(existing?.messages ?? []), { role, content }].slice(-20);
@@ -77,6 +88,7 @@ export function appendSmsSession(
     messages,
     mode: mode ?? existing?.mode ?? 'agent',
     lastActivity: Date.now(),
+    conversationId: conversationId ?? existing?.conversationId ?? null,
   });
 }
 
@@ -90,6 +102,21 @@ export function setSmsMode(userId: string, mode: SmsMode): void {
 
 export function clearSmsSession(userId: string): void {
   sessions.delete(userId);
+}
+
+function setSmsConversationId(userId: string, conversationId: string | null): void {
+  const existing = getSession(userId);
+  if (!existing) {
+    sessions.set(userId, {
+      messages: [],
+      mode: 'agent',
+      lastActivity: Date.now(),
+      conversationId,
+    });
+    return;
+  }
+  existing.conversationId = conversationId;
+  existing.lastActivity = Date.now();
 }
 
 // ── Send SMS ──────────────────────────────────────────────────────────────────
@@ -125,7 +152,7 @@ export async function sendWelcomeSms(toPhone: string): Promise<void> {
   );
 }
 
-// ── Agent caller ──────────────────────────────────────────────────────────────
+// ── SMS hint for the agent ────────────────────────────────────────────────────
 
 function buildSmsHint(mode: SmsMode): string {
   const base =
@@ -143,14 +170,75 @@ function buildSmsHint(mode: SmsMode): string {
   return base + ' The user is chatting with you directly as their personal AI assistant.';
 }
 
+// ── Local memory helpers (run inside bridge context) ─────────────────────────
+
+const SMS_CONV_TITLE_PREFIX = 'SMS:';
+
+/**
+ * Find the most recent active SMS conversation in local memory, or create a new one.
+ * Must be called from within a bridge context (desktop online).
+ */
+async function getOrCreateLocalSmsConversation(
+  mode: SmsMode,
+  existingId?: string | null,
+): Promise<string | null> {
+  // Try to resume existing conversation from this session
+  if (existingId) {
+    const conv = await localMemory.getConversation(existingId).catch(() => null);
+    if (conv && conv.status === 'active') return conv.id;
+  }
+
+  // Look for a recent SMS conversation (updated in last 2 hours)
+  const recent = await localMemory.listConversations({ status: 'active', limit: 10 }).catch(() => []);
+  const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+  const smsConv = recent.find(
+    (c) => c.title?.startsWith(SMS_CONV_TITLE_PREFIX) && new Date(c.updated_at).getTime() > twoHoursAgo,
+  );
+  if (smsConv) return smsConv.id;
+
+  // Create a new SMS conversation
+  const source = mode === 'proactive' ? 'proactive' : 'stuard';
+  const title = `${SMS_CONV_TITLE_PREFIX} ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+  const conv = await localMemory.createConversation(title, 'balanced', undefined, source).catch(() => null);
+  return conv?.id ?? null;
+}
+
+// ── Agent caller ──────────────────────────────────────────────────────────────
+
 async function runAgent(
   userId: string,
   toPhone: string,
   userMessage: string,
-  history: SmsMessage[],
   mode: SmsMode,
+  session: SmsSession | null,
 ): Promise<void> {
-  await runWithSecrets({ userId }, async () => {
+  const run = async () => {
+    const online = hasClientBridge();
+    let conversationId = session?.conversationId ?? null;
+    let history: SmsMessage[] = session?.messages?.filter((m) => m.role === 'user' || m.role === 'assistant') ?? [];
+
+    // ── Load / persist history from local memory (desktop online) ──────────
+    if (online) {
+      conversationId = await getOrCreateLocalSmsConversation(mode, conversationId);
+      if (conversationId) {
+        setSmsConversationId(userId, conversationId);
+
+        // Load full history from local DB (overrides stale in-memory session)
+        const msgs = await localMemory.getMessages(conversationId, { limit: 20 }).catch(() => []);
+        if (msgs.length > 0) {
+          history = msgs
+            .filter((m) => m.role === 'user' || m.role === 'assistant')
+            .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+        }
+
+        // Persist the incoming user message
+        await localMemory.addMessage(conversationId, 'user', userMessage, {
+          metadata: { mode, source: 'sms' },
+        }).catch(() => {});
+      }
+    }
+
+    // ── Resolve enabled integrations ────────────────────────────────────────
     const providers = ['github', 'google', 'outlook'];
     const checks = await Promise.allSettled(providers.map((p) => getExternalAccount(userId, p)));
     const enabledIntegrations = providers.filter((_, i) => {
@@ -158,6 +246,7 @@ async function runAgent(
       return r.status === 'fulfilled' && !!r.value;
     });
 
+    // ── Run agent ───────────────────────────────────────────────────────────
     const agent = await getAgentForQuery('balanced', userMessage, undefined, enabledIntegrations);
 
     const baseMessages = [
@@ -175,14 +264,29 @@ async function runAgent(
       });
       const reply = stripMarkdownForSms(response?.text ?? '');
       if (reply) {
-        appendSmsSession(userId, 'assistant', reply);
+        appendSmsSession(userId, 'assistant', reply, mode, conversationId);
+
+        // Persist the assistant reply locally
+        if (online && conversationId) {
+          await localMemory.addMessage(conversationId, 'assistant', reply, {
+            metadata: { mode, source: 'sms' },
+          }).catch(() => {});
+        }
+
         await sendSmsRaw(toPhone, reply);
       }
     } catch (e: any) {
       console.error('[sms-chat] Agent error:', e?.message ?? e);
       await sendSmsRaw(toPhone, 'Something went wrong. Try again or send /new.').catch(() => {});
     }
-  });
+  };
+
+  const desktopWs = getDesktopWs(userId);
+  if (desktopWs) {
+    await withClientBridge(desktopWs, run, { userId });
+  } else {
+    await runWithSecrets({ userId }, run);
+  }
 }
 
 // ── Command dispatcher ────────────────────────────────────────────────────────
@@ -206,8 +310,7 @@ async function dispatchCommand(token: string, userId: string, toPhone: string): 
     case '/agent':
     case '/chat': {
       clearSmsSession(userId);
-      // Seed the new session in agent mode
-      sessions.set(userId, { messages: [], mode: 'agent', lastActivity: Date.now() });
+      sessions.set(userId, { messages: [], mode: 'agent', lastActivity: Date.now(), conversationId: null });
       await sendSmsRaw(toPhone, 'Switched to direct chat. What can I help you with?');
       return true;
     }
@@ -227,9 +330,10 @@ async function dispatchCommand(token: string, userId: string, toPhone: string): 
       } else {
         const minsAgo = Math.round((Date.now() - s.lastActivity) / 60_000);
         const modeLabel = s.mode === 'proactive' ? 'proactive reply' : 'direct chat';
+        const memLabel = s.conversationId ? ' (history saved locally)' : ' (desktop offline — ephemeral)';
         await sendSmsRaw(
           toPhone,
-          `Mode: ${modeLabel} | ${s.messages.length} messages | last active ${minsAgo} min ago.\n/agent to chat directly, /new to clear.`,
+          `Mode: ${modeLabel} | ${s.messages.length} messages | last active ${minsAgo} min ago${memLabel}.\n/agent to chat directly, /new to clear.`,
         );
       }
       return true;
@@ -243,6 +347,7 @@ async function dispatchCommand(token: string, userId: string, toPhone: string): 
 // ── Main inbound handler ───────────────────────────────────────────────────────
 
 export async function handleInboundSms(userId: string, userMessage: string, replyToPhone?: string): Promise<void> {
+  // Supabase used only for phone number lookup
   const acc = await getExternalAccount(userId, 'telnyx');
   const fallbackPhone = String(acc?.meta?.phone ?? '');
   const secondaryPhone = String(acc?.meta?.phone2 ?? '');
@@ -267,9 +372,10 @@ export async function handleInboundSms(userId: string, userMessage: string, repl
   }
 
   const session = getSession(userId);
-  const history = session?.messages ?? [];
   const mode: SmsMode = session?.mode ?? 'agent';
 
-  appendSmsSession(userId, 'user', trimmed);
-  await runAgent(userId, toPhone, trimmed, history, mode);
+  // Append to in-memory session immediately (agent run will update with persisted conversationId)
+  appendSmsSession(userId, 'user', trimmed, mode, session?.conversationId ?? null);
+
+  await runAgent(userId, toPhone, trimmed, mode, getSession(userId));
 }

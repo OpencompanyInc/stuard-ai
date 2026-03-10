@@ -673,6 +673,38 @@ export async function addUserMessage(
   } catch {}
 }
 
+export async function getConversationMessages(
+  userId: string,
+  conversationId: string,
+  limit = 20,
+): Promise<Array<{ role: 'user' | 'assistant' | 'system' | 'tool'; content: string }>> {
+  if (!supabaseService) return [];
+  const prefs = await getSyncPreferences(userId);
+  if (!prefs.sync_conversations) return [];
+  try {
+    const safeLimit = Math.max(1, Math.min(50, Math.floor(limit || 20)));
+    const { data, error } = await supabaseService
+      .from('messages')
+      .select('role, content')
+      .eq('conversation_id', conversationId)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(safeLimit);
+    if (error || !Array.isArray(data)) return [];
+    return [...data]
+      .reverse()
+      .map((row: any) => ({
+        role: (['user', 'assistant', 'system', 'tool'].includes(String(row?.role))
+          ? row.role
+          : 'user') as 'user' | 'assistant' | 'system' | 'tool',
+        content: String(row?.content || ''),
+      }))
+      .filter((row) => row.content.trim());
+  } catch {
+    return [];
+  }
+}
+
 async function resolveUsageConversationId(userId: string, conversationId: string | null): Promise<string | null> {
   if (!supabaseService) return null;
   const trimmed = typeof conversationId === 'string' ? conversationId.trim() : '';
