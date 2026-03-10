@@ -1,6 +1,6 @@
 {
   "name": "stuard-ai-website",
-  "version": "0.1.9",
+  "version": "0.1.15",
   "private": true,
   "engines": {
     "node": "20.x"
