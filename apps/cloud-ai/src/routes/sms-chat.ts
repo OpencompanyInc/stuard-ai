@@ -242,9 +242,14 @@ async function dispatchCommand(token: string, userId: string, toPhone: string): 
 
 // ── Main inbound handler ───────────────────────────────────────────────────────
 
-export async function handleInboundSms(userId: string, userMessage: string): Promise<void> {
+export async function handleInboundSms(userId: string, userMessage: string, replyToPhone?: string): Promise<void> {
   const acc = await getExternalAccount(userId, 'telnyx');
-  const toPhone: string = acc?.meta?.phone ?? '';
+  const fallbackPhone = String(acc?.meta?.phone ?? '');
+  const secondaryPhone = String(acc?.meta?.phone2 ?? '');
+  const toPhone =
+    replyToPhone && (replyToPhone === fallbackPhone || replyToPhone === secondaryPhone)
+      ? replyToPhone
+      : fallbackPhone;
   if (!toPhone) {
     console.error('[sms-chat] No verified phone for user', userId);
     return;

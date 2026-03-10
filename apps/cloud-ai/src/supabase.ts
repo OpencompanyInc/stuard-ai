@@ -168,6 +168,11 @@ function chooseFresherAccount(preferredOnTie: ExternalAccount, other: ExternalAc
 
 const _syncCache = new Map<string, { val: boolean; ts: number }>();
 const SYNC_CACHE_TTL = 60_000;
+const ALWAYS_SYNC_EXTERNAL_ACCOUNT_PROVIDERS = new Set(['telnyx']);
+
+function shouldAlwaysSyncExternalAccount(provider: string): boolean {
+  return ALWAYS_SYNC_EXTERNAL_ACCOUNT_PROVIDERS.has(String(provider || '').toLowerCase());
+}
 
 async function shouldSyncAccounts(userId: string): Promise<boolean> {
   const now = Date.now();
@@ -186,6 +191,11 @@ async function shouldSyncAccounts(userId: string): Promise<boolean> {
 
 export function invalidateSyncCache(userId: string): void {
   _syncCache.delete(userId);
+}
+
+async function shouldUseSupabaseExternalAccount(userId: string, provider: string): Promise<boolean> {
+  if (shouldAlwaysSyncExternalAccount(provider)) return true;
+  return shouldSyncAccounts(userId);
 }
 
 export async function migrateLocalAccountsToSupabase(userId: string): Promise<{ migrated: number; errors: number }> {
@@ -224,7 +234,7 @@ export async function getExternalAccount(
   profileLabel?: string,
 ): Promise<ExternalAccount | null> {
   const local = await localGetExternalAccount(userId, provider, profileLabel);
-  if (!(await shouldSyncAccounts(userId))) return local;
+  if (!(await shouldUseSupabaseExternalAccount(userId, provider))) return local;
   const hot = await _supabaseGetExternalAccount(userId, provider, profileLabel);
   if (!hot) return local;
   if (!local) return hot;
@@ -286,7 +296,10 @@ export async function listExternalAccounts(
   userId: string,
   provider?: string,
 ): Promise<ExternalAccount[]> {
-  if (!(await shouldSyncAccounts(userId))) return localListExternalAccounts(userId, provider);
+  if (provider && !(await shouldUseSupabaseExternalAccount(userId, provider))) {
+    return localListExternalAccounts(userId, provider);
+  }
+  if (!provider && !(await shouldSyncAccounts(userId))) return localListExternalAccounts(userId, provider);
   const [hot, local] = await Promise.all([
     _supabaseListExternalAccounts(userId, provider),
     localListExternalAccounts(userId, provider),
@@ -340,8 +353,12 @@ export async function setDefaultExternalAccount(
   profileLabel: string,
 ): Promise<boolean> {
   const localOk = await localSetDefaultExternalAccount(userId, provider, profileLabel);
-  if (await shouldSyncAccounts(userId)) {
-    try { await _supabaseSetDefaultExternalAccount(userId, provider, profileLabel); } catch {}
+  if (await shouldUseSupabaseExternalAccount(userId, provider)) {
+    if (shouldAlwaysSyncExternalAccount(provider)) {
+      await _supabaseSetDefaultExternalAccount(userId, provider, profileLabel);
+    } else {
+      try { await _supabaseSetDefaultExternalAccount(userId, provider, profileLabel); } catch {}
+    }
   }
   return localOk;
 }
@@ -377,8 +394,12 @@ export async function deleteExternalAccount(
   profileLabel: string,
 ): Promise<boolean> {
   const localOk = await localDeleteExternalAccount(userId, provider, profileLabel);
-  if (await shouldSyncAccounts(userId)) {
-    try { await _supabaseDeleteExternalAccount(userId, provider, profileLabel); } catch {}
+  if (await shouldUseSupabaseExternalAccount(userId, provider)) {
+    if (shouldAlwaysSyncExternalAccount(provider)) {
+      await _supabaseDeleteExternalAccount(userId, provider, profileLabel);
+    } else {
+      try { await _supabaseDeleteExternalAccount(userId, provider, profileLabel); } catch {}
+    }
   }
   return localOk;
 }
@@ -434,8 +455,12 @@ export async function upsertExternalAccount(input: {
   accountEmail?: string | null;
 }): Promise<void> {
   await localUpsertExternalAccount(input);
-  if (await shouldSyncAccounts(input.userId)) {
-    try { await _supabaseUpsertExternalAccount(input); } catch {}
+  if (await shouldUseSupabaseExternalAccount(input.userId, input.provider)) {
+    if (shouldAlwaysSyncExternalAccount(input.provider)) {
+      await _supabaseUpsertExternalAccount(input);
+    } else {
+      try { await _supabaseUpsertExternalAccount(input); } catch {}
+    }
   }
 }
 
@@ -782,16 +807,24 @@ export function hasSupabase(): boolean {
   return !!supabaseAnon && !!supabaseService;
 }
 
+function normalizePhoneLookup(phone: string): string {
+  let digits = String(phone || '').replace(/[^\d+]/g, '');
+  if (digits && !digits.startsWith('+')) digits = '+' + digits;
+  return digits;
+}
+
 // Find a user by their Telnyx-verified phone (primary or secondary)
 export async function findUserIdByPhone(phone: string): Promise<string | null> {
   if (!supabaseService) return null;
   try {
+    const normalizedPhone = normalizePhoneLookup(phone);
+    if (!normalizedPhone) return null;
     // Primary phone
     const { data: d1 } = await supabaseService
       .from('external_accounts')
       .select('user_id')
       .eq('provider', 'telnyx')
-      .eq('meta->>phone', phone)
+      .eq('meta->>phone', normalizedPhone)
       .limit(1)
       .maybeSingle();
     if (d1?.user_id) return d1.user_id as string;
@@ -800,7 +833,7 @@ export async function findUserIdByPhone(phone: string): Promise<string | null> {
       .from('external_accounts')
       .select('user_id')
       .eq('provider', 'telnyx')
-      .eq('meta->>phone2', phone)
+      .eq('meta->>phone2', normalizedPhone)
       .limit(1)
       .maybeSingle();
     if (d2?.user_id) return d2.user_id as string;

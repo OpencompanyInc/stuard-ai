@@ -13,7 +13,7 @@ const pendingSecondaryVerifications = new Map<string, { code: string; phone: str
 
 function normalizePhone(raw: string): string {
   let digits = raw.replace(/[^\d+]/g, '');
-  if (!digits.startsWith('+')) digits = '+' + digits;
+  if (digits && !digits.startsWith('+')) digits = '+' + digits;
   return digits;
 }
 
@@ -352,19 +352,33 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
 
       if (eventType === 'message.received') {
         const msgPayload = payload?.data?.payload || {};
-        const fromPhone: string = msgPayload?.from?.phone_number || msgPayload?.from || '';
-        const inboundText: string = msgPayload?.text || '';
+        const fromPhone = normalizePhone(String(msgPayload?.from?.phone_number || msgPayload?.from || ''));
+        const inboundText: string = String(msgPayload?.text || '').trim();
 
         if (fromPhone && inboundText) {
           // Find which user owns this number (primary or secondary)
           const userId = await findUserIdByPhone(fromPhone);
           if (userId) {
-            // Fire-and-forget: run the SMS chat agent (conversation-aware, markdown stripped)
+            console.log('[telnyx] inbound SMS matched user', {
+              fromPhone,
+              userId,
+              textPreview: inboundText.slice(0, 80),
+            });
             const { handleInboundSms } = await import('../sms-chat');
-            handleInboundSms(userId, inboundText).catch((e: any) =>
-              console.error('[telnyx] SMS handler failed:', e?.message || e)
-            );
+            // Cloud Run does not reliably continue background work after the response ends,
+            // so handle the inbound message before acknowledging the webhook.
+            await handleInboundSms(userId, inboundText, fromPhone);
+          } else {
+            console.warn('[telnyx] inbound SMS did not match a verified user', {
+              fromPhone,
+              textPreview: inboundText.slice(0, 80),
+            });
           }
+        } else {
+          console.warn('[telnyx] inbound SMS missing sender or text', {
+            fromPhone,
+            hasText: !!inboundText,
+          });
         }
       }
     } catch (e: any) {
