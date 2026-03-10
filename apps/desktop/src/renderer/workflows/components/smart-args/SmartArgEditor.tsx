@@ -2,10 +2,10 @@
  * SmartArgEditor - Main schema-aware argument editor component
  * Uses modular editors from ./editors folder
  */
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Paintbrush, Plus, X, Settings, Code2, LayoutGrid } from 'lucide-react';
 import type { WorkflowVariable } from '../../types';
-import { getToolSchema } from '../../constants/tool-schemas';
+import { getToolSchema, type ArgOption } from '../../constants/tool-schemas';
 import { SmartValueEditor } from '../SmartValueEditor';
 import { EnhancedUIBuilderModal } from '../../../ui-builder/EnhancedUIBuilderModal';
 import type { UIWindowConfig } from '../../../ui-builder/types';
@@ -27,8 +27,56 @@ import { MemoryEditor } from './editors/MemoryEditor';
 import { BooleanToggle } from './editors/BooleanToggle';
 import { CronEditor } from '../CronEditor';
 import { UIBuilderModal } from '../../../ui-builder';
+import { supabase } from '../../../lib/supabaseClient';
 
 export type { UpstreamNode };
+
+const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || 'http://127.0.0.1:8082';
+
+interface IntegrationProfile {
+  provider: string;
+  profile_label: string;
+  is_default: boolean;
+  account_email?: string | null;
+}
+
+function buildGoogleProfileOptions(profiles: IntegrationProfile[]): ArgOption[] {
+  const googleProfiles = [...profiles]
+    .filter((profile) => profile.provider === 'google')
+    .sort((a, b) => {
+      if (a.is_default !== b.is_default) return a.is_default ? -1 : 1;
+      return String(a.account_email || a.profile_label || '').localeCompare(String(b.account_email || b.profile_label || ''));
+    });
+
+  if (googleProfiles.length === 0) {
+    return [];
+  }
+
+  const defaultProfile = googleProfiles.find((profile) => profile.is_default);
+  const options: ArgOption[] = [
+    {
+      value: '',
+      label: defaultProfile?.account_email ? `Default: ${defaultProfile.account_email}` : 'Default Google account',
+      description: defaultProfile?.profile_label
+        ? `Uses profile "${defaultProfile.profile_label}"`
+        : 'Use the default connected Google account',
+    },
+  ];
+
+  for (const profile of googleProfiles) {
+    const label = profile.account_email || profile.profile_label || 'Google account';
+    const suffix = profile.is_default ? 'default' : `profile "${profile.profile_label}"`;
+    options.push({
+      value: profile.profile_label,
+      label,
+      description: profile.account_email && profile.account_email !== profile.profile_label
+        ? `${profile.profile_label} • ${suffix}`
+        : suffix,
+    });
+  }
+
+  return options;
+}
 
 /**
  * Unescape double-escaped component code from LLM output.
@@ -66,6 +114,61 @@ export interface SmartArgEditorProps {
 export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNodes, workflowVariables }: SmartArgEditorProps) {
   const schema = useMemo(() => getToolSchema(toolName), [toolName]);
   const argSchema = schema?.args[argKey];
+  const shouldUseGoogleAccountDropdown =
+    (toolName === 'gmail_send_message' || toolName === 'gmail_send') &&
+    (argKey === 'profile' || argKey === 'account');
+  const [googleProfileOptions, setGoogleProfileOptions] = useState<ArgOption[]>([]);
+  const [googleProfilesLoading, setGoogleProfilesLoading] = useState(false);
+
+  useEffect(() => {
+    if (!shouldUseGoogleAccountDropdown) return;
+
+    let cancelled = false;
+
+    const loadGoogleProfiles = async () => {
+      setGoogleProfilesLoading(true);
+      try {
+        const { data } = await supabase.auth.getSession();
+        const token = data.session?.access_token;
+        if (!token) {
+          if (!cancelled) setGoogleProfileOptions([]);
+          return;
+        }
+
+        const resp = await fetch(`${CLOUD_AI_HTTP}/integrations/profiles?provider=google`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const json = await resp.json().catch(() => null);
+        const rawProfiles = Array.isArray(json?.profiles) ? json.profiles : [];
+        const profiles: IntegrationProfile[] = rawProfiles.map((profile: any) => ({
+          provider: profile.provider || 'google',
+          profile_label: profile.profile || profile.profile_label || 'default',
+          is_default: !!(profile.isDefault ?? profile.is_default),
+          account_email: profile.email || profile.account_email || null,
+        }));
+
+        if (!cancelled) {
+          setGoogleProfileOptions(buildGoogleProfileOptions(profiles));
+        }
+      } catch {
+        if (!cancelled) setGoogleProfileOptions([]);
+      } finally {
+        if (!cancelled) setGoogleProfilesLoading(false);
+      }
+    };
+
+    void loadGoogleProfiles();
+
+    const handleProfilesChanged = () => {
+      void loadGoogleProfiles();
+    };
+
+    window.addEventListener('integrations.connected.changed', handleProfilesChanged);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('integrations.connected.changed', handleProfilesChanged);
+    };
+  }, [shouldUseGoogleAccountDropdown]);
 
   // If no schema, infer the best editor from the value type
   if (!argSchema) {
@@ -170,6 +273,31 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
           workflowVariables={workflowVariables}
           isParallel={toolName === 'run_parallel'}
         />
+      );
+    }
+
+    if (shouldUseGoogleAccountDropdown) {
+      return (
+        <div className="space-y-2">
+          <SelectInput
+            value={String(value ?? '')}
+            onChange={onChange}
+            options={googleProfileOptions}
+            placeholder={
+              googleProfilesLoading
+                ? 'Loading connected Google accounts...'
+                : googleProfileOptions.length > 0
+                  ? 'Select connected Google account'
+                  : 'No Google accounts connected'
+            }
+            allowFreeform={googleProfileOptions.length === 0}
+          />
+          {!googleProfilesLoading && googleProfileOptions.length === 0 && (
+            <p className="text-[11px] text-white/40 leading-snug">
+              Connect a Google account in Integrations to populate this list.
+            </p>
+          )}
+        </div>
       );
     }
 

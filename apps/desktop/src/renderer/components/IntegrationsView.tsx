@@ -437,6 +437,15 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
   );
 };
 
+// ─── Phone number helpers ─────────────────────────────────────────────────────
+
+function formatLocalDigits(digits: string): string {
+  const d = digits.slice(0, 10);
+  if (d.length <= 3) return d;
+  if (d.length <= 6) return `(${d.slice(0, 3)}) ${d.slice(3)}`;
+  return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
+}
+
 // ─── Telnyx Phone Verification Card ─────────────────────────────────────────
 
 interface TelnyxPhoneCardProps {
@@ -452,15 +461,31 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
   isConnected, phone, verifying, requestCode, verifyCode, disconnect,
 }) => {
   const [step, setStep] = useState<'idle' | 'enter-phone' | 'enter-code'>('idle');
-  const [phoneInput, setPhoneInput] = useState('');
+  // Split input: country code + local digits
+  const [countryCode, setCountryCode] = useState('+1');
+  const [localDigits, setLocalDigits] = useState('');
+  const [editingCountry, setEditingCountry] = useState(false);
   const [codeInput, setCodeInput] = useState('');
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
 
+  // E.164: countryCode + all digits of local input
+  const e164 = `${countryCode}${localDigits.replace(/\D/g, '')}`;
+  const localRaw = localDigits.replace(/\D/g, '');
+  // US/CA (+1) needs exactly 10 local digits; others need 6–12
+  const phoneValid = countryCode === '+1'
+    ? localRaw.length === 10
+    : localRaw.length >= 6 && e164.length <= 16;
+
+  const handleLocalChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const digits = e.target.value.replace(/\D/g, '').slice(0, countryCode === '+1' ? 10 : 12);
+    setLocalDigits(countryCode === '+1' ? formatLocalDigits(digits) : digits);
+  };
+
   const handleRequestCode = async () => {
     setError('');
     setSending(true);
-    const result = await requestCode(phoneInput);
+    const result = await requestCode(e164);
     setSending(false);
     if (result.ok) {
       setStep('enter-code');
@@ -476,7 +501,7 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
     setSending(false);
     if (result.ok) {
       setStep('idle');
-      setPhoneInput('');
+      setLocalDigits('');
       setCodeInput('');
     } else {
       setError(result.error || 'Verification failed.');
@@ -486,7 +511,7 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
   const handleDisconnect = async () => {
     await disconnect();
     setStep('idle');
-    setPhoneInput('');
+    setLocalDigits('');
     setCodeInput('');
     setError('');
   };
@@ -551,47 +576,113 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
           <div className="space-y-3">
             <div>
               <label className="block text-[11px] text-theme-muted font-medium mb-1.5">Phone Number</label>
-              <input
-                type="tel"
-                value={phoneInput}
-                onChange={(e) => setPhoneInput(e.target.value)}
-                placeholder="+1 (555) 123-4567"
-                className="w-full px-3 py-2.5 rounded-lg bg-theme-bg border border-theme text-[13px] text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/50 transition-colors"
-              />
+              <div className="flex gap-1.5">
+                {/* Country code badge — click to edit */}
+                {editingCountry ? (
+                  <input
+                    type="text"
+                    value={countryCode}
+                    onChange={(e) => setCountryCode(e.target.value.replace(/[^\d+]/g, '') || '+')}
+                    onBlur={() => setEditingCountry(false)}
+                    autoFocus
+                    className="w-16 px-2 py-2.5 rounded-lg bg-theme-bg border border-primary/50 text-[13px] text-theme-fg text-center font-mono focus:outline-none"
+                    placeholder="+1"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setEditingCountry(true)}
+                    className="px-3 py-2.5 rounded-lg bg-theme-hover border border-theme text-[13px] font-mono text-theme-fg hover:border-primary/50 transition-colors whitespace-nowrap"
+                    title="Click to change country code"
+                  >
+                    {countryCode}
+                  </button>
+                )}
+                {/* Local number */}
+                <input
+                  type="tel"
+                  inputMode="numeric"
+                  value={localDigits}
+                  onChange={handleLocalChange}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && phoneValid) handleRequestCode(); }}
+                  placeholder={countryCode === '+1' ? '(614) 380-9607' : '123456789'}
+                  autoComplete="tel-national"
+                  autoFocus={!editingCountry}
+                  className={clsx(
+                    "flex-1 px-3 py-2.5 rounded-lg bg-theme-bg border text-[13px] text-theme-fg placeholder:text-theme-muted/40 focus:outline-none transition-colors",
+                    localRaw.length > 0 && phoneValid ? "border-emerald-500/50 focus:border-emerald-500" :
+                    localRaw.length > 0 && !phoneValid ? "border-red-500/40 focus:border-red-500/60" :
+                    "border-theme focus:border-primary/50"
+                  )}
+                />
+              </div>
+              {/* Preview */}
+              {phoneValid && (
+                <p className="text-[11px] text-emerald-400 mt-1.5 flex items-center gap-1">
+                  <span className="opacity-60">Sending to:</span>
+                  <span className="font-mono font-medium">{e164}</span>
+                </p>
+              )}
+              {!phoneValid && localRaw.length > 0 && (
+                <p className="text-[11px] text-theme-muted mt-1.5">
+                  {countryCode === '+1' ? `${10 - localRaw.length} more digit${10 - localRaw.length !== 1 ? 's' : ''} needed` : 'Enter full number'}
+                </p>
+              )}
+              {localRaw.length === 0 && (
+                <p className="text-[10px] text-theme-muted mt-1.5">
+                  Click <span className="font-mono text-theme-fg">{countryCode}</span> to change country code
+                </p>
+              )}
             </div>
-            {error && <p className="text-[11px] text-red-400">{error}</p>}
+            {error && (
+              <div className="px-3 py-2 rounded-md bg-red-900/20 border border-red-900/30">
+                <p className="text-[11px] text-red-400">{error}</p>
+              </div>
+            )}
             <div className="flex gap-2">
               <button
-                onClick={() => { setStep('idle'); setError(''); }}
+                onClick={() => { setStep('idle'); setError(''); setLocalDigits(''); }}
                 className="px-4 py-2 rounded-md bg-theme-hover text-theme-fg text-[11px] font-bold border border-theme hover:bg-theme-active transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={handleRequestCode}
-                disabled={sending || !phoneInput.trim()}
+                disabled={sending || !phoneValid}
                 className="flex-1 px-4 py-2 rounded-md bg-primary text-white text-[11px] font-bold hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                {sending ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                Send Code
+                {sending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Phone className="w-3 h-3" />}
+                {sending ? 'Sending…' : 'Send Code'}
               </button>
             </div>
           </div>
         ) : (
           <div className="space-y-3">
             <div>
-              <label className="block text-[11px] text-theme-muted font-medium mb-1.5">Verification Code</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-[11px] text-theme-muted font-medium">Verification Code</label>
+                <span className="text-[10px] text-emerald-400 font-mono">{e164}</span>
+              </div>
               <input
                 type="text"
+                inputMode="numeric"
                 value={codeInput}
                 onChange={(e) => setCodeInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                placeholder="123456"
+                onKeyDown={(e) => { if (e.key === 'Enter' && codeInput.length === 6) handleVerify(); }}
+                placeholder="· · · · · ·"
                 maxLength={6}
-                className="w-full px-3 py-2.5 rounded-lg bg-theme-bg border border-theme text-[13px] text-theme-fg text-center tracking-[0.3em] font-mono placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/50 transition-colors"
+                autoFocus
+                className="w-full px-3 py-3 rounded-lg bg-theme-bg border border-theme text-[18px] text-theme-fg text-center tracking-[0.5em] font-mono placeholder:text-theme-muted/30 focus:outline-none focus:border-primary/50 transition-colors"
               />
-              <p className="text-[10px] text-theme-muted mt-1.5">Check your phone for a 6-digit code.</p>
+              <p className="text-[10px] text-theme-muted mt-1.5 text-center">
+                Check your texts — code expires in 10 min
+              </p>
             </div>
-            {error && <p className="text-[11px] text-red-400">{error}</p>}
+            {error && (
+              <div className="px-3 py-2 rounded-md bg-red-900/20 border border-red-900/30">
+                <p className="text-[11px] text-red-400">{error}</p>
+              </div>
+            )}
             <div className="flex gap-2">
               <button
                 onClick={() => { setStep('enter-phone'); setError(''); setCodeInput(''); }}
@@ -605,7 +696,7 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
                 className="flex-1 px-4 py-2 rounded-md bg-primary text-white text-[11px] font-bold hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {sending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />}
-                Verify
+                {sending ? 'Verifying…' : 'Verify'}
               </button>
             </div>
           </div>

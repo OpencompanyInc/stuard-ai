@@ -25,6 +25,8 @@ import { getDefaultModelForCategory } from '../pricing';
 import { buildProactiveMessageContent, filterProactiveTools, generateWithToolRecovery } from './proactive-utils';
 import { verifyVMAuthFromRequest } from '../services/vm-tokens';
 import { telnyx_send_sms, telnyx_make_call } from '../tools/telnyx-tools';
+import { stripMarkdownForSms, appendSmsSession, setSmsMode } from './sms-chat';
+import { getBridgeSecrets } from '../tools/bridge';
 import { normalizeUsage } from '../utils/usage';
 import { search_past_conversations, get_conversation_context } from '../tools/device-tools';
 
@@ -93,9 +95,18 @@ async function deliverProactiveNotifications(
 
   const results: Record<string, any> = {};
   if (requested.has('sms')) {
+    const smsText = stripMarkdownForSms(message);
     results.sms = await (telnyx_send_sms as any).execute({
-      message: `Stuard Check-in: ${message.slice(0, 1500)}`,
+      message: smsText.slice(0, 1500),
     }, {} as any);
+    // Store in SMS session and mark mode=proactive so replies stay in that context
+    try {
+      const userId = String((getBridgeSecrets() as any)?.userId || '');
+      if (userId) {
+        appendSmsSession(userId, 'assistant', smsText, 'proactive');
+        setSmsMode(userId, 'proactive');
+      }
+    } catch {}
   }
   if (requested.has('call')) {
     results.call = await (telnyx_make_call as any).execute({
@@ -403,49 +414,3 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
   return false;
 }
 
-// ─── SMS-triggered proactive agent ───────────────────────────────────────────
-// Called when an inbound SMS arrives from a verified user. Runs the proactive
-// agent with the message as the prompt and delivers the reply back via SMS.
-export async function triggerAgentFromSms(userId: string, userMessage: string): Promise<void> {
-  const kanban = createKanbanTools([]);
-  const availableTools: Record<string, any> = {
-    ...kanban.tools,
-    web_search,
-    deploy_headless_agent: deployHeadlessAgent,
-    search_tools,
-    get_tool_schema,
-    execute_tool,
-    get_skill_info,
-    search_past_conversations,
-    get_conversation_context,
-  };
-
-  const secretBag: Record<string, any> = { userId };
-
-  await runWithSecrets(secretBag, async () => {
-    const model = getModel('balanced', getDefaultModelForCategory('balanced' as any));
-
-    const agent = new Agent({
-      id: 'stuard-proactive',
-      name: 'stuard-proactive',
-      instructions: [{ role: 'system', content: PROACTIVE_SYSTEM_PROMPT }] as any,
-      model,
-      tools: availableTools,
-    });
-
-    try {
-      const response: any = await generateWithToolRecovery({
-        agent: agent as any,
-        baseMessages: [{ role: 'user', content: userMessage }],
-        maxSteps: 10,
-        maxRetries: 2,
-      });
-      const text = response?.text || '';
-      if (text) {
-        await deliverProactiveNotifications(text, ['sms']);
-      }
-    } catch (e: any) {
-      console.error('[telnyx] SMS-triggered agent failed:', e?.message || e);
-    }
-  });
-}

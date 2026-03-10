@@ -7,6 +7,7 @@ import { WebSocket } from 'ws';
 import { writeLog } from '../utils/logger';
 import { queueWebhookDelivery, updateWebhookEvent, getWebhookBySlug, logWebhookEvent } from './core';
 import type { Webhook, WebhookEvent } from './core';
+import { dispatchTriggerToDeployment, findDeploymentsForWorkflowTrigger } from '../services/deployment-trigger-dispatch';
 
 // Active client connections by user ID
 const activeConnections = new Map<string, Set<WebSocket>>();
@@ -88,6 +89,36 @@ export interface WebhookPayload {
   data: any;
 }
 
+async function deliverToVmDeployments(
+  userId: string,
+  workflowId: string | undefined,
+  triggerId: string | undefined,
+  data: any,
+  source: string
+): Promise<number> {
+  if (!workflowId) return 0;
+  const deployments = await findDeploymentsForWorkflowTrigger(userId, workflowId, triggerId);
+  if (deployments.length === 0) return 0;
+
+  let delivered = 0;
+  await Promise.all(deployments.map(async (deployment) => {
+    const result = await dispatchTriggerToDeployment(userId, deployment.id, triggerId, data, source);
+    if (result.ok) {
+      delivered++;
+      return;
+    }
+    writeLog('workflow_vm_trigger_delivery_failed', {
+      userId,
+      workflowId,
+      triggerId,
+      deploymentId: deployment.id,
+      error: result.error,
+      source,
+    });
+  }));
+  return delivered;
+}
+
 /**
  * Dispatch a webhook event to the user's desktop client
  */
@@ -122,6 +153,9 @@ export async function dispatchWebhook(
     };
   }
 
+  let desktopDelivered = false;
+  let queued = false;
+
   // Try to deliver immediately
   const ws = getActiveWs(userId);
   if (ws) {
@@ -135,23 +169,42 @@ export async function dispatchWebhook(
         delivered_at: new Date().toISOString(),
       });
 
-      return { delivered: true, queued: false };
+      desktopDelivered = true;
     } catch (e: any) {
       writeLog('webhook_delivery_failed', { userId, webhookId: webhook.id, error: e?.message });
     }
   }
 
-  // Queue for later delivery
-  writeLog('webhook_queued', { userId, webhookId: webhook.id, eventId });
+  if (!desktopDelivered) {
+    // Queue for later delivery
+    writeLog('webhook_queued', { userId, webhookId: webhook.id, eventId });
+    await queueWebhookDelivery(userId, webhook.id, eventId, payload);
+    await updateWebhookEvent(eventId, {
+      status: 'processing',
+      delivered_to: 'queued',
+    });
+    queued = true;
+  }
 
-  await queueWebhookDelivery(userId, webhook.id, eventId, payload);
+  const vmDelivered = await deliverToVmDeployments(
+    userId,
+    webhook.target_workflow_id,
+    webhook.target_workflow_trigger_id || undefined,
+    bodyPayloadForVm(data, payload),
+    'webhook.cloud'
+  );
 
-  await updateWebhookEvent(eventId, {
-    status: 'processing',
-    delivered_to: 'queued',
-  });
+  if (vmDelivered > 0) {
+    await updateWebhookEvent(eventId, {
+      status: 'delivered',
+      delivered_to: desktopDelivered
+        ? 'desktop+vm'
+        : (queued ? 'vm+queued' : 'vm'),
+      delivered_at: new Date().toISOString(),
+    });
+  }
 
-  return { delivered: false, queued: true };
+  return { delivered: desktopDelivered || vmDelivered > 0, queued };
 }
 
 /**
@@ -178,22 +231,44 @@ export async function dispatchProviderWebhook(
     data,
   };
 
+  let desktopDelivered = false;
+  let queued = false;
   const ws = getActiveWs(userId);
   if (ws) {
     try {
       ws.send(JSON.stringify(payload));
       writeLog('provider_webhook_delivered', { userId, provider, eventType, eventId });
-      return { delivered: true, queued: false };
+      desktopDelivered = true;
     } catch (e: any) {
       writeLog('provider_webhook_delivery_failed', { userId, provider, error: e?.message });
     }
   }
 
-  // Queue for later
-  await queueWebhookDelivery(userId, null, eventId, payload);
-  writeLog('provider_webhook_queued', { userId, provider, eventType, eventId });
+  if (!desktopDelivered) {
+    // Queue for later
+    await queueWebhookDelivery(userId, null, eventId, payload);
+    writeLog('provider_webhook_queued', { userId, provider, eventType, eventId });
+    queued = true;
+  }
 
-  return { delivered: false, queued: true };
+  const vmDelivered = await deliverToVmDeployments(
+    userId,
+    workflowId,
+    triggerId,
+    bodyPayloadForVm(data, payload),
+    `provider:${provider}:${eventType}`
+  );
+
+  return { delivered: desktopDelivered || vmDelivered > 0, queued };
+}
+
+function bodyPayloadForVm(data: any, payload: any): any {
+  return {
+    input: data,
+    webhook: data,
+    args: data,
+    trigger: payload?.event ? { event: payload.event, data } : { data },
+  };
 }
 
 /**

@@ -216,12 +216,21 @@ async function handleCommand(command: string, args: any): Promise<any> {
         envVars: args.envVars || {},
         autoRestart: args.autoRestart ?? true,
         schedule: args.schedule || null,
+        sourceWorkflowId: args.sourceWorkflowId || null,
+        triggerBindings: Array.isArray(args.triggerBindings) ? args.triggerBindings : [],
         inlineBundle: args.inlineBundle || undefined,
       });
     case 'deploy_stop':
       return { stopped: deployExecutor.stop(args.deployId) };
     case 'deploy_cleanup':
       return { cleaned: deployExecutor.cleanup(args.deployId) };
+    case 'deploy_trigger':
+      return await deployExecutor.trigger(
+        args.deployId,
+        typeof args.triggerId === 'string' ? args.triggerId : undefined,
+        args.payload,
+        String(args.source || 'external')
+      );
     case 'deploy_logs':
       return { logs: deployExecutor.getLogs(args.deployId, args.lines || 200) };
     case 'deploy_list':

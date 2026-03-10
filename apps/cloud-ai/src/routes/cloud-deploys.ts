@@ -127,6 +127,8 @@ export async function handleCloudDeploysRoutes(req: IncomingMessage, res: Server
         envVars: body.envVars,
         autoRestart: body.autoRestart,
         schedule: body.schedule,
+        workflowId: body.workflowId,
+        triggerBindings: body.triggerBindings,
       });
 
       json(res, 201, { ok: true, deployment });

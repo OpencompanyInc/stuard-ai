@@ -43,6 +43,45 @@ async function cloudFetch(path: string, opts?: RequestInit) {
   return resp.json();
 }
 
+function getCloudTriggerBindings(model: DesignerModel | null) {
+  if (!model) return [];
+  return (model.triggers || []).flatMap((trigger) => {
+    const type = String(trigger?.type || '').trim();
+    const triggerId = String(trigger?.id || '').trim();
+    if (!type || !triggerId) return [];
+
+    if (type === 'gmail.new_email' || type === 'drive.new_file') {
+      return [{
+        triggerId,
+        type,
+        args: trigger?.args && typeof trigger.args === 'object' ? trigger.args : {},
+      }];
+    }
+
+    if (type === 'webhook.cloud') {
+      return [{
+        triggerId,
+        type,
+        mode: 'cloud',
+        args: trigger?.args && typeof trigger.args === 'object' ? trigger.args : {},
+      }];
+    }
+
+    if (type === 'webhook') {
+      const mode = String(trigger?.args?.mode || 'cloud').trim().toLowerCase();
+      if (mode === 'local') return [];
+      return [{
+        triggerId,
+        type,
+        mode,
+        args: trigger?.args && typeof trigger.args === 'object' ? trigger.args : {},
+      }];
+    }
+
+    return [];
+  });
+}
+
 export function useWorkflowDeploy({ selectedId, model }: UseWorkflowDeployProps) {
   const [showDeployPanel, setShowDeployPanel] = useState(false);
   const [deployStatus, setDeployStatus] = useState<WorkflowDeployStatus | null>(null);
@@ -191,6 +230,8 @@ export function useWorkflowDeploy({ selectedId, model }: UseWorkflowDeployProps)
           envVars: {},
           autoRestart: true,
           schedule: model.triggers?.find((t) => t.type === 'schedule.cron')?.args?.cron || undefined,
+          workflowId: selectedId,
+          triggerBindings: getCloudTriggerBindings(model),
         }),
       });
 

@@ -1869,6 +1869,10 @@ export class VMWorkflowEngine extends EventEmitter {
       userId: string;
       /** Per-VM HMAC secret (VM_TOKEN_SECRET env var) */
       vmTokenSecret: string;
+      /** Optional trigger ID to execute a specific trigger path */
+      triggerId?: string;
+      /** Optional trigger payload injected into ctx.input/ctx.trigger */
+      triggerPayload?: any;
     }
   ): Promise<{ ok: boolean; result?: any; error?: string; logs: string[] }> {
     const logs: string[] = [];
@@ -1890,7 +1894,7 @@ export class VMWorkflowEngine extends EventEmitter {
     } else if (payload.nodes || payload.triggers || payload.wires) {
       // DesignerModel — convert
       logFn('Converting DesignerModel to StuardSpec...');
-      spec = designerModelToStuardSpec(payload);
+      spec = designerModelToStuardSpec(payload, opts.triggerId);
     } else {
       return { ok: false, error: 'invalid_workflow_format: expected nodes/wires or steps', logs };
     }
@@ -1905,7 +1909,7 @@ export class VMWorkflowEngine extends EventEmitter {
       return { ok: false, error: 'workflow_has_no_steps', logs };
     }
 
-    logFn(`Workflow "${spec.name}" — ${steps.length} steps, start: ${spec.start || 'auto'}`);
+    logFn(`Workflow "${spec.name}" — ${steps.length} steps, start: ${spec.start || 'auto'}${opts.triggerId ? `, trigger: ${opts.triggerId}` : ''}`);
 
     // Load variables for this deployment (per-deploy scoped)
     loadDeployVariables(deployId);
@@ -1970,15 +1974,17 @@ export class VMWorkflowEngine extends EventEmitter {
     };
 
     // ── Inject input/trigger context from payload ──
-    if (payload && typeof payload === 'object') {
-      if ('input' in payload || 'webhook' in payload || 'args' in payload) {
-        if (payload.input !== undefined) ctx.input = payload.input;
-        if (payload.webhook !== undefined) ctx.webhook = payload.webhook;
-        if (payload.args !== undefined) ctx.args = payload.args;
-      } else if (payload.nodes === undefined && payload.steps === undefined) {
+    const triggerPayload = opts.triggerPayload !== undefined ? opts.triggerPayload : payload;
+    if (triggerPayload && typeof triggerPayload === 'object') {
+      if ('input' in triggerPayload || 'webhook' in triggerPayload || 'args' in triggerPayload) {
+        if (triggerPayload.input !== undefined) ctx.input = triggerPayload.input;
+        if (triggerPayload.webhook !== undefined) ctx.webhook = triggerPayload.webhook;
+        if (triggerPayload.args !== undefined) ctx.args = triggerPayload.args;
+        if (triggerPayload.trigger !== undefined) ctx.trigger = triggerPayload.trigger;
+      } else if (triggerPayload.nodes === undefined && triggerPayload.steps === undefined) {
         // Raw payload data (not the workflow definition itself)
-        ctx.input = payload;
-        ctx.webhook = payload;
+        ctx.input = triggerPayload;
+        ctx.webhook = triggerPayload;
       }
     }
 

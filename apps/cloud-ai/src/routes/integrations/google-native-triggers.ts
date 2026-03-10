@@ -20,6 +20,7 @@ type GmailNativeRegistration = {
   userId: string;
   workflowId: string;
   triggerId: string;
+  sourceKeys: string[];
   profileLabel: string;
   accountEmail: string;
   labelIds: string[];
@@ -32,6 +33,7 @@ type DriveNativeRegistration = {
   userId: string;
   workflowId: string;
   triggerId: string;
+  sourceKeys: string[];
   profileLabel: string;
   accountEmail: string;
   channelId: string;
@@ -81,6 +83,27 @@ function normalizeStringArray(input: any): string[] {
 
 function nativeKey(userId: string, workflowId: string, triggerId: string): string {
   return `${userId}:${workflowId}:${triggerId}`;
+}
+
+function defaultTriggerSourceKey(workflowId: string, triggerId: string): string {
+  return `desktop:${workflowId}:${triggerId}`;
+}
+
+function normalizeTriggerSourceKey(sourceKey: string | undefined, workflowId: string, triggerId: string): string {
+  const normalized = String(sourceKey || '').trim();
+  return normalized || defaultTriggerSourceKey(workflowId, triggerId);
+}
+
+function addSourceKey(sourceKeys: string[] | undefined, sourceKey: string): string[] {
+  const next = new Set((sourceKeys || []).map((v) => String(v || '').trim()).filter(Boolean));
+  next.add(sourceKey);
+  return Array.from(next);
+}
+
+function removeSourceKey(sourceKeys: string[] | undefined, sourceKey: string): string[] {
+  return (sourceKeys || [])
+    .map((v) => String(v || '').trim())
+    .filter((v) => v && v !== sourceKey);
 }
 
 function hasScope(acc: any, scope: string): boolean {
@@ -142,8 +165,29 @@ async function registerGmailNativeTrigger(
   workflowId: string,
   triggerId: string,
   args: any,
+  sourceKey?: string,
 ) {
   const key = nativeKey(userId, workflowId, triggerId);
+  const normalizedSourceKey = normalizeTriggerSourceKey(sourceKey, workflowId, triggerId);
+  const existing = gmailRegs.get(key);
+  if (existing) {
+    existing.sourceKeys = addSourceKey(existing.sourceKeys, normalizedSourceKey);
+    gmailRegs.set(key, existing);
+    addGmailEmailIndex(existing.accountEmail, key);
+    return {
+      ok: true,
+      registration: {
+        type: 'gmail.new_email',
+        workflowId,
+        triggerId,
+        profile: existing.profileLabel,
+        email: existing.accountEmail,
+        labelIds: existing.labelIds,
+        expiration: existing.expirationMs || null,
+      },
+    };
+  }
+
   const profileLabel = normalizeProfileLabel(args?.profile);
   const { acc, accessToken } = await getGoogleTokenForProfile(userId, profileLabel);
   if (!hasScope(acc, 'https://www.googleapis.com/auth/gmail.readonly')) {
@@ -173,6 +217,7 @@ async function registerGmailNativeTrigger(
     userId,
     workflowId,
     triggerId,
+    sourceKeys: [normalizedSourceKey],
     profileLabel,
     accountEmail,
     labelIds: watchBody.labelIds,
@@ -180,8 +225,6 @@ async function registerGmailNativeTrigger(
     expirationMs: parseNumber(watch?.expiration),
   };
 
-  const prev = gmailRegs.get(key);
-  if (prev) removeGmailEmailIndex(prev.accountEmail, key);
   gmailRegs.set(key, reg);
   addGmailEmailIndex(accountEmail, key);
 
@@ -199,10 +242,17 @@ async function registerGmailNativeTrigger(
   };
 }
 
-async function unregisterGmailNativeTrigger(userId: string, workflowId: string, triggerId: string) {
+async function unregisterGmailNativeTrigger(userId: string, workflowId: string, triggerId: string, sourceKey?: string) {
   const key = nativeKey(userId, workflowId, triggerId);
   const existing = gmailRegs.get(key);
   if (!existing) return { ok: true, removed: false };
+  const normalizedSourceKey = normalizeTriggerSourceKey(sourceKey, workflowId, triggerId);
+  const remainingSources = removeSourceKey(existing.sourceKeys, normalizedSourceKey);
+  if (remainingSources.length > 0) {
+    existing.sourceKeys = remainingSources;
+    gmailRegs.set(key, existing);
+    return { ok: true, removed: false, detached: true };
+  }
 
   gmailRegs.delete(key);
   removeGmailEmailIndex(existing.accountEmail, key);
@@ -229,8 +279,31 @@ async function registerDriveNativeTrigger(
   workflowId: string,
   triggerId: string,
   args: any,
+  sourceKey?: string,
 ) {
   const key = nativeKey(userId, workflowId, triggerId);
+  const normalizedSourceKey = normalizeTriggerSourceKey(sourceKey, workflowId, triggerId);
+  const existing = driveRegs.get(key);
+  if (existing) {
+    existing.sourceKeys = addSourceKey(existing.sourceKeys, normalizedSourceKey);
+    driveRegs.set(key, existing);
+    driveRegKeyByChannelId.set(existing.channelId, key);
+    return {
+      ok: true,
+      registration: {
+        type: 'drive.new_file',
+        workflowId,
+        triggerId,
+        profile: existing.profileLabel,
+        email: existing.accountEmail,
+        channelId: existing.channelId,
+        expiration: existing.expirationMs || null,
+        onlyNew: existing.onlyNew,
+        includeFolders: existing.includeFolders,
+      },
+    };
+  }
+
   const profileLabel = normalizeProfileLabel(args?.profile);
   const { acc, accessToken } = await getGoogleTokenForProfile(userId, profileLabel);
   if (!hasScope(acc, 'https://www.googleapis.com/auth/drive.readonly')) {
@@ -273,6 +346,7 @@ async function registerDriveNativeTrigger(
     userId,
     workflowId,
     triggerId,
+    sourceKeys: [normalizedSourceKey],
     profileLabel,
     accountEmail,
     channelId,
@@ -286,21 +360,6 @@ async function registerDriveNativeTrigger(
   };
   if (!reg.resourceId) throw new Error('drive_watch_resource_id_missing');
 
-  const prev = driveRegs.get(key);
-  if (prev) {
-    driveRegKeyByChannelId.delete(prev.channelId);
-    try {
-      await googleFetchJson(accessToken, 'https://www.googleapis.com/drive/v3/channels/stop', {
-        method: 'POST',
-        body: JSON.stringify({
-          id: prev.channelId,
-          resourceId: prev.resourceId,
-        }),
-      });
-    } catch {
-      // Best effort cleanup for replaced registrations.
-    }
-  }
   driveRegs.set(key, reg);
   driveRegKeyByChannelId.set(reg.channelId, key);
 
@@ -320,10 +379,18 @@ async function registerDriveNativeTrigger(
   };
 }
 
-async function unregisterDriveNativeTrigger(userId: string, workflowId: string, triggerId: string) {
+async function unregisterDriveNativeTrigger(userId: string, workflowId: string, triggerId: string, sourceKey?: string) {
   const key = nativeKey(userId, workflowId, triggerId);
   const existing = driveRegs.get(key);
   if (!existing) return { ok: true, removed: false };
+  const normalizedSourceKey = normalizeTriggerSourceKey(sourceKey, workflowId, triggerId);
+  const remainingSources = removeSourceKey(existing.sourceKeys, normalizedSourceKey);
+  if (remainingSources.length > 0) {
+    existing.sourceKeys = remainingSources;
+    driveRegs.set(key, existing);
+    driveRegKeyByChannelId.set(existing.channelId, key);
+    return { ok: true, removed: false, detached: true };
+  }
 
   driveRegs.delete(key);
   driveRegKeyByChannelId.delete(existing.channelId);
@@ -341,6 +408,39 @@ async function unregisterDriveNativeTrigger(userId: string, workflowId: string, 
   }
 
   return { ok: true, removed: true };
+}
+
+export async function ensureNativeWorkflowTriggerRegistration(
+  userId: string,
+  workflowId: string,
+  triggerId: string,
+  type: NativeTriggerType,
+  args: any,
+  sourceKey?: string,
+) {
+  if (type === 'gmail.new_email') {
+    return registerGmailNativeTrigger(userId, workflowId, triggerId, args, sourceKey);
+  }
+  if (type === 'drive.new_file') {
+    return registerDriveNativeTrigger(userId, workflowId, triggerId, args, sourceKey);
+  }
+  throw new Error('unsupported_trigger_type');
+}
+
+export async function removeNativeWorkflowTriggerRegistration(
+  userId: string,
+  workflowId: string,
+  triggerId: string,
+  type: NativeTriggerType,
+  sourceKey?: string,
+) {
+  if (type === 'gmail.new_email') {
+    return unregisterGmailNativeTrigger(userId, workflowId, triggerId, sourceKey);
+  }
+  if (type === 'drive.new_file') {
+    return unregisterDriveNativeTrigger(userId, workflowId, triggerId, sourceKey);
+  }
+  throw new Error('unsupported_trigger_type');
 }
 
 async function fetchGmailMetadata(accessToken: string, messageId: string) {
@@ -615,18 +715,19 @@ export async function handleGoogleNativeTriggerRoutes(
     const workflowId = String(body?.workflowId || '').trim();
     const triggerId = String(body?.triggerId || '').trim();
     const args = body?.args || {};
+    const source = String(body?.source || '').trim() || undefined;
     if (!workflowId || !triggerId) {
       sendJson(res, 400, { ok: false, error: 'workflowId_and_triggerId_required' });
       return true;
     }
     try {
       if (type === 'gmail.new_email') {
-        const out = await registerGmailNativeTrigger(auth.userId, workflowId, triggerId, args);
+        const out = await registerGmailNativeTrigger(auth.userId, workflowId, triggerId, args, source);
         sendJson(res, 200, out);
         return true;
       }
       if (type === 'drive.new_file') {
-        const out = await registerDriveNativeTrigger(auth.userId, workflowId, triggerId, args);
+        const out = await registerDriveNativeTrigger(auth.userId, workflowId, triggerId, args, source);
         sendJson(res, 200, out);
         return true;
       }
@@ -663,18 +764,19 @@ export async function handleGoogleNativeTriggerRoutes(
     const type = String(body?.type || '').trim() as NativeTriggerType;
     const workflowId = String(body?.workflowId || '').trim();
     const triggerId = String(body?.triggerId || '').trim();
+    const source = String(body?.source || '').trim() || undefined;
     if (!workflowId || !triggerId) {
       sendJson(res, 400, { ok: false, error: 'workflowId_and_triggerId_required' });
       return true;
     }
     try {
       if (type === 'gmail.new_email') {
-        const out = await unregisterGmailNativeTrigger(auth.userId, workflowId, triggerId);
+        const out = await unregisterGmailNativeTrigger(auth.userId, workflowId, triggerId, source);
         sendJson(res, 200, out);
         return true;
       }
       if (type === 'drive.new_file') {
-        const out = await unregisterDriveNativeTrigger(auth.userId, workflowId, triggerId);
+        const out = await unregisterDriveNativeTrigger(auth.userId, workflowId, triggerId, source);
         sendJson(res, 200, out);
         return true;
       }

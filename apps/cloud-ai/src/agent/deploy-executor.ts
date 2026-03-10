@@ -26,8 +26,17 @@ export interface DeployConfig {
   envVars: Record<string, string>;
   autoRestart: boolean;
   schedule: string | null;
+  sourceWorkflowId?: string | null;
+  triggerBindings?: WorkflowTriggerBinding[];
   /** When provided, skip the GCS download and use this bundle directly. */
   inlineBundle?: any;
+}
+
+interface WorkflowTriggerBinding {
+  triggerId: string;
+  type: string;
+  mode?: string | null;
+  args?: Record<string, any>;
 }
 
 interface RunningDeploy {
@@ -42,6 +51,8 @@ interface RunningDeploy {
   logFile: string;
   dir: string;
   status: 'starting' | 'running' | 'stopped' | 'failed';
+  sourceWorkflowId?: string | null;
+  triggerBindings?: WorkflowTriggerBinding[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -223,6 +234,64 @@ export class DeployExecutor extends EventEmitter {
   }
 
   /**
+   * Execute a trigger-driven workflow deployment on demand.
+   */
+  async trigger(deployId: string, triggerId?: string, triggerPayload?: any, source = 'external'): Promise<{ triggered: boolean; error?: string }> {
+    const deploy = this.running.get(deployId);
+    if (!deploy || deploy.kind !== 'workflow') {
+      return { triggered: false, error: 'deploy_not_found' };
+    }
+    if (this.engine.isRunning(deployId)) {
+      return { triggered: false, error: 'deploy_busy' };
+    }
+
+    const workflowPath = path.join(deploy.dir, 'workflow.json');
+    if (!fs.existsSync(workflowPath)) {
+      return { triggered: false, error: 'workflow_definition_missing' };
+    }
+
+    let workflowPayload: any;
+    try {
+      workflowPayload = JSON.parse(fs.readFileSync(workflowPath, 'utf-8'));
+    } catch (e: any) {
+      return { triggered: false, error: `workflow_read_failed: ${String(e?.message || e)}` };
+    }
+
+    const cloudAiUrl = process.env.CLOUD_AI_URL
+      || process.env.CLOUD_PUBLIC_URL
+      || 'http://localhost:8082';
+    const agentWsUrl = process.env.AGENT_WS_URL
+      || process.env.AGENT_WS
+      || 'ws://127.0.0.1:8765/ws';
+    const userId = process.env.STUARD_USER_ID || '';
+    const vmTokenSecret = process.env.VM_TOKEN_SECRET || '';
+
+    this.appendLog(deploy.dir, `[trigger] Received ${source}${triggerId ? ` for ${triggerId}` : ''}`);
+
+    void this.engine.run(deployId, workflowPayload, deploy.dir, {
+      cloudAiUrl,
+      agentWsUrl,
+      userId,
+      vmTokenSecret,
+      triggerId,
+      triggerPayload,
+    }).then((result) => {
+      this.appendLog(
+        deploy.dir,
+        `[trigger] Completed${triggerId ? ` (${triggerId})` : ''}: ok=${result.ok}${result.error ? ` error=${result.error}` : ''}`
+      );
+      if (!result.ok) {
+        this.emit('status', deployId, 'running');
+      }
+    }).catch((e: any) => {
+      this.appendLog(deploy.dir, `[trigger] Failed${triggerId ? ` (${triggerId})` : ''}: ${String(e?.message || e)}`);
+      this.emit('status', deployId, 'running');
+    });
+
+    return { triggered: true };
+  }
+
+  /**
    * Cleanup deploy directory.
    */
   cleanup(deployId: string): boolean {
@@ -361,37 +430,9 @@ export class DeployExecutor extends EventEmitter {
     payload: any,
     logFile: string,
   ): Promise<{ pid: number | null; dir: string }> {
-    // Write workflow JSON + env file
-    fs.writeFileSync(path.join(deployDir, 'workflow.json'), JSON.stringify(payload, null, 2));
-    this.writeEnvFile(deployDir, config.envVars);
-
-    // Install Python deps if needed
-    if (payload.requirements) {
-      const reqPath = path.join(deployDir, 'requirements.txt');
-      fs.writeFileSync(reqPath, payload.requirements);
-      try {
-        execFileSync('pip3', ['install', '-r', reqPath, '--quiet'], { cwd: deployDir, timeout: 120_000, stdio: 'pipe' });
-      } catch (e: any) {
-        this.appendLog(deployDir, `[deploy] Warning: pip install failed: ${e.message}`);
-      }
-    }
-
-    // Write embedded scripts if any
-    if (payload.scripts && typeof payload.scripts === 'object') {
-      for (const [filename, content] of Object.entries(payload.scripts)) {
-        const scriptPath = path.join(deployDir, filename);
-        fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
-        fs.writeFileSync(scriptPath, String(content));
-        if (filename.endsWith('.sh') || filename.endsWith('.py')) {
-          fs.chmodSync(scriptPath, 0o755);
-        }
-      }
-    }
-
-    // Create workspace subdirs
-    for (const sub of ['data', 'scripts', 'assets']) {
-      fs.mkdirSync(path.join(deployDir, sub), { recursive: true });
-    }
+    await this.prepareWorkflowRuntime(deployDir, payload, config.envVars);
+    const triggerBindings = this.normalizeTriggerBindings(config.triggerBindings);
+    const usesTriggerRuntime = this.hasTriggerRuntimeBindings(triggerBindings);
 
     // Track as running deploy (pid = null since engine is in-process)
     const deploy: RunningDeploy = {
@@ -406,6 +447,8 @@ export class DeployExecutor extends EventEmitter {
       logFile,
       dir: deployDir,
       status: 'running',
+      sourceWorkflowId: config.sourceWorkflowId || null,
+      triggerBindings,
     };
     this.running.set(config.deployId, deploy);
 
@@ -426,6 +469,14 @@ export class DeployExecutor extends EventEmitter {
 
     if (!userId || !vmTokenSecret) {
       this.appendLog(deployDir, `[engine] WARNING: Missing STUARD_USER_ID or VM_TOKEN_SECRET — cloud/desktop tools will fail auth`);
+    }
+
+    if (usesTriggerRuntime) {
+      this.appendLog(
+        deployDir,
+        `[engine] Armed trigger runtime for "${config.name}" (${triggerBindings.map((b) => `${b.type}:${b.triggerId}`).join(', ')})`
+      );
+      return { pid: null, dir: deployDir };
     }
 
     this.appendLog(deployDir, `[engine] Starting workflow "${config.name}" with real engine`);
@@ -483,7 +534,11 @@ export class DeployExecutor extends EventEmitter {
     const payload = bundle?.payload;
 
     if (config.kind === 'workflow') {
-      return this.startWorkflowEngine(config, deployDir, payload, logFile);
+      return this.startWorkflowEngine({
+        ...config,
+        sourceWorkflowId: String(bundle?.sourceWorkflowId || config.sourceWorkflowId || '').trim() || undefined,
+        triggerBindings: this.normalizeTriggerBindings(bundle?.triggerBindings || config.triggerBindings),
+      }, deployDir, payload, logFile);
     }
 
     let entrypoint: string;
@@ -554,6 +609,36 @@ ${cmd}
 `, { mode: 0o755 });
 
     return runnerPath;
+  }
+
+  private async prepareWorkflowRuntime(dir: string, payload: any, envVars: Record<string, string>): Promise<void> {
+    fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify(payload, null, 2));
+    this.writeEnvFile(dir, envVars);
+
+    if (payload?.requirements) {
+      const reqPath = path.join(dir, 'requirements.txt');
+      fs.writeFileSync(reqPath, payload.requirements);
+      try {
+        execFileSync('pip3', ['install', '-r', reqPath, '--quiet'], { cwd: dir, timeout: 120_000, stdio: 'pipe' });
+      } catch (e: any) {
+        this.appendLog(dir, `[deploy] Warning: pip install failed: ${e.message}`);
+      }
+    }
+
+    if (payload?.scripts && typeof payload.scripts === 'object') {
+      for (const [filename, content] of Object.entries(payload.scripts)) {
+        const scriptPath = path.join(dir, filename);
+        fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
+        fs.writeFileSync(scriptPath, String(content));
+        if (filename.endsWith('.sh') || filename.endsWith('.py')) {
+          fs.chmodSync(scriptPath, 0o755);
+        }
+      }
+    }
+
+    for (const sub of ['data', 'scripts', 'assets']) {
+      fs.mkdirSync(path.join(dir, sub), { recursive: true });
+    }
   }
 
   private async prepareProject(dir: string, payload: any, envVars: Record<string, string>): Promise<string> {
@@ -794,5 +879,39 @@ ${startCmd}
     for (const [id] of this.running) {
       this.stop(id);
     }
+  }
+
+  private normalizeTriggerBindings(input: any): WorkflowTriggerBinding[] {
+    if (!Array.isArray(input)) return [];
+    const seen = new Set<string>();
+    const out: WorkflowTriggerBinding[] = [];
+    for (const raw of input) {
+      const triggerId = String(raw?.triggerId || '').trim();
+      const type = String(raw?.type || '').trim();
+      const mode = raw?.mode == null ? '' : String(raw.mode).trim();
+      if (!triggerId || !type) continue;
+      const key = `${triggerId}:${type}:${mode}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        triggerId,
+        type,
+        mode: mode || undefined,
+        args: raw?.args && typeof raw.args === 'object' ? raw.args : undefined,
+      });
+    }
+    return out;
+  }
+
+  private hasTriggerRuntimeBindings(bindings: WorkflowTriggerBinding[]): boolean {
+    return bindings.some((binding) => {
+      if (binding.type === 'gmail.new_email' || binding.type === 'drive.new_file') return true;
+      if (binding.type === 'webhook.local') return false;
+      if (binding.type === 'webhook.cloud') return true;
+      if (binding.type === 'webhook') {
+        return String(binding.mode || 'cloud').trim().toLowerCase() !== 'local';
+      }
+      return false;
+    });
   }
 }

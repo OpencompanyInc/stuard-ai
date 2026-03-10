@@ -315,11 +315,18 @@ function getCloudAiHttpBase(): string {
   ).trim().replace(/\/+$/, '');
 }
 
+const WEBHOOK_CONSUMERS_METADATA_KEY = 'stuardConsumers';
+
+function getDesktopTriggerSourceId(flowId: string, triggerId?: string): string {
+  return `desktop:${flowId}:${triggerId || 'default'}`;
+}
+
 /**
  * Ensure a cloud webhook entry exists for a workflow so the incoming URL works.
  * Uses the flowId as the slug. Silently succeeds if already created.
  */
 async function ensureCloudWebhook(flowId: string, flowName: string, triggerId?: string) {
+  const consumerId = getDesktopTriggerSourceId(flowId, triggerId);
   try {
     const token = await getRendererAccessToken();
     if (!token) return;
@@ -332,8 +339,16 @@ async function ensureCloudWebhook(flowId: string, flowName: string, triggerId?: 
       const listBody = await listRes.json() as any;
       const existing = (listBody?.webhooks || []).find((w: any) => w.slug === flowId);
       if (existing) {
-        // Already exists, just make sure it's active and pointing to this workflow
-        if (!existing.is_active || existing.target_workflow_id !== flowId) {
+        const rawConsumers = Array.isArray(existing?.metadata?.[WEBHOOK_CONSUMERS_METADATA_KEY])
+          ? existing.metadata[WEBHOOK_CONSUMERS_METADATA_KEY]
+          : [];
+        const consumers = Array.from(new Set(rawConsumers.map((v: any) => String(v || '').trim()).filter(Boolean).concat(consumerId)));
+        if (
+          !existing.is_active ||
+          existing.target_workflow_id !== flowId ||
+          existing.target_workflow_trigger_id !== (triggerId || null) ||
+          consumers.length !== rawConsumers.length
+        ) {
           await net.fetch(`${base}/v1/webhooks/${existing.id}`, {
             method: 'PUT',
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -341,6 +356,10 @@ async function ensureCloudWebhook(flowId: string, flowName: string, triggerId?: 
               is_active: true,
               target_workflow_id: flowId,
               target_workflow_trigger_id: triggerId || null,
+              metadata: {
+                ...(existing.metadata && typeof existing.metadata === 'object' ? existing.metadata : {}),
+                [WEBHOOK_CONSUMERS_METADATA_KEY]: consumers,
+              },
             }),
           }).catch(() => {});
         }
@@ -357,11 +376,55 @@ async function ensureCloudWebhook(flowId: string, flowName: string, triggerId?: 
         type: 'workflow',
         workflowId: flowId,
         triggerId: triggerId || undefined,
+        metadata: {
+          [WEBHOOK_CONSUMERS_METADATA_KEY]: [consumerId],
+        },
       }),
     });
     console.log(`[Workflows] Cloud webhook registered for ${flowId}`);
   } catch (e: any) {
     console.warn(`[Workflows] Failed to register cloud webhook for ${flowId}:`, e?.message);
+  }
+}
+
+async function removeCloudWebhook(flowId: string, triggerId?: string) {
+  const consumerId = getDesktopTriggerSourceId(flowId, triggerId);
+  try {
+    const token = await getRendererAccessToken();
+    if (!token) return;
+    const base = getCloudAiHttpBase();
+    const listRes = await net.fetch(`${base}/v1/webhooks`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!listRes.ok) return;
+    const listBody = await listRes.json() as any;
+    const existing = (listBody?.webhooks || []).find((w: any) => w.slug === flowId);
+    if (!existing?.id) return;
+
+    const rawConsumers = Array.isArray(existing?.metadata?.[WEBHOOK_CONSUMERS_METADATA_KEY])
+      ? existing.metadata[WEBHOOK_CONSUMERS_METADATA_KEY]
+      : [];
+    const consumers = rawConsumers
+      .map((v: any) => String(v || '').trim())
+      .filter((v: string) => v && v !== consumerId);
+
+    if (consumers.length === 0) {
+      await net.fetch(`${base}/v1/webhooks/${existing.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+      return;
+    }
+
+    const nextMetadata = { ...(existing.metadata && typeof existing.metadata === 'object' ? existing.metadata : {}) } as Record<string, any>;
+    nextMetadata[WEBHOOK_CONSUMERS_METADATA_KEY] = consumers;
+    await net.fetch(`${base}/v1/webhooks/${existing.id}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ metadata: nextMetadata }),
+    }).catch(() => {});
+  } catch (e: any) {
+    console.warn(`[Workflows] Failed to remove cloud webhook for ${flowId}:`, e?.message);
   }
 }
 
@@ -395,7 +458,13 @@ async function registerGoogleNativeTrigger(
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ workflowId: flowId, triggerId, type, args: args || {} }),
+        body: JSON.stringify({
+          workflowId: flowId,
+          triggerId,
+          type,
+          args: args || {},
+          source: getDesktopTriggerSourceId(flowId, triggerId),
+        }),
       });
       const out: any = await resp.json().catch(() => ({}));
       if (!resp.ok || !out?.ok) {
@@ -432,7 +501,12 @@ async function unregisterGoogleNativeTrigger(
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ workflowId: flowId, triggerId, type }),
+      body: JSON.stringify({
+        workflowId: flowId,
+        triggerId,
+        type,
+        source: getDesktopTriggerSourceId(flowId, triggerId),
+      }),
     });
     const out: any = await resp.json().catch(() => ({}));
     if (!resp.ok || !out?.ok) {
@@ -452,6 +526,7 @@ export type FlowRuntime = {
   intervals: any[];
   procs: Array<ChildProcess | null>;
   googleNativeTriggers: Array<{ type: 'gmail.new_email' | 'drive.new_file'; triggerId: string }>;
+  cloudWebhookTriggerId?: string;
   lastOutlookCalendarStamp?: string;
 };
 
@@ -1068,6 +1143,7 @@ export function startFlowRuntime(id: string) {
         webhookEnabledFlows.set(safe, triggerId);
       } else {
         cloudWebhookEnabledFlows.set(safe, triggerId);
+        rt.cloudWebhookTriggerId = triggerId;
         // Auto-register cloud webhook endpoint so the URL works
         ensureCloudWebhook(safe, model?.name || safe, triggerId).catch(() => {});
       }
@@ -1299,6 +1375,11 @@ export function stopFlowRuntime(id: string) {
     for (const g of rt.googleNativeTriggers || []) {
       if (!g?.triggerId) continue;
       void unregisterGoogleNativeTrigger(safe, g.triggerId, g.type);
+    }
+  } catch { }
+  try {
+    if (rt.cloudWebhookTriggerId) {
+      void removeCloudWebhook(safe, rt.cloudWebhookTriggerId);
     }
   } catch { }
   try { for (const p of rt.procs) { try { if (p && !p.killed) { if (process.platform === 'win32') { try { process.kill((p as any).pid); } catch { } } else { try { p.kill('SIGTERM'); } catch { } } } } catch { } } } catch { }

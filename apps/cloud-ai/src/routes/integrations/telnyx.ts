@@ -136,6 +136,10 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         },
       });
       sendJson(res, 200, { ok: true, phone: pending.phone, verified: true });
+      // Fire-and-forget welcome SMS
+      import('../sms-chat').then(({ sendWelcomeSms }) =>
+        sendWelcomeSms(pending.phone).catch(() => {})
+      );
     } catch (e: any) {
       sendJson(res, 500, { ok: false, error: String(e?.message || e) });
     }
@@ -355,10 +359,10 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
           // Find which user owns this number (primary or secondary)
           const userId = await findUserIdByPhone(fromPhone);
           if (userId) {
-            // Fire-and-forget: trigger the proactive agent which will reply via SMS
-            const { triggerAgentFromSms } = await import('../proactive');
-            triggerAgentFromSms(userId, inboundText).catch((e: any) =>
-              console.error('[telnyx] SMS agent trigger failed:', e?.message || e)
+            // Fire-and-forget: run the SMS chat agent (conversation-aware, markdown stripped)
+            const { handleInboundSms } = await import('../sms-chat');
+            handleInboundSms(userId, inboundText).catch((e: any) =>
+              console.error('[telnyx] SMS handler failed:', e?.message || e)
             );
           }
         }
