@@ -363,6 +363,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
       const stateMode = body?.mode;
       const preferredModel = body?.preferredModel;
       const conversationId = typeof body?.conversationId === 'string' ? body.conversationId.trim() || null : undefined;
+      const resumeConversationId = typeof body?.resumeConversationId === 'string' ? body.resumeConversationId.trim() || null : undefined;
       if (!queueItemId || !replyText) {
         sendJson(res, 400, { ok: false, error: 'queueItemId and replyText are required.' });
         return true;
@@ -390,6 +391,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         mode: stateMode,
         preferredModel,
         conversationId,
+        resumeConversationId,
         lastReplyToPhone: targetPhone,
       }).catch(() => false);
       sendJson(res, 200, { ok: true });

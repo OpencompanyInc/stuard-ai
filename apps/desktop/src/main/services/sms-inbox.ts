@@ -27,6 +27,7 @@ type SmsUserState = {
   mode: SmsMode;
   preferred_model: SmsPreferredModel;
   conversation_id: string | null;
+  resume_conversation_id: string | null;
   last_reply_to_phone: string | null;
 };
 
@@ -39,10 +40,11 @@ const MODEL_LABELS: Record<SmsPreferredModel, string> = {
 
 const HELP_TEXT =
   'Stuard SMS commands:\n' +
-  '/agent - direct chat mode\n' +
-  '/new - clear conversation\n' +
-  '/model [fast|balanced|smart] - view or switch model\n' +
-  '/session - show status\n' +
+  '/agent - switch to direct chat mode\n' +
+  '/new - start a fresh thread\n' +
+  '/resume - continue your last thread\n' +
+  '/model [fast|balanced|smart|research] - view or switch model\n' +
+  '/session - show current SMS state\n' +
   '/help - this list\n' +
   'Or just text me anything.';
 
@@ -58,6 +60,7 @@ function defaultSmsState(): SmsUserState {
     mode: 'agent',
     preferred_model: 'balanced',
     conversation_id: null,
+    resume_conversation_id: null,
     last_reply_to_phone: null,
   };
 }
@@ -112,7 +115,7 @@ async function loadSmsUserState(userId: string): Promise<SmsUserState> {
   try {
     const { data, error } = await client
       .from('sms_user_state')
-      .select('mode, preferred_model, conversation_id, last_reply_to_phone')
+      .select('mode, preferred_model, conversation_id, resume_conversation_id, last_reply_to_phone')
       .eq('user_id', userId)
       .maybeSingle();
     if (error || !data) return defaultSmsState();
@@ -120,6 +123,7 @@ async function loadSmsUserState(userId: string): Promise<SmsUserState> {
       mode: normalizeMode((data as any).mode),
       preferred_model: normalizeModel((data as any).preferred_model),
       conversation_id: (data as any).conversation_id ? String((data as any).conversation_id) : null,
+      resume_conversation_id: (data as any).resume_conversation_id ? String((data as any).resume_conversation_id) : null,
       last_reply_to_phone: (data as any).last_reply_to_phone ? String((data as any).last_reply_to_phone) : null,
     };
   } catch {
@@ -150,6 +154,7 @@ async function submitSmsReply(input: {
   mode: SmsMode;
   preferredModel: SmsPreferredModel;
   conversationId: string | null;
+  resumeConversationId: string | null;
 }): Promise<void> {
   const session = getMainAuthSession();
   const token = session?.access_token;
@@ -167,6 +172,7 @@ async function submitSmsReply(input: {
       mode: input.mode,
       preferredModel: input.preferredModel,
       conversationId: input.conversationId,
+      resumeConversationId: input.resumeConversationId,
     }),
   });
   const data = await resp.json().catch(() => ({} as any));
@@ -230,6 +236,7 @@ function handleSmsCommand(
   switch (token) {
     case '/help':
     case '/commands':
+    case '/menu':
     case '?':
       return { handled: true, replyText: HELP_TEXT, nextState: state };
 
@@ -237,8 +244,15 @@ function handleSmsCommand(
     case '/chat':
       return {
         handled: true,
-        replyText: 'Switched to direct chat. What can I help you with?',
-        nextState: { ...state, mode: 'agent', conversation_id: null },
+        replyText: state.conversation_id || state.resume_conversation_id
+          ? 'Switched to direct chat. Your next message starts a fresh agent thread. Send /resume to jump back to the last one.'
+          : 'Switched to direct chat. Your next message starts a fresh agent thread.',
+        nextState: {
+          ...state,
+          mode: 'agent',
+          resume_conversation_id: state.conversation_id || state.resume_conversation_id,
+          conversation_id: null,
+        },
       };
 
     case '/new':
@@ -246,24 +260,55 @@ function handleSmsCommand(
     case '/clear':
       return {
         handled: true,
-        replyText: 'Conversation cleared. What can I help you with?',
-        nextState: { ...state, mode: 'agent', conversation_id: null },
+        replyText: state.conversation_id || state.resume_conversation_id
+          ? 'Started a fresh thread. Send /resume if you want to jump back to your last conversation.'
+          : 'Started a fresh thread. What can I help you with?',
+        nextState: {
+          ...state,
+          mode: 'agent',
+          resume_conversation_id: state.conversation_id || state.resume_conversation_id,
+          conversation_id: null,
+        },
       };
+
+    case '/resume': {
+      const resumeId = state.conversation_id || state.resume_conversation_id;
+      if (!resumeId) {
+        return {
+          handled: true,
+          replyText: 'There is no previous SMS thread to resume yet. Send a message to start one.',
+          nextState: state,
+        };
+      }
+      const alreadyActive = !!state.conversation_id && state.conversation_id === resumeId;
+      return {
+        handled: true,
+        replyText: alreadyActive
+          ? 'You are already in your current SMS thread. Keep going.'
+          : 'Resumed your last SMS thread. Keep going.',
+        nextState: {
+          ...state,
+          mode: 'agent',
+          conversation_id: resumeId,
+          resume_conversation_id: resumeId,
+        },
+      };
+    }
 
     case '/model': {
       const choice = normalizeModel(rest);
       if (!rest) {
         return {
           handled: true,
-          replyText: `Current model: ${MODEL_LABELS[state.preferred_model]}\nOptions: /model fast | /model balanced | /model smart`,
+          replyText: `Current model: ${MODEL_LABELS[state.preferred_model]}\nOptions: /model fast | /model balanced | /model smart | /model research`,
           nextState: state,
         };
       }
       const raw = String(rest || '').trim().toLowerCase();
-      if (!['fast', 'balanced', 'smart'].includes(raw)) {
+      if (!['fast', 'balanced', 'smart', 'research'].includes(raw)) {
         return {
           handled: true,
-          replyText: 'Unknown model. Use: /model fast, /model balanced, or /model smart',
+          replyText: 'Unknown model. Use: /model fast, /model balanced, /model smart, or /model research',
           nextState: state,
         };
       }
@@ -278,7 +323,7 @@ function handleSmsCommand(
     case '/status':
       return {
         handled: true,
-        replyText: `Mode: ${state.mode === 'proactive' ? 'proactive reply' : 'direct chat'} | Model: ${MODEL_LABELS[state.preferred_model]} | ${state.conversation_id ? 'thread linked' : 'new thread next reply'}`,
+        replyText: `Mode: ${state.mode === 'proactive' ? 'proactive reply' : 'direct chat'} | Model: ${MODEL_LABELS[state.preferred_model]} | ${state.conversation_id ? 'active thread linked' : 'next reply starts fresh'}${state.resume_conversation_id ? ' | /resume available' : ''}`,
         nextState: state,
       };
 
@@ -404,6 +449,7 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
     mode: normalizeMode(item.mode ?? state.mode),
     preferred_model: normalizeModel(item.preferred_model ?? state.preferred_model),
     conversation_id: state.conversation_id || item.conversation_id || null,
+    resume_conversation_id: state.resume_conversation_id || state.conversation_id || item.conversation_id || null,
     last_reply_to_phone: state.last_reply_to_phone || item.reply_to_phone || null,
   };
 
@@ -421,6 +467,7 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
       mode: commandResult.nextState.mode,
       preferredModel: commandResult.nextState.preferred_model,
       conversationId: commandResult.nextState.conversation_id,
+      resumeConversationId: commandResult.nextState.resume_conversation_id,
     });
     await completeSmsItem(item.id);
     return;
@@ -442,6 +489,7 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
     mode: effectiveState.mode,
     preferredModel: effectiveState.preferred_model,
     conversationId: turn.conversationId,
+    resumeConversationId: turn.conversationId || effectiveState.resume_conversation_id,
   });
   await completeSmsItem(item.id);
 }

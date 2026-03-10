@@ -5,9 +5,9 @@ import { openai } from '@ai-sdk/openai';
 import { anthropic } from '@ai-sdk/anthropic';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 
-// Single configured Google provider — reads GOOGLE_API_KEY (or legacy fallbacks)
+// Single configured Google provider — reads GOOGLE_API_KEY (works for both Gemini and Cloud Vision)
 export const google = createGoogleGenerativeAI({
-  apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '',
+  apiKey: process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || '',
 });
 
 /**

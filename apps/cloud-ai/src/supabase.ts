@@ -853,6 +853,7 @@ export interface SmsUserState {
   mode: SmsMode;
   preferred_model: SmsPreferredModel;
   conversation_id: string | null;
+  resume_conversation_id: string | null;
   last_reply_to_phone: string | null;
   created_at?: string | null;
   updated_at?: string | null;
@@ -890,6 +891,7 @@ const DEFAULT_SMS_STATE: SmsUserState = {
   mode: 'agent',
   preferred_model: 'balanced',
   conversation_id: null,
+  resume_conversation_id: null,
   last_reply_to_phone: null,
 };
 
@@ -940,20 +942,33 @@ export async function getSmsUserState(userId: string): Promise<SmsUserState> {
   try {
     const { data, error } = await supabaseService
       .from('sms_user_state')
-      .select('user_id, mode, preferred_model, conversation_id, last_reply_to_phone, created_at, updated_at')
+      .select('user_id, mode, preferred_model, conversation_id, resume_conversation_id, last_reply_to_phone, created_at, updated_at')
       .eq('user_id', userId)
       .maybeSingle();
-    if (error || !data) return { ...DEFAULT_SMS_STATE, user_id: userId };
+    if (error || !data) {
+      if (error) {
+        console.error('[sms-queue] getSmsUserState failed:', {
+          userId,
+          code: (error as any)?.code,
+          message: (error as any)?.message,
+          details: (error as any)?.details,
+          hint: (error as any)?.hint,
+        });
+      }
+      return { ...DEFAULT_SMS_STATE, user_id: userId };
+    }
     return {
       user_id: String((data as any).user_id || userId),
       mode: normalizeSmsMode((data as any).mode),
       preferred_model: normalizeSmsPreferredModel((data as any).preferred_model),
       conversation_id: ((data as any).conversation_id ? String((data as any).conversation_id) : null),
+      resume_conversation_id: ((data as any).resume_conversation_id ? String((data as any).resume_conversation_id) : null),
       last_reply_to_phone: ((data as any).last_reply_to_phone ? String((data as any).last_reply_to_phone) : null),
       created_at: (data as any).created_at || null,
       updated_at: (data as any).updated_at || null,
     };
-  } catch {
+  } catch (error: any) {
+    console.error('[sms-queue] getSmsUserState exception:', error?.message || error, { userId });
     return { ...DEFAULT_SMS_STATE, user_id: userId };
   }
 }
@@ -963,6 +978,7 @@ export async function upsertSmsUserState(input: {
   mode?: SmsMode;
   preferredModel?: SmsPreferredModel;
   conversationId?: string | null;
+  resumeConversationId?: string | null;
   lastReplyToPhone?: string | null;
 }): Promise<boolean> {
   if (!supabaseService) return false;
@@ -973,14 +989,25 @@ export async function upsertSmsUserState(input: {
       mode: normalizeSmsMode(input.mode ?? existing.mode),
       preferred_model: normalizeSmsPreferredModel(input.preferredModel ?? existing.preferred_model),
       conversation_id: input.conversationId !== undefined ? input.conversationId : existing.conversation_id,
+      resume_conversation_id: input.resumeConversationId !== undefined ? input.resumeConversationId : existing.resume_conversation_id,
       last_reply_to_phone: input.lastReplyToPhone !== undefined ? input.lastReplyToPhone : existing.last_reply_to_phone,
       updated_at: new Date().toISOString(),
     };
     const { error } = await supabaseService
       .from('sms_user_state')
       .upsert(payload, { onConflict: 'user_id' });
+    if (error) {
+      console.error('[sms-queue] upsertSmsUserState failed:', {
+        userId: input.userId,
+        code: (error as any)?.code,
+        message: (error as any)?.message,
+        details: (error as any)?.details,
+        hint: (error as any)?.hint,
+      });
+    }
     return !error;
-  } catch {
+  } catch (error: any) {
+    console.error('[sms-queue] upsertSmsUserState exception:', error?.message || error, { userId: input.userId });
     return false;
   }
 }
@@ -1030,10 +1057,47 @@ export async function enqueueSmsInboxItem(input: {
           .maybeSingle();
         return (existing as SmsQueueItem) || null;
       }
-      return null;
+      console.error('[sms-queue] enqueueSmsInboxItem primary insert failed:', {
+        userId: input.userId,
+        code: (error as any)?.code,
+        message: (error as any)?.message,
+        details: (error as any)?.details,
+        hint: (error as any)?.hint,
+        providerMessageId: input.providerMessageId || null,
+      });
+
+      const fallbackRow = {
+        user_id: row.user_id,
+        provider: row.provider,
+        provider_message_id: row.provider_message_id,
+        from_phone: row.from_phone,
+        reply_to_phone: row.reply_to_phone,
+        message_text: row.message_text,
+      };
+      const { data: fallbackData, error: fallbackError } = await supabaseService
+        .from('sms_inbox_queue')
+        .insert([fallbackRow])
+        .select('*')
+        .single();
+      if (fallbackError || !fallbackData) {
+        console.error('[sms-queue] enqueueSmsInboxItem fallback insert failed:', {
+          userId: input.userId,
+          code: (fallbackError as any)?.code,
+          message: (fallbackError as any)?.message,
+          details: (fallbackError as any)?.details,
+          hint: (fallbackError as any)?.hint,
+          providerMessageId: input.providerMessageId || null,
+        });
+        return null;
+      }
+      return fallbackData as SmsQueueItem;
     }
     return data as SmsQueueItem;
-  } catch {
+  } catch (error: any) {
+    console.error('[sms-queue] enqueueSmsInboxItem exception:', error?.message || error, {
+      userId: input.userId,
+      providerMessageId: input.providerMessageId || null,
+    });
     return null;
   }
 }
@@ -1094,7 +1158,7 @@ export async function getSyncPreferences(userId: string): Promise<SyncPreference
     const { data, error } = await supabaseService
       .from('profiles')
       .select('sync_accounts, sync_conversations, sync_memories, sync_integrations, timezone')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
     if (error || !data) return defaultSyncPrefs;
     return {
@@ -1121,7 +1185,7 @@ export async function updateSyncPreferences(userId: string, prefs: Partial<SyncP
     const { error } = await supabaseService
       .from('profiles')
       .update(updates)
-      .eq('user_id', userId);
+      .eq('id', userId);
     return !error;
   } catch {
     return false;
@@ -1145,7 +1209,7 @@ export async function getProfile(userId: string): Promise<{
     const { data, error } = await supabaseService
       .from('profiles')
       .select('plan, monthly_token_limit, billing_customer_id, billing_subscription_id, billing_product_id, billing_subscription_status, current_period_start, current_period_end')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
     if (error || !data) return null;
     return {
