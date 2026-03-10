@@ -11,6 +11,7 @@ const __agentWs = process.env.AGENT_WS || process.env.AGENT_WS_URL || "";
 try { contextBridge.exposeInMainWorld('__AGENT_WS__', __agentWs); } catch { }
 
 contextBridge.exposeInMainWorld("desktopAPI", {
+  syncAuthSession: (session: any | null) => ipcRenderer.invoke('auth:syncSession', session),
   show: () => ipcRenderer.invoke("overlay:show"),
   hide: () => ipcRenderer.invoke("overlay:hide"),
   toggle: () => ipcRenderer.invoke("overlay:toggle"),

@@ -26,7 +26,11 @@ export const buildProviderModel = (id: string): any | null => {
     if (provider === 'xai') return xai(mid);
     if (provider === 'google') return google(mid);
     if (provider === 'deepseek') return deepseek(mid);
-    if (provider === 'openai' || provider === 'penai') return openai(mid);
+    if (provider === 'openai' || provider === 'penai') {
+      // o-series and gpt-5 models: use Responses API to expose reasoning summaries
+      const isReasoningModel = /^(o[1-9]|gpt-5(?:$|[-.]))/.test(mid);
+      return isReasoningModel ? openai.responses(mid) : openai(mid);
+    }
     if (provider === 'anthropic') return anthropic(mid);
     if (provider === 'openrouter') {
       const apiKey = process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY;

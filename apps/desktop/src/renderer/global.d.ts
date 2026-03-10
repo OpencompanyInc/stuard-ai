@@ -3,6 +3,7 @@ export { };
 declare global {
   interface Window {
     desktopAPI: {
+      syncAuthSession: (session: any | null) => Promise<{ ok: boolean; error?: string }>;
       show: () => Promise<void>;
       hide: () => Promise<void>;
       toggle: () => Promise<void>;

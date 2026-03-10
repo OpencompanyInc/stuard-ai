@@ -2,6 +2,7 @@ import WebSocket from 'ws';
 import { net } from 'electron';
 import { handleCloudWebhookEvent } from '../workflows';
 import logger from '../utils/logger';
+import { getMainAccessToken } from './auth-session';
 
 let ws: WebSocket | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
@@ -18,6 +19,8 @@ function getCloudAiHttpBase(): string {
 }
 
 async function getAuthToken(): Promise<string | null> {
+    const synced = getMainAccessToken();
+    if (synced) return synced;
     try {
         const { BrowserWindow } = require('electron');
         for (const win of BrowserWindow.getAllWindows()) {

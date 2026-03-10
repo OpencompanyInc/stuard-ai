@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import { initEnv } from "./env";
 import { createWindow, registerGlobalShortcuts, createTray, showWindow, openNotificationWindow } from "./windows/index";
 import { setupIpc } from "./ipc/index";
-import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, startBrowserExtensionServer, refreshAppCache, startReminderScheduler, stopReminderScheduler, startProactiveScheduler, stopProactiveScheduler, startCloudWebhooks, stopCloudWebhooks } from "./services/index";
+import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, startBrowserExtensionServer, refreshAppCache, startReminderScheduler, stopReminderScheduler, startProactiveScheduler, stopProactiveScheduler, startCloudWebhooks, stopCloudWebhooks, startSmsInbox, stopSmsInbox } from "./services/index";
 import { startLocalWebhookServer, workflows_autostart } from "./workflows/index";
 import { stuards_autostart } from "./stuards";
 import { initCustomUiIpc } from "./tools/index";
@@ -357,6 +357,13 @@ app.whenReady().then(async () => {
     logger.error("Failed to start cloud webhooks listener:", e);
   }
 
+  try {
+    startSmsInbox();
+    logger.info("SMS inbox listener started");
+  } catch (e) {
+    logger.error("Failed to start SMS inbox listener:", e);
+  }
+
   // Run file indexing in the background after a short delay
   // This allows the agent to fully initialize first
   setTimeout(async () => {
@@ -388,6 +395,7 @@ app.on("will-quit", () => {
   stopReminderScheduler();
   stopProactiveScheduler();
   stopCloudWebhooks();
+  stopSmsInbox();
   // Flush any debounced variable saves before exit
   try { require('./workflow-variables').saveVariablesSync(); } catch { }
   logger.info("Cleanup complete");

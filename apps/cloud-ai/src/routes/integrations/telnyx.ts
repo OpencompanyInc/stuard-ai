@@ -1,9 +1,18 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomInt } from 'crypto';
-import { upsertExternalAccount, getExternalAccount, findUserIdByPhone } from '../../supabase';
+import {
+  upsertExternalAccount,
+  getExternalAccount,
+  findUserIdByPhone,
+  enqueueSmsInboxItem,
+  getSmsQueueItem,
+  markSmsQueueReplySent,
+  upsertSmsUserState,
+} from '../../supabase';
 import { authenticateHttpLegacy, sendJson, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
 import { TELNYX_API_KEY, TELNYX_FROM_NUMBER, TELNYX_MESSAGING_PROFILE_ID } from '../../utils/config';
+import { stripMarkdownForSms, sendWelcomeSms } from '../sms-utils';
 
 const TELNYX_API = 'https://api.telnyx.com/v2';
 
@@ -137,9 +146,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
       });
       sendJson(res, 200, { ok: true, phone: pending.phone, verified: true });
       // Fire-and-forget welcome SMS
-      import('../sms-chat').then(({ sendWelcomeSms }) =>
-        sendWelcomeSms(pending.phone).catch(() => {})
-      );
+      sendWelcomeSms(pending.phone).catch(() => {});
     } catch (e: any) {
       sendJson(res, 500, { ok: false, error: String(e?.message || e) });
     }
@@ -342,6 +349,56 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
     return true;
   }
 
+  // ── Desktop-owned SMS reply submission ─────────────────────────────────────
+  if (req.method === 'POST' && pathname === '/integrations/telnyx/sms-reply') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    try {
+      const body = JSON.parse(await readBody(req));
+      const queueItemId = String(body?.queueItemId || '').trim();
+      const replyText = stripMarkdownForSms(String(body?.replyText || '').trim()).slice(0, 1500);
+      const stateMode = body?.mode;
+      const preferredModel = body?.preferredModel;
+      const conversationId = typeof body?.conversationId === 'string' ? body.conversationId.trim() || null : undefined;
+      if (!queueItemId || !replyText) {
+        sendJson(res, 400, { ok: false, error: 'queueItemId and replyText are required.' });
+        return true;
+      }
+
+      const queueItem = await getSmsQueueItem(queueItemId);
+      if (!queueItem || queueItem.user_id !== auth.userId) {
+        sendJson(res, 404, { ok: false, error: 'sms_queue_item_not_found' });
+        return true;
+      }
+      const targetPhone = normalizePhone(String(queueItem.reply_to_phone || body?.replyToPhone || ''));
+      if (!targetPhone) {
+        sendJson(res, 400, { ok: false, error: 'reply_to_phone_missing' });
+        return true;
+      }
+      if (queueItem.reply_sent_at) {
+        sendJson(res, 200, { ok: true, duplicate: true });
+        return true;
+      }
+
+      await telnyxSendSms(targetPhone, replyText);
+      await markSmsQueueReplySent(queueItemId).catch(() => false);
+      await upsertSmsUserState({
+        userId: auth.userId,
+        mode: stateMode,
+        preferredModel,
+        conversationId,
+        lastReplyToPhone: targetPhone,
+      }).catch(() => false);
+      sendJson(res, 200, { ok: true });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
   // ── Incoming SMS webhook (Telnyx → Stuard) ───────────────────────────────
   // Configure this URL in the Telnyx portal as the messaging webhook:
   //   POST /webhooks/telnyx/sms
@@ -354,6 +411,12 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         const msgPayload = payload?.data?.payload || {};
         const fromPhone = normalizePhone(String(msgPayload?.from?.phone_number || msgPayload?.from || ''));
         const inboundText: string = String(msgPayload?.text || '').trim();
+        const providerMessageId = String(
+          msgPayload?.id ||
+          msgPayload?.record_id ||
+          payload?.data?.id ||
+          '',
+        ).trim() || null;
 
         if (fromPhone && inboundText) {
           // Find which user owns this number (primary or secondary)
@@ -364,10 +427,25 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
               userId,
               textPreview: inboundText.slice(0, 80),
             });
-            const { handleInboundSms } = await import('../sms-chat');
-            // Cloud Run does not reliably continue background work after the response ends,
-            // so handle the inbound message before acknowledging the webhook.
-            await handleInboundSms(userId, inboundText, fromPhone);
+            const queued = await enqueueSmsInboxItem({
+              userId,
+              provider: 'telnyx',
+              providerMessageId,
+              fromPhone,
+              replyToPhone: fromPhone,
+              messageText: inboundText,
+              metadata: {
+                eventType,
+                receivedAt: new Date().toISOString(),
+              },
+            });
+            if (!queued) {
+              console.warn('[telnyx] inbound SMS could not be queued', {
+                fromPhone,
+                userId,
+                textPreview: inboundText.slice(0, 80),
+              });
+            }
           } else {
             console.warn('[telnyx] inbound SMS did not match a verified user', {
               fromPhone,

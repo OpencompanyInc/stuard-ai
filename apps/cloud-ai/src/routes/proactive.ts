@@ -25,10 +25,11 @@ import { getDefaultModelForCategory } from '../pricing';
 import { buildProactiveMessageContent, filterProactiveTools, generateWithToolRecovery } from './proactive-utils';
 import { verifyVMAuthFromRequest } from '../services/vm-tokens';
 import { telnyx_send_sms, telnyx_make_call } from '../tools/telnyx-tools';
-import { stripMarkdownForSms, appendSmsSession, setSmsMode } from './sms-chat';
+import { stripMarkdownForSms } from './sms-utils';
 import { getBridgeSecrets } from '../tools/bridge';
 import { normalizeUsage } from '../utils/usage';
 import { search_past_conversations, get_conversation_context } from '../tools/device-tools';
+import { upsertSmsUserState } from '../supabase';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -99,12 +100,14 @@ async function deliverProactiveNotifications(
     results.sms = await (telnyx_send_sms as any).execute({
       message: smsText.slice(0, 1500),
     }, {} as any);
-    // Store in SMS session and mark mode=proactive so replies stay in that context
+    // Persist SMS mode so the next inbound reply stays in proactive context.
     try {
       const userId = String((getBridgeSecrets() as any)?.userId || '');
       if (userId) {
-        appendSmsSession(userId, 'assistant', smsText, 'proactive');
-        setSmsMode(userId, 'proactive');
+        await upsertSmsUserState({
+          userId,
+          mode: 'proactive',
+        });
       }
     } catch {}
   }

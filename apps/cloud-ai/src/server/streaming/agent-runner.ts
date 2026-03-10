@@ -361,7 +361,38 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
             ...(streamOptions.providerOptions || {}),
             openai: {
               reasoningEffort: reasoningLevel,
+              // Responses API: expose reasoning summaries as streaming chunks
+              reasoningSummary: reasoningLevel !== 'none' ? 'auto' : undefined,
             },
+          };
+        }
+      }
+
+      // ---------- xAI/Grok reasoning ----------
+      if (chosenModelId?.includes('xai/')) {
+        const modelPart = (chosenModelId || '').split('/').pop() || '';
+        const supportsReasoning = !modelPart.includes('non-reasoning');
+        if (supportsReasoning && reasoningLevel !== 'none') {
+          // xAI Chat API only supports 'low' | 'high' (not 'medium' or 'none')
+          const xaiEffort = reasoningLevel === 'low' ? 'low' : 'high';
+          streamOptions.providerOptions = {
+            ...(streamOptions.providerOptions || {}),
+            xai: { reasoningEffort: xaiEffort },
+          };
+        }
+      }
+
+      // ---------- DeepSeek thinking ----------
+      if (chosenModelId?.includes('deepseek/')) {
+        if (reasoningLevel === 'none') {
+          streamOptions.providerOptions = {
+            ...(streamOptions.providerOptions || {}),
+            deepseek: { thinking: { type: 'disabled' } },
+          };
+        } else {
+          streamOptions.providerOptions = {
+            ...(streamOptions.providerOptions || {}),
+            deepseek: { thinking: { type: 'enabled' } },
           };
         }
       }

@@ -845,6 +845,66 @@ function normalizePhoneLookup(phone: string): string {
   return digits;
 }
 
+export type SmsMode = 'agent' | 'proactive';
+export type SmsPreferredModel = 'fast' | 'balanced' | 'smart' | 'research';
+
+export interface SmsUserState {
+  user_id: string;
+  mode: SmsMode;
+  preferred_model: SmsPreferredModel;
+  conversation_id: string | null;
+  last_reply_to_phone: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface SmsQueueItem {
+  id: string;
+  user_id: string;
+  provider: string;
+  provider_message_id?: string | null;
+  from_phone?: string | null;
+  reply_to_phone?: string | null;
+  message_text?: string | null;
+  mode: SmsMode;
+  preferred_model: SmsPreferredModel;
+  conversation_id?: string | null;
+  metadata?: any;
+  status: 'pending' | 'claimed' | 'completed' | 'failed' | 'expired';
+  attempts: number;
+  max_attempts: number;
+  claimed_at?: string | null;
+  claimed_by?: string | null;
+  last_attempt_at?: string | null;
+  next_attempt_at?: string | null;
+  error_message?: string | null;
+  reply_sent_at?: string | null;
+  processed_at?: string | null;
+  expires_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+const DEFAULT_SMS_STATE: SmsUserState = {
+  user_id: '',
+  mode: 'agent',
+  preferred_model: 'balanced',
+  conversation_id: null,
+  last_reply_to_phone: null,
+};
+
+function normalizeSmsMode(mode: unknown): SmsMode {
+  return String(mode || '').toLowerCase() === 'proactive' ? 'proactive' : 'agent';
+}
+
+function normalizeSmsPreferredModel(model: unknown): SmsPreferredModel {
+  const raw = String(model || '').toLowerCase().trim();
+  if (raw === 'fast') return 'fast';
+  if (raw === 'smart') return 'smart';
+  if (raw === 'research') return 'research';
+  return 'balanced';
+}
+
 // Find a user by their Telnyx-verified phone (primary or secondary)
 export async function findUserIdByPhone(phone: string): Promise<string | null> {
   if (!supabaseService) return null;
@@ -872,6 +932,138 @@ export async function findUserIdByPhone(phone: string): Promise<string | null> {
     return null;
   } catch {
     return null;
+  }
+}
+
+export async function getSmsUserState(userId: string): Promise<SmsUserState> {
+  if (!supabaseService) return { ...DEFAULT_SMS_STATE, user_id: userId };
+  try {
+    const { data, error } = await supabaseService
+      .from('sms_user_state')
+      .select('user_id, mode, preferred_model, conversation_id, last_reply_to_phone, created_at, updated_at')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (error || !data) return { ...DEFAULT_SMS_STATE, user_id: userId };
+    return {
+      user_id: String((data as any).user_id || userId),
+      mode: normalizeSmsMode((data as any).mode),
+      preferred_model: normalizeSmsPreferredModel((data as any).preferred_model),
+      conversation_id: ((data as any).conversation_id ? String((data as any).conversation_id) : null),
+      last_reply_to_phone: ((data as any).last_reply_to_phone ? String((data as any).last_reply_to_phone) : null),
+      created_at: (data as any).created_at || null,
+      updated_at: (data as any).updated_at || null,
+    };
+  } catch {
+    return { ...DEFAULT_SMS_STATE, user_id: userId };
+  }
+}
+
+export async function upsertSmsUserState(input: {
+  userId: string;
+  mode?: SmsMode;
+  preferredModel?: SmsPreferredModel;
+  conversationId?: string | null;
+  lastReplyToPhone?: string | null;
+}): Promise<boolean> {
+  if (!supabaseService) return false;
+  try {
+    const existing = await getSmsUserState(input.userId);
+    const payload = {
+      user_id: input.userId,
+      mode: normalizeSmsMode(input.mode ?? existing.mode),
+      preferred_model: normalizeSmsPreferredModel(input.preferredModel ?? existing.preferred_model),
+      conversation_id: input.conversationId !== undefined ? input.conversationId : existing.conversation_id,
+      last_reply_to_phone: input.lastReplyToPhone !== undefined ? input.lastReplyToPhone : existing.last_reply_to_phone,
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabaseService
+      .from('sms_user_state')
+      .upsert(payload, { onConflict: 'user_id' });
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+export async function enqueueSmsInboxItem(input: {
+  userId: string;
+  provider?: string;
+  providerMessageId?: string | null;
+  fromPhone?: string | null;
+  replyToPhone?: string | null;
+  messageText: string;
+  mode?: SmsMode;
+  preferredModel?: SmsPreferredModel;
+  conversationId?: string | null;
+  metadata?: any;
+  expiresAt?: string | null;
+}): Promise<SmsQueueItem | null> {
+  if (!supabaseService) return null;
+  try {
+    const state = await getSmsUserState(input.userId);
+    const row = {
+      user_id: input.userId,
+      provider: String(input.provider || 'telnyx'),
+      provider_message_id: input.providerMessageId || null,
+      from_phone: input.fromPhone ? normalizePhoneLookup(input.fromPhone) : null,
+      reply_to_phone: input.replyToPhone ? normalizePhoneLookup(input.replyToPhone) : (state.last_reply_to_phone || null),
+      message_text: String(input.messageText || '').trim(),
+      mode: normalizeSmsMode(input.mode ?? state.mode),
+      preferred_model: normalizeSmsPreferredModel(input.preferredModel ?? state.preferred_model),
+      conversation_id: input.conversationId !== undefined ? input.conversationId : state.conversation_id,
+      metadata: input.metadata ?? {},
+      expires_at: input.expiresAt || undefined,
+    };
+    if (!row.message_text) return null;
+    const { data, error } = await supabaseService
+      .from('sms_inbox_queue')
+      .insert([row])
+      .select('*')
+      .single();
+    if (error || !data) {
+      if ((error as any)?.code === '23505' && input.providerMessageId) {
+        const { data: existing } = await supabaseService
+          .from('sms_inbox_queue')
+          .select('*')
+          .eq('provider', row.provider)
+          .eq('provider_message_id', input.providerMessageId)
+          .maybeSingle();
+        return (existing as SmsQueueItem) || null;
+      }
+      return null;
+    }
+    return data as SmsQueueItem;
+  } catch {
+    return null;
+  }
+}
+
+export async function getSmsQueueItem(queueId: string): Promise<SmsQueueItem | null> {
+  if (!supabaseService) return null;
+  try {
+    const { data, error } = await supabaseService
+      .from('sms_inbox_queue')
+      .select('*')
+      .eq('id', queueId)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data as SmsQueueItem;
+  } catch {
+    return null;
+  }
+}
+
+export async function markSmsQueueReplySent(queueId: string): Promise<boolean> {
+  if (!supabaseService) return false;
+  try {
+    const { error } = await supabaseService
+      .from('sms_inbox_queue')
+      .update({ reply_sent_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq('id', queueId)
+      .is('reply_sent_at', null);
+    return !error;
+  } catch {
+    return false;
   }
 }
 

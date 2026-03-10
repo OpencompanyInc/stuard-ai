@@ -7,7 +7,7 @@ import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
 import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } from "../integrations/outlook";
-import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, createCheckout, getCustomer, listProducts, openCustomerPortal, purchaseCredits, unifiedTasksService, offlineCalendarService, getInstalledApps, refreshAppCache, unifiedSearch, getFileIconCached } from "../services";
+import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, createCheckout, getCustomer, listProducts, openCustomerPortal, purchaseCredits, unifiedTasksService, offlineCalendarService, getInstalledApps, refreshAppCache, unifiedSearch, getFileIconCached, syncMainAuthSession } from "../services";
 import { setupSpeechIpc } from "./speech";
 import { setupTerminalIpc } from "../terminal";
 import logger from "../utils/logger";
@@ -188,6 +188,7 @@ function isPrivateOrInternalUrl(urlString: string): boolean {
 export function setupIpc() {
   setupSpeechIpc();
   setupTerminalIpc();
+  ipcMain.handle('auth:syncSession', (_e, session: any) => syncMainAuthSession(session ?? null));
   // Overlay
   ipcMain.handle("overlay:show", () => showWindow());
   ipcMain.handle("overlay:hide", () => hideWindow());
