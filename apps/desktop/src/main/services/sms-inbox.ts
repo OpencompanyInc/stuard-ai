@@ -54,6 +54,7 @@ let currentChannel: any = null;
 let currentChannelUserId: string | null = null;
 let draining = false;
 let drainQueued = false;
+let reconnectTimer: NodeJS.Timeout | null = null;
 
 function defaultSmsState(): SmsUserState {
   return {
@@ -214,6 +215,9 @@ async function claimNextSmsItem(userId: string): Promise<SmsQueueItem | null> {
   return (data as SmsQueueItem) || null;
 }
 
+// ── SMS /commands are handled on desktop ─────────────────────────────────────
+// Commands are instant state operations with no AI involvement.
+// Keeping them local avoids cloud round-trips and gives instant replies.
 function parseSmsCommand(inputText: string): { token: string; rest: string; isCommand: boolean } {
   const trimmed = String(inputText || '').trim();
   const firstToken = trimmed.split(/\s+/)[0].toLowerCase();
@@ -526,6 +530,18 @@ async function drainInbox(reason: string): Promise<void> {
   }
 }
 
+function scheduleReconnect(delayMs: number): void {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (!started) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    if (started) void reconnectListener();
+  }, delayMs);
+}
+
 async function reconnectListener(): Promise<void> {
   const client = getMainSupabaseClient();
   const session = getMainAuthSession();
@@ -542,23 +558,45 @@ async function reconnectListener(): Promise<void> {
 
   try { client.realtime.setAuth(session.access_token); } catch { }
 
+  // Drain any messages that arrived while we were disconnected or
+  // that were already pending when we first start up.
+  void drainInbox('auth-sync');
+
   currentChannel = client
     .channel(`sms-inbox:${userId}`)
     .on('postgres_changes', {
-      event: '*',
+      event: 'INSERT',
       schema: 'public',
       table: 'sms_inbox_queue',
       filter: `user_id=eq.${userId}`,
-    }, () => {
+    }, (payload: any) => {
+      logger.info(`[sms-inbox] Realtime INSERT for ${userId}, item ${payload?.new?.id}`);
       void drainInbox('realtime');
+    })
+    .on('postgres_changes', {
+      event: 'UPDATE',
+      schema: 'public',
+      table: 'sms_inbox_queue',
+      filter: `user_id=eq.${userId}`,
+    }, (payload: any) => {
+      // Re-drain if a failed item becomes retryable (status back to pending/failed)
+      const newStatus = payload?.new?.status;
+      if (newStatus === 'pending' || newStatus === 'failed') {
+        void drainInbox('realtime-update');
+      }
     });
 
   currentChannel.subscribe((status: string) => {
-    logger.info(`[sms-inbox] Realtime status for ${userId}: ${status}`);
+    logger.info(`[sms-inbox] Realtime channel status for ${userId}: ${status}`);
     if (status === 'SUBSCRIBED') {
+      // Drain any items that arrived between disconnect and now.
       void drainInbox('subscribed');
+    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+      logger.warn(`[sms-inbox] Realtime channel ${status} for ${userId} — reconnecting in 5s`);
+      scheduleReconnect(5000);
     }
   });
+
   currentChannelUserId = userId;
 }
 
@@ -573,6 +611,10 @@ export function startSmsInbox(): void {
 
 export function stopSmsInbox(): void {
   started = false;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
   if (authUnsub) {
     try { authUnsub(); } catch { }
     authUnsub = null;
