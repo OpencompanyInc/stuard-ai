@@ -402,3 +402,50 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
 
   return false;
 }
+
+// ─── SMS-triggered proactive agent ───────────────────────────────────────────
+// Called when an inbound SMS arrives from a verified user. Runs the proactive
+// agent with the message as the prompt and delivers the reply back via SMS.
+export async function triggerAgentFromSms(userId: string, userMessage: string): Promise<void> {
+  const kanban = createKanbanTools([]);
+  const availableTools: Record<string, any> = {
+    ...kanban.tools,
+    web_search,
+    deploy_headless_agent: deployHeadlessAgent,
+    search_tools,
+    get_tool_schema,
+    execute_tool,
+    get_skill_info,
+    search_past_conversations,
+    get_conversation_context,
+  };
+
+  const secretBag: Record<string, any> = { userId };
+
+  await runWithSecrets(secretBag, async () => {
+    const model = getModel('balanced', getDefaultModelForCategory('balanced' as any));
+
+    const agent = new Agent({
+      id: 'stuard-proactive',
+      name: 'stuard-proactive',
+      instructions: [{ role: 'system', content: PROACTIVE_SYSTEM_PROMPT }] as any,
+      model,
+      tools: availableTools,
+    });
+
+    try {
+      const response: any = await generateWithToolRecovery({
+        agent: agent as any,
+        baseMessages: [{ role: 'user', content: userMessage }],
+        maxSteps: 10,
+        maxRetries: 2,
+      });
+      const text = response?.text || '';
+      if (text) {
+        await deliverProactiveNotifications(text, ['sms']);
+      }
+    } catch (e: any) {
+      console.error('[telnyx] SMS-triggered agent failed:', e?.message || e);
+    }
+  });
+}

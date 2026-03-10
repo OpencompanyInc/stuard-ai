@@ -1,13 +1,15 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomInt } from 'crypto';
-import { upsertExternalAccount, getExternalAccount } from '../../supabase';
+import { upsertExternalAccount, getExternalAccount, findUserIdByPhone } from '../../supabase';
 import { authenticateHttpLegacy, sendJson, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
 import { TELNYX_API_KEY, TELNYX_FROM_NUMBER, TELNYX_MESSAGING_PROFILE_ID } from '../../utils/config';
 
 const TELNYX_API = 'https://api.telnyx.com/v2';
 
+// Pending verification maps (primary & secondary)
 const pendingVerifications = new Map<string, { code: string; phone: string; expiresAt: number }>();
+const pendingSecondaryVerifications = new Map<string, { code: string; phone: string; expiresAt: number }>();
 
 function normalizePhone(raw: string): string {
   let digits = raw.replace(/[^\d+]/g, '');
@@ -26,14 +28,8 @@ function readBody(req: IncomingMessage): Promise<string> {
 
 async function telnyxSendSms(to: string, text: string): Promise<void> {
   if (!TELNYX_API_KEY || !TELNYX_FROM_NUMBER) throw new Error('Telnyx not configured');
-  const body: any = {
-    from: TELNYX_FROM_NUMBER,
-    to,
-    text,
-  };
-  if (TELNYX_MESSAGING_PROFILE_ID) {
-    body.messaging_profile_id = TELNYX_MESSAGING_PROFILE_ID;
-  }
+  const body: any = { from: TELNYX_FROM_NUMBER, to, text };
+  if (TELNYX_MESSAGING_PROFILE_ID) body.messaging_profile_id = TELNYX_MESSAGING_PROFILE_ID;
   const res = await fetch(`${TELNYX_API}/messages`, {
     method: 'POST',
     headers: {
@@ -51,7 +47,7 @@ async function telnyxSendSms(to: string, text: string): Promise<void> {
 export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   const { pathname } = parsedUrl;
 
-  // ── Status: check if user has verified phone ─────────────────────────────
+  // ── Status: primary + secondary phone info ────────────────────────────────
   if (req.method === 'GET' && pathname === '/integrations/telnyx/status') {
     const auth = await authenticateHttpLegacy(req, parsedUrl);
     if (!auth.success || !auth.userId) {
@@ -64,23 +60,22 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
       ok: true,
       connected: !!meta.verified,
       phone: meta.verified ? meta.phone : undefined,
+      phone2: meta.verified2 ? meta.phone2 : undefined,
     });
     return true;
   }
 
-  // ── Request verification code ─────────────────────────────────────────────
+  // ── Request verification code (primary) ───────────────────────────────────
   if (req.method === 'POST' && pathname === '/integrations/telnyx/request-code') {
     const auth = await authenticateHttpLegacy(req, parsedUrl);
     if (!auth.success || !auth.userId) {
       sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
       return true;
     }
-
     if (!TELNYX_API_KEY || !TELNYX_FROM_NUMBER) {
       sendJson(res, 503, { ok: false, error: 'Telnyx integration is not configured on the server.' });
       return true;
     }
-
     try {
       const body = JSON.parse(await readBody(req));
       const phone = normalizePhone(body.phone || '');
@@ -88,16 +83,9 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         sendJson(res, 400, { ok: false, error: 'Invalid phone number. Include country code (e.g. +1...).' });
         return true;
       }
-
       const code = String(randomInt(100000, 999999));
-      pendingVerifications.set(auth.userId, {
-        code,
-        phone,
-        expiresAt: Date.now() + 10 * 60 * 1000,
-      });
-
+      pendingVerifications.set(auth.userId, { code, phone, expiresAt: Date.now() + 10 * 60 * 1000 });
       await telnyxSendSms(phone, `Your Stuard verification code is: ${code}`);
-
       sendJson(res, 200, { ok: true, message: 'Verification code sent.' });
     } catch (e: any) {
       sendJson(res, 500, { ok: false, error: String(e?.message || e) });
@@ -105,19 +93,17 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
     return true;
   }
 
-  // ── Verify code and store phone ───────────────────────────────────────────
+  // ── Verify code (primary) ─────────────────────────────────────────────────
   if (req.method === 'POST' && pathname === '/integrations/telnyx/verify-code') {
     const auth = await authenticateHttpLegacy(req, parsedUrl);
     if (!auth.success || !auth.userId) {
       sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
       return true;
     }
-
     try {
       const body = JSON.parse(await readBody(req));
       const userCode = String(body.code || '').trim();
       const pending = pendingVerifications.get(auth.userId);
-
       if (!pending) {
         sendJson(res, 400, { ok: false, error: 'No pending verification. Request a new code.' });
         return true;
@@ -131,8 +117,11 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         sendJson(res, 400, { ok: false, error: 'Incorrect code. Please try again.' });
         return true;
       }
-
       pendingVerifications.delete(auth.userId);
+
+      // Preserve existing secondary phone if any
+      const existing = await getExternalAccount(auth.userId, 'telnyx');
+      const existingMeta = existing?.meta || {};
 
       await upsertExternalAccount({
         userId: auth.userId,
@@ -140,12 +129,12 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         access_token: 'verified',
         scopes: ['sms', 'voice'],
         meta: {
+          ...existingMeta,
           phone: pending.phone,
           verified: true,
           verifiedAt: new Date().toISOString(),
         },
       });
-
       sendJson(res, 200, { ok: true, phone: pending.phone, verified: true });
     } catch (e: any) {
       sendJson(res, 500, { ok: false, error: String(e?.message || e) });
@@ -153,14 +142,120 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
     return true;
   }
 
-  // ── Disconnect / remove verified phone ────────────────────────────────────
+  // ── Add / request code for secondary phone ────────────────────────────────
+  if (req.method === 'POST' && pathname === '/integrations/telnyx/add-secondary') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    if (!TELNYX_API_KEY || !TELNYX_FROM_NUMBER) {
+      sendJson(res, 503, { ok: false, error: 'Telnyx integration is not configured on the server.' });
+      return true;
+    }
+    const acc = await getExternalAccount(auth.userId, 'telnyx');
+    if (!acc?.meta?.verified) {
+      sendJson(res, 400, { ok: false, error: 'Verify your primary phone number first.' });
+      return true;
+    }
+    try {
+      const body = JSON.parse(await readBody(req));
+      const phone = normalizePhone(body.phone || '');
+      if (!phone || phone.length < 10) {
+        sendJson(res, 400, { ok: false, error: 'Invalid phone number. Include country code (e.g. +1...).' });
+        return true;
+      }
+      const code = String(randomInt(100000, 999999));
+      pendingSecondaryVerifications.set(auth.userId, { code, phone, expiresAt: Date.now() + 10 * 60 * 1000 });
+      await telnyxSendSms(phone, `Your Stuard secondary number verification code is: ${code}`);
+      sendJson(res, 200, { ok: true, message: 'Verification code sent to secondary number.' });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
+  // ── Verify secondary phone ────────────────────────────────────────────────
+  if (req.method === 'POST' && pathname === '/integrations/telnyx/verify-secondary') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    try {
+      const body = JSON.parse(await readBody(req));
+      const userCode = String(body.code || '').trim();
+      const pending = pendingSecondaryVerifications.get(auth.userId);
+      if (!pending) {
+        sendJson(res, 400, { ok: false, error: 'No pending secondary verification. Request a new code.' });
+        return true;
+      }
+      if (Date.now() > pending.expiresAt) {
+        pendingSecondaryVerifications.delete(auth.userId);
+        sendJson(res, 400, { ok: false, error: 'Code expired. Request a new one.' });
+        return true;
+      }
+      if (userCode !== pending.code) {
+        sendJson(res, 400, { ok: false, error: 'Incorrect code. Please try again.' });
+        return true;
+      }
+      pendingSecondaryVerifications.delete(auth.userId);
+
+      const existing = await getExternalAccount(auth.userId, 'telnyx');
+      const existingMeta = existing?.meta || {};
+      await upsertExternalAccount({
+        userId: auth.userId,
+        provider: 'telnyx',
+        access_token: 'verified',
+        scopes: ['sms', 'voice'],
+        meta: {
+          ...existingMeta,
+          phone2: pending.phone,
+          verified2: true,
+          verifiedAt2: new Date().toISOString(),
+        },
+      });
+      sendJson(res, 200, { ok: true, phone2: pending.phone, verified2: true });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
+  // ── Remove secondary phone ────────────────────────────────────────────────
+  if (req.method === 'POST' && pathname === '/integrations/telnyx/remove-secondary') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    try {
+      const existing = await getExternalAccount(auth.userId, 'telnyx');
+      const existingMeta = { ...(existing?.meta || {}) };
+      delete existingMeta.phone2;
+      delete existingMeta.verified2;
+      delete existingMeta.verifiedAt2;
+      await upsertExternalAccount({
+        userId: auth.userId,
+        provider: 'telnyx',
+        access_token: existing?.access_token || 'verified',
+        scopes: ['sms', 'voice'],
+        meta: existingMeta,
+      });
+      sendJson(res, 200, { ok: true });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
+  // ── Disconnect / remove all ────────────────────────────────────────────────
   if (req.method === 'POST' && pathname === '/integrations/telnyx/disconnect') {
     const auth = await authenticateHttpLegacy(req, parsedUrl);
     if (!auth.success || !auth.userId) {
       sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
       return true;
     }
-
     try {
       const { deleteExternalAccount } = await import('../../supabase');
       await deleteExternalAccount(auth.userId, 'telnyx', 'default');
@@ -243,21 +338,70 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
     return true;
   }
 
+  // ── Incoming SMS webhook (Telnyx → Stuard) ───────────────────────────────
+  // Configure this URL in the Telnyx portal as the messaging webhook:
+  //   POST /webhooks/telnyx/sms
+  if (req.method === 'POST' && pathname === '/webhooks/telnyx/sms') {
+    try {
+      const payload = JSON.parse(await readBody(req));
+      const eventType: string = payload?.data?.event_type || '';
+
+      if (eventType === 'message.received') {
+        const msgPayload = payload?.data?.payload || {};
+        const fromPhone: string = msgPayload?.from?.phone_number || msgPayload?.from || '';
+        const inboundText: string = msgPayload?.text || '';
+
+        if (fromPhone && inboundText) {
+          // Find which user owns this number (primary or secondary)
+          const userId = await findUserIdByPhone(fromPhone);
+          if (userId) {
+            // Fire-and-forget: trigger the proactive agent which will reply via SMS
+            const { triggerAgentFromSms } = await import('../proactive');
+            triggerAgentFromSms(userId, inboundText).catch((e: any) =>
+              console.error('[telnyx] SMS agent trigger failed:', e?.message || e)
+            );
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error('[telnyx] Incoming SMS webhook error:', e?.message || e);
+    }
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
   // ── Call webhook (Telnyx sends call events here) ──────────────────────────
   if (req.method === 'POST' && pathname === '/integrations/telnyx/call-webhook') {
     try {
       const body = JSON.parse(await readBody(req));
-      const eventType = body?.data?.event_type;
-      const callControlId = body?.data?.payload?.call_control_id;
+      const eventType: string = body?.data?.event_type || '';
+      const callControlId: string = body?.data?.payload?.call_control_id || '';
+      const direction: string = body?.data?.payload?.direction || '';
 
+      // Inbound call: answer it, then speak a greeting
+      if (eventType === 'call.initiated' && direction === 'inbound' && callControlId) {
+        await fetch(`${TELNYX_API}/calls/${callControlId}/actions/answer`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${TELNYX_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({}),
+        });
+      }
+
+      // Call answered (outbound TTS) or after answering inbound
       if (eventType === 'call.answered' && callControlId) {
-        const customHeaders = body?.data?.payload?.custom_headers || [];
+        const customHeaders: any[] = body?.data?.payload?.custom_headers || [];
         const ttsHeader = customHeaders.find((h: any) => h.name === 'X-Tts-Message');
         const voiceHeader = customHeaders.find((h: any) => h.name === 'X-Tts-Voice');
-        const message = ttsHeader ? Buffer.from(ttsHeader.value, 'base64').toString('utf8') : 'Hello from Stuard AI.';
+        const message = ttsHeader
+          ? Buffer.from(ttsHeader.value, 'base64').toString('utf8')
+          : direction === 'inbound'
+            ? 'Hello, this is Stuard AI. How can I help you? Please send me a text message and I will respond shortly.'
+            : 'Hello from Stuard AI.';
         const voice = voiceHeader?.value || 'female';
-
-        await fetch(`https://api.telnyx.com/v2/calls/${callControlId}/actions/speak`, {
+        await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${TELNYX_API_KEY}`,
@@ -271,8 +415,9 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         });
       }
 
+      // TTS finished: hang up
       if (eventType === 'call.speak.ended' && callControlId) {
-        await fetch(`https://api.telnyx.com/v2/calls/${callControlId}/actions/hangup`, {
+        await fetch(`${TELNYX_API}/calls/${callControlId}/actions/hangup`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${TELNYX_API_KEY}`,

@@ -216,6 +216,7 @@ async function handleCommand(command: string, args: any): Promise<any> {
         envVars: args.envVars || {},
         autoRestart: args.autoRestart ?? true,
         schedule: args.schedule || null,
+        inlineBundle: args.inlineBundle || undefined,
       });
     case 'deploy_stop':
       return { stopped: deployExecutor.stop(args.deployId) };

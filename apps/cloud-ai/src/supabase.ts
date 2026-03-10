@@ -782,6 +782,34 @@ export function hasSupabase(): boolean {
   return !!supabaseAnon && !!supabaseService;
 }
 
+// Find a user by their Telnyx-verified phone (primary or secondary)
+export async function findUserIdByPhone(phone: string): Promise<string | null> {
+  if (!supabaseService) return null;
+  try {
+    // Primary phone
+    const { data: d1 } = await supabaseService
+      .from('external_accounts')
+      .select('user_id')
+      .eq('provider', 'telnyx')
+      .eq('meta->>phone', phone)
+      .limit(1)
+      .maybeSingle();
+    if (d1?.user_id) return d1.user_id as string;
+    // Secondary phone
+    const { data: d2 } = await supabaseService
+      .from('external_accounts')
+      .select('user_id')
+      .eq('provider', 'telnyx')
+      .eq('meta->>phone2', phone)
+      .limit(1)
+      .maybeSingle();
+    if (d2?.user_id) return d2.user_id as string;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function getSupabaseAdmin(): SupabaseClient | null {
   return supabaseService;
 }

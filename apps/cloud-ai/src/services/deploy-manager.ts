@@ -208,27 +208,30 @@ export async function listDeployments(userId: string): Promise<Deployment[]> {
  * Create and start a new deployment on the user's Cloud VM.
  */
 export async function createDeployment(userId: string, req: DeployRequest): Promise<Deployment> {
-  // 1. Upload bundle to GCS
   const deployId = randomUUID();
   let gcsObject: string | null = null;
 
+  const bundlePayload = {
+    id: deployId,
+    kind: req.kind,
+    name: req.name,
+    payload: req.payload,
+    envVars: req.envVars || {},
+    autoRestart: req.autoRestart ?? true,
+    schedule: req.schedule || null,
+  };
+
+  // 1. Try uploading bundle to GCS (non-fatal — falls back to inline delivery)
+  let gcsUploadOk = false;
   try {
-    gcsObject = await uploadDeployBundle(userId, deployId, {
-      id: deployId,
-      kind: req.kind,
-      name: req.name,
-      payload: req.payload,
-      envVars: req.envVars || {},
-      autoRestart: req.autoRestart ?? true,
-      schedule: req.schedule || null,
-    });
+    gcsObject = await uploadDeployBundle(userId, deployId, bundlePayload);
+    gcsUploadOk = true;
   } catch (e: any) {
-    throw new Error(`Failed to upload deploy bundle: ${e.message}`);
+    console.warn(`[deploy-manager] GCS upload failed, will send bundle inline: ${e?.message || e}`);
   }
 
   // 2. Save to DB
   const deployment = await insertDeployment(userId, { ...req }, gcsObject);
-  // Fix: use the actual generated ID
   await supabaseAdmin.from(DEPLOY_TABLE).update({ id: deployId, gcs_object_name: gcsObject }).eq('id', deployment.id);
   const finalDeploy = { ...deployment, id: deployId, gcs_object_name: gcsObject };
 
@@ -236,11 +239,19 @@ export async function createDeployment(userId: string, req: DeployRequest): Prom
   try {
     await updateDeployStatus(deployId, 'uploading');
 
-    const downloadUrl = await getSignedDeployUrl(gcsObject);
+    // Resolve signed download URL if GCS upload succeeded
+    let downloadUrl = '';
+    if (gcsUploadOk && gcsObject) {
+      try {
+        downloadUrl = await getSignedDeployUrl(gcsObject);
+      } catch (e: any) {
+        console.warn(`[deploy-manager] Signed URL generation failed, will send bundle inline: ${e?.message || e}`);
+      }
+    }
 
     await updateDeployStatus(deployId, 'deploying');
 
-    const result = await sendVMCommand(userId, 'deploy_start', {
+    const deployArgs: any = {
       deployId,
       downloadUrl,
       kind: req.kind,
@@ -248,7 +259,14 @@ export async function createDeployment(userId: string, req: DeployRequest): Prom
       envVars: req.envVars || {},
       autoRestart: req.autoRestart ?? true,
       schedule: req.schedule || null,
-    }, DEPLOY_TIMEOUT_MS);
+    };
+
+    // Send bundle inline when GCS path is unavailable
+    if (!downloadUrl) {
+      deployArgs.inlineBundle = bundlePayload;
+    }
+
+    const result = await sendVMCommand(userId, 'deploy_start', deployArgs, DEPLOY_TIMEOUT_MS);
 
     if (!result.ok) {
       await updateDeployStatus(deployId, 'failed', { error_message: result.error || 'deploy_command_failed' });
@@ -295,7 +313,13 @@ export async function restartDeployment(userId: string, deployId: string): Promi
 
   try {
     await updateDeployStatus(deployId, 'deploying');
-    const downloadUrl = await getSignedDeployUrl(deploy.gcs_object_name);
+
+    let downloadUrl = '';
+    try {
+      downloadUrl = await getSignedDeployUrl(deploy.gcs_object_name);
+    } catch (e: any) {
+      console.warn(`[deploy-manager] Restart signed URL failed, VM will use cached bundle: ${e?.message || e}`);
+    }
 
     const result = await sendVMCommand(userId, 'deploy_start', {
       deployId,

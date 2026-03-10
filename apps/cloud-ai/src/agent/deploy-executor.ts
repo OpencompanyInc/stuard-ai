@@ -26,6 +26,8 @@ export interface DeployConfig {
   envVars: Record<string, string>;
   autoRestart: boolean;
   schedule: string | null;
+  /** When provided, skip the GCS download and use this bundle directly. */
+  inlineBundle?: any;
 }
 
 interface RunningDeploy {
@@ -150,22 +152,44 @@ export class DeployExecutor extends EventEmitter {
     // Create deploy directory
     fs.mkdirSync(deployDir, { recursive: true });
 
-    // Wait for DNS to be ready before attempting the download.
-    // On freshly booted VMs the resolver can take a few seconds.
-    await this.waitForDns(deployDir);
+    let bundle: any;
 
-    // Download bundle
-    this.appendLog(deployDir, `[deploy] Downloading bundle for ${config.name}`);
-    try {
-      await this.downloadFile(config.downloadUrl, bundlePath);
-      this.appendLog(deployDir, `[deploy] Bundle downloaded to ${bundlePath}`);
-    } catch (error: any) {
-      this.appendLog(deployDir, `[deploy] Bundle download failed: ${error?.message || error}`);
-      throw error;
+    if (config.inlineBundle) {
+      // Bundle was passed inline — no GCS download needed
+      this.appendLog(deployDir, `[deploy] Using inline bundle for ${config.name}`);
+      bundle = typeof config.inlineBundle === 'string'
+        ? JSON.parse(config.inlineBundle)
+        : config.inlineBundle;
+      fs.writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+    } else if (config.downloadUrl) {
+      // Wait for DNS to be ready before attempting the download.
+      // On freshly booted VMs the resolver can take a few seconds.
+      await this.waitForDns(deployDir);
+
+      // Download bundle
+      this.appendLog(deployDir, `[deploy] Downloading bundle for ${config.name}`);
+      try {
+        await this.downloadFile(config.downloadUrl, bundlePath);
+        this.appendLog(deployDir, `[deploy] Bundle downloaded to ${bundlePath}`);
+      } catch (error: any) {
+        this.appendLog(deployDir, `[deploy] Bundle download failed: ${error?.message || error}`);
+        // Fall back to existing bundle on disk (e.g. restart after previous deploy)
+        if (fs.existsSync(bundlePath)) {
+          this.appendLog(deployDir, `[deploy] Using previously cached bundle from disk`);
+        } else {
+          throw error;
+        }
+      }
+
+      bundle = JSON.parse(fs.readFileSync(bundlePath, 'utf-8'));
+    } else if (fs.existsSync(bundlePath)) {
+      // No download URL and no inline bundle, but bundle exists on disk (restart)
+      this.appendLog(deployDir, `[deploy] Using existing bundle on disk for ${config.name}`);
+      bundle = JSON.parse(fs.readFileSync(bundlePath, 'utf-8'));
+    } else {
+      throw new Error('No bundle available: no downloadUrl, no inlineBundle, and no cached bundle on disk');
     }
 
-    // Parse bundle
-    const bundle = JSON.parse(fs.readFileSync(bundlePath, 'utf-8'));
     return this.startFromBundle(config, deployDir, bundle);
   }
 
