@@ -1,5 +1,12 @@
-
-import { app, BrowserWindow, globalShortcut, Menu, nativeImage, Tray, screen } from "electron";
+import {
+  app,
+  BrowserWindow,
+  globalShortcut,
+  Menu,
+  nativeImage,
+  Tray,
+  screen,
+} from "electron";
 import path from "path";
 import fs from "fs";
 import { isDev } from "../env";
@@ -51,7 +58,9 @@ type SplitTargetSnapshot = {
 
 let lastSplitTarget: SplitTargetSnapshot | null = null;
 
-function captureWindowSnapshotByHandle(handle: string): SplitTargetSnapshot | null {
+function captureWindowSnapshotByHandle(
+  handle: string,
+): SplitTargetSnapshot | null {
   if (process.platform !== "win32") return null;
   if (!handle || handle === "0") return null;
   try {
@@ -84,14 +93,23 @@ $isMin = [Win32Bounds]::IsIconic($h)
 Write-Output "x=$($rect.Left) y=$($rect.Top) w=$w h=$hgt max=$isMax min=$isMin"
 `;
     fs.writeFileSync(scriptPath, ps, "utf8");
-    const out = execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath], {
-      encoding: "utf8",
-      timeout: 2000,
-      windowsHide: true,
-    }).trim();
-    try { fs.unlinkSync(scriptPath); } catch { }
+    const out = execFileSync(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+      {
+        encoding: "utf8",
+        timeout: 2000,
+        windowsHide: true,
+      },
+    ).trim();
+    try {
+      fs.unlinkSync(scriptPath);
+    } catch {}
 
-    const m = /x=([-\d]+)\s+y=([-\d]+)\s+w=(\d+)\s+h=(\d+)\s+max=(True|False)\s+min=(True|False)/.exec(out);
+    const m =
+      /x=([-\d]+)\s+y=([-\d]+)\s+w=(\d+)\s+h=(\d+)\s+max=(True|False)\s+min=(True|False)/.exec(
+        out,
+      );
     if (!m) return null;
     return {
       handle,
@@ -111,9 +129,9 @@ function restoreWindowSnapshot(snapshot: SplitTargetSnapshot) {
   if (process.platform !== "win32") return;
   if (!snapshot?.handle || snapshot.handle === "0") return;
   try {
-    const { execFile } = require('child_process');
-    const tmpDir = require('os').tmpdir();
-    const scriptPath = path.join(tmpDir, 'stuard_restore_split.ps1');
+    const { execFile } = require("child_process");
+    const tmpDir = require("os").tmpdir();
+    const scriptPath = path.join(tmpDir, "stuard_restore_split.ps1");
     const ps = `
 Add-Type @"
 using System;
@@ -129,19 +147,26 @@ public class Win32Restore {
 $hwnd = [IntPtr]${snapshot.handle}
 if ($hwnd -eq 0) { exit 2 }
 [Win32Restore]::SetWindowPos($hwnd, [IntPtr]::Zero, ${snapshot.x}, ${snapshot.y}, ${snapshot.width}, ${snapshot.height}, 0x14) | Out-Null
-if (${snapshot.wasMaximized ? '$true' : '$false'}) {
+if (${snapshot.wasMaximized ? "$true" : "$false"}) {
   [Win32Restore]::ShowWindow($hwnd, 3) | Out-Null
-} elseif (${snapshot.wasMinimized ? '$true' : '$false'}) {
+} elseif (${snapshot.wasMinimized ? "$true" : "$false"}) {
   [Win32Restore]::ShowWindow($hwnd, 6) | Out-Null
 } else {
   [Win32Restore]::ShowWindow($hwnd, 9) | Out-Null
 }
 `;
-    fs.writeFileSync(scriptPath, ps, 'utf8');
-    execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], { windowsHide: true }, () => {
-      try { fs.unlinkSync(scriptPath); } catch { }
-    });
-  } catch { }
+    fs.writeFileSync(scriptPath, ps, "utf8");
+    execFile(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+      { windowsHide: true },
+      () => {
+        try {
+          fs.unlinkSync(scriptPath);
+        } catch {}
+      },
+    );
+  } catch {}
 }
 
 function getNativeWindowHandleString(target: BrowserWindow | null) {
@@ -215,16 +240,22 @@ $target.ToInt64()
 
     let capturedHandle: string | null = null;
     try {
-      const result = execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", getHandleScript], {
-        encoding: "utf8",
-        timeout: 2000,
-        windowsHide: true,
-      });
+      const result = execFileSync(
+        "powershell.exe",
+        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", getHandleScript],
+        {
+          encoding: "utf8",
+          timeout: 2000,
+          windowsHide: true,
+        },
+      );
       capturedHandle = result.trim();
     } catch (e) {
       logger.warn("Failed to capture foreground window handle:", e);
     }
-    try { fs.unlinkSync(getHandleScript); } catch { }
+    try {
+      fs.unlinkSync(getHandleScript);
+    } catch {}
 
     if (!capturedHandle || capturedHandle === "0") return null;
     return capturedHandle;
@@ -256,14 +287,14 @@ interface ModeSizePrefs {
 
 // Default sizes for each mode
 const DEFAULT_MODE_SIZES: ModeSizePrefs = {
-  compact: { width: 520, height: 140 },  // Compact is a small pill-shaped input bar
+  compact: { width: 520, height: 140 }, // Compact is a small pill-shaped input bar
   window: { width: 800, height: 600 },
 };
 
 // Min/max constraints per mode for user resizing
 const MODE_SIZE_CONSTRAINTS = {
-  compact: { minW: 400, maxW: 800, minH: 100, maxH: 800 },  // Increased to 800 to avoid cut-off
-  sidebar: { minW: 400, maxW: 1100, minH: 400, maxH: 2000 },  // Allow for internal sidebar (320px)
+  compact: { minW: 400, maxW: 800, minH: 100, maxH: 800 }, // Increased to 800 to avoid cut-off
+  sidebar: { minW: 400, maxW: 1100, minH: 400, maxH: 2000 }, // Allow for internal sidebar (320px)
   window: { minW: 500, maxW: 1400, minH: 400, maxH: 1000 },
 };
 
@@ -273,16 +304,28 @@ let internalSidebarOpen = false;
 function applyOverlayChrome(mode: OverlayMode) {
   if (!win) return;
   try {
-    if (mode === 'window') {
-      try { win.setAlwaysOnTop(false); } catch { }
-      try { win.setSkipTaskbar(false); } catch { }
-      try { win.setHasShadow(true); } catch { }
+    if (mode === "window") {
+      try {
+        win.setAlwaysOnTop(false);
+      } catch {}
+      try {
+        win.setSkipTaskbar(false);
+      } catch {}
+      try {
+        win.setHasShadow(true);
+      } catch {}
     } else {
-      try { win.setSkipTaskbar(true); } catch { }
-      try { win.setAlwaysOnTop(true, 'screen-saver'); } catch { }
-      try { win.setHasShadow(false); } catch { }
+      try {
+        win.setSkipTaskbar(true);
+      } catch {}
+      try {
+        win.setAlwaysOnTop(true, "screen-saver");
+      } catch {}
+      try {
+        win.setHasShadow(false);
+      } catch {}
     }
-  } catch { }
+  } catch {}
 }
 
 // Current user-preferred sizes (loaded from store on init)
@@ -296,9 +339,9 @@ export function getPreloadPath() {
   // In dev, __dirname is usually dist/main; the preload we want is dist/preload/index.js
   // After refactor, paths may differ, so try a few candidates in order.
   const candidates = [
-    path.join(__dirname, "../preload/index.js"),       // dist/main -> dist/preload
-    path.join(__dirname, "../../preload/index.js"),    // dist/main/windows -> dist/preload (older layout)
-    path.join(process.cwd(), "dist/preload/index.js"),  // fallback
+    path.join(__dirname, "../preload/index.js"), // dist/main -> dist/preload
+    path.join(__dirname, "../../preload/index.js"), // dist/main/windows -> dist/preload (older layout)
+    path.join(process.cwd(), "dist/preload/index.js"), // fallback
   ];
   logger.debug("Looking for preload in:", candidates);
   for (const p of candidates) {
@@ -307,19 +350,34 @@ export function getPreloadPath() {
         logger.info("Preload resolved:", p);
         return p;
       }
-    } catch { }
+    } catch {}
   }
   const fallback = path.join(__dirname, "../preload/index.js");
   logger.warn("Preload not found, falling back to", fallback);
   return fallback;
 }
 
-export function getRendererUrl(entry: "index" | "dashboard" | "onboarding" | "board" | "workflows" | "hud-test" | "spaces" | "sidebar" | "notification" = "index") {
+export function getRendererUrl(
+  entry:
+    | "index"
+    | "dashboard"
+    | "onboarding"
+    | "board"
+    | "workflows"
+    | "hud-test"
+    | "spaces"
+    | "sidebar"
+    | "notification" = "index",
+) {
   if (isDev) return `http://localhost:5173/${entry}.html`;
   return `file://${path.join(__dirname, `../../renderer/${entry}.html`)}`;
 }
 
-function centerTopWithContentSize(target: BrowserWindow, contentWidth: number, contentHeight: number) {
+function centerTopWithContentSize(
+  target: BrowserWindow,
+  contentWidth: number,
+  contentHeight: number,
+) {
   target.setContentSize(contentWidth, contentHeight);
   const { workArea } = screen.getPrimaryDisplay();
   const b = target.getBounds();
@@ -349,24 +407,34 @@ function handleUserResize() {
 
   // Clamp to constraints
   const width = Math.max(constraints.minW, Math.min(constraints.maxW, b.width));
-  const height = Math.max(constraints.minH, Math.min(constraints.maxH, b.height));
+  const height = Math.max(
+    constraints.minH,
+    Math.min(constraints.maxH, b.height),
+  );
 
   // Save user's preferred size for this mode (except sidebar which is special)
   // Subtract internal sidebar width if open, so we save the base content width
-  if (currentMode !== 'sidebar') {
-    const savedWidth = internalSidebarOpen ? Math.max(width - INTERNAL_SIDEBAR_WIDTH, constraints.minW) : width;
+  if (currentMode !== "sidebar") {
+    const savedWidth = internalSidebarOpen
+      ? Math.max(width - INTERNAL_SIDEBAR_WIDTH, constraints.minW)
+      : width;
     userModeSizes[currentMode] = { width: savedWidth, height };
-    // Persist to main process memory (could also use electron-store)
+    // Persist the true base content size separately from the expanded outer width.
+    // This prevents the internal sidebar width from being baked into future mode sizes.
     baseContentWidth = savedWidth;
     baseContentHeight = height;
-    baseOuterWidth = internalSidebarOpen ? savedWidth + INTERNAL_SIDEBAR_WIDTH : savedWidth;
+    baseOuterWidth = b.width;
     baseOuterHeight = b.height;
   }
 
   // Notify renderer of size change for responsive layout
   try {
-    win.webContents.send('overlay:resized', { width, height, mode: currentMode });
-  } catch { }
+    win.webContents.send("overlay:resized", {
+      width,
+      height,
+      mode: currentMode,
+    });
+  } catch {}
 }
 
 // Ensure overlay window stays within constraints
@@ -378,12 +446,23 @@ function assertOverlaySize() {
   const b = win.getBounds();
   const constraints = MODE_SIZE_CONSTRAINTS[currentMode];
 
-  const clampedWidth = Math.max(constraints.minW, Math.min(constraints.maxW, b.width));
-  const clampedHeight = Math.max(constraints.minH, Math.min(constraints.maxH, b.height));
+  const clampedWidth = Math.max(
+    constraints.minW,
+    Math.min(constraints.maxW, b.width),
+  );
+  const clampedHeight = Math.max(
+    constraints.minH,
+    Math.min(constraints.maxH, b.height),
+  );
 
   // Only adjust if out of constraints
   if (b.width !== clampedWidth || b.height !== clampedHeight) {
-    win.setBounds({ x: b.x, y: b.y, width: clampedWidth, height: clampedHeight });
+    win.setBounds({
+      x: b.x,
+      y: b.y,
+      width: clampedWidth,
+      height: clampedHeight,
+    });
   }
 }
 
@@ -394,12 +473,12 @@ function updateSizeConstraints(mode: OverlayMode) {
   try {
     win.setMinimumSize(constraints.minW, constraints.minH);
     win.setMaximumSize(constraints.maxW, constraints.maxH);
-  } catch { }
+  } catch {}
 }
 
 // Get current overlay size info for renderer
 export function getOverlaySize() {
-  if (!win) return { width: 520, height: 130, mode: 'compact' };
+  if (!win) return { width: 520, height: 130, mode: "compact" };
   const b = win.getBounds();
   return { width: b.width, height: b.height, mode: currentMode };
 }
@@ -446,7 +525,9 @@ export function createWindow() {
   logger.info("BrowserWindow created");
   win.setMenu(null);
   if (screenCaptureInvisibleEnabled) {
-    try { win.setContentProtection(true); } catch {}
+    try {
+      win.setContentProtection(true);
+    } catch {}
   }
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   centerTopWithContentSize(win, WIDTH, HEIGHT);
@@ -460,7 +541,7 @@ export function createWindow() {
     baseOuterHeight = ob.height;
   }
   // Set min/max constraints for compact mode (will be updated on mode change)
-  updateSizeConstraints('compact');
+  updateSizeConstraints("compact");
 
   if (isDev) {
     const devUrl = getRendererUrl("index");
@@ -469,8 +550,8 @@ export function createWindow() {
   } else {
     // Try multiple paths since __dirname can vary between dev and packaged builds
     const candidates = [
-      path.join(__dirname, "../renderer/index.html"),     // dist/main -> dist/renderer
-      path.join(__dirname, "../../renderer/index.html"),   // dist/main/windows -> dist/renderer (nested)
+      path.join(__dirname, "../renderer/index.html"), // dist/main -> dist/renderer
+      path.join(__dirname, "../../renderer/index.html"), // dist/main/windows -> dist/renderer (nested)
       path.join(__dirname, "../../dist/renderer/index.html"), // fallback
     ];
     logger.info("Renderer path candidates:", candidates);
@@ -479,7 +560,7 @@ export function createWindow() {
     for (const p of candidates) {
       if (fs.existsSync(p)) {
         logger.info("Loading renderer:", p);
-        win.loadFile(p).catch(err => {
+        win.loadFile(p).catch((err) => {
           logger.error("Failed to load renderer file:", err);
         });
         loaded = true;
@@ -492,7 +573,7 @@ export function createWindow() {
   }
 
   // Show window when ready to show (more reliable than did-finish-load for initial paint)
-  win.once('ready-to-show', () => {
+  win.once("ready-to-show", () => {
     logger.info("Window ready-to-show event fired");
     if (win && !win.isVisible()) {
       logger.info("Showing window on ready-to-show...");
@@ -506,7 +587,9 @@ export function createWindow() {
     try {
       if (!win || win.isDestroyed()) return;
       if (!win.isVisible()) {
-        logger.warn("Startup fallback: window still hidden after delay; forcing showWindow()");
+        logger.warn(
+          "Startup fallback: window still hidden after delay; forcing showWindow()",
+        );
         showWindow();
       }
     } catch (e) {
@@ -515,7 +598,7 @@ export function createWindow() {
   }, 2500);
 
   // Log renderer load status
-  win.webContents.on('did-finish-load', () => {
+  win.webContents.on("did-finish-load", () => {
     logger.info("Renderer loaded successfully");
     logger.info("Window visible:", win?.isVisible());
     // Fallback: show window if not yet visible
@@ -524,24 +607,34 @@ export function createWindow() {
       showWindow();
     }
   });
-  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
-    logger.error("Renderer failed to load:", { errorCode, errorDescription, validatedURL });
-    // Still show window on failure so user can see something is wrong
-    if (win && !win.isVisible()) {
-      logger.info("Showing window despite load failure...");
-      win.show();
-    }
-  });
-  win.webContents.on('render-process-gone', (_event, details) => {
+  win.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, validatedURL) => {
+      logger.error("Renderer failed to load:", {
+        errorCode,
+        errorDescription,
+        validatedURL,
+      });
+      // Still show window on failure so user can see something is wrong
+      if (win && !win.isVisible()) {
+        logger.info("Showing window despite load failure...");
+        win.show();
+      }
+    },
+  );
+  win.webContents.on("render-process-gone", (_event, details) => {
     logger.error("Render process gone:", details);
   });
-  win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
-    const levelStr = ['verbose', 'info', 'warning', 'error'][level] || 'log';
-    // Log renderer messages to terminal - show everything including log/verbose
-    if (level >= 0) {
-      logger.info(`[Renderer] [${levelStr}] ${message}`);
-    }
-  });
+  win.webContents.on(
+    "console-message",
+    (_event, level, message, line, sourceId) => {
+      const levelStr = ["verbose", "info", "warning", "error"][level] || "log";
+      // Log renderer messages to terminal - show everything including log/verbose
+      if (level >= 0) {
+        logger.info(`[Renderer] [${levelStr}] ${message}`);
+      }
+    },
+  );
 
   // Keep overlay visible on focus changes; user controls visibility via hotkey or Escape
   // Prevent minimize to survive Win+D / Show Desktop
@@ -557,38 +650,43 @@ export function createWindow() {
     win = null;
   });
   // Handle resize events - allow user resizing while enforcing constraints
-  win.on('move', () => { /* No longer repositioning external sidebar */ });
-  win.on('resize', () => {
+  win.on("move", () => {
+    /* No longer repositioning external sidebar */
+  });
+  win.on("resize", () => {
     assertOverlaySize();
     handleUserResize();
   });
-  win.on('will-resize', (_event, newBounds) => {
+  win.on("will-resize", (_event, newBounds) => {
     // Notify renderer of incoming resize for smooth animations
     try {
-      win?.webContents.send('overlay:resizing', { width: newBounds.width, height: newBounds.height });
-    } catch { }
+      win?.webContents.send("overlay:resizing", {
+        width: newBounds.width,
+        height: newBounds.height,
+      });
+    } catch {}
   });
-  win.on('focus', () => {
+  win.on("focus", () => {
     unregisterMoveShortcuts();
     clearMoveTimer();
   });
-  win.on('blur', () => {
-    updateLastActiveWindowHandle('blur');
+  win.on("blur", () => {
+    updateLastActiveWindowHandle("blur");
     registerMoveShortcuts();
   });
-  win.on('hide', () => {
+  win.on("hide", () => {
     wasHidden = true;
     unregisterMoveShortcuts();
     clearMoveTimer();
   });
-  win.on('show', () => {
+  win.on("show", () => {
     if (win?.isFocused()) unregisterMoveShortcuts();
     else registerMoveShortcuts();
   });
-  win.on('move', () => {
+  win.on("move", () => {
     // No longer repositioning external sidebar - using internal sidebar
   });
-  win.on('resize', () => {
+  win.on("resize", () => {
     // No longer repositioning external sidebar - using internal sidebar
   });
 }
@@ -626,7 +724,7 @@ export function openOnboardingWindow() {
     skipTaskbar: false, // Show in taskbar like a normal window
     alwaysOnTop: false, // Act like a normal window
     useContentSize: true,
-    titleBarStyle: 'hidden',
+    titleBarStyle: "hidden",
     webPreferences: {
       preload: getPreloadPath(),
       contextIsolation: true,
@@ -639,7 +737,9 @@ export function openOnboardingWindow() {
 
   onboardingWin.setMenu(null);
   if (screenCaptureInvisibleEnabled) {
-    try { onboardingWin.setContentProtection(true); } catch {}
+    try {
+      onboardingWin.setContentProtection(true);
+    } catch {}
   }
 
   // Center on screen
@@ -648,7 +748,7 @@ export function openOnboardingWindow() {
   onboardingWin.setPosition(x, y);
 
   // Show when ready for smoother appearance
-  onboardingWin.once('ready-to-show', () => {
+  onboardingWin.once("ready-to-show", () => {
     onboardingWin?.show();
     onboardingWin?.focus();
   });
@@ -668,15 +768,19 @@ export function openOnboardingWindow() {
     }
   }
 
-  onboardingWin.on("closed", () => { onboardingWin = null; });
+  onboardingWin.on("closed", () => {
+    onboardingWin = null;
+  });
 }
 
 export function closeOnboardingWindow() {
-  try { onboardingWin?.close(); } catch { }
+  try {
+    onboardingWin?.close();
+  } catch {}
 }
 
 export function openDashboardWindow(options?: { tab?: string }) {
-  const initialTab = options?.tab || '';
+  const initialTab = options?.tab || "";
 
   if (dashboardWin && !dashboardWin.isDestroyed()) {
     dashboardWin.show();
@@ -684,7 +788,7 @@ export function openDashboardWindow(options?: { tab?: string }) {
     dashboardWin.moveTop();
     // If a tab was specified, send it to the renderer
     if (initialTab) {
-      dashboardWin.webContents.send('dashboard:navigate', { tab: initialTab });
+      dashboardWin.webContents.send("dashboard:navigate", { tab: initialTab });
     }
     return;
   }
@@ -717,7 +821,9 @@ export function openDashboardWindow(options?: { tab?: string }) {
   d.setMenu(null);
   d.setMenuBarVisibility(false);
   if (screenCaptureInvisibleEnabled) {
-    try { d.setContentProtection(true); } catch {}
+    try {
+      d.setContentProtection(true);
+    } catch {}
   }
   if (isDev) {
     const url = initialTab
@@ -741,27 +847,40 @@ export function openDashboardWindow(options?: { tab?: string }) {
     }
   }
   try {
-    const base = String(process.env.CLOUD_AI_HTTP || process.env.CLOUD_PUBLIC_URL || process.env.VITE_CLOUD_AI_URL || '').replace(/\/+$/, '');
+    const base = String(
+      process.env.CLOUD_AI_HTTP ||
+        process.env.CLOUD_PUBLIC_URL ||
+        process.env.VITE_CLOUD_AI_URL ||
+        "",
+    ).replace(/\/+$/, "");
     if (base) {
-      d.webContents.on('did-finish-load', () => {
-        try { d.webContents.executeJavaScript(`window.__CLOUD_AI_HTTP__ = ${JSON.stringify(base)};`); } catch { }
+      d.webContents.on("did-finish-load", () => {
+        try {
+          d.webContents.executeJavaScript(
+            `window.__CLOUD_AI_HTTP__ = ${JSON.stringify(base)};`,
+          );
+        } catch {}
       });
     }
-  } catch { }
+  } catch {}
 
-  d.on('closed', () => { dashboardWin = null; });
+  d.on("closed", () => {
+    dashboardWin = null;
+  });
   dashboardWin = d;
 }
 
 export function openWorkflowsWindow(options?: { marketplaceSlug?: string }) {
-  const initialSlug = options?.marketplaceSlug || '';
+  const initialSlug = options?.marketplaceSlug || "";
 
   if (workflowsWin && !workflowsWin.isDestroyed()) {
     workflowsWin.show();
     workflowsWin.focus();
     workflowsWin.moveTop();
     if (initialSlug) {
-      workflowsWin.webContents.send('workflows:navigate', { marketplaceSlug: initialSlug });
+      workflowsWin.webContents.send("workflows:navigate", {
+        marketplaceSlug: initialSlug,
+      });
     }
     return;
   }
@@ -793,13 +912,15 @@ export function openWorkflowsWindow(options?: { marketplaceSlug?: string }) {
   d.setMenu(null);
   d.setMenuBarVisibility(false);
   if (screenCaptureInvisibleEnabled) {
-    try { d.setContentProtection(true); } catch {}
+    try {
+      d.setContentProtection(true);
+    } catch {}
   }
   // Open devTools in production for debugging workflow UI issues
   if (!isDev) {
-    d.webContents.on('did-finish-load', () => {
+    d.webContents.on("did-finish-load", () => {
       // Log any errors to help debug
-      d.webContents.on('console-message', (_event, level, message) => {
+      d.webContents.on("console-message", (_event, level, message) => {
         if (level >= 2) logger.warn(`[Workflows] ${message}`);
       });
     });
@@ -826,19 +947,33 @@ export function openWorkflowsWindow(options?: { marketplaceSlug?: string }) {
     }
   }
   try {
-    const base = String(process.env.CLOUD_AI_HTTP || process.env.CLOUD_PUBLIC_URL || process.env.VITE_CLOUD_AI_URL || '').replace(/\/+$/, '');
+    const base = String(
+      process.env.CLOUD_AI_HTTP ||
+        process.env.CLOUD_PUBLIC_URL ||
+        process.env.VITE_CLOUD_AI_URL ||
+        "",
+    ).replace(/\/+$/, "");
     if (base) {
-      d.webContents.on('did-finish-load', () => {
-        try { d.webContents.executeJavaScript(`window.__CLOUD_AI_HTTP__ = ${JSON.stringify(base)};`); } catch { }
+      d.webContents.on("did-finish-load", () => {
+        try {
+          d.webContents.executeJavaScript(
+            `window.__CLOUD_AI_HTTP__ = ${JSON.stringify(base)};`,
+          );
+        } catch {}
       });
     }
-  } catch { }
-  d.on('closed', () => { workflowsWin = null; });
+  } catch {}
+  d.on("closed", () => {
+    workflowsWin = null;
+  });
   workflowsWin = d;
 }
 
 // Standalone Sidebar Window (Spaces, Canvas, Terminal) - always opens as standalone window
-export function openSidebarWindow(options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) {
+export function openSidebarWindow(options?: {
+  tab?: "spaces" | "canvas" | "terminal";
+  expanded?: boolean;
+}) {
   // Always open as standalone expanded window (ignore expanded flag, always expanded)
 
   if (sidebarWin && !sidebarWin.isDestroyed()) {
@@ -846,7 +981,7 @@ export function openSidebarWindow(options?: { tab?: 'spaces' | 'canvas' | 'termi
     sidebarWin.focus();
     sidebarWin.moveTop();
     if (options?.tab) {
-      sidebarWin.webContents.send('sidebar:navigate', { tab: options.tab });
+      sidebarWin.webContents.send("sidebar:navigate", { tab: options.tab });
     }
     return;
   }
@@ -861,7 +996,7 @@ export function openSidebarWindow(options?: { tab?: 'spaces' | 'canvas' | 'termi
     x: Math.round(workArea.x + (workArea.width - width) / 2),
     y: Math.round(workArea.y + (workArea.height - height) / 2),
     width,
-    height
+    height,
   };
   sidebarExpanded = true; // Always expanded
 
@@ -879,8 +1014,8 @@ export function openSidebarWindow(options?: { tab?: 'spaces' | 'canvas' | 'termi
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
-    skipTaskbar: false,  // Always show in taskbar (standalone window)
-    alwaysOnTop: false,   // Not always on top (standalone window)
+    skipTaskbar: false, // Always show in taskbar (standalone window)
+    alwaysOnTop: false, // Not always on top (standalone window)
     useContentSize: true,
     focusable: true,
     minWidth: 380,
@@ -897,17 +1032,21 @@ export function openSidebarWindow(options?: { tab?: 'spaces' | 'canvas' | 'termi
 
   sidebarWin.setMenu(null);
   if (screenCaptureInvisibleEnabled) {
-    try { sidebarWin.setContentProtection(true); } catch {}
+    try {
+      sidebarWin.setContentProtection(true);
+    } catch {}
   }
   // Always standalone mode - no special always-on-top handling needed
 
   // Build URL/file with tab and expanded params (always expanded)
-  const queryParams: Record<string, string> = { expanded: 'true' };
+  const queryParams: Record<string, string> = { expanded: "true" };
   if (options?.tab) queryParams.tab = options.tab;
 
   if (isDev) {
     const params = new URLSearchParams(queryParams).toString();
-    const url = params ? `${getRendererUrl("sidebar")}?${params}` : getRendererUrl("sidebar");
+    const url = params
+      ? `${getRendererUrl("sidebar")}?${params}`
+      : getRendererUrl("sidebar");
     sidebarWin.loadURL(url);
   } else {
     const candidates = [
@@ -926,7 +1065,7 @@ export function openSidebarWindow(options?: { tab?: 'spaces' | 'canvas' | 'termi
     }
   }
 
-  sidebarWin.on('closed', () => {
+  sidebarWin.on("closed", () => {
     sidebarWin = null;
     sidebarExpanded = false;
   });
@@ -935,16 +1074,23 @@ export function openSidebarWindow(options?: { tab?: 'spaces' | 'canvas' | 'termi
 }
 
 export function closeSidebarWindow() {
-  try { sidebarWin?.close(); } catch { }
+  try {
+    sidebarWin?.close();
+  } catch {}
 }
 
-export function toggleSidebarWindow(options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) {
+export function toggleSidebarWindow(options?: {
+  tab?: "spaces" | "canvas" | "terminal";
+  expanded?: boolean;
+}) {
   if (!sidebarWin || sidebarWin.isDestroyed()) {
     openSidebarWindow(options);
     return;
   }
   if (sidebarWin.isVisible()) {
-    try { sidebarWin.hide(); } catch { }
+    try {
+      sidebarWin.hide();
+    } catch {}
     return;
   }
 
@@ -953,7 +1099,7 @@ export function toggleSidebarWindow(options?: { tab?: 'spaces' | 'canvas' | 'ter
   sidebarWin.focus();
   sidebarWin.moveTop();
   if (options?.tab) {
-    sidebarWin.webContents.send('sidebar:navigate', { tab: options.tab });
+    sidebarWin.webContents.send("sidebar:navigate", { tab: options.tab });
   }
 }
 
@@ -973,7 +1119,7 @@ export function toggleSidebarExpanded() {
 
 // Legacy Spaces Window functions - now redirect to sidebar
 export function openSpacesWindow() {
-  openSidebarWindow({ tab: 'spaces' });
+  openSidebarWindow({ tab: "spaces" });
 }
 
 export function closeSpacesWindow() {
@@ -981,7 +1127,7 @@ export function closeSpacesWindow() {
 }
 
 export function toggleSpacesWindow() {
-  toggleSidebarWindow({ tab: 'spaces' });
+  toggleSidebarWindow({ tab: "spaces" });
 }
 
 // HUD Window - 3D Curved Launcher
@@ -1026,7 +1172,9 @@ export function openHudWindow() {
   hudWin.setIgnoreMouseEvents(false);
 
   // Try to set always on top with screen-saver level
-  try { hudWin.setAlwaysOnTop(true, 'screen-saver'); } catch { }
+  try {
+    hudWin.setAlwaysOnTop(true, "screen-saver");
+  } catch {}
 
   if (isDev) {
     hudWin.loadURL(getRendererUrl("hud-test"));
@@ -1043,15 +1191,21 @@ export function openHudWindow() {
     }
   }
 
-  hudWin.on('closed', () => { hudWin = null; });
-  hudWin.on('blur', () => {
+  hudWin.on("closed", () => {
+    hudWin = null;
+  });
+  hudWin.on("blur", () => {
     // Hide when focus is lost
-    try { hudWin?.hide(); } catch { }
+    try {
+      hudWin?.hide();
+    } catch {}
   });
 }
 
 export function hideHudWindow() {
-  try { hudWin?.hide(); } catch { }
+  try {
+    hudWin?.hide();
+  } catch {}
 }
 
 export function toggleHudWindow() {
@@ -1077,7 +1231,7 @@ export function handleOverlayHotkey() {
     if (overlayHotkeyLatchTimer != null) {
       clearTimeout(overlayHotkeyLatchTimer);
     }
-  } catch { }
+  } catch {}
 
   overlayHotkeyLatchTimer = setTimeout(() => {
     overlayHotkeyLatched = false;
@@ -1096,7 +1250,7 @@ export function showWindow() {
 
   const wasVisible = win.isVisible();
 
-  if (currentMode === 'compact' && wasHidden && !wasVisible) {
+  if (currentMode === "compact" && wasHidden && !wasVisible) {
     repositionTopCenter(win);
   }
 
@@ -1104,23 +1258,31 @@ export function showWindow() {
     if (win.isMinimized()) {
       win.restore();
     }
-  } catch { }
+  } catch {}
 
   try {
     win.showInactive();
     win.focus();
   } catch {
-    try { win.show(); } catch { }
-    try { win.focus(); } catch { }
+    try {
+      win.show();
+    } catch {}
+    try {
+      win.focus();
+    } catch {}
   }
 
   lastShowAt = Date.now();
 
-  try { win.moveTop(); } catch { }
+  try {
+    win.moveTop();
+  } catch {}
 
   wasHidden = false;
 
-  try { win.webContents.send("overlay:showed"); } catch { }
+  try {
+    win.webContents.send("overlay:showed");
+  } catch {}
 }
 
 export function hideWindow() {
@@ -1147,20 +1309,27 @@ export function toggleWindow() {
       showWindow();
     }
   } else {
-    if (currentMode !== 'compact') {
-      try { setOverlayMode('compact'); } catch { }
+    if (currentMode !== "compact") {
+      try {
+        setOverlayMode("compact");
+      } catch {}
     }
     showWindow();
   }
 }
 
-export function setOverlaySize(width: number, height: number, reposition = false, anchor: 'top' | 'bottom' = 'top') {
+export function setOverlaySize(
+  width: number,
+  height: number,
+  reposition = false,
+  anchor: "top" | "bottom" = "top",
+) {
   if (!win) return;
   resizingProgrammatically = true;
   baseContentWidth = width;
   baseContentHeight = height;
 
-  if (anchor === 'bottom') {
+  if (anchor === "bottom") {
     // Math must be done on *outer* bounds to be accurate
     const currentBounds = win.getBounds();
     // We can't easily predict the new outer height from content height without setContentSize...
@@ -1172,7 +1341,12 @@ export function setOverlaySize(width: number, height: number, reposition = false
     // Let's assume for this frameless window, setBounds width/height is close enough or use setBounds directly.
     const dy = height - currentBounds.height; // Approximation if mixing content/outer, but for frameless it's 1:1 usually
     const newY = currentBounds.y - dy;
-    win.setBounds({ x: currentBounds.x, y: newY, width: width, height: height });
+    win.setBounds({
+      x: currentBounds.x,
+      y: newY,
+      width: width,
+      height: height,
+    });
   } else {
     // Only reposition to center-top if explicitly requested or if window isn't visible yet
     if (reposition || !win.isVisible()) {
@@ -1183,7 +1357,10 @@ export function setOverlaySize(width: number, height: number, reposition = false
   }
 
   setTimeout(() => {
-    if (!win) { resizingProgrammatically = false; return; }
+    if (!win) {
+      resizingProgrammatically = false;
+      return;
+    }
     const ob = win.getBounds();
     baseOuterWidth = ob.width;
     baseOuterHeight = ob.height;
@@ -1193,35 +1370,38 @@ export function setOverlaySize(width: number, height: number, reposition = false
     try {
       win.setMinimumSize(constraints.minW, constraints.minH);
       win.setMaximumSize(constraints.maxW, constraints.maxH);
-    } catch { }
+    } catch {}
     resizingProgrammatically = false;
   }, 0);
 }
 
 export function setOverlayMode(mode: OverlayMode) {
   const prevMode = currentMode;
+
+  // If the internal sidebar is open while leaving window/sidebar mode, contract first
+  // so the next mode starts from the true base content width instead of the expanded width.
+  if (internalSidebarOpen && prevMode !== "compact" && mode !== prevMode) {
+    try {
+      toggleInternalSidebar(false);
+    } catch {}
+  }
+
   currentMode = mode;
 
   applyOverlayChrome(mode);
 
-  // Close internal sidebar when switching modes to reset width properly
-  if (internalSidebarOpen) {
+  // Compact mode never keeps the internal sidebar open
+  if (mode === "compact" && internalSidebarOpen) {
     internalSidebarOpen = false;
-    // Reset userModeSizes for current mode to remove expanded width
-    if (prevMode !== 'sidebar' && userModeSizes[prevMode]) {
-      const constraints = MODE_SIZE_CONSTRAINTS[prevMode];
-      const currentWidth = userModeSizes[prevMode].width;
-      // If width seems expanded (larger than default + some buffer), reset to default
-      if (currentWidth > DEFAULT_MODE_SIZES[prevMode].width + 100) {
-        userModeSizes[prevMode] = { ...DEFAULT_MODE_SIZES[prevMode] };
-      }
-    }
     try {
-      win?.webContents.send('overlay:internalSidebarChanged', { open: false, width: 0 });
-    } catch { }
+      win?.webContents.send("overlay:internalSidebarChanged", {
+        open: false,
+        width: 0,
+      });
+    } catch {}
   }
 
-  if (prevMode === 'sidebar' && mode !== 'sidebar' && lastSplitTarget) {
+  if (prevMode === "sidebar" && mode !== "sidebar" && lastSplitTarget) {
     restoreWindowSnapshot(lastSplitTarget);
     lastSplitTarget = null;
   }
@@ -1237,16 +1417,19 @@ export function setOverlayMode(mode: OverlayMode) {
 
     // Split-screen: use the last active window handle if available, otherwise capture.
     try {
-      const { execFile } = require('child_process');
+      const { execFile } = require("child_process");
       const activeWindowWidth = workArea.width - sidebarWidth;
-      const tmpDir = require('os').tmpdir();
+      const tmpDir = require("os").tmpdir();
 
       const overlayHandle = getNativeWindowHandleString(win);
-      logger.info('Overlay window handle:', overlayHandle);
-      logger.info('Last active window handle:', lastActiveWindowHandle);
+      logger.info("Overlay window handle:", overlayHandle);
+      logger.info("Last active window handle:", lastActiveWindowHandle);
 
       let capturedHandle = lastActiveWindowHandle;
-      if (!capturedHandle || (overlayHandle && capturedHandle === overlayHandle)) {
+      if (
+        !capturedHandle ||
+        (overlayHandle && capturedHandle === overlayHandle)
+      ) {
         capturedHandle = captureForegroundWindowHandle([
           overlayHandle,
           getNativeWindowHandleString(spacesWin),
@@ -1256,10 +1439,13 @@ export function setOverlayMode(mode: OverlayMode) {
         if (capturedHandle) lastActiveWindowHandle = capturedHandle;
       }
       if (capturedHandle) {
-        logger.info('Using foreground window handle for split-screen:', capturedHandle);
+        logger.info(
+          "Using foreground window handle for split-screen:",
+          capturedHandle,
+        );
       }
 
-      if (capturedHandle && capturedHandle !== '0') {
+      if (capturedHandle && capturedHandle !== "0") {
         lastSplitTarget = captureWindowSnapshotByHandle(capturedHandle);
       } else {
         lastSplitTarget = null;
@@ -1267,13 +1453,28 @@ export function setOverlayMode(mode: OverlayMode) {
 
       // Now position Stuard on the right side
       const sidebarX = workArea.x + workArea.width - sidebarWidth;
-      win?.setBounds({ x: sidebarX, y: workArea.y, width: sidebarWidth, height: h });
+      win?.setBounds({
+        x: sidebarX,
+        y: workArea.y,
+        width: sidebarWidth,
+        height: h,
+      });
       setOverlaySize(sidebarWidth, h, false);
 
       // Step 2: Resize the captured window to the left side
-      if (capturedHandle && capturedHandle !== '0') {
-        logger.info('Resizing window with handle:', capturedHandle, 'to', activeWindowWidth, 'x', h, 'at', workArea.x, workArea.y);
-        const resizeScript = path.join(tmpDir, 'stuard_split.ps1');
+      if (capturedHandle && capturedHandle !== "0") {
+        logger.info(
+          "Resizing window with handle:",
+          capturedHandle,
+          "to",
+          activeWindowWidth,
+          "x",
+          h,
+          "at",
+          workArea.x,
+          workArea.y,
+        );
+        const resizeScript = path.join(tmpDir, "stuard_split.ps1");
         const resizePsScript = `
 Add-Type @"
 using System;
@@ -1317,38 +1518,59 @@ if ($targetWindow -ne 0) {
   Write-Output "SplitSetWindowPos=$result"
 }
 `;
-        fs.writeFileSync(resizeScript, resizePsScript, 'utf8');
+        fs.writeFileSync(resizeScript, resizePsScript, "utf8");
 
-        execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', resizeScript], (error: any, stdout: string, stderr: string) => {
-          const trimmedOut = (stdout || '').trim();
-          const trimmedErr = (stderr || '').trim();
-          if (trimmedOut) {
-            logger.info('Split-screen target info:', trimmedOut);
-          }
-          if (trimmedErr) {
-            logger.warn('Split-screen stderr:', trimmedErr);
-          }
-          if (error) {
-            logger.warn('Failed to resize active window for split-screen:', error.message);
-          } else {
-            logger.info('Split-screen layout applied successfully');
-          }
-          try { fs.unlinkSync(resizeScript); } catch { }
-        });
+        execFile(
+          "powershell.exe",
+          ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", resizeScript],
+          (error: any, stdout: string, stderr: string) => {
+            const trimmedOut = (stdout || "").trim();
+            const trimmedErr = (stderr || "").trim();
+            if (trimmedOut) {
+              logger.info("Split-screen target info:", trimmedOut);
+            }
+            if (trimmedErr) {
+              logger.warn("Split-screen stderr:", trimmedErr);
+            }
+            if (error) {
+              logger.warn(
+                "Failed to resize active window for split-screen:",
+                error.message,
+              );
+            } else {
+              logger.info("Split-screen layout applied successfully");
+            }
+            try {
+              fs.unlinkSync(resizeScript);
+            } catch {}
+          },
+        );
       } else {
         // No window to resize, just position Stuard
-        logger.info('No active window to split with, just positioning sidebar');
+        logger.info("No active window to split with, just positioning sidebar");
       }
     } catch (err) {
-      logger.warn('Error applying split-screen:', err);
+      logger.warn("Error applying split-screen:", err);
       // Still position Stuard even if split fails
       const sidebarX = workArea.x + workArea.width - sidebarWidth;
-      win?.setBounds({ x: sidebarX, y: workArea.y, width: sidebarWidth, height: h });
+      win?.setBounds({
+        x: sidebarX,
+        y: workArea.y,
+        width: sidebarWidth,
+        height: h,
+      });
       setOverlaySize(sidebarWidth, h, false);
     }
 
     // Notify renderer of mode change
-    try { win?.webContents.send('overlay:modeChanged', { mode, width: sidebarWidth, height: h, prevMode }); } catch { }
+    try {
+      win?.webContents.send("overlay:modeChanged", {
+        mode,
+        width: sidebarWidth,
+        height: h,
+        prevMode,
+      });
+    } catch {}
     return;
   }
 
@@ -1363,7 +1585,14 @@ if ($targetWindow -ne 0) {
   setOverlaySize(width, height, true);
 
   // Notify renderer of mode change
-  try { win?.webContents.send('overlay:modeChanged', { mode, width, height, prevMode }); } catch { }
+  try {
+    win?.webContents.send("overlay:modeChanged", {
+      mode,
+      width,
+      height,
+      prevMode,
+    });
+  } catch {}
 }
 
 // Get current mode
@@ -1378,15 +1607,34 @@ function clamp(n: number, min: number, max: number) {
 export function moveOverlayBy(dx: number, dy: number) {
   if (!win) return;
   const outer = win.getBounds();
-  const display = screen.getDisplayMatching({ x: outer.x, y: outer.y, width: outer.width, height: outer.height });
+  const display = screen.getDisplayMatching({
+    x: outer.x,
+    y: outer.y,
+    width: outer.width,
+    height: outer.height,
+  });
   const wa = display.workArea;
   const targetOuterX = clamp(outer.x + dx, wa.x, wa.x + wa.width - outer.width);
-  const targetOuterY = clamp(outer.y + dy, wa.y, wa.y + wa.height - outer.height);
+  const targetOuterY = clamp(
+    outer.y + dy,
+    wa.y,
+    wa.y + wa.height - outer.height,
+  );
   // Lock the outer width/height absolutely when moving
-  win.setBounds({ x: targetOuterX, y: targetOuterY, width: baseOuterWidth, height: baseOuterHeight });
+  win.setBounds({
+    x: targetOuterX,
+    y: targetOuterY,
+    width: baseOuterWidth,
+    height: baseOuterHeight,
+  });
 }
 
-export function setOverlayBounds(bounds: { x?: number; y?: number; width?: number; height?: number }) {
+export function setOverlayBounds(bounds: {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+}) {
   if (!win) return;
   resizingProgrammatically = true;
   try {
@@ -1405,7 +1653,9 @@ export function setOverlayBounds(bounds: { x?: number; y?: number; width?: numbe
 
     win.setBounds(target);
   } finally {
-    setTimeout(() => { resizingProgrammatically = false; }, 0);
+    setTimeout(() => {
+      resizingProgrammatically = false;
+    }, 0);
   }
 }
 
@@ -1413,8 +1663,11 @@ export function setOverlayBounds(bounds: { x?: number; y?: number; width?: numbe
  * Toggle internal sidebar - expands/contracts overlay window width
  * This keeps sidebar as part of the main overlay window (not a separate window)
  */
-export function toggleInternalSidebar(open?: boolean): { open: boolean; width: number } {
-  const shouldOpen = typeof open === 'boolean' ? open : !internalSidebarOpen;
+export function toggleInternalSidebar(open?: boolean): {
+  open: boolean;
+  width: number;
+} {
+  const shouldOpen = typeof open === "boolean" ? open : !internalSidebarOpen;
 
   if (!win || win.isDestroyed()) {
     internalSidebarOpen = shouldOpen;
@@ -1424,62 +1677,102 @@ export function toggleInternalSidebar(open?: boolean): { open: boolean; width: n
   const current = win.getBounds();
   const display = screen.getDisplayMatching(current);
   const workArea = display.workArea;
+  const constraints = MODE_SIZE_CONSTRAINTS[currentMode];
+
+  // Treat the current base content width as the source of truth.
+  // When the sidebar is already open, derive it from the visible width.
+  const currentBaseWidth = internalSidebarOpen
+    ? Math.max(current.width - INTERNAL_SIDEBAR_WIDTH, constraints.minW)
+    : current.width;
 
   resizingProgrammatically = true;
 
   try {
     if (shouldOpen && !internalSidebarOpen) {
-      // Opening sidebar - expand width
-      const newWidth = Math.min(current.width + INTERNAL_SIDEBAR_WIDTH, workArea.width - 40);
+      // Opening sidebar - expand from the base content width instead of stacking width repeatedly.
+      const expandedWidth = Math.min(
+        currentBaseWidth + INTERNAL_SIDEBAR_WIDTH,
+        workArea.width - 40,
+      );
 
       // Adjust x position if expanding would go off-screen
       let newX = current.x;
-      if (current.x + newWidth > workArea.x + workArea.width) {
-        newX = Math.max(workArea.x, workArea.x + workArea.width - newWidth);
+      if (current.x + expandedWidth > workArea.x + workArea.width) {
+        newX = Math.max(
+          workArea.x,
+          workArea.x + workArea.width - expandedWidth,
+        );
       }
 
-      win.setBounds({ x: newX, y: current.y, width: newWidth, height: current.height });
-      baseContentWidth = newWidth;
-      baseOuterWidth = newWidth;
+      win.setBounds({
+        x: newX,
+        y: current.y,
+        width: expandedWidth,
+        height: current.height,
+      });
 
-      // Update max width constraint to allow the expanded size
-      const constraints = MODE_SIZE_CONSTRAINTS[currentMode];
+      // Keep the base width stable so reopening the sidebar does not keep growing the window.
+      baseContentWidth = currentBaseWidth;
+      baseContentHeight = current.height;
+      baseOuterWidth = expandedWidth;
+      baseOuterHeight = current.height;
+
+      if (currentMode !== "sidebar") {
+        userModeSizes[currentMode] = {
+          width: currentBaseWidth,
+          height: current.height,
+        };
+      }
+
+      // Update max width constraint to allow the expanded size while open
       try {
-        win.setMaximumSize(Math.max(constraints.maxW, newWidth + 100), constraints.maxH);
-      } catch { }
-
+        win.setMaximumSize(
+          Math.max(constraints.maxW, expandedWidth),
+          constraints.maxH,
+        );
+      } catch {}
     } else if (!shouldOpen && internalSidebarOpen) {
-      // Closing sidebar - contract width
-      const newWidth = Math.max(current.width - INTERNAL_SIDEBAR_WIDTH, MODE_SIZE_CONSTRAINTS[currentMode].minW);
+      // Closing sidebar - return to the remembered base content width
+      const contractedWidth = Math.max(currentBaseWidth, constraints.minW);
 
-      win.setBounds({ x: current.x, y: current.y, width: newWidth, height: current.height });
-      baseContentWidth = newWidth;
-      baseOuterWidth = newWidth;
+      win.setBounds({
+        x: current.x,
+        y: current.y,
+        width: contractedWidth,
+        height: current.height,
+      });
+      baseContentWidth = contractedWidth;
+      baseContentHeight = current.height;
+      baseOuterWidth = contractedWidth;
+      baseOuterHeight = current.height;
 
       // Update userModeSizes to the contracted width so mode switches use correct size
-      if (currentMode !== 'sidebar') {
-        userModeSizes[currentMode] = { width: newWidth, height: current.height };
+      if (currentMode !== "sidebar") {
+        userModeSizes[currentMode] = {
+          width: contractedWidth,
+          height: current.height,
+        };
       }
 
       // Restore normal max width constraint
-      const constraints = MODE_SIZE_CONSTRAINTS[currentMode];
       try {
         win.setMaximumSize(constraints.maxW, constraints.maxH);
-      } catch { }
+      } catch {}
     }
 
     internalSidebarOpen = shouldOpen;
 
     // Notify renderer of the change
     try {
-      win.webContents.send('overlay:internalSidebarChanged', {
+      win.webContents.send("overlay:internalSidebarChanged", {
         open: internalSidebarOpen,
-        width: win.getBounds().width
+        width: win.getBounds().width,
       });
-    } catch { }
-
+    } catch {}
   } finally {
-    setTimeout(() => { resizingProgrammatically = false; }, 0);
+    setTimeout(() => {
+      resizingProgrammatically = false;
+    }, 0);
   }
 
   return { open: internalSidebarOpen, width: win.getBounds().width };
@@ -1498,22 +1791,33 @@ export function registerGlobalShortcuts() {
 
   // Unregister any existing shortcuts first
   const existingAccels = [
-    "Control+Space", "Ctrl+Space", "Control+Shift+Space", "Ctrl+Shift+Space",
-    "CommandOrControl+Shift+Space", "Alt+Space", "Command+Space"
+    "Control+Space",
+    "Ctrl+Space",
+    "Control+Shift+Space",
+    "Ctrl+Shift+Space",
+    "CommandOrControl+Shift+Space",
+    "Alt+Space",
+    "Command+Space",
   ];
   for (const a of existingAccels) {
-    try { globalShortcut.unregister(a); } catch { }
+    try {
+      globalShortcut.unregister(a);
+    } catch {}
   }
 
   // Also unregister HUD legacy shortcut just in case
-  try { globalShortcut.unregister("Control+Alt+Space"); } catch { }
+  try {
+    globalShortcut.unregister("Control+Alt+Space");
+  } catch {}
 
   let registered = false;
 
   // Try to register the stored hotkey first
   try {
     if (globalShortcut.isRegistered(storedHotkey)) {
-      logger.warn(`Stored hotkey ${storedHotkey} is already registered by another application.`);
+      logger.warn(
+        `Stored hotkey ${storedHotkey} is already registered by another application.`,
+      );
     } else {
       const success = globalShortcut.register(storedHotkey, () => {
         logger.info("Hotkey pressed:", storedHotkey);
@@ -1534,8 +1838,11 @@ export function registerGlobalShortcuts() {
   // If stored hotkey failed, fall back to defaults
   if (!registered) {
     const fallbackAccels = [
-      "Control+Space", "Ctrl+Space", "Control+Shift+Space",
-      "Ctrl+Shift+Space", "CommandOrControl+Shift+Space"
+      "Control+Space",
+      "Ctrl+Space",
+      "Control+Shift+Space",
+      "Ctrl+Shift+Space",
+      "CommandOrControl+Shift+Space",
     ];
 
     for (const a of fallbackAccels) {
@@ -1565,10 +1872,22 @@ export function registerGlobalShortcuts() {
     logger.error("Failed to register ANY overlay shortcut!");
   }
 
-  try { globalShortcut.register("CommandOrControl+/", () => openWorkflowsWindow()); } catch { }
-  try { globalShortcut.register("Control+/", () => openWorkflowsWindow()); } catch { }
-  try { globalShortcut.register("CommandOrControl+Shift+/", () => openWorkflowsWindow()); } catch { }
-  try { globalShortcut.register("CommandOrControl+Divide", () => openWorkflowsWindow()); } catch { }
+  try {
+    globalShortcut.register("CommandOrControl+/", () => openWorkflowsWindow());
+  } catch {}
+  try {
+    globalShortcut.register("Control+/", () => openWorkflowsWindow());
+  } catch {}
+  try {
+    globalShortcut.register("CommandOrControl+Shift+/", () =>
+      openWorkflowsWindow(),
+    );
+  } catch {}
+  try {
+    globalShortcut.register("CommandOrControl+Divide", () =>
+      openWorkflowsWindow(),
+    );
+  } catch {}
 
   // HUD Window: Control+Alt+Space
   try {
@@ -1586,8 +1905,11 @@ export function registerGlobalShortcuts() {
 
 export function createTray() {
   // 1x1 transparent PNG
-  const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
-  const image = nativeImage.createFromDataURL(`data:image/png;base64,${pixel}`).resize({ width: 16, height: 16 });
+  const pixel =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
+  const image = nativeImage
+    .createFromDataURL(`data:image/png;base64,${pixel}`)
+    .resize({ width: 16, height: 16 });
   tray = new Tray(image);
   tray.setToolTip("StuardAI Assistant");
   const contextMenu = Menu.buildFromTemplate([
@@ -1608,7 +1930,9 @@ const KEY_TTL_MS = 130;
 
 function clearMoveTimer() {
   if (moveTimer != null) {
-    try { clearInterval(moveTimer); } catch { }
+    try {
+      clearInterval(moveTimer);
+    } catch {}
     moveTimer = null;
     lastMoveTs = 0;
   }
@@ -1618,7 +1942,10 @@ function ensureMoveTimer() {
   if (moveTimer != null) return;
   lastMoveTs = Date.now();
   moveTimer = setInterval(() => {
-    if (!win || !win.isVisible() || win.isFocused()) { clearMoveTimer(); return; }
+    if (!win || !win.isVisible() || win.isFocused()) {
+      clearMoveTimer();
+      return;
+    }
     const now = Date.now();
     const dt = (now - lastMoveTs) / 1000;
     lastMoveTs = now;
@@ -1628,7 +1955,8 @@ function ensureMoveTimer() {
     const right = pressedUntil.right > now;
     const up = pressedUntil.up > now;
     const down = pressedUntil.down > now;
-    let vx = 0, vy = 0;
+    let vx = 0,
+      vy = 0;
     if (left) vx -= 1;
     if (right) vx += 1;
     if (up) vy -= 1;
@@ -1636,7 +1964,8 @@ function ensureMoveTimer() {
     if (ctrl && (vx !== 0 || vy !== 0)) {
       const speed = shift ? 1500 : 900;
       const len = Math.hypot(vx, vy) || 1;
-      vx /= len; vy /= len;
+      vx /= len;
+      vy /= len;
       const dx = Math.round(vx * speed * dt);
       const dy = Math.round(vy * speed * dt);
       if (dx !== 0 || dy !== 0) moveOverlayBy(dx, dy);
@@ -1646,7 +1975,14 @@ function ensureMoveTimer() {
   }, 16);
 }
 
-function markPressed(state: { ctrl?: boolean; shift?: boolean; left?: boolean; right?: boolean; up?: boolean; down?: boolean; }) {
+function markPressed(state: {
+  ctrl?: boolean;
+  shift?: boolean;
+  left?: boolean;
+  right?: boolean;
+  up?: boolean;
+  down?: boolean;
+}) {
   const now = Date.now();
   if (state.ctrl) pressedUntil.ctrl = now + KEY_TTL_MS;
   if (state.shift) pressedUntil.shift = now + KEY_TTL_MS;
@@ -1669,7 +2005,9 @@ function unregisterMoveShortcuts() {
     "Control+Shift+Down",
   ];
   for (const a of accels) {
-    try { globalShortcut.unregister(a); } catch { }
+    try {
+      globalShortcut.unregister(a);
+    } catch {}
   }
 }
 
@@ -1678,7 +2016,17 @@ function registerMoveShortcuts() {
   if (!win.isVisible()) return;
   if (win.isFocused()) return;
   unregisterMoveShortcuts();
-  const registerMove = (accel: string, state: { ctrl?: boolean; shift?: boolean; left?: boolean; right?: boolean; up?: boolean; down?: boolean; }) => {
+  const registerMove = (
+    accel: string,
+    state: {
+      ctrl?: boolean;
+      shift?: boolean;
+      left?: boolean;
+      right?: boolean;
+      up?: boolean;
+      down?: boolean;
+    },
+  ) => {
     try {
       globalShortcut.register(accel, () => {
         if (!win) return;
@@ -1686,7 +2034,7 @@ function registerMoveShortcuts() {
         if (win.isFocused()) return;
         markPressed(state);
       });
-    } catch { }
+    } catch {}
   };
   registerMove("Control+Left", { ctrl: true, left: true });
   registerMove("Control+Right", { ctrl: true, right: true });
@@ -1703,7 +2051,7 @@ const boardWindows = new Map<string, BrowserWindow>();
 const boardStates = new Map<string, any>();
 
 export function createBoardWindow(item: any) {
-  const id = String(item?.id || '').trim();
+  const id = String(item?.id || "").trim();
   if (!id) return;
   // If exists, update instead
   if (boardWindows.has(id)) {
@@ -1739,23 +2087,28 @@ export function createBoardWindow(item: any) {
   });
   w.setMenu(null);
   // Hide from alt-tab on Windows by setting tool window style
-  try { w.setAlwaysOnTop(true, 'pop-up-menu'); } catch { }
+  try {
+    w.setAlwaysOnTop(true, "pop-up-menu");
+  } catch {}
   // Position near specified coords or center-top
   try {
-    if (pos && (typeof pos.x === 'number') && (typeof pos.y === 'number')) {
+    if (pos && typeof pos.x === "number" && typeof pos.y === "number") {
       const { workArea } = screen.getPrimaryDisplay();
       const bx = Math.round(pos.x);
       const by = Math.round(pos.y);
-      w.setPosition(clamp(bx, workArea.x, workArea.x + workArea.width - width), clamp(by, workArea.y, workArea.y + workArea.height - height));
+      w.setPosition(
+        clamp(bx, workArea.x, workArea.x + workArea.width - width),
+        clamp(by, workArea.y, workArea.y + workArea.height - height),
+      );
     } else {
       const { workArea } = screen.getPrimaryDisplay();
       const x = Math.round(workArea.x + (workArea.width - width) / 2);
       const y = Math.round(workArea.y + workArea.height * 0.18);
       w.setPosition(x, y);
     }
-  } catch { }
+  } catch {}
   if (isDev) {
-    w.loadURL(getRendererUrl('board'));
+    w.loadURL(getRendererUrl("board"));
   } else {
     const candidates = [
       path.join(__dirname, "../renderer/board.html"),
@@ -1768,21 +2121,27 @@ export function createBoardWindow(item: any) {
       }
     }
   }
-  w.on('closed', () => {
-    try { boardWindows.delete(id); } catch { }
+  w.on("closed", () => {
+    try {
+      boardWindows.delete(id);
+    } catch {}
   });
   boardWindows.set(id, w);
-  try { boardStates.set(id, { ...(boardStates.get(id) || {}), ...item }); } catch { }
+  try {
+    boardStates.set(id, { ...(boardStates.get(id) || {}), ...item });
+  } catch {}
   // Send initial data once DOM is ready
   try {
-    w.webContents.on('did-finish-load', () => {
-      try { w.webContents.send('board:init', item); } catch { }
+    w.webContents.on("did-finish-load", () => {
+      try {
+        w.webContents.send("board:init", item);
+      } catch {}
     });
-  } catch { }
+  } catch {}
 }
 
 export function updateBoardWindow(item: any) {
-  const id = String(item?.id || '').trim();
+  const id = String(item?.id || "").trim();
   if (!id) return;
   const w = boardWindows.get(id);
   if (!w || w.isDestroyed()) return;
@@ -1794,54 +2153,80 @@ export function updateBoardWindow(item: any) {
     const height = clamp(Number(size?.height || bounds.height), 120, 3000);
     let x = bounds.x;
     let y = bounds.y;
-    if (typeof pos?.x === 'number') x = pos.x;
-    if (typeof pos?.y === 'number') y = pos.y;
+    if (typeof pos?.x === "number") x = pos.x;
+    if (typeof pos?.y === "number") y = pos.y;
     const display = screen.getDisplayMatching({ x, y, width, height });
     const wa = display.workArea;
     const targetX = clamp(x, wa.x, wa.x + wa.width - width);
     const targetY = clamp(y, wa.y, wa.y + wa.height - height);
     w.setBounds({ x: targetX, y: targetY, width, height });
-  } catch { }
-  try { w.webContents.send('board:update', item); } catch { }
-  try { boardStates.set(id, { ...(boardStates.get(id) || {}), ...item }); } catch { }
+  } catch {}
+  try {
+    w.webContents.send("board:update", item);
+  } catch {}
+  try {
+    boardStates.set(id, { ...(boardStates.get(id) || {}), ...item });
+  } catch {}
 }
 
 export function deleteBoardWindow(id: string) {
   const w = boardWindows.get(id);
   if (w && !w.isDestroyed()) {
-    try { w.close(); } catch { }
+    try {
+      w.close();
+    } catch {}
   }
-  try { boardWindows.delete(id); } catch { }
-  try { boardStates.delete(id); } catch { }
+  try {
+    boardWindows.delete(id);
+  } catch {}
+  try {
+    boardStates.delete(id);
+  } catch {}
 }
 
 export function showBoardWindow(id: string) {
   const w = boardWindows.get(id);
-  try { w?.show(); w?.focus(); w?.moveTop(); } catch { }
+  try {
+    w?.show();
+    w?.focus();
+    w?.moveTop();
+  } catch {}
 }
 
 export function hideBoardWindow(id: string) {
   const w = boardWindows.get(id);
-  try { w?.hide(); } catch { }
+  try {
+    w?.hide();
+  } catch {}
 }
 
 export function focusBoardWindow(id: string) {
   const w = boardWindows.get(id);
-  try { w?.show(); w?.focus(); w?.moveTop(); } catch { }
+  try {
+    w?.show();
+    w?.focus();
+    w?.moveTop();
+  } catch {}
 }
 
 export function clearBoardWindows() {
   try {
     for (const [id, w] of boardWindows) {
-      try { w.close(); } catch { }
+      try {
+        w.close();
+      } catch {}
     }
     boardWindows.clear();
     boardStates.clear();
-  } catch { }
+  } catch {}
 }
 
 export function listBoardWindows() {
-  try { return Array.from(boardStates.values()); } catch { return []; }
+  try {
+    return Array.from(boardStates.values());
+  } catch {
+    return [];
+  }
 }
 
 export function getNotificationWindow() {
@@ -1857,23 +2242,37 @@ export function getScreenCaptureInvisible(): boolean {
 
 export function setScreenCaptureInvisible(enabled: boolean) {
   screenCaptureInvisibleEnabled = enabled;
-  const allWindows = [win, dashboardWin, workflowsWin, onboardingWin, sidebarWin, hudWin, notificationWin];
+  const allWindows = [
+    win,
+    dashboardWin,
+    workflowsWin,
+    onboardingWin,
+    sidebarWin,
+    hudWin,
+    notificationWin,
+  ];
   for (const w of allWindows) {
     if (w && !w.isDestroyed()) {
-      try { w.setContentProtection(enabled); } catch {}
+      try {
+        w.setContentProtection(enabled);
+      } catch {}
     }
   }
   // Also apply to all BrowserWindows (catches custom_ui windows)
   for (const w of BrowserWindow.getAllWindows()) {
-    try { w.setContentProtection(enabled); } catch {}
+    try {
+      w.setContentProtection(enabled);
+    } catch {}
   }
-  logger.info(`Screen capture invisibility ${enabled ? 'enabled' : 'disabled'} for all windows`);
+  logger.info(
+    `Screen capture invisibility ${enabled ? "enabled" : "disabled"} for all windows`,
+  );
 }
 
 export function openNotificationWindow() {
   if (notificationWin && !notificationWin.isDestroyed()) {
     // Should be invisible to interaction but visible for rendering
-    // notificationWin.show(); 
+    // notificationWin.show();
     return;
   }
 
@@ -1896,7 +2295,7 @@ export function openNotificationWindow() {
     fullscreenable: false,
     skipTaskbar: true,
     alwaysOnTop: true, // Always on top for notifications
-    type: 'toolbar', // Helps on some OSs to stay on top
+    type: "toolbar", // Helps on some OSs to stay on top
     webPreferences: {
       preload: getPreloadPath(),
       contextIsolation: true,
@@ -1911,7 +2310,9 @@ export function openNotificationWindow() {
   notificationWin.setIgnoreMouseEvents(true, { forward: true });
   notificationWin.setMenu(null);
   if (screenCaptureInvisibleEnabled) {
-    try { notificationWin.setContentProtection(true); } catch {}
+    try {
+      notificationWin.setContentProtection(true);
+    } catch {}
   }
 
   if (isDev) {
@@ -1928,7 +2329,7 @@ export function openNotificationWindow() {
     }
   }
 
-  notificationWin.once('ready-to-show', () => {
+  notificationWin.once("ready-to-show", () => {
     notificationWin?.showInactive(); // Show without taking focus
   });
 

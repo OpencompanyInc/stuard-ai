@@ -1,20 +1,31 @@
-import React, { memo, useCallback, useMemo, useRef, useState, useEffect } from 'react';
-import { clsx } from 'clsx';
-import { X, Sparkles } from 'lucide-react';
-import MessageList from './MessageList';
-import { ContextItem, FileNavRef } from './FileNavigator';
-import type { ChatMode, ChatModelsConfig, ReasoningLevel } from '../hooks/usePreferences';
-import { useModelRegistry } from '../hooks/useModelRegistry';
-import { ChatTabs } from './chat-view/ChatTabs';
-import { ChatHeaderActions } from './chat-view/ChatHeaderActions';
-import { ChatInputArea } from './chat-view/ChatInputArea';
-import { FileNavigatorOverlay } from './chat-view/FileNavigatorOverlay';
-import { SidebarTabsPanel } from './SidebarTabsPanel';
-import { TasksView, TaskSubTab } from './TasksView';
-import { SubagentDashboard } from './chat-view/SubagentDashboard';
-import { AskUserPrompt } from './chat-view/AskUserPrompt';
-import { useSubagentDashboard } from '../hooks/useSubagentDashboard';
-import { buildContextUsageMetrics } from '../utils/contextUsage';
+import React, {
+  memo,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  useEffect,
+} from "react";
+import { clsx } from "clsx";
+import { X, Sparkles } from "lucide-react";
+import MessageList from "./MessageList";
+import { ContextItem, FileNavRef } from "./FileNavigator";
+import type {
+  ChatMode,
+  ChatModelsConfig,
+  ReasoningLevel,
+} from "../hooks/usePreferences";
+import { useModelRegistry } from "../hooks/useModelRegistry";
+import { ChatTabs } from "./chat-view/ChatTabs";
+import { ChatHeaderActions } from "./chat-view/ChatHeaderActions";
+import { ChatInputArea } from "./chat-view/ChatInputArea";
+import { FileNavigatorOverlay } from "./chat-view/FileNavigatorOverlay";
+import { SidebarTabsPanel } from "./SidebarTabsPanel";
+import { TasksView, TaskSubTab } from "./TasksView";
+import { SubagentDashboard } from "./chat-view/SubagentDashboard";
+import { AskUserPrompt } from "./chat-view/AskUserPrompt";
+import { useSubagentDashboard } from "../hooks/useSubagentDashboard";
+import { buildContextUsageMetrics } from "../utils/contextUsage";
 
 interface ChatViewProps {
   messages: any[];
@@ -44,7 +55,7 @@ interface ChatViewProps {
   onMicClick?: () => void;
 
   // Attachments
-  attachments?: Array<{ type: 'image' | 'file'; name: string }>;
+  attachments?: Array<{ type: "image" | "file"; name: string }>;
   onRemoveAttachment?: (index: number) => void;
   onAttachFiles?: () => void;
   onAttachImages?: () => void;
@@ -69,7 +80,7 @@ interface ChatViewProps {
   modelName?: string;
   contextUsage?: Record<string, any>;
   contextModelId?: string;
-  connectionStatus?: 'connected' | 'connecting' | 'disconnected' | 'error';
+  connectionStatus?: "connected" | "connecting" | "disconnected" | "error";
 
   chatMode?: ChatMode;
   onChatModeChange?: (mode: ChatMode) => void;
@@ -79,7 +90,7 @@ interface ChatViewProps {
   onReasoningLevelChange?: (level: ReasoningLevel) => void;
 
   // Layout mode for responsive styling
-  overlayMode?: 'compact' | 'sidebar' | 'window';
+  overlayMode?: "compact" | "sidebar" | "window";
 
   // Tabs
   tabs?: any[];
@@ -93,7 +104,12 @@ interface ChatViewProps {
   onGenUIResponse?: (component: string, result: any) => void;
 
   // ask_user tool prompts
-  askUserPrompts?: Array<{ id: string; tool: string; args: any; status: string }>;
+  askUserPrompts?: Array<{
+    id: string;
+    tool: string;
+    args: any;
+    status: string;
+  }>;
   onAskUserRespond?: (toolCallId: string, result: any) => void;
 
   // Edit & Revert
@@ -120,10 +136,10 @@ interface ChatViewProps {
 
   // Internal Sidebar
   internalSidebarOpen?: boolean;
-  activeSidebarTab?: 'spaces' | 'canvas' | 'terminal';
+  activeSidebarTab?: "spaces" | "canvas" | "terminal";
   onToggleInternalSidebar?: () => void;
   onCloseInternalSidebar?: () => void;
-  onSwitchSidebarTab?: (tab: 'spaces' | 'canvas' | 'terminal') => void;
+  onSwitchSidebarTab?: (tab: "spaces" | "canvas" | "terminal") => void;
 }
 
 const ChatViewInner: React.FC<ChatViewProps> = ({
@@ -154,18 +170,18 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   chatMenuOpen,
   onChatMenuOpenChange,
   onDeleteConversation,
-  statusText = 'Online',
-  modelName = '',
+  statusText = "Online",
+  modelName = "",
   contextUsage,
   contextModelId,
-  connectionStatus = 'connected',
-  chatMode = 'auto',
+  connectionStatus = "connected",
+  chatMode = "auto",
   onChatModeChange,
   chatModels,
   onChatModelsChange,
   reasoningLevel,
   onReasoningLevelChange,
-  overlayMode = 'compact',
+  overlayMode = "compact",
   tabs = [],
   activeTabId,
   onSwitchTab,
@@ -193,28 +209,37 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
 
   // Internal Sidebar
   internalSidebarOpen = false,
-  activeSidebarTab = 'spaces',
+  activeSidebarTab = "spaces",
   onToggleInternalSidebar,
   onCloseInternalSidebar,
   onSwitchSidebarTab,
 }) => {
   // Responsive layout based on overlay mode
-  const isSidebarMode = overlayMode === 'sidebar';
-  const isWindowMode = overlayMode === 'window';
-  const selectedModelId: string | 'auto' = (typeof chatMode === 'string' && chatMode.trim()) ? (chatMode.trim() as any) : 'auto';
+  const isSidebarMode = overlayMode === "sidebar";
+  const isWindowMode = overlayMode === "window";
+  const selectedModelId: string | "auto" =
+    typeof chatMode === "string" && chatMode.trim()
+      ? (chatMode.trim() as any)
+      : "auto";
   const { modelById } = useModelRegistry();
 
   // View Mode State (Chat vs Tasks)
-  const [viewMode, setViewMode] = useState<'chat' | 'tasks'>('chat');
-  const [tasksSubTab, setTasksSubTab] = useState<TaskSubTab>('todo');
+  const [viewMode, setViewMode] = useState<"chat" | "tasks">("chat");
+  const [tasksSubTab, setTasksSubTab] = useState<TaskSubTab>("todo");
 
   // Subagent Dashboard (pinned panel in chat)
-  const activeChatTab = tabs.find((tab: any) => tab?.id === activeTabId) || tabs[0];
-  const subagentDash = useSubagentDashboard(activeChatTab?.serverId || undefined);
+  const activeChatTab =
+    tabs.find((tab: any) => tab?.id === activeTabId) || tabs[0];
+  const subagentDash = useSubagentDashboard(
+    activeChatTab?.serverId || undefined,
+  );
 
   // Listen for view mode change events (e.g., from bookmark shortcuts)
   useEffect(() => {
-    const handler = (_e: any, data: { mode: 'chat' | 'tasks'; subTab?: TaskSubTab }) => {
+    const handler = (
+      _e: any,
+      data: { mode: "chat" | "tasks"; subTab?: TaskSubTab },
+    ) => {
       if (data?.mode) {
         setViewMode(data.mode);
         if (data.subTab) setTasksSubTab(data.subTab);
@@ -229,33 +254,41 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
       }
     };
     try {
-      (window as any).require?.('electron')?.ipcRenderer?.on?.('overlay:view-mode', ipcHandler);
+      (window as any)
+        .require?.("electron")
+        ?.ipcRenderer?.on?.("overlay:view-mode", ipcHandler);
     } catch {}
     return () => {
       unsubscribe?.();
       try {
-        (window as any).require?.('electron')?.ipcRenderer?.off?.('overlay:view-mode', ipcHandler);
+        (window as any)
+          .require?.("electron")
+          ?.ipcRenderer?.off?.("overlay:view-mode", ipcHandler);
       } catch {}
     };
   }, []);
 
   const selectedModelLabel = (() => {
-    if (selectedModelId === 'auto') return 'Auto';
+    if (selectedModelId === "auto") return "Auto";
     const m = modelById.get(selectedModelId);
     return m ? m.name : selectedModelId;
   })();
 
-  const contextMetrics = useMemo(() => buildContextUsageMetrics({
-    usage: contextUsage,
-    modelId: contextModelId,
-    modelById,
-  }), [contextUsage, contextModelId, modelById]);
+  const contextMetrics = useMemo(
+    () =>
+      buildContextUsageMetrics({
+        usage: contextUsage,
+        modelId: contextModelId,
+        modelById,
+      }),
+    [contextUsage, contextModelId, modelById],
+  );
 
   const displayModelName = (() => {
-    const serverChosen = (modelName || '').trim();
-    if (selectedModelId === 'auto') {
+    const serverChosen = (modelName || "").trim();
+    if (selectedModelId === "auto") {
       if (serverChosen) return `Auto • ${serverChosen}`;
-      return 'Auto';
+      return "Auto";
     }
     return selectedModelLabel;
   })();
@@ -270,7 +303,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   const [fileNavOverlay, setFileNavOverlay] = useState<null | {
     left: number;
     top: number;
-    placement: 'top' | 'bottom';
+    placement: "top" | "bottom";
     width: number;
   }>(null);
 
@@ -289,10 +322,10 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
       Math.max(margin, window.innerWidth - width - margin),
     );
 
-    let placement: 'top' | 'bottom' = 'top';
+    let placement: "top" | "bottom" = "top";
     let top = rect.top - 10;
     if (rect.top < 340) {
-      placement = 'bottom';
+      placement = "bottom";
       top = rect.bottom + 10;
     }
 
@@ -345,33 +378,39 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
     };
   }, [query]);
 
-  const handleFileSelect = useCallback((item: ContextItem) => {
-    const lastAt = query.lastIndexOf("@");
-    if (lastAt >= 0) {
-      setQuery(query.substring(0, lastAt).trimEnd());
-    }
-    onAddContext?.(item);
-    setShowFileNav(false);
-    setFileNavFilter("");
-  }, [query, setQuery, onAddContext]);
+  const handleFileSelect = useCallback(
+    (item: ContextItem) => {
+      const lastAt = query.lastIndexOf("@");
+      if (lastAt >= 0) {
+        setQuery(query.substring(0, lastAt).trimEnd());
+      }
+      onAddContext?.(item);
+      setShowFileNav(false);
+      setFileNavFilter("");
+    },
+    [query, setQuery, onAddContext],
+  );
 
-  const handleNavigate = useCallback((path: string) => {
-    const lastAt = query.lastIndexOf("@");
-    if (lastAt >= 0) {
-      setQuery(query.substring(0, lastAt + 1) + path);
-    }
-  }, [query, setQuery]);
+  const handleNavigate = useCallback(
+    (path: string) => {
+      const lastAt = query.lastIndexOf("@");
+      if (lastAt >= 0) {
+        setQuery(query.substring(0, lastAt + 1) + path);
+      }
+    },
+    [query, setQuery],
+  );
 
   useEffect(() => {
     if (!showFileNav) return;
     updateFileNavOverlayPos();
 
     const handler = () => updateFileNavOverlayPos();
-    window.addEventListener('resize', handler);
-    window.addEventListener('scroll', handler, true);
+    window.addEventListener("resize", handler);
+    window.addEventListener("scroll", handler, true);
     return () => {
-      window.removeEventListener('resize', handler);
-      window.removeEventListener('scroll', handler, true);
+      window.removeEventListener("resize", handler);
+      window.removeEventListener("scroll", handler, true);
     };
   }, [showFileNav, updateFileNavOverlayPos]);
 
@@ -391,22 +430,26 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
         onClose={() => setShowFileNav(false)}
         onNavigate={handleNavigate}
       />
-      <div className="flex h-full bg-transparent relative font-sans smooth-resize min-h-0">
+      <div className="flex h-full min-w-0 bg-transparent relative font-sans smooth-resize min-h-0">
         {/* Internal Sidebar - outside main container for proper corner rendering */}
         <SidebarTabsPanel
           isOpen={internalSidebarOpen}
-          onClose={onCloseInternalSidebar || (() => { })}
+          onClose={onCloseInternalSidebar || (() => {})}
           activeTab={activeSidebarTab}
-          onSwitchTab={onSwitchSidebarTab || (() => { })}
+          onSwitchTab={onSwitchSidebarTab || (() => {})}
           translucentMode={translucentMode}
         />
 
-        {(overlayMode === 'window' || overlayMode === 'sidebar') ? (
-          <div className={clsx(
-            "flex-1 min-h-0 flex flex-col gap-3 p-3 bg-theme-bg backdrop-blur-3xl border border-theme/10",
-            // Seamless sidebar: no left rounding when sidebar is open
-            internalSidebarOpen ? "rounded-r-[28px] rounded-l-none border-l-0" : "rounded-[28px]"
-          )}>
+        {overlayMode === "window" || overlayMode === "sidebar" ? (
+          <div
+            className={clsx(
+              "flex-1 min-w-0 min-h-0 flex flex-col gap-3 p-3 bg-theme-bg backdrop-blur-3xl border border-theme/10",
+              // Seamless sidebar: no left rounding when sidebar is open
+              internalSidebarOpen
+                ? "rounded-r-[28px] rounded-l-none border-l-0 overflow-hidden"
+                : "rounded-[28px] overflow-hidden",
+            )}
+          >
             {/* Top Card: Header & Messages */}
             <div
               className={clsx(
@@ -414,7 +457,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                 isSidebarMode ? "rounded-[16px]" : "rounded-[24px]",
                 translucentMode
                   ? "bg-theme-bg backdrop-blur-xl border border-theme/5"
-                  : "bg-theme-card border border-theme/10"
+                  : "bg-theme-card border border-theme/10",
               )}
             >
               {/* Top Header */}
@@ -446,55 +489,64 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               </div>
 
               {/* Pending memories (overlay-only; compact UI) */}
-              {viewMode === 'chat' && Array.isArray(pendingMemories) && pendingMemories.length > 0 && (
-                <div className="px-4 py-2 border-b border-theme/10 bg-amber-500/10">
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                      <span className="text-[11px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-300">
-                        Pending memory
-                      </span>
-                    </div>
-                    <div className="text-[10px] font-bold text-amber-700/70 dark:text-amber-300/70">
-                      {pendingMemories.length} item(s)
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    {pendingMemories.slice(0, 3).map((pm) => (
-                      <div key={pm.id} className="flex items-start justify-between gap-3 p-3 rounded-xl bg-theme-card/70 border border-theme/10">
-                        <div className="min-w-0">
-                          <div className="text-[12px] font-semibold text-theme-fg truncate">
-                            {pm.proposed_action}{pm.proposed_key ? `:${pm.proposed_key}` : ''}
-                          </div>
-                          <div className="text-[11px] text-theme-muted mt-0.5 line-clamp-2">
-                            {pm.proposed_value}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-300 text-[10px] font-black uppercase tracking-widest border border-emerald-500/20"
-                            onClick={() => onConfirmPendingMemory?.(pm.id)}
-                          >
-                            Keep
-                          </button>
-                          <button
-                            className="px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-300 text-[10px] font-black uppercase tracking-widest border border-red-500/20"
-                            onClick={() => onRejectPendingMemory?.(pm.id)}
-                          >
-                            No
-                          </button>
-                        </div>
+              {viewMode === "chat" &&
+                Array.isArray(pendingMemories) &&
+                pendingMemories.length > 0 && (
+                  <div className="px-4 py-2 border-b border-theme/10 bg-amber-500/10">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        <span className="text-[11px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-300">
+                          Pending memory
+                        </span>
                       </div>
-                    ))}
+                      <div className="text-[10px] font-bold text-amber-700/70 dark:text-amber-300/70">
+                        {pendingMemories.length} item(s)
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      {pendingMemories.slice(0, 3).map((pm) => (
+                        <div
+                          key={pm.id}
+                          className="flex items-start justify-between gap-3 p-3 rounded-xl bg-theme-card/70 border border-theme/10"
+                        >
+                          <div className="min-w-0">
+                            <div className="text-[12px] font-semibold text-theme-fg truncate">
+                              {pm.proposed_action}
+                              {pm.proposed_key ? `:${pm.proposed_key}` : ""}
+                            </div>
+                            <div className="text-[11px] text-theme-muted mt-0.5 line-clamp-2">
+                              {pm.proposed_value}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-300 text-[10px] font-black uppercase tracking-widest border border-emerald-500/20"
+                              onClick={() => onConfirmPendingMemory?.(pm.id)}
+                            >
+                              Keep
+                            </button>
+                            <button
+                              className="px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-300 text-[10px] font-black uppercase tracking-widest border border-red-500/20"
+                              onClick={() => onRejectPendingMemory?.(pm.id)}
+                            >
+                              No
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
               {/* Secondary Header: Context Pills */}
-              {viewMode === 'chat' && contextPaths.length > 0 && (
+              {viewMode === "chat" && contextPaths.length > 0 && (
                 <div className="flex items-center gap-2 px-4 py-2 bg-theme-active/20 border-b border-theme/10 overflow-x-auto scrollbar-hidden">
                   {contextPaths.map((ctx, idx) => (
-                    <div key={idx} className="flex items-center gap-1.5 px-3 py-1.5 bg-theme-card rounded-full text-[11px] text-theme-fg font-bold border border-theme/10 whitespace-nowrap">
+                    <div
+                      key={idx}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-theme-card rounded-full text-[11px] text-theme-fg font-bold border border-theme/10 whitespace-nowrap"
+                    >
                       <span className="truncate max-w-[120px]">{ctx.name}</span>
                       <button
                         onClick={() => onRemoveContext(idx)}
@@ -509,9 +561,13 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
 
               {/* Messages or Tasks View */}
               <div className="flex-1 min-h-0 overflow-hidden relative">
-                {viewMode === 'tasks' ? (
+                {viewMode === "tasks" ? (
                   <div className="h-full overflow-y-auto custom-scrollbar">
-                    <TasksView compact defaultSubTab={tasksSubTab} onSubTabChange={setTasksSubTab} />
+                    <TasksView
+                      compact
+                      defaultSubTab={tasksSubTab}
+                      onSubTabChange={setTasksSubTab}
+                    />
                   </div>
                 ) : (
                   <>
@@ -550,9 +606,15 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
             </div>
 
             {/* ask_user prompts */}
-            {askUserPrompts.filter(p => p.status === 'pending' && p.tool === 'ask_user').map(p => (
-              <AskUserPrompt key={p.id} prompt={p} onRespond={onAskUserRespond!} />
-            ))}
+            {askUserPrompts
+              .filter((p) => p.status === "pending" && p.tool === "ask_user")
+              .map((p) => (
+                <AskUserPrompt
+                  key={p.id}
+                  prompt={p}
+                  onRespond={onAskUserRespond!}
+                />
+              ))}
 
             {/* Bottom Card: Status & Input */}
             <ChatInputArea
@@ -592,10 +654,16 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
             <div
               className={clsx(
                 "flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden relative transition-all duration-300 shadow-2xl",
-                isSidebarMode ? "rounded-[16px]" : "rounded-[28px]",
+                internalSidebarOpen
+                  ? isSidebarMode
+                    ? "rounded-r-[16px] rounded-l-none"
+                    : "rounded-r-[28px] rounded-l-none"
+                  : isSidebarMode
+                    ? "rounded-[16px]"
+                    : "rounded-[28px]",
                 translucentMode
                   ? "bg-theme-bg/25 backdrop-blur-2xl border border-theme/20"
-                  : "bg-theme-card border border-theme/50"
+                  : "bg-theme-card border border-theme/50",
               )}
             >
               {/* Top Header */}
@@ -627,55 +695,64 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               </div>
 
               {/* Pending memories (overlay-only; compact UI) */}
-              {viewMode === 'chat' && Array.isArray(pendingMemories) && pendingMemories.length > 0 && (
-                <div className="px-4 py-2 border-b border-theme/10 bg-amber-500/10">
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                      <span className="text-[11px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-300">
-                        Pending memory
-                      </span>
-                    </div>
-                    <div className="text-[10px] font-bold text-amber-700/70 dark:text-amber-300/70">
-                      {pendingMemories.length} item(s)
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    {pendingMemories.slice(0, 3).map((pm) => (
-                      <div key={pm.id} className="flex items-start justify-between gap-3 p-3 rounded-xl bg-theme-card/70 border border-theme/10">
-                        <div className="min-w-0">
-                          <div className="text-[12px] font-semibold text-theme-fg truncate">
-                            {pm.proposed_action}{pm.proposed_key ? `:${pm.proposed_key}` : ''}
-                          </div>
-                          <div className="text-[11px] text-theme-muted mt-0.5 line-clamp-2">
-                            {pm.proposed_value}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-300 text-[10px] font-black uppercase tracking-widest border border-emerald-500/20"
-                            onClick={() => onConfirmPendingMemory?.(pm.id)}
-                          >
-                            Keep
-                          </button>
-                          <button
-                            className="px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-300 text-[10px] font-black uppercase tracking-widest border border-red-500/20"
-                            onClick={() => onRejectPendingMemory?.(pm.id)}
-                          >
-                            No
-                          </button>
-                        </div>
+              {viewMode === "chat" &&
+                Array.isArray(pendingMemories) &&
+                pendingMemories.length > 0 && (
+                  <div className="px-4 py-2 border-b border-theme/10 bg-amber-500/10">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        <span className="text-[11px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-300">
+                          Pending memory
+                        </span>
                       </div>
-                    ))}
+                      <div className="text-[10px] font-bold text-amber-700/70 dark:text-amber-300/70">
+                        {pendingMemories.length} item(s)
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      {pendingMemories.slice(0, 3).map((pm) => (
+                        <div
+                          key={pm.id}
+                          className="flex items-start justify-between gap-3 p-3 rounded-xl bg-theme-card/70 border border-theme/10"
+                        >
+                          <div className="min-w-0">
+                            <div className="text-[12px] font-semibold text-theme-fg truncate">
+                              {pm.proposed_action}
+                              {pm.proposed_key ? `:${pm.proposed_key}` : ""}
+                            </div>
+                            <div className="text-[11px] text-theme-muted mt-0.5 line-clamp-2">
+                              {pm.proposed_value}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-300 text-[10px] font-black uppercase tracking-widest border border-emerald-500/20"
+                              onClick={() => onConfirmPendingMemory?.(pm.id)}
+                            >
+                              Keep
+                            </button>
+                            <button
+                              className="px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-300 text-[10px] font-black uppercase tracking-widest border border-red-500/20"
+                              onClick={() => onRejectPendingMemory?.(pm.id)}
+                            >
+                              No
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
               {/* Secondary Header: Context Pills */}
-              {viewMode === 'chat' && contextPaths.length > 0 && (
+              {viewMode === "chat" && contextPaths.length > 0 && (
                 <div className="flex items-center gap-2 px-4 py-2 bg-theme-active/20 border-b border-theme/10 overflow-x-auto scrollbar-hidden">
                   {contextPaths.map((ctx, idx) => (
-                    <div key={idx} className="flex items-center gap-1.5 px-3 py-1.5 bg-theme-card rounded-full text-[11px] text-theme-fg font-bold border border-theme/10 whitespace-nowrap">
+                    <div
+                      key={idx}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-theme-card rounded-full text-[11px] text-theme-fg font-bold border border-theme/10 whitespace-nowrap"
+                    >
                       <span className="truncate max-w-[120px]">{ctx.name}</span>
                       <button
                         onClick={() => onRemoveContext(idx)}
@@ -690,9 +767,13 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
 
               {/* Messages or Tasks View */}
               <div className="flex-1 min-h-0 overflow-hidden relative">
-                {viewMode === 'tasks' ? (
+                {viewMode === "tasks" ? (
                   <div className="h-full overflow-y-auto custom-scrollbar">
-                    <TasksView compact defaultSubTab={tasksSubTab} onSubTabChange={setTasksSubTab} />
+                    <TasksView
+                      compact
+                      defaultSubTab={tasksSubTab}
+                      onSubTabChange={setTasksSubTab}
+                    />
                   </div>
                 ) : (
                   <>
@@ -731,9 +812,15 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
             </div>
 
             {/* ask_user prompts */}
-            {askUserPrompts.filter(p => p.status === 'pending' && p.tool === 'ask_user').map(p => (
-              <AskUserPrompt key={p.id} prompt={p} onRespond={onAskUserRespond!} />
-            ))}
+            {askUserPrompts
+              .filter((p) => p.status === "pending" && p.tool === "ask_user")
+              .map((p) => (
+                <AskUserPrompt
+                  key={p.id}
+                  prompt={p}
+                  onRespond={onAskUserRespond!}
+                />
+              ))}
 
             {/* Bottom Card: Status & Input */}
             <ChatInputArea

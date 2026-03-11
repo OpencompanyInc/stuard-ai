@@ -26,9 +26,10 @@ from aiohttp import web
 # Globals
 # ---------------------------------------------------------------------------
 
-_browser = None          # browser_use.Browser instance
-_context = None          # Playwright BrowserContext (persistent)
+_browser = None          # browser_use.Browser instance (None when using Playwright directly)
+_context = None          # Playwright BrowserContext (persistent in Strategy 1)
 _page = None             # Active Playwright Page
+_playwright = None       # Playwright instance (only set when using Strategy 1)
 _config: dict[str, Any] = {
     "mode": "headed",    # headed | headless | connect
     "cdp_url": None,     # only used when mode == "connect"
@@ -345,6 +346,23 @@ def _clone_profile_into_managed_root(profile_path: str, user_data_dir: str, targ
     target_profile = temp_root / target_profile_name
     shutil.copytree(source_profile, target_profile, ignore=_profile_copy_ignore, copy_function=_copy_profile_file_resilient, dirs_exist_ok=True)
 
+    # Remove lock files and session data that would conflict with a new Chrome instance
+    for lock_rel in ("lockfile", "SingletonLock", "SingletonCookie", "SingletonSocket"):
+        lock_path = target_profile / lock_rel
+        if lock_path.exists():
+            try:
+                lock_path.unlink()
+            except Exception:
+                pass
+    # Also remove from the root (Local State level locks)
+    for lock_rel in ("lockfile", "SingletonLock", "SingletonCookie", "SingletonSocket"):
+        lock_path = temp_root / lock_rel
+        if lock_path.exists():
+            try:
+                lock_path.unlink()
+            except Exception:
+                pass
+
     meta = {
         "sourceSignatureHash": signature_hash,
         "sourceSignature": signature,
@@ -463,21 +481,32 @@ def _find_local_browser_executable(browser_name: str) -> str | None:
 
 def _browser_launch_overrides(sync_meta: dict[str, Any]) -> dict[str, Any]:
     source_browser = _guess_source_browser_name(sync_meta)
-    if not source_browser:
-        return {}
 
-    executable_path = _find_local_browser_executable(source_browser)
-    if executable_path:
-        return {"executable_path": executable_path}
+    # If we know the source browser from sync meta, use it
+    if source_browser:
+        executable_path = _find_local_browser_executable(source_browser)
+        if executable_path:
+            return {"executable_path": executable_path}
 
-    normalized = source_browser.strip().lower()
-    if normalized == "chrome":
-        return {"channel": "chrome"}
-    if normalized == "chrome beta":
-        return {"channel": "chrome-beta"}
-    if normalized == "edge":
-        return {"channel": "msedge"}
-    return {}
+        normalized = source_browser.strip().lower()
+        if normalized == "chrome":
+            return {"channel": "chrome"}
+        if normalized == "chrome beta":
+            return {"channel": "chrome-beta"}
+        if normalized == "edge":
+            return {"channel": "msedge"}
+
+    # Always try to find any installed Chrome-family browser, even without sync meta.
+    # This is critical: Playwright's bundled Chromium can't decrypt cookies from a
+    # cloned Chrome profile because DPAPI keys are tied to the original Chrome binary's
+    # encryption context. Using the user's actual Chrome makes cookie encryption work.
+    for browser_name in ("Chrome", "Edge", "Brave", "Chrome Beta"):
+        exe = _find_local_browser_executable(browser_name)
+        if exe:
+            return {"executable_path": exe}
+
+    # Fall back to Playwright channels
+    return {"channel": "chrome"}
 
 
 async def _safe_json(req: web.Request) -> dict[str, Any]:
@@ -747,8 +776,53 @@ async def _smart_wait_for_element(selector: str = "", text: str = "", timeout: i
     return False
 
 
+async def _auto_inject_cookies_on_startup() -> None:
+    """Read cookies from the source Chrome profile and inject them into the browser session.
+
+    Called automatically after _ensure_browser launches the browser.
+    This compensates for the fact that we remove encrypted Cookie DB files from the
+    cloned profile (since they can't be decrypted by a different Chromium instance).
+    """
+    profile_dir = _current_profile_dir()
+    sync_meta = _read_sync_meta(profile_dir)
+
+    source_profile_path = str(sync_meta.get("sourceProfilePath") or "").strip()
+    source_user_data_dir = str(sync_meta.get("sourceUserDataDir") or "").strip()
+
+    if not source_profile_path or not source_user_data_dir:
+        # No sync source configured — try to auto-detect Chrome
+        resolved = await asyncio.to_thread(
+            _resolve_sync_source, None, None, "Chrome", "Default"
+        )
+        if resolved:
+            source_profile_path = str(resolved.get("profilePath") or "")
+            source_user_data_dir = str(resolved.get("userDataDir") or "")
+
+    if not source_profile_path or not source_user_data_dir:
+        return
+
+    if not Path(source_profile_path).exists():
+        return
+
+    cookies = await asyncio.to_thread(_read_chrome_cookies, source_profile_path, source_user_data_dir)
+    if not cookies:
+        print(f"[browser-use-server] No cookies read from Chrome profile", flush=True)
+        return
+
+    try:
+        result = await _inject_cookies_into_session(cookies)
+        injected = result.get("injected", 0)
+        failed = result.get("failed", 0)
+        print(f"[browser-use-server] Auto-injected {injected} cookies ({failed} failed) from {source_profile_path}", flush=True)
+    except Exception as e:
+        print(f"[browser-use-server] Cookie injection error: {e}", flush=True)
+
+
 async def _ensure_browser() -> tuple[bool, Optional[str]]:
     """Lazily start the browser + context + page.
+
+    Uses Playwright's launch_persistent_context for proper cookie/auth persistence.
+    Falls back to browser-use library if Playwright direct launch fails.
 
     Returns:
         (ok, error_message)
@@ -759,13 +833,6 @@ async def _ensure_browser() -> tuple[bool, Optional[str]]:
         return True, None
     _page = None
 
-    try:
-        from browser_use import Browser
-    except ImportError:
-        return False, "browser-use is not installed. Run: pip install browser-use"
-    except Exception as e:
-        return False, f"browser-use import failed: {e}"
-
     profile_dir = _current_profile_dir()
     profile_dir.mkdir(parents=True, exist_ok=True)
     sync_meta = _read_sync_meta(profile_dir)
@@ -775,9 +842,83 @@ async def _ensure_browser() -> tuple[bool, Optional[str]]:
     headless = _config["mode"] == "headless"
     cdp_url = _config.get("cdp_url") if _config["mode"] == "connect" else None
 
+    # Build the full profile path (user-data-dir + profile-directory)
+    full_profile_path = profile_dir / managed_profile_dir_name
+    if not full_profile_path.exists():
+        # Fallback: maybe the profile IS the profile_dir itself
+        full_profile_path = profile_dir
+
+    # ── Strategy 1: Playwright persistent context (BEST for auth) ──
+    # launch_persistent_context opens Chrome with a REAL persistent profile.
+    # Unlike new_context(), this reads cookies/localStorage/IndexedDB from disk.
+    # This is why auth actually works — Chrome uses its own encrypted cookie store.
+    if not cdp_url:
+        try:
+            from playwright.async_api import async_playwright
+
+            pw_instance = await async_playwright().start()
+
+            launch_args: list[str] = [
+                f"--profile-directory={managed_profile_dir_name}",
+                "--disable-blink-features=AutomationControlled",
+                "--no-first-run",
+                "--no-default-browser-check",
+            ]
+
+            launch_kwargs: dict[str, Any] = {
+                "headless": headless,
+                "args": launch_args,
+                "ignore_default_args": ["--enable-automation"],
+                "viewport": {"width": 1280, "height": 900},
+                "no_viewport": False,
+            }
+
+            # Use user's Chrome binary for proper cookie decryption
+            exe = launch_overrides.get("executable_path")
+            channel = launch_overrides.get("channel")
+            if exe:
+                launch_kwargs["executable_path"] = exe
+            elif channel:
+                launch_kwargs["channel"] = channel
+
+            _context = await pw_instance.chromium.launch_persistent_context(
+                str(profile_dir),
+                **launch_kwargs,
+            )
+            _browser = None  # No separate browser object in persistent mode
+            pages = _context.pages
+            _page = pages[0] if pages else await _context.new_page()
+
+            print(f"[browser-use-server] Launched persistent context from {profile_dir} "
+                  f"(profile: {managed_profile_dir_name}, exe: {exe or channel or 'default'})",
+                  flush=True)
+
+            # Also inject decrypted cookies as a boost (covers edge cases)
+            try:
+                await _auto_inject_cookies_on_startup()
+            except Exception as cookie_err:
+                print(f"[browser-use-server] Cookie boost inject (non-fatal): {cookie_err}", flush=True)
+
+            return True, None
+        except Exception as pw_err:
+            print(f"[browser-use-server] Playwright persistent context failed, falling back to browser-use: {pw_err}", flush=True)
+            # Clean up partial state
+            try:
+                if _context:
+                    await _context.close()
+            except Exception:
+                pass
+            _browser = _context = _page = None
+
+    # ── Strategy 2: browser-use library (fallback) ──
     try:
-        # Compatibility: old browser-use exposed BrowserConfig/new_context,
-        # newer versions use Browser(...kwargs) + start()/new_page().
+        from browser_use import Browser
+    except ImportError:
+        return False, "browser-use is not installed. Run: pip install browser-use"
+    except Exception as e:
+        return False, f"browser-use import failed: {e}"
+
+    try:
         BrowserConfig = None
         try:
             from browser_use import BrowserConfig as _BrowserConfig  # type: ignore
@@ -791,10 +932,29 @@ async def _ensure_browser() -> tuple[bool, Optional[str]]:
                 config_kwargs["cdp_url"] = cdp_url
             else:
                 config_kwargs["chrome_instance_path"] = launch_overrides.get("executable_path")
-                config_kwargs["extra_chromium_args"] = [f"--user-data-dir={profile_dir}", f"--profile-directory={managed_profile_dir_name}"]
+                config_kwargs["extra_chromium_args"] = [
+                    f"--user-data-dir={profile_dir}",
+                    f"--profile-directory={managed_profile_dir_name}",
+                    "--disable-blink-features=AutomationControlled",
+                ]
 
             _browser = await asyncio.to_thread(lambda: Browser(config=BrowserConfig(**config_kwargs)))
-            _context = await _browser.new_context()
+
+            # Try to use existing default context (has profile cookies) instead of new_context()
+            _context = None
+            try:
+                if hasattr(_browser, "browser") and hasattr(_browser.browser, "contexts"):
+                    contexts = _browser.browser.contexts
+                    if contexts:
+                        _context = contexts[0]
+                        print("[browser-use-server] Using default browser context (preserves auth)", flush=True)
+            except Exception:
+                pass
+
+            if _context is None:
+                _context = await _browser.new_context()
+                print("[browser-use-server] Warning: Using new_context() — auth may not persist", flush=True)
+
             pages = _context.pages if hasattr(_context, "pages") else []
             _page = pages[0] if pages else await _context.new_page()
         else:
@@ -807,7 +967,11 @@ async def _ensure_browser() -> tuple[bool, Optional[str]]:
             else:
                 browser_kwargs["user_data_dir"] = str(profile_dir)
                 browser_kwargs["profile_directory"] = managed_profile_dir_name
-                browser_kwargs["args"] = [f"--user-data-dir={profile_dir}", f"--profile-directory={managed_profile_dir_name}"]
+                browser_kwargs["args"] = [
+                    f"--user-data-dir={profile_dir}",
+                    f"--profile-directory={managed_profile_dir_name}",
+                    "--disable-blink-features=AutomationControlled",
+                ]
                 if launch_overrides.get("channel"):
                     browser_kwargs["channel"] = launch_overrides["channel"]
                 if launch_overrides.get("executable_path"):
@@ -824,9 +988,15 @@ async def _ensure_browser() -> tuple[bool, Optional[str]]:
                 except Exception:
                     pages = []
             _page = pages[0] if pages else await _browser.new_page()
+
+        # Inject decrypted cookies as a safety net
+        try:
+            await _auto_inject_cookies_on_startup()
+        except Exception as cookie_err:
+            print(f"[browser-use-server] Cookie auto-inject failed (non-fatal): {cookie_err}", flush=True)
+
         return True, None
     except Exception as e:
-        # Always reset partially initialized state so future calls can recover.
         try:
             await _close_browser()
         except Exception:
@@ -2206,21 +2376,70 @@ def _resolve_sync_source(
     }
 
 
+def _normalize_cookies_for_playwright(cookies: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize cookies to be compatible with Playwright's add_cookies format.
+
+    Playwright requires either 'url' or ('domain' + 'path').
+    Chrome stores domains with leading dots (e.g., '.google.com') which is fine.
+    """
+    normalized = []
+    for cookie in cookies:
+        c = dict(cookie)  # shallow copy
+
+        domain = str(c.get("domain", "")).strip()
+        if not domain:
+            continue
+
+        # Ensure path is set
+        if "path" not in c or not c["path"]:
+            c["path"] = "/"
+
+        # Playwright needs sameSite to be a specific enum
+        same_site = str(c.get("sameSite", "None")).strip()
+        if same_site not in ("Strict", "Lax", "None"):
+            same_site = "None"
+        c["sameSite"] = same_site
+
+        # If domain starts with dot, add a url for better compatibility
+        if "url" not in c:
+            scheme = "https" if c.get("secure") else "http"
+            clean_domain = domain.lstrip(".")
+            c["url"] = f"{scheme}://{clean_domain}/"
+
+        # Remove None/empty values that could cause Playwright errors
+        c = {k: v for k, v in c.items() if v is not None}
+
+        normalized.append(c)
+    return normalized
+
+
 async def _inject_cookies_into_session(cookies: list[dict[str, Any]]) -> dict[str, int]:
     injected = 0
     failed = 0
+
+    # Normalize cookies for Playwright compatibility
+    normalized = _normalize_cookies_for_playwright(cookies)
+    if not normalized:
+        return {"injected": 0, "failed": 0}
+
     if _browser and hasattr(_browser, "_cdp_set_cookies"):
-        await _browser._cdp_set_cookies(cookies)
-        injected = len(cookies)
+        try:
+            await _browser._cdp_set_cookies(normalized)
+            injected = len(normalized)
+        except Exception as e:
+            print(f"[browser-use-server] CDP cookie set failed: {e}", flush=True)
+            failed = len(normalized)
         return {"injected": injected, "failed": failed}
+
     if _context:
         batch_size = 50
-        for i in range(0, len(cookies), batch_size):
-            batch = cookies[i:i + batch_size]
+        for i in range(0, len(normalized), batch_size):
+            batch = normalized[i:i + batch_size]
             try:
                 await _context.add_cookies(batch)
                 injected += len(batch)
             except Exception:
+                # If batch fails, try one at a time to maximize success
                 for cookie in batch:
                     try:
                         await _context.add_cookies([cookie])
@@ -2228,6 +2447,7 @@ async def _inject_cookies_into_session(cookies: list[dict[str, Any]]) -> dict[st
                     except Exception:
                         failed += 1
         return {"injected": injected, "failed": failed}
+
     raise RuntimeError("No browser context available for cookie injection")
 
 
