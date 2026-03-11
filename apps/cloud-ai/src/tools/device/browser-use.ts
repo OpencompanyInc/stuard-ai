@@ -96,7 +96,7 @@ export const browser_use_navigate = makeLocalTool(
 
 export const browser_use_click = makeLocalTool(
   'browser_use_click',
-  'Click an element on the current page. Identify by CSS selector or visible text.',
+  'Click an element on the current page. Identify by CSS selector or visible text. For best results, call browser_use_get_interactive_elements first to discover available elements and their exact selectors. Uses multiple click strategies including Playwright native click, text matching, role-based matching, and label matching for maximum reliability.',
   z.object({
     selector: z.string().optional().describe('CSS selector of the element to click'),
     text: z.string().optional().describe('Visible text of the element to click (alternative to selector)'),
@@ -116,7 +116,7 @@ export const browser_use_click = makeLocalTool(
 
 export const browser_use_type = makeLocalTool(
   'browser_use_type',
-  'Type text into an input field or the active element. Can clear existing content before typing.',
+  'Type text into an input field or the active element. Can clear existing content before typing. Works with React, Vue, Angular and other frameworks. For best results, specify a CSS selector (use browser_use_get_interactive_elements to discover them). If no selector is given, types into the currently focused element.',
   z.object({
     selector: z.string().optional().describe('CSS selector of the input field (if omitted, types into focused element)'),
     text: z.string().describe('Text to type'),
@@ -176,7 +176,7 @@ export const browser_use_screenshot = makeLocalTool(
 
 export const browser_use_content = makeLocalTool(
   'browser_use_content',
-  'Get the text or HTML content of the current page. Use "text" mode for readable content or "html" mode for the full HTML source.',
+  'Get the text or HTML content of the current page. Use "text" mode for readable content or "html" mode for the full HTML source. For understanding page structure and interactive elements, prefer browser_use_get_interactive_elements instead — it returns structured data about all forms, inputs, buttons, and links with their selectors.',
   z.object({
     mode: z.enum(['text', 'html']).optional().describe('Content mode: "text" for readable text (default), "html" for raw HTML'),
     max_length: z.number().optional().describe('Maximum content length in characters (default: 50000)'),
@@ -272,5 +272,153 @@ export const browser_use_cookies = makeLocalTool(
     error: z.string().optional(),
   }),
   10000,
+  { noFallback: true },
+);
+
+// ─── browser_use_hover ──────────────────────────────────────────────────────
+
+export const browser_use_hover = makeLocalTool(
+  'browser_use_hover',
+  'Hover over an element on the page. Useful for revealing tooltips, dropdown menus, or hover-triggered content. Identify by CSS selector or visible text.',
+  z.object({
+    selector: z.string().optional().describe('CSS selector of the element to hover over'),
+    text: z.string().optional().describe('Visible text of the element to hover over'),
+    timeout: z.number().optional().describe('Timeout in ms (default: 5000)'),
+  }),
+  z.object({
+    ok: z.boolean(),
+    hovered: z.string().optional(),
+    method: z.string().optional(),
+    error: z.string().optional(),
+  }),
+  10000,
+  { noFallback: true },
+);
+
+// ─── browser_use_select_option ──────────────────────────────────────────────
+
+export const browser_use_select_option = makeLocalTool(
+  'browser_use_select_option',
+  'Select an option from a <select> dropdown element. Use the CSS selector of the <select> element and specify which option to pick by value, label text, or index.',
+  z.object({
+    selector: z.string().describe('CSS selector of the <select> element'),
+    value: z.string().optional().describe('Option value attribute to select'),
+    label: z.string().optional().describe('Option visible text to select (case-insensitive partial match)'),
+    index: z.number().optional().describe('Option index to select (0-based)'),
+    timeout: z.number().optional().describe('Timeout in ms (default: 5000)'),
+  }),
+  z.object({
+    ok: z.boolean(),
+    selected: z.any().optional(),
+    text: z.string().optional(),
+    method: z.string().optional(),
+    error: z.string().optional(),
+  }),
+  10000,
+  { noFallback: true },
+);
+
+// ─── browser_use_get_interactive_elements ───────────────────────────────────
+
+export const browser_use_get_interactive_elements = makeLocalTool(
+  'browser_use_get_interactive_elements',
+  'Get all interactive elements on the current page — inputs, buttons, links, selects, checkboxes, etc. Returns their CSS selectors, labels, current values, placeholder text, and form associations. ALWAYS call this before filling forms or clicking buttons so you know exactly what elements are available and what selectors to use.',
+  z.object({
+    wait_for_selector: z.string().optional().describe('Optional CSS selector to wait for before scanning the page'),
+    wait_timeout: z.number().optional().describe('Wait timeout in ms (default: 3000)'),
+  }),
+  z.object({
+    ok: z.boolean(),
+    url: z.string().optional(),
+    title: z.string().optional(),
+    elements: z.array(z.object({
+      index: z.number(),
+      tag: z.string(),
+      selector: z.string(),
+      type: z.string().optional(),
+      role: z.string().optional(),
+      name: z.string().optional(),
+      id: z.string().optional(),
+      text: z.string().optional(),
+      href: z.string().optional(),
+      label: z.string().optional(),
+      placeholder: z.string().optional(),
+      value: z.string().optional(),
+      selectedText: z.string().optional(),
+      checked: z.boolean().optional(),
+      disabled: z.boolean().optional(),
+      required: z.boolean().optional(),
+      readonly: z.boolean().optional(),
+      options: z.array(z.object({
+        value: z.string(),
+        text: z.string(),
+        selected: z.boolean(),
+      })).optional(),
+    })).optional(),
+    forms: z.array(z.object({
+      selector: z.string(),
+      action: z.string().optional(),
+      method: z.string().optional(),
+      name: z.string().optional(),
+      fieldIndices: z.array(z.number()).optional(),
+    })).optional(),
+    elementCount: z.number().optional(),
+    formCount: z.number().optional(),
+    error: z.string().optional(),
+  }),
+  15000,
+  { noFallback: true },
+);
+
+// ─── browser_use_fill_form ──────────────────────────────────────────────────
+
+export const browser_use_fill_form = makeLocalTool(
+  'browser_use_fill_form',
+  'Fill multiple form fields at once and optionally submit the form. More reliable than calling browser_use_type for each field individually. Pass fields as an object mapping CSS selectors to values, or as an array of {selector, value} pairs.',
+  z.object({
+    fields: z.union([
+      z.record(z.string(), z.string()),
+      z.array(z.object({
+        selector: z.string().optional(),
+        name: z.string().optional(),
+        value: z.string(),
+        type: z.string().optional().describe('"text" (default), "select", "checkbox", or "radio"'),
+      })),
+    ]).describe('Fields to fill: object { "css-selector": "value" } or array of { selector, value, type? }'),
+    submit: z.boolean().optional().describe('Submit the form after filling (default: false)'),
+    form_selector: z.string().optional().describe('CSS selector of the form element (helps find the submit button)'),
+  }),
+  z.object({
+    ok: z.boolean(),
+    filled: z.number().optional(),
+    total: z.number().optional(),
+    submitted: z.boolean().optional(),
+    errors: z.array(z.string()).nullable().optional(),
+    error: z.string().optional(),
+  }),
+  30000,
+  { noFallback: true },
+);
+
+// ─── browser_use_wait_for ───────────────────────────────────────────────────
+
+export const browser_use_wait_for = makeLocalTool(
+  'browser_use_wait_for',
+  'Wait for a specific condition before proceeding: an element to appear/disappear, a URL change, or page content to load. Essential for SPAs and dynamic pages where content loads asynchronously.',
+  z.object({
+    selector: z.string().optional().describe('CSS selector to wait for'),
+    text: z.string().optional().describe('Text content to wait for on the page'),
+    url_pattern: z.string().optional().describe('URL substring to wait for (e.g., "/results" or "search?q=")'),
+    state: z.enum(['visible', 'hidden', 'detached']).optional().describe('Element state to wait for (default: "visible")'),
+    timeout: z.number().optional().describe('Timeout in ms (default: 10000)'),
+  }),
+  z.object({
+    ok: z.boolean(),
+    matched: z.boolean().optional(),
+    url: z.string().optional(),
+    type: z.string().optional(),
+    error: z.string().optional(),
+  }),
+  65000,
   { noFallback: true },
 );

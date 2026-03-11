@@ -265,6 +265,11 @@ export {
   browser_use_scroll,
   browser_use_tabs,
   browser_use_cookies,
+  browser_use_hover,
+  browser_use_select_option,
+  browser_use_get_interactive_elements,
+  browser_use_fill_form,
+  browser_use_wait_for,
 } from './device/browser-use';
 
 // Canvas Document Tools (AI can read/write user's canvas notes)

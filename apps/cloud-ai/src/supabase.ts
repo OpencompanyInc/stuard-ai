@@ -855,6 +855,7 @@ export interface SmsUserState {
   conversation_id: string | null;
   resume_conversation_id: string | null;
   last_reply_to_phone: string | null;
+  proactive_message: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -893,6 +894,7 @@ const DEFAULT_SMS_STATE: SmsUserState = {
   conversation_id: null,
   resume_conversation_id: null,
   last_reply_to_phone: null,
+  proactive_message: null,
 };
 
 function normalizeSmsMode(mode: unknown): SmsMode {
@@ -942,7 +944,7 @@ export async function getSmsUserState(userId: string): Promise<SmsUserState> {
   try {
     const { data, error } = await supabaseService
       .from('sms_user_state')
-      .select('user_id, mode, preferred_model, conversation_id, resume_conversation_id, last_reply_to_phone, created_at, updated_at')
+      .select('user_id, mode, preferred_model, conversation_id, resume_conversation_id, last_reply_to_phone, proactive_message, created_at, updated_at')
       .eq('user_id', userId)
       .maybeSingle();
     if (error || !data) {
@@ -964,6 +966,7 @@ export async function getSmsUserState(userId: string): Promise<SmsUserState> {
       conversation_id: ((data as any).conversation_id ? String((data as any).conversation_id) : null),
       resume_conversation_id: ((data as any).resume_conversation_id ? String((data as any).resume_conversation_id) : null),
       last_reply_to_phone: ((data as any).last_reply_to_phone ? String((data as any).last_reply_to_phone) : null),
+      proactive_message: ((data as any).proactive_message ? String((data as any).proactive_message) : null),
       created_at: (data as any).created_at || null,
       updated_at: (data as any).updated_at || null,
     };
@@ -980,6 +983,7 @@ export async function upsertSmsUserState(input: {
   conversationId?: string | null;
   resumeConversationId?: string | null;
   lastReplyToPhone?: string | null;
+  proactiveMessage?: string | null;
 }): Promise<boolean> {
   if (!supabaseService) return false;
   try {
@@ -991,6 +995,7 @@ export async function upsertSmsUserState(input: {
       conversation_id: input.conversationId !== undefined ? input.conversationId : existing.conversation_id,
       resume_conversation_id: input.resumeConversationId !== undefined ? input.resumeConversationId : existing.resume_conversation_id,
       last_reply_to_phone: input.lastReplyToPhone !== undefined ? input.lastReplyToPhone : existing.last_reply_to_phone,
+      proactive_message: input.proactiveMessage !== undefined ? input.proactiveMessage : existing.proactive_message,
       updated_at: new Date().toISOString(),
     };
     const { error } = await supabaseService

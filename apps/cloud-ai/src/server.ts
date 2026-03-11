@@ -7,7 +7,7 @@ import { setSessionWorkflow, clearSessionWorkflow } from './tools/workflow';
 import { withClientBridge, handleClientToolMessage } from './tools/bridge';
 import { routeModel, type ModelChoice } from './router/model-router';
 import { verifyAccessToken, AuthErrorCode } from './auth';
-import { createConversation, addAssistantMessage, addUserMessage, logUsageEvent, checkAccess, incrementDailyRequestCounter, finishRun, setConversationTitle, getExternalAccount } from './supabase';
+import { createConversation, addAssistantMessage, addUserMessage, getConversationMessages, logUsageEvent, checkAccess, incrementDailyRequestCounter, finishRun, setConversationTitle, getExternalAccount } from './supabase';
 import { getDefaultModelForCategory, priceForModel } from './pricing';
 import { buildProviderModel } from './utils/models';
 import { randomUUID } from 'crypto';
@@ -895,11 +895,29 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         const historyKey = clientConvId || requestId || '__default__';
         const history = getConversationHistory(ws, historyKey);
 
-        // Add new user messages to history
-        const newUserMsgs = messages.filter(m => m.role === 'user');
-        for (const userMsg of newUserMsgs) {
-          if (!history.find((h: any) => h.role === 'user' && h.content === userMsg.content)) {
-            history.push(userMsg);
+        // Hydrate from Supabase when reconnecting to an existing conversation on a
+        // fresh WebSocket (e.g. each SMS turn opens a new WS). Without this, the AI
+        // would lose all prior context because in-memory history is per-connection.
+        let hydratedFromSupabase = false;
+        if (history.length === 0 && clientConvId && authUser) {
+          try {
+            const stored = await getConversationMessages(authUser.userId, clientConvId, 50);
+            if (stored.length > 0) {
+              for (const m of stored) history.push(m);
+              hydratedFromSupabase = true;
+            }
+          } catch { }
+        }
+
+        // Add new user messages to history for future turns on this persistent WS.
+        // Skip when we just hydrated from Supabase — the current user message will be
+        // appended separately to inputMessages to avoid duplication.
+        if (!hydratedFromSupabase) {
+          const newUserMsgs = messages.filter(m => m.role === 'user');
+          for (const userMsg of newUserMsgs) {
+            if (!history.find((h: any) => h.role === 'user' && h.content === userMsg.content)) {
+              history.push(userMsg);
+            }
           }
         }
 
@@ -1283,6 +1301,18 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         let inputMessages: any[] = (providedMessages && providedMessages.length > 0)
           ? [...recentHistory]
           : [...recentHistory, { role: 'user', content: prompt }];
+
+        // When we hydrated from Supabase, the current user message was deferred to
+        // avoid duplication in inputMessages. Now push it into history for future
+        // turns on this same WS connection (important for persistent desktop WS).
+        if (hydratedFromSupabase) {
+          const newUserMsgs = messages.filter(m => m.role === 'user');
+          for (const userMsg of newUserMsgs) {
+            if (!history.find((h: any) => h.role === 'user' && h.content === userMsg.content)) {
+              history.push(userMsg);
+            }
+          }
+        }
 
         // If attachments or images are present, attach them to the last user message as multimodal parts
         const attachments = Array.isArray((msg as any)?.attachments) ? (msg as any).attachments : [];

@@ -11,7 +11,7 @@ import { listHeadlessAgentTasks } from '../tools/list-headless-agent-tasks';
 import { outlook_get_me, outlook_list_messages, outlook_search_messages, outlook_send_mail } from '../tools/outlook-tools';
 import { github_get_me, github_list_repos, github_list_issues, github_create_issue } from '../tools/github-tools';
 import { google_get_userinfo, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, calendar_list_events, calendar_create_event, calendar_delete_event, calendar_update_event, tasks_list, drive_list_files, sheets_read_range, sheets_create_spreadsheet, sheets_write_range, sheets_append_rows, sheets_clear_range, sheets_get_spreadsheet, sheets_add_sheet, sheets_format_cells, sheets_batch_update_values, sheets_delete_rows_columns, sheets_sort_range, sheets_auto_resize, docs_get_document, docs_create_document, docs_write_text } from '../tools/google-tools';
-import { send_hotkey, list_directory, read_file, write_file, create_directory, move_file, canvas_list, canvas_read, canvas_write, canvas_create, canvas_delete, calendar_crud, task_crud, task_reminders, planner_list_items, capture_media, describe_media_capture_capabilities, run_command, run_system_command, search_local_workflows, import_workflow, run_automation, stop_automation, search_past_conversations, get_conversation_context, agent_decision, agent_extract, glob, grep, browser_use_status, browser_use_configure, browser_use_execute_script, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies } from '../tools/device-tools';
+import { send_hotkey, list_directory, read_file, write_file, create_directory, move_file, canvas_list, canvas_read, canvas_write, canvas_create, canvas_delete, calendar_crud, task_crud, task_reminders, planner_list_items, capture_media, describe_media_capture_capabilities, run_command, run_system_command, search_local_workflows, import_workflow, run_automation, stop_automation, search_past_conversations, get_conversation_context, agent_decision, agent_extract, glob, grep, browser_use_status, browser_use_configure, browser_use_execute_script, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies, browser_use_hover, browser_use_select_option, browser_use_get_interactive_elements, browser_use_fill_form, browser_use_wait_for } from '../tools/device-tools';
 import { web_search } from '../tools/perplexity-tools';
 
 const HEADLESS_SYSTEM_INSTRUCTIONS = `You are the Headless Execution Agent for StuardAI.
@@ -30,6 +30,14 @@ OPERATING PROCEDURE:
 2. Formulate a plan to achieve the goal using tools.
 3. Execute tools (observe -> act -> verify).
 4. When the task is complete, return the final result.
+
+BROWSER AUTOMATION:
+When browsing websites, filling forms, or interacting with web pages:
+1. Navigate to the URL with browser_use_navigate.
+2. ALWAYS call browser_use_get_interactive_elements to discover all forms, inputs, buttons, links with their exact CSS selectors. This is how you understand the page structure.
+3. Use the exact selectors from get_interactive_elements to interact. For forms, prefer browser_use_fill_form. For dropdowns, use browser_use_select_option.
+4. After actions that change the page (clicks, form submissions), use browser_use_wait_for then browser_use_get_interactive_elements again to see what changed.
+5. NEVER guess CSS selectors. Always discover them first.
 
 OUTPUT FORMAT:
 - Your final response must be the result of the task.
@@ -120,6 +128,11 @@ export function getHeadlessAgent(
     browser_use_scroll,
     browser_use_tabs,
     browser_use_cookies,
+    browser_use_hover,
+    browser_use_select_option,
+    browser_use_get_interactive_elements,
+    browser_use_fill_form,
+    browser_use_wait_for,
     // Memory
     search_past_conversations,
     get_conversation_context,
@@ -151,7 +164,8 @@ export function getHeadlessAgent(
     'describe_media_capture_capabilities', 'run_system_command', 'run_command',
     'browser_use_status', 'browser_use_configure', 'browser_use_execute_script', 'browser_use_navigate', 'browser_use_click',
     'browser_use_type', 'browser_use_press_key', 'browser_use_screenshot', 'browser_use_content', 'browser_use_scroll',
-    'browser_use_tabs', 'browser_use_cookies',
+    'browser_use_tabs', 'browser_use_cookies', 'browser_use_hover', 'browser_use_select_option',
+    'browser_use_get_interactive_elements', 'browser_use_fill_form', 'browser_use_wait_for',
     'calendar_crud', 'task_crud', 'task_reminders', 'planner_list_items',
     'list_directory', 'read_file', 'write_file', 'create_directory', 'move_file',
     'search_local_workflows',

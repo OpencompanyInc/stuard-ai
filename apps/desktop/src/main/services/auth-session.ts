@@ -1,12 +1,16 @@
 import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
+import WebSocket from 'ws';
 import logger from '../utils/logger';
 
-const SUPABASE_URL = String(process.env.SUPABASE_URL || '').trim();
-const SUPABASE_PUBLISHABLE_KEY = String(
+const SUPABASE_URL =
+  process.env.SUPABASE_URL ||
+  process.env.VITE_SUPABASE_URL ||
+  'https://mptdemenoyqzyttglrvd.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY =
   process.env.SUPABASE_PUBLISHABLE_KEY ||
   process.env.SUPABASE_ANON_KEY ||
-  ''
-).trim();
+  process.env.VITE_SUPABASE_ANON_KEY ||
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1wdGRlbWVub3lxenl0dGdscnZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ2MDA4NTgsImV4cCI6MjA3MDE3Njg1OH0.3C0h0CCY1xl-z-zD61pdiiNu5ehN2R9c0tY0DLYI6gE';
 
 let supabaseMain: SupabaseClient | null = null;
 let currentSession: Session | null = null;
@@ -20,15 +24,14 @@ function emitSessionChange() {
 
 export function getMainSupabaseClient(): SupabaseClient | null {
   if (supabaseMain) return supabaseMain;
-  if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-    logger.warn('[auth-session] Supabase public config missing in main process');
-    return null;
-  }
   supabaseMain = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
       detectSessionInUrl: false,
+    },
+    realtime: {
+      transport: WebSocket as any,
     },
   });
   return supabaseMain;
@@ -47,8 +50,7 @@ export function getMainUserId(): string | null {
 }
 
 export async function syncMainAuthSession(session: Session | null): Promise<{ ok: boolean; error?: string }> {
-  const client = getMainSupabaseClient();
-  if (!client) return { ok: false, error: 'supabase_main_client_unavailable' };
+  const client = getMainSupabaseClient()!;
   try {
     if (!session?.access_token || !session?.refresh_token) {
       currentSession = null;
@@ -62,10 +64,12 @@ export async function syncMainAuthSession(session: Session | null): Promise<{ ok
       refresh_token: session.refresh_token,
     });
     if (error) {
+      logger.warn('[auth-session] setSession failed:', error.message);
       return { ok: false, error: error.message };
     }
 
     currentSession = data.session || session;
+    logger.info(`[auth-session] Session synced for user ${currentSession?.user?.id}`);
     try { client.realtime.setAuth(currentSession.access_token); } catch { }
     emitSessionChange();
     return { ok: true };

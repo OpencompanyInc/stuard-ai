@@ -350,6 +350,29 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
   }
 
   // ── Desktop-owned SMS reply submission ─────────────────────────────────────
+  // ── Outbound SMS notification (no queue item needed — used for mid-turn tool permission prompts)
+  if (req.method === 'POST' && pathname === '/integrations/telnyx/sms-notify') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    try {
+      const body = JSON.parse(await readBody(req));
+      const toPhone = String(body?.to || '').trim();
+      const text = stripMarkdownForSms(String(body?.text || '').trim()).slice(0, 1530);
+      if (!toPhone || !text) {
+        sendJson(res, 400, { ok: false, error: 'to and text are required.' });
+        return true;
+      }
+      await telnyxSendSms(toPhone, text);
+      sendJson(res, 200, { ok: true });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
   if (req.method === 'POST' && pathname === '/integrations/telnyx/sms-reply') {
     const auth = await authenticateHttpLegacy(req, parsedUrl);
     if (!auth.success || !auth.userId) {
@@ -393,6 +416,8 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         conversationId,
         resumeConversationId,
         lastReplyToPhone: targetPhone,
+        // Clear the stored proactive message when switching back to agent mode
+        proactiveMessage: stateMode === 'agent' ? null : undefined,
       }).catch(() => false);
       sendJson(res, 200, { ok: true });
     } catch (e: any) {

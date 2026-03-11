@@ -339,6 +339,8 @@ jobs:
           CLOUD_AI_HTTP=${{ steps.env.outputs.API_URL }}
           UPDATE_CHANNEL=${{ steps.env.outputs.UPDATE_CHANNEL }}
           STUARD_UPDATE_BASE_URL=https://updates.stuard.ai/desktop
+          SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY=${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
           EOF
           cp "$GITHUB_WORKSPACE/apps/desktop/build/.env" "$GITHUB_WORKSPACE/apps/desktop/build/agent/.env"
 

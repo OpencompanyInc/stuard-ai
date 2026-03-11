@@ -3,6 +3,8 @@ import WebSocket from 'ws';
 import { randomUUID } from 'crypto';
 import logger from '../utils/logger';
 import { startAgentIfNeeded } from './agent';
+import { execTool } from '../tools';
+import type { RouterContext } from '../tools/types';
 import {
   getMainAuthSession,
   getMainSupabaseClient,
@@ -29,11 +31,28 @@ type SmsUserState = {
   conversation_id: string | null;
   resume_conversation_id: string | null;
   last_reply_to_phone: string | null;
+  proactive_message: string | null;
 };
 
+// Tools that need explicit SMS approval before the desktop executes them
+const SMS_PERMISSION_TOOLS = new Set([
+  'run_command', 'run_system_command', 'run_python_script', 'run_node_script',
+  'capture_media', 'capture_screen', 'capture_system_audio',
+  'terminal_create', 'terminal_send_input', 'terminal_send_raw', 'terminal_send_keys',
+]);
+
+type PendingToolPermission = {
+  toolId: string;
+  toolName: string;
+  allow: (yes: boolean) => void;
+};
+
+// One pending tool permission per userId at a time
+const pendingToolPermissions = new Map<string, PendingToolPermission>();
+
 const MODEL_LABELS: Record<SmsPreferredModel, string> = {
-  fast: 'Fast (DeepSeek)',
-  balanced: 'Balanced (Grok)',
+  fast: 'Fast (Gemini Flash)',
+  balanced: 'Balanced (GPT-5)',
   smart: 'Smart (Gemini)',
   research: 'Research',
 };
@@ -63,6 +82,7 @@ function defaultSmsState(): SmsUserState {
     conversation_id: null,
     resume_conversation_id: null,
     last_reply_to_phone: null,
+    proactive_message: null,
   };
 }
 
@@ -81,8 +101,51 @@ function getLocalAgentWsUrl(): string {
   return 'ws://127.0.0.1:8765/ws';
 }
 
+function getCloudAiWsUrl(): string {
+  if (process.env.CLOUD_AI_WS) return String(process.env.CLOUD_AI_WS).trim();
+  const http = getCloudAiUrl().replace(/\/+$/, '');
+  const ws = http.startsWith('https://')
+    ? 'wss://' + http.slice(8)
+    : 'ws://' + http.slice(http.startsWith('http://') ? 7 : 0);
+  return ws.endsWith('/ws') ? ws : ws + '/ws';
+}
+
+async function sendSmsNotify(toPhone: string, text: string): Promise<void> {
+  const session = getMainAuthSession();
+  const token = session?.access_token;
+  if (!token || !toPhone) return;
+  try {
+    const resp = await net.fetch(`${getCloudAiUrl()}/integrations/telnyx/sms-notify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ to: toPhone, text }),
+    });
+    if (!resp.ok) logger.warn(`[sms-inbox] sms-notify failed: ${resp.status}`);
+  } catch (e: any) {
+    logger.warn('[sms-inbox] sms-notify error:', e?.message);
+  }
+}
+
+// GSM-7 concatenated: 153 chars/segment × 10 segments = 1530
+// Unicode concatenated:  67 chars/segment × 10 segments = 670
+function truncateForSms(text: string): string {
+  const isUnicode = /[^\x00-\x7F]/.test(text);
+  return text.slice(0, isUnicode ? 670 : 1530);
+}
+
 function stripMarkdownForSms(text: string): string {
   return text
+    // Normalize common AI-generated Unicode chars to GSM-7 ASCII equivalents
+    .replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '"')
+    .replace(/\u2014|\u2015/g, '--')
+    .replace(/\u2013/g, '-')
+    .replace(/\u2026/g, '...')
+    .replace(/\u00A0/g, ' ')
+    .replace(/[\u2022\u2023\u25E6\u2043\u00B7]/g, '-')
+    .replace(/\u2212/g, '-')
+    .replace(/\u00D7/g, 'x')
+    // Markdown stripping
     .replace(/```[\s\S]*?```/g, (m) => m.replace(/```[^\n]*\n?/g, '').replace(/```$/g, '').trim())
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/\*([^*\n]+)\*/g, '$1')
@@ -116,7 +179,7 @@ async function loadSmsUserState(userId: string): Promise<SmsUserState> {
   try {
     const { data, error } = await client
       .from('sms_user_state')
-      .select('mode, preferred_model, conversation_id, resume_conversation_id, last_reply_to_phone')
+      .select('mode, preferred_model, conversation_id, resume_conversation_id, last_reply_to_phone, proactive_message')
       .eq('user_id', userId)
       .maybeSingle();
     if (error || !data) return defaultSmsState();
@@ -126,27 +189,33 @@ async function loadSmsUserState(userId: string): Promise<SmsUserState> {
       conversation_id: (data as any).conversation_id ? String((data as any).conversation_id) : null,
       resume_conversation_id: (data as any).resume_conversation_id ? String((data as any).resume_conversation_id) : null,
       last_reply_to_phone: (data as any).last_reply_to_phone ? String((data as any).last_reply_to_phone) : null,
+      proactive_message: (data as any).proactive_message ? String((data as any).proactive_message) : null,
     };
   } catch {
     return defaultSmsState();
   }
 }
 
-function buildSmsHiddenContext(mode: SmsMode): string {
+function buildSmsHiddenContext(mode: SmsMode, proactiveMessage?: string | null): string {
   const modeMarker = mode === 'proactive' ? '[PROACTIVE FOLLOW-UP]' : '[SMS MODE]';
   const contextLine = mode === 'proactive'
     ? 'Context: the user is replying to a proactive check-in. Stay in that context unless they clearly change topic.'
     : 'Context: the user is chatting with you directly over SMS.';
-  return [
+  const lines = [
     modeMarker,
     'You are replying over SMS text message.',
     'Critical rules:',
     '- Plain text only. No markdown, headers, bullet syntax beyond plain text, backticks, or formatting markup.',
-    '- Keep replies short. Aim for under 300 characters when possible. Hard limit 1400 characters.',
+    '- Keep replies short. Aim for under 300 characters when possible. Hard limit 600 characters.',
+    '- Use only plain ASCII characters. No smart quotes, em dashes, ellipsis glyphs, or other Unicode.',
     '- No GenUI or visual components.',
     '- Be warm, direct, and conversational.',
     contextLine,
-  ].join('\n');
+  ];
+  if (mode === 'proactive' && proactiveMessage) {
+    lines.push(`Your original proactive message was:\n${proactiveMessage}`);
+  }
+  return lines.join('\n');
 }
 
 async function submitSmsReply(input: {
@@ -245,19 +314,27 @@ function handleSmsCommand(
       return { handled: true, replyText: HELP_TEXT, nextState: state };
 
     case '/agent':
-    case '/chat':
+    case '/chat': {
+      const wasProactive = state.mode === 'proactive';
+      const keepConversation = !wasProactive && state.conversation_id;
       return {
         handled: true,
-        replyText: state.conversation_id || state.resume_conversation_id
-          ? 'Switched to direct chat. Your next message starts a fresh agent thread. Send /resume to jump back to the last one.'
-          : 'Switched to direct chat. Your next message starts a fresh agent thread.',
+        replyText: wasProactive
+          ? 'Switched to direct chat. Send /new to start a fresh thread or just keep texting.'
+          : state.conversation_id
+            ? 'Already in direct chat. Send /new to start a fresh thread.'
+            : 'Switched to direct chat. Send a message to start.',
         nextState: {
           ...state,
           mode: 'agent',
-          resume_conversation_id: state.conversation_id || state.resume_conversation_id,
-          conversation_id: null,
+          resume_conversation_id: keepConversation
+            ? state.resume_conversation_id
+            : (state.conversation_id || state.resume_conversation_id),
+          conversation_id: keepConversation ? state.conversation_id : null,
+          proactive_message: null,
         },
       };
+    }
 
     case '/new':
     case '/reset':
@@ -336,19 +413,31 @@ function handleSmsCommand(
   }
 }
 
-async function runLocalSmsTurn(input: {
+async function runSmsTurn(input: {
   text: string;
   mode: SmsMode;
   preferredModel: SmsPreferredModel;
   conversationId: string | null;
+  userId: string;
+  replyToPhone: string;
+  proactiveMessage?: string | null;
 }): Promise<{ replyText: string; conversationId: string | null }> {
   const session = getMainAuthSession();
   const token = session?.access_token;
   if (!token) throw new Error('desktop_auth_missing');
 
+  // Ensure local agent is running for any local tool execution
   await startAgentIfNeeded();
-  const wsUrl = getLocalAgentWsUrl();
+
+  const wsUrl = getCloudAiWsUrl();
   const requestId = `sms-${randomUUID()}`;
+
+  const toolCtx: RouterContext = {
+    agentWsUrl: getLocalAgentWsUrl(),
+    cloudAiUrl: getCloudAiUrl(),
+    logFn: (msg) => logger.info(`[sms-tool] ${msg}`),
+    accessToken: token,
+  };
 
   return await new Promise((resolve, reject) => {
     let conversationId = input.conversationId || null;
@@ -362,20 +451,26 @@ async function runLocalSmsTurn(input: {
       done = true;
       if (connectTimeout) clearTimeout(connectTimeout);
       if (runTimeout) clearTimeout(runTimeout);
+      // Clean up any pending permission for this user
+      pendingToolPermissions.delete(input.userId);
       try { ws.removeAllListeners(); } catch { }
       try { ws.close(); } catch { }
       fn();
     };
 
+    const wsSend = (msg: unknown) => {
+      try { ws.send(JSON.stringify(msg)); } catch { }
+    };
+
     try {
       ws = new WebSocket(wsUrl);
     } catch (e: any) {
-      reject(new Error(`sms_agent_ws_connect_failed: ${String(e?.message || e)}`));
+      reject(new Error(`sms_cloud_ws_connect_failed: ${String(e?.message || e)}`));
       return;
     }
 
     connectTimeout = setTimeout(() => {
-      finish(() => reject(new Error('sms_agent_ws_connect_timeout')));
+      finish(() => reject(new Error('sms_cloud_ws_connect_timeout')));
     }, 15000);
 
     runTimeout = setTimeout(() => {
@@ -385,17 +480,17 @@ async function runLocalSmsTurn(input: {
     ws.on('open', () => {
       if (connectTimeout) clearTimeout(connectTimeout);
       try {
-        ws.send(JSON.stringify({
+        wsSend({
           type: 'chat',
           requestId,
           text: input.text,
           model: input.preferredModel,
           conversationId: input.conversationId || undefined,
-          hiddenContext: buildSmsHiddenContext(input.mode),
+          hiddenContext: buildSmsHiddenContext(input.mode, input.proactiveMessage),
           auth: { accessToken: token },
-        }));
+        });
       } catch (e: any) {
-        finish(() => reject(new Error(`sms_agent_ws_send_failed: ${String(e?.message || e)}`)));
+        finish(() => reject(new Error(`sms_cloud_ws_send_failed: ${String(e?.message || e)}`)));
       }
     });
 
@@ -408,33 +503,82 @@ async function runLocalSmsTurn(input: {
       }
 
       const type = String(msg?.type || '').toLowerCase();
+
       if (type === 'conversation' && msg?.conversationId) {
         conversationId = String(msg.conversationId);
         return;
       }
+
+      // ── Tool request: act as the desktop tool bridge ──────────────────────
+      if (type === 'tool_request') {
+        const toolId = String(msg?.id || '');
+        const toolName = String(msg?.tool || '');
+        const args = msg?.args ?? {};
+        if (!toolId || !toolName) return;
+
+        if (SMS_PERMISSION_TOOLS.has(toolName)) {
+          // Suspend run timeout while waiting for user response
+          if (runTimeout) { clearTimeout(runTimeout); runTimeout = undefined; }
+
+          const permissionTimer = setTimeout(() => {
+            pendingToolPermissions.delete(input.userId);
+            wsSend({ type: 'tool_result', id: toolId, result: { ok: false, error: 'permission_timeout' } });
+          }, 15 * 60 * 1000);
+
+          pendingToolPermissions.set(input.userId, {
+            toolId,
+            toolName,
+            allow: (yes) => {
+              clearTimeout(permissionTimer);
+              if (!yes) {
+                wsSend({ type: 'tool_result', id: toolId, result: { ok: false, error: 'permission_denied' } });
+                return;
+              }
+              execTool(toolName, args, toolCtx)
+                .then(result => wsSend({ type: 'tool_result', id: toolId, result }))
+                .catch(e => wsSend({ type: 'tool_result', id: toolId, result: { ok: false, error: String(e?.message || e) } }));
+            },
+          });
+
+          const argsPreview = JSON.stringify(args).slice(0, 120);
+          void sendSmsNotify(
+            input.replyToPhone,
+            `Stuard wants to run: ${toolName}\n${argsPreview}\nReply YES to allow, NO to deny.`,
+          );
+          return;
+        }
+
+        // Non-permission tool: execute and relay result immediately
+        execTool(toolName, args, toolCtx)
+          .then(result => wsSend({ type: 'tool_result', id: toolId, result }))
+          .catch(e => wsSend({ type: 'tool_result', id: toolId, result: { ok: false, error: String(e?.message || e) } }));
+        return;
+      }
+
       if (type === 'final') {
         const result = msg?.result || {};
-        const replyText = stripMarkdownForSms(
+        const replyText = truncateForSms(stripMarkdownForSms(
           String(result?.text || result?.response || '').trim(),
-        ).slice(0, 1500);
+        ));
         const nextConversationId = msg?.conversationId
           ? String(msg.conversationId)
           : conversationId;
         finish(() => resolve({ replyText, conversationId: nextConversationId || null }));
         return;
       }
+
       if (type === 'error') {
         finish(() => reject(new Error(String(msg?.message || 'sms_agent_error'))));
       }
     });
 
     ws.on('error', (e: Error) => {
-      finish(() => reject(new Error(`sms_agent_ws_error: ${e.message}`)));
+      finish(() => reject(new Error(`sms_cloud_ws_error: ${e.message}`)));
     });
 
     ws.on('close', () => {
       if (!done) {
-        finish(() => reject(new Error('sms_agent_ws_closed')));
+        finish(() => reject(new Error('sms_cloud_ws_closed')));
       }
     });
   });
@@ -455,6 +599,7 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
     conversation_id: state.conversation_id || item.conversation_id || null,
     resume_conversation_id: state.resume_conversation_id || state.conversation_id || item.conversation_id || null,
     last_reply_to_phone: state.last_reply_to_phone || item.reply_to_phone || null,
+    proactive_message: state.proactive_message || null,
   };
 
   const incomingText = String(item.message_text || '').trim();
@@ -463,6 +608,23 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
     return;
   }
 
+  // ── Tool permission response: user replied YES/NO to a running tool ───────
+  const pendingPermission = pendingToolPermissions.get(userId);
+  if (pendingPermission) {
+    const normalized = incomingText.toLowerCase().trim();
+    const isYes = normalized === 'yes' || normalized === 'y';
+    const isNo = normalized === 'no' || normalized === 'n' || normalized === 'deny';
+    if (isYes || isNo) {
+      pendingToolPermissions.delete(userId);
+      pendingPermission.allow(isYes);
+      // The allow() call sends tool_result back over the open WS; just complete this queue item
+      await completeSmsItem(item.id);
+      return;
+    }
+    // Not a YES/NO — fall through; the permission stays pending
+  }
+
+  // ── SMS commands ──────────────────────────────────────────────────────────
   const commandResult = handleSmsCommand(incomingText, effectiveState);
   if (commandResult.handled && commandResult.replyText && commandResult.nextState) {
     await submitSmsReply({
@@ -477,15 +639,18 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
     return;
   }
 
-  const turn = await runLocalSmsTurn({
+  // ── Agent turn (direct cloud WS with full tool bridge) ───────────────────
+  const replyToPhone = String(item.reply_to_phone || effectiveState.last_reply_to_phone || '');
+  const turn = await runSmsTurn({
     text: incomingText,
     mode: effectiveState.mode,
     preferredModel: effectiveState.preferred_model,
     conversationId: effectiveState.conversation_id,
+    userId,
+    replyToPhone,
+    proactiveMessage: effectiveState.proactive_message,
   });
-  if (!turn.replyText) {
-    throw new Error('sms_empty_agent_reply');
-  }
+  if (!turn.replyText) throw new Error('sms_empty_agent_reply');
 
   await submitSmsReply({
     queueItemId: item.id,
@@ -511,7 +676,13 @@ async function drainInbox(reason: string): Promise<void> {
   draining = true;
   try {
     while (started) {
-      const item = await claimNextSmsItem(userId);
+      let item: SmsQueueItem | null;
+      try {
+        item = await claimNextSmsItem(userId);
+      } catch (e: any) {
+        logger.error('[sms-inbox] Failed to claim next SMS item:', e);
+        break;
+      }
       if (!item) break;
       try {
         logger.info(`[sms-inbox] Processing item ${item.id} (${reason})`);
@@ -546,6 +717,7 @@ async function reconnectListener(): Promise<void> {
   const client = getMainSupabaseClient();
   const session = getMainAuthSession();
   const userId = session?.user?.id || null;
+  logger.info(`[sms-inbox] reconnectListener: client=${!!client} session=${!!session} userId=${userId} started=${started}`);
   if (!client) return;
 
   if (currentChannel) {
@@ -562,7 +734,7 @@ async function reconnectListener(): Promise<void> {
   // that were already pending when we first start up.
   void drainInbox('auth-sync');
 
-  currentChannel = client
+  const ch = client
     .channel(`sms-inbox:${userId}`)
     .on('postgres_changes', {
       event: 'INSERT',
@@ -579,17 +751,20 @@ async function reconnectListener(): Promise<void> {
       table: 'sms_inbox_queue',
       filter: `user_id=eq.${userId}`,
     }, (payload: any) => {
-      // Re-drain if a failed item becomes retryable (status back to pending/failed)
       const newStatus = payload?.new?.status;
       if (newStatus === 'pending' || newStatus === 'failed') {
         void drainInbox('realtime-update');
       }
     });
 
-  currentChannel.subscribe((status: string) => {
+  ch.subscribe((status: string) => {
+    if (ch !== currentChannel) return; // stale channel removed intentionally, ignore
     logger.info(`[sms-inbox] Realtime channel status for ${userId}: ${status}`);
     if (status === 'SUBSCRIBED') {
-      // Drain any items that arrived between disconnect and now.
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
       void drainInbox('subscribed');
     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
       logger.warn(`[sms-inbox] Realtime channel ${status} for ${userId} — reconnecting in 5s`);
@@ -597,6 +772,7 @@ async function reconnectListener(): Promise<void> {
     }
   });
 
+  currentChannel = ch;
   currentChannelUserId = userId;
 }
 

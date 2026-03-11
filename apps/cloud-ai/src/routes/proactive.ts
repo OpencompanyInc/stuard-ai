@@ -97,16 +97,20 @@ async function deliverProactiveNotifications(
   const results: Record<string, any> = {};
   if (requested.has('sms')) {
     const smsText = stripMarkdownForSms(message);
+    const smsFooter = '\n\n(Proactive mode. Reply to respond, or text /agent to switch.)';
+    const maxBody = 1500 - smsFooter.length;
+    const smsWithFooter = smsText.slice(0, maxBody) + smsFooter;
     results.sms = await (telnyx_send_sms as any).execute({
-      message: smsText.slice(0, 1500),
+      message: smsWithFooter,
     }, {} as any);
-    // Persist SMS mode so the next inbound reply stays in proactive context.
+    // Persist SMS mode + the proactive message so the reply handler can include it as context.
     try {
       const userId = String((getBridgeSecrets() as any)?.userId || '');
       if (userId) {
         await upsertSmsUserState({
           userId,
           mode: 'proactive',
+          proactiveMessage: smsText.slice(0, 2000),
         });
       }
     } catch {}

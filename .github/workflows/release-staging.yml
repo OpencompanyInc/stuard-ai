@@ -232,6 +232,8 @@ jobs:
           echo "CLOUD_AI_HTTP=https://staging-api.stuard.ai" >> "$GITHUB_WORKSPACE/apps/desktop/build/.env"
           echo "UPDATE_CHANNEL=staging" >> "$GITHUB_WORKSPACE/apps/desktop/build/.env"
           echo "STUARD_UPDATE_BASE_URL=https://updates.stuard.ai/desktop" >> "$GITHUB_WORKSPACE/apps/desktop/build/.env"
+          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> "$GITHUB_WORKSPACE/apps/desktop/build/.env"
+          echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_PUBLISHABLE_KEY }}" >> "$GITHUB_WORKSPACE/apps/desktop/build/.env"
           cp "$GITHUB_WORKSPACE/apps/desktop/build/.env" "$GITHUB_WORKSPACE/apps/desktop/build/agent/.env"
       - name: Build Desktop App
         working-directory: apps/desktop

@@ -144,19 +144,31 @@ async function checkPlaywrightChromium(): Promise<boolean> {
   return ok;
 }
 
+// Cache installation check results to avoid repeated slow Python subprocess calls
+let _installCheckResult: { ok: boolean; error?: string; step?: string } | null = null;
+
 export async function installBrowserUse(): Promise<{ ok: boolean; error?: string; step?: string }> {
+  // Return cached result if we already verified everything is installed
+  if (_installCheckResult?.ok) return { ok: true };
+
   if (!(await checkPythonAvailable())) {
     return { ok: false, error: 'Python is not installed. Please install Python 3.11+ from python.org first.', step: 'python' };
   }
 
-  if (!(await checkBrowserUseInstalled())) {
+  // Run browser-use and playwright checks in parallel for faster startup
+  const [hasBrowserUse, hasPlaywright] = await Promise.all([
+    checkBrowserUseInstalled(),
+    checkPlaywrightChromium(),
+  ]);
+
+  if (!hasBrowserUse) {
     const pip = await runCmd(getPythonCmd(), ['-m', 'pip', 'install', 'browser-use', 'aiohttp', 'cryptography'], 300000);
     if (!pip.ok) {
       return { ok: false, error: `Failed to install browser-use: ${pip.stderr.slice(0, 300)}`, step: 'pip' };
     }
   }
 
-  if (!(await checkPlaywrightChromium())) {
+  if (!hasPlaywright) {
     const pipPw = await runCmd(getPythonCmd(), ['-m', 'pip', 'install', 'playwright'], 300000);
     if (!pipPw.ok) {
       return { ok: false, error: `Failed to install playwright: ${pipPw.stderr.slice(0, 300)}`, step: 'playwright-pip' };
@@ -167,6 +179,7 @@ export async function installBrowserUse(): Promise<{ ok: boolean; error?: string
     }
   }
 
+  _installCheckResult = { ok: true };
   return { ok: true };
 }
 
@@ -233,7 +246,8 @@ async function ensureBrowserPageOpen(sessionId = 'default'): Promise<{ ok: boole
   try {
     const statusResp = await browserUseFetch('/status', { timeoutMs: 5000 }, sessionId);
     if (statusResp.ok) {
-      await ensureChromeSyncFresh(sessionId);
+      // Run Chrome sync in background — don't block the browser from being used
+      ensureChromeSyncFresh(sessionId).catch(() => {});
       return { ok: true };
     }
     const errText = await statusResp.text().catch(() => '');
@@ -423,6 +437,37 @@ async function withServer<T>(
     return await fn(sessionId);
   } catch (err: any) {
     return { ok: false, error: err.message || `${label} failed` };
+  }
+}
+
+/**
+ * Pre-warm the browser-use server in the background on app startup.
+ * This starts the Python server process so the first browser tool call is fast.
+ * Non-blocking — fire and forget. If it fails, the normal lazy setup will handle it.
+ */
+export async function prewarmBrowserUseServer(): Promise<void> {
+  try {
+    // Only pre-warm if we have cached install check or can quickly verify
+    if (_installCheckResult?.ok) {
+      const runtime = await getRuntime('default');
+      if (!runtime.process || runtime.process.killed) {
+        console.log('[browser-use] Pre-warming server...');
+        startBrowserUseServer('default').catch(() => {});
+      }
+    } else {
+      // Do a quick Python check (just version, not full import), then start if available
+      const hasPython = await checkPythonAvailable();
+      if (hasPython) {
+        // Run full install check in background (caches result for later)
+        installBrowserUse().then((result) => {
+          if (result.ok) {
+            startBrowserUseServer('default').catch(() => {});
+          }
+        }).catch(() => {});
+      }
+    }
+  } catch {
+    // Pre-warming is best-effort
   }
 }
 
@@ -806,6 +851,109 @@ async function ensureChromeSyncFresh(sessionId = 'default', force = false): Prom
     runtime.chromeSyncPromise = null;
   });
   await runtime.chromeSyncPromise;
+}
+
+export async function execBrowserUseHover(args: any, _ctx: RouterContext): Promise<any> {
+  return withServer('Hover', args, async (sessionId) => {
+    const resp = await browserUseFetch('/hover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        selector: args?.selector,
+        text: args?.text,
+        timeout: args?.timeout,
+      }),
+    }, sessionId);
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, error: `Hover failed: ${resp.status} ${errText}` };
+    }
+    return await resp.json();
+  });
+}
+
+export async function execBrowserUseSelectOption(args: any, _ctx: RouterContext): Promise<any> {
+  return withServer('SelectOption', args, async (sessionId) => {
+    const resp = await browserUseFetch('/select_option', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        selector: args?.selector,
+        value: args?.value,
+        label: args?.label,
+        index: args?.index,
+        timeout: args?.timeout,
+      }),
+    }, sessionId);
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, error: `Select option failed: ${resp.status} ${errText}` };
+    }
+    return await resp.json();
+  });
+}
+
+export async function execBrowserUseGetInteractiveElements(args: any, _ctx: RouterContext): Promise<any> {
+  return withServer('GetInteractiveElements', args, async (sessionId) => {
+    const resp = await browserUseFetch('/get_interactive_elements', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        wait_for_selector: args?.wait_for_selector,
+        wait_timeout: args?.wait_timeout,
+      }),
+      timeoutMs: 15000,
+    }, sessionId);
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, error: `Get interactive elements failed: ${resp.status} ${errText}` };
+    }
+    return await resp.json();
+  });
+}
+
+export async function execBrowserUseFillForm(args: any, _ctx: RouterContext): Promise<any> {
+  return withServer('FillForm', args, async (sessionId) => {
+    const resp = await browserUseFetch('/fill_form', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: args?.fields,
+        submit: args?.submit,
+        form_selector: args?.form_selector,
+      }),
+      timeoutMs: 30000,
+    }, sessionId);
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, error: `Fill form failed: ${resp.status} ${errText}` };
+    }
+    return await resp.json();
+  });
+}
+
+export async function execBrowserUseWaitFor(args: any, _ctx: RouterContext): Promise<any> {
+  return withServer('WaitFor', args, async (sessionId) => {
+    const timeoutRaw = Number(args?.timeout ?? 10000);
+    const timeoutMs = Number.isFinite(timeoutRaw) ? Math.max(500, Math.min(60000, Math.floor(timeoutRaw))) : 10000;
+    const resp = await browserUseFetch('/wait_for', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        selector: args?.selector,
+        text: args?.text,
+        url_pattern: args?.url_pattern,
+        state: args?.state,
+        timeout: timeoutMs,
+      }),
+      timeoutMs: timeoutMs + 5000,
+    }, sessionId);
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, error: `Wait failed: ${resp.status} ${errText}` };
+    }
+    return await resp.json();
+  });
 }
 
 export async function execBrowserUseClose(args: any, _ctx: RouterContext): Promise<any> {

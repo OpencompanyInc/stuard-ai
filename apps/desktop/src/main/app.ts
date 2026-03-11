@@ -9,6 +9,7 @@ import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdat
 import { startLocalWebhookServer, workflows_autostart } from "./workflows/index";
 import { stuards_autostart } from "./stuards";
 import { initCustomUiIpc } from "./tools/index";
+import { prewarmBrowserUseServer } from "./tools/handlers/browser-use";
 import logger from "./utils/logger";
 
 initEnv();
@@ -315,6 +316,13 @@ app.whenReady().then(async () => {
     logger.info("Custom UI IPC initialized");
   } catch (e) {
     logger.error("Failed to initialize custom UI IPC:", e);
+  }
+
+  // Pre-warm browser-use server in background so first browser tool call is fast
+  try {
+    prewarmBrowserUseServer();
+  } catch (e) {
+    logger.warn("Browser-use pre-warm failed (non-critical):", e);
   }
 
   // Note: The window will auto-show after the renderer finishes loading

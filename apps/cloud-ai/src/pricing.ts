@@ -185,8 +185,8 @@ export function getDefaultModelForCategory(category: ModelCategory): string {
   if (models.length > 0) {
     // Return the first one or a specific preferred one
     if (category === 'fast') return 'google/gemini-3.1-flash-lite-preview';
-    if (category === 'balanced') return 'xai/grok-4-1-fast';
-    if (category === 'smart') return 'google/gemini-2.5-pro';
+    if (category === 'balanced') return 'openai/gpt-5-chat-latest';
+    if (category === 'smart') return 'google/gemini-3.1-pro-preview';
     if (category === 'research') return 'perplexity/sonar-pro';
     return models[0].id;
   }
