@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Search, Link2, RefreshCw, Box, Globe, Plus, Star, Trash2, Users, ChevronDown, ChevronUp, Terminal, Film, ScanFace, Mail, Github, HardDrive, Webhook, Calendar, Table, FileText, CheckCircle2, AlertCircle, ArrowUpRight, Download, ArrowRight, Loader2, Shield, X, Bot, Phone, MessageSquare } from "lucide-react";
 import { clsx } from 'clsx';
+import { getCloudAiHttp } from '../utils/cloud';
 
 interface IntegrationProfile {
   provider: string;
@@ -74,6 +75,7 @@ interface IntegrationsViewProps {
   telnyxRequestCode: (phone: string) => Promise<{ ok: boolean; error?: string }>;
   telnyxVerifyCode: (code: string) => Promise<{ ok: boolean; phone?: string; error?: string }>;
   telnyxDisconnect: () => Promise<void>;
+  getToken?: () => string | null;
   whatsappPhone: string | null;
   whatsappConnecting: boolean;
   whatsappLinking: boolean;
@@ -455,10 +457,13 @@ interface TelnyxPhoneCardProps {
   requestCode: (phone: string) => Promise<{ ok: boolean; error?: string }>;
   verifyCode: (code: string) => Promise<{ ok: boolean; phone?: string; error?: string }>;
   disconnect: () => Promise<void>;
+  getToken?: () => string | null;
 }
 
+type SmsAgentTarget = 'desktop' | 'vm' | 'auto';
+
 const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
-  isConnected, phone, verifying, requestCode, verifyCode, disconnect,
+  isConnected, phone, verifying, requestCode, verifyCode, disconnect, getToken,
 }) => {
   const [step, setStep] = useState<'idle' | 'enter-phone' | 'enter-code'>('idle');
   // Split input: country code + local digits
@@ -468,6 +473,54 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
   const [codeInput, setCodeInput] = useState('');
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
+
+  // SMS routing settings
+  const [smsTarget, setSmsTarget] = useState<SmsAgentTarget>('auto');
+  const [vmAvailable, setVmAvailable] = useState(false);
+  const [loadingSettings, setLoadingSettings] = useState(false);
+
+  useEffect(() => {
+    if (!isConnected) return;
+    let cancelled = false;
+    const token = getToken?.();
+    if (!token) return;
+    (async () => {
+      try {
+        setLoadingSettings(true);
+        const base = getCloudAiHttp();
+        const resp = await fetch(`${base}/integrations/telnyx/sms-settings`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (resp.ok && !cancelled) {
+          const data = await resp.json();
+          if (data.ok) {
+            setSmsTarget(data.agentTarget || 'auto');
+            setVmAvailable(!!data.vmAvailable);
+          }
+        }
+      } catch {} finally {
+        if (!cancelled) setLoadingSettings(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isConnected, getToken]);
+
+  const handleTargetChange = async (target: SmsAgentTarget) => {
+    setSmsTarget(target);
+    const token = getToken?.();
+    if (!token) return;
+    try {
+      const base = getCloudAiHttp();
+      await fetch(`${base}/integrations/telnyx/sms-settings`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ agentTarget: target }),
+      });
+    } catch {}
+  };
 
   // E.164: countryCode + all digits of local input
   const e164 = `${countryCode}${localDigits.replace(/\D/g, '')}`;
@@ -552,17 +605,52 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
         </p>
 
         {isConnected ? (
-          <div className="flex items-center gap-2">
-            <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-md bg-theme-bg border border-theme text-[12px]">
-              <MessageSquare className="w-4 h-4 text-emerald-400" />
-              <span className="text-theme-fg font-medium">{phone}</span>
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-md bg-theme-bg border border-theme text-[12px]">
+                <MessageSquare className="w-4 h-4 text-emerald-400" />
+                <span className="text-theme-fg font-medium">{phone}</span>
+              </div>
+              <button
+                onClick={handleDisconnect}
+                className="px-3 py-2 rounded-md bg-red-900/20 text-red-400 text-[11px] font-bold border border-red-900/30 hover:bg-red-900/30 transition-colors"
+              >
+                Remove
+              </button>
             </div>
-            <button
-              onClick={handleDisconnect}
-              className="px-3 py-2 rounded-md bg-red-900/20 text-red-400 text-[11px] font-bold border border-red-900/30 hover:bg-red-900/30 transition-colors"
-            >
-              Remove
-            </button>
+
+            {/* SMS Routing Target */}
+            <div>
+              <label className="block text-[11px] text-theme-muted font-medium mb-1.5">SMS Agent Routing</label>
+              <div className="flex gap-1.5">
+                {([
+                  { value: 'auto' as const, label: 'Auto', desc: 'VM first, then desktop' },
+                  { value: 'vm' as const, label: 'Cloud VM', desc: 'VM agent only' },
+                  { value: 'desktop' as const, label: 'Desktop', desc: 'Desktop agent only' },
+                ] as const).map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => handleTargetChange(opt.value)}
+                    disabled={loadingSettings}
+                    className={clsx(
+                      "flex-1 px-2 py-2 rounded-md text-[11px] font-bold border transition-colors text-center",
+                      smsTarget === opt.value
+                        ? "bg-primary/20 border-primary/40 text-primary"
+                        : "bg-theme-hover border-theme text-theme-muted hover:border-theme-hover hover:text-theme-fg",
+                      opt.value === 'vm' && !vmAvailable && "opacity-60"
+                    )}
+                    title={opt.desc + (opt.value === 'vm' && !vmAvailable ? ' (VM not running)' : '')}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-theme-muted mt-1">
+                {smsTarget === 'auto' ? 'Tries VM agent first, falls back to desktop inbox' :
+                 smsTarget === 'vm' ? (vmAvailable ? 'All SMS messages go to Cloud VM agent' : 'Cloud VM is not running — start it to use VM routing') :
+                 'All SMS messages queued for desktop agent'}
+              </p>
+            </div>
           </div>
         ) : step === 'idle' ? (
           <button
@@ -1702,6 +1790,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     telnyxRequestCode,
     telnyxVerifyCode,
     telnyxDisconnect,
+    getToken,
     whatsappPhone,
     whatsappConnecting,
     whatsappLinking,
@@ -1845,6 +1934,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
               requestCode={telnyxRequestCode}
               verifyCode={telnyxVerifyCode}
               disconnect={telnyxDisconnect}
+              getToken={getToken}
             />
           )}
 

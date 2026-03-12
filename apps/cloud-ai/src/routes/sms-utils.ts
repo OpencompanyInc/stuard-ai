@@ -42,8 +42,9 @@ export async function sendSmsRaw(to: string, text: string): Promise<void> {
 }
 
 const WELCOME_MESSAGE =
-  'Stuard AI ready on SMS. Text me anything and your desktop agent will pick it up.\n\n' +
-  'Commands: /agent /new /model /session /help';
+  'Stuard AI ready on SMS. Text me anything to chat with your agent.\n\n' +
+  'Routing: /vm /desktop /auto\n' +
+  'Commands: /agent /new /model /status /help';
 
 export async function sendWelcomeSms(toPhone: string): Promise<void> {
   await sendSmsRaw(toPhone, WELCOME_MESSAGE).catch((e) =>

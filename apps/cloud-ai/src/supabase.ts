@@ -847,11 +847,13 @@ function normalizePhoneLookup(phone: string): string {
 
 export type SmsMode = 'agent' | 'proactive';
 export type SmsPreferredModel = 'fast' | 'balanced' | 'smart' | 'research';
+export type SmsAgentTarget = 'desktop' | 'vm' | 'auto';
 
 export interface SmsUserState {
   user_id: string;
   mode: SmsMode;
   preferred_model: SmsPreferredModel;
+  agent_target: SmsAgentTarget;
   conversation_id: string | null;
   resume_conversation_id: string | null;
   last_reply_to_phone: string | null;
@@ -891,6 +893,7 @@ const DEFAULT_SMS_STATE: SmsUserState = {
   user_id: '',
   mode: 'agent',
   preferred_model: 'balanced',
+  agent_target: 'auto',
   conversation_id: null,
   resume_conversation_id: null,
   last_reply_to_phone: null,
@@ -899,6 +902,13 @@ const DEFAULT_SMS_STATE: SmsUserState = {
 
 function normalizeSmsMode(mode: unknown): SmsMode {
   return String(mode || '').toLowerCase() === 'proactive' ? 'proactive' : 'agent';
+}
+
+function normalizeSmsAgentTarget(target: unknown): SmsAgentTarget {
+  const raw = String(target || '').toLowerCase().trim();
+  if (raw === 'desktop') return 'desktop';
+  if (raw === 'vm') return 'vm';
+  return 'auto';
 }
 
 function normalizeSmsPreferredModel(model: unknown): SmsPreferredModel {
@@ -944,7 +954,7 @@ export async function getSmsUserState(userId: string): Promise<SmsUserState> {
   try {
     const { data, error } = await supabaseService
       .from('sms_user_state')
-      .select('user_id, mode, preferred_model, conversation_id, resume_conversation_id, last_reply_to_phone, proactive_message, created_at, updated_at')
+      .select('user_id, mode, preferred_model, agent_target, conversation_id, resume_conversation_id, last_reply_to_phone, proactive_message, created_at, updated_at')
       .eq('user_id', userId)
       .maybeSingle();
     if (error || !data) {
@@ -963,6 +973,7 @@ export async function getSmsUserState(userId: string): Promise<SmsUserState> {
       user_id: String((data as any).user_id || userId),
       mode: normalizeSmsMode((data as any).mode),
       preferred_model: normalizeSmsPreferredModel((data as any).preferred_model),
+      agent_target: normalizeSmsAgentTarget((data as any).agent_target),
       conversation_id: ((data as any).conversation_id ? String((data as any).conversation_id) : null),
       resume_conversation_id: ((data as any).resume_conversation_id ? String((data as any).resume_conversation_id) : null),
       last_reply_to_phone: ((data as any).last_reply_to_phone ? String((data as any).last_reply_to_phone) : null),
@@ -980,6 +991,7 @@ export async function upsertSmsUserState(input: {
   userId: string;
   mode?: SmsMode;
   preferredModel?: SmsPreferredModel;
+  agentTarget?: SmsAgentTarget;
   conversationId?: string | null;
   resumeConversationId?: string | null;
   lastReplyToPhone?: string | null;
@@ -992,6 +1004,7 @@ export async function upsertSmsUserState(input: {
       user_id: input.userId,
       mode: normalizeSmsMode(input.mode ?? existing.mode),
       preferred_model: normalizeSmsPreferredModel(input.preferredModel ?? existing.preferred_model),
+      agent_target: normalizeSmsAgentTarget(input.agentTarget ?? existing.agent_target),
       conversation_id: input.conversationId !== undefined ? input.conversationId : existing.conversation_id,
       resume_conversation_id: input.resumeConversationId !== undefined ? input.resumeConversationId : existing.resume_conversation_id,
       last_reply_to_phone: input.lastReplyToPhone !== undefined ? input.lastReplyToPhone : existing.last_reply_to_phone,

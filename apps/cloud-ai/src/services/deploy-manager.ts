@@ -506,6 +506,11 @@ export async function createDeployment(userId: string, req: DeployRequest): Prom
       started_at: new Date().toISOString(),
     });
 
+    // Sync agent databases to VM so deployed workflows have access to memories
+    try {
+      await sendVMCommand(userId, 'sync_agent_data', { direction: 'download' }, 30_000).catch(() => {});
+    } catch { /* non-critical */ }
+
     // Record deployment in VM memory for agent context
     try {
       await sendVMCommand(userId, 'memory_add', {

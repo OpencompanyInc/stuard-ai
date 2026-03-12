@@ -8,6 +8,8 @@ import {
   getSmsQueueItem,
   markSmsQueueReplySent,
   upsertSmsUserState,
+  getSmsUserState,
+  getCloudEngine,
 } from '../../supabase';
 import { authenticateHttpLegacy, sendJson, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
@@ -51,6 +53,89 @@ async function telnyxSendSms(to: string, text: string): Promise<void> {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as any)?.errors?.[0]?.detail || `Telnyx SMS failed (${res.status})`);
+  }
+}
+
+// ─── SMS Slash Command Handler ───────────────────────────────────────────────
+
+const SMS_HELP_TEXT =
+  'Stuard SMS Commands:\n' +
+  '/vm - Route messages to Cloud VM agent\n' +
+  '/desktop - Route messages to desktop agent\n' +
+  '/auto - Auto-detect best agent (default)\n' +
+  '/status - Show current routing & VM status\n' +
+  '/model <fast|balanced|smart> - Set AI model\n' +
+  '/agent - Switch to agent mode\n' +
+  '/proactive - Switch to proactive mode\n' +
+  '/new - Start a new conversation\n' +
+  '/help - Show this help message';
+
+async function handleSmsSlashCommand(userId: string, fromPhone: string, command: string): Promise<boolean> {
+  const cmd = command.split(/\s+/)[0].toLowerCase();
+  const arg = command.slice(cmd.length).trim();
+
+  switch (cmd) {
+    case '/vm': {
+      await upsertSmsUserState({ userId, agentTarget: 'vm' });
+      await sendSmsRaw(fromPhone, 'SMS routing set to Cloud VM. Your messages will be handled by the VM agent.\n\nText /auto to switch back to automatic routing.').catch(() => {});
+      return true;
+    }
+    case '/desktop': {
+      await upsertSmsUserState({ userId, agentTarget: 'desktop' });
+      await sendSmsRaw(fromPhone, 'SMS routing set to Desktop. Your messages will be queued for the desktop agent.\n\nText /auto to switch back to automatic routing.').catch(() => {});
+      return true;
+    }
+    case '/auto': {
+      await upsertSmsUserState({ userId, agentTarget: 'auto' });
+      await sendSmsRaw(fromPhone, 'SMS routing set to Auto. Messages will try VM first, then fall back to desktop.\n\nText /status to check current routing.').catch(() => {});
+      return true;
+    }
+    case '/status': {
+      const state = await getSmsUserState(userId);
+      const engine = await getCloudEngine(userId);
+      const vmStatus = engine?.status === 'running' ? 'Running' : engine?.status ? `${engine.status}` : 'Not provisioned';
+      const targetLabel = { desktop: 'Desktop', vm: 'Cloud VM', auto: 'Auto (VM > Desktop)' }[state.agent_target] || 'Auto';
+      const modeLabel = state.mode === 'proactive' ? 'Proactive' : 'Agent';
+      await sendSmsRaw(fromPhone,
+        `Stuard SMS Status:\n` +
+        `Routing: ${targetLabel}\n` +
+        `Mode: ${modeLabel}\n` +
+        `Model: ${state.preferred_model}\n` +
+        `Cloud VM: ${vmStatus}`
+      ).catch(() => {});
+      return true;
+    }
+    case '/model': {
+      const model = arg.toLowerCase();
+      if (['fast', 'balanced', 'smart', 'research'].includes(model)) {
+        await upsertSmsUserState({ userId, preferredModel: model as any });
+        await sendSmsRaw(fromPhone, `AI model set to "${model}".`).catch(() => {});
+      } else {
+        await sendSmsRaw(fromPhone, 'Usage: /model <fast|balanced|smart|research>').catch(() => {});
+      }
+      return true;
+    }
+    case '/agent': {
+      await upsertSmsUserState({ userId, mode: 'agent', proactiveMessage: null });
+      await sendSmsRaw(fromPhone, 'Switched to Agent mode.').catch(() => {});
+      return true;
+    }
+    case '/proactive': {
+      await upsertSmsUserState({ userId, mode: 'proactive' });
+      await sendSmsRaw(fromPhone, 'Switched to Proactive mode. You will receive proactive notifications.').catch(() => {});
+      return true;
+    }
+    case '/new': {
+      await upsertSmsUserState({ userId, conversationId: null, resumeConversationId: null });
+      await sendSmsRaw(fromPhone, 'New conversation started. Previous context cleared.').catch(() => {});
+      return true;
+    }
+    case '/help': {
+      await sendSmsRaw(fromPhone, SMS_HELP_TEXT).catch(() => {});
+      return true;
+    }
+    default:
+      return false;
   }
 }
 
@@ -427,6 +512,55 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
     return true;
   }
 
+  // ── SMS Settings: get/set agent routing target ──────────────────────────
+  if (req.method === 'GET' && pathname === '/integrations/telnyx/sms-settings') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    try {
+      const state = await getSmsUserState(auth.userId);
+      const engine = await getCloudEngine(auth.userId);
+      sendJson(res, 200, {
+        ok: true,
+        agentTarget: state.agent_target,
+        mode: state.mode,
+        preferredModel: state.preferred_model,
+        vmAvailable: !!(engine && engine.status === 'running'),
+      });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
+  if (req.method === 'POST' && pathname === '/integrations/telnyx/sms-settings') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    try {
+      const body = JSON.parse(await readBody(req));
+      const updates: Parameters<typeof upsertSmsUserState>[0] = { userId: auth.userId };
+      if (body.agentTarget !== undefined) updates.agentTarget = body.agentTarget;
+      if (body.mode !== undefined) updates.mode = body.mode;
+      if (body.preferredModel !== undefined) updates.preferredModel = body.preferredModel;
+      await upsertSmsUserState(updates);
+      const state = await getSmsUserState(auth.userId);
+      sendJson(res, 200, {
+        ok: true,
+        agentTarget: state.agent_target,
+        mode: state.mode,
+        preferredModel: state.preferred_model,
+      });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
   // ── Incoming SMS webhook (Telnyx → Stuard) ───────────────────────────────
   // Configure this URL in the Telnyx portal as the messaging webhook:
   //   POST /webhooks/telnyx/sms
@@ -456,50 +590,74 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
               textPreview: inboundText.slice(0, 80),
             });
 
-            // ── Try VM agent chat first ──────────────────────────────
-            // If the user has a running VM, route the SMS to the VM agent
-            // for an immediate AI response. Fall back to inbox queueing.
-            let vmHandled = false;
-            try {
-              const vmResult = await sendVMCommand(userId, 'agent_chat', {
-                message: inboundText,
-                model: 'fast',
-                context: { source: 'sms', fromPhone },
-              }, 60_000);
-
-              if (vmResult.ok && vmResult.result?.text) {
-                // Send the agent's response back via SMS
-                const replyText = stripMarkdownForSms(String(vmResult.result.text)).slice(0, 1500);
-                await sendSmsRaw(fromPhone, replyText).catch((e: any) => {
-                  console.error('[telnyx] Failed to send VM agent SMS reply:', e?.message);
-                });
-                vmHandled = true;
-                console.log('[telnyx] SMS routed through VM agent', { userId, responseLen: replyText.length });
+            // ── Handle slash commands ────────────────────────────────
+            const trimmedLower = inboundText.toLowerCase().trim();
+            if (trimmedLower.startsWith('/')) {
+              const slashHandled = await handleSmsSlashCommand(userId, fromPhone, trimmedLower);
+              if (slashHandled) {
+                // Slash command was handled — don't route to agent
+                sendJson(res, 200, { ok: true });
+                return true;
               }
-            } catch {
-              // VM not available — fall through to queue
             }
 
-            // ── Queue to inbox if VM didn't handle it ────────────────
-            if (!vmHandled) {
-              const queued = await enqueueSmsInboxItem({
-                userId,
-                provider: 'telnyx',
-                providerMessageId,
-                fromPhone,
-                replyToPhone: fromPhone,
-                messageText: inboundText,
-                metadata: {
-                  eventType,
-                  receivedAt: new Date().toISOString(),
-                },
-              });
-              if (!queued) {
-                console.warn('[telnyx] inbound SMS could not be queued', {
-                  fromPhone,
+            // ── Route based on user's agent_target setting ───────────
+            const smsState = await getSmsUserState(userId);
+            const target = smsState.agent_target;
+
+            let handled = false;
+
+            if (target === 'vm' || target === 'auto') {
+              // Try VM agent first
+              try {
+                const vmResult = await sendVMCommand(userId, 'agent_chat', {
+                  message: inboundText,
+                  model: smsState.preferred_model || 'fast',
+                  context: { source: 'sms', fromPhone },
+                }, 60_000);
+
+                if (vmResult.ok && vmResult.result?.text) {
+                  const label = target === 'vm' ? '[VM]' : '[VM]';
+                  const replyText = stripMarkdownForSms(String(vmResult.result.text)).slice(0, 1500);
+                  await sendSmsRaw(fromPhone, replyText).catch((e: any) => {
+                    console.error('[telnyx] Failed to send VM agent SMS reply:', e?.message);
+                  });
+                  handled = true;
+                  console.log('[telnyx] SMS routed through VM agent', { userId, target, responseLen: replyText.length });
+                }
+              } catch {
+                // VM not available — fall through
+              }
+            }
+
+            // If target is 'desktop' or VM didn't handle it (auto fallback)
+            if (!handled) {
+              if (target === 'vm') {
+                // User explicitly chose VM but it's unavailable
+                await sendSmsRaw(fromPhone,
+                  'Your Cloud VM is not available right now. Start it from the desktop app, or text /auto to enable automatic routing.'
+                ).catch(() => {});
+              } else {
+                // Queue to desktop inbox
+                const queued = await enqueueSmsInboxItem({
                   userId,
-                  textPreview: inboundText.slice(0, 80),
+                  provider: 'telnyx',
+                  providerMessageId,
+                  fromPhone,
+                  replyToPhone: fromPhone,
+                  messageText: inboundText,
+                  metadata: {
+                    eventType,
+                    receivedAt: new Date().toISOString(),
+                  },
                 });
+                if (!queued) {
+                  console.warn('[telnyx] inbound SMS could not be queued', {
+                    fromPhone,
+                    userId,
+                    textPreview: inboundText.slice(0, 80),
+                  });
+                }
               }
             }
           } else {

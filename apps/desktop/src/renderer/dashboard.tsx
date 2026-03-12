@@ -1324,6 +1324,7 @@ function DashboardApp() {
                                 telnyxRequestCode={telnyxRequestCode}
                                 telnyxVerifyCode={telnyxVerifyCode}
                                 telnyxDisconnect={telnyxDisconnect}
+                                getToken={() => session?.access_token || null}
                                 whatsappPhone={whatsappPhone}
                                 whatsappConnecting={whatsappConnecting}
                                 whatsappLinking={whatsappLinking}
