@@ -5,11 +5,16 @@ This is a slim variant of dispatch.py for headless Linux cloud VMs.
 Desktop-only modules (gui, clipboard, windows, screen_capture, media, media_bus,
 wakeword, mediapipe_tools) are stubbed out. Everything else is the same.
 
+Workflow execution and terminal tools route to the local Node.js VM agent
+(http://127.0.0.1:7400) which has DeployExecutor and ShellExecutor.
+
 Environment variable STUARD_AGENT_MODE=vm activates this dispatch.
 """
 from __future__ import annotations
 
 import os
+import json
+import asyncio
 from typing import Any, Dict, Callable, Awaitable
 
 # ── VM-compatible modules (no GUI, no display, no hardware capture) ──────────
@@ -174,6 +179,23 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "export_workflow": ("flow", "Export a workflow to JSON"),
     "validate_workflow_requirements": ("flow", "Validate workflow requirements"),
 
+    # ── VM Workflow Execution ────────────────────────────────────────────────
+    "invoke_workflow": ("flow", "Run a workflow on the VM"),
+    "run_automation": ("flow", "Run a workflow/automation on the VM"),
+    "stuards_run": ("flow", "Run a Stuard automation on the VM"),
+    "stop_automation": ("flow", "Stop a running workflow on the VM"),
+    "stuards_stop": ("flow", "Stop a running Stuard automation"),
+    "show_json_workflow_code": ("flow", "Show workflow JSON source code"),
+
+    # ── VM Terminal ──────────────────────────────────────────────────────────
+    "terminal_create": ("system", "Create a PTY terminal session"),
+    "terminal_send_input": ("system", "Send input to a terminal session"),
+    "terminal_read": ("system", "Read output from a terminal session"),
+    "terminal_resize": ("system", "Resize a terminal session"),
+    "terminal_destroy": ("system", "Close a terminal session"),
+    "terminal_send_keys": ("system", "Send key sequence to a terminal"),
+    "terminal_send_raw": ("system", "Send raw data to a terminal"),
+
     # ── File Index & Search ──────────────────────────────────────────────────
     "file_index_add_root": ("data", "Add a root directory to file index"),
     "file_index_remove_root": ("data", "Remove a root from file index"),
@@ -292,6 +314,195 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "ffmpeg_extract_frames": ("vision", "Extract video frames"),
 }
 
+# ── VM-native Node.js agent bridge ─────────────────────────────────────────
+# These helpers call the local Node.js VM agent (port 7400) for capabilities
+# that live in the Node process: DeployExecutor (workflows) and ShellExecutor (terminals).
+
+_VM_AGENT_URL = os.environ.get("STUARD_VM_AGENT_URL", "http://127.0.0.1:7400")
+
+
+async def _call_vm_agent(endpoint: str, body: Dict[str, Any], timeout: float = 60.0) -> Dict[str, Any]:
+    """POST to the local Node.js VM agent and return the JSON response."""
+    import urllib.request
+    import urllib.error
+
+    url = f"{_VM_AGENT_URL}{endpoint}"
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+
+    loop = asyncio.get_event_loop()
+    try:
+        def _do():
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                try:
+                    err_body = json.loads(e.read().decode("utf-8"))
+                except Exception:
+                    err_body = {}
+                return {"ok": False, "error": err_body.get("error", f"http_{e.code}"), "status": e.code}
+            except urllib.error.URLError as e:
+                return {"ok": False, "error": f"vm_agent_unreachable: {e.reason}"}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
+        return await loop.run_in_executor(None, _do)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+async def _vm_command(command: str, args: Dict[str, Any], timeout: float = 60.0) -> Dict[str, Any]:
+    """Send a command to the Node.js VM agent's /command endpoint."""
+    return await _call_vm_agent("/command", {"command": command, "args": args}, timeout)
+
+
+# ── VM workflow handlers (route to Node.js DeployExecutor) ─────────────────
+
+async def _vm_invoke_workflow(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Run a workflow on the VM via the local DeployExecutor."""
+    wf_id = str(args.get("id") or args.get("workflow_id") or "").strip()
+    name = str(args.get("name") or "").strip()
+
+    if not wf_id:
+        return {"ok": False, "error": "missing workflow id"}
+
+    # Try to read the workflow JSON from local filesystem
+    wf_path = None
+    for search_dir in [
+        os.path.join(os.path.expanduser("~"), ".config", "Stuard AI", "workflows"),
+        os.path.join(os.path.expanduser("~"), ".config", "@stuardai/desktop", "workflows"),
+        "/home/stuard/workspace/workflows",
+        "/home/stuard/deploys",
+    ]:
+        candidate = os.path.join(search_dir, f"{wf_id}.json")
+        if os.path.isfile(candidate):
+            wf_path = candidate
+            break
+
+    if not wf_path:
+        return {"ok": False, "error": f"workflow '{wf_id}' not found on VM filesystem"}
+
+    try:
+        with open(wf_path, "r", encoding="utf-8") as f:
+            wf_data = json.load(f)
+    except Exception as e:
+        return {"ok": False, "error": f"failed to read workflow: {e}"}
+
+    # Deploy via the Node.js agent's DeployExecutor with inline bundle
+    deploy_id = f"wf_{wf_id}_{int(asyncio.get_event_loop().time() * 1000)}"
+    result = await _vm_command("deploy_start", {
+        "deployId": deploy_id,
+        "downloadUrl": "",
+        "kind": "workflow",
+        "name": name or wf_data.get("name", wf_id),
+        "envVars": {},
+        "autoRestart": False,
+        "schedule": None,
+        "sourceWorkflowId": wf_id,
+        "inlineBundle": wf_data,
+    }, timeout=300.0)
+
+    if result.get("ok"):
+        return {"ok": True, "deployId": deploy_id, "workflowId": wf_id, "message": "Workflow started on VM"}
+    return result
+
+
+async def _vm_run_automation(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Alias for invoke_workflow — runs a workflow/automation on the VM."""
+    return await _vm_invoke_workflow(args)
+
+
+async def _vm_stop_automation(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Stop a running workflow/automation on the VM."""
+    deploy_id = str(args.get("deployId") or args.get("deploy_id") or args.get("id") or "").strip()
+    if not deploy_id:
+        return {"ok": False, "error": "missing deployId"}
+    return await _vm_command("deploy_stop", {"deployId": deploy_id})
+
+
+async def _vm_show_json_workflow_code(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
+    """Read and return workflow JSON from the local filesystem."""
+    wf_id = str(args.get("id") or "").strip()
+    if not wf_id:
+        return {"ok": False, "error": "missing_id"}
+
+    for search_dir in [
+        os.path.join(os.path.expanduser("~"), ".config", "Stuard AI", "workflows"),
+        os.path.join(os.path.expanduser("~"), ".config", "@stuardai/desktop", "workflows"),
+        "/home/stuard/workspace/workflows",
+    ]:
+        candidate = os.path.join(search_dir, f"{wf_id}.json")
+        if os.path.isfile(candidate):
+            try:
+                with open(candidate, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                return {"ok": True, "workflow": data, "filePath": candidate}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
+    return {"ok": False, "error": "workflow_not_found"}
+
+
+# ── VM terminal handlers (route to Node.js ShellExecutor) ──────────────────
+
+async def _vm_terminal_create(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a PTY terminal session via the Node.js agent."""
+    return await _call_vm_agent("/terminal/open", {
+        "sessionId": args.get("session_id") or args.get("sessionId", ""),
+        "cols": args.get("cols", 120),
+        "rows": args.get("rows", 30),
+    })
+
+
+async def _vm_terminal_send_input(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Send input to a PTY terminal session."""
+    return await _call_vm_agent("/terminal/data", {
+        "sessionId": args.get("session_id") or args.get("sessionId", ""),
+        "data": args.get("data") or args.get("input", ""),
+    })
+
+
+async def _vm_terminal_read(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Read output from a PTY terminal session."""
+    return await _call_vm_agent("/terminal/read", {
+        "sessionId": args.get("session_id") or args.get("sessionId", ""),
+    })
+
+
+async def _vm_terminal_resize(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Resize a PTY terminal session."""
+    return await _call_vm_agent("/terminal/resize", {
+        "sessionId": args.get("session_id") or args.get("sessionId", ""),
+        "cols": args.get("cols", 120),
+        "rows": args.get("rows", 30),
+    })
+
+
+async def _vm_terminal_destroy(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Close/destroy a PTY terminal session."""
+    return await _call_vm_agent("/terminal/close", {
+        "sessionId": args.get("session_id") or args.get("sessionId", ""),
+    })
+
+
+async def _vm_terminal_send_keys(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Send key sequence to a terminal (maps to terminal data)."""
+    keys = args.get("keys") or args.get("data", "")
+    return await _call_vm_agent("/terminal/data", {
+        "sessionId": args.get("session_id") or args.get("sessionId", ""),
+        "data": keys,
+    })
+
+
+async def _vm_terminal_send_raw(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Send raw bytes to a terminal."""
+    return await _call_vm_agent("/terminal/data", {
+        "sessionId": args.get("session_id") or args.get("sessionId", ""),
+        "data": args.get("data", ""),
+    })
+
+
 # ── Desktop-only tools (stubbed) ────────────────────────────────────────────
 _DESKTOP_ONLY_STUBS = [
     # GUI tools
@@ -317,13 +528,9 @@ _DESKTOP_ONLY_STUBS = [
     "mediapipe_holistic", "mediapipe_process_video",
     # Wakeword (needs mic)
     "wakeword_start", "wakeword_stop", "wakeword_status",
-    # Desktop-only workflow tools
-    "run_automation", "stuards_run", "stop_automation", "stuards_stop",
-    "invoke_workflow", "test_run_steps", "stuards_import_workflow",
-    "show_json_workflow_code",
-    # Desktop notifications
+    # Desktop notifications (no UI to show them)
     "send_notification",
-    # Desktop file open
+    # Desktop file open (no GUI to open with)
     "open_file",
 ]
 
@@ -477,6 +684,23 @@ _HANDLERS.update({
     "import_workflow": workflows.import_workflow,
     "export_workflow": workflows.export_workflow,
     "validate_workflow_requirements": workflows.validate_workflow_requirements,
+
+    # VM-native workflow execution (routes to Node.js DeployExecutor)
+    "invoke_workflow": _vm_invoke_workflow,
+    "run_automation": _vm_run_automation,
+    "stuards_run": _vm_run_automation,
+    "stop_automation": _vm_stop_automation,
+    "stuards_stop": _vm_stop_automation,
+    "show_json_workflow_code": _vm_show_json_workflow_code,
+
+    # VM-native terminal tools (routes to Node.js ShellExecutor)
+    "terminal_create": _vm_terminal_create,
+    "terminal_send_input": _vm_terminal_send_input,
+    "terminal_read": _vm_terminal_read,
+    "terminal_resize": _vm_terminal_resize,
+    "terminal_destroy": _vm_terminal_destroy,
+    "terminal_send_keys": _vm_terminal_send_keys,
+    "terminal_send_raw": _vm_terminal_send_raw,
 
     # File Index & Search
     "file_index_add_root": file_scanner.add_index_root,

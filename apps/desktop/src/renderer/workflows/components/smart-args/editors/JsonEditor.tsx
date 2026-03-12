@@ -75,21 +75,24 @@ export function JsonEditor({ value, onChange, label, upstreamNodes, workflowVari
       }
     }
 
-    // Add upstream node outputs
+    // Add upstream node outputs (use trigger.data.X for triggers)
     if (upstreamNodes?.length) {
       for (const node of upstreamNodes) {
+        const prefix = (node as any).isTrigger ? 'trigger.data' : node.id;
+        const baseSuggestion = (node as any).isTrigger ? '{{trigger.data}}' : `{{${node.id}}}`;
         results.push({
-          text: `{{${node.id}}}`,
-          label: node.id,
-          description: node.label
+          text: baseSuggestion,
+          label: prefix,
+          description: (node as any).isTrigger ? 'Trigger data' : node.label,
         });
 
         const toolOutputs = node.tool ? getToolOutputs(node.tool) : ['ok', 'result'];
         for (const field of toolOutputs) {
+          const fullPath = (node as any).isTrigger ? `trigger.data.${field}` : `${node.id}.${field}`;
           results.push({
-            text: `{{${node.id}.${field}}}`,
-            label: `${node.id}.${field}`,
-            description: `${node.label} → ${field}`
+            text: `{{${fullPath}}}`,
+            label: fullPath,
+            description: `${node.label} → ${field}`,
           });
         }
       }

@@ -229,7 +229,7 @@ export async function fetchVMMetrics(ip: string, userId: string, timeoutMs = 10_
 
     // Mint a token using the per-VM secret — the VM agent verifies the HMAC
     const secret = await resolveVMSecret(userId);
-    const token = mintVMToken(secret, 'cloud-ai-monitor', 'health-monitor');
+    const token = mintVMToken(secret, userId, 'cloud-ai-monitor');
 
     const resp = await fetch(`http://${ip}:${VM_AGENT_PORT}/metrics`, {
       headers: {

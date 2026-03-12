@@ -133,14 +133,15 @@ function buildThemeCss(options: {
 
   const radiusStyle = borderRadius > 0 ? `border-radius: ${borderRadius}px;` : '';
   const overflowStyle = overflow ? `overflow: ${overflow};` : (borderRadius > 0 ? 'overflow: hidden;' : '');
-  const bgValue = transparentBg ? 'transparent' : (backgroundType === 'color' ? backgroundColor : 'transparent');
 
-  // When borderRadius > 0 the Electron window is transparent so rounded corners
-  // are visible. html must stay transparent; only the inner containers (which have
-  // border-radius + overflow:hidden) should carry the background color.
-  const htmlBg = borderRadius > 0 ? 'transparent' : bgValue;
-  const bodyBg = borderRadius > 0 ? 'transparent' : bgValue;
-  const containerBg = bgValue; // inner container always gets the real background
+  // Default to transparent — components own their backgrounds.
+  // Only apply an explicit background when one is configured.
+  const explicitBg = !transparentBg && backgroundType === 'color' && backgroundColor && backgroundColor !== 'transparent'
+    ? backgroundColor
+    : 'transparent';
+  const htmlBg = 'transparent';
+  const bodyBg = 'transparent';
+  const containerBg = explicitBg;
 
   return `
     html { background: ${htmlBg}; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; height: 100%; }
@@ -155,15 +156,10 @@ function buildThemeCss(options: {
       background: ${containerBg}; ${radiusStyle} ${shadowCss} ${borderCss} ${overflowStyle}
       height: 100%; ${contentPadding ? `padding: ${contentPadding}px;` : ''}
     }
-    ${backgroundType !== 'color' && !transparentBg ? `
+    ${backgroundType !== 'color' ? `
     .stuard-background { position: fixed; inset: 0; ${backgroundCss} ${backgroundOverlayCss} z-index: -1; }` : ''}
     ${backgroundType === 'translucent' ? `
-    html, body { background: transparent !important; }
     .stuard-root, .root, .overlay-container { ${translucentCss} }` : ''}
-    ${transparentBg && backgroundType !== 'translucent' ? `
-    html, body, .dark, .stuard-root, .root, .overlay-container, body > div, body > div > div {
-      background: transparent !important; background-color: transparent !important;
-    }` : ''}
 
     /* === Component Defaults === */
     button, .btn {
@@ -314,7 +310,7 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
     reactRuntime = '// React runtime failed to load: ' + String(err?.message || err);
   }
 
-  const bgOverlay = backgroundType !== 'color' && !transparentBg ? '<div class="stuard-background"></div>' : '';
+  const bgOverlay = backgroundType !== 'color' ? '<div class="stuard-background"></div>' : '';
 
   // Build the runtime script for the custom UI window
   const runtimeScript = buildRuntimeScript({
@@ -328,7 +324,7 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">`;
 
   return `<!DOCTYPE html>
-<html${(transparentBg || borderRadius > 0) ? ' style="background:transparent!important"' : ''}>
+<html style="background:transparent!important">
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: file:; img-src * data: blob: local-file: file:; media-src * data: blob: local-file: file:; font-src * data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; connect-src https://fonts.googleapis.com https://fonts.gstatic.com;">
@@ -339,7 +335,7 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
   <style>${themeCss}\n${css || ''}\n${animationKeyframes}</style>
   <script>${reactRuntime}<\/script>
 </head>
-<body${(transparentBg || borderRadius > 0) ? ' style="background:transparent!important"' : ''}>
+<body style="background:transparent!important">
   ${bgOverlay}
   <div class="stuard-root${draggable ? ' drag' : ''}" id="stuard-root"></div>
   <script>${runtimeScript}<\/script>

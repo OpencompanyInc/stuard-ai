@@ -84,6 +84,7 @@ async function requireProactiveAuth(req: IncomingMessage, res: ServerResponse): 
 async function deliverProactiveNotifications(
   text: string,
   channels: unknown,
+  userId?: string,
 ): Promise<Record<string, any>> {
   const message = String(text || '').trim();
   if (!message) return {};
@@ -105,10 +106,10 @@ async function deliverProactiveNotifications(
     }, {} as any);
     // Persist SMS mode + the proactive message so the reply handler can include it as context.
     try {
-      const userId = String((getBridgeSecrets() as any)?.userId || '');
-      if (userId) {
+      const resolvedUserId = userId || String((getBridgeSecrets() as any)?.userId || '');
+      if (resolvedUserId) {
         await upsertSmsUserState({
-          userId,
+          userId: resolvedUserId,
           mode: 'proactive',
           proactiveMessage: smsText.slice(0, 2000),
         });
@@ -387,7 +388,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
         const usage = response?.usage ? normalizeUsage(response.usage) : undefined;
         const { taskUpdates, newTasks, deletedTaskIds } = kanban.getResults();
         const notifications = (deliverNotifications || sendNotifications)
-          ? await deliverProactiveNotifications(text, notificationChannels)
+          ? await deliverProactiveNotifications(text, notificationChannels, auth.userId)
           : undefined;
 
         writeJson(res, 200, {

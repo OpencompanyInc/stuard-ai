@@ -90,11 +90,11 @@ describe('pricing module', () => {
     });
 
     it('should return correct default for balanced category', () => {
-      expect(getDefaultModelForCategory('balanced')).toBe('xai/grok-4-1-fast');
+      expect(getDefaultModelForCategory('balanced')).toBe('openai/gpt-5-chat-latest');
     });
 
     it('should return correct default for smart category', () => {
-      expect(getDefaultModelForCategory('smart')).toBe('google/gemini-2.5-pro');
+      expect(getDefaultModelForCategory('smart')).toBe('google/gemini-3.1-pro-preview');
     });
 
     it('should return correct default for research category', () => {

@@ -12,7 +12,8 @@ import {
 import { authenticateHttpLegacy, sendJson, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
 import { TELNYX_API_KEY, TELNYX_FROM_NUMBER, TELNYX_MESSAGING_PROFILE_ID } from '../../utils/config';
-import { stripMarkdownForSms, sendWelcomeSms } from '../sms-utils';
+import { stripMarkdownForSms, sendWelcomeSms, sendSmsRaw } from '../sms-utils';
+import { sendVMCommand } from '../../services/vm-command';
 
 const TELNYX_API = 'https://api.telnyx.com/v2';
 
@@ -454,24 +455,52 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
               userId,
               textPreview: inboundText.slice(0, 80),
             });
-            const queued = await enqueueSmsInboxItem({
-              userId,
-              provider: 'telnyx',
-              providerMessageId,
-              fromPhone,
-              replyToPhone: fromPhone,
-              messageText: inboundText,
-              metadata: {
-                eventType,
-                receivedAt: new Date().toISOString(),
-              },
-            });
-            if (!queued) {
-              console.warn('[telnyx] inbound SMS could not be queued', {
-                fromPhone,
+
+            // ── Try VM agent chat first ──────────────────────────────
+            // If the user has a running VM, route the SMS to the VM agent
+            // for an immediate AI response. Fall back to inbox queueing.
+            let vmHandled = false;
+            try {
+              const vmResult = await sendVMCommand(userId, 'agent_chat', {
+                message: inboundText,
+                model: 'fast',
+                context: { source: 'sms', fromPhone },
+              }, 60_000);
+
+              if (vmResult.ok && vmResult.result?.text) {
+                // Send the agent's response back via SMS
+                const replyText = stripMarkdownForSms(String(vmResult.result.text)).slice(0, 1500);
+                await sendSmsRaw(fromPhone, replyText).catch((e: any) => {
+                  console.error('[telnyx] Failed to send VM agent SMS reply:', e?.message);
+                });
+                vmHandled = true;
+                console.log('[telnyx] SMS routed through VM agent', { userId, responseLen: replyText.length });
+              }
+            } catch {
+              // VM not available — fall through to queue
+            }
+
+            // ── Queue to inbox if VM didn't handle it ────────────────
+            if (!vmHandled) {
+              const queued = await enqueueSmsInboxItem({
                 userId,
-                textPreview: inboundText.slice(0, 80),
+                provider: 'telnyx',
+                providerMessageId,
+                fromPhone,
+                replyToPhone: fromPhone,
+                messageText: inboundText,
+                metadata: {
+                  eventType,
+                  receivedAt: new Date().toISOString(),
+                },
               });
+              if (!queued) {
+                console.warn('[telnyx] inbound SMS could not be queued', {
+                  fromPhone,
+                  userId,
+                  textPreview: inboundText.slice(0, 80),
+                });
+              }
             }
           } else {
             console.warn('[telnyx] inbound SMS did not match a verified user', {

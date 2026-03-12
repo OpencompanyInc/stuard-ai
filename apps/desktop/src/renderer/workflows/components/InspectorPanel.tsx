@@ -132,8 +132,9 @@ function getUpstreamNodes(model: DesignerModel, nodeId: string): UpstreamNode[] 
       if (trigger) {
         result.push({
           id: trigger.id,
-          label: trigger.label || trigger.type || 'Trigger',
-          tool: undefined,
+          label: trigger.label || (trigger as any).type || 'Trigger',
+          tool: (trigger as any).type,
+          isTrigger: true,
         });
         continue;
       }

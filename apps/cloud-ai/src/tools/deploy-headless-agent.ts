@@ -223,7 +223,18 @@ async function runHeadlessTask(
       ? (Array.isArray(toolsAllowed) && toolsAllowed.length > 0 ? toolsAllowed : ['wait', 'run_sequential', 'run_parallel'])
       : toolsAllowed;
 
-    const agent = getHeadlessAgent(model, enabledIntegrations, mcpTools, allowedForAgent, customSystemPrompt);
+    // Detect if running without a desktop bridge (e.g. VM-only context)
+    const bridgeWsNow = getBridgeWs();
+    const hasDesktopBridge = bridgeWsNow && bridgeWsNow.readyState === (bridgeWsNow as any).OPEN;
+
+    const agent = getHeadlessAgent({
+      model,
+      enabledIntegrations,
+      mcpTools,
+      allowedTools: allowedForAgent,
+      customSystemPrompt,
+      vmMode: !hasDesktopBridge,
+    });
 
     // Prepare provider options
     const providerOptions: any = {};

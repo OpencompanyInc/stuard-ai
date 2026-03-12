@@ -264,6 +264,26 @@ const DOCS: DocSection[] = [
           { type: "text", value: "Access in templates: `{{trigger.data.username}}`, `{{trigger.data.count}}`" },
         ],
       },
+      {
+        id: "trigger-gmail",
+        title: "Gmail Trigger Output",
+        summary: "Access email data when Gmail trigger fires",
+        tags: ["trigger", "gmail", "email", "messageId", "trigger.data"],
+        content: [
+          { type: "text", value: "When the `gmail.new_email` trigger fires, the workflow receives data via `{{trigger.data.X}}`. Use these in steps like gmail_get_message_full:" },
+          { type: "table", headers: ["Path", "Description"], rows: [
+            ["`{{trigger.data.messageId}}`", "Gmail message ID — pass to gmail_get_message_full"],
+            ["`{{trigger.data.message}}`", "Brief metadata (from, to, subject, snippet, date)"],
+            ["`{{trigger.data.message.from}}`", "Sender email"],
+            ["`{{trigger.data.message.to}}`", "Recipient(s)"],
+            ["`{{trigger.data.message.subject}}`", "Email subject"],
+            ["`{{trigger.data.message.snippet}}`", "Short preview text"],
+            ["`{{trigger.data.emailAddress}}`", "Watched mailbox address"],
+            ["`{{trigger.data.profile}}`", "Profile label used"],
+          ]},
+          { type: "code", language: "json", value: `// Get full email when trigger fires\n{ "tool": "gmail_get_message_full", "args": { "id": "{{trigger.data.messageId}}", "profile": "{{trigger.data.profile}}" } }` },
+        ],
+      },
     ],
   },
 

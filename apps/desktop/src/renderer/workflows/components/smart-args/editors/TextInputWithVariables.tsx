@@ -11,6 +11,8 @@ export interface UpstreamNode {
   id: string;
   label: string;
   tool?: string;
+  /** When true, suggestions use {{trigger.data.X}} instead of {{nodeId.X}} */
+  isTrigger?: boolean;
 }
 
 interface TextInputWithVariablesProps {
@@ -78,16 +80,20 @@ export function TextInputWithVariables({
     if (!upstreamNodes?.length) return results.slice(0, 12);
 
     for (const node of upstreamNodes) {
-      // Add the step ID as a suggestion
-      if (!search || node.id.toLowerCase().includes(search) || node.label.toLowerCase().includes(search)) {
+      // For triggers, use trigger.data.X; for steps, use nodeId.X
+      const varPrefix = node.isTrigger ? 'trigger.data' : node.id;
+      const varBaseSuggestion = node.isTrigger ? '{{trigger.data}}' : `{{${node.id}}}`;
+
+      // Add the base suggestion (trigger.data or node id)
+      if (!search || varPrefix.toLowerCase().includes(search) || node.label.toLowerCase().includes(search)) {
         results.push({
-          text: `{{${node.id}}}`,
-          label: node.id,
-          description: node.label
+          text: varBaseSuggestion,
+          label: varPrefix,
+          description: node.isTrigger ? 'Trigger data (Gmail, webhook, etc.)' : node.label,
         });
       }
 
-      // Get fields for this tool
+      // Get fields for this tool (or trigger outputs)
       const toolOutputs = node.tool ? getToolOutputs(node.tool) : ['ok', 'result'];
 
       // Filter based on suggestFrom if provided
@@ -103,12 +109,12 @@ export function TextInputWithVariables({
 
       // Add field-specific suggestions
       for (const field of relevantOutputs) {
-        const fullPath = `${node.id}.${field}`;
+        const fullPath = node.isTrigger ? `trigger.data.${field}` : `${node.id}.${field}`;
         if (!search || fullPath.toLowerCase().includes(search) || field.toLowerCase().includes(search)) {
           results.push({
             text: `{{${fullPath}}}`,
             label: fullPath,
-            description: `${node.label} → ${field}`
+            description: node.isTrigger ? `Trigger → ${field}` : `${node.label} → ${field}`,
           });
         }
       }

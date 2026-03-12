@@ -33,6 +33,7 @@ import { handleCloudSnapshotsRoutes } from './cloud-snapshots';
 import { handleCloudDeploysRoutes } from './cloud-deploys';
 import { handleCloudAdminRoutes } from './cloud-admin';
 import { handleVMRelayRoutes } from './vm-relay';
+import { handleVMAgentRoutes } from './vm-agent-routes';
 import { handleDesktopToolRelayRoutes } from './desktop-tool-relay';
 import { handleProactiveRoutes } from './proactive';
 
@@ -71,6 +72,7 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleCloudDeploysRoutes(req, res, parsedUrl)) return true;
   if (await handleCloudAdminRoutes(req, res, parsedUrl)) return true;
   if (await handleVMRelayRoutes(req, res, parsedUrl)) return true;
+  if (await handleVMAgentRoutes(req, res, parsedUrl)) return true;
   if (await handleDesktopToolRelayRoutes(req, res, parsedUrl)) return true;
   if (await handleProactiveRoutes(req, res, parsedUrl)) return true;
   return false;

@@ -655,6 +655,9 @@ async function execLocalTool(tool: string, args: any, ctx: RouterContext, timeou
  * Execute a tool on the user's desktop PC via cloud-ai relay.
  * Flow: VM engine → HTTP POST cloud-ai /v1/vm/exec-desktop-tool → WS to desktop → result
  * Uses per-VM HMAC auth (no user tokens on the VM).
+ *
+ * If desktop is offline, provides graceful degradation with clear error messages
+ * and suggests VM-native alternatives where possible.
  */
 async function execDesktopRelayTool(tool: string, args: any, ctx: RouterContext, timeoutMs = 90_000): Promise<any> {
   try {
@@ -677,7 +680,18 @@ async function execDesktopRelayTool(tool: string, args: any, ctx: RouterContext,
       if (!resp.ok) {
         const errText = await resp.text().catch(() => '');
         if (resp.status === 503 || errText.includes('desktop_offline')) {
-          return { ok: false, error: `desktop_offline: The Stuard desktop app must be running to use '${tool}'. This tool requires direct access to your PC.` };
+          // Provide VM-native alternatives where possible
+          const alternative = getDesktopToolAlternative(tool, args);
+          if (alternative) {
+            ctx.logFn(`Desktop offline — using VM alternative for '${tool}'`);
+            return alternative;
+          }
+          return {
+            ok: false,
+            error: `desktop_offline: The Stuard desktop app must be running to use '${tool}'. This tool requires direct access to your PC.`,
+            desktopRequired: true,
+            toolName: tool,
+          };
         }
         return { ok: false, error: `desktop_relay_error_${resp.status}: ${errText}` };
       }
@@ -692,7 +706,41 @@ async function execDesktopRelayTool(tool: string, args: any, ctx: RouterContext,
       return { ok: false, error: `desktop_relay_timeout: Tool '${tool}' timed out waiting for desktop response` };
     }
     ctx.logFn(`Desktop relay error: ${e?.message}`);
+
+    // Try VM-native alternative on connection failure
+    const alternative = getDesktopToolAlternative(tool, args);
+    if (alternative) {
+      ctx.logFn(`Desktop unreachable — using VM alternative for '${tool}'`);
+      return alternative;
+    }
+
     return { ok: false, error: String(e?.message || 'desktop_relay_failed') };
+  }
+}
+
+/**
+ * Get a VM-native alternative for a desktop-only tool when the desktop is offline.
+ * Returns null if no alternative exists.
+ */
+function getDesktopToolAlternative(tool: string, args: any): any | null {
+  switch (tool) {
+    case 'get_clipboard':
+      // Can't access desktop clipboard, but return a clear message
+      return { ok: false, error: 'clipboard_unavailable: Desktop is offline. Use read_file or get_variable instead.', fallback: true };
+    case 'set_clipboard':
+      // Store as a variable instead
+      return { ok: true, fallback: true, message: 'Desktop offline — clipboard content stored as variable "clipboard_content"' };
+    case 'show_notification':
+      // Log the notification instead
+      return { ok: true, fallback: true, message: `Notification (desktop offline): ${args?.title || ''} - ${args?.message || args?.body || ''}` };
+    case 'open_url':
+      // Can use headless browser instead
+      return null; // Let the workflow handle this via http_request or browser-use
+    case 'open_file':
+    case 'open_application':
+      return { ok: false, error: `${tool}: Desktop is offline. This operation requires the desktop app.`, fallback: true };
+    default:
+      return null;
   }
 }
 

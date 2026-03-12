@@ -28,13 +28,42 @@ const ALLOWED_VM_PATHS: RegExp[] = [
   /^\/command$/,
   /^\/health$/,
   /^\/metrics$/,
+  // Terminal
   /^\/terminal\/open$/,
   /^\/terminal\/data$/,
   /^\/terminal\/resize$/,
   /^\/terminal\/close$/,
   /^\/terminal\/read$/,
+  // Sync
   /^\/sync\/upload$/,
   /^\/sync\/download$/,
+  // Agent chat & execute
+  /^\/agent\/chat$/,
+  /^\/agent\/execute$/,
+  // Memory
+  /^\/memory\/add$/,
+  /^\/memory\/get$/,
+  /^\/memory\/update$/,
+  /^\/memory\/delete$/,
+  /^\/memory\/list$/,
+  /^\/memory\/search$/,
+  /^\/memory\/topics$/,
+  /^\/memory\/stats$/,
+  /^\/memory\/export$/,
+  /^\/memory\/import$/,
+  /^\/memory\/preferences_get$/,
+  /^\/memory\/preferences_set$/,
+  /^\/memory\/conversations_list$/,
+  /^\/memory\/conversations_add$/,
+  // Proactive
+  /^\/proactive\/status$/,
+  /^\/proactive\/config$/,
+  /^\/proactive\/wakeup$/,
+  /^\/proactive\/tasks$/,
+  /^\/proactive\/task_add$/,
+  /^\/proactive\/task_update$/,
+  /^\/proactive\/task_delete$/,
+  // Legacy memory paths
   /^\/v1\/memory\/conversations(?:\?.*)?$/,
   /^\/v1\/memory\/conversations\/[^/?#]+(?:\?.*)?$/,
   /^\/v1\/memory\/conversations\/[^/?#]+\/messages(?:\?.*)?$/,
@@ -221,7 +250,11 @@ export async function handleVMRelayRoutes(
       return true;
     }
 
-    const timeoutMs = Math.min(Number(body.timeoutMs) || 30_000, 120_000);
+    // Agent/chat paths need longer timeouts
+    const isLongRunning = vmPath.startsWith('/agent/') || vmPath === '/proactive/wakeup';
+    const defaultTimeout = isLongRunning ? 180_000 : 30_000;
+    const maxTimeout = isLongRunning ? 300_000 : 120_000;
+    const timeoutMs = Math.min(Number(body.timeoutMs) || defaultTimeout, maxTimeout);
 
     const base = await resolveVMBaseUrl(user.userId);
     if (!base) {

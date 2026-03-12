@@ -1,20 +1,30 @@
 /**
  * VM Agent — HTTP Server
  *
- * Lightweight Node.js HTTP service installed on each VM.
- * Cloud-ai sends commands on-demand via HTTP — no persistent WebSocket.
+ * Full-featured Node.js HTTP service installed on each VM.
+ * Provides headless desktop-equivalent functionality including:
+ * - Agent chat & task execution via Python agent WS proxy
+ * - Persistent memory storage with search
+ * - Proactive scheduling and task management
+ * - Workflow deployment and execution
+ * - Terminal PTY sessions
+ * - Desktop bridge for user PC tools
  *
  * Endpoints:
- *   GET  /health          — liveness probe
- *   POST /command          — execute a command (file ops, deploy, shell, snapshot)
- *   POST /terminal/open    — open a PTY session
- *   POST /terminal/data    — write to PTY
- *   POST /terminal/resize  — resize PTY
- *   POST /terminal/close   — close PTY
- *   POST /terminal/read    — poll PTY output buffer
- *   GET  /metrics          — system metrics
- *   POST /sync/upload      — compress workspace → upload to GCS
- *   POST /sync/download    — download from GCS → extract to workspace
+ *   GET  /health              — liveness probe
+ *   POST /command             — execute a command (file ops, deploy, shell, snapshot)
+ *   POST /agent/chat          — send chat message to agent (proxied to Python agent)
+ *   POST /agent/execute       — execute headless agent task
+ *   POST /terminal/open       — open a PTY session
+ *   POST /terminal/data       — write to PTY
+ *   POST /terminal/resize     — resize PTY
+ *   POST /terminal/close      — close PTY
+ *   POST /terminal/read       — poll PTY output buffer
+ *   GET  /metrics             — system metrics
+ *   POST /memory/*            — memory CRUD, search, sync
+ *   POST /proactive/*         — proactive task management
+ *   POST /sync/upload         — compress workspace → upload to GCS
+ *   POST /sync/download       — download from GCS → extract to workspace
  */
 
 import http from 'http';
@@ -27,6 +37,8 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { collectMetrics, initMetrics } from './metrics-collector';
 import { ShellExecutor } from './shell-executor';
 import { DeployExecutor } from './deploy-executor';
+import { getVMMemoryStore, type MemoryEntry } from './vm-memory';
+import { getVMProactiveScheduler } from './vm-proactive';
 import * as fileManager from './file-manager';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,7 +48,7 @@ import * as fileManager from './file-manager';
 const PORT = Number(process.env.STUARD_AGENT_PORT || 7400);
 const VM_TOKEN = process.env.STUARD_VM_TOKEN || '';
 const USER_ID = process.env.STUARD_USER_ID || '';
-const AGENT_VERSION = '2.0.0';
+const AGENT_VERSION = '3.0.0';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // State
@@ -45,6 +57,81 @@ const AGENT_VERSION = '2.0.0';
 const shellExecutor = new ShellExecutor();
 const deployExecutor = new DeployExecutor();
 const LOCAL_AGENT_WS_URL = process.env.STUARD_LOCAL_AGENT_WS || 'ws://127.0.0.1:8765/ws';
+
+/** Shared reference to Python agent WS (lazy connected, auto-reconnects) */
+let _agentWs: WebSocket | null = null;
+let _agentWsConnecting = false;
+const _agentPendingRequests = new Map<string, {
+  resolve: (result: any) => void;
+  timer: ReturnType<typeof setTimeout>;
+}>();
+
+function getAgentWs(): Promise<WebSocket> {
+  return new Promise((resolve, reject) => {
+    if (_agentWs?.readyState === WebSocket.OPEN) {
+      return resolve(_agentWs);
+    }
+    if (_agentWsConnecting) {
+      // Wait for the connection to complete
+      const check = setInterval(() => {
+        if (_agentWs?.readyState === WebSocket.OPEN) {
+          clearInterval(check);
+          resolve(_agentWs);
+        }
+      }, 100);
+      setTimeout(() => { clearInterval(check); reject(new Error('agent_ws_connect_timeout')); }, 10_000);
+      return;
+    }
+
+    _agentWsConnecting = true;
+    const ws = new WebSocket(LOCAL_AGENT_WS_URL);
+    ws.on('open', () => {
+      _agentWs = ws;
+      _agentWsConnecting = false;
+      console.log('[vm-agent] Connected to Python agent WS');
+      resolve(ws);
+    });
+    ws.on('message', (data) => {
+      try {
+        const msg = JSON.parse(String(data));
+        const id = msg.id || msg.requestId;
+        if (id && _agentPendingRequests.has(id)) {
+          const pending = _agentPendingRequests.get(id)!;
+          clearTimeout(pending.timer);
+          _agentPendingRequests.delete(id);
+          pending.resolve(msg);
+        }
+      } catch { /* non-JSON message, ignore */ }
+    });
+    ws.on('close', () => {
+      _agentWs = null;
+      _agentWsConnecting = false;
+      // Auto-reconnect after 5s
+      setTimeout(() => { getAgentWs().catch(() => {}); }, 5000);
+    });
+    ws.on('error', (err) => {
+      _agentWsConnecting = false;
+      if (_agentWs === ws) _agentWs = null;
+      reject(err);
+    });
+  });
+}
+
+/** Send a message to the Python agent and await a response */
+async function sendToAgent(msg: Record<string, any>, timeoutMs = 120_000): Promise<any> {
+  const ws = await getAgentWs();
+  const id = msg.id || randomUUID();
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      _agentPendingRequests.delete(id);
+      reject(new Error('agent_response_timeout'));
+    }, timeoutMs);
+
+    _agentPendingRequests.set(id, { resolve, timer });
+    ws.send(JSON.stringify({ ...msg, id }));
+  });
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth — verify HMAC bearer token on each request
@@ -236,9 +323,391 @@ async function handleCommand(command: string, args: any): Promise<any> {
     case 'deploy_list':
       return { deploys: deployExecutor.list() };
 
+    // ── Agent Chat & Execute ────────────────────────────────────────────
+    case 'agent_chat':
+      return await handleAgentChat(args);
+    case 'agent_execute':
+      return await handleAgentExecute(args);
+
+    // ── Memory Commands ─────────────────────────────────────────────────
+    case 'memory_add':
+      return handleMemoryAdd(args);
+    case 'memory_get':
+      return handleMemoryGet(args);
+    case 'memory_update':
+      return handleMemoryUpdate(args);
+    case 'memory_delete':
+      return handleMemoryDelete(args);
+    case 'memory_list':
+      return handleMemoryList(args);
+    case 'memory_search':
+      return handleMemorySearch(args);
+    case 'memory_topics':
+      return handleMemoryTopics();
+    case 'memory_stats':
+      return handleMemoryStats();
+    case 'memory_export':
+      return handleMemoryExport();
+    case 'memory_import':
+      return handleMemoryImport(args);
+    case 'memory_preferences_get':
+      return handleMemoryPreferencesGet(args);
+    case 'memory_preferences_set':
+      return handleMemoryPreferencesSet(args);
+    case 'memory_conversations_list':
+      return handleMemoryConversationsList(args);
+    case 'memory_conversations_add':
+      return handleMemoryConversationsAdd(args);
+
+    // ── Proactive Commands ──────────────────────────────────────────────
+    case 'proactive_status':
+      return handleProactiveStatus();
+    case 'proactive_config':
+      return handleProactiveConfig(args);
+    case 'proactive_wakeup':
+      return await handleProactiveWakeup();
+    case 'proactive_tasks':
+      return handleProactiveTasks(args);
+    case 'proactive_task_add':
+      return handleProactiveTaskAdd(args);
+    case 'proactive_task_update':
+      return handleProactiveTaskUpdate(args);
+    case 'proactive_task_delete':
+      return handleProactiveTaskDelete(args);
+
+    // ── Database Sync ────────────────────────────────────────────────────
+    case 'sync_agent_data':
+      return await syncAgentData(args);
+
     default:
       throw new Error(`Unknown command: ${command}`);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Agent Chat & Execute Handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function handleAgentChat(args: any): Promise<any> {
+  const message = String(args.message || '').trim();
+  if (!message) return { ok: false, error: 'empty_message' };
+
+  const conversationId = args.conversationId || randomUUID();
+  const model = args.model || 'balanced';
+
+  try {
+    // Forward chat to Python agent via WebSocket
+    const result = await sendToAgent({
+      type: 'chat',
+      message,
+      conversationId,
+      model,
+      context: {
+        isVM: true,
+        userId: USER_ID,
+        ...(args.context || {}),
+      },
+      // Include memory context so agent has access to user memories
+      memoryContext: getAgentMemoryContext(args.memoryQuery || message),
+    }, 180_000); // 3 min timeout for chat
+
+    // Store conversation summary in VM memory
+    const memStore = getVMMemoryStore();
+    memStore.addConversation({
+      id: conversationId,
+      title: message.slice(0, 100),
+      summary: typeof result?.text === 'string' ? result.text.slice(0, 500) : '',
+      model,
+      source: 'agent',
+      message_count: 1,
+      topics: [],
+    });
+
+    return { ok: true, conversationId, ...result };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'agent_chat_failed') };
+  }
+}
+
+async function handleAgentExecute(args: any): Promise<any> {
+  const task = String(args.task || args.prompt || '').trim();
+  if (!task) return { ok: false, error: 'empty_task' };
+
+  const outputSchema = args.outputSchema || null;
+  const tools = args.tools || null;
+  const model = args.model || 'balanced';
+
+  try {
+    const result = await sendToAgent({
+      type: 'tool_exec',
+      tool: 'agent_execute',
+      args: {
+        task,
+        outputSchema,
+        allowedTools: tools,
+        model,
+        context: {
+          isVM: true,
+          userId: USER_ID,
+          ...(args.context || {}),
+        },
+        memoryContext: getAgentMemoryContext(task),
+      },
+    }, 300_000); // 5 min timeout for task execution
+
+    // Store memory of the executed task
+    const memStore = getVMMemoryStore();
+    memStore.add({
+      topic: 'tasks',
+      content: `Executed task: ${task.slice(0, 200)}${result?.ok ? ' (success)' : ' (failed)'}`,
+      metadata: { task: task.slice(0, 500), result: typeof result === 'string' ? result.slice(0, 500) : undefined },
+      tags: ['task', 'executed'],
+      source: 'agent',
+      importance: 3,
+    });
+
+    return { ok: true, ...result };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'agent_execute_failed') };
+  }
+}
+
+/** Build memory context for agent prompts */
+function getAgentMemoryContext(query: string): any {
+  const memStore = getVMMemoryStore();
+
+  // Search for relevant memories
+  const searchResults = memStore.search(query, 10);
+  const recentMemories = memStore.list({ limit: 5, minImportance: 5 });
+  const preferences = memStore.getPreferences();
+
+  return {
+    relevantMemories: searchResults.map(r => ({
+      content: r.entry.content,
+      topic: r.entry.topic,
+      importance: r.entry.importance,
+      score: r.score,
+    })),
+    recentImportant: recentMemories.map(m => ({
+      content: m.content,
+      topic: m.topic,
+    })),
+    preferences: Object.keys(preferences).length > 0 ? preferences : undefined,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Memory Handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function handleMemoryAdd(args: any): any {
+  const memStore = getVMMemoryStore();
+  const entry = memStore.add({
+    topic: String(args.topic || 'general'),
+    content: String(args.content || ''),
+    metadata: args.metadata || {},
+    tags: Array.isArray(args.tags) ? args.tags : [],
+    source: args.source || 'user',
+    importance: Number(args.importance ?? 5),
+    expires_at: args.expires_at || null,
+  });
+  return { ok: true, memory: entry };
+}
+
+function handleMemoryGet(args: any): any {
+  const memStore = getVMMemoryStore();
+  const entry = memStore.get(args.id);
+  return entry ? { ok: true, memory: entry } : { ok: false, error: 'not_found' };
+}
+
+function handleMemoryUpdate(args: any): any {
+  const memStore = getVMMemoryStore();
+  const entry = memStore.update(args.id, args.updates || {});
+  return entry ? { ok: true, memory: entry } : { ok: false, error: 'not_found' };
+}
+
+function handleMemoryDelete(args: any): any {
+  const memStore = getVMMemoryStore();
+  const deleted = memStore.delete(args.id);
+  return { ok: deleted, deleted };
+}
+
+function handleMemoryList(args: any): any {
+  const memStore = getVMMemoryStore();
+  const memories = memStore.list({
+    topic: args.topic,
+    source: args.source,
+    tags: args.tags,
+    limit: args.limit,
+    offset: args.offset,
+    minImportance: args.minImportance,
+  });
+  return { ok: true, memories, count: memories.length };
+}
+
+function handleMemorySearch(args: any): any {
+  const memStore = getVMMemoryStore();
+  const results = memStore.search(String(args.query || ''), args.limit || 20);
+  return {
+    ok: true,
+    results: results.map(r => ({
+      ...r.entry,
+      score: r.score,
+      matchedFields: r.matchedFields,
+    })),
+    count: results.length,
+  };
+}
+
+function handleMemoryTopics(): any {
+  return { ok: true, topics: getVMMemoryStore().getTopics() };
+}
+
+function handleMemoryStats(): any {
+  return { ok: true, stats: getVMMemoryStore().getStats() };
+}
+
+function handleMemoryExport(): any {
+  return { ok: true, data: getVMMemoryStore().exportAll() };
+}
+
+function handleMemoryImport(args: any): any {
+  const result = getVMMemoryStore().importAll(args.data || {}, args.mode || 'merge');
+  return { ok: true, ...result };
+}
+
+function handleMemoryPreferencesGet(args: any): any {
+  const memStore = getVMMemoryStore();
+  if (args.key) {
+    return { ok: true, value: memStore.getPreference(args.key, args.default) };
+  }
+  return { ok: true, preferences: memStore.getPreferences() };
+}
+
+function handleMemoryPreferencesSet(args: any): any {
+  const memStore = getVMMemoryStore();
+  memStore.setPreference(String(args.key), args.value);
+  return { ok: true };
+}
+
+function handleMemoryConversationsList(args: any): any {
+  return { ok: true, conversations: getVMMemoryStore().listConversations(args.limit || 50) };
+}
+
+function handleMemoryConversationsAdd(args: any): any {
+  const conv = getVMMemoryStore().addConversation({
+    id: args.id || randomUUID(),
+    title: String(args.title || ''),
+    summary: String(args.summary || ''),
+    model: String(args.model || ''),
+    source: String(args.source || 'agent'),
+    message_count: Number(args.message_count || 0),
+    topics: Array.isArray(args.topics) ? args.topics : [],
+  });
+  return { ok: true, conversation: conv };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Proactive Handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function handleProactiveStatus(): any {
+  return { ok: true, ...getVMProactiveScheduler().getStatus() };
+}
+
+function handleProactiveConfig(args: any): any {
+  const scheduler = getVMProactiveScheduler();
+  if (args.updates) {
+    return { ok: true, config: scheduler.updateConfig(args.updates) };
+  }
+  return { ok: true, config: scheduler.getConfig() };
+}
+
+async function handleProactiveWakeup(): Promise<any> {
+  const result = await getVMProactiveScheduler().wakeup();
+  return { ok: true, result };
+}
+
+function handleProactiveTasks(args: any): any {
+  return {
+    ok: true,
+    tasks: getVMProactiveScheduler().listTasks({
+      status: args.status,
+      priority: args.priority,
+    }),
+  };
+}
+
+function handleProactiveTaskAdd(args: any): any {
+  const task = getVMProactiveScheduler().addTask({
+    title: String(args.title || ''),
+    description: String(args.description || ''),
+    status: args.status || 'pending',
+    priority: args.priority || 'medium',
+    source: args.source || 'user',
+    dueAt: args.dueAt,
+    metadata: args.metadata,
+  });
+  return { ok: true, task };
+}
+
+function handleProactiveTaskUpdate(args: any): any {
+  const task = getVMProactiveScheduler().updateTask(args.id, args.updates || {});
+  return task ? { ok: true, task } : { ok: false, error: 'not_found' };
+}
+
+function handleProactiveTaskDelete(args: any): any {
+  return { ok: getVMProactiveScheduler().deleteTask(args.id) };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Agent Database Sync (SQLite databases ↔ GCS)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const AGENT_DATA_DIR = process.env.AGENT_DATA_DIR || '/home/stuard/agent-data';
+const GCS_BUCKET = process.env.STUARD_GCS_BUCKET || '';
+
+async function syncAgentData(args: any): Promise<any> {
+  const direction = String(args.direction || 'upload').toLowerCase();
+  const { execFileSync } = require('child_process');
+
+  if (direction === 'upload') {
+    // Compress and upload agent-data to GCS
+    if (!GCS_BUCKET) return { ok: false, error: 'no_gcs_bucket' };
+    if (!fs.existsSync(AGENT_DATA_DIR)) return { ok: false, error: 'agent_data_dir_missing' };
+
+    const archivePath = `/tmp/agent-data-sync-${Date.now()}.tar.gz`;
+    try {
+      execFileSync('tar', ['-czf', archivePath, '-C', AGENT_DATA_DIR, '.'], { timeout: 120_000 });
+      const gcsPath = `gs://${GCS_BUCKET}/users/${USER_ID}/agent-data.tar.gz`;
+      execFileSync('gsutil', ['cp', archivePath, gcsPath], { timeout: 120_000 });
+      const stats = fs.statSync(archivePath);
+      try { fs.unlinkSync(archivePath); } catch {}
+      console.log(`[vm-agent] Agent data synced to ${gcsPath} (${stats.size} bytes)`);
+      return { ok: true, direction: 'upload', bytes: stats.size, gcsPath };
+    } catch (e: any) {
+      try { fs.unlinkSync(archivePath); } catch {}
+      return { ok: false, error: e?.message || 'sync_upload_failed' };
+    }
+  } else if (direction === 'download') {
+    // Download and extract agent-data from GCS
+    if (!GCS_BUCKET) return { ok: false, error: 'no_gcs_bucket' };
+
+    const gcsPath = `gs://${GCS_BUCKET}/users/${USER_ID}/agent-data.tar.gz`;
+    const tempPath = `/tmp/agent-data-download-${Date.now()}.tar.gz`;
+    try {
+      execFileSync('gsutil', ['cp', gcsPath, tempPath], { timeout: 120_000 });
+      fs.mkdirSync(AGENT_DATA_DIR, { recursive: true });
+      execFileSync('tar', ['-xzf', tempPath, '-C', AGENT_DATA_DIR], { timeout: 120_000 });
+      try { fs.unlinkSync(tempPath); } catch {}
+      console.log(`[vm-agent] Agent data restored from ${gcsPath}`);
+      return { ok: true, direction: 'download', gcsPath };
+    } catch (e: any) {
+      try { fs.unlinkSync(tempPath); } catch {}
+      return { ok: false, error: e?.message || 'sync_download_failed' };
+    }
+  }
+  return { ok: false, error: 'invalid direction — use upload or download' };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -304,18 +773,35 @@ const server = http.createServer(async (req, res) => {
 
   // Health probe — no auth required
   if (method === 'GET' && url === '/health') {
+    const memStore = getVMMemoryStore();
+    const proactive = getVMProactiveScheduler();
     json(res, 200, {
       ok: true,
       agentVersion: AGENT_VERSION,
       userId: USER_ID,
       uptime: Math.round(process.uptime()),
       timestamp: Date.now(),
+      capabilities: [
+        'chat', 'execute', 'deploy', 'terminal', 'memory',
+        'proactive', 'sync', 'desktop-bridge',
+      ],
+      memory: {
+        totalMemories: memStore.getStats().totalMemories,
+        totalConversations: memStore.getStats().totalConversations,
+      },
+      proactive: {
+        enabled: proactive.getStatus().enabled,
+        pendingTasks: proactive.getStatus().pendingTasks,
+      },
+      deploys: deployExecutor.list().length,
+      pythonAgent: _agentWs?.readyState === WebSocket.OPEN ? 'connected' : 'disconnected',
     });
     return;
   }
 
   // Auth check for all other endpoints
-  if (!verifyBearerToken(req.headers.authorization)) {
+  const authHeader = authHeaderFromRequest(req);
+  if (!verifyBearerToken(authHeader)) {
     json(res, 401, { ok: false, error: 'unauthorized' });
     return;
   }
@@ -327,6 +813,92 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, { ok: true, metrics, agentVersion: AGENT_VERSION, activeSessions: shellExecutor.getActiveSessions() });
     } catch (e: any) {
       json(res, 500, { ok: false, error: e?.message });
+    }
+    return;
+  }
+
+  // ── Agent Chat & Execute ─────────────────────────────────────────────
+
+  // POST /agent/chat — send chat message to agent
+  if (method === 'POST' && url === '/agent/chat') {
+    try {
+      const body = await readBody(req, 5 * 1024 * 1024);
+      const result = await handleCommand('agent_chat', body);
+      json(res, 200, { ok: true, result });
+    } catch (e: any) {
+      json(res, 500, { ok: false, error: e?.message || 'agent_chat_failed' });
+    }
+    return;
+  }
+
+  // POST /agent/execute — execute headless agent task
+  if (method === 'POST' && url === '/agent/execute') {
+    try {
+      const body = await readBody(req, 5 * 1024 * 1024);
+      const result = await handleCommand('agent_execute', body);
+      json(res, 200, { ok: true, result });
+    } catch (e: any) {
+      json(res, 500, { ok: false, error: e?.message || 'agent_execute_failed' });
+    }
+    return;
+  }
+
+  // ── Memory Endpoints ─────────────────────────────────────────────────
+
+  if (method === 'POST' && url.startsWith('/memory/')) {
+    try {
+      const body = await readBody(req);
+      const action = url.slice('/memory/'.length).replace(/\/$/, '');
+      const command = `memory_${action.replace(/\//g, '_')}`;
+      const result = await handleCommand(command, body);
+      json(res, 200, { ok: true, result });
+    } catch (e: any) {
+      json(res, 500, { ok: false, error: e?.message || 'memory_operation_failed' });
+    }
+    return;
+  }
+
+  if (method === 'GET' && url === '/memory/stats') {
+    try {
+      const result = await handleCommand('memory_stats', {});
+      json(res, 200, { ok: true, result });
+    } catch (e: any) {
+      json(res, 500, { ok: false, error: e?.message });
+    }
+    return;
+  }
+
+  if (method === 'GET' && url === '/memory/topics') {
+    try {
+      const result = await handleCommand('memory_topics', {});
+      json(res, 200, { ok: true, result });
+    } catch (e: any) {
+      json(res, 500, { ok: false, error: e?.message });
+    }
+    return;
+  }
+
+  // ── Proactive Endpoints ──────────────────────────────────────────────
+
+  if (method === 'GET' && url === '/proactive/status') {
+    try {
+      const result = await handleCommand('proactive_status', {});
+      json(res, 200, { ok: true, result });
+    } catch (e: any) {
+      json(res, 500, { ok: false, error: e?.message });
+    }
+    return;
+  }
+
+  if (method === 'POST' && url.startsWith('/proactive/')) {
+    try {
+      const body = await readBody(req);
+      const action = url.slice('/proactive/'.length).replace(/\/$/, '');
+      const command = `proactive_${action.replace(/\//g, '_')}`;
+      const result = await handleCommand(command, body);
+      json(res, 200, { ok: true, result });
+    } catch (e: any) {
+      json(res, 500, { ok: false, error: e?.message || 'proactive_operation_failed' });
     }
     return;
   }
@@ -612,30 +1184,82 @@ server.on('upgrade', (req, socket, head) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function startAgent(): void {
+  console.log('[vm-agent] ═══════════════════════════════════════════════');
   console.log('[vm-agent] Starting Stuard VM Agent v' + AGENT_VERSION);
+  console.log('[vm-agent] ═══════════════════════════════════════════════');
   console.log(`[vm-agent] User: ${USER_ID}`);
   console.log(`[vm-agent] HTTP server on port ${PORT}`);
+  console.log(`[vm-agent] Python agent WS: ${LOCAL_AGENT_WS_URL}`);
 
   initMetrics();
 
+  // Initialize memory store
+  const memStore = getVMMemoryStore();
+  console.log(`[vm-agent] Memory store: ${memStore.getStats().totalMemories} memories, ${memStore.getStats().totalConversations} conversations`);
+
+  // Initialize proactive scheduler
+  const proactive = getVMProactiveScheduler();
+  const proactiveConfig = proactive.getConfig();
+  if (proactiveConfig.enabled) {
+    proactive.start();
+    console.log(`[vm-agent] Proactive scheduler: enabled (interval=${proactiveConfig.intervalMs}ms)`);
+  } else {
+    console.log('[vm-agent] Proactive scheduler: disabled (enable via proactive_config command)');
+  }
+
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`[vm-agent] Listening on http://0.0.0.0:${PORT}`);
+
+    // Connect to Python agent WS (non-blocking)
+    getAgentWs().catch(() => {
+      console.warn('[vm-agent] Python agent not yet available — will retry automatically');
+    });
+
+    // Restore deployments
     deployExecutor.restoreAll()
       .then((summary) => {
         if (summary.restored.length > 0 || summary.failed.length > 0) {
-          console.log(`[vm-agent] Deploy restore summary: restored=${summary.restored.length} skipped=${summary.skipped.length} failed=${summary.failed.length}`);
+          console.log(`[vm-agent] Deploy restore: restored=${summary.restored.length} skipped=${summary.skipped.length} failed=${summary.failed.length}`);
         }
       })
       .catch((e: any) => {
         console.warn(`[vm-agent] Initial deploy restore failed: ${String(e?.message || e)}`);
       });
+
+    // Periodic cleanup of expired memories (every hour)
+    setInterval(() => {
+      const removed = memStore.cleanupExpired();
+      if (removed > 0) {
+        console.log(`[vm-agent] Cleaned up ${removed} expired memories`);
+      }
+    }, 3600_000);
+
+    // Periodic agent database sync to GCS (every 30 minutes)
+    if (GCS_BUCKET) {
+      setInterval(() => {
+        syncAgentData({ direction: 'upload' }).then((r) => {
+          if (r.ok) console.log(`[vm-agent] Auto-synced agent data (${r.bytes} bytes)`);
+        }).catch(() => {});
+      }, 1800_000);
+      console.log('[vm-agent] Agent data auto-sync: every 30 min');
+    }
   });
 
   // Graceful shutdown
-  const shutdown = (sig: string) => {
+  const shutdown = async (sig: string) => {
     console.log(`[vm-agent] Received ${sig}, shutting down...`);
     deployExecutor.stopAll();
     shellExecutor.destroyAll();
+    proactive.destroy();
+    memStore.destroy();
+    // Final sync of agent databases before exit
+    if (GCS_BUCKET) {
+      await syncAgentData({ direction: 'upload' }).catch(() => {});
+      console.log('[vm-agent] Final agent data sync complete');
+    }
+    if (_agentWs) {
+      try { _agentWs.close(); } catch {}
+    }
     server.close();
     process.exit(0);
   };

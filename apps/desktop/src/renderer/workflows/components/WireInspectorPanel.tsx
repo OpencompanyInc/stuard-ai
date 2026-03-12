@@ -177,14 +177,16 @@ export function WireInspectorPanel({ model, wireIndex, onUpdate, onDelete, onClo
     const source = model.nodes.find(n => n.id === wire.from);
     const trigger = model.triggers.find(t => t.id === wire.from);
     const sourceItem = source || trigger;
-    
+
     const upstream = getUpstreamNodes(model, wire.from);
     if (sourceItem) {
-      const tool = 'tool' in sourceItem ? sourceItem.tool : undefined;
-      upstream.unshift({ 
-        id: sourceItem.id, 
-        label: sourceItem.label || (tool || sourceItem.type) || 'Source', 
-        tool 
+      const tool = 'tool' in sourceItem ? sourceItem.tool : (trigger ? (trigger as any).type : undefined);
+      const isTrigger = !!trigger;
+      upstream.unshift({
+        id: sourceItem.id,
+        label: sourceItem.label || (tool || (sourceItem as any).type) || 'Source',
+        tool: tool || (isTrigger ? (trigger as any).type : undefined),
+        isTrigger,
       });
     }
     return upstream;

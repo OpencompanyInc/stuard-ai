@@ -506,6 +506,18 @@ export async function createDeployment(userId: string, req: DeployRequest): Prom
       started_at: new Date().toISOString(),
     });
 
+    // Record deployment in VM memory for agent context
+    try {
+      await sendVMCommand(userId, 'memory_add', {
+        topic: 'deployments',
+        content: `Deployed "${req.name}" (${req.kind}) - ID: ${deployId}`,
+        tags: ['deployment', req.kind, 'active'],
+        source: 'system',
+        importance: 4,
+        metadata: { deployId, kind: req.kind, name: req.name },
+      }, 5_000).catch(() => {});
+    } catch { /* non-critical */ }
+
     return { ...finalDeploy, status: 'running', pid: result.result?.pid || null, started_at: new Date().toISOString() };
   } catch (e: any) {
     await updateDeployStatus(deployId, 'failed', { error_message: e?.message });

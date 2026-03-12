@@ -825,7 +825,7 @@ for (const trigType of ['webhook', 'webhook.cloud', 'webhook.local']) {
   }
 }
 
-// Gmail Native Trigger - profile and label selection
+// Gmail Native Trigger - profile and label selection + output fields for {{trigger.data.X}}
 if (TOOL_SCHEMAS['gmail.new_email']) {
   TOOL_SCHEMAS['gmail.new_email'].args = {
     profile: {
@@ -842,10 +842,40 @@ if (TOOL_SCHEMAS['gmail.new_email']) {
       default: ['INBOX'],
     },
   };
+  // Outputs available in ctx.trigger.data / {{trigger.data.X}}
+  TOOL_SCHEMAS['gmail.new_email'].outputs = [
+    'messageId',
+    'event',
+    'historyId',
+    'emailAddress',
+    'profile',
+    'message',
+    'message.id',
+    'message.threadId',
+    'message.snippet',
+    'message.from',
+    'message.to',
+    'message.subject',
+    'message.date',
+    'message.internalDate',
+  ];
 }
 
 // Drive Native Trigger - profile and filter options
 if (TOOL_SCHEMAS['drive.new_file']) {
+  TOOL_SCHEMAS['drive.new_file'].outputs = [
+    'fileId',
+    'event',
+    'profile',
+    'changeTime',
+    'file',
+    'file.id',
+    'file.name',
+    'file.mimeType',
+    'file.webViewLink',
+    'file.createdTime',
+    'file.modifiedTime',
+  ];
   TOOL_SCHEMAS['drive.new_file'].args = {
     profile: {
       type: 'string',

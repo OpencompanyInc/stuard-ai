@@ -90,7 +90,12 @@ echo "[stuard] ── VM startup $(date -u +%Y-%m-%dT%H:%M:%SZ) ──"
 # ── 1. Create stuard user + directory ────────────────────────────────────────
 id -u stuard &>/dev/null || useradd -m -s /bin/bash stuard
 mkdir -p /opt/stuard /home/stuard
-chown stuard:stuard /home/stuard
+mkdir -p /home/stuard/memories /home/stuard/memories/topics /home/stuard/memories/conversations /home/stuard/memories/sync
+mkdir -p /home/stuard/proactive
+mkdir -p /home/stuard/deploys
+mkdir -p /home/stuard/workspace /home/stuard/data /home/stuard/scripts /home/stuard/assets
+mkdir -p /home/stuard/agent-data
+chown -R stuard:stuard /home/stuard
 
 # ── 2. Persist env vars ─────────────────────────────────────────────────────
 cat > /opt/stuard/env <<'ENVEOF'
@@ -103,6 +108,9 @@ CLOUD_AI_URL=${cloudAiUrl}
 CLOUD_AI_WS=${cloudAiWsUrl}
 STUARD_VM_ROOT=/home/stuard
 STUARD_AGENT_PORT=7400
+STUARD_MEMORY_ROOT=/home/stuard/memories
+STUARD_PROACTIVE_ROOT=/home/stuard/proactive
+STUARD_DEPLOY_ROOT=/home/stuard/deploys
 AGENT_HOST=127.0.0.1
 AGENT_PORT=8765
 AGENT_HTTP=http://127.0.0.1:8765
@@ -110,6 +118,11 @@ AGENT_WS=ws://127.0.0.1:8765/ws
 AGENT_WS_URL=ws://127.0.0.1:8765/ws
 STUARD_WS_HOST=127.0.0.1
 STUARD_WS_PORT=8765
+STUARD_LOCAL_AGENT_WS=ws://127.0.0.1:8765/ws
+STUARD_AGENT_MODE=vm
+AGENT_DATA_DIR=/home/stuard/agent-data
+STUARD_VM_AGENT_URL=http://127.0.0.1:7400
+DISPLAY=:99
 ENVEOF
 
 # Also write to /etc/environment so interactive shells see them
@@ -130,9 +143,16 @@ else
   echo "[stuard] Node.js $(node --version) already installed"
 fi
 
-# Install node-pty native dependency (needed for terminal PTY support)
-apt-get install -y -q build-essential python3 python3-pip python3-venv 2>/dev/null || true
+# Install node-pty native dependency and headless browser for automation
+apt-get install -y -q build-essential python3 python3-pip python3-venv \
+  chromium chromium-driver xvfb xdotool imagemagick \
+  ffmpeg jq curl wget git unzip 2>/dev/null || true
 npm install -g node-pty 2>/dev/null || echo "[stuard] node-pty global install skipped (will try local)"
+
+# Setup headless display for browser automation (Xvfb)
+export DISPLAY=:99
+Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &>/dev/null &
+echo "export DISPLAY=:99" >> /opt/stuard/env
 
 # Expand the root partition/filesystem to the full boot disk size if the image
 # came up with a smaller default filesystem.
@@ -262,6 +282,24 @@ iptables -A INPUT -p tcp --dport 8765 ! -s 127.0.0.1 -j DROP 2>/dev/null || true
 
 # ── 6. Create systemd services ───────────────────────────────────────────────
 
+# Xvfb (virtual framebuffer) for headless browser/GUI automation
+if command -v Xvfb >/dev/null 2>&1; then
+cat > /etc/systemd/system/stuard-xvfb.service <<'XVFBEOF'
+[Unit]
+Description=Xvfb Virtual Framebuffer (headless display)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+XVFBEOF
+fi
+
 # Python agent service (provides local tools via WebSocket on port 8765)
 if [ -d /opt/stuard/python-agent ] && [ -f /opt/stuard/python-agent/vm_main.py ]; then
 cat > /etc/systemd/system/stuard-python-agent.service <<'PYEOF'
@@ -323,8 +361,32 @@ MemoryMax=512M
 WantedBy=multi-user.target
 SVCEOF
 
+# ── 6b. Restore agent databases from cold storage if available ──────────────
+# The SQLite databases (knowledge.db, memory.db, etc.) are synced as part of
+# the workspace cold storage archive. Try to download and extract them so
+# the Python agent starts with the user's full memory and knowledge graph.
+AGENT_DB_GCS="gs://${bucket}/users/${userId}/agent-data.tar.gz"
+if gsutil -q stat "$AGENT_DB_GCS" 2>/dev/null; then
+  echo "[stuard] Restoring agent databases from cold storage..."
+  gsutil cp "$AGENT_DB_GCS" /tmp/agent-data.tar.gz 2>/dev/null && \\
+    tar -xzf /tmp/agent-data.tar.gz -C /home/stuard/agent-data/ 2>/dev/null && \\
+    rm -f /tmp/agent-data.tar.gz
+  chown -R stuard:stuard /home/stuard/agent-data
+  echo "[stuard] Agent databases restored"
+else
+  echo "[stuard] No agent database backup found — starting fresh"
+fi
+
 # ── 7. Start services ────────────────────────────────────────────────────────
 systemctl daemon-reload
+
+# Start Xvfb first (provides virtual display for headless automation)
+if [ -f /etc/systemd/system/stuard-xvfb.service ]; then
+  systemctl enable stuard-xvfb
+  systemctl start stuard-xvfb
+  echo "[stuard] Xvfb started on display :99"
+  sleep 1
+fi
 
 # Start Python agent first (provides local tools on ws://127.0.0.1:8765)
 if [ -f /etc/systemd/system/stuard-python-agent.service ]; then

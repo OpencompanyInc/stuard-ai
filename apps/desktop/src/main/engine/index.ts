@@ -126,16 +126,18 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
     }
   } catch { }
 
-  // Initialize payload
+  // Initialize payload (webhook, Gmail, Drive, etc.)
   if (payload !== undefined) {
     try {
-      if (payload && typeof payload === 'object' && ('input' in payload || 'webhook' in payload)) {
+      if (payload && typeof payload === 'object' && ('input' in payload || 'webhook' in payload || 'args' in payload)) {
         if (payload.input !== undefined) ctx.input = payload.input;
         if (payload.webhook !== undefined) ctx.webhook = payload.webhook;
         if (payload.args !== undefined) ctx.args = payload.args;
       } else {
+        // Raw webhook/provider data (Gmail, Drive, etc.) — expose as input, webhook, and args
         ctx.input = payload;
         ctx.webhook = payload;
+        ctx.args = payload;
       }
     } catch { }
   }

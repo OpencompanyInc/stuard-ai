@@ -48,13 +48,43 @@ OUTPUT FORMAT:
  * Get a headless agent configured for task execution.
  * This agent is stripped of personality and focused on tools.
  */
+export interface HeadlessAgentOptions {
+  model?: ModelChoice;
+  enabledIntegrations?: string[];
+  mcpTools?: Record<string, any>;
+  allowedTools?: string[];
+  customSystemPrompt?: string;
+  /** When true, desktop-only tools (clipboard, hotkeys, screen capture, etc.) are excluded. Browser tools remain available via Xvfb. */
+  vmMode?: boolean;
+}
+
+/** Desktop-only tools that require the user's physical desktop (GUI, clipboard, hardware). */
+const VM_EXCLUDED_TOOLS = new Set([
+  'send_hotkey',
+  'capture_media',
+  'describe_media_capture_capabilities',
+]);
+
 export function getHeadlessAgent(
-  model: ModelChoice = 'fast',
+  modelOrOpts: ModelChoice | HeadlessAgentOptions = 'fast',
   enabledIntegrations: string[] = [],
   mcpTools: Record<string, any> = {},
   allowedTools?: string[],
   customSystemPrompt?: string
 ): Agent {
+  // Support both old positional API and new options object
+  let vmMode = false;
+  let model: ModelChoice = 'fast';
+  if (typeof modelOrOpts === 'object' && modelOrOpts !== null) {
+    model = modelOrOpts.model || 'fast';
+    enabledIntegrations = modelOrOpts.enabledIntegrations || [];
+    mcpTools = modelOrOpts.mcpTools || {};
+    allowedTools = modelOrOpts.allowedTools;
+    customSystemPrompt = modelOrOpts.customSystemPrompt;
+    vmMode = !!modelOrOpts.vmMode;
+  } else {
+    model = modelOrOpts;
+  }
   const allTools = {
     wait: waitTool,
     run_sequential: runSequentialTool,
@@ -157,7 +187,7 @@ export function getHeadlessAgent(
   const tools: Record<string, any> = { ...mcpTools };
 
   // Always available tools
-  const coreTools = [
+  let coreTools = [
     'wait', 'run_sequential', 'run_parallel', 'analyze_media', 'web_search',
     'deploy_headless_agent', 'get_headless_agent_status', 'list_headless_agent_tasks',
     'send_hotkey', 'glob', 'grep', 'canvas_list', 'canvas_read', 'canvas_write', 'canvas_create', 'canvas_delete', 'capture_media',
@@ -173,6 +203,11 @@ export function getHeadlessAgent(
     'search_past_conversations', 'get_conversation_context',
     'agent_decision', 'agent_extract',
   ];
+
+  // In VM mode, strip desktop-only tools that need physical hardware/display
+  if (vmMode) {
+    coreTools = coreTools.filter(name => !VM_EXCLUDED_TOOLS.has(name));
+  }
 
   coreTools.forEach(name => {
     if ((allTools as any)[name]) {
@@ -256,10 +291,21 @@ export function getHeadlessAgent(
     }
   }
 
+  let systemContent = HEADLESS_SYSTEM_INSTRUCTIONS;
+  if (vmMode) {
+    systemContent += `\n\nVM ENVIRONMENT:
+You are running on a headless cloud VM (Linux, Debian 12).
+- Browser automation is available via Xvfb virtual display + Chromium. Use browser_use_* tools normally.
+- Desktop-only tools (clipboard, hotkeys, screen capture from hardware) are NOT available.
+- Use run_command / run_system_command for shell operations.
+- File operations (read_file, write_file, glob, grep) operate on the VM filesystem.
+`;
+  }
+
   const instructions = [
     {
       role: 'system',
-      content: HEADLESS_SYSTEM_INSTRUCTIONS,
+      content: systemContent,
     },
   ];
 

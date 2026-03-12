@@ -389,12 +389,16 @@ export class DeployExecutor extends EventEmitter {
           continue;
         }
 
-        // Current workflow deploys behave like bundle-and-run, not a durable trigger runtime.
-        // Skip them during restore so a VM reboot does not replay side effects.
+        // Restore workflows that have trigger bindings (webhooks, cron, etc.) since
+        // they are durable event-driven workflows. Skip one-shot workflows that already ran.
         if (kind === 'workflow') {
-          skipped.push(dirent.name);
-          this.appendLog(deployDir, `[restore] Skipped workflow restore for ${dirent.name} (cloud workflow trigger runtime is not yet durable on VM restore)`);
-          continue;
+          const hasTriggers = Array.isArray(bundle?.triggerBindings) && bundle.triggerBindings.length > 0;
+          const hasSchedule = typeof bundle?.schedule === 'string' && bundle.schedule.trim();
+          if (!hasTriggers && !hasSchedule) {
+            skipped.push(dirent.name);
+            this.appendLog(deployDir, `[restore] Skipped one-shot workflow ${dirent.name} (no triggers/schedule)`);
+            continue;
+          }
         }
 
         await this.startFromBundle({

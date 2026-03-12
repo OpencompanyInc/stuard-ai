@@ -53,7 +53,6 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
   const borderRadius = Number(windowCfg.borderRadius ?? windowCfg.radius ?? 0);
   const margin = Number(windowCfg.margin ?? 20);
   const frameless = windowCfg.frameless === true || windowCfg.frameless === 'true';
-  const wantsTransparentWindow = windowCfg.transparent === true || windowCfg.transparent === 'true';
 
   // === ENHANCED WINDOW PROPERTIES ===
   const backgroundType = windowCfg.backgroundType || 'color';
@@ -67,16 +66,15 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
   const contentPadding = windowCfg.contentPadding || 0;
   const overflow = windowCfg.overflow || '';
   const invisible = windowCfg.invisible === true || windowCfg.invisible === 'true';
-  const isTranslucent = backgroundType === 'translucent';
 
-  const transparentBg =
-    windowCfg.noBackground === true ||
-    windowCfg.noBackground === 'true' ||
-    windowCfg.transparentBg === true ||
-    windowCfg.transparentBg === 'true' ||
-    wantsTransparentWindow ||
-    (rawHtml && wantsTransparentWindow) ||
-    isTranslucent;
+  // Default to transparent — components own their background.
+  // Only opaque when an explicit background color/type is configured.
+  const hasExplicitBackground =
+    (windowCfg.backgroundColor && windowCfg.backgroundColor !== 'transparent') ||
+    backgroundType === 'gradient' ||
+    backgroundType === 'image' ||
+    backgroundType === 'translucent';
+  const transparentBg = !hasExplicitBackground;
 
   const flowId = args?.flowId || (ctx as any)?.flowId || '';
 
@@ -143,7 +141,7 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
 
   const { x, y } = calculatePosition(windowCfg.position, width, height, windowCfg.x, windowCfg.y, margin);
 
-  // Handle existing window — push data via variable system (no page reload)
+  // Handle existing window — push data and update content (no full page reload)
   if (existing && !existing.isDestroyed() && !forceNew) {
     // Update window geometry only if changed
     const [currentWidth, currentHeight] = existing.getSize();
@@ -153,7 +151,6 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     existing.setTitle(title);
 
     // Push each data key as a workflow variable so useVar hooks update reactively.
-    // This avoids regenerating HTML and reloading the page — React just re-renders.
     if (safeData && typeof safeData === 'object') {
       for (const [key, value] of Object.entries(safeData)) {
         setVariable(key, value as VariableValue);
@@ -163,6 +160,51 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     // Also send a data-update IPC as fallback for onDataUpdate listeners
     if (!existing.isDestroyed()) {
       existing.webContents.send('stuard:data-update', safeData);
+    }
+
+    // Update HTML content if rawHtml is provided — templates like {{step.text}}
+    // get resolved fresh by interpolateForTool each execution, but the existing
+    // window still shows the first render. Push the newly-resolved HTML into the DOM.
+    if (rawHtml && !existing.isDestroyed()) {
+      try {
+        await existing.webContents.executeJavaScript(`(function() {
+          var root = document.querySelector('.stuard-root') || document.querySelector('.root') || document.body;
+          if (root) {
+            root.innerHTML = ${JSON.stringify(rawHtml)};
+            if (typeof __initBindings === 'function') __initBindings();
+          }
+        })()`);
+      } catch (e: any) {
+        ctx.logFn(`custom_ui: Failed to update HTML in existing window "${id}": ${e?.message}`);
+      }
+    }
+
+    // Update data-bind elements for plain HTML data binding (same logic as update_custom_ui)
+    if (safeData && typeof safeData === 'object' && !existing.isDestroyed()) {
+      try {
+        await existing.webContents.executeJavaScript(`(function() {
+          var updates = ${JSON.stringify(safeData)};
+          for (var _key in updates) {
+            if (!updates.hasOwnProperty(_key)) continue;
+            var _val = updates[_key];
+            var bindEl = document.querySelector('[data-bind="' + _key + '"]');
+            if (bindEl) {
+              if (bindEl.tagName === 'INPUT' || bindEl.tagName === 'TEXTAREA') {
+                bindEl.value = _val;
+              } else if (bindEl.hasAttribute('data-html') || bindEl.hasAttribute('data-render-html')) {
+                bindEl.innerHTML = _val;
+              } else {
+                bindEl.textContent = _val;
+              }
+            }
+            if (typeof formData !== 'undefined') {
+              formData[_key] = _val;
+            }
+          }
+        })()`);
+      } catch (e: any) {
+        ctx.logFn(`custom_ui: Failed to update data-bind in existing window "${id}": ${e?.message}`);
+      }
     }
 
     if (!existing.isVisible()) {
@@ -192,10 +234,9 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     windowData.delete(id);
   }
 
-  // Only enable Electron-level transparency when the window is frameless.
-  // On Windows, transparent + framed windows don't render CSS backgrounds correctly.
-  // borderRadius still applies visually via CSS overflow:hidden inside the frame.
-  const transparent = frameless && (!!windowCfg.transparent || borderRadius > 0 || transparentBg || isTranslucent);
+  // Frameless windows are always transparent at the Electron level — components own the background.
+  // On Windows, transparent + framed windows don't render correctly, so framed windows stay opaque.
+  const transparent = frameless;
   const isAlwaysOnTop = windowCfg.alwaysOnTop !== false;
   const shouldSkipTaskbar = windowCfg.skipTaskbar === true || (isAlwaysOnTop && windowCfg.skipTaskbar !== false);
 
@@ -219,7 +260,7 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     show: false,
     frame: !frameless,
     transparent,
-    backgroundColor: (transparent || isTranslucent) ? '#00000000' : (backgroundColor || '#1a1a2e'),
+    backgroundColor: '#00000000',
     resizable: windowCfg.resizable !== false,
     movable: windowCfg.movable !== false,
     minimizable: false,
@@ -227,7 +268,7 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     fullscreenable: false,
     skipTaskbar: shouldSkipTaskbar,
     alwaysOnTop: isAlwaysOnTop,
-    hasShadow: shadow.enabled !== false && !transparentBg,
+    hasShadow: shadow.enabled === true,
     title,
     webPreferences: {
       contextIsolation: true,
