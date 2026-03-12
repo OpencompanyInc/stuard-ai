@@ -2275,4 +2275,105 @@ export function setupIpc() {
   ipcMain.handle("system:getGlobalHotkey", () => {
     return { ok: true, hotkey: getGlobalHotkey() };
   });
+
+  // ── Upload agent databases to cloud for VM sync ─────────────────────────
+  ipcMain.handle("cloud:uploadAgentData", async (_e, cloudAiUrl: string, token: string) => {
+    try {
+      const fs = require('fs');
+      const os = require('os');
+      const { execFileSync } = require('child_process');
+
+      // Resolve agent data directory
+      const base = process.platform === 'win32'
+        ? (process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'))
+        : process.platform === 'darwin'
+          ? path.join(os.homedir(), 'Library', 'Application Support')
+          : (process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'));
+      const agentDir = process.env.AGENT_DATA_DIR || path.join(base, 'StuardAI', 'agent');
+
+      // Check if agent databases exist
+      const knowledgePath = path.join(agentDir, 'knowledge.db');
+      const memoryPath = path.join(agentDir, 'memory.db');
+      const hasKnowledge = fs.existsSync(knowledgePath);
+      const hasMemory = fs.existsSync(memoryPath);
+      if (!hasKnowledge && !hasMemory) {
+        return { ok: true, skipped: true, reason: 'no_agent_databases' };
+      }
+
+      // Create tar.gz of the agent databases
+      const tmpDir = os.tmpdir();
+      const archivePath = path.join(tmpDir, `stuard-agent-data-${Date.now()}.tar.gz`);
+
+      // Build list of files to include
+      const filesToInclude: string[] = [];
+      if (hasKnowledge) filesToInclude.push('knowledge.db');
+      if (hasMemory) filesToInclude.push('memory.db');
+      // Include any other .db files in the agent directory
+      try {
+        const files = fs.readdirSync(agentDir);
+        for (const f of files) {
+          if (f.endsWith('.db') && !filesToInclude.includes(f)) {
+            filesToInclude.push(f);
+          }
+        }
+      } catch {}
+
+      if (process.platform === 'win32') {
+        // On Windows, use tar (available in Windows 10+)
+        try {
+          execFileSync('tar', ['-czf', archivePath, ...filesToInclude], {
+            cwd: agentDir,
+            timeout: 60_000,
+          });
+        } catch {
+          // Fallback: use node's built-in zlib
+          const zlib = require('zlib');
+          const archiver = require('archiver');
+          // If archiver isn't available, do a simple manual approach
+          // Just send the raw files as base64
+          const filesData: Record<string, string> = {};
+          for (const f of filesToInclude) {
+            const fp = path.join(agentDir, f);
+            if (fs.existsSync(fp)) {
+              filesData[f] = fs.readFileSync(fp).toString('base64');
+            }
+          }
+          // Upload individually
+          const resp = await fetch(`${cloudAiUrl}/v1/cloud-engine/upload-agent-data`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ files: filesData }),
+          });
+          const result = await resp.json();
+          return result;
+        }
+      } else {
+        execFileSync('tar', ['-czf', archivePath, ...filesToInclude], {
+          cwd: agentDir,
+          timeout: 60_000,
+        });
+      }
+
+      // Read the archive and send as base64
+      const archiveBuffer = fs.readFileSync(archivePath);
+      try { fs.unlinkSync(archivePath); } catch {}
+
+      const resp = await fetch(`${cloudAiUrl}/v1/cloud-engine/upload-agent-data`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ data: archiveBuffer.toString('base64') }),
+      });
+      const result = await resp.json();
+      return { ok: true, ...result, bytes: archiveBuffer.length };
+    } catch (e: any) {
+      logger.error('[cloud:uploadAgentData] Error:', e);
+      return { ok: false, error: String(e?.message || 'upload_failed') };
+    }
+  });
 }

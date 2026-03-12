@@ -379,6 +379,12 @@ async function handleCommand(command: string, args: any): Promise<any> {
     case 'sync_agent_data':
       return await syncAgentData(args);
 
+    // ── OAuth Token Storage ──────────────────────────────────────────────
+    case 'store_oauth_tokens':
+      return storeOAuthTokens(args);
+    case 'get_oauth_token':
+      return getOAuthToken(args);
+
     default:
       throw new Error(`Unknown command: ${command}`);
   }
@@ -709,6 +715,83 @@ async function syncAgentData(args: any): Promise<any> {
   }
   return { ok: false, error: 'invalid direction — use upload or download' };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OAuth Token Storage (synced from cloud-ai)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const OAUTH_TOKENS_PATH = path.join(AGENT_DATA_DIR, 'oauth-tokens.json');
+
+interface StoredOAuthToken {
+  provider: string;
+  profileLabel: string;
+  isDefault: boolean;
+  accessToken: string;
+  refreshToken: string | null;
+  expiresAt: string | null;
+  scopes: string[];
+  accountEmail: string | null;
+  syncedAt: string;
+}
+
+let _oauthTokens: StoredOAuthToken[] = [];
+
+function loadOAuthTokens(): StoredOAuthToken[] {
+  try {
+    if (fs.existsSync(OAUTH_TOKENS_PATH)) {
+      _oauthTokens = JSON.parse(fs.readFileSync(OAUTH_TOKENS_PATH, 'utf-8'));
+    }
+  } catch { _oauthTokens = []; }
+  return _oauthTokens;
+}
+
+function saveOAuthTokens(): void {
+  try {
+    fs.mkdirSync(AGENT_DATA_DIR, { recursive: true });
+    fs.writeFileSync(OAUTH_TOKENS_PATH, JSON.stringify(_oauthTokens, null, 2));
+  } catch (e: any) {
+    console.error('[vm-agent] Failed to save OAuth tokens:', e?.message);
+  }
+}
+
+function storeOAuthTokens(args: any): any {
+  const tokens = args.tokens;
+  if (!Array.isArray(tokens)) return { ok: false, error: 'tokens must be an array' };
+
+  const now = new Date().toISOString();
+  _oauthTokens = tokens.map((t: any) => ({
+    provider: String(t.provider || ''),
+    profileLabel: String(t.profileLabel || 'default'),
+    isDefault: !!t.isDefault,
+    accessToken: String(t.accessToken || ''),
+    refreshToken: t.refreshToken || null,
+    expiresAt: t.expiresAt || null,
+    scopes: Array.isArray(t.scopes) ? t.scopes : [],
+    accountEmail: t.accountEmail || null,
+    syncedAt: now,
+  }));
+  saveOAuthTokens();
+  console.log(`[vm-agent] Stored ${_oauthTokens.length} OAuth tokens`);
+  return { ok: true, count: _oauthTokens.length };
+}
+
+function getOAuthToken(args: any): any {
+  const provider = String(args.provider || '').toLowerCase();
+  const profileLabel = args.profileLabel || 'default';
+
+  if (_oauthTokens.length === 0) loadOAuthTokens();
+
+  const match = _oauthTokens.find(t =>
+    t.provider.toLowerCase() === provider &&
+    (t.profileLabel === profileLabel || t.isDefault)
+  );
+
+  if (!match) return { ok: false, error: `no_token_for_${provider}` };
+  return { ok: true, token: match };
+}
+
+// Load tokens on startup
+loadOAuthTokens();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Snapshot Helpers (hardened — no shell interpolation)

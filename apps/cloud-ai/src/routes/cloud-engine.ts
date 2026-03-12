@@ -1,9 +1,9 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { verifyToken, checkAccess, getCloudEngine, upsertCloudEngine, updateCloudEngineStatus, deleteCloudEngine, getStorageUsage, upsertStorageUsage, updateEngineHealth, getCreditSummary } from '../supabase';
+import { verifyToken, checkAccess, getCloudEngine, upsertCloudEngine, updateCloudEngineStatus, deleteCloudEngine, getStorageUsage, upsertStorageUsage, updateEngineHealth, getCreditSummary, listExternalAccounts } from '../supabase';
 import { COMPUTE_TIER_CONFIG, DEFAULT_CLOUD_DISK_GB_BY_TIER, STORAGE_PRICING, estimateComputeCostCredits, estimateMachineCreditsPerHour, estimateStorageCostCredits, resolveComputeMachineSpec } from '../pricing';
 import { getComputeProvider } from '../services/compute';
 import { syncToCloud, restoreFromCloud, getSyncStatus } from '../services/sync-engine';
-import { deleteAllUserData } from '../services/cold-storage';
+import { deleteAllUserData, uploadAgentData } from '../services/cold-storage';
 import { getUserComputeUsage } from '../services/compute-billing';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -464,6 +464,102 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
     } catch (e: any) {
       console.error('[cloud-engine] status error:', e?.message);
       json(res, 500, { ok: false, error: 'status_failed', message: e?.message || 'failed' });
+    }
+    return true;
+  }
+
+  // ── POST /v1/cloud-engine/upload-agent-data ──────────────────────────────
+  // Desktop uploads knowledge.db + memory.db as tar.gz before VM provision/start.
+  // Accepts either:
+  //   - { data: "<base64 tar.gz>" } — inline upload (small files)
+  //   - {} — returns a signed GCS upload URL for the desktop to upload directly
+  if (method === 'POST' && path === '/v1/cloud-engine/upload-agent-data') {
+    const user = await authenticate(req, res);
+    if (!user) return true;
+    try {
+      const body = await readBody(req, 100 * 1024 * 1024); // 100 MB max
+      const base64Data = body?.data;
+
+      if (typeof base64Data === 'string' && base64Data.length > 0) {
+        // Inline upload — desktop sent the tar.gz as base64
+        const buffer = Buffer.from(base64Data, 'base64');
+        const result = await uploadAgentData(user.userId, buffer);
+        json(res, 200, { ok: true, ...result });
+      } else {
+        // Return a signed upload URL for the desktop to upload directly
+        const { generateAgentDataUploadUrl } = await import('../services/cold-storage');
+        const { uploadUrl, objectName } = await generateAgentDataUploadUrl(user.userId);
+        json(res, 200, { ok: true, uploadUrl, objectName });
+      }
+    } catch (e: any) {
+      console.error('[cloud-engine] upload-agent-data error:', e?.message);
+      json(res, 500, { ok: false, error: 'upload_failed', message: e?.message || 'failed' });
+    }
+    return true;
+  }
+
+  // ── GET /v1/cloud-engine/oauth-tokens ──────────────────────────────────
+  // Returns OAuth tokens for all connected integrations.
+  // Used by VM agent to access integrations (Google, GitHub, etc.)
+  if (method === 'GET' && path === '/v1/cloud-engine/oauth-tokens') {
+    const user = await authenticate(req, res);
+    if (!user) return true;
+    try {
+      const accounts = await listExternalAccounts(user.userId);
+      // Strip sensitive fields, keep what the VM needs
+      const tokens = accounts
+        .filter(a => a.access_token && a.access_token !== 'verified')
+        .map(a => ({
+          provider: a.provider,
+          profileLabel: a.profile_label,
+          isDefault: a.is_default,
+          accessToken: a.access_token,
+          refreshToken: a.refresh_token || null,
+          expiresAt: a.expires_at || null,
+          scopes: a.scopes || [],
+          accountEmail: a.account_email || null,
+        }));
+      json(res, 200, { ok: true, tokens });
+    } catch (e: any) {
+      console.error('[cloud-engine] oauth-tokens error:', e?.message);
+      json(res, 500, { ok: false, error: 'tokens_failed', message: e?.message || 'failed' });
+    }
+    return true;
+  }
+
+  // ── POST /v1/cloud-engine/sync-oauth-to-vm ──────────────────────────────
+  // Pushes OAuth tokens to the running VM so integrations work there
+  if (method === 'POST' && path === '/v1/cloud-engine/sync-oauth-to-vm') {
+    const user = await authenticate(req, res);
+    if (!user) return true;
+    try {
+      const engine = await getCloudEngine(user.userId);
+      if (!engine || engine.status !== 'running') {
+        json(res, 409, { ok: false, error: 'engine_not_running' });
+        return true;
+      }
+
+      const accounts = await listExternalAccounts(user.userId);
+      const tokens = accounts
+        .filter(a => a.access_token && a.access_token !== 'verified')
+        .map(a => ({
+          provider: a.provider,
+          profileLabel: a.profile_label,
+          isDefault: a.is_default,
+          accessToken: a.access_token,
+          refreshToken: a.refresh_token || null,
+          expiresAt: a.expires_at || null,
+          scopes: a.scopes || [],
+          accountEmail: a.account_email || null,
+        }));
+
+      // Send tokens to VM agent
+      const { sendVMCommand } = await import('../services/vm-command');
+      const result = await sendVMCommand(user.userId, 'store_oauth_tokens', { tokens }, 15_000);
+      json(res, 200, { ok: true, synced: tokens.length, vmResult: result.ok });
+    } catch (e: any) {
+      console.error('[cloud-engine] sync-oauth error:', e?.message);
+      json(res, 500, { ok: false, error: 'sync_oauth_failed', message: e?.message || 'failed' });
     }
     return true;
   }

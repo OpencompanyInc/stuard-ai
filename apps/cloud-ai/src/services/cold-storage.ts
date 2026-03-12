@@ -259,3 +259,40 @@ export async function deleteAllUserData(userId: string): Promise<void> {
 export function getBackupObjectName(userId: string): string {
   return `${userId}/memory_backup.tar.gz`;
 }
+
+/** Get the agent data (knowledge.db + memory.db) GCS path for a user. */
+export function getAgentDataObjectName(userId: string): string {
+  return `users/${userId}/agent-data.tar.gz`;
+}
+
+/**
+ * Upload raw agent data (tar.gz bytes) directly to GCS.
+ * Used by desktop to push knowledge.db + memory.db before VM provisioning.
+ */
+export async function uploadAgentData(userId: string, data: Buffer): Promise<{ objectName: string; bytes: number }> {
+  const objectName = getAgentDataObjectName(userId);
+  const file = getBucket().file(objectName);
+  await file.save(data, {
+    contentType: 'application/gzip',
+    resumable: false,
+    metadata: {
+      metadata: { source: 'desktop-sync', uploadedAt: new Date().toISOString() },
+    },
+  });
+  return { objectName, bytes: data.length };
+}
+
+/**
+ * Generate a signed upload URL for agent data (used by desktop to upload directly to GCS).
+ */
+export async function generateAgentDataUploadUrl(userId: string): Promise<{ uploadUrl: string; objectName: string }> {
+  const objectName = getAgentDataObjectName(userId);
+  const file = getBucket().file(objectName);
+  const [uploadUrl] = await file.getSignedUrl({
+    version: 'v4',
+    action: 'write',
+    expires: Date.now() + UPLOAD_URL_TTL_MS,
+    contentType: 'application/gzip',
+  });
+  return { uploadUrl, objectName };
+}
