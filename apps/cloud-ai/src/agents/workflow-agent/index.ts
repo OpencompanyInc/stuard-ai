@@ -1112,6 +1112,117 @@ callNode wires:
   • You don't want to clutter the canvas
 
 ═══════════════════════════════════════════════════════════════════════════════
+FUNCTION TRIGGERS + call_function + callNode — Internal Reusable Sub-Flows
+═══════════════════════════════════════════════════════════════════════════════
+
+Use this pattern when a custom_ui dashboard needs to repeatedly invoke a
+sub-flow with parameters (e.g., ML training steps, batch operations, API calls).
+
+─── ARCHITECTURE ─────────────────────────────────────────────────────────────
+
+  [Manual Trigger] → [custom_ui Dashboard (blocking)]
+                         │ callNode (on-demand, dashed teal wire)
+                         ▼
+                     [call_function node]
+                         │ triggers function trigger
+                         ▼
+                   [Function Trigger (inputParams: x, y)]
+                      ╱         ╲
+                 [Calc W]    [Calc B]     ← parallel branches
+                     │           │
+                 [Save W]    [Save B]     ← set_variable with notifyUi
+
+─── COMPONENTS ───────────────────────────────────────────────────────────────
+
+1. FUNCTION TRIGGER — defines reusable inputs:
+   { id: "fn_trig", type: "function", args: {
+     inputParams: [
+       { name: "x", type: "number" },
+       { name: "y", type: "number" }
+     ]
+   }}
+
+2. call_function NODE — bridges callNode to the function trigger:
+   { id: "call_fn", tool: "call_function", args: {
+     triggerId: "fn_trig",
+     inputs: { x: "{{caller.x}}", y: "{{caller.y}}" }
+   }}
+   • {{caller.X}} templates are resolved by callNode with the data passed from UI
+   • inputs are forwarded to the function trigger as {{args.X}} in downstream nodes
+
+3. DOWNSTREAM NODES — use {{args.X}} to access function inputs:
+   { tool: "math_eval", args: { expression: "{{$vars.w}} + {{args.x}}" } }
+   • {{args.x}} and {{args.y}} come from the function trigger's inputs
+   • {{$vars.varName}} reads workflow variables (live updated by set_variable)
+
+4. set_variable with notifyUi: true — pushes updates to custom_ui:
+   { tool: "set_variable", args: { name: "w", value: "{{calc.result}}", notifyUi: true } }
+   • The custom_ui's useVar('w') hook auto-updates when notifyUi fires
+
+─── WIRING RULES (CRITICAL) ─────────────────────────────────────────────────
+
+⚠️ The wire from custom_ui to call_function MUST be callNode: true!
+   { from: "dashboard", to: "call_fn", callNode: true }
+
+   WITHOUT callNode: true → the engine auto-traverses this wire when
+   Dashboard closes, {{caller.X}} resolves to empty strings, and all
+   downstream math/logic breaks with cryptic errors.
+
+   WITH callNode: true → wire is on-demand only, executes when
+   stuard.callNode() is called from the UI, {{caller.X}} resolves properly.
+
+   Regular wires from function trigger to downstream nodes are fine:
+   { from: "fn_trig", to: "calc_w", guard: "always" }
+   { from: "fn_trig", to: "calc_b", guard: "always" }  ← parallel branches OK
+
+─── FULL EXAMPLE (ML Training Loop) ─────────────────────────────────────────
+
+  triggers: [
+    { id: "trig_0", type: "manual" },
+    { id: "fn_train", type: "function", args: {
+      inputParams: [{ name: "x", type: "number" }, { name: "y", type: "number" }]
+    }}
+  ],
+  nodes: [
+    { id: "ui", tool: "custom_ui", args: {
+      blocking: true,
+      component: "function App() {\\n  const [w] = useVar('w', 0);\\n  const train = async () => {\\n    await stuard.callNode('do_train', { x: 5, y: 1 });\\n  };\\n  return html\`<div><p>w = $\{w}</p><button onClick=$\{train}>Train</button></div>\`;\\n}"
+    }},
+    { id: "do_train", tool: "call_function", label: "Train Step", args: {
+      triggerId: "fn_train",
+      inputs: { x: "{{caller.x}}", y: "{{caller.y}}" }
+    }},
+    { id: "calc", tool: "math_eval", args: { expression: "{{$vars.w}} + 0.1 * {{args.x}}" } },
+    { id: "save", tool: "set_variable", args: { name: "w", value: "{{calc.result}}", notifyUi: true } }
+  ],
+  wires: [
+    { from: "trig_0", to: "ui" },
+    { from: "ui", to: "do_train", callNode: true },  // ← MUST be callNode: true!
+    { from: "fn_train", to: "calc" },
+    { from: "calc", to: "save" }
+  ],
+  variables: [{ name: "w", type: "number", defaultValue: 0 }]
+
+─── TEMPLATE RESOLUTION CHAIN ───────────────────────────────────────────────
+
+  UI: stuard.callNode('do_train', { x: 5, y: 1 })
+    → call_function inputs: {{caller.x}} = 5, {{caller.y}} = 1
+    → function trigger receives: args = { x: 5, y: 1 }
+    → math_eval: {{args.x}} = 5, {{args.y}} = 1
+    → set_variable: {{calc.result}} = computed value
+    → useVar('w') in custom_ui auto-updates with new value
+
+─── math_eval TIPS ───────────────────────────────────────────────────────────
+
+  math_eval uses Python eval() with safe math functions:
+  • Functions: abs, round, min, max, sum, pow, sqrt, sin, cos, tan, log, exp,
+    floor, ceil, factorial, gcd, lcm, hypot, radians, degrees
+  • Constants: pi, e, tau, inf, nan
+  • Use Python syntax: ** for power, not ^. Use exp(x) not e^x.
+  • All templates MUST resolve to actual numbers before eval runs.
+    Empty/missing values cause syntax errors (e.g., "5 * " is invalid Python).
+
+═══════════════════════════════════════════════════════════════════════════════
 CUSTOM UI - Pages System (Multi-Page SPA)
 ═══════════════════════════════════════════════════════════════════════════════
 

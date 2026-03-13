@@ -784,16 +784,18 @@ export function designerModelToStuardSpec(m: any, triggerId?: string): StuardSpe
   // Map triggers with their IDs and start nodes for call_function support
   const triggers = triggersIn.map((t: any) => {
     const tid = String(t?.id || '');
-    // Find the wire from this trigger to its start node
-    const triggerWire = wires.find((w: any) => String(w?.from || '') === tid);
-    const triggerStart = triggerWire ? String(triggerWire.to || '') : undefined;
+    // Find ALL wires from this trigger to its start nodes (supports parallel branches)
+    const triggerWires = wires.filter((w: any) => String(w?.from || '') === tid);
+    const triggerStarts = triggerWires.map((w: any) => String(w?.to || '')).filter(Boolean);
 
     return {
       id: tid,
       type: String(t?.type || ''),
       args: t?.args || {},
-      inputParams: Array.isArray(t?.inputParams) ? t.inputParams : undefined,
-      start: triggerStart // Start node for this trigger (used by call_function)
+      inputParams: Array.isArray(t?.inputParams) ? t.inputParams
+        : Array.isArray(t?.args?.inputParams) ? t.args.inputParams : undefined,
+      start: triggerStarts[0], // backward compat — first start node
+      startNodes: triggerStarts.length > 1 ? triggerStarts : undefined, // parallel branches (if >1)
     };
   });
 

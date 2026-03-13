@@ -11,7 +11,7 @@ import {
   HomeIcon,
   PlusIcon
 } from "@radix-ui/react-icons";
-import { Mic, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle } from 'lucide-react';
+import { Mic, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle, NotebookPen, Terminal, LayoutGrid } from 'lucide-react';
 import { clsx } from 'clsx';
 import QueuePanel from './QueuePanel';
 import { FileNavigator, ContextItem, FileNavRef } from './FileNavigator';
@@ -430,6 +430,17 @@ const shouldRunSemanticQuickSearch = (query: string): boolean => {
   const compactLen = normalized.replace(/\s+/g, '').length;
   const tokenCount = normalized ? normalized.split(' ').length : 0;
   return tokenCount > 1 && compactLen >= 6;
+};
+
+type QuickLaunchAction = {
+  id: string;
+  title: string;
+  description: string;
+  keywords: string;
+  icon: React.ReactNode;
+  iconClassName: string;
+  iconWrapperClassName: string;
+  run: () => Promise<void> | void;
 };
 
 const InputArea = forwardRef(function InputArea(
@@ -882,6 +893,188 @@ const InputArea = forwardRef(function InputArea(
       (window as any).desktopAPI?.hide?.();
     } catch { }
   }, []);
+
+  const handleCreateQuickNote = useCallback(async () => {
+    const api = (window as any).desktopAPI;
+    const now = new Date().toISOString();
+    const note = {
+      id: `canvas_${Date.now()}`,
+      title: 'Quick Note',
+      content: '',
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    try {
+      await api?.canvasCreateDocument?.(note);
+      await api?.canvasCreate?.({
+        id: note.id,
+        title: note.title,
+        content: note.content,
+        template: 'notes',
+        createdAt: note.createdAt,
+        updatedAt: note.updatedAt,
+        size: { width: 320, height: 220 },
+      });
+      await api?.hide?.();
+    } catch { }
+  }, []);
+
+  const handleOpenQuickNotes = useCallback(async () => {
+    try {
+      const api = (window as any).desktopAPI;
+      const listResult = await api?.canvasListDocuments?.();
+      const documents = Array.isArray(listResult?.documents) ? listResult.documents : [];
+      const latest = documents
+        .slice()
+        .sort((a: any, b: any) => {
+          const aTime = new Date(a?.updatedAt || a?.createdAt || 0).getTime();
+          const bTime = new Date(b?.updatedAt || b?.createdAt || 0).getTime();
+          return bTime - aTime;
+        })[0];
+
+      if (latest?.id) {
+        await api?.canvasCreate?.({
+          id: latest.id,
+          title: latest.title || 'Quick Note',
+          content: latest.content || '',
+          template: 'notes',
+          createdAt: latest.createdAt,
+          updatedAt: latest.updatedAt,
+          size: { width: 320, height: 220 },
+        });
+      } else {
+        const now = new Date().toISOString();
+        const note = {
+          id: `canvas_${Date.now()}`,
+          title: 'Quick Note',
+          content: '',
+          createdAt: now,
+          updatedAt: now,
+        };
+        await api?.canvasCreateDocument?.(note);
+        await api?.canvasCreate?.({
+          id: note.id,
+          title: note.title,
+          content: note.content,
+          template: 'notes',
+          createdAt: note.createdAt,
+          updatedAt: note.updatedAt,
+          size: { width: 320, height: 220 },
+        });
+      }
+      await api?.hide?.();
+    } catch { }
+  }, []);
+
+  const handleOpenTerminal = useCallback(async () => {
+    try {
+      const api = (window as any).desktopAPI;
+      await api?.openSidebar?.({ tab: 'terminal', expanded: true });
+      await api?.hide?.();
+    } catch { }
+  }, []);
+
+  const handleOpenSpaces = useCallback(async () => {
+    try {
+      const api = (window as any).desktopAPI;
+      await api?.openSidebar?.({ tab: 'spaces', expanded: true });
+      await api?.hide?.();
+    } catch { }
+  }, []);
+
+  const handleOpenWorkflows = useCallback(async () => {
+    try {
+      const api = (window as any).desktopAPI;
+      await api?.openWorkflows?.();
+      await api?.hide?.();
+    } catch { }
+  }, []);
+
+  const handleOpenDashboardAction = useCallback(async () => {
+    try {
+      onOpenDashboard();
+      await (window as any).desktopAPI?.hide?.();
+    } catch { }
+  }, [onOpenDashboard]);
+
+  const quickLaunchActions = React.useMemo(() => {
+    const q = normalizeQuickSearchText(normalizedDeferredQuery);
+    if (!q || q.length < 2) return [] as QuickLaunchAction[];
+
+    const actions: QuickLaunchAction[] = [
+      {
+        id: 'new-quick-note',
+        title: 'New Quick Note',
+        description: 'Create and open a fresh quick note',
+        keywords: 'new quick note note notes canvas memo jot notebook',
+        icon: <NotebookPen className="w-3.5 h-3.5" />,
+        iconClassName: 'text-pink-500',
+        iconWrapperClassName: 'bg-pink-500/10 border-pink-500/20',
+        run: handleCreateQuickNote,
+      },
+      {
+        id: 'open-quick-notes',
+        title: 'Open Quick Notes',
+        description: 'Jump straight into your notes sidebar',
+        keywords: 'open quick notes notes canvas sidebar notebook',
+        icon: <FileText className="w-3.5 h-3.5" />,
+        iconClassName: 'text-fuchsia-500',
+        iconWrapperClassName: 'bg-fuchsia-500/10 border-fuchsia-500/20',
+        run: handleOpenQuickNotes,
+      },
+      {
+        id: 'open-terminal',
+        title: 'Open Terminal',
+        description: 'Launch the built-in terminal panel',
+        keywords: 'new terminal open terminal shell console command prompt powershell',
+        icon: <Terminal className="w-3.5 h-3.5" />,
+        iconClassName: 'text-orange-500',
+        iconWrapperClassName: 'bg-orange-500/10 border-orange-500/20',
+        run: handleOpenTerminal,
+      },
+      {
+        id: 'open-spaces',
+        title: 'Open Spaces',
+        description: 'Open spaces and create or browse a space',
+        keywords: 'new space open spaces workspace room project collaboration',
+        icon: <LayoutGrid className="w-3.5 h-3.5" />,
+        iconClassName: 'text-cyan-500',
+        iconWrapperClassName: 'bg-cyan-500/10 border-cyan-500/20',
+        run: handleOpenSpaces,
+      },
+      {
+        id: 'open-workflows',
+        title: 'Open Workflows',
+        description: 'Go to the workflows builder',
+        keywords: 'workflow workflows automation automations builder',
+        icon: <Zap className="w-3.5 h-3.5" />,
+        iconClassName: 'text-amber-500',
+        iconWrapperClassName: 'bg-amber-500/10 border-amber-500/20',
+        run: handleOpenWorkflows,
+      },
+      {
+        id: 'open-dashboard',
+        title: 'Open Dashboard',
+        description: 'Open the full Stuard dashboard',
+        keywords: 'dashboard home planner settings memories main app',
+        icon: <PanelRight className="w-3.5 h-3.5" />,
+        iconClassName: 'text-indigo-500',
+        iconWrapperClassName: 'bg-indigo-500/10 border-indigo-500/20',
+        run: handleOpenDashboardAction,
+      },
+    ];
+
+    return actions
+      .map((action) => ({
+        action,
+        score: scoreLocalSuggestion(`${action.title} ${action.description} ${action.keywords}`, q),
+      }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score || a.action.title.localeCompare(b.action.title))
+      .slice(0, 5)
+      .map((item) => item.action);
+  }, [normalizedDeferredQuery, handleCreateQuickNote, handleOpenQuickNotes, handleOpenTerminal, handleOpenSpaces, handleOpenWorkflows, handleOpenDashboardAction]);
 
   // Handle adding a file result as context
   const handleAddFileAsContext = useCallback((file: any) => {
@@ -1398,6 +1591,40 @@ const InputArea = forwardRef(function InputArea(
                   </div>
                   <div className="text-[10px] font-bold text-theme-muted bg-theme-hover px-2 py-1 rounded-lg border border-theme/10 group-hover:bg-primary group-hover:text-primary-fg group-hover:border-primary transition-all z-10">Enter</div>
                 </button>
+
+                {quickLaunchActions.length > 0 && (
+                  <div className="space-y-1 mb-1">
+                    <div className="px-3 py-1.5 flex items-center gap-2">
+                      <Sparkles className="w-3.5 h-3.5 text-violet-500" />
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">Launch</span>
+                    </div>
+                    <div className="px-1 space-y-1">
+                      {quickLaunchActions.map((action) => (
+                        <button
+                          key={action.id}
+                          onClick={() => {
+                            void action.run();
+                            setQuery('');
+                          }}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-bg/30 border border-theme/10 shadow-sm hover:border-violet-500/30 hover:shadow-md transition-all group text-left mb-1"
+                        >
+                          <div className={clsx('w-7 h-7 rounded-lg border flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-all', action.iconWrapperClassName, action.iconClassName)}>
+                            {action.icon}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className={clsx('text-[13px] font-semibold text-theme-fg truncate transition-colors group-hover:text-violet-500')}>
+                              {action.title}
+                            </div>
+                            <div className="text-[10px] text-theme-muted truncate font-medium">
+                              {action.description}
+                            </div>
+                          </div>
+                          <PlayCircle className="w-3.5 h-3.5 text-violet-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* App Results — always shown FIRST */}
                 {Array.isArray(appResults) && appResults.length > 0 && (

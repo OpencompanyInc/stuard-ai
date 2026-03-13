@@ -2,7 +2,6 @@
 
 import { Container } from '@/components/ui/Container';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card';
-import WaitlistForm from '@/components/waitlist/WaitlistForm';
 import Link from 'next/link';
 import { useAuthContext } from '@/components/providers/AuthProvider';
 import { useMemo, useState } from 'react';
@@ -15,8 +14,6 @@ export default function PricingPage() {
     process.env.NEXT_PUBLIC_POLAR_PRODUCT_PAYG_ID ||
     process.env.NEXT_PUBLIC_POLAR_PRODUCT_PRO_ID ||
     process.env.NEXT_PUBLIC_POLAR_PRODUCT_STARTER_ID;
-
-  console.log('PricingPage auth status:', { user: !!user });
 
   const baseRate = 33;
   const tier = useMemo(() => {
@@ -58,57 +55,77 @@ export default function PricingPage() {
     <>
       <section className="pt-32 pb-16">
         <Container className="text-center">
-          <div className="inline-flex items-center px-4 py-2 rounded-full bg-primary/10 border border-primary/20 text-primary text-sm font-medium mb-6">
-            <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-            </svg>
-            Early Access Pricing
-          </div>
           <h1 className="text-4xl lg:text-6xl font-bold mb-6 text-gray-900">Simple, Transparent Pricing</h1>
-          <p className="text-xl lg:text-2xl mb-8 text-gray-600 max-w-3xl mx-auto">
-            Join the waitlist for early access and get 10% off your first 3 months
+          <p className="text-xl lg:text-2xl mb-4 text-gray-600 max-w-3xl mx-auto">
+            Pay what you want. Start free, scale as you grow.
           </p>
         </Container>
       </section>
 
-      <section className="py-24">
+      <section className="pb-24">
         <Container>
-          {/* Waitlist CTA */}
-          <div className="max-w-3xl mx-auto mb-16 bg-white rounded-2xl shadow-xl p-8 border border-primary/20">
-            <div className="text-center mb-8">
-              <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v13m0-13V6a2 2 0 112 2h-2zm0 0V5.5A2.5 2.5 0 109.5 8H12zm-7 4h14M5 12a2 2 0 110-4h14a2 2 0 110 4M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7" />
-                </svg>
+          {/* Free Tier Highlight */}
+          <div className="max-w-3xl mx-auto mb-16">
+            <Card className="border border-gray-200 shadow-lg overflow-hidden">
+              <div className="bg-gradient-to-r from-emerald-500 to-teal-500 px-8 py-6 text-white">
+                <div className="flex items-center justify-between flex-wrap gap-4">
+                  <div>
+                    <h2 className="text-2xl font-bold">Free Plan</h2>
+                    <p className="text-emerald-100 mt-1">Get started with no commitment</p>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-4xl font-bold">$0</div>
+                    <p className="text-emerald-100 text-sm">forever</p>
+                  </div>
+                </div>
               </div>
-              <h2 className="text-3xl font-bold text-gray-900 mb-3">
-                Early Access Launch Offer
-              </h2>
-              <p className="text-xl text-gray-600 mb-6">
-                Join the waitlist and get <strong className="text-primary">10% off your first 3 months</strong>
-              </p>
-            </div>
-            <WaitlistForm variant="inline" showExtendedFields={true} />
-            <div className="mt-6 flex items-center justify-center space-x-6 text-sm text-gray-600">
-              <div className="flex items-center">
-                <svg className="w-5 h-5 text-blue-600 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-                No credit card to join
-              </div>
-              <div className="flex items-center">
-                <svg className="w-5 h-5 text-blue-600 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-                Cancel anytime
-              </div>
-            </div>
+              <CardContent className="p-8">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                  <div className="flex items-start gap-3">
+                    <svg className="w-5 h-5 text-emerald-500 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    <div>
+                      <p className="font-medium text-gray-900">15 starter credits</p>
+                      <p className="text-sm text-gray-500">Try before you buy</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <svg className="w-5 h-5 text-emerald-500 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    <div>
+                      <p className="font-medium text-gray-900">All AI models</p>
+                      <p className="text-sm text-gray-500">Access every model</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <svg className="w-5 h-5 text-emerald-500 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    <div>
+                      <p className="font-medium text-gray-900">Desktop app</p>
+                      <p className="text-sm text-gray-500">Full automation features</p>
+                    </div>
+                  </div>
+                </div>
+                {!user && (
+                  <div className="mt-6 text-center">
+                    <Link href="/signup">
+                      <button className="px-8 py-3 rounded-xl bg-gray-900 text-white font-semibold hover:bg-black transition-colors">
+                        Create Free Account
+                      </button>
+                    </Link>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </div>
 
           {/* Pricing Preview */}
           <div className="text-center mb-12">
             <h3 className="text-2xl font-bold text-gray-900 mb-4">Pay What You Want</h3>
-            <p className="text-gray-600">Your monthly payment funds a rolling credit ledger, and larger amounts unlock better credit multipliers.</p>
+            <p className="text-gray-600 max-w-2xl mx-auto">Your monthly payment funds a rolling credit ledger. Larger amounts unlock better credit multipliers.</p>
           </div>
 
           <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-8">
@@ -116,7 +133,7 @@ export default function PricingPage() {
               <CardHeader>
                 <CardTitle className="text-2xl">Pick your monthly amount</CardTitle>
                 <CardDescription>
-                  Drag the slider or tap a quick amount. Minimum $5. Subscription credits are added to your ledger and unused credits roll over for 30 days.
+                  Drag the slider or tap a quick amount. Minimum $5. Unused credits roll over for 30 days.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-8">
@@ -232,55 +249,49 @@ export default function PricingPage() {
                 ) : (
                   <Link href="/signup" className="block w-full">
                     <button className="w-full py-3 rounded-xl bg-primary text-white font-bold hover:opacity-90 transition-all shadow-sm active:scale-[0.98]">
-                      Create account to continue
+                      Create account to subscribe
                     </button>
                   </Link>
                 )}
                 <p className="text-xs text-gray-500 text-center">
-                  Pay-what-you-want subscription. Minimum $5/month.
+                  Cancel anytime. No long-term contracts.
                 </p>
               </CardContent>
             </Card>
           </div>
 
           {/* FAQ Section */}
-          <div className="mt-12 max-w-3xl mx-auto">
+          <div className="mt-16 max-w-3xl mx-auto">
             <h3 className="text-2xl font-bold text-gray-900 mb-8 text-center">Frequently Asked Questions</h3>
-            <div className="space-y-6">
+            <div className="space-y-4">
               <Card className="p-6">
                 <h4 className="font-semibold text-gray-900 mb-2">How do credits work?</h4>
                 <p className="text-gray-600">
-                  Credits are stored in a ledger and are used for AI interactions, workflow runs, and other billable usage. Your monthly subscription adds a recurring pool, and add-on purchases can top you up whenever you need more.
+                  Credits are stored in a ledger and used for AI interactions, workflow runs, and other usage. Your monthly subscription adds a recurring pool, and you can top up anytime from your billing dashboard.
                 </p>
               </Card>
               <Card className="p-6">
                 <h4 className="font-semibold text-gray-900 mb-2">What happens if I run out of credits?</h4>
                 <p className="text-gray-600">
-                  You can increase your monthly amount for a larger recurring allowance, or purchase add-on credits from your billing dashboard to keep going without waiting for your next renewal.
+                  You can increase your monthly amount for a larger recurring allowance, or purchase add-on credits from your billing dashboard to keep going without waiting for renewal.
                 </p>
               </Card>
               <Card className="p-6">
-                <h4 className="font-semibold text-gray-900 mb-2">When will Stuard AI be available?</h4>
+                <h4 className="font-semibold text-gray-900 mb-2">Is there a free plan?</h4>
                 <p className="text-gray-600">
-                  We&apos;re targeting Q2 2025 for our official launch. Waitlist members will get early access and exclusive pricing.
-                </p>
-              </Card>
-              <Card className="p-6">
-                <h4 className="font-semibold text-gray-900 mb-2">How does the early access discount work?</h4>
-                <p className="text-gray-600">
-                  Waitlist members get 10% off their subscription for the first 3 months. After that, you&apos;ll pay the standard monthly rate.
+                  Yes. New accounts start on the free plan with about 15 starter credits so you can try Stuard AI before subscribing.
                 </p>
               </Card>
               <Card className="p-6">
                 <h4 className="font-semibold text-gray-900 mb-2">Can I cancel anytime?</h4>
                 <p className="text-gray-600">
-                  Absolutely. No long-term contracts or commitments. Cancel your subscription anytime with one click.
+                  Absolutely. No long-term contracts or commitments. Cancel your subscription anytime with one click from your dashboard.
                 </p>
               </Card>
               <Card className="p-6">
-                <h4 className="font-semibold text-gray-900 mb-2">Is there a free trial?</h4>
+                <h4 className="font-semibold text-gray-900 mb-2">What AI models are included?</h4>
                 <p className="text-gray-600">
-                  Yes. New accounts start on the free plan with about 15 starter credits so you can try Stuard AI before upgrading.
+                  All plans include access to every AI model available on the platform. Your credits work across all models — use whichever fits your task best.
                 </p>
               </Card>
             </div>

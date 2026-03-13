@@ -345,11 +345,11 @@ def _audio_bus_worker(bus: MediaBus) -> None:
                             for sub in bus.subscribers.values():
                                 if sub.recording_active:
                                     sub.recorded_chunks.append(chunk)
-                                # Push to linked stream if set (include volume)
+                                # Push to linked stream if set (include volumePercent)
                                 if sub.stream_id:
                                     try:
                                         from . import streams as _streams_mod
-                                        _streams_mod.push_to_stream(sub.stream_id, chunk, metadata={"volume": round(rms * 100, 2)})
+                                        _streams_mod.push_to_stream(sub.stream_id, chunk, metadata={"volumePercent": round(rms * 100, 2)})
                                     except Exception:
                                         pass
                                 

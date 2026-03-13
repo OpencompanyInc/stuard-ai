@@ -11,8 +11,9 @@ export interface UpstreamNode {
   id: string;
   label: string;
   tool?: string;
-  /** When true, suggestions use {{trigger.data.X}} instead of {{nodeId.X}} */
   isTrigger?: boolean;
+  hasStream?: boolean;
+  mediaKind?: string;
 }
 
 interface TextInputWithVariablesProps {
@@ -23,6 +24,30 @@ interface TextInputWithVariablesProps {
   workflowVariables?: WorkflowVariable[];
   suggestFrom?: string[];
   multiline?: boolean;
+}
+
+function getSuggestionFields(node: UpstreamNode, suggestFrom?: string[]): string[] {
+  const toolOutputs = node.tool ? getToolOutputs(node.tool) : ['ok', 'result'];
+  const showAllFields = !suggestFrom || suggestFrom.includes('*.*') || suggestFrom.includes('*');
+  const relevantOutputs = showAllFields
+    ? toolOutputs
+    : toolOutputs.filter(f =>
+      suggestFrom.some(s => {
+        const [pattern, field] = s.split('.');
+        return (pattern === '*' || pattern === node.tool) && (field === f || field === '*');
+      })
+    );
+
+  if (!node.hasStream) {
+    return relevantOutputs;
+  }
+
+  const extra = ['text', 'chunk', 'chunkIndex', 'fullText', 'streamId'];
+  if (node.tool === 'capture_system_audio' || node.mediaKind === 'audio' || node.mediaKind === 'audiovideo') {
+    extra.push('volumePercent', 'chunk.volumePercent');
+  }
+
+  return [...new Set([...relevantOutputs, ...extra])];
 }
 
 export function TextInputWithVariables({
@@ -93,21 +118,8 @@ export function TextInputWithVariables({
         });
       }
 
-      // Get fields for this tool (or trigger outputs)
-      const toolOutputs = node.tool ? getToolOutputs(node.tool) : ['ok', 'result'];
+      const relevantOutputs = getSuggestionFields(node, suggestFrom);
 
-      // Filter based on suggestFrom if provided
-      const showAllFields = !suggestFrom || suggestFrom.includes('*.*') || suggestFrom.includes('*');
-      const relevantOutputs = showAllFields
-        ? toolOutputs
-        : toolOutputs.filter(f =>
-          suggestFrom.some(s => {
-            const [pattern, field] = s.split('.');
-            return (pattern === '*' || pattern === node.tool) && (field === f || field === '*');
-          })
-        );
-
-      // Add field-specific suggestions
       for (const field of relevantOutputs) {
         const fullPath = node.isTrigger ? `trigger.data.${field}` : `${node.id}.${field}`;
         if (!search || fullPath.toLowerCase().includes(search) || field.toLowerCase().includes(search)) {
@@ -226,7 +238,7 @@ export function TextInputWithVariables({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const baseClass = "w-full px-4 py-2.5 text-sm border border-white/[0.08] rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all bg-black/20 text-white/80 shadow-sm placeholder:text-white/30";
+  const baseClass = "w-full px-4 py-2.5 text-sm border wf-border-subtle rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all wf-input wf-fg shadow-sm placeholder:wf-fg-faint";
 
   return (
     <div ref={containerRef} className="relative group">
@@ -255,7 +267,7 @@ export function TextInputWithVariables({
           {((upstreamNodes && upstreamNodes.length > 0) || (workflowVariables && workflowVariables.length > 0)) && (
             <button
               onClick={triggerSuggestions}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-white/40 hover:text-indigo-400 hover:bg-indigo-500/200/10 transition-colors"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg wf-fg-faint hover:text-indigo-400 hover:bg-indigo-500/200/10 transition-colors"
               title="Insert Variable"
             >
               <Plus className="w-4 h-4" />
@@ -275,9 +287,9 @@ export function TextInputWithVariables({
             width: dropdownPos.width,
             zIndex: 9999,
           }}
-          className="bg-black/80 backdrop-blur-2xl border border-white/[0.08] rounded-xl shadow-2xl shadow-black/50 max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150"
+          className="wf-bg-elevated backdrop-blur-2xl border wf-border-subtle rounded-xl shadow-2xl shadow-black/20 max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150"
         >
-          <div className="px-3 py-2 bg-white/[0.04] border-b border-white/[0.08] text-[10px] font-bold text-white/50 uppercase tracking-wider flex items-center gap-1.5 sticky top-0">
+          <div className="px-3 py-2 wf-bg-overlay border-b wf-border-subtle text-[10px] font-bold wf-fg-muted uppercase tracking-wider flex items-center gap-1.5 sticky top-0">
             <Variable className="w-3 h-3" />
             Pick a Variable
           </div>
@@ -286,20 +298,20 @@ export function TextInputWithVariables({
               <button
                 key={s.text}
                 onClick={() => insertSuggestion(s.text)}
-                className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 transition-all rounded-lg mb-0.5 ${i === selectedIndex ? 'bg-indigo-500/20 text-indigo-400 shadow-sm' : 'text-white/60 hover:bg-white/[0.06]'
+                className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 transition-all rounded-lg mb-0.5 ${i === selectedIndex ? 'bg-indigo-500/20 text-indigo-500 shadow-sm' : 'wf-fg-muted wf-hover-bg wf-hover-fg'
                   }`}
               >
-                <code className={`px-1.5 py-0.5 rounded text-xs font-mono border ${i === selectedIndex ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-300' : 'bg-white/[0.04] border-white/[0.08] text-white/50'
+                <code className={`px-1.5 py-0.5 rounded text-xs font-mono border ${i === selectedIndex ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400' : 'wf-bg-overlay wf-border-subtle wf-fg-muted'
                   }`}>
                   {s.label}
                 </code>
                 {s.description && (
-                  <span className="text-xs opacity-60 truncate ml-auto text-white/40">{s.description}</span>
+                  <span className="text-xs opacity-60 truncate ml-auto wf-fg-faint">{s.description}</span>
                 )}
               </button>
             ))}
             {suggestions.length === 0 && (
-              <div className="px-3 py-4 text-sm text-white/40 text-center">No variables found</div>
+              <div className="px-3 py-4 text-sm wf-fg-faint text-center">No variables found</div>
             )}
           </div>
         </div>,

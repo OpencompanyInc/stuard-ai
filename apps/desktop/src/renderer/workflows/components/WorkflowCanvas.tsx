@@ -124,7 +124,7 @@ export function WorkflowCanvas({
   const gridSize = 24 * zoom;
 
   return (
-    <div className="w-full h-full relative overflow-hidden bg-black" data-onboarding="workflow-canvas">
+    <div className="w-full h-full relative overflow-hidden wf-bg-canvas" data-onboarding="workflow-canvas">
       {/* Scrollable canvas area */}
       <div
         ref={canvasRef}
@@ -159,11 +159,10 @@ export function WorkflowCanvas({
 
         {/* Dot Grid Background - scales with zoom, covers full scrollable area */}
         <div
-          className="absolute inset-0 pointer-events-none"
+          className="absolute inset-0 pointer-events-none wf-dot-grid"
           style={{
             width: scaledSize.w,
             height: scaledSize.h,
-            backgroundImage: 'radial-gradient(rgba(255,255,255,0.15) 1.5px, transparent 1.5px)',
             backgroundSize: `${gridSize}px ${gridSize}px`
           }}
         />
@@ -182,7 +181,7 @@ export function WorkflowCanvas({
             {/* Wire animation defs */}
             <defs>
               <marker id="ah" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
-                <path d="M0,0 L6,2 L0,4" fill="#cbd5e1" />
+                <path d="M0,0 L6,2 L0,4" fill="var(--wf-wire-default)" />
               </marker>
               <marker id="ah-active" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
                 <path d="M0,0 L6,2 L0,4" fill="#6366f1" />
@@ -484,14 +483,14 @@ export function WorkflowCanvas({
                   : isSelected ? '#ef4444'
                     : isActiveWire ? '#6366f1'
                       : isCompletedWire ? '#10b981'
-                        : isHovered ? '#94a3b8'
+                        : isHovered ? 'var(--wf-wire-icon-border)'
                           : isCallNodeWire ? '#14b8a6' // Teal for callNode wires
                             : isStreamWire ? '#06b6d4' // Cyan for stream wires
                               : isInStreamPipeline ? '#06b6d4' // Cyan for downstream pipeline wires
                                 : isInsideLoop ? '#f97316' // Orange for wires that continue in loop
                                   : hasLoop ? '#a855f7' // Purple for configured loops (entry)
                                     : isBackEdge ? '#f59e0b' // Amber for back edges
-                                      : '#cbd5e1'; // Grey for normal and loopBreak
+                                      : 'var(--wf-wire-default)'; // Themed default for normal and loopBreak
 
                 const markerEnd = isReconnecting ? 'url(#ah-loop)' // Amber marker for reconnecting
                   : isSelected ? 'url(#ah-selected)'
@@ -543,7 +542,7 @@ export function WorkflowCanvas({
                     {/* Loop indicator icon for configured loops */}
                     {hasLoop && !isSelected && !isHovered && (
                       <g transform={`translate(${midX}, ${midY})`}>
-                        <circle r="10" fill="#111827" stroke="#a855f7" strokeWidth="1.5" className="drop-shadow-sm" />
+                        <circle r="10" fill="var(--wf-wire-icon-bg)" stroke="#a855f7" strokeWidth="1.5" className="drop-shadow-sm" />
                         {loopType === 'forEach' && (
                           // List icon for forEach
                           <g transform="translate(-5, -5)" stroke="#a855f7" strokeWidth="1.5" fill="none">
@@ -574,7 +573,7 @@ export function WorkflowCanvas({
                     {/* Loop indicator icon for back edges (no explicit config) */}
                     {isBackEdge && !hasLoop && !isSelected && !isHovered && (
                       <g transform={`translate(${midX}, ${midY})`}>
-                        <circle r="8" fill="#111827" stroke="#f59e0b" strokeWidth="1.5" className="drop-shadow-sm" />
+                        <circle r="8" fill="var(--wf-wire-icon-bg)" stroke="#f59e0b" strokeWidth="1.5" className="drop-shadow-sm" />
                         <path
                           d="M-3 0 A3 3 0 1 1 3 0 M3 0 L1 -2 M3 0 L1 2"
                           fill="none"
@@ -588,7 +587,7 @@ export function WorkflowCanvas({
                     {/* Continue in loop indicator icon (orange) */}
                     {isInsideLoop && !isSelected && !isHovered && (
                       <g transform={`translate(${midX}, ${midY})`}>
-                        <circle r="10" fill="#111827" stroke="#f97316" strokeWidth="1.5" className="drop-shadow-sm" />
+                        <circle r="10" fill="var(--wf-wire-icon-bg)" stroke="#f97316" strokeWidth="1.5" className="drop-shadow-sm" />
                         {/* Loop arrow icon */}
                         <path
                           d="M-3 0 A3 3 0 1 1 3 0 M3 0 L1 -2 M3 0 L1 2"
@@ -603,7 +602,7 @@ export function WorkflowCanvas({
                     {/* Stream wire indicator icon (cyan radio/signal icon) */}
                     {isStreamWire && !isSelected && !isHovered && (
                       <g transform={`translate(${midX}, ${midY})`}>
-                        <circle r="10" fill="#111827" stroke="#06b6d4" strokeWidth="1.5" className="drop-shadow-sm" />
+                        <circle r="10" fill="var(--wf-wire-icon-bg)" stroke="#06b6d4" strokeWidth="1.5" className="drop-shadow-sm" />
                         {/* Radio/signal icon - concentric arcs */}
                         <g stroke="#06b6d4" strokeWidth="1.5" fill="none" strokeLinecap="round">
                           <circle cx="0" cy="0" r="2" fill="#06b6d4" />
@@ -616,7 +615,7 @@ export function WorkflowCanvas({
                     {/* callNode wire indicator icon (teal plug/socket icon) */}
                     {isCallNodeWire && !isSelected && !isHovered && (
                       <g transform={`translate(${midX}, ${midY})`}>
-                        <circle r="10" fill="#111827" stroke="#14b8a6" strokeWidth="1.5" className="drop-shadow-sm" />
+                        <circle r="10" fill="var(--wf-wire-icon-bg)" stroke="#14b8a6" strokeWidth="1.5" className="drop-shadow-sm" />
                         {/* Plug icon — vertical prong with socket arc */}
                         <g stroke="#14b8a6" strokeWidth="1.5" fill="none" strokeLinecap="round">
                           <line x1="-2" y1="-5" x2="-2" y2="0" />
@@ -692,12 +691,12 @@ export function WorkflowCanvas({
                         {/* Visible button */}
                         <circle
                           r="12"
-                          fill={isSelected ? '#1c1917' : '#111827'}
-                          stroke={isSelected ? '#ef4444' : '#475569'}
+                          fill={isSelected ? 'var(--wf-wire-handle-bg)' : 'var(--wf-wire-icon-bg)'}
+                          stroke={isSelected ? '#ef4444' : 'var(--wf-wire-icon-border)'}
                           strokeWidth="2"
                           className="drop-shadow-md transition-all"
                         />
-                        <g stroke={isSelected ? '#ef4444' : '#94a3b8'} strokeWidth="2" strokeLinecap="round" className="transition-colors">
+                        <g stroke={isSelected ? '#ef4444' : 'var(--wf-wire-icon-fg)'} strokeWidth="2" strokeLinecap="round" className="transition-colors">
                           <line x1="-4" y1="-4" x2="4" y2="4" />
                           <line x1="4" y1="-4" x2="-4" y2="4" />
                         </g>
@@ -721,7 +720,7 @@ export function WorkflowCanvas({
                           <circle r="14" fill="transparent" />
                           <circle
                             r="10"
-                            fill="#1c1917"
+                            fill="var(--wf-wire-handle-bg)"
                             stroke="#f59e0b"
                             strokeWidth="2"
                             className="drop-shadow-md transition-all"
@@ -745,7 +744,7 @@ export function WorkflowCanvas({
                           <circle r="14" fill="transparent" />
                           <circle
                             r="10"
-                            fill="#1c1917"
+                            fill="var(--wf-wire-handle-bg)"
                             stroke="#f59e0b"
                             strokeWidth="2"
                             className="drop-shadow-md transition-all"
@@ -909,12 +908,12 @@ export function WorkflowCanvas({
           {/* Empty State */}
           {model.triggers.length === 0 && model.nodes.length === 0 && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="text-center max-w-md px-4">
-                <div className="w-16 h-16 bg-white/[0.05] rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/[0.08]">
-                  <MousePointer2 className="w-6 h-6 text-white/30" />
+                <div className="text-center max-w-md px-4">
+                <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 wf-surface-muted">
+                  <MousePointer2 className="w-6 h-6 wf-fg-muted" />
                 </div>
-                <h3 className="text-lg font-semibold text-white/60">Start building</h3>
-                <p className="text-sm text-white/30 mt-1 max-w-xs mx-auto mb-4">
+                <h3 className="text-lg font-semibold wf-fg">Start building</h3>
+                <p className="text-sm wf-fg-muted mt-1 max-w-xs mx-auto mb-4">
                   Drag tools from the palette or ask the AI to design a workflow for you.
                 </p>
                 <div className="pointer-events-auto">
@@ -948,43 +947,43 @@ export function WorkflowCanvas({
       </div>
 
       {/* Zoom Controls - non-scrolling overlay */}
-      <div className="absolute bottom-6 left-6 z-50 flex items-center bg-white/[0.06] backdrop-blur-2xl rounded-2xl shadow-lg border border-white/[0.1] p-1 transition-all">
+      <div className="absolute bottom-6 left-6 z-50 flex items-center rounded-2xl shadow-lg p-1 transition-all wf-overlay-chip">
         {onAutoOrganize && (
           <>
             <button
               onClick={onAutoOrganize}
-              className="p-1.5 rounded-xl hover:bg-white/10 text-white transition-colors"
+              className="p-1.5 rounded-xl transition-colors wf-overlay-btn"
               title="Auto-organize layout"
             >
               <LayoutGrid className="w-4 h-4" />
             </button>
-            <div className="w-px h-4 bg-white/10 mx-1" />
+            <div className="w-px h-4 mx-1 wf-overlay-divider" />
           </>
         )}
         <button
           onClick={onZoomReset}
-          className="p-1.5 rounded-xl hover:bg-white/10 text-white transition-colors"
+          className="p-1.5 rounded-xl transition-colors wf-overlay-btn"
           title="Fit to screen"
         >
           <Maximize2 className="w-4 h-4" />
         </button>
         <button
           onClick={onZoomOut}
-          className="p-1.5 rounded-xl hover:bg-white/10 text-white transition-colors"
+          className="p-1.5 rounded-xl transition-colors wf-overlay-btn"
           title="Zoom out (Ctrl + Scroll)"
         >
           <ZoomOut className="w-4 h-4" />
         </button>
         <button
           onClick={onZoomReset}
-          className="px-1.5 py-1 rounded-xl hover:bg-white/10 text-white transition-colors text-[11px] font-bold min-w-[2.5rem] tabular-nums"
+          className="px-1.5 py-1 rounded-xl transition-colors text-[11px] font-bold min-w-[2.5rem] tabular-nums wf-overlay-btn"
           title="Reset zoom to 100%"
         >
           {Math.round(zoom * 100)}%
         </button>
         <button
           onClick={onZoomIn}
-          className="p-1.5 rounded-xl hover:bg-white/10 text-white transition-colors"
+          className="p-1.5 rounded-xl transition-colors wf-overlay-btn"
           title="Zoom in (Ctrl + Scroll)"
         >
           <ZoomIn className="w-4 h-4" />
@@ -992,7 +991,7 @@ export function WorkflowCanvas({
       </div>
 
       {connectingFrom && (
-        <div className="absolute top-8 left-1/2 -translate-x-1/2 bg-white/[0.08] backdrop-blur-2xl text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg border border-white/[0.1] z-50 flex items-center gap-2 pointer-events-none">
+        <div className="absolute top-8 left-1/2 -translate-x-1/2 text-xs font-medium px-4 py-2 rounded-full shadow-lg z-50 flex items-center gap-2 pointer-events-none wf-overlay-chip-strong">
           <div className="w-2 h-2 bg-indigo-400 rounded-full animate-pulse" />
           Select a target node to connect
         </div>
@@ -1000,7 +999,7 @@ export function WorkflowCanvas({
 
       {/* Reconnecting mode indicator */}
       {reconnecting && (
-        <div className="absolute top-8 left-1/2 -translate-x-1/2 bg-amber-600 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg z-50 flex items-center gap-2 pointer-events-none">
+        <div className="absolute top-8 left-1/2 -translate-x-1/2 bg-amber-600 text-amber-50 text-xs font-medium px-4 py-2 rounded-full shadow-lg z-50 flex items-center gap-2 pointer-events-none">
           <div className="w-2 h-2 bg-amber-300 rounded-full animate-pulse" />
           Click a node to reconnect the {reconnecting.end === 'from' ? 'source' : 'target'} • Press Esc to cancel
         </div>
@@ -1008,7 +1007,7 @@ export function WorkflowCanvas({
 
       {/* Execution overlay indicator */}
       {executionState?.flowId === selectedId && executionState.isRunning && (
-        <div className="absolute top-6 right-6 bg-white/[0.06] backdrop-blur-2xl border border-emerald-500/20 text-emerald-400 text-xs font-medium px-4 py-2 rounded-full flex items-center gap-2 shadow-lg z-50 pointer-events-none">
+        <div className="absolute top-6 right-6 border border-emerald-500/30 text-emerald-500 text-xs font-medium px-4 py-2 rounded-full flex items-center gap-2 shadow-lg z-50 pointer-events-none wf-overlay-chip">
           <span className="relative flex h-2 w-2">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
             <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>

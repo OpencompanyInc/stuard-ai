@@ -242,12 +242,15 @@ async function killPortProcess(port: number): Promise<void> {
   }
 }
 
-async function ensureBrowserPageOpen(sessionId = 'default'): Promise<{ ok: boolean; error?: string }> {
+async function ensureBrowserPageOpen(sessionId = 'default', { skipChromeSync = false } = {}): Promise<{ ok: boolean; error?: string }> {
   try {
     const statusResp = await browserUseFetch('/status', { timeoutMs: 5000 }, sessionId);
     if (statusResp.ok) {
       // Run Chrome sync in background — don't block the browser from being used
-      ensureChromeSyncFresh(sessionId).catch(() => {});
+      // Skip during prewarm to avoid launching a browser window on app startup
+      if (!skipChromeSync) {
+        ensureChromeSyncFresh(sessionId).catch(() => {});
+      }
       return { ok: true };
     }
     const errText = await statusResp.text().catch(() => '');
@@ -257,12 +260,12 @@ async function ensureBrowserPageOpen(sessionId = 'default'): Promise<{ ok: boole
   }
 }
 
-export async function startBrowserUseServer(sessionId = 'default'): Promise<{ ok: boolean; error?: string }> {
+export async function startBrowserUseServer(sessionId = 'default', { skipChromeSync = false } = {}): Promise<{ ok: boolean; error?: string }> {
   const runtime = await getRuntime(sessionId);
   if (runtime.process && !runtime.process.killed) {
     const alive = await isBrowserUseAlive(sessionId);
     if (alive) {
-      const opened = await ensureBrowserPageOpen(sessionId);
+      const opened = await ensureBrowserPageOpen(sessionId, { skipChromeSync });
       return opened.ok ? { ok: true } : opened;
     }
     try { runtime.process.kill(); } catch {}
@@ -272,7 +275,7 @@ export async function startBrowserUseServer(sessionId = 'default'): Promise<{ ok
 
   if (await isBrowserUseAlive(sessionId)) {
     runtime.ready = true;
-    const opened = await ensureBrowserPageOpen(sessionId);
+    const opened = await ensureBrowserPageOpen(sessionId, { skipChromeSync });
     return opened.ok ? { ok: true } : opened;
   }
 
@@ -330,7 +333,7 @@ export async function startBrowserUseServer(sessionId = 'default'): Promise<{ ok
 
       if (await isBrowserUseAlive(sessionId)) {
         runtime.ready = true;
-        const opened = await ensureBrowserPageOpen(sessionId);
+        const opened = await ensureBrowserPageOpen(sessionId, { skipChromeSync });
         return opened.ok ? { ok: true } : opened;
       }
     }
@@ -448,11 +451,13 @@ async function withServer<T>(
 export async function prewarmBrowserUseServer(): Promise<void> {
   try {
     // Only pre-warm if we have cached install check or can quickly verify
+    // skipChromeSync: true — prewarm only starts the HTTP server process,
+    // it must NOT trigger chrome sync which would launch a browser window
     if (_installCheckResult?.ok) {
       const runtime = await getRuntime('default');
       if (!runtime.process || runtime.process.killed) {
         console.log('[browser-use] Pre-warming server...');
-        startBrowserUseServer('default').catch(() => {});
+        startBrowserUseServer('default', { skipChromeSync: true }).catch(() => {});
       }
     } else {
       // Do a quick Python check (just version, not full import), then start if available
@@ -461,7 +466,7 @@ export async function prewarmBrowserUseServer(): Promise<void> {
         // Run full install check in background (caches result for later)
         installBrowserUse().then((result) => {
           if (result.ok) {
-            startBrowserUseServer('default').catch(() => {});
+            startBrowserUseServer('default', { skipChromeSync: true }).catch(() => {});
           }
         }).catch(() => {});
       }

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import type { DesignerModel, DesignerTrigger } from "../types";
 import type { CloudVM, CloudDeployState } from "../hooks/useWorkflowDeploy";
+import { useWorkflowTheme } from "../WorkflowThemeContext";
 
 interface DeployPanelModalProps {
   model: DesignerModel;
@@ -30,7 +31,7 @@ interface DeployPanelModalProps {
 }
 
 // Helper to get trigger display info
-function getTriggerInfo(trigger: DesignerTrigger): { icon: React.ReactNode; label: string; value?: string; color: string } {
+function getTriggerInfo(trigger: DesignerTrigger, d: boolean): { icon: React.ReactNode; label: string; value?: string; color: string } {
   switch (trigger.type) {
     case 'schedule.cron':
       return { 
@@ -71,7 +72,7 @@ function getTriggerInfo(trigger: DesignerTrigger): { icon: React.ReactNode; labe
       return { 
         icon: <Play className="w-3.5 h-3.5" />, 
         label: 'Manual', 
-        color: 'text-white/70 bg-white/[0.06] border-white/[0.08]'
+        color: d ? 'text-blue-300 bg-blue-500/10 border-blue-500/20' : 'text-blue-700 bg-blue-50 border-blue-200'
       };
     default:
       return { 
@@ -86,34 +87,44 @@ export function DeployPanelModal({
   model, deployStatus, onClose, onDeploy, onUndeploy, onExport, onPublish,
   cloudVMs, selectedVM, onSelectVM, cloudDeployState, cloudDeployError, cloudDeployId, onDeployToCloud, onResetCloudDeploy,
 }: DeployPanelModalProps) {
+  const { isDark } = useWorkflowTheme();
+  const d = isDark;
   const isDeployed = deployStatus?.deployed;
   const triggerCount = model.triggers?.length || 0;
   const runningVMs = cloudVMs.filter((vm) => vm.status === 'running');
   const hasRunningVM = runningVMs.length > 0;
+  const panelStyle = { background: d ? "#0f1117" : "#ffffff", borderColor: "var(--wf-border)", color: "var(--wf-fg)" } as React.CSSProperties;
+  const headerStyle = { background: d ? "#0c0f14" : "#ffffff", borderColor: "var(--wf-border)" } as React.CSSProperties;
+  const sectionCardStyle = { background: d ? "rgba(255,255,255,0.03)" : "#ffffff", borderColor: "var(--wf-border)" } as React.CSSProperties;
+  const subtleCardStyle = { background: d ? "rgba(255,255,255,0.02)" : "var(--wf-bg)", borderColor: "var(--wf-border)" } as React.CSSProperties;
+  const footerStyle = { background: d ? "#0c0f14" : "#ffffff", borderColor: "var(--wf-border)" } as React.CSSProperties;
 
   return (
     <div 
-      className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-150" 
+      className="fixed inset-0 backdrop-blur-md flex items-center justify-center z-50 animate-in fade-in duration-150 p-4" 
+      style={{ background: d ? "rgba(2, 6, 23, 0.78)" : "rgba(15, 23, 42, 0.18)" }}
       onClick={onClose}
     >
       <div 
-        className="bg-white/[0.04] rounded-2xl shadow-2xl w-[460px] max-w-[90vw] overflow-hidden animate-in zoom-in-95 duration-200" 
+        className="rounded-[28px] border shadow-2xl w-[560px] max-w-[92vw] overflow-hidden animate-in zoom-in-95 duration-200" 
+        style={panelStyle}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-6 py-4 border-b border-white/[0.04] flex items-center justify-between">
+        <div className="px-6 py-4 border-b flex items-center justify-between" style={headerStyle}>
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-sky-600 flex items-center justify-center shadow-lg shadow-blue-200">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-sky-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
               <Rocket className="w-4.5 h-4.5 text-white" />
             </div>
             <div>
-              <h3 className="font-semibold text-white">Deploy Workflow</h3>
-              <p className="text-xs text-white/50">{model.name || 'Untitled Workflow'}</p>
+              <h3 className="font-semibold wf-fg">Deploy Workflow</h3>
+              <p className="text-xs wf-fg-muted">{model.name || 'Untitled Workflow'}</p>
             </div>
           </div>
           <button 
             onClick={onClose} 
-            className="p-2 hover:bg-white/[0.1] rounded-lg transition-colors text-white/40 hover:text-white/70"
+            className="p-2 rounded-lg transition-colors"
+            style={{ color: "var(--wf-fg-faint)" }}
           >
             <X className="w-4 h-4" />
           </button>
@@ -122,15 +133,16 @@ export function DeployPanelModal({
         {/* Content */}
         <div className="p-6 space-y-5">
           {/* Status Card */}
-          <div className={`relative overflow-hidden rounded-xl border-2 transition-all ${
-            isDeployed 
-              ? 'border-emerald-200 bg-gradient-to-br from-emerald-50 to-green-50' 
-              : 'border-white/[0.08] bg-gradient-to-br from-slate-50 to-slate-100'
-          }`}>
+          <div
+            className="relative overflow-hidden rounded-2xl border transition-all"
+            style={isDeployed
+              ? { background: d ? "linear-gradient(135deg, rgba(16,185,129,0.12), rgba(34,197,94,0.06))" : "linear-gradient(135deg, #ecfdf5, #f0fdf4)", borderColor: d ? "rgba(16,185,129,0.22)" : "#bbf7d0" }
+              : { background: d ? "rgba(255,255,255,0.03)" : "linear-gradient(135deg, #f8fafc, #f1f5f9)", borderColor: "var(--wf-border)" }}
+          >
             <div className="p-4 flex items-center gap-4">
               {/* Status Indicator */}
               <div className={`relative w-12 h-12 rounded-xl flex items-center justify-center ${
-                isDeployed ? 'bg-emerald-100' : 'bg-slate-200'
+                isDeployed ? 'bg-emerald-100' : d ? 'bg-white/[0.06]' : 'bg-slate-200'
               }`}>
                 {isDeployed ? (
                   <>
@@ -140,14 +152,14 @@ export function DeployPanelModal({
                     </span>
                   </>
                 ) : (
-                  <Rocket className="w-6 h-6 text-white/40" />
+                  <Rocket className={`w-6 h-6 ${d ? 'text-white/40' : 'text-slate-400'}`} />
                 )}
               </div>
               
               {/* Status Text */}
               <div className="flex-1">
                 <div className="flex items-center gap-2">
-                  <span className={`font-semibold ${isDeployed ? 'text-emerald-700' : 'text-white/80'}`}>
+                  <span className={`font-semibold ${isDeployed ? 'text-emerald-700' : 'wf-fg'}`}>
                     {isDeployed ? 'Deployed & Active' : 'Not Deployed'}
                   </span>
                   {isDeployed && (
@@ -156,7 +168,7 @@ export function DeployPanelModal({
                     </span>
                   )}
                 </div>
-                <p className="text-sm text-white/50 mt-0.5">
+                <p className="text-sm wf-fg-muted mt-0.5">
                   {isDeployed 
                     ? `Running with ${triggerCount} active trigger${triggerCount !== 1 ? 's' : ''}`
                     : 'Deploy to enable automatic triggers'}
@@ -174,24 +186,24 @@ export function DeployPanelModal({
           {triggerCount > 0 && (
             <div>
               <div className="flex items-center gap-2 mb-3">
-                <Zap className="w-4 h-4 text-white/40" />
-                <span className="text-sm font-medium text-white/80">Triggers</span>
-                <span className="ml-auto text-xs text-white/40">{triggerCount} configured</span>
+                <Zap className="w-4 h-4 wf-fg-faint" />
+                <span className="text-sm font-medium wf-fg">Triggers</span>
+                <span className="ml-auto text-xs wf-fg-faint">{triggerCount} configured</span>
               </div>
               <div className="grid gap-2">
                 {model.triggers.map((trigger, i) => {
-                  const info = getTriggerInfo(trigger);
+                  const info = getTriggerInfo(trigger, d);
                   return (
                     <div 
                       key={i} 
                       className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl border ${info.color} transition-all hover:shadow-sm`}
                     >
-                      <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-white/60">
+                      <div className={`flex items-center justify-center w-7 h-7 rounded-lg ${d ? 'bg-black/20' : 'bg-white/70'}`}>
                         {info.icon}
                       </div>
                       <span className="font-medium text-sm">{info.label}</span>
                       {info.value && (
-                        <code className="ml-auto px-2 py-1 text-xs font-mono bg-white/60 rounded-md text-white/70">
+                        <code className={`ml-auto px-2 py-1 text-xs font-mono rounded-md ${d ? 'bg-black/20 text-white/75' : 'bg-white/70 text-slate-700'}`}>
                           {info.value}
                         </code>
                       )}
@@ -235,7 +247,7 @@ export function DeployPanelModal({
           <div className="pt-1">
             <div className="flex items-center gap-2 mb-3">
               <Cloud className="w-4 h-4 text-sky-500" />
-              <span className="text-sm font-medium text-white/80">Deploy to Cloud VM</span>
+              <span className="text-sm font-medium wf-fg">Deploy to Cloud VM</span>
               {hasRunningVM && (
                 <span className="ml-auto text-[10px] font-bold uppercase tracking-wider text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
                   {runningVMs.length} Online
@@ -245,10 +257,10 @@ export function DeployPanelModal({
 
             {/* VM selector */}
             {cloudVMs.length === 0 ? (
-              <div className="rounded-xl border-2 border-dashed border-white/[0.08] p-4 text-center">
-                <Server className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                <p className="text-sm text-white/50 font-medium">No Cloud VMs found</p>
-                <p className="text-xs text-white/40 mt-1">Set up a Cloud Engine in Settings to deploy workflows to the cloud</p>
+              <div className="rounded-2xl border-2 border-dashed p-4 text-center" style={{ borderColor: "var(--wf-input-border)", background: d ? "rgba(255,255,255,0.02)" : "var(--wf-bg)" }}>
+                <Server className={`w-8 h-8 mx-auto mb-2 ${d ? 'text-white/35' : 'text-slate-300'}`} />
+                <p className="text-sm wf-fg font-medium">No Cloud VMs found</p>
+                <p className="text-xs wf-fg-muted mt-1">Set up a Cloud Engine in Settings to deploy workflows to the cloud</p>
               </div>
             ) : (
               <div className="space-y-2">
@@ -264,8 +276,8 @@ export function DeployPanelModal({
                         isSelected && isRunning
                           ? 'border-sky-300 bg-sky-50 shadow-sm shadow-sky-100'
                           : isRunning
-                            ? 'border-white/[0.08] bg-white/[0.04] hover:border-sky-200 hover:bg-sky-50/50'
-                            : 'border-white/[0.04] bg-white/[0.06] opacity-60 cursor-not-allowed'
+                            ? d ? 'border-white/[0.08] bg-white/[0.03] hover:border-sky-300/60 hover:bg-sky-500/10' : 'border-slate-200 bg-white hover:border-sky-200 hover:bg-sky-50/50'
+                            : d ? 'border-white/[0.04] bg-white/[0.02] opacity-60 cursor-not-allowed' : 'border-slate-200 bg-slate-50 opacity-60 cursor-not-allowed'
                       }`}
                     >
                       {/* Status dot */}
@@ -280,20 +292,20 @@ export function DeployPanelModal({
 
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-white/90 truncate">{vm.instance_name || 'Cloud Engine'}</span>
+                          <span className="text-sm font-medium truncate wf-fg">{vm.instance_name || 'Cloud Engine'}</span>
                           <span className={`px-1.5 py-0.5 text-[10px] font-bold uppercase rounded ${
-                            isRunning ? 'bg-emerald-100 text-emerald-700' : 'bg-white/[0.06] text-white/50'
+                            isRunning ? 'bg-emerald-100 text-emerald-700' : d ? 'bg-white/[0.06] text-white/50' : 'bg-slate-200 text-slate-500'
                           }`}>
                             {vm.status}
                           </span>
                         </div>
-                        <div className="text-xs text-white/40 mt-0.5 flex items-center gap-2">
+                        <div className="text-xs wf-fg-faint mt-0.5 flex items-center gap-2">
                           <span>{vm.tier}</span>
-                          <span className="text-slate-200">•</span>
+                          <span className={d ? 'text-white/20' : 'text-slate-300'}>•</span>
                           <span>{vm.zone}</span>
                           {vm.external_ip && (
                             <>
-                              <span className="text-slate-200">•</span>
+                              <span className={d ? 'text-white/20' : 'text-slate-300'}>•</span>
                               <span>{vm.external_ip}</span>
                             </>
                           )}
@@ -305,7 +317,7 @@ export function DeployPanelModal({
                         <CheckCircle2 className="w-5 h-5 text-sky-500 flex-shrink-0" />
                       )}
                       {!isSelected && isRunning && (
-                        <div className="w-5 h-5 rounded-full border-2 border-white/[0.08] flex-shrink-0" />
+                        <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 ${d ? 'border-white/[0.08]' : 'border-slate-300'}`} />
                       )}
                     </button>
                   );
@@ -323,7 +335,7 @@ export function DeployPanelModal({
                     className={`group w-full flex items-center justify-center gap-2.5 px-4 py-3 text-sm font-medium rounded-xl transition-all ${
                       selectedVM
                         ? 'text-white bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 shadow-lg shadow-sky-200 hover:shadow-xl hover:shadow-sky-300 hover:-translate-y-0.5'
-                        : 'text-white/40 bg-white/[0.06] cursor-not-allowed'
+                        : d ? 'text-white/40 bg-white/[0.06] cursor-not-allowed' : 'text-slate-400 bg-slate-100 cursor-not-allowed'
                     }`}
                   >
                     <Cloud className="w-4 h-4" />
@@ -384,18 +396,20 @@ export function DeployPanelModal({
         </div>
         
         {/* Footer - Secondary Actions */}
-        <div className="px-6 py-4 bg-white/[0.06] border-t border-white/[0.04]">
+        <div className="px-6 py-4 border-t" style={footerStyle}>
           <div className="flex items-center gap-3">
             <button 
               onClick={onExport}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-white/70 bg-white/[0.04] hover:bg-white/[0.06] border border-white/[0.08] rounded-xl transition-all hover:border-white/[0.12]"
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium border rounded-xl transition-all"
+              style={{ background: d ? "rgba(255,255,255,0.03)" : "#ffffff", borderColor: "var(--wf-input-border)", color: "var(--wf-fg)" }}
             >
               <Download className="w-4 h-4" />
               <span>Export</span>
             </button>
             <button 
               onClick={onPublish}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-blue-600 bg-white/[0.04] hover:bg-blue-50 border border-blue-200 rounded-xl transition-all hover:border-blue-300"
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-xl transition-all border"
+              style={{ background: d ? "rgba(96,165,250,0.10)" : "#eff6ff", color: d ? "#bfdbfe" : "#2563eb", borderColor: d ? "rgba(96,165,250,0.18)" : "#bfdbfe" }}
             >
               <Upload className="w-4 h-4" />
               <span>Publish to Marketplace</span>

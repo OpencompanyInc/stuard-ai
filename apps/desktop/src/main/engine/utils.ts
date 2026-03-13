@@ -38,7 +38,9 @@ export function getAtPath(obj: any, pathStr: string, defaultVal?: any) {
     // Special handling for $vars.varName - lookup from variable store
     if (parts[0] === '$vars' && parts.length >= 2) {
       const varName = parts[1];
-      const varValue = getVariable(varName, undefined);
+      let varValue = getVariable(varName, undefined);
+      // Variables are stored with 'workflow.' prefix (e.g. 'workflow.w'), so fall back
+      if (varValue === undefined) varValue = getVariable(`workflow.${varName}`, undefined);
       if (varValue === undefined) return defaultVal;
       // If there are more path segments, traverse into the value
       if (parts.length > 2) {

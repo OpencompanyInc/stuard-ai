@@ -11,9 +11,9 @@
  */
 
 import { embed } from 'ai';
-import { openai } from '@ai-sdk/openai';
+import { google } from './models';
 
-const EMBEDDING_MODEL = 'text-embedding-3-large';
+const EMBEDDING_MODEL = 'gemini-embedding-2-preview';
 const CACHE_TTL_MS = 1000 * 60 * 3; // 3 minutes
 const MAX_INPUT_CHARS = 8000;
 
@@ -72,7 +72,7 @@ export function getOrCreateQueryEmbedding(text: string): Promise<number[]> {
 
   // Create the embedding promise (not awaited – shared across consumers)
   const promise = embed({
-    model: openai.embedding(EMBEDDING_MODEL),
+    model: google.textEmbeddingModel(EMBEDDING_MODEL),
     value: text.slice(0, MAX_INPUT_CHARS),
   }).then(({ embedding }) => embedding as number[]);
 

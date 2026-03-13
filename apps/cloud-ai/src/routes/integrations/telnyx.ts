@@ -605,40 +605,66 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
             const smsState = await getSmsUserState(userId);
             const target = smsState.agent_target;
 
+            // Check if VM is actually deployed and running before trying it
+            const engine = await getCloudEngine(userId);
+            const vmRunning = !!(engine && engine.status === 'running');
+
+            // Resolve effective target: if 'auto', pick based on what's available
+            let effectiveTarget: 'vm' | 'desktop' = 'desktop';
+            if (target === 'vm') {
+              effectiveTarget = vmRunning ? 'vm' : 'desktop'; // fall back to desktop if VM not running
+            } else if (target === 'auto') {
+              effectiveTarget = vmRunning ? 'vm' : 'desktop';
+            }
+
+            console.log('[telnyx] SMS routing decision', {
+              userId, configuredTarget: target, vmRunning, effectiveTarget,
+            });
+
             let handled = false;
 
-            if (target === 'vm' || target === 'auto') {
-              // Try VM agent first
+            if (effectiveTarget === 'vm') {
+              // Relay to VM — the VM owns conversation state, memory, and multi-turn.
+              // We just pass the conversationId and forward the reply as SMS.
               try {
                 const vmResult = await sendVMCommand(userId, 'agent_chat', {
                   message: inboundText,
+                  conversationId: smsState.conversation_id || undefined,
                   model: smsState.preferred_model || 'fast',
                   context: { source: 'sms', fromPhone },
                 }, 60_000);
 
                 if (vmResult.ok && vmResult.result?.text) {
-                  const label = target === 'vm' ? '[VM]' : '[VM]';
                   const replyText = stripMarkdownForSms(String(vmResult.result.text)).slice(0, 1500);
                   await sendSmsRaw(fromPhone, replyText).catch((e: any) => {
                     console.error('[telnyx] Failed to send VM agent SMS reply:', e?.message);
                   });
                   handled = true;
-                  console.log('[telnyx] SMS routed through VM agent', { userId, target, responseLen: replyText.length });
+                  
+                  // Track conversation ID returned by VM for next turn
+                  const vmConvId = vmResult.result?.conversationId || null;
+                  if (vmConvId && vmConvId !== smsState.conversation_id) {
+                    await upsertSmsUserState({ userId, conversationId: vmConvId });
+                  }
+                  
+                  console.log('[telnyx] SMS routed to VM', { userId, conversationId: vmConvId, responseLen: replyText.length });
                 }
               } catch {
-                // VM not available — fall through
+                // VM call failed at runtime — fall through to desktop
               }
             }
 
-            // If target is 'desktop' or VM didn't handle it (auto fallback)
+            // Desktop fallback (or primary desktop target)
+            // Desktop inbox → desktop processSmsItem → cloud WS → agent handles
+            // conversation state, memory, and multi-turn end-to-end.
             if (!handled) {
-              if (target === 'vm') {
-                // User explicitly chose VM but it's unavailable
+              if (target === 'vm' && !vmRunning) {
+                // User explicitly chose VM but it's not deployed/running
                 await sendSmsRaw(fromPhone,
-                  'Your Cloud VM is not available right now. Start it from the desktop app, or text /auto to enable automatic routing.'
+                  'Your Cloud VM is not running. Start it from the desktop app, or text /auto to enable automatic routing.'
                 ).catch(() => {});
               } else {
-                // Queue to desktop inbox
+                // Queue to desktop inbox — pass conversationId for multi-turn continuity
                 const queued = await enqueueSmsInboxItem({
                   userId,
                   provider: 'telnyx',
@@ -646,6 +672,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
                   fromPhone,
                   replyToPhone: fromPhone,
                   messageText: inboundText,
+                  conversationId: smsState.conversation_id,
                   metadata: {
                     eventType,
                     receivedAt: new Date().toISOString(),

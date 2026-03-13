@@ -54,8 +54,8 @@ function WebhookUrlInfo({ mode, flowId }: { mode: 'cloud' | 'local'; flowId: str
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-sm font-bold text-white/80">Webhook URL</span>
-        <div className="h-px bg-white/[0.08] flex-1" />
+        <span className="text-sm font-bold wf-fg">Webhook URL</span>
+        <div className="h-px flex-1 bg-[var(--wf-border)]" />
       </div>
       <div className={`border rounded-xl overflow-hidden ${isCloud ? 'border-blue-500/30 bg-blue-500/10' : 'border-emerald-500/30 bg-emerald-500/10'}`}>
         <div className="px-3 py-2.5 flex items-center gap-2">
@@ -63,18 +63,18 @@ function WebhookUrlInfo({ mode, flowId }: { mode: 'cloud' | 'local'; flowId: str
             <Globe className="w-4 h-4" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-xs font-semibold text-white/90">
+            <div className="text-xs font-semibold wf-fg">
               {isCloud ? 'Cloud Endpoint' : 'Local Endpoint'}
             </div>
-            <div className="text-[10px] text-white/50">
+            <div className="text-[10px] wf-fg-muted">
               {isCloud ? 'External services POST here' : 'Local network POST here'}
             </div>
           </div>
         </div>
         {url && (
-          <div className={`px-3 py-2 border-t ${isCloud ? 'border-blue-500/20' : 'border-emerald-500/20'} bg-black/20`}>
+          <div className={`px-3 py-2 border-t ${isCloud ? 'border-blue-500/20' : 'border-emerald-500/20'} wf-input`}>
             <div className="flex items-center gap-2">
-              <code className="flex-1 text-[11px] text-white/80 font-mono bg-black/30 px-2 py-1.5 rounded-lg break-all select-all leading-relaxed">
+              <code className="flex-1 text-[11px] wf-fg font-mono wf-input px-2 py-1.5 rounded-lg break-all select-all leading-relaxed">
                 {url}
               </code>
               <button
@@ -243,18 +243,18 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
   };
 
   return (
-    <div className="flex flex-col h-full w-full bg-transparent text-white/90">
+    <div className="flex flex-col h-full w-full wf-bg-elevated wf-fg">
       {/* Header */}
-      <div className="h-14 px-5 border-b border-white/[0.08] flex items-center justify-between shrink-0 bg-transparent">
+      <div className="h-14 px-5 border-b wf-border-subtle flex items-center justify-between shrink-0 bg-transparent">
         <div className="flex items-center gap-2.5">
           <div className={`p-1.5 rounded-lg ${styles.bg} ${styles.text}`}>
             <Settings className="w-4 h-4" />
           </div>
-          <span className="font-semibold text-white/90">Properties</span>
+          <span className="font-semibold wf-fg">Properties</span>
         </div>
         <button
           onClick={onClose}
-          className="p-2 hover:bg-white/[0.04] rounded-full text-white/40 hover:text-white/70 transition-colors"
+          className="p-2 wf-hover-bg rounded-full wf-fg-faint wf-hover-fg transition-colors"
         >
           <X className="w-5 h-5" />
         </button>
@@ -265,17 +265,17 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
         <div className="flex-1 overflow-y-auto scrollbar-minimal p-5 space-y-6">
           {/* Header */}
           <div className="flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center shadow-sm border border-white/[0.08] bg-gradient-to-br from-indigo-500/20 to-blue-500/20 text-indigo-400">
+            <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center shadow-sm border wf-border-subtle bg-gradient-to-br from-indigo-500/20 to-blue-500/20 text-indigo-400">
               <Zap className="w-6 h-6" />
             </div>
             <div className="flex-1 space-y-1">
               <input
                 value={model.name || ''}
                 onChange={e => onUpdate({ ...model, name: e.target.value })}
-                className="w-full px-0 py-1 text-lg font-bold bg-transparent border-none focus:ring-0 focus:outline-none placeholder:text-white/30 text-white/90"
+                className="w-full px-0 py-1 text-lg font-bold bg-transparent border-none focus:ring-0 focus:outline-none placeholder:wf-fg-faint wf-fg"
                 placeholder="Workflow Name"
               />
-              <div className="text-xs text-white/50 font-medium px-0.5">
+              <div className="text-xs wf-fg-muted font-medium px-0.5">
                 Workflow Settings
               </div>
             </div>
@@ -283,37 +283,37 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
 
           {/* Description */}
           <div className="space-y-2">
-            <label className="text-sm font-bold text-white/80 flex items-center gap-2">
-              <FileText className="w-4 h-4 text-white/40" />
+            <label className="text-sm font-bold wf-fg flex items-center gap-2">
+              <FileText className="w-4 h-4 wf-fg-faint" />
               Description
             </label>
             <textarea
               value={model.description || ''}
               onChange={(e) => onUpdate({ ...model, description: e.target.value })}
               placeholder="What does this workflow do?"
-              className="w-full px-3 py-2.5 text-sm border border-white/[0.08] bg-black/20 text-white/80 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 resize-none"
+              className="w-full px-3 py-2.5 text-sm border wf-border-subtle wf-input wf-fg rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 resize-none"
               rows={3}
             />
           </div>
 
           {/* Autostart Toggle */}
-          <div className="border border-white/[0.08] bg-black/20 rounded-xl p-4">
+          <div className="border wf-border-subtle wf-input rounded-xl p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
                   <Power className="w-4 h-4" />
                 </div>
                 <div>
-                  <div className="text-sm font-semibold text-white/80">Auto-start</div>
-                  <div className="text-xs text-white/50">Run when Stuard starts</div>
+                  <div className="text-sm font-semibold wf-fg">Auto-start</div>
+                  <div className="text-xs wf-fg-muted">Run when Stuard starts</div>
                 </div>
               </div>
               <button
                 onClick={() => onUpdate({ ...model, autostart: !model.autostart })}
-                className={`relative w-11 h-6 rounded-full transition-colors ${model.autostart ? 'bg-emerald-500' : 'bg-white/20'
+                className={`relative w-11 h-6 rounded-full transition-colors ${model.autostart ? 'bg-emerald-500' : '[background:color-mix(in_srgb,var(--wf-fg)_15%,transparent)]'
                   }`}
               >
-                <div className={`absolute top-1 w-4 h-4 rounded-full bg-white/[0.04] shadow-sm transition-transform ${model.autostart ? 'left-6' : 'left-1'
+                <div className={`absolute top-1 w-4 h-4 rounded-full wf-bg-elevated shadow-sm transition-transform ${model.autostart ? 'left-6' : 'left-1'
                   }`} />
               </button>
             </div>
@@ -334,29 +334,29 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
           />
 
           {/* Workflow Info */}
-          <div className="border border-white/[0.08] rounded-xl overflow-hidden">
+          <div className="border wf-border-subtle rounded-xl overflow-hidden">
             <button
               onClick={() => { }}
-              className="w-full flex items-center justify-between px-3 py-2 bg-white/[0.04] text-xs font-medium text-white/60"
+              className="w-full flex items-center justify-between px-3 py-2 wf-bg-overlay text-xs font-medium wf-fg-muted"
             >
               <span>Workflow Info</span>
             </button>
-            <div className="p-3 bg-black/20 space-y-2">
+            <div className="p-3 wf-input space-y-2">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-white/50">ID</span>
-                <code className="text-white/80 font-mono bg-white/[0.06] px-2 py-0.5 rounded">{model.id}</code>
+                <span className="wf-fg-muted">ID</span>
+                <code className="wf-fg font-mono wf-bg-overlay px-2 py-0.5 rounded">{model.id}</code>
               </div>
               <div className="flex items-center justify-between text-xs">
-                <span className="text-white/50">Version</span>
-                <code className="text-white/80 font-mono bg-white/[0.06] px-2 py-0.5 rounded">{model.version || '1.0.0'}</code>
+                <span className="wf-fg-muted">Version</span>
+                <code className="wf-fg font-mono wf-bg-overlay px-2 py-0.5 rounded">{model.version || '1.0.0'}</code>
               </div>
               <div className="flex items-center justify-between text-xs">
-                <span className="text-white/50">Triggers</span>
-                <span className="text-white/80">{model.triggers.length}</span>
+                <span className="wf-fg-muted">Triggers</span>
+                <span className="wf-fg">{model.triggers.length}</span>
               </div>
               <div className="flex items-center justify-between text-xs">
-                <span className="text-white/50">Steps</span>
-                <span className="text-white/80">{model.nodes.length}</span>
+                <span className="wf-fg-muted">Steps</span>
+                <span className="wf-fg">{model.nodes.length}</span>
               </div>
             </div>
           </div>
@@ -374,42 +374,42 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
                 <input
                   value={item.label || ''}
                   onChange={e => updateItem({ label: e.target.value })}
-                  className="w-full px-0 py-1 text-lg font-bold bg-transparent border-none focus:ring-0 focus:outline-none placeholder:text-white/30 text-white/90"
+                  className="w-full px-0 py-1 text-lg font-bold bg-transparent border-none focus:ring-0 focus:outline-none placeholder:wf-fg-faint wf-fg"
                   placeholder={toolSchema?.label || toolName}
                 />
-                <div className="text-xs text-white/50 font-medium px-0.5">
+                <div className="text-xs wf-fg-muted font-medium px-0.5">
                   {toolSchema?.description || (isTrigger ? 'Starts the workflow' : 'Performs an action')}
                 </div>
               </div>
             </div>
 
             {/* Advanced Details Toggle */}
-            <div className="border border-white/[0.08] rounded-lg overflow-hidden">
+            <div className="border wf-border-subtle rounded-lg overflow-hidden">
               <button
                 onClick={() => setShowAdvanced(!showAdvanced)}
-                className="w-full flex items-center justify-between px-3 py-2 bg-white/[0.02] hover:bg-white/[0.04] transition-colors text-xs font-medium text-white/60"
+                className="w-full flex items-center justify-between px-3 py-2 wf-bg-overlay hover:wf-bg-overlay transition-colors text-xs font-medium wf-fg-muted"
               >
                 <span>Advanced Details</span>
                 {showAdvanced ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
               </button>
 
               {showAdvanced && (
-                <div className="p-3 bg-black/20 space-y-3 border-t border-white/[0.08]">
+                <div className="p-3 wf-input space-y-3 border-t wf-border-subtle">
                   <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 flex items-center gap-1">
+                    <label className="text-[10px] font-bold wf-fg-faint uppercase tracking-wider mb-1 flex items-center gap-1">
                       <Hash className="w-3 h-3" /> Step ID
                     </label>
                     <input
                       value={item.id}
                       onChange={e => updateItem({ id: e.target.value })}
-                      className="w-full px-2 py-1 text-xs bg-white/[0.04] border border-white/[0.08] rounded-md font-mono text-white/70 focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/30 outline-none"
+                      className="w-full px-2 py-1 text-xs wf-bg-overlay border wf-border-subtle rounded-md font-mono wf-fg-muted focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/30 outline-none"
                     />
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 flex items-center gap-1">
+                    <label className="text-[10px] font-bold wf-fg-faint uppercase tracking-wider mb-1 flex items-center gap-1">
                       <Activity className="w-3 h-3" /> Type
                     </label>
-                    <div className="w-full px-2 py-1 text-xs bg-white/[0.04] rounded-md font-mono text-white/60 select-all">
+                    <div className="w-full px-2 py-1 text-xs wf-bg-overlay rounded-md font-mono wf-fg-muted select-all">
                       {String('tool' in item ? item.tool : item.type)}
                     </div>
                   </div>
@@ -432,21 +432,21 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
                         <GitMerge className="w-4 h-4" />
                       </div>
                       <div>
-                        <div className="text-xs font-semibold text-white/90">Wait For All Branches</div>
-                        <div className="text-[10px] text-white/50">{incomingWires.length} incoming connections</div>
+                        <div className="text-xs font-semibold wf-fg">Wait For All Branches</div>
+                        <div className="text-[10px] wf-fg-muted">{incomingWires.length} incoming connections</div>
                       </div>
                     </div>
                     <button
                       onClick={() => updateItem({ waitForAll: !waitForAll })}
-                      className={`relative w-11 h-6 rounded-full transition-colors ${waitForAll ? 'bg-indigo-500' : 'bg-white/20'
+                      className={`relative w-11 h-6 rounded-full transition-colors ${waitForAll ? 'bg-indigo-500' : '[background:color-mix(in_srgb,var(--wf-fg)_15%,transparent)]'
                         }`}
                     >
-                      <div className={`absolute top-1 w-4 h-4 rounded-full bg-white/[0.04] shadow-sm transition-transform ${waitForAll ? 'left-6' : 'left-1'
+                      <div className={`absolute top-1 w-4 h-4 rounded-full wf-bg-elevated shadow-sm transition-transform ${waitForAll ? 'left-6' : 'left-1'
                         }`} />
                     </button>
                   </div>
                   {waitForAll && (
-                    <div className="px-3 py-2 border-t border-indigo-500/20 bg-black/20">
+                    <div className="px-3 py-2 border-t border-indigo-500/20 wf-input">
                       <div className="flex items-start gap-1.5 text-[10px] text-indigo-400">
                         <Info className="w-3 h-3 mt-0.5 shrink-0" />
                         <span>This step will wait until all {incomingWires.length} parallel branches complete before executing.</span>
@@ -471,11 +471,11 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
                       <Repeat className="w-4 h-4" />
                     </div>
                     <div className="flex-1">
-                      <div className="text-xs font-semibold text-white/90">Loop Execution</div>
-                      <div className="text-[10px] text-white/50">This step will run multiple times</div>
+                      <div className="text-xs font-semibold wf-fg">Loop Execution</div>
+                      <div className="text-[10px] wf-fg-muted">This step will run multiple times</div>
                     </div>
                   </div>
-                  <div className="px-3 py-2 border-t border-blue-500/20 bg-black/20 space-y-2">
+                  <div className="px-3 py-2 border-t border-blue-500/20 wf-input space-y-2">
                     {incomingLoopWires.map((wire, i) => {
                       const loop = (wire as any).loop;
                       const sourceNode = [...model.triggers, ...model.nodes].find(n => n.id === wire.from);
@@ -492,15 +492,15 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
                                loop.type === 'repeat' ? `Repeat ${loop.count}x` : 
                                'While'}
                             </span>
-                            <span className="text-white/40"> from </span>
-                            <span className="font-medium text-white/70">{sourceNode?.label || wire.from}</span>
+                            <span className="wf-fg-faint"> from </span>
+                            <span className="font-medium wf-fg-muted">{sourceNode?.label || wire.from}</span>
                             {loop.type === 'forEach' && loop.itemVar && (
-                              <div className="text-white/40 mt-0.5">
+                              <div className="wf-fg-faint mt-0.5">
                                 Access item as <code className="bg-blue-500/20 px-1 rounded text-blue-300">{'{{loop.' + loop.itemVar + '}}'}</code>
                               </div>
                             )}
                             {loop.maxIterations && (
-                              <div className="text-white/30">Max: {loop.maxIterations} iterations</div>
+                              <div className="wf-fg-faint">Max: {loop.maxIterations} iterations</div>
                             )}
                           </div>
                         </div>
@@ -515,8 +515,8 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
           {/* Settings / Arguments */}
           <div>
             <div className="flex items-center gap-2 mb-3">
-              <span className="text-sm font-bold text-white/80">Settings</span>
-              <div className="h-px bg-white/[0.08] flex-1" />
+              <span className="text-sm font-bold wf-fg">Settings</span>
+              <div className="h-px flex-1 bg-[var(--wf-border)]" />
             </div>
 
             <div className="bg-transparent">
@@ -551,27 +551,27 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
           {!isTrigger && upstreamNodes.length > 0 && (
             <div>
               <div className="flex items-center gap-2 mb-3">
-                <span className="text-sm font-bold text-white/80">Available Data</span>
-                <div className="h-px bg-white/[0.08] flex-1" />
+                <span className="text-sm font-bold wf-fg">Available Data</span>
+                <div className="h-px flex-1 bg-[var(--wf-border)]" />
               </div>
 
-              <div className="bg-black/20 rounded-xl p-3 border border-white/[0.08]">
-                <p className="text-xs text-white/50 mb-3">
+              <div className="wf-input rounded-xl p-3 border wf-border-subtle">
+                <p className="text-xs wf-fg-muted mb-3">
                   Click the <VariableIcon className="w-3 h-3 inline mx-1" /> icon in any text field to insert these values:
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {upstreamNodes.map(v => (
                     <div
                       key={v.id}
-                      className="group relative flex items-center bg-white/[0.04] border border-white/[0.08] rounded-full pl-1 pr-3 py-1 shadow-sm hover:shadow-md hover:border-indigo-500/50 transition-all cursor-help"
+                      className="group relative flex items-center wf-bg-overlay border wf-border-subtle rounded-full pl-1 pr-3 py-1 shadow-sm hover:shadow-md hover:border-indigo-500/50 transition-all cursor-help"
                     >
                       <div className="w-5 h-5 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center mr-2 text-[10px] font-bold font-mono">
                         {'{'}
                       </div>
-                      <span className="text-xs font-medium text-white/80">{v.label}</span>
+                      <span className="text-xs font-medium wf-fg">{v.label}</span>
 
                       {/* Tooltip */}
-                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[200px] bg-slate-800 text-white text-[10px] rounded px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[200px] wf-bg-elevated wf-fg text-[10px] border wf-border-subtle rounded px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
                         ID: {v.id}
                       </div>
                     </div>
@@ -585,8 +585,8 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
           {!isTrigger && outgoingWires.length > 0 && (
             <div>
               <div className="flex items-center gap-2 mb-3">
-                <span className="text-sm font-bold text-white/80">Next Steps</span>
-                <div className="h-px bg-white/[0.08] flex-1" />
+                <span className="text-sm font-bold wf-fg">Next Steps</span>
+                <div className="h-px flex-1 bg-[var(--wf-border)]" />
               </div>
 
               <div className="space-y-3">
@@ -702,16 +702,16 @@ function WireLoopEditor({
   const LoopIcon = loopTypeIcon;
 
   return (
-    <div className={`rounded-lg p-2.5 border transition-colors mb-3 ${hasLoop ? 'bg-blue-500/10 border-blue-500/20' : 'bg-black/20 border-white/[0.08]'}`}>
+    <div className={`rounded-lg p-2.5 border transition-colors mb-3 ${hasLoop ? 'bg-blue-500/10 border-blue-500/20' : 'wf-input wf-border-subtle'}`}>
       <div className="flex items-center justify-between mb-2">
-        <label className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${hasLoop ? 'text-blue-400' : 'text-white/40'}`}>
+        <label className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${hasLoop ? 'text-blue-400' : 'wf-fg-faint'}`}>
           <LoopIcon className="w-3 h-3" />
           Loop
         </label>
         <select
           value={hasLoop ? loopType : 'none'}
           onChange={(e) => handleLoopTypeChange(e.target.value)}
-          className={`text-xs border-none bg-transparent font-medium focus:ring-0 cursor-pointer rounded px-1 -mr-1 transition-colors ${hasLoop ? 'text-blue-400 hover:bg-blue-500/20' : 'text-white/50 hover:bg-white/10'}`}
+          className={`text-xs border-none bg-transparent font-medium focus:ring-0 cursor-pointer rounded px-1 -mr-1 transition-colors ${hasLoop ? 'text-blue-400 hover:bg-blue-500/20' : 'wf-fg-muted wf-hover-bg'}`}
         >
           <option value="none">No Loop</option>
           <option value="forEach">For Each Item</option>
@@ -726,7 +726,7 @@ function WireLoopEditor({
           {loopType === 'forEach' && (
             <>
               <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-1 block">
+                <label className="text-[10px] font-bold uppercase tracking-wider wf-fg-faint mb-1 block">
                   Items to iterate
                 </label>
                 <TextInputWithVariables
@@ -737,11 +737,11 @@ function WireLoopEditor({
                   workflowVariables={workflowVariables}
                   suggestFrom={['*.*']}
                 />
-                <p className="text-[10px] text-white/40 mt-1">Array or list to loop through</p>
+                <p className="text-[10px] wf-fg-faint mt-1">Array or list to loop through</p>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-1 block">
+                  <label className="text-[10px] font-bold uppercase tracking-wider wf-fg-faint mb-1 block">
                     Item variable
                   </label>
                   <input
@@ -749,11 +749,11 @@ function WireLoopEditor({
                     value={wire.loop?.itemVar || 'item'}
                     onChange={(e) => updateLoopField('itemVar', e.target.value)}
                     placeholder="item"
-                    className="w-full px-2 py-1.5 text-xs border border-white/[0.08] rounded-lg bg-black/20 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/50 font-mono text-white/80"
+                    className="w-full px-2 py-1.5 text-xs border wf-border-subtle rounded-lg wf-input focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/50 font-mono wf-fg"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-1 block">
+                  <label className="text-[10px] font-bold uppercase tracking-wider wf-fg-faint mb-1 block">
                     Index variable
                   </label>
                   <input
@@ -761,7 +761,7 @@ function WireLoopEditor({
                     value={wire.loop?.indexVar || 'index'}
                     onChange={(e) => updateLoopField('indexVar', e.target.value)}
                     placeholder="index"
-                    className="w-full px-2 py-1.5 text-xs border border-white/[0.08] rounded-lg bg-black/20 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/50 font-mono text-white/80"
+                    className="w-full px-2 py-1.5 text-xs border wf-border-subtle rounded-lg wf-input focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/50 font-mono wf-fg"
                   />
                 </div>
               </div>
@@ -776,7 +776,7 @@ function WireLoopEditor({
           {/* Repeat N Times */}
           {loopType === 'repeat' && (
             <div>
-              <label className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-1 block">
+              <label className="text-[10px] font-bold uppercase tracking-wider wf-fg-faint mb-1 block">
                 Number of times
               </label>
               <input
@@ -785,10 +785,10 @@ function WireLoopEditor({
                 onChange={(e) => updateLoopField('count', parseInt(e.target.value) || 1)}
                 min={1}
                 max={10000}
-                className="w-full px-2 py-1.5 text-xs border border-white/[0.08] rounded-lg bg-black/20 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/50 text-white/80"
+                className="w-full px-2 py-1.5 text-xs border wf-border-subtle rounded-lg wf-input focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/50 wf-fg"
               />
-              <p className="text-[10px] text-white/40 mt-1">
-                Access iteration number as <code className="bg-white/[0.04] px-1 rounded">{'{{loop.index}}'}</code>
+              <p className="text-[10px] wf-fg-faint mt-1">
+                Access iteration number as <code className="wf-bg-overlay px-1 rounded">{'{{loop.index}}'}</code>
               </p>
             </div>
           )}
@@ -796,7 +796,7 @@ function WireLoopEditor({
           {/* While Loop */}
           {loopType === 'while' && (
             <div>
-              <label className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-1 block">
+              <label className="text-[10px] font-bold uppercase tracking-wider wf-fg-faint mb-1 block">
                 Continue while
               </label>
               <TextInputWithVariables
@@ -807,15 +807,15 @@ function WireLoopEditor({
                 workflowVariables={workflowVariables}
                 suggestFrom={['*.*']}
               />
-              <p className="text-[10px] text-white/40 mt-1">Loop continues while this condition is true</p>
+              <p className="text-[10px] wf-fg-faint mt-1">Loop continues while this condition is true</p>
             </div>
           )}
 
           {/* Common Loop Settings */}
-          <div className="pt-2 border-t border-white/[0.08] space-y-2">
+          <div className="pt-2 border-t wf-border-subtle space-y-2">
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-1 block">
+                <label className="text-[10px] font-bold uppercase tracking-wider wf-fg-faint mb-1 block">
                   Max iterations
                 </label>
                 <input
@@ -824,11 +824,11 @@ function WireLoopEditor({
                   onChange={(e) => updateLoopField('maxIterations', parseInt(e.target.value) || 100)}
                   min={1}
                   max={10000}
-                  className="w-full px-2 py-1.5 text-xs border border-white/[0.08] rounded-lg bg-black/20 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/50 text-white/80"
+                  className="w-full px-2 py-1.5 text-xs border wf-border-subtle rounded-lg wf-input focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/50 wf-fg"
                 />
               </div>
               <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-1 block">
+                <label className="text-[10px] font-bold uppercase tracking-wider wf-fg-faint mb-1 block">
                   Delay (ms)
                 </label>
                 <input
@@ -836,30 +836,30 @@ function WireLoopEditor({
                   value={wire.loop?.delayMs || 0}
                   onChange={(e) => updateLoopField('delayMs', parseInt(e.target.value) || 0)}
                   min={0}
-                  className="w-full px-2 py-1.5 text-xs border border-white/[0.08] rounded-lg bg-black/20 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/50 text-white/80"
+                  className="w-full px-2 py-1.5 text-xs border wf-border-subtle rounded-lg wf-input focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/50 wf-fg"
                 />
               </div>
             </div>
-            <p className="text-[10px] text-white/40">Safety limit to prevent infinite loops</p>
+            <p className="text-[10px] wf-fg-faint">Safety limit to prevent infinite loops</p>
           </div>
         </div>
       )}
 
       {/* Loop Fanout Mode - shown for non-loop wires when sibling has loop */}
       {!hasLoop && hasOutgoingLoopFromSameNode && (
-        <div className="pt-2 border-t border-white/[0.08]">
-          <label className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-1 block">
+        <div className="pt-2 border-t wf-border-subtle">
+          <label className="text-[10px] font-bold uppercase tracking-wider wf-fg-faint mb-1 block">
             When sibling loop is active
           </label>
           <select
             value={fanoutMode}
             onChange={(e) => onUpdate(index, { loopFanoutMode: e.target.value })}
-            className="w-full px-2 py-1.5 text-xs border border-white/[0.08] rounded-lg bg-black/20 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/50 text-white/80"
+            className="w-full px-2 py-1.5 text-xs border wf-border-subtle rounded-lg wf-input focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/50 wf-fg"
           >
             <option value="wait">Wait for loop to finish</option>
             <option value="parallel">Run in parallel with loop</option>
           </select>
-          <p className="text-[10px] text-white/40 mt-1">
+          <p className="text-[10px] wf-fg-faint mt-1">
             {fanoutMode === 'wait'
               ? 'This connection executes after the loop completes'
               : 'This connection executes immediately, in parallel with the loop'}
@@ -1093,22 +1093,22 @@ function WireConditionEditor({
   }, [builderLhs, builderOp, builderRhs, index, onUpdate, parseRhsValue]);
 
   return (
-    <div className="p-3 bg-black/20 border border-white/[0.08] rounded-xl shadow-sm hover:border-indigo-500/50 transition-all group">
+    <div className="p-3 wf-input border wf-border-subtle rounded-xl shadow-sm hover:border-indigo-500/50 transition-all group">
       {/* Header: Destination & Actions */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <div className="w-6 h-6 rounded-md bg-indigo-500/20 flex items-center justify-center text-indigo-400">
             <ArrowRight className="w-3.5 h-3.5" />
           </div>
-          <span className="text-sm font-medium text-white/60">To:</span>
-          <div className="flex items-center gap-1.5 px-2 py-1 bg-white/[0.04] border border-white/[0.08] rounded text-xs text-white/80" title={`ID: ${wire.to}`}>
+          <span className="text-sm font-medium wf-fg-muted">To:</span>
+          <div className="flex items-center gap-1.5 px-2 py-1 wf-bg-overlay border wf-border-subtle rounded text-xs wf-fg" title={`ID: ${wire.to}`}>
             <span className="font-semibold">{targetNode?.label || wire.to}</span>
-            <span className="text-[10px] text-white/40 font-mono">#{wire.to}</span>
+            <span className="text-[10px] wf-fg-faint font-mono">#{wire.to}</span>
           </div>
         </div>
         <button
           onClick={() => onDelete(index)}
-          className="p-1.5 text-white/30 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+          className="p-1.5 wf-fg-faint hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
           title="Remove connection"
         >
           <Trash2 className="w-4 h-4" />
@@ -1126,16 +1126,16 @@ function WireConditionEditor({
       />
 
       {/* Condition Section */}
-      <div className={`rounded-lg p-2.5 border transition-colors ${isConditional ? 'bg-amber-500/10 border-amber-500/20' : 'bg-black/20 border-white/[0.08]'}`}>
+      <div className={`rounded-lg p-2.5 border transition-colors ${isConditional ? 'bg-amber-500/10 border-amber-500/20' : 'wf-input wf-border-subtle'}`}>
         <div className="flex items-center justify-between mb-2">
-          <label className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${isConditional ? 'text-amber-400' : 'text-white/40'}`}>
+          <label className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${isConditional ? 'text-amber-400' : 'wf-fg-faint'}`}>
             <GitBranch className="w-3 h-3" />
             Condition
           </label>
           <select
             value={isConditional ? 'conditional' : 'always'}
             onChange={(e) => handleModeChange(e.target.value)}
-            className={`text-xs border-none bg-transparent font-medium focus:ring-0 cursor-pointer rounded px-1 -mr-1 transition-colors ${isConditional ? 'text-amber-400 hover:bg-amber-500/20' : 'text-white/50 hover:bg-white/10'
+            className={`text-xs border-none bg-transparent font-medium focus:ring-0 cursor-pointer rounded px-1 -mr-1 transition-colors ${isConditional ? 'text-amber-400 hover:bg-amber-500/20' : 'wf-fg-muted wf-hover-bg'
               }`}
           >
             <option value="always">Always Run</option>
@@ -1146,11 +1146,11 @@ function WireConditionEditor({
         {isConditional && (
           <div className="animate-in fade-in slide-in-from-top-1 duration-200">
             <div className="flex items-center justify-between mb-2">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-white/40">Editor</div>
-              <div className="flex items-center gap-1 bg-white/[0.04] border border-white/[0.08] rounded-lg p-1">
+              <div className="text-[10px] font-bold uppercase tracking-wider wf-fg-faint">Editor</div>
+              <div className="flex items-center gap-1 wf-bg-overlay border wf-border-subtle rounded-lg p-1">
                 <button
                   onClick={() => setEditorMode('builder')}
-                  className={`px-2 py-1 text-xs font-semibold rounded-md transition-colors ${editorMode === 'builder' ? 'bg-indigo-500/20 text-indigo-400' : 'text-white/50 hover:bg-white/10'}`}
+                  className={`px-2 py-1 text-xs font-semibold rounded-md transition-colors ${editorMode === 'builder' ? 'bg-indigo-500/20 text-indigo-400' : 'wf-fg-muted wf-hover-bg'}`}
                 >
                   Builder
                 </button>
@@ -1160,7 +1160,7 @@ function WireConditionEditor({
                     const guardStr = guardToString(wire.guard);
                     setLocalText(guardStr === 'always' ? '' : guardStr); 
                   }}
-                  className={`px-2 py-1 text-xs font-semibold rounded-md transition-colors ${editorMode === 'advanced' ? 'bg-indigo-500/20 text-indigo-400' : 'text-white/50 hover:bg-white/10'}`}
+                  className={`px-2 py-1 text-xs font-semibold rounded-md transition-colors ${editorMode === 'advanced' ? 'bg-indigo-500/20 text-indigo-400' : 'wf-fg-muted wf-hover-bg'}`}
                 >
                   Advanced
                 </button>
@@ -1171,11 +1171,11 @@ function WireConditionEditor({
               <div className="space-y-2">
                 <div className="grid grid-cols-3 gap-2">
                   <div className="col-span-1">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-1">Left</div>
+                    <div className="text-[10px] font-bold uppercase tracking-wider wf-fg-faint mb-1">Left</div>
                     <select
                       value={builderLhs}
                       onChange={(e) => handleBuilderChange('lhs', e.target.value)}
-                      className="w-full px-2 py-2 text-xs border border-white/[0.08] rounded-lg bg-black/20 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 text-white/80"
+                      className="w-full px-2 py-2 text-xs border wf-border-subtle rounded-lg wf-input focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 wf-fg"
                     >
                       <option value="">Select…</option>
                       {(['Workflow Variables', 'This Step Output', 'Upstream Step Outputs'] as const).map(group => {
@@ -1193,11 +1193,11 @@ function WireConditionEditor({
                   </div>
 
                   <div className="col-span-1">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-1">Op</div>
+                    <div className="text-[10px] font-bold uppercase tracking-wider wf-fg-faint mb-1">Op</div>
                     <select
                       value={builderOp}
                       onChange={(e) => handleBuilderChange('op', e.target.value)}
-                      className="w-full px-2 py-2 text-xs border border-white/[0.08] rounded-lg bg-black/20 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 text-white/80"
+                      className="w-full px-2 py-2 text-xs border wf-border-subtle rounded-lg wf-input focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 wf-fg"
                     >
                       <option value="==">Equals</option>
                       <option value="!=">Not equals</option>
@@ -1210,7 +1210,7 @@ function WireConditionEditor({
                   </div>
 
                   <div className="col-span-1">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-1">Right</div>
+                    <div className="text-[10px] font-bold uppercase tracking-wider wf-fg-faint mb-1">Right</div>
                     <div className="space-y-2">
                       <TextInputWithVariables
                         value={builderRhs}
@@ -1229,7 +1229,7 @@ function WireConditionEditor({
                             className={`px-2 py-1 text-[10px] font-medium rounded-md border transition-colors ${
                               builderRhs === val
                                 ? 'bg-indigo-500/20 border-indigo-500/30 text-indigo-400'
-                                : 'bg-black/20 border-white/[0.08] text-white/50 hover:border-indigo-500/30 hover:bg-indigo-500/10'
+                                : 'wf-input wf-border-subtle wf-fg-muted hover:border-indigo-500/30 hover:bg-indigo-500/10'
                             }`}
                           >
                             {val}
@@ -1241,8 +1241,8 @@ function WireConditionEditor({
                 </div>
 
                 {/* Show preview of the condition */}
-                <div className="flex items-center gap-2 px-2 py-1.5 bg-black/20 rounded-lg border border-white/[0.08]">
-                  <code className="text-[11px] font-mono text-white/60 flex-1">
+                <div className="flex items-center gap-2 px-2 py-1.5 wf-input rounded-lg border wf-border-subtle">
+                  <code className="text-[11px] font-mono wf-fg-muted flex-1">
                     {builderLhs ? `${builderLhs} ${builderOp} ${builderRhs || '?'}` : 'Select a variable...'}
                   </code>
                 </div>
@@ -1257,7 +1257,7 @@ function WireConditionEditor({
                   workflowVariables={workflowVariables}
                   suggestFrom={['*.*']}
                 />
-                <div className="mt-1.5 flex items-center gap-1 text-[10px] text-white/40">
+                <div className="mt-1.5 flex items-center gap-1 text-[10px] wf-fg-faint">
                   <Info className="w-3 h-3" />
                   <span>Supports JS-like syntax: <code>==</code>, <code>!=</code>, <code>&gt;</code>, <code>&&</code></span>
                 </div>
@@ -1300,7 +1300,7 @@ function InputParamsEditor({
   };
 
   return (
-    <div className="border border-white/[0.08] rounded-xl overflow-hidden">
+    <div className="border wf-border-subtle rounded-xl overflow-hidden">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
         className="w-full flex items-center justify-between px-4 py-3 bg-gradient-to-r from-blue-500/10 to-indigo-500/10 hover:from-blue-500/20 hover:to-indigo-500/20 transition-colors"
@@ -1310,20 +1310,20 @@ function InputParamsEditor({
             <Package className="w-4 h-4" />
           </div>
           <div className="text-left">
-            <div className="text-sm font-semibold text-white/80">Input Parameters</div>
-            <div className="text-[10px] text-white/50">
+            <div className="text-sm font-semibold wf-fg">Input Parameters</div>
+            <div className="text-[10px] wf-fg-muted">
               {params.length === 0 ? 'Define inputs for this workflow' : `${params.length} parameter${params.length !== 1 ? 's' : ''}`}
             </div>
           </div>
         </div>
-        {isExpanded ? <ChevronDown className="w-4 h-4 text-white/40" /> : <ChevronRight className="w-4 h-4 text-white/40" />}
+        {isExpanded ? <ChevronDown className="w-4 h-4 wf-fg-faint" /> : <ChevronRight className="w-4 h-4 wf-fg-faint" />}
       </button>
 
       {isExpanded && (
-        <div className="p-4 space-y-3 bg-black/20">
+        <div className="p-4 space-y-3 wf-input">
           {params.length === 0 ? (
             <div className="text-center py-4">
-              <p className="text-xs text-white/50 mb-3">
+              <p className="text-xs wf-fg-muted mb-3">
                 Add input parameters to use this workflow as a reusable function
               </p>
               <button
@@ -1338,7 +1338,7 @@ function InputParamsEditor({
           ) : (
             <>
               {params.map((param, i) => (
-                <div key={i} className="flex items-start gap-2 p-3 bg-white/[0.02] rounded-lg border border-white/[0.06]">
+                <div key={i} className="flex items-start gap-2 p-3 wf-bg-overlay rounded-lg border wf-border-subtle">
                   <div className="flex-1 space-y-2">
                     <div className="grid grid-cols-2 gap-2">
                       <input
@@ -1347,13 +1347,13 @@ function InputParamsEditor({
                         onChange={(e) => updateParam(i, { name: e.target.value.replace(/[^a-zA-Z0-9_]/g, '') })}
                         placeholder="paramName"
                         disabled={disabled}
-                        className="px-2 py-1.5 text-xs border border-white/[0.08] rounded-md font-mono focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/30 bg-black/20 text-white/80 outline-none disabled:opacity-50"
+                        className="px-2 py-1.5 text-xs border wf-border-subtle rounded-md font-mono focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/30 wf-input wf-fg outline-none disabled:opacity-50"
                       />
                       <select
                         value={param.type}
                         onChange={(e) => updateParam(i, { type: e.target.value as any })}
                         disabled={disabled}
-                        className="px-2 py-1.5 text-xs border border-white/[0.08] rounded-md focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/30 bg-black/20 text-white/80 outline-none disabled:opacity-50"
+                        className="px-2 py-1.5 text-xs border wf-border-subtle rounded-md focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/30 wf-input wf-fg outline-none disabled:opacity-50"
                       >
                         <option value="string">String</option>
                         <option value="number">Number</option>
@@ -1368,16 +1368,16 @@ function InputParamsEditor({
                       onChange={(e) => updateParam(i, { description: e.target.value })}
                       placeholder="Description (optional)"
                       disabled={disabled}
-                      className="w-full px-2 py-1.5 text-xs border border-white/[0.08] rounded-md focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/30 bg-black/20 text-white/80 outline-none disabled:opacity-50"
+                      className="w-full px-2 py-1.5 text-xs border wf-border-subtle rounded-md focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/30 wf-input wf-fg outline-none disabled:opacity-50"
                     />
                     <div className="flex items-center gap-3">
-                      <label className="flex items-center gap-1.5 text-xs text-white/60">
+                      <label className="flex items-center gap-1.5 text-xs wf-fg-muted">
                         <input
                           type="checkbox"
                           checked={param.required || false}
                           onChange={(e) => updateParam(i, { required: e.target.checked })}
                           disabled={disabled}
-                          className="rounded border-white/[0.08] text-blue-500 bg-black/20 focus:ring-blue-500"
+                          className="rounded wf-border-subtle text-blue-500 wf-input focus:ring-blue-500"
                         />
                         Required
                       </label>
@@ -1388,7 +1388,7 @@ function InputParamsEditor({
                           onChange={(e) => updateParam(i, { defaultValue: e.target.value })}
                           placeholder="Default value"
                           disabled={disabled}
-                          className="flex-1 px-2 py-1 text-xs border border-white/[0.08] rounded-md focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/30 bg-black/20 text-white/80 outline-none disabled:opacity-50"
+                          className="flex-1 px-2 py-1 text-xs border wf-border-subtle rounded-md focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/30 wf-input wf-fg outline-none disabled:opacity-50"
                         />
                       )}
                     </div>
@@ -1396,7 +1396,7 @@ function InputParamsEditor({
                   <button
                     onClick={() => removeParam(i)}
                     disabled={disabled}
-                    className="p-1.5 text-white/40 hover:text-red-400 hover:bg-red-500/10 rounded-md transition-colors disabled:opacity-50"
+                    className="p-1.5 wf-fg-faint hover:text-red-400 hover:bg-red-500/10 rounded-md transition-colors disabled:opacity-50"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -1414,9 +1414,9 @@ function InputParamsEditor({
           )}
 
           {params.length > 0 && (
-            <div className="pt-2 border-t border-white/[0.06]">
-              <p className="text-[10px] text-white/50">
-                Access inputs via <code className="bg-white/[0.06] px-1 rounded text-white/70">{'{{input.paramName}}'}</code> or <code className="bg-white/[0.06] px-1 rounded text-white/70">{'{{args.paramName}}'}</code>
+            <div className="pt-2 border-t wf-border-subtle">
+              <p className="text-[10px] wf-fg-muted">
+                Access inputs via <code className="wf-bg-overlay px-1 rounded wf-fg-muted">{'{{input.paramName}}'}</code> or <code className="wf-bg-overlay px-1 rounded wf-fg-muted">{'{{args.paramName}}'}</code>
               </p>
             </div>
           )}
@@ -1456,7 +1456,7 @@ function OutputSchemaEditor({
   };
 
   return (
-    <div className="border border-white/[0.08] rounded-xl overflow-hidden">
+    <div className="border wf-border-subtle rounded-xl overflow-hidden">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
         className="w-full flex items-center justify-between px-4 py-3 bg-gradient-to-r from-emerald-500/10 to-teal-500/10 hover:from-emerald-500/20 hover:to-teal-500/20 transition-colors"
@@ -1466,20 +1466,20 @@ function OutputSchemaEditor({
             <ArrowRightFromLine className="w-4 h-4" />
           </div>
           <div className="text-left">
-            <div className="text-sm font-semibold text-white/80">Output Schema</div>
-            <div className="text-[10px] text-white/50">
+            <div className="text-sm font-semibold wf-fg">Output Schema</div>
+            <div className="text-[10px] wf-fg-muted">
               {fields.length === 0 ? 'Define what this workflow returns' : `${fields.length} field${fields.length !== 1 ? 's' : ''}`}
             </div>
           </div>
         </div>
-        {isExpanded ? <ChevronDown className="w-4 h-4 text-white/40" /> : <ChevronRight className="w-4 h-4 text-white/40" />}
+        {isExpanded ? <ChevronDown className="w-4 h-4 wf-fg-faint" /> : <ChevronRight className="w-4 h-4 wf-fg-faint" />}
       </button>
 
       {isExpanded && (
-        <div className="p-4 space-y-3 bg-black/20">
+        <div className="p-4 space-y-3 wf-input">
           {fields.length === 0 ? (
             <div className="text-center py-4">
-              <p className="text-xs text-white/50 mb-3">
+              <p className="text-xs wf-fg-muted mb-3">
                 Define output fields to document what this workflow returns
               </p>
               <button
@@ -1494,7 +1494,7 @@ function OutputSchemaEditor({
           ) : (
             <>
               {fields.map((field, i) => (
-                <div key={i} className="flex items-start gap-2 p-3 bg-white/[0.02] rounded-lg border border-white/[0.06]">
+                <div key={i} className="flex items-start gap-2 p-3 wf-bg-overlay rounded-lg border wf-border-subtle">
                   <div className="flex-1 space-y-2">
                     <div className="grid grid-cols-2 gap-2">
                       <input
@@ -1503,13 +1503,13 @@ function OutputSchemaEditor({
                         onChange={(e) => updateField(i, { name: e.target.value.replace(/[^a-zA-Z0-9_]/g, '') })}
                         placeholder="fieldName"
                         disabled={disabled}
-                        className="px-2 py-1.5 text-xs border border-white/[0.08] rounded-md font-mono focus:border-emerald-500/50 focus:ring-2 focus:ring-emerald-500/30 bg-black/20 text-white/80 outline-none disabled:opacity-50"
+                        className="px-2 py-1.5 text-xs border wf-border-subtle rounded-md font-mono focus:border-emerald-500/50 focus:ring-2 focus:ring-emerald-500/30 wf-input wf-fg outline-none disabled:opacity-50"
                       />
                       <select
                         value={field.type}
                         onChange={(e) => updateField(i, { type: e.target.value as any })}
                         disabled={disabled}
-                        className="px-2 py-1.5 text-xs border border-white/[0.08] rounded-md focus:border-emerald-500/50 focus:ring-2 focus:ring-emerald-500/30 bg-black/20 text-white/80 outline-none disabled:opacity-50"
+                        className="px-2 py-1.5 text-xs border wf-border-subtle rounded-md focus:border-emerald-500/50 focus:ring-2 focus:ring-emerald-500/30 wf-input wf-fg outline-none disabled:opacity-50"
                       >
                         <option value="string">String</option>
                         <option value="number">Number</option>
@@ -1524,13 +1524,13 @@ function OutputSchemaEditor({
                       onChange={(e) => updateField(i, { description: e.target.value })}
                       placeholder="Description (optional)"
                       disabled={disabled}
-                      className="w-full px-2 py-1.5 text-xs border border-white/[0.08] rounded-md focus:border-emerald-500/50 focus:ring-2 focus:ring-emerald-500/30 bg-black/20 text-white/80 outline-none disabled:opacity-50"
+                      className="w-full px-2 py-1.5 text-xs border wf-border-subtle rounded-md focus:border-emerald-500/50 focus:ring-2 focus:ring-emerald-500/30 wf-input wf-fg outline-none disabled:opacity-50"
                     />
                   </div>
                   <button
                     onClick={() => removeField(i)}
                     disabled={disabled}
-                    className="p-1.5 text-white/40 hover:text-red-400 hover:bg-red-500/10 rounded-md transition-colors disabled:opacity-50"
+                    className="p-1.5 wf-fg-faint hover:text-red-400 hover:bg-red-500/10 rounded-md transition-colors disabled:opacity-50"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -1548,9 +1548,9 @@ function OutputSchemaEditor({
           )}
 
           {fields.length > 0 && (
-            <div className="pt-2 border-t border-white/[0.06]">
-              <p className="text-[10px] text-white/50">
-                Use the <code className="bg-white/[0.06] px-1 rounded text-white/70">return_value</code> node to return data matching this schema
+            <div className="pt-2 border-t wf-border-subtle">
+              <p className="text-[10px] wf-fg-muted">
+                Use the <code className="wf-bg-overlay px-1 rounded wf-fg-muted">return_value</code> node to return data matching this schema
               </p>
             </div>
           )}

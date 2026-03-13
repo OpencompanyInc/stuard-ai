@@ -33,59 +33,64 @@ export async function executeFromTrigger(
       engineCtx.logFn(`Warning: Trigger ${triggerId} is not a 'function' trigger (type: ${trigger.type})`);
     }
 
-    // Find edges from this trigger to determine the start step
+    // Find ALL start step IDs from this trigger (supports parallel branches)
     const steps = Array.isArray(spec.steps) ? spec.steps : [];
     const specAny = spec as any;
-    
-    // In StuardSpec, triggers have a 'start' property pointing to the first step
-    // Or we need to find it from the edges array
-    let startStepId: string | undefined;
-    
-    // Method 1: Check if trigger has a 'start' property
-    const triggerAnyStart = trigger as any;
-    if (triggerAnyStart.start) {
-      startStepId = triggerAnyStart.start;
+    const triggerAny = trigger as any;
+    let startStepIds: string[] = [];
+
+    // Method 1: Check trigger.startNodes (array) or trigger.start (single)
+    if (Array.isArray(triggerAny.startNodes) && triggerAny.startNodes.length > 0) {
+      startStepIds = [...triggerAny.startNodes];
+    } else if (triggerAny.start) {
+      startStepIds = [triggerAny.start];
     }
-    
-    // Method 2: Check edges array in spec (from designerModelToStuardSpec)
-    if (!startStepId && Array.isArray(specAny.edges)) {
-      const edge = specAny.edges.find((e: any) => e.from === triggerId);
-      if (edge) startStepId = edge.to;
+
+    // Method 2: Check edges array in spec
+    if (startStepIds.length === 0 && Array.isArray(specAny.edges)) {
+      startStepIds = specAny.edges
+        .filter((e: any) => e.from === triggerId)
+        .map((e: any) => String(e.to))
+        .filter(Boolean);
     }
-    
+
     // Method 3: Check step.next edges that reference this trigger
-    if (!startStepId) {
+    if (startStepIds.length === 0) {
       for (const step of steps) {
         const nextEdges = Array.isArray(step.next) ? step.next : [];
         for (const edge of nextEdges) {
           const edgeAny = edge as any;
-          if (edgeAny.from === triggerId) {
-            startStepId = edgeAny.to || edge.to;
-            break;
+          if (edgeAny.from === triggerId && (edgeAny.to || edge.to)) {
+            startStepIds.push(String(edgeAny.to || edge.to));
           }
         }
-        if (startStepId) break;
       }
     }
-    
+
     // Method 4: Check if any step has this trigger as source
-    if (!startStepId) {
+    if (startStepIds.length === 0) {
       for (const step of steps) {
         const stepAny = step as any;
         if (stepAny.triggerId === triggerId || stepAny.trigger === triggerId) {
-          startStepId = step.id;
-          break;
+          startStepIds.push(step.id);
         }
       }
     }
 
-    if (!startStepId) {
+    // Deduplicate
+    startStepIds = [...new Set(startStepIds)];
+
+    if (startStepIds.length === 0) {
       return { ok: false, error: `no_start_step_for_trigger: ${triggerId}` };
     }
 
-    const startStep = steps.find(s => s.id === startStepId);
-    if (!startStep) {
-      return { ok: false, error: `start_step_not_found: ${startStepId}` };
+    // Verify all start steps exist
+    const map = new Map<string, StuardStep>();
+    for (const s of steps) map.set(s.id, s);
+
+    const validStartSteps = startStepIds.map(id => map.get(id)).filter(Boolean) as StuardStep[];
+    if (validStartSteps.length === 0) {
+      return { ok: false, error: `start_steps_not_found: ${startStepIds.join(', ')}` };
     }
 
     // Build function context with inputs
@@ -100,7 +105,6 @@ export async function executeFromTrigger(
     };
 
     // Map input params if trigger has inputParams defined
-    const triggerAny = trigger as any;
     if (triggerAny.inputParams && Array.isArray(triggerAny.inputParams)) {
       for (const param of triggerAny.inputParams) {
         const paramName = param.name;
@@ -115,52 +119,69 @@ export async function executeFromTrigger(
       data: inputs || {}
     };
 
-    engineCtx.logFn(`📞 Calling function trigger: ${triggerId}`);
+    engineCtx.logFn(`📞 Calling function trigger: ${triggerId} (${validStartSteps.length} branch${validStartSteps.length > 1 ? 'es' : ''})`);
 
-    // Execute the chain starting from startStep
-    const map = new Map<string, StuardStep>();
-    for (const s of steps) map.set(s.id, s);
+    // Helper: run a single linear chain from a start step
+    async function runChain(startStep: StuardStep, ctx: any): Promise<{ ok: boolean; error?: string }> {
+      let currentStep: StuardStep | undefined = startStep;
+      let iterationCount = 0;
+      const maxIterations = 1000;
 
-    let currentStep: StuardStep | undefined = startStep;
-    let iterationCount = 0;
-    const maxIterations = 1000; // Safety limit
+      while (currentStep && iterationCount < maxIterations) {
+        iterationCount++;
 
-    while (currentStep && iterationCount < maxIterations) {
-      iterationCount++;
+        if (ctx.__terminated) break;
 
-      // Check for termination
-      if (functionCtx.__terminated) {
-        break;
+        emitStepEvent(spec.id, currentStep.id, 'running');
+
+        const stepResult = await executeStep(spec, currentStep, ctx, engineCtx);
+
+        if (!stepResult.ok) {
+          engineCtx.logFn(`[fn-chain] ${currentStep.id} (${currentStep.tool}) FAILED: ${stepResult.error}`);
+          emitStepEvent(spec.id, currentStep.id, 'error', { error: stepResult.error });
+          return { ok: false, error: stepResult.error || 'function_step_failed' };
+        }
+
+        emitStepEvent(spec.id, currentStep.id, 'completed', { result: ctx[currentStep.id] });
+
+        if (ctx.__terminated || ctx.__return !== undefined) break;
+
+        // Use edge-based routing from executeStep results
+        const flowEdges = (stepResult.edges || []).filter(e => !e.stream);
+
+        if (flowEdges.length === 0) {
+          // End of chain
+          break;
+        } else if (flowEdges.length === 1) {
+          currentStep = map.get(flowEdges[0].to);
+          if (!currentStep) {
+            engineCtx.logFn(`[fn-chain] WARNING: next step ${flowEdges[0].to} not found in step map`);
+          }
+        } else {
+          // Multiple flow edges within a function branch — run sub-branches in parallel
+          const subBranches = flowEdges.map(e => map.get(e.to)).filter(Boolean) as StuardStep[];
+          const results = await Promise.all(subBranches.map(s => runChain(s, ctx)));
+          const failed = results.find(r => !r.ok);
+          if (failed) return failed;
+          break;
+        }
       }
+      return { ok: true };
+    }
 
-      // Emit 'running' event so UI highlights this step
-      emitStepEvent(spec.id, currentStep.id, 'running');
-
-      const stepResult = await executeStep(spec, currentStep, functionCtx, engineCtx);
-      
-      if (!stepResult.ok) {
-        // Emit 'error' event
-        emitStepEvent(spec.id, currentStep.id, 'error', { error: stepResult.error });
-        return { ok: false, error: stepResult.error || 'function_step_failed' };
-      }
-
-      // Emit 'completed' event
-      emitStepEvent(spec.id, currentStep.id, 'completed', { result: functionCtx[currentStep.id] });
-
-      // Check if this step returned a value (terminated the function)
-      if (functionCtx.__terminated || functionCtx.__return !== undefined) {
-        break;
-      }
-
-      // Move to next step
-      if (stepResult.nextId) {
-        currentStep = map.get(stepResult.nextId);
-      } else if (stepResult.nextIds && stepResult.nextIds.length > 0) {
-        // For simplicity, take the first branch (functions should be linear)
-        currentStep = map.get(stepResult.nextIds[0]);
-      } else {
-        currentStep = undefined;
-      }
+    // Execute branches
+    if (validStartSteps.length === 1) {
+      // Single branch — run sequentially
+      const chainResult = await runChain(validStartSteps[0], functionCtx);
+      if (!chainResult.ok) return chainResult;
+    } else {
+      // Multiple branches — run in parallel (shared context for variable updates)
+      engineCtx.logFn(`⚡ Function ${triggerId}: executing ${validStartSteps.length} parallel branches`);
+      const results = await Promise.all(
+        validStartSteps.map(step => runChain(step, functionCtx))
+      );
+      const failed = results.find(r => !r.ok);
+      if (failed) return failed;
     }
 
     // Return the function result

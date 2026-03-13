@@ -60,25 +60,25 @@ const FilePathActions: React.FC<{ filePath: string }> = ({ filePath }) => {
   };
 
   return (
-    <div className="flex items-center gap-1.5 bg-white/[0.04] border border-white/[0.08] rounded-md px-2 py-1.5 my-0.5">
-      <span className="text-[10px] text-white/40 shrink-0">
+    <div className="flex items-center gap-1.5 wf-bg-overlay border wf-border-subtle rounded-md px-2 py-1.5 my-0.5">
+      <span className="text-[10px] wf-fg-faint shrink-0">
         {isImage ? '🖼' : isAudio ? '🔊' : '📄'}
       </span>
-      <span className="text-[10px] font-medium text-white/70 truncate max-w-[200px]" title={filePath}>
+      <span className="text-[10px] font-medium wf-fg-muted truncate max-w-[200px]" title={filePath}>
         {fileName}
       </span>
       <div className="flex items-center gap-0.5 ml-auto shrink-0">
-        <button onClick={openFile} className="p-0.5 rounded hover:bg-white/10 transition-colors" title="Open file">
-          <ExternalLink className="w-3 h-3 text-white/40 hover:text-white/70" />
+        <button onClick={openFile} className="p-0.5 rounded wf-hover-bg transition-colors" title="Open file">
+          <ExternalLink className="w-3 h-3 wf-fg-faint wf-hover-fg" />
         </button>
-        <button onClick={revealInFolder} className="p-0.5 rounded hover:bg-white/10 transition-colors" title="Show in folder">
-          <Folder className="w-3 h-3 text-white/40 hover:text-white/70" />
+        <button onClick={revealInFolder} className="p-0.5 rounded wf-hover-bg transition-colors" title="Show in folder">
+          <Folder className="w-3 h-3 wf-fg-faint wf-hover-fg" />
         </button>
-        <button onClick={copyPath} className="p-0.5 rounded hover:bg-white/10 transition-colors" title="Copy path">
+        <button onClick={copyPath} className="p-0.5 rounded wf-hover-bg transition-colors" title="Copy path">
           {copied
             ? <Check className="w-3 h-3 text-emerald-400" />
-            : <Copy className="w-3 h-3 text-white/40 hover:text-white/70" />
-          }
+            : <Copy className="w-3 h-3 wf-fg-faint wf-hover-fg" />
+        }
         </button>
       </div>
     </div>
@@ -163,7 +163,7 @@ const ChatMedia: React.FC<{ src: string; alt?: string }> = ({ src, alt }) => {
           controls
           preload="metadata"
           crossOrigin="anonymous"
-          className="w-full rounded-lg border border-white/[0.08] shadow-sm bg-black/50 max-h-[400px]"
+          className="w-full rounded-lg border wf-border-subtle shadow-sm bg-black/50 max-h-[400px]"
           onError={(e) => {
             console.error(`[ChatMedia] Video load error for ${mediaSrc}:`, e.currentTarget.error);
             setError(true);
@@ -175,7 +175,7 @@ const ChatMedia: React.FC<{ src: string; alt?: string }> = ({ src, alt }) => {
 
   return (
     <span className="block my-2 relative group">
-      <div className={`absolute inset-0 bg-white/[0.04] rounded-lg animate-pulse ${loaded ? 'hidden' : 'block'}`} />
+      <div className={`absolute inset-0 wf-bg-overlay rounded-lg animate-pulse ${loaded ? 'hidden' : 'block'}`} />
       <img
         src={mediaSrc}
         alt={alt || 'Image'}
@@ -184,7 +184,7 @@ const ChatMedia: React.FC<{ src: string; alt?: string }> = ({ src, alt }) => {
           console.error(`[ChatMedia] Image load error: ${mediaSrc}`);
           setError(true);
         }}
-        className={`max-w-full max-h-[240px] rounded-lg border border-white/[0.08] shadow-sm object-contain bg-black/50 transition-all duration-300 ${loaded ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}
+        className={`max-w-full max-h-[240px] rounded-lg border wf-border-subtle shadow-sm object-contain bg-black/50 transition-all duration-300 ${loaded ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}
       />
     </span>
   );
@@ -240,10 +240,10 @@ const ModifyWorkflowView = ({
   const canUndo = showSuccess && workflowBefore && onUndo;
 
   return (
-    <div className="mt-3 flex flex-col gap-px text-[11px] border border-white/[0.08] rounded-xl bg-black/20 overflow-hidden shadow-sm">
-      <div className="bg-white/[0.02] px-3 py-2 text-white/60 text-[10px] font-semibold uppercase tracking-wider border-b border-white/[0.04] flex items-center justify-between">
+    <div className="mt-3 flex flex-col gap-px text-[11px] border wf-border-subtle rounded-xl wf-bg-sunken overflow-hidden shadow-sm">
+      <div className="wf-bg-overlay px-3 py-2 wf-fg-muted text-[10px] font-semibold uppercase tracking-wider border-b wf-border-subtle flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="p-1 bg-white/[0.04] rounded-md border border-white/[0.06] shadow-sm">
+          <div className="p-1 wf-bg-overlay rounded-md border wf-border-subtle shadow-sm">
             <Sparkles className="w-3 h-3 text-blue-400" />
           </div>
           {showSuccess ? 'Updates Applied' : showPending ? 'Applying Updates...' : 'Update Status'}
@@ -252,7 +252,7 @@ const ModifyWorkflowView = ({
           <button
             type="button"
             onClick={() => onUndo(workflowBefore)}
-            className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-white/50 hover:text-blue-400 hover:bg-blue-500/20 rounded-md transition-colors"
+            className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium wf-fg-muted hover:text-blue-400 hover:bg-blue-500/20 rounded-md transition-colors"
             title="Undo this change"
           >
             <Undo2 className="w-3 h-3" />
@@ -262,7 +262,7 @@ const ModifyWorkflowView = ({
       </div>
 
       {instructions && (
-        <div className="p-3 bg-transparent border-b border-white/[0.04] whitespace-pre-wrap break-words text-white/70">
+        <div className="p-3 bg-transparent border-b wf-border-subtle whitespace-pre-wrap break-words wf-fg-muted">
           <div className="text-[11px] leading-relaxed">{instructions}</div>
         </div>
       )}
@@ -295,7 +295,7 @@ const ModifyWorkflowView = ({
 
       {showPending && (
         <div className="bg-transparent p-3 whitespace-pre-wrap break-words">
-          <div className="text-[11px] flex items-center gap-2 text-white/50">
+          <div className="text-[11px] flex items-center gap-2 wf-fg-muted">
             <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
             Processing workflow changes...
           </div>
@@ -305,13 +305,13 @@ const ModifyWorkflowView = ({
       {showUnknown && (() => {
         const filePaths = extractFilePaths(result);
         return (
-          <div className="bg-white/[0.02] text-white/60 p-3 whitespace-pre-wrap break-words">
+          <div className="wf-bg-overlay wf-fg-muted p-3 whitespace-pre-wrap break-words">
             {filePaths.length > 0 && (
               <div className="flex flex-col gap-0.5 mb-2">
                 {filePaths.map((fp) => <FilePathActions key={fp} filePath={fp} />)}
               </div>
             )}
-            <div className="flex select-none text-white/30 mb-1 text-[9px] uppercase font-bold">Raw Result</div>
+            <div className="flex select-none wf-fg-faint mb-1 text-[9px] uppercase font-bold">Raw Result</div>
             <div className="text-[10px] font-mono max-h-24 overflow-y-auto scrollbar-minimal">
               {JSON.stringify(result, null, 2)}
             </div>
@@ -375,20 +375,20 @@ const ToolCallItem = ({ evt, onUndo }: { evt: ToolEvent; onUndo?: (snapshot: any
   }
 
   return (
-    <div className={`mb-3 rounded-xl border ${resultFailed ? 'border-amber-500/30 bg-amber-500/10' : 'border-white/[0.06] bg-black/20'} shadow-sm overflow-hidden transition-all group`}>
-      <div className={`px-3 py-2 ${resultFailed ? 'bg-amber-500/20' : 'bg-white/[0.02]'} flex items-center justify-between`}>
+    <div className={`mb-3 rounded-xl border ${resultFailed ? 'border-amber-500/30 bg-amber-500/10' : 'wf-border-subtle wf-bg-sunken'} shadow-sm overflow-hidden transition-all group`}>
+      <div className={`px-3 py-2 ${resultFailed ? 'bg-amber-500/20' : 'wf-bg-overlay'} flex items-center justify-between`}>
         <div className="flex items-center gap-2">
-          <div className={`w-6 h-6 rounded-md flex items-center justify-center text-[10px] border shadow-sm ${resultFailed ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' : 'bg-white/[0.04] text-indigo-400 border-white/[0.08]'}`}>
+          <div className={`w-6 h-6 rounded-md flex items-center justify-center text-[10px] border shadow-sm ${resultFailed ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' : 'wf-bg-overlay text-indigo-400 wf-border-subtle'}`}>
             <Zap className="w-3 h-3" />
           </div>
-          <span className="text-[11px] font-semibold text-white/80">{formatToolName(rawTool || evt.tool)}</span>
+          <span className="text-[11px] font-semibold wf-fg">{formatToolName(rawTool || evt.tool)}</span>
         </div>
         <span className={`text-[10px] font-medium flex items-center gap-1.5 opacity-80 ${statusColor}`}>
           {statusIcon}
         </span>
       </div>
 
-      <div className="px-3 py-2 hidden group-hover:block transition-all border-t border-white/[0.04]">
+      <div className="px-3 py-2 hidden group-hover:block transition-all border-t wf-border-subtle">
         {resultFailed && resultError && (
           <div className="mb-2 p-2 bg-amber-500/10 border border-amber-500/20 rounded text-amber-400 text-[11px] flex gap-2">
             <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
@@ -397,7 +397,7 @@ const ToolCallItem = ({ evt, onUndo }: { evt: ToolEvent; onUndo?: (snapshot: any
             </div>
           </div>
         )}
-        <div className="text-[10px] font-mono text-white/50 whitespace-pre-wrap break-all max-h-32 overflow-y-auto scrollbar-minimal">
+        <div className="text-[10px] font-mono wf-fg-muted whitespace-pre-wrap break-all max-h-32 overflow-y-auto scrollbar-minimal">
           {JSON.stringify(args, null, 2)}
         </div>
         {evt.result && (() => {
@@ -474,24 +474,24 @@ export function ChatHistory({
     <div className="flex flex-col h-full min-h-0 bg-transparent">
       {/* Session History Panel */}
       {showSessionHistory && pastSessions.length > 0 && (
-        <div className="border-b border-white/[0.06] bg-black/20 max-h-64 overflow-y-auto scrollbar-minimal shadow-inner">
-          <div className="px-3 py-2 text-[10px] font-semibold text-white/40 uppercase tracking-wider border-b border-white/[0.04]">
+        <div className="border-b wf-border-subtle wf-bg-sunken max-h-64 overflow-y-auto scrollbar-minimal shadow-inner">
+          <div className="px-3 py-2 text-[10px] font-semibold wf-fg-faint uppercase tracking-wider border-b wf-border-subtle">
             Past Conversations
           </div>
           {pastSessions.map((session) => (
             <div
               key={session.id}
-              className="group px-3 py-2.5 hover:bg-white/[0.04] border-b border-white/[0.04] last:border-0 cursor-pointer flex items-start justify-between gap-2 transition-colors"
+              className="group px-3 py-2.5 wf-hover-bg border-b wf-border-subtle last:border-0 cursor-pointer flex items-start justify-between gap-2 transition-colors"
               onClick={() => onLoadSession && onLoadSession(session.id)}
             >
               <div className="flex-1 min-w-0">
-                <div className="text-[12px] font-medium text-white/80 truncate mb-0.5">
+                <div className="text-[12px] font-medium wf-fg truncate mb-0.5">
                   {session.title || 'Untitled conversation'}
                 </div>
-                <div className="text-[10px] text-white/40 flex items-center gap-1.5">
+                <div className="text-[10px] wf-fg-faint flex items-center gap-1.5">
                   <Clock className="w-3 h-3" />
                   {formatSessionTime(session.updatedAt)}
-                  <span className="w-0.5 h-0.5 rounded-full bg-white/20" />
+                  <span className="w-0.5 h-0.5 rounded-full wf-fg-faint opacity-50" />
                   {session.messages.length} msgs
                 </div>
               </div>
@@ -501,7 +501,7 @@ export function ChatHistory({
                     e.stopPropagation();
                     if (confirm('Delete this conversation?')) onDeleteSession(session.id);
                   }}
-                  className="p-1 text-white/30 hover:text-red-400 hover:bg-red-500/20 rounded opacity-0 group-hover:opacity-100 transition-all"
+                  className="p-1 wf-fg-faint hover:text-red-400 hover:bg-red-500/20 rounded opacity-0 group-hover:opacity-100 transition-all"
                   title="Delete conversation"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -517,7 +517,7 @@ export function ChatHistory({
           <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
             <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 border shadow-sm mt-0.5
               ${msg.role === 'user'
-                ? 'bg-white/[0.06] border-white/[0.1] text-white/70'
+                ? 'wf-bg-overlay wf-border-subtle wf-fg-muted'
                 : 'bg-indigo-500/20 border-indigo-500/30 text-indigo-400'}`}>
               {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
             </div>
@@ -530,7 +530,7 @@ export function ChatHistory({
                     const isVideo = /\.(mp4|webm|mov)(\?|$)/i.test(src) || (img.mimeType && img.mimeType.startsWith('video/'));
 
                     return (
-                      <div key={idx} className="relative rounded-lg overflow-hidden border border-white/[0.08] shadow-sm max-w-[200px] bg-white/[0.06]">
+                      <div key={idx} className="relative rounded-lg overflow-hidden border wf-border-subtle shadow-sm max-w-[200px] wf-bg-overlay">
                         {isVideo ? (
                           <video src={src} className="max-h-48 w-full object-cover" controls={false} muted onMouseOver={e => e.currentTarget.play()} onMouseOut={e => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
                         ) : (
@@ -544,8 +544,8 @@ export function ChatHistory({
 
               <div className={`px-4 py-3 rounded-3xl shadow-sm text-[13px] leading-relaxed
                 ${msg.role === 'user'
-                  ? 'bg-white/[0.08] text-white rounded-tr-sm border border-white/[0.04]'
-                  : 'bg-black/20 border border-white/[0.04] text-white/90 rounded-tl-sm'}`}>
+                  ? 'wf-bg-elevated wf-fg rounded-tr-sm border wf-border-subtle'
+                  : 'wf-bg-sunken border wf-border-subtle wf-fg rounded-tl-sm'}`}>
                 <div className="markdown-body">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkMath]}
@@ -569,17 +569,17 @@ export function ChatHistory({
                         const language = className.replace('language-', '') || 'code';
                         
                         return (
-                          <div className="my-4 rounded-xl overflow-hidden bg-white/[0.04] border border-white/[0.08] shadow-sm flex flex-col">
-                            <div className="bg-white/[0.06] px-4 py-2 border-b border-white/[0.08] flex items-center justify-between">
-                              <span className="text-xs text-white/50 font-mono uppercase tracking-wider">{language}</span>
+                          <div className="my-4 rounded-xl overflow-hidden wf-bg-overlay border wf-border-subtle shadow-sm flex flex-col">
+                            <div className="wf-bg-overlay px-4 py-2 border-b wf-border-subtle flex items-center justify-between">
+                              <span className="text-xs wf-fg-muted font-mono uppercase tracking-wider">{language}</span>
                               <div className="flex gap-1.5">
                                 <div className="w-2.5 h-2.5 rounded-full bg-red-400" />
                                 <div className="w-2.5 h-2.5 rounded-full bg-yellow-400" />
                                 <div className="w-2.5 h-2.5 rounded-full bg-green-400" />
                               </div>
                             </div>
-                            <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4 bg-slate-50/50">
-                              <code className={clsx(className, "font-mono text-[13px] inline-block min-w-full leading-[1.7] text-white/90 whitespace-pre tab-4")} {...childProps}>{codeContent}</code>
+                            <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4 wf-bg-sunken">
+                              <code className={clsx(className, "font-mono text-[13px] inline-block min-w-full leading-[1.7] wf-fg whitespace-pre tab-4")} {...childProps}>{codeContent}</code>
                             </div>
                           </div>
                         );
@@ -587,7 +587,7 @@ export function ChatHistory({
                       code: ({ className, children, ...props }: any) => {
                         const isInline = !String(className).includes('language-');
                         return isInline ? (
-                          <code className="bg-white/[0.06] text-white/90 px-[6px] py-[2px] rounded-md text-[85%] font-mono font-medium border border-white/[0.08] shadow-sm align-middle" {...props}>
+                          <code className="wf-bg-overlay wf-fg px-[6px] py-[2px] rounded-md text-[85%] font-mono font-medium border wf-border-subtle shadow-sm align-middle" {...props}>
                             {children}
                           </code>
                         ) : (
@@ -596,31 +596,31 @@ export function ChatHistory({
                           </code>
                         );
                       },
-                      ul: (props) => <ul className="list-disc pl-6 mb-3 space-y-1.5 marker:text-white/30 marker:text-sm" {...props} />,
-                      ol: (props) => <ol className="list-decimal pl-6 mb-3 space-y-1.5 marker:text-white/30 marker:text-sm marker:font-medium" {...props} />,
+                      ul: (props) => <ul className="list-disc pl-6 mb-3 space-y-1.5 marker:wf-fg-faint marker:text-sm" {...props} />,
+                      ol: (props) => <ol className="list-decimal pl-6 mb-3 space-y-1.5 marker:wf-fg-faint marker:text-sm marker:font-medium" {...props} />,
                       li: (props) => <li className="leading-[1.7] pl-1" {...props} />,
                       blockquote: (props) => (
                         <blockquote className="border-l-4 border-indigo-500/40 pl-4 my-3 py-2 bg-gradient-to-r from-indigo-500/10 to-transparent rounded-r-lg" {...props}>
-                          <span className="text-white/60 italic leading-[1.7]">{props.children}</span>
+                          <span className="wf-fg-muted italic leading-[1.7]">{props.children}</span>
                         </blockquote>
                       ),
-                      h1: (props) => <h1 className="text-lg font-bold mb-3 mt-4 first:mt-0 tracking-tight border-b border-white/[0.06] pb-2" {...props} />,
+                      h1: (props) => <h1 className="text-lg font-bold mb-3 mt-4 first:mt-0 tracking-tight border-b wf-border-subtle pb-2" {...props} />,
                       h2: (props) => <h2 className="text-base font-bold mb-2.5 mt-3.5 first:mt-0 tracking-tight" {...props} />,
                       h3: (props) => <h3 className="text-sm font-bold mb-2 mt-3 first:mt-0" {...props} />,
                       h4: (props) => <h4 className="text-sm font-semibold mb-1.5 mt-2.5 first:mt-0" {...props} />,
-                      strong: (props) => <strong className="font-bold text-white" {...props} />,
+                      strong: (props) => <strong className="font-bold wf-fg" {...props} />,
                       em: (props) => <em className="italic opacity-90" {...props} />,
                       table: (props) => (
-                        <div className="overflow-x-auto my-3 rounded-xl border border-white/[0.06] shadow-sm">
+                        <div className="overflow-x-auto my-3 rounded-xl border wf-border-subtle shadow-sm">
                           <table className="min-w-full divide-y divide-white/[0.06] text-sm" {...props} />
                         </div>
                       ),
-                      thead: (props) => <thead className="bg-black/20" {...props} />,
+                      thead: (props) => <thead className="wf-bg-sunken" {...props} />,
                       tbody: (props) => <tbody className="divide-y divide-white/[0.04] bg-transparent" {...props} />,
-                      tr: (props) => <tr className="hover:bg-white/[0.02] transition-colors" {...props} />,
-                      th: (props) => <th className="px-4 py-2.5 text-left font-bold uppercase tracking-wider text-[11px] text-white/50" {...props} />,
+                      tr: (props) => <tr className="hover:wf-bg-overlay transition-colors" {...props} />,
+                      th: (props) => <th className="px-4 py-2.5 text-left font-bold uppercase tracking-wider text-[11px] wf-fg-muted" {...props} />,
                       td: (props) => <td className="px-4 py-2.5 whitespace-pre-wrap" {...props} />,
-                      hr: (props) => <hr className="my-4 border-white/[0.06]" {...props} />,
+                      hr: (props) => <hr className="my-4 wf-border-subtle" {...props} />,
                     }}
                   >
                     {preprocessMessageContent(msg.content)}
@@ -654,7 +654,7 @@ export function ChatHistory({
 
         {(streamItems.length > 0 || busy || reasoningText) && (
           <div className="flex gap-3">
-            <div className="w-8 h-8 rounded-full bg-indigo-600 border border-indigo-700 text-white flex items-center justify-center shrink-0 shadow-sm mt-0.5">
+            <div className="w-8 h-8 rounded-full bg-indigo-600 border border-indigo-700 wf-fg flex items-center justify-center shrink-0 shadow-sm mt-0.5">
               <Bot className="w-4 h-4" />
             </div>
             <div className="flex flex-col gap-2 max-w-[90%] w-full">
@@ -669,7 +669,7 @@ export function ChatHistory({
 
               {streamItems.map((item, i) => (
                 item.type === 'text' ? (
-                  <div key={i} className="px-4 py-3 rounded-3xl rounded-tl-sm bg-black/20 border border-white/[0.04] text-white/90 shadow-sm text-[13px] leading-relaxed">
+                  <div key={i} className="px-4 py-3 rounded-3xl rounded-tl-sm wf-bg-sunken border wf-border-subtle wf-fg shadow-sm text-[13px] leading-relaxed">
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm, remarkMath]}
                       rehypePlugins={[rehypeKatex]}
@@ -692,51 +692,51 @@ export function ChatHistory({
                           const language = className.replace('language-', '') || 'code';
                           
                           return (
-                            <div className="my-4 rounded-xl overflow-hidden bg-black/60 border border-white/[0.08] shadow-xl flex flex-col">
-                              <div className="bg-white/[0.02] px-4 py-2 border-b border-white/[0.06] flex items-center justify-between">
-                                <span className="text-xs text-white/40 font-mono uppercase tracking-wider">{language}</span>
+                            <div className="my-4 rounded-xl overflow-hidden bg-black/60 border wf-border-subtle shadow-xl flex flex-col">
+                              <div className="wf-bg-overlay px-4 py-2 border-b wf-border-subtle flex items-center justify-between">
+                                <span className="text-xs wf-fg-faint font-mono uppercase tracking-wider">{language}</span>
                                 <div className="flex gap-1.5">
                                   <div className="w-2.5 h-2.5 rounded-full bg-red-500/40" />
                                   <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/40" />
                                   <div className="w-2.5 h-2.5 rounded-full bg-green-500/40" />
                                 </div>
                             </div>
-                            <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4 bg-slate-50/50">
-                              <code className={clsx(className, "font-mono text-[13px] inline-block min-w-full leading-[1.7] text-white/90 whitespace-pre tab-4")} {...childProps}>{codeContent}</code>
+                            <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4 wf-bg-sunken">
+                              <code className={clsx(className, "font-mono text-[13px] inline-block min-w-full leading-[1.7] wf-fg whitespace-pre tab-4")} {...childProps}>{codeContent}</code>
                             </div>
                           </div>
                         );
                       },
                       code: ({ className, children, ...props }: any) => (
-                        <code className="bg-white/[0.06] text-white/90 px-[6px] py-[2px] rounded-md text-[85%] font-mono font-medium border border-white/[0.08] shadow-sm align-middle" {...props}>
+                        <code className="wf-bg-overlay wf-fg px-[6px] py-[2px] rounded-md text-[85%] font-mono font-medium border wf-border-subtle shadow-sm align-middle" {...props}>
                           {children}
                         </code>
                       ),
-                        ul: (props) => <ul className="list-disc pl-6 mb-3 space-y-1.5 marker:text-white/30 marker:text-sm" {...props} />,
-                        ol: (props) => <ol className="list-decimal pl-6 mb-3 space-y-1.5 marker:text-white/30 marker:text-sm marker:font-medium" {...props} />,
+                        ul: (props) => <ul className="list-disc pl-6 mb-3 space-y-1.5 marker:wf-fg-faint marker:text-sm" {...props} />,
+                        ol: (props) => <ol className="list-decimal pl-6 mb-3 space-y-1.5 marker:wf-fg-faint marker:text-sm marker:font-medium" {...props} />,
                         li: (props) => <li className="leading-[1.7] pl-1" {...props} />,
                         blockquote: (props) => (
                           <blockquote className="border-l-4 border-indigo-500/40 pl-4 my-3 py-2 bg-gradient-to-r from-indigo-500/10 to-transparent rounded-r-lg" {...props}>
-                            <span className="text-white/60 italic leading-[1.7]">{props.children}</span>
+                            <span className="wf-fg-muted italic leading-[1.7]">{props.children}</span>
                           </blockquote>
                         ),
-                        h1: (props) => <h1 className="text-lg font-bold mb-3 mt-4 first:mt-0 tracking-tight border-b border-white/[0.06] pb-2" {...props} />,
+                        h1: (props) => <h1 className="text-lg font-bold mb-3 mt-4 first:mt-0 tracking-tight border-b wf-border-subtle pb-2" {...props} />,
                         h2: (props) => <h2 className="text-base font-bold mb-2.5 mt-3.5 first:mt-0 tracking-tight" {...props} />,
                         h3: (props) => <h3 className="text-sm font-bold mb-2 mt-3 first:mt-0" {...props} />,
                         h4: (props) => <h4 className="text-sm font-semibold mb-1.5 mt-2.5 first:mt-0" {...props} />,
-                        strong: (props) => <strong className="font-bold text-white" {...props} />,
+                        strong: (props) => <strong className="font-bold wf-fg" {...props} />,
                         em: (props) => <em className="italic opacity-90" {...props} />,
                         table: (props) => (
-                          <div className="overflow-x-auto my-3 rounded-xl border border-white/[0.06] shadow-sm">
+                          <div className="overflow-x-auto my-3 rounded-xl border wf-border-subtle shadow-sm">
                             <table className="min-w-full divide-y divide-white/[0.06] text-sm" {...props} />
                           </div>
                         ),
-                        thead: (props) => <thead className="bg-black/20" {...props} />,
+                        thead: (props) => <thead className="wf-bg-sunken" {...props} />,
                         tbody: (props) => <tbody className="divide-y divide-white/[0.04] bg-transparent" {...props} />,
-                        tr: (props) => <tr className="hover:bg-white/[0.02] transition-colors" {...props} />,
-                        th: (props) => <th className="px-4 py-2.5 text-left font-bold uppercase tracking-wider text-[11px] text-white/50" {...props} />,
+                        tr: (props) => <tr className="hover:wf-bg-overlay transition-colors" {...props} />,
+                        th: (props) => <th className="px-4 py-2.5 text-left font-bold uppercase tracking-wider text-[11px] wf-fg-muted" {...props} />,
                         td: (props) => <td className="px-4 py-2.5 whitespace-pre-wrap" {...props} />,
-                        hr: (props) => <hr className="my-4 border-white/[0.06]" {...props} />,
+                        hr: (props) => <hr className="my-4 wf-border-subtle" {...props} />,
                       }}
                     >
                       {preprocessMessageContent(item.content)}
@@ -748,7 +748,7 @@ export function ChatHistory({
               ))}
 
               {busy && streamItems.length === 0 && !reasoningText && (
-                <div className="flex items-center gap-2 text-white/40 text-xs px-2 py-1">
+                <div className="flex items-center gap-2 wf-fg-faint text-xs px-2 py-1">
                   <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce" />
                   <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce delay-75" />
                   <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce delay-150" />

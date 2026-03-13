@@ -54,57 +54,46 @@ export function CodePanel({ model, errors, onClose, onUpdateModel }: CodePanelPr
   const handleModeChange = (newMode: CodeMode) => { setMode(newMode); setEditing(false); setParseError(''); };
   
   return (
-    <div className="flex flex-col h-full" style={{ background: '#1e1e1e' }}>
+    <div className="flex flex-col h-full wf-bg wf-fg">
       {/* VS Code Title Bar */}
-      <div className="flex items-center justify-between shrink-0 px-2" style={{ height: 35, background: '#252526', borderBottom: '1px solid #3c3c3c' }}>
+      <div className="flex items-center justify-between shrink-0 border-b wf-border-subtle wf-bg-overlay px-2" style={{ height: 35 }}>
         <div className="flex items-center gap-1 min-w-0">
           {/* File tabs like VS Code */}
           <button
             onClick={() => handleModeChange('json')}
-            className="flex items-center gap-1.5 px-3 py-1 text-[12px] shrink-0 transition-colors"
-            style={{
-              background: mode === 'json' ? '#1e1e1e' : 'transparent',
-              color: mode === 'json' ? '#ffffff' : '#969696',
-              borderTop: mode === 'json' ? '1px solid #007acc' : '1px solid transparent',
-              borderBottom: mode === 'json' ? 'none' : undefined,
-            }}
+            className={`flex items-center gap-1.5 px-3 py-1 text-[12px] shrink-0 transition-colors ${mode === 'json' ? 'wf-fg wf-bg-elevated border-t-2 border-indigo-500' : 'wf-fg-faint hover:wf-fg hover:wf-bg-sunken border-t-2 border-transparent'}`}
           >
-            <Braces className="w-3.5 h-3.5" style={{ color: '#e8ab53' }} />
+            <Braces className="w-3.5 h-3.5 text-yellow-500" />
             <span>workflow.json</span>
           </button>
           <button
             onClick={() => handleModeChange('debug')}
-            className="flex items-center gap-1.5 px-3 py-1 text-[12px] shrink-0 transition-colors"
-            style={{
-              background: mode === 'debug' ? '#1e1e1e' : 'transparent',
-              color: mode === 'debug' ? '#ffffff' : '#969696',
-              borderTop: mode === 'debug' ? '1px solid #007acc' : '1px solid transparent',
-            }}
+            className={`flex items-center gap-1.5 px-3 py-1 text-[12px] shrink-0 transition-colors ${mode === 'debug' ? 'wf-fg wf-bg-elevated border-t-2 border-indigo-500' : 'wf-fg-faint hover:wf-fg hover:wf-bg-sunken border-t-2 border-transparent'}`}
           >
-            <AlertTriangle className="w-3.5 h-3.5" style={{ color: errCount > 0 ? '#f14c4c' : '#6a9955' }} />
+            <AlertTriangle className={`w-3.5 h-3.5 ${errCount > 0 ? 'text-red-500' : 'text-emerald-500'}`} />
             <span>problems</span>
             {errCount > 0 && (
-              <span className="px-1 py-px text-[9px] font-bold rounded-sm" style={{ background: '#f14c4c', color: '#ffffff' }}>{errCount}</span>
+              <span className="px-1 py-px text-[9px] font-bold rounded-sm bg-red-500 text-white">{errCount}</span>
             )}
           </button>
         </div>
-        <button onClick={onClose} className="p-1 rounded-sm hover:bg-[#ffffff15] transition-colors" style={{ color: '#969696' }}>
+        <button onClick={onClose} className="p-1 rounded-sm wf-fg-faint hover:wf-fg hover:wf-bg-sunken transition-colors" title="Close">
           <X className="w-4 h-4" />
         </button>
       </div>
 
       {/* VS Code Breadcrumb Bar */}
-      <div className="flex items-center gap-1 px-3 shrink-0" style={{ height: 22, background: '#1e1e1e', borderBottom: '1px solid #2d2d2d' }}>
-        <span className="text-[11px]" style={{ color: '#969696' }}>{model.name || 'workflow'}</span>
-        <ChevronRight className="w-3 h-3" style={{ color: '#4d4d4d' }} />
-        <span className="text-[11px]" style={{ color: '#cccccc' }}>{mode === 'json' ? 'source' : 'diagnostics'}</span>
+      <div className="flex items-center gap-1 px-3 py-1.5 shrink-0 border-b wf-border-subtle wf-bg-sunken">
+        <span className="text-[11px] font-medium wf-fg-muted">{model.name || 'workflow'}</span>
+        <ChevronRight className="w-3 h-3 wf-fg-faint" />
+        <span className="text-[11px] wf-fg">{mode === 'json' ? 'source' : 'diagnostics'}</span>
         {editing && (
           <>
-            <span className="text-[11px] ml-2 px-1.5 rounded-sm" style={{ background: '#007acc33', color: '#007acc' }}>EDITING</span>
+            <span className="text-[10px] font-bold ml-2 px-1.5 py-0.5 rounded-sm bg-indigo-500/20 text-indigo-500">EDITING</span>
           </>
         )}
         {!editing && mode === 'json' && (
-          <button onClick={startEdit} className="ml-auto flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-sm hover:bg-[#ffffff10] transition-colors" style={{ color: '#969696' }}>
+          <button onClick={startEdit} className="ml-auto flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-sm wf-fg-muted hover:wf-fg hover:wf-bg-overlay transition-colors">
             <Pencil className="w-3 h-3" />
             Edit
           </button>
@@ -113,20 +102,20 @@ export function CodePanel({ model, errors, onClose, onUpdateModel }: CodePanelPr
 
       {/* Parse error banner */}
       {parseError && (
-        <div className="px-3 py-1.5 flex items-center gap-2" style={{ background: '#5a1d1d', borderBottom: '1px solid #6e2a2a' }}>
-          <span className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] shrink-0" style={{ background: '#f14c4c', color: '#1e1e1e', fontWeight: 700 }}>!</span>
-          <span className="text-[12px] truncate" style={{ color: '#f48771' }}>{parseError}</span>
+        <div className="px-3 py-1.5 flex items-center gap-2 bg-red-500/10 border-b border-red-500/20">
+          <span className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] shrink-0 bg-red-500 text-white font-bold">!</span>
+          <span className="text-[12px] truncate text-red-500">{parseError}</span>
         </div>
       )}
       
       {/* Problems panel (when in debug mode or expanded) */}
       {mode === 'debug' && errors.length > 0 && (
-        <div className="max-h-40 overflow-auto" style={{ background: '#1e1e1e', borderBottom: '1px solid #3c3c3c' }}>
+        <div className="max-h-40 overflow-auto wf-bg-sunken border-b wf-border-subtle custom-scrollbar">
           {errors.map((e, i) => (
-            <div key={i} className="flex items-center gap-2 px-4 py-1 hover:bg-[#2a2d2e] text-[12px] cursor-default" style={{ color: e.type === 'error' ? '#f14c4c' : '#cca700' }}>
+            <div key={i} className={`flex items-center gap-2 px-4 py-1.5 hover:wf-bg-overlay text-[12px] cursor-default ${e.type === 'error' ? 'text-red-500' : 'text-amber-500'}`}>
               {e.type === 'error' ? <X className="w-3 h-3 shrink-0" /> : <AlertTriangle className="w-3 h-3 shrink-0" />}
-              <span style={{ color: '#d4d4d4' }}>{e.message}</span>
-              {e.nodeId && <span className="ml-auto text-[10px]" style={{ color: '#858585' }}>[{e.nodeId}]</span>}
+              <span className="wf-fg-muted">{e.message}</span>
+              {e.nodeId && <span className="ml-auto text-[10px] wf-fg-faint">[{e.nodeId}]</span>}
             </div>
           ))}
         </div>
@@ -145,11 +134,11 @@ export function CodePanel({ model, errors, onClose, onUpdateModel }: CodePanelPr
 
       {/* Edit action bar */}
       {editing && (
-        <div className="flex items-center gap-2 px-3 py-2 shrink-0" style={{ background: '#252526', borderTop: '1px solid #3c3c3c' }}>
-          <button onClick={cancelEdit} className="flex-1 py-1.5 text-[12px] font-medium rounded-sm transition-colors hover:bg-[#ffffff10]" style={{ color: '#cccccc', border: '1px solid #3c3c3c' }}>
+        <div className="flex items-center gap-2 px-3 py-2 shrink-0 wf-bg-overlay border-t wf-border-subtle">
+          <button onClick={cancelEdit} className="flex-1 py-1.5 text-[12px] font-medium rounded-md transition-colors wf-surface-muted hover:wf-bg-sunken wf-fg">
             Cancel
           </button>
-          <button onClick={applyEdit} className="flex-1 py-1.5 text-[12px] font-medium rounded-sm transition-colors hover:opacity-90" style={{ background: '#007acc', color: '#ffffff' }}>
+          <button onClick={applyEdit} className="flex-1 py-1.5 text-[12px] font-medium rounded-md transition-colors wf-primary-btn">
             Apply Changes
           </button>
         </div>

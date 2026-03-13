@@ -5,6 +5,7 @@ import React from "react";
 import { Link2, MoreHorizontal, Play, Check, X, Radio } from "lucide-react";
 import { getToolIcon, getToolColor, CATEGORY_COLORS } from "../constants/paletteCategories";
 import type { DesignerNode, DesignerTrigger } from "../types";
+import { useWorkflowTheme } from "../WorkflowThemeContext";
 
 export type StepExecutionStatus = 'pending' | 'running' | 'completed' | 'error';
 
@@ -62,7 +63,7 @@ interface WorkflowNodeProps {
 }
 
 const DARK_CATEGORY_COLORS: Record<string, { bg: string; border: string; text: string }> = {
-  slate: { bg: 'bg-slate-800/50', border: 'border-slate-500/60', text: 'text-white/40' },
+  slate: { bg: 'bg-black/80', border: 'border-white/[0.12]', text: 'text-white/40' },
   amber: { bg: 'bg-amber-900/30', border: 'border-amber-500/60', text: 'text-amber-400' },
   purple: { bg: 'bg-purple-900/30', border: 'border-purple-500/60', text: 'text-purple-400' },
   blue: { bg: 'bg-blue-900/30', border: 'border-blue-500/60', text: 'text-blue-400' },
@@ -87,11 +88,19 @@ export function WorkflowNode({
   hasStreamOut, hasStreamIn, connectingStreamFrom,
   onSelect, onMouseDown, onContextMenu, onConnect, onStreamConnect
 }: WorkflowNodeProps) {
+  const { isDark } = useWorkflowTheme();
   const tool = ('tool' in node ? node.tool : node.type) || '';
   const Icon = getToolIcon(tool, isTrigger);
   const colorKey = getToolColor(tool, isTrigger);
-  const styles = CATEGORY_COLORS[colorKey] || CATEGORY_COLORS.slate;
+  const lightStyles = CATEGORY_COLORS[colorKey] || CATEGORY_COLORS.slate;
   const darkStyles = DARK_CATEGORY_COLORS[colorKey] || DARK_CATEGORY_COLORS.slate;
+  const themeStyles = isDark
+    ? darkStyles
+    : {
+      bg: lightStyles.bg,
+      border: lightStyles.border,
+      text: lightStyles.icon,
+    };
 
   const nodeArgs = ('args' in node ? (node as any).args : undefined) || {};
   const isStreamProducer = STREAM_ALWAYS_TOOLS.has(tool) || (STREAM_CAPABLE_TOOLS.has(tool) && (nodeArgs.stream === true || nodeArgs.mode === 'stream'));
@@ -104,7 +113,7 @@ export function WorkflowNode({
     if (multiSelected) return 'border-blue-400 ring-2 ring-blue-400/20 shadow-[0_4px_20px_rgb(59,130,246,0.12)] z-10';
     if (connecting) return 'border-dashed border-blue-500/40 bg-blue-500/5 shadow-none';
     if (reconnectTarget) return 'border-amber-400 ring-4 ring-amber-400/20 shadow-[0_8px_30px_rgb(245,158,11,0.2)] cursor-pointer z-10 animate-pulse';
-    return `${darkStyles.border} shadow-sm hover:shadow-md hover:-translate-y-0.5`;
+    return `${themeStyles.border} shadow-sm hover:shadow-md hover:-translate-y-0.5`;
   };
 
   const getStatusIcon = () => {
@@ -112,7 +121,7 @@ export function WorkflowNode({
       case 'running': return <Play className="w-3 h-3 text-white fill-current animate-pulse" />;
       case 'completed': return <Check className="w-3.5 h-3.5 text-white" />;
       case 'error': return <X className="w-3.5 h-3.5 text-white" />;
-      default: return <Icon className={`w-4 h-4 ${darkStyles.text}`} />;
+      default: return <Icon className={`w-4 h-4 ${themeStyles.text}`} />;
     }
   };
 
@@ -121,13 +130,13 @@ export function WorkflowNode({
       case 'running': return 'bg-emerald-500';
       case 'completed': return 'bg-emerald-500';
       case 'error': return 'bg-red-500';
-      default: return `${darkStyles.bg} ${darkStyles.border} border`;
+      default: return `${themeStyles.bg} ${themeStyles.border} border`;
     }
   };
 
   return (
     <div
-      className={`absolute w-64 rounded-[20px] border-2 bg-black transition-all duration-200 select-none flex flex-col overflow-visible group ${getStatusClasses()}`}
+      className={`absolute w-64 rounded-[20px] border-2 transition-all duration-200 select-none flex flex-col overflow-visible group wf-node-card ${getStatusClasses()}`}
       style={{ left: node.position.x, top: node.position.y }}
       onClick={e => { e.stopPropagation(); onSelect(e); }}
       onMouseDown={e => { e.stopPropagation(); onMouseDown(e); }}
@@ -141,16 +150,16 @@ export function WorkflowNode({
     >
       <div className="rounded-[20px] overflow-hidden flex flex-col flex-1">
         {/* Header */}
-        <div className="px-3 py-2.5 flex items-center gap-3 border-b border-white/[0.04]">
+        <div className="px-3 py-2.5 flex items-center gap-3 border-b wf-node-header">
           <div className={`w-8 h-8 rounded-xl shrink-0 transition-colors duration-300 flex items-center justify-center shadow-sm ${getStatusBg()}`}>
             {getStatusIcon()}
           </div>
 
           <div className="flex-1 min-w-0">
-            <div className="text-xs font-bold text-white/90 truncate leading-tight">
+            <div className="text-xs font-bold truncate leading-tight wf-node-title">
               {node.label || tool}
             </div>
-            <div className={`text-[10px] truncate font-medium mt-0.5 opacity-70 ${darkStyles.text}`}>
+            <div className={`text-[10px] truncate font-medium mt-0.5 opacity-80 ${themeStyles.text}`}>
               {tool}
             </div>
           </div>
@@ -161,32 +170,32 @@ export function WorkflowNode({
           {Object.keys(node.args || {}).length > 0 ? (
             <div className="space-y-1">
               {Object.entries(node.args || {}).slice(0, 3).map(([k, v]) => (
-                <div key={k} className="flex items-center gap-2 text-[10px] bg-white/[0.03] px-2 py-1 rounded-lg border border-white/[0.06]">
-                  <span className="text-white/35 font-medium truncate max-w-[70px] flex-shrink-0" title={k}>{k}</span>
-                  <span className="text-white/60 truncate flex-1 font-mono">
+                <div key={k} className="flex items-center gap-2 text-[10px] px-2 py-1 rounded-lg border wf-node-arg">
+                  <span className="font-medium truncate max-w-[70px] flex-shrink-0 wf-node-arg-key" title={k}>{k}</span>
+                  <span className="truncate flex-1 font-mono wf-node-arg-value">
                     {formatArgPreview(v)}
                   </span>
                 </div>
               ))}
               {Object.keys(node.args || {}).length > 3 && (
-                <div className="text-[9px] text-white/25 font-medium pl-1 flex items-center gap-1 pt-0.5">
+                <div className="text-[9px] font-medium pl-1 flex items-center gap-1 pt-0.5 wf-fg-faint">
                   <MoreHorizontal className="w-3 h-3" />
                   {Object.keys(node.args || {}).length - 3} more
                 </div>
               )}
             </div>
           ) : (
-            <div className="text-[10px] text-white/20 italic px-1 py-0.5">No configuration</div>
+            <div className="text-[10px] italic px-1 py-0.5 wf-node-empty">No configuration</div>
           )}
         </div>
       </div>
 
       {/* Action Handle - Connect (control wire, right side) */}
       <div
-        className={`absolute -right-3.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full border-4 border-black shadow-sm flex items-center justify-center cursor-crosshair transition-all duration-200 z-20
+        className={`absolute -right-3.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full border-4 wf-node-handle-ring shadow-sm flex items-center justify-center cursor-crosshair transition-all duration-200 z-20
           ${connecting
-            ? 'bg-blue-600 scale-110'
-            : 'bg-slate-700 text-white/40 opacity-0 group-hover:opacity-100 hover:bg-blue-500 hover:text-white hover:scale-110'
+            ? 'bg-blue-600 text-white scale-110'
+            : 'wf-node-handle-idle opacity-0 group-hover:opacity-100 hover:scale-110'
           }`}
         onClick={e => { e.stopPropagation(); onConnect(); }}
         title="Connect"
@@ -196,13 +205,13 @@ export function WorkflowNode({
 
       {/* Input Handle (visual only, left side) */}
       {!isTrigger && (
-        <div className={`absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border-2 border-black shadow-sm ${darkStyles.bg}`} />
+        <div className={`absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border-2 wf-node-handle-ring shadow-sm ${themeStyles.bg}`} />
       )}
 
       {/* Stream Output Port */}
       {(isStreamProducer || hasStreamOut) && (
         <div
-          className={`absolute -bottom-3.5 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full border-4 border-black shadow-sm flex items-center justify-center cursor-crosshair transition-all duration-200 z-20
+          className={`absolute -bottom-3.5 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full border-4 wf-node-handle-ring shadow-sm flex items-center justify-center cursor-crosshair transition-all duration-200 z-20
             ${connectingStreamFrom === node.id
               ? 'bg-cyan-500 scale-110'
               : hasStreamOut
@@ -219,8 +228,8 @@ export function WorkflowNode({
       {/* Stream Input Ports */}
       {hasStreamIn && (
         <>
-          <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 rounded-full border-2 border-black shadow-sm bg-cyan-800 border-cyan-600" title="Stream input" />
-          <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 rounded-full border-2 border-black shadow-sm bg-cyan-800 border-cyan-600" title="Stream input" />
+          <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 rounded-full border-2 wf-node-handle-ring shadow-sm bg-cyan-800 border-cyan-600" title="Stream input" />
+          <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 rounded-full border-2 wf-node-handle-ring shadow-sm bg-cyan-800 border-cyan-600" title="Stream input" />
         </>
       )}
 

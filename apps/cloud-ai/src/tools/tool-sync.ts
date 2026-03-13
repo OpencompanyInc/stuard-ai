@@ -1,7 +1,7 @@
 import { getSupabaseService } from '../supabase';
 import { getToolRegistry, getToolMetadata } from './tool-registry';
 import { embedMany } from 'ai';
-import { openai } from '@ai-sdk/openai';
+import { google } from '../utils/models';
 import { clearToolCache } from './sis-supabase';
 import { z } from 'zod';
 
@@ -9,7 +9,7 @@ import { z } from 'zod';
 import './meta-tools';
 import { initToolRegistry } from './meta-tools';
 
-const EMBEDDING_MODEL = 'text-embedding-3-large';
+const EMBEDDING_MODEL = 'gemini-embedding-2-preview';
 const BATCH_SIZE = 50;
 
 export interface ToolSyncResult {
@@ -297,7 +297,7 @@ export async function syncToolsToSupabase(options: {
       });
 
       const { embeddings } = await embedMany({
-        model: openai.embedding(EMBEDDING_MODEL),
+        model: google.textEmbeddingModel(EMBEDDING_MODEL),
         values: texts,
       });
 

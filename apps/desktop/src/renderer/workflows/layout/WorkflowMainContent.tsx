@@ -265,20 +265,20 @@ export function WorkflowMainContent({
           {/* Floating AI Chat Panel */}
           {viewMode === "ai" && (
             <div
-              className="absolute right-20 top-24 bottom-24 flex flex-col z-20 bg-white/[0.06] backdrop-blur-2xl border border-white/[0.1] rounded-[20px] shadow-2xl pointer-events-auto"
-              style={{ width: aiLeftWidth, minWidth: 320 }}
+              className="absolute right-20 top-24 bottom-24 flex flex-col z-20 rounded-[20px] shadow-2xl pointer-events-auto border wf-panel"
+              style={{ width: aiLeftWidth, minWidth: 320, backdropFilter: 'var(--wf-glass-blur)' }}
             >
               {/* Header */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06] shrink-0 bg-white/[0.02] rounded-t-[20px] z-20">
-                <span className="font-semibold text-white/90 text-sm">AI Assistant</span>
+              <div className="flex items-center justify-between px-4 py-3 border-b shrink-0 rounded-t-[20px] z-20 wf-border-subtle" style={{ background: 'var(--wf-bg-overlay)' }}>
+                <span className="font-semibold text-sm wf-fg">AI Assistant</span>
                 <div className="flex items-center gap-1">
-                  <button onClick={chat.newSession} className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-colors" title="New Chat">
+                  <button onClick={chat.newSession} className="p-1.5 rounded-lg wf-fg-faint wf-hover-fg wf-hover-bg transition-colors" style={{ ['--tw-bg-opacity' as any]: 1 }} title="New Chat">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
                   </button>
-                  <button onClick={() => chat.setShowSessionHistory(!chat.showSessionHistory)} className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-colors" title="History">
+                  <button onClick={() => chat.setShowSessionHistory(!chat.showSessionHistory)} className="p-1.5 rounded-lg wf-fg-faint wf-hover-fg wf-hover-bg transition-colors" title="History">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
                   </button>
-                  <button onClick={() => { onSetViewMode('none'); onSetRightPanel('none'); }} className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-red-500/20 transition-colors ml-1" title="Close">
+                  <button onClick={() => { onSetViewMode('none'); onSetRightPanel('none'); }} className="p-1.5 rounded-lg wf-fg-faint hover:text-red-400 hover:bg-red-500/20 transition-colors ml-1" title="Close">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
                   </button>
                 </div>
@@ -321,7 +321,7 @@ export function WorkflowMainContent({
               </div>
 
               <div
-                className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/10 transition-colors"
+                className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize transition-colors wf-resize-handle"
                 onMouseDown={onStartResizeAiLeft}
                 onDoubleClick={onResetAiLeftWidth}
               />
@@ -330,7 +330,7 @@ export function WorkflowMainContent({
 
           {/* Floating Tool Palette for Manual Mode */}
           {viewMode === "manual" && (
-            <div className="absolute left-6 top-32 bottom-24 w-64 bg-white/[0.06] backdrop-blur-2xl border border-white/[0.1] rounded-xl shadow-2xl flex flex-col shrink-0 z-20 overflow-hidden pointer-events-auto">
+            <div className="absolute left-6 top-32 bottom-24 w-64 rounded-xl shadow-2xl flex flex-col shrink-0 z-20 overflow-hidden pointer-events-auto border wf-panel" style={{ backdropFilter: 'var(--wf-glass-blur)' }}>
               <ToolPalette
                 ref={toolPaletteRef}
                 onDragStart={(e, item) => {
@@ -343,11 +343,11 @@ export function WorkflowMainContent({
           )}
         </div>
       ) : (
-        <div className="flex-1 flex items-center justify-center bg-black">
+        <div className="flex-1 flex items-center justify-center wf-bg">
           <div className="text-center max-w-xl px-6">
-            <div className="w-12 h-12 border-4 border-slate-700 border-t-blue-500 rounded-full animate-spin mx-auto mb-6" />
-            <h2 className="text-lg font-semibold text-slate-200 mb-2">Loading...</h2>
-            <p className="text-sm text-slate-500 mb-5">Getting your workflow ready.</p>
+            <div className="w-10 h-10 border-[3px] rounded-full animate-spin mx-auto mb-6" style={{ borderColor: 'var(--wf-border)', borderTopColor: 'var(--wf-accent)' }} />
+            <h2 className="text-base font-semibold mb-1.5 wf-fg">Loading workflow…</h2>
+            <p className="text-sm mb-5 wf-fg-muted">Getting things ready.</p>
             <DiscoverTips
               compact
               title="Discover while this loads"

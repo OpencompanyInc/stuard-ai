@@ -17,6 +17,7 @@ import { ChatInput, ChatInputRef } from "./chat/ChatInput";
 import { useSkillChat } from "../hooks/useSkillChat";
 import { useModelRegistry } from "../../hooks/useModelRegistry";
 import { buildContextUsageMetrics } from "../../utils/contextUsage";
+import { useWorkflowTheme } from "../WorkflowThemeContext";
 
 // ============================================================================
 // TYPES
@@ -298,6 +299,7 @@ export function SkillsLibrary({
   onDeleteSkill,
   onToggleSkill,
 }: SkillsLibraryProps) {
+  const { isDark: d } = useWorkflowTheme();
   const filteredSkills = useMemo(() => {
     if (!search.trim()) return skills;
     const q = search.toLowerCase();
@@ -308,20 +310,14 @@ export function SkillsLibrary({
     <>
       {/* Skills Info Bar */}
       <div className="px-8 pb-6 flex items-center gap-4">
-        <div className="flex items-center gap-3 px-4 py-2 bg-white rounded-lg border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-center">
-            <Brain className="w-4 h-4 text-slate-600" />
-          </div>
+        <div className="flex items-center gap-3 px-4 py-2 rounded-lg border shadow-sm wf-bg-elevated wf-border">
+          <Brain className="w-4 h-4 wf-fg-muted" />
           <div className="flex items-baseline gap-1.5">
-            <span className="text-sm text-slate-800 font-medium">
-              {skills.filter(s => s.isActive).length} active
-            </span>
-            <span className="text-xs text-slate-500">
-              of {skills.length} skills
-            </span>
+            <span className="text-sm font-medium wf-fg">{skills.filter(s => s.isActive).length} active</span>
+            <span className="text-xs wf-fg-muted">of {skills.length} skills</span>
           </div>
         </div>
-        <p className="text-sm text-slate-500">
+        <p className="text-sm wf-fg-muted">
           Skills define how Stuard responds to specific requests with structured steps.
         </p>
       </div>
@@ -329,18 +325,23 @@ export function SkillsLibrary({
       {/* Grid */}
       <div className="flex-1 px-8 pb-8 overflow-y-auto scrollbar-minimal">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-12">
-          
+
           {/* Create Skill Card */}
           {!search && (
-            <div 
+            <div
               onClick={onCreateSkill}
-              className="group relative h-[200px] rounded-xl cursor-pointer flex flex-col items-center justify-center transition-all border border-dashed border-slate-300 hover:border-slate-400 bg-slate-50/50 hover:bg-slate-50"
+              className={`group relative h-[200px] rounded-xl cursor-pointer flex flex-col items-center justify-center transition-all border border-dashed ${
+                d ? 'border-white/[0.12] hover:border-white/[0.2] bg-white/[0.02] hover:bg-white/[0.04]'
+                  : 'border-slate-300 hover:border-slate-400 bg-slate-50/50 hover:bg-slate-50'
+              }`}
             >
-              <div className="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center mb-3 shadow-sm group-hover:scale-105 transition-transform duration-200">
-                <Plus className="w-5 h-5 text-slate-600" />
+              <div className={`w-10 h-10 rounded-full border flex items-center justify-center mb-3 shadow-sm group-hover:scale-105 transition-transform duration-200 ${
+                d ? 'bg-white/[0.06] border-white/[0.08]' : 'bg-white border-slate-200'
+              }`}>
+                <Plus className="w-5 h-5 wf-fg-muted" />
               </div>
-              <span className="text-slate-700/80 font-medium text-sm">Create New Skill</span>
-              <span className="text-slate-500 text-xs mt-1">Define a reusable behavior</span>
+              <span className="font-medium text-sm wf-fg">Create New Skill</span>
+              <span className="text-xs mt-1 wf-fg-muted">Define a reusable behavior</span>
             </div>
           )}
 
@@ -348,64 +349,54 @@ export function SkillsLibrary({
           {filteredSkills.map((skill) => {
             const IconComponent = SKILL_ICONS.find(i => i.name === skill.icon)?.icon || Wand2;
             const colorClasses = getSkillColorClasses(skill.color);
-            
+
             return (
               <div
                 key={skill.id}
                 onClick={() => onEditSkill(skill)}
-                className="group relative rounded-xl bg-white border border-slate-200 hover:border-slate-300 shadow-sm hover:shadow transition-all flex flex-col h-[200px] cursor-pointer overflow-hidden"
+                className={`group relative rounded-xl border shadow-sm hover:shadow transition-all flex flex-col h-[200px] cursor-pointer overflow-hidden ${
+                  d ? 'bg-white/[0.04] border-white/[0.06] hover:border-white/[0.12]' : 'bg-white border-slate-200 hover:border-slate-300'
+                }`}
               >
-                {/* Active indicator top border */}
-                <div className={`absolute top-0 left-0 right-0 h-1 ${skill.isActive ? colorClasses.bg : 'bg-slate-200'}`} />
-                
+                <div className={`absolute top-0 left-0 right-0 h-1 ${skill.isActive ? colorClasses.bg : (d ? 'bg-white/[0.06]' : 'bg-slate-200')}`} />
+
                 <div className="p-4 flex flex-col flex-1 mt-1">
-                  {/* Header */}
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex items-center gap-3">
                       <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${colorClasses.bgSoft} border ${colorClasses.border}`}>
                         <IconComponent className={`w-5 h-5 ${colorClasses.icon}`} />
                       </div>
                       <div>
-                        <h3 className="font-semibold text-slate-800 text-sm">{skill.name}</h3>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-xs text-slate-500">{skill.steps.length} steps</span>
-                        </div>
+                        <h3 className="font-semibold text-sm wf-fg">{skill.name}</h3>
+                        <span className="text-xs wf-fg-muted">{skill.steps.length} steps</span>
                       </div>
                     </div>
-                    
-                    {/* Active Toggle */}
                     <button
                       onClick={(e) => { e.stopPropagation(); onToggleSkill(skill.id); }}
-                      className={`p-1 rounded-md transition-colors ${skill.isActive ? 'text-emerald-600 hover:bg-emerald-50' : 'text-slate-400 hover:bg-slate-100'}`}
+                      className={`p-1 rounded-md transition-colors ${skill.isActive ? 'text-emerald-500 hover:bg-emerald-500/10' : 'wf-fg-faint hover:bg-white/10'}`}
                       title={skill.isActive ? 'Active' : 'Inactive'}
                     >
                       {skill.isActive ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
                     </button>
                   </div>
 
-                  {/* Description */}
-                  <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed mb-3 flex-1">
-                    {skill.description}
-                  </p>
+                  <p className="text-xs line-clamp-2 leading-relaxed mb-3 flex-1 wf-fg-muted">{skill.description}</p>
 
-                  {/* Trigger Preview */}
-                  <div className="px-3 py-2 bg-slate-50 rounded-lg border border-slate-100 mb-3">
+                  <div className={`px-3 py-2 rounded-lg border mb-3 ${d ? 'bg-white/[0.03] border-white/[0.06]' : 'bg-slate-50 border-slate-100'}`}>
                     <div className="flex items-center gap-1.5 mb-1">
-                      <Zap className="w-3 h-3 text-slate-400" />
-                      <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">Trigger</span>
+                      <Zap className="w-3 h-3 wf-fg-faint" />
+                      <span className="text-[10px] font-medium uppercase tracking-wider wf-fg-faint">Trigger</span>
                     </div>
-                    <p className="text-xs text-slate-700/80 line-clamp-1">{skill.trigger}</p>
+                    <p className="text-xs line-clamp-1 wf-fg-muted">{skill.trigger}</p>
                   </div>
 
-                  {/* Footer */}
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] text-slate-400">
+                    <span className="text-[10px] wf-fg-faint">
                       {skill.updatedAt ? `Updated ${formatRelativeTime(skill.updatedAt)}` : ''}
                     </span>
-                    
                     <button
                       onClick={(e) => { e.stopPropagation(); onDeleteSkill(skill.id); }}
-                      className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors opacity-0 group-hover:opacity-100"
+                      className={`p-1 rounded transition-colors opacity-0 group-hover:opacity-100 ${d ? 'text-white/40 hover:text-red-400 hover:bg-red-500/10' : 'text-slate-400 hover:text-red-600 hover:bg-red-50'}`}
                       title="Delete Skill"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -416,14 +407,13 @@ export function SkillsLibrary({
             );
           })}
 
-          {/* Empty state */}
           {filteredSkills.length === 0 && search && (
             <div className="col-span-full py-16 flex flex-col items-center justify-center text-center">
-              <div className="w-12 h-12 bg-white shadow-sm rounded-lg flex items-center justify-center mb-4 border border-slate-200">
-                <Search className="w-5 h-5 text-slate-400" />
+              <div className="w-12 h-12 shadow-sm rounded-lg flex items-center justify-center mb-4 border wf-bg-elevated wf-border">
+                <Search className="w-5 h-5 wf-fg-faint" />
               </div>
-              <h3 className="text-sm font-semibold text-slate-800">No skills found</h3>
-              <p className="text-xs text-slate-500 mt-1">Try adjusting your search query</p>
+              <h3 className="text-sm font-semibold wf-fg">No skills found</h3>
+              <p className="text-xs mt-1 wf-fg-muted">Try adjusting your search query</p>
             </div>
           )}
         </div>
@@ -519,10 +509,10 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp }: SkillEdito
   const colorClasses = getSkillColorClasses(editedSkill.color);
 
   return (
-    <div className="flex-1 flex bg-[#F4F4F5] h-screen w-screen overflow-hidden text-slate-900 font-sans">
-      
+    <div className="flex-1 flex h-screen w-screen overflow-hidden font-sans wf-bg wf-fg">
+
       {/* Left Panel - Skill Settings */}
-      <div className="w-[320px] flex flex-col bg-white border-r border-slate-200 overflow-hidden shrink-0 z-10">
+      <div className="w-[320px] flex flex-col border-r overflow-hidden shrink-0 z-10 wf-bg-elevated wf-border">
         {/* Header */}
         <div className="h-14 px-4 border-b border-slate-200 flex items-center justify-between shrink-0 bg-slate-50/50">
           <div className="flex items-center gap-2">
@@ -857,21 +847,21 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp }: SkillEdito
 
       {/* AI Chat Panel */}
       {showAI && (
-        <div className="w-[360px] flex flex-col border-l border-white/[0.06] overflow-hidden shrink-0" style={{ background: '#0f1117' }}>
+        <div className="w-[360px] flex flex-col border-l wf-border-subtle overflow-hidden shrink-0 wf-bg-sunken">
           {/* Header */}
-          <div className="h-14 px-4 flex items-center justify-between shrink-0 border-b border-white/[0.06]" style={{ background: 'rgba(0,0,0,0.2)' }}>
+          <div className="h-14 px-4 flex items-center justify-between shrink-0 border-b wf-border-subtle wf-bg-overlay">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded-full bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center">
                 <Bot className="w-3.5 h-3.5 text-indigo-400" />
               </div>
               <div>
-                <h3 className="text-[13px] font-semibold text-white">Skill Architect</h3>
-                <p className="text-[10px] text-slate-400">Describe your skill or ask for changes</p>
+                <h3 className="text-[13px] font-semibold wf-fg">Skill Architect</h3>
+                <p className="text-[10px] wf-fg-muted">Describe your skill or ask for changes</p>
               </div>
             </div>
             <button
               onClick={() => setShowAI(false)}
-              className="p-1.5 rounded-md text-white/40 hover:text-white hover:bg-white/10 transition-colors"
+              className="p-1.5 rounded-md wf-fg-faint wf-hover-fg wf-hover-bg transition-colors"
             >
               <X className="w-4 h-4" />
             </button>

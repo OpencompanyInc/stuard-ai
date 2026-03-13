@@ -69,7 +69,22 @@ export async function executeStep(
       if (!triggerId) {
         result = { ok: false, error: 'missing triggerId for call_function' };
       } else {
-        result = await executeFromTrigger(spec, triggerId, inputs, ctx, engineCtx);
+        // Detect if inputs have unresolved {{caller.X}} templates (resolved to empty strings).
+        // This happens when call_function is reached via a regular wire instead of a callNode wire.
+        // In that case, skip gracefully — the node is designed for on-demand callNode invocation.
+        const originalInputs = step.args?.inputs;
+        const hasCallerTemplates = originalInputs && typeof originalInputs === 'object' &&
+          Object.values(originalInputs).some((v: any) => typeof v === 'string' && v.includes('{{caller.'));
+        const hasEmptyInputs = Object.keys(inputs).length > 0 &&
+          Object.values(inputs).some((v: any) => v === '' || v === undefined || v === null);
+
+        if (hasCallerTemplates && hasEmptyInputs) {
+          engineCtx.logFn(`[${step.id}] ⚠️ call_function skipped — inputs have unresolved {{caller.X}} templates. ` +
+            `This node should be connected via a callNode wire (callNode: true) from custom_ui, not a regular wire.`);
+          result = { ok: true, skipped: true, reason: 'unresolved_caller_templates' };
+        } else {
+          result = await executeFromTrigger(spec, triggerId, inputs, ctx, engineCtx);
+        }
       }
     } else if (toolName === 'noop' || !toolName) {
       result = { ok: true };

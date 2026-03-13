@@ -11,6 +11,17 @@
     }
   },
   {
+    "id": "xai/grok-4.20-beta-latest-non-reasoning",
+    "name": "Grok 4.20 Beta (Non-Reasoning)",
+    "category": "balanced",
+    "contextWindow": 2000000,
+    "pricing": {
+      "in": 0.2,
+      "out": 0.5,
+      "cached": 0.05
+    }
+  },
+  {
     "id": "xai/grok-4-1-fast",
     "name": "Grok 4.1 Fast",
     "category": "balanced",

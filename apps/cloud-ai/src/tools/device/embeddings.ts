@@ -6,7 +6,7 @@ import { resolveEmbedder, cosineSimilarity } from '../../utils/embeddings';
 export const embed_text = createTool({
   id: 'embed_text',
   description:
-    'Generate a vector embedding for one or more text strings using OpenAI text-embedding-3-large. Returns an array of float vectors. Useful for semantic search, similarity matching, clustering, and classification in workflows.',
+    'Generate a vector embedding for one or more text strings using Gemini Embedding 2. Returns an array of 3072-dim float vectors. Supports semantic search, similarity matching, clustering, and classification in workflows.',
   inputSchema: z.object({
     texts: z
       .array(z.string())

@@ -13,7 +13,8 @@ import "./styles.css";
 import "./scrollbar.css";
 
 import { useWorkflowChat } from "./workflows/hooks/useWorkflowChat";
-import { WorkflowLauncher } from "./workflows/components/WorkflowLauncher";
+import { WorkflowLauncherV2 } from "./workflows/components/WorkflowLauncherV2";
+import { ProjectNameModal } from "./workflows/components/ProjectNameModal";
 import { WorkspaceExplorer } from "./workflows/components/WorkspaceExplorer";
 import { useWorkflowUiState } from "./workflows/hooks/useWorkflowUiState";
 import { useWorkflows } from "./workflows/hooks/useWorkflows";
@@ -33,11 +34,15 @@ import { WorkflowHeader } from "./workflows/layout/WorkflowHeader";
 import type { OpenFileTab, RightPanel, WorkflowContextMenu, WorkspaceInfo } from "./workflows/layout/types";
 import type { ChatInputRef } from "./workflows/components/chat/ChatInput";
 import type { ToolPaletteRef } from "./workflows/components/ToolPalette";
+import { usePreferences } from "./hooks/usePreferences";
 import type { ReasoningLevel } from "./hooks/usePreferences";
+import { WorkflowThemeContext } from "./workflows/WorkflowThemeContext";
 
 const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
 
 function WorkflowsApp() {
+  const { themeMode } = usePreferences();
+  const isDark = themeMode === 'dark' || themeMode === 'custom';
   const { items, folders, loading, refresh, updates } = useWorkflows();
   const { logs, setLogs, executionState, runningIds, setRunningIds } = useWorkflowRuntime();
   const [selectedId, setSelectedId] = useState("");
@@ -368,6 +373,8 @@ function WorkflowsApp() {
           if (wsRes?.ok) {
             setWorkspaceInfo({ workspacePath: wsRes.workspacePath, subdirs: wsRes.subdirs, files: wsRes.files });
             setShowWorkspace(true);
+            setViewMode('none');
+            setRightPanel('none');
           } else {
             setWorkspaceInfo(null);
           }
@@ -395,6 +402,8 @@ function WorkflowsApp() {
       if (res?.ok) { setDirty(false); await refresh(); } else alert(res?.error || 'Save failed');
     }
   }, [model, refresh, selectedId, activeSubPath]);
+
+  const [showNameModal, setShowNameModal] = useState(false);
 
   const {
     showImport,
@@ -442,32 +451,41 @@ function WorkflowsApp() {
     return model.triggers.filter(t => t.type === 'manual');
   }, [model]);
 
-  const run = useCallback(async (triggerId?: string) => {
-    if (!selectedId) return;
+  const runWorkflowById = useCallback(async (workflowId: string, triggerId?: string) => {
+    if (!workflowId) return;
     setShowRunMenu(false);
-    console.log('[Workflows] Running workflow:', selectedId, triggerId ? `(trigger: ${triggerId})` : '(all triggers)');
-    setRunningIds(p => ({ ...p, [selectedId]: true }));
+    console.log('[Workflows] Running workflow:', workflowId, triggerId ? `(trigger: ${triggerId})` : '(all triggers)');
+    setRunningIds(p => ({ ...p, [workflowId]: true }));
     try {
-      // Get access token for cloud tool authentication
       const accessToken = await getValidAccessToken() || undefined;
-      const res = await (window as any).desktopAPI?.workflowsRun?.(selectedId, triggerId, { accessToken });
+      const res = await (window as any).desktopAPI?.workflowsRun?.(workflowId, triggerId, { accessToken });
       console.log('[Workflows] Run result:', res);
-      setRunningIds(p => ({ ...p, [selectedId]: false }));
+      setRunningIds(p => ({ ...p, [workflowId]: false }));
       if (!res?.ok) {
         alert(res?.error || 'Run failed');
       }
     } catch (e: any) {
       console.error('[Workflows] Run error:', e);
-      setRunningIds(p => ({ ...p, [selectedId]: false }));
+      setRunningIds(p => ({ ...p, [workflowId]: false }));
       alert(e?.message || 'Run failed');
     }
-  }, [selectedId]);
+  }, [setRunningIds]);
+
+  const stopWorkflowById = useCallback(async (workflowId: string) => {
+    if (!workflowId) return;
+    await (window as any).desktopAPI?.workflowsStop?.(workflowId);
+    setRunningIds(p => ({ ...p, [workflowId]: false }));
+  }, [setRunningIds]);
+
+  const run = useCallback(async (triggerId?: string) => {
+    if (!selectedId) return;
+    await runWorkflowById(selectedId, triggerId);
+  }, [runWorkflowById, selectedId]);
 
   const stop = useCallback(async () => {
     if (!selectedId) return;
-    await (window as any).desktopAPI?.workflowsStop?.(selectedId);
-    setRunningIds(p => ({ ...p, [selectedId]: false }));
-  }, [selectedId]);
+    await stopWorkflowById(selectedId);
+  }, [selectedId, stopWorkflowById]);
 
   // Run a single step (for testing/debugging)
   const runStep = useCallback(async (nodeId: string) => {
@@ -634,11 +652,11 @@ function WorkflowsApp() {
     return { ...inputModel, triggers: newTriggers, nodes: newNodes };
   }, []);
 
-  const create = async () => {
+  const create = async (projectName?: string) => {
     const safe = `flow_${Math.random().toString(36).slice(2, 10)}`;
     const skeleton: DesignerModel = {
       id: safe,
-      name: "Hello World Starter",
+      name: projectName || "Hello World Starter",
       version: "1",
       triggers: [{ id: `trig_0`, type: 'manual', label: 'Manual Trigger', args: {}, position: { x: 60, y: 50 } }],
       nodes: [
@@ -845,22 +863,37 @@ function WorkflowsApp() {
   // When no workflow is selected, show the launcher
   if (!selectedId || !model) {
     return (
-      <div className="h-screen w-screen flex flex-col bg-black overflow-hidden text-slate-200 font-sans">
-        <WorkflowLauncher
+      <WorkflowThemeContext.Provider value={{ isDark }}>
+      <div data-wf-theme={isDark ? 'dark' : 'light'} className="h-screen w-screen flex flex-col overflow-hidden font-sans wf-bg wf-fg">
+        <WorkflowLauncherV2
           items={items}
           loading={loading}
           runningIds={runningIds}
+          updates={updates}
           onSelect={load}
-          onCreate={create}
+          onCreate={() => setShowNameModal(true)}
           onImport={() => setShowImport(true)}
-          onMarketplace={() => setShowMarketplace(true)}
+          onMarketplace={(slug?: string) => {
+            setMarketplaceSlug(slug);
+            setShowMarketplace(true);
+          }}
           onDelete={async (id: string) => {
             await (window as any).desktopAPI?.workflowsDelete?.(id);
             if (selectedId === id) { setSelectedId(""); setModel(null); }
             await refresh();
           }}
+          onRun={runWorkflowById}
+          onStop={stopWorkflowById}
+          onShowPublished={() => setShowMyPublished(true)}
           onDashboard={() => (window as any).desktopAPI?.openDashboard?.()}
         />
+
+        {showNameModal && (
+          <ProjectNameModal
+            onClose={() => setShowNameModal(false)}
+            onConfirm={(name) => { setShowNameModal(false); create(name); }}
+          />
+        )}
 
         <WorkflowOverlays
           contextMenu={null}
@@ -906,20 +939,24 @@ function WorkflowsApp() {
           marketplaceSlug={marketplaceSlug}
           onCloseMarketplace={() => { setShowMarketplace(false); setMarketplaceSlug(undefined); }}
           onImportMarketplace={importFromMarketplace}
-          showMyPublished={false}
-          onCloseMyPublished={() => { }}
-          onOpenPublishFromMyPublished={() => { }}
-          pendingUpdate={null}
-          currentUpdateWorkflowName=""
-          onClosePendingUpdate={() => { }}
-          onApplyPendingUpdate={async () => { }}
+          showMyPublished={showMyPublished}
+          onCloseMyPublished={() => setShowMyPublished(false)}
+          onOpenPublishFromMyPublished={() => {
+            setShowMyPublished(false);
+          }}
+          pendingUpdate={pendingUpdate}
+          currentUpdateWorkflowName={items.find(i => i.id === pendingUpdate?.id)?.name || pendingUpdate?.id || ""}
+          onClosePendingUpdate={() => setPendingUpdate(null)}
+          onApplyPendingUpdate={executeWorkflowUpdate}
         />
       </div>
+      </WorkflowThemeContext.Provider>
     );
   }
 
   return (
-    <div className="h-screen w-screen relative bg-black overflow-hidden text-slate-200 font-sans">
+    <WorkflowThemeContext.Provider value={{ isDark }}>
+    <div data-wf-theme={isDark ? 'dark' : 'light'} className="h-screen w-screen relative overflow-hidden font-sans wf-bg wf-fg">
       <div className="absolute inset-0">
         {/* Main Content Area */}
         <WorkflowMainContent
@@ -1045,8 +1082,8 @@ function WorkflowsApp() {
       {/* Floating Right Sidebar Menu */}
       {model && (
         <div
-          className="absolute right-4 top-1/2 -translate-y-1/2 z-40 flex flex-col items-center justify-center bg-white/[0.06] backdrop-blur-2xl border-white/[0.1] shadow-2xl pointer-events-auto"
-          style={{ width: 52, minHeight: 340, gap: 16, borderRadius: 20, padding: 8, borderWidth: 0.4, borderStyle: 'solid' }}
+          className="absolute right-4 top-1/2 -translate-y-1/2 z-40 flex flex-col items-center justify-center shadow-2xl pointer-events-auto border wf-panel"
+          style={{ width: 52, minHeight: 340, gap: 16, borderRadius: 20, padding: 8, backdropFilter: 'var(--wf-glass-blur)' }}
         >
           <button
             onClick={() => {
@@ -1058,7 +1095,7 @@ function WorkflowsApp() {
                 setRightPanel('ai');
               }
             }}
-            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${viewMode === 'ai' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/10 hover:text-white/80'}`}
+            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${viewMode === 'ai' ? 'wf-sidebar-btn-active' : 'wf-sidebar-btn'}`}
             title="Design with AI"
           >
             <Sparkles className="w-5 h-5" />
@@ -1073,13 +1110,13 @@ function WorkflowsApp() {
                 setRightPanel('none');
               }
             }}
-            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${viewMode === 'manual' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/10 hover:text-white/80'}`}
+            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${viewMode === 'manual' ? 'wf-sidebar-btn-active' : 'wf-sidebar-btn'}`}
             title="Manual Build"
           >
             <Wrench className="w-5 h-5" />
           </button>
 
-          <div className="w-6 h-[1.5px] bg-white/[0.15] shrink-0 rounded-full" />
+          <div className="w-6 h-[1.5px] shrink-0 rounded-full" style={{ background: 'var(--wf-border)' }} />
 
           <button
             onClick={() => {
@@ -1091,7 +1128,7 @@ function WorkflowsApp() {
                 });
               }
             }}
-            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${rightPanel === 'logs' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/10 hover:text-white/80'}`}
+            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${rightPanel === 'logs' ? 'wf-sidebar-btn-active' : 'wf-sidebar-btn'}`}
             title="Execution Logs"
           >
             <Terminal className="w-5 h-5" />
@@ -1108,13 +1145,13 @@ function WorkflowsApp() {
                 return next;
               });
             }}
-            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${showWorkspace ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/10 hover:text-white/80'}`}
+            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${showWorkspace ? 'wf-sidebar-btn-active' : 'wf-sidebar-btn'}`}
             title="Workspace"
           >
             <FolderOpen className="w-5 h-5" />
           </button>
 
-          <div className="w-6 h-[1.5px] bg-white/[0.15] shrink-0 rounded-full" />
+          <div className="w-6 h-[1.5px] shrink-0 rounded-full" style={{ background: 'var(--wf-border)' }} />
 
           <button
             onClick={() => {
@@ -1126,7 +1163,7 @@ function WorkflowsApp() {
                 });
               }
             }}
-            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${rightPanel === 'code' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/10 hover:text-white/80'}`}
+            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${rightPanel === 'code' ? 'wf-sidebar-btn-active' : 'wf-sidebar-btn'}`}
             title="JSON Code"
           >
             <FileCode className="w-5 h-5" />
@@ -1139,7 +1176,7 @@ function WorkflowsApp() {
                 return next;
               });
             }}
-            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${rightPanel === 'docs' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/10 hover:text-white/80'}`}
+            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${rightPanel === 'docs' ? 'wf-sidebar-btn-active' : 'wf-sidebar-btn'}`}
             title="Documentation"
           >
             <BookOpen className="w-5 h-5" />
@@ -1154,7 +1191,7 @@ function WorkflowsApp() {
                 });
               }
             }}
-            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${rightPanel === 'inspector' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/10 hover:text-white/80'}`}
+            className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${rightPanel === 'inspector' ? 'wf-sidebar-btn-active' : 'wf-sidebar-btn'}`}
             title="Inspector Settings"
           >
             <Settings className="w-5 h-5" />
@@ -1224,6 +1261,7 @@ function WorkflowsApp() {
         onApplyPendingUpdate={executeWorkflowUpdate}
       />
     </div>
+    </WorkflowThemeContext.Provider>
   );
 }
 

@@ -69,6 +69,13 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'return_value') return execReturnValue(args, ctx);
       if (toolName === 'invoke_workflow') return execInvokeWorkflow(args, ctx);
       if (toolName === 'call_workflow') return execCallWorkflow(args, ctx);
+      // call_function is an engine-internal tool — it executes a function trigger chain
+      // within the same workflow. When called from the engine (execution.ts), it's handled
+      // inline there. When called from callNode (custom_ui), it's handled in custom-ui/ipc.ts.
+      // If it reaches here, it means something tried to call it outside those contexts.
+      if (toolName === 'call_function') {
+        return { ok: false, error: 'call_function must be used within a workflow engine context or via callNode from custom_ui. It cannot be called as a standalone tool.' };
+      }
       if (toolName === 'call_workspace_function') return execCallWorkspaceFunction(args, ctx);
       if (toolName === 'list_workspace_functions') return execListWorkspaceFunctions(args, ctx);
       if (toolName === 'workspace_read_file') return execWorkspaceReadFile(args, ctx);

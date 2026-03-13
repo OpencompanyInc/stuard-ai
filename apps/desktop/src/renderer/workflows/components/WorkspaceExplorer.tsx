@@ -33,12 +33,12 @@ function fileIcon(name: string, isMain?: boolean) {
   if (['py'].includes(ext)) return <Code2 className="w-3.5 h-3.5 text-yellow-500" />;
   if (['js', 'ts', 'mjs'].includes(ext)) return <Code2 className="w-3.5 h-3.5 text-blue-400" />;
   if (['json'].includes(ext)) return <Braces className="w-3.5 h-3.5 text-emerald-500" />;
-  if (['txt', 'md', 'csv', 'log'].includes(ext)) return <FileText className="w-3.5 h-3.5 text-white/40" />;
+  if (['txt', 'md', 'csv', 'log'].includes(ext)) return <FileText className="w-3.5 h-3.5 wf-fg-faint" />;
   // Media files with distinct icons
   if (['wav', 'mp3', 'ogg', 'flac', 'm4a', 'aac', 'wma', 'opus'].includes(ext)) return <Music className="w-3.5 h-3.5 text-purple-400" />;
   if (['mp4', 'webm', 'mov', 'avi', 'mkv', 'wmv', 'm4v', 'ogv'].includes(ext)) return <Video className="w-3.5 h-3.5 text-pink-500" />;
   if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico', 'tiff', 'avif'].includes(ext)) return <Image className="w-3.5 h-3.5 text-cyan-400" />;
-  return <File className="w-3.5 h-3.5 text-white/40" />;
+  return <File className="w-3.5 h-3.5 wf-fg-faint" />;
 }
 
 function formatSize(bytes?: number): string {
@@ -71,7 +71,7 @@ function RefPill({ value, label }: { value: string; label?: string }) {
   return (
     <button
       onClick={copy}
-      className="inline-flex items-center gap-1 px-2 py-0.5 bg-white/[0.06] hover:bg-indigo-50 border border-white/[0.08] hover:border-indigo-300 rounded text-[11px] font-mono text-white/70 hover:text-indigo-700 transition-all group"
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono transition-all group wf-surface-muted wf-fg-muted hover:text-indigo-700 hover:bg-indigo-50 hover:border-indigo-300"
       title={`Click to copy: ${value}`}
     >
       <span className="truncate max-w-[180px]">{label || value}</span>
@@ -106,7 +106,7 @@ function InlineRename({ currentName, onConfirm, onCancel }: {
         if (value.trim() && value.trim() !== currentName) onConfirm(value.trim());
         else onCancel();
       }}
-      className="flex-1 px-1 py-0 text-xs bg-white/[0.06] border border-indigo-500/50 rounded focus:outline-none focus:ring-1 focus:ring-indigo-400 min-w-0 text-white"
+      className="flex-1 px-1 py-0 text-xs rounded min-w-0 wf-input"
       onClick={e => e.stopPropagation()}
     />
   );
@@ -205,23 +205,23 @@ function ContextMenu({ state, flowId, onRefresh, onOpenFile, onOpenStuard, onClo
 
   return (
     <div
-      className="fixed z-50 bg-white/[0.04] rounded-lg shadow-xl border border-white/[0.08] py-1 min-w-[180px] animate-in fade-in zoom-in-95 duration-100"
+      className="fixed z-50 rounded-lg shadow-xl py-1 min-w-[180px] animate-in fade-in zoom-in-95 duration-100 wf-menu"
       style={{ left: state.x, top: state.y }}
       onClick={e => e.stopPropagation()}
     >
       {items.map((item, i) => {
-        if (item.sep && !item.label) return <div key={i} className="my-1 border-t border-white/[0.04]" />;
+        if (item.sep && !item.label) return <div key={i} className="my-1 border-t wf-border-subtle" />;
         return (
           <React.Fragment key={i}>
-            {item.sep && item.label && <div className="my-1 border-t border-white/[0.04]" />}
+            {item.sep && item.label && <div className="my-1 border-t wf-border-subtle" />}
             <button
               onClick={item.action}
               className={`flex items-center gap-2 w-full px-3 py-1.5 text-xs transition-colors ${
                 item.danger
-                  ? 'text-red-600 hover:bg-red-50'
-                  : item.accent
-                    ? `${item.accent} hover:bg-white/[0.06] font-medium`
-                    : 'text-white/80 hover:bg-white/[0.06]'
+                  ? 'wf-menu-item-danger'
+                : item.accent
+                    ? `${item.accent} hover:bg-indigo-50 font-medium`
+                    : 'wf-menu-item'
               }`}
             >
               {item.icon && <item.icon className="w-3.5 h-3.5 shrink-0" />}
@@ -246,7 +246,7 @@ function InlineCreate({ type, folderPath, flowId, onDone }: {
   useEffect(() => { inputRef.current?.focus(); }, []);
 
   const placeholder = type === 'stuard' ? 'sub-workflow name' : type === 'folder' ? 'folder name' : 'file name';
-  const icon = type === 'stuard' ? <Workflow className="w-3 h-3 text-indigo-500" /> : type === 'folder' ? <FolderPlus className="w-3 h-3 text-amber-500" /> : <Plus className="w-3 h-3 text-white/40" />;
+  const icon = type === 'stuard' ? <Workflow className="w-3 h-3 text-indigo-500" /> : type === 'folder' ? <FolderPlus className="w-3 h-3 text-amber-500" /> : <Plus className="w-3 h-3 wf-fg-faint" />;
 
   const handleConfirm = useCallback(async () => {
     if (!value.trim()) { onDone(); return; }
@@ -271,7 +271,7 @@ function InlineCreate({ type, folderPath, flowId, onDone }: {
         onKeyDown={e => { if (e.key === 'Enter') handleConfirm(); if (e.key === 'Escape') onDone(); }}
         onBlur={handleConfirm}
         placeholder={placeholder}
-        className="flex-1 px-1 py-0.5 text-xs bg-white/[0.06] border border-white/[0.1] rounded focus:border-indigo-400 focus:outline-none min-w-0 text-white"
+        className="flex-1 px-1 py-0.5 text-xs rounded min-w-0 wf-input"
         onClick={e => e.stopPropagation()}
       />
     </div>
@@ -335,7 +335,7 @@ function FileTreeNode({
     <div>
       <div
         className={`flex items-center gap-1.5 px-2 py-[3px] cursor-pointer rounded-sm transition-colors group ${
-          isDragOver ? 'bg-indigo-500/20 ring-1 ring-indigo-500/50' : 'hover:bg-white/[0.04]'
+          isDragOver ? 'bg-indigo-500/20 ring-1 ring-indigo-500/50' : 'wf-hover-bg'
         } ${isStuard ? 'hover:bg-indigo-500/10' : ''} ${isMainStuard ? 'hover:bg-emerald-500/10' : ''}`}
         style={{ paddingLeft: `${8 + depth * 14}px` }}
         draggable={!isMainStuard && !isRenaming}
@@ -354,12 +354,12 @@ function FileTreeNode({
         {/* Expand/collapse or drag handle */}
         {entry.type === 'directory' ? (
           <>
-            {expanded ? <ChevronDown className="w-3 h-3 text-white/40 shrink-0" /> : <ChevronRight className="w-3 h-3 text-white/40 shrink-0" />}
+            {expanded ? <ChevronDown className="w-3 h-3 wf-fg-faint shrink-0" /> : <ChevronRight className="w-3 h-3 wf-fg-faint shrink-0" />}
             {expanded ? <FolderOpen className="w-3.5 h-3.5 text-amber-400 shrink-0" /> : <FolderClosed className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
           </>
         ) : (
           <>
-            <GripVertical className="w-3 h-3 text-white/20 shrink-0 opacity-0 group-hover:opacity-100 cursor-grab" />
+            <GripVertical className="w-3 h-3 wf-fg-faint shrink-0 opacity-0 group-hover:opacity-100 cursor-grab" />
             {fileIcon(entry.name, isMainStuard)}
           </>
         )}
@@ -375,7 +375,7 @@ function FileTreeNode({
           <span className={`text-xs truncate flex-1 ${
             isMainStuard ? 'text-emerald-400 font-semibold' :
             isStuard ? 'text-indigo-400 font-medium' :
-            'text-white/80'
+            'wf-fg'
           }`}>
             {entry.name}
             {isStuard && (
@@ -389,14 +389,14 @@ function FileTreeNode({
 
         {/* Size for non-stuard files */}
         {!isRenaming && entry.size !== undefined && !isStuard && !isMainStuard && (
-          <span className="text-[10px] text-white/30 shrink-0">{formatSize(entry.size)}</span>
+          <span className="text-[10px] wf-fg-faint shrink-0">{formatSize(entry.size)}</span>
         )}
 
         {/* Actions button */}
         {!isRenaming && (
           <button
             onClick={(e) => { e.stopPropagation(); onContextMenu(e, entry); }}
-            className="p-0.5 text-white/30 hover:text-white/80 rounded opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+            className="p-0.5 wf-fg-faint wf-hover-fg rounded opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
             title="Actions"
           >
             <MoreHorizontal className="w-3 h-3" />
@@ -440,7 +440,7 @@ function FileTreeNode({
             </div>
           )}
           {children.length === 0 && !showInlineCreate && (
-            <div style={{ paddingLeft: `${8 + (depth + 1) * 14}px` }} className="text-[10px] text-white/30 italic py-0.5">
+            <div style={{ paddingLeft: `${8 + (depth + 1) * 14}px` }} className="text-[10px] wf-fg-faint italic py-0.5">
               empty
             </div>
           )}
@@ -570,7 +570,7 @@ export function WorkspaceExplorer({ flowId, workspaceInfo, variables, onRefresh,
   }, [flowId, onRefresh]);
 
   return (
-    <div className="flex flex-col h-full bg-transparent text-white/90" onClick={() => { setContextMenu(null); }}>
+    <div className="flex flex-col h-full bg-transparent wf-fg" onClick={() => { setContextMenu(null); }}>
       {/* Context Menu */}
       {contextMenu && (
         <ContextMenu
@@ -586,35 +586,35 @@ export function WorkspaceExplorer({ flowId, workspaceInfo, variables, onRefresh,
       )}
 
       {/* Header */}
-      <div className="h-10 px-3 border-b border-white/[0.08] flex items-center justify-between shrink-0">
+      <div className="h-10 px-3 border-b wf-border-subtle flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
           <FolderOpen className="w-4 h-4 text-amber-400" />
-          <span className="text-xs font-semibold text-white/90">Project Files</span>
+          <span className="text-xs font-semibold wf-fg">Project Files</span>
         </div>
         <div className="flex items-center gap-0.5">
-          <button onClick={onRefresh} className="p-1 text-white/40 hover:text-white rounded transition-colors" title="Refresh">
+          <button onClick={onRefresh} className="p-1 wf-fg-faint wf-hover-fg rounded transition-colors" title="Refresh">
             <RefreshCw className="w-3.5 h-3.5" />
           </button>
-          <button onClick={handleOpenInExplorer} className="p-1 text-white/40 hover:text-white rounded transition-colors" title="Open in File Explorer">
+          <button onClick={handleOpenInExplorer} className="p-1 wf-fg-faint wf-hover-fg rounded transition-colors" title="Open in File Explorer">
             <ExternalLink className="w-3.5 h-3.5" />
           </button>
-          <button onClick={onClose} className="p-1 text-white/40 hover:text-white rounded transition-colors" title="Close">
+          <button onClick={onClose} className="p-1 wf-fg-faint wf-hover-fg rounded transition-colors" title="Close">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-white/[0.08] shrink-0">
+      <div className="flex border-b wf-border-subtle shrink-0">
         <button
           onClick={() => setActiveTab('files')}
-          className={`flex-1 py-1.5 text-[11px] font-medium transition-colors ${activeTab === 'files' ? 'text-white border-b-2 border-white' : 'text-white/40 hover:text-white/80'}`}
+          className={`flex-1 py-1.5 text-[11px] font-medium transition-colors ${activeTab === 'files' ? 'wf-fg border-b-2 border-current' : 'wf-fg-faint wf-hover-fg'}`}
         >
           Files
         </button>
         <button
           onClick={() => setActiveTab('references')}
-          className={`flex-1 py-1.5 text-[11px] font-medium transition-colors ${activeTab === 'references' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-white/40 hover:text-white/80'}`}
+          className={`flex-1 py-1.5 text-[11px] font-medium transition-colors ${activeTab === 'references' ? 'text-indigo-500 border-b-2 border-indigo-500' : 'wf-fg-faint wf-hover-fg'}`}
         >
           Imports & Refs
         </button>
@@ -631,9 +631,9 @@ export function WorkspaceExplorer({ flowId, workspaceInfo, variables, onRefresh,
           >
             {!workspaceInfo ? (
               <div className="px-3 py-6 text-center">
-                <FolderOpen className="w-8 h-8 text-white/20 mx-auto mb-2" />
-                <p className="text-xs text-white/50">No workspace available</p>
-                <p className="text-[10px] text-white/40 mt-1">Save your workflow to create a workspace</p>
+                <FolderOpen className="w-8 h-8 wf-fg-faint mx-auto mb-2" />
+                <p className="text-xs wf-fg-muted">No workspace available</p>
+                <p className="text-[10px] wf-fg-faint mt-1">Save your workflow to create a workspace</p>
               </div>
             ) : (
               <>
@@ -672,13 +672,13 @@ export function WorkspaceExplorer({ flowId, workspaceInfo, variables, onRefresh,
                 )}
 
                 {rootEntries.length === 0 && (
-                  <div className="px-3 py-4 text-center text-xs text-white/40">
+                  <div className="px-3 py-4 text-center text-xs wf-fg-faint">
                     Empty workspace
                   </div>
                 )}
 
                 {/* Quick Actions Bar */}
-                <div className="px-2 pt-2 pb-1 space-y-1 border-t border-white/[0.04] mt-1">
+                <div className="px-2 pt-2 pb-1 space-y-1 border-t wf-border-subtle mt-1">
                   {showNewStuard ? (
                     <div className="flex gap-1">
                       <input
@@ -687,7 +687,7 @@ export function WorkspaceExplorer({ flowId, workspaceInfo, variables, onRefresh,
                         onChange={e => setNewStuardPath(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter') handleCreateStuard(); if (e.key === 'Escape') setShowNewStuard(false); }}
                         placeholder="e.g. helpers/send-email"
-                        className="flex-1 px-2 py-1 text-xs bg-white/[0.06] border border-indigo-500/50 rounded focus:border-indigo-400 focus:outline-none text-white"
+                        className="flex-1 px-2 py-1 text-xs rounded wf-input"
                       />
                       <button onClick={handleCreateStuard} className="px-2 py-1 text-[10px] font-medium bg-indigo-500 text-white rounded hover:bg-indigo-600">
                         <Check className="w-3 h-3" />
@@ -712,16 +712,16 @@ export function WorkspaceExplorer({ flowId, workspaceInfo, variables, onRefresh,
                         onChange={e => setNewFileName(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter') handleCreateFile(); if (e.key === 'Escape') setShowNewFile(false); }}
                         placeholder="e.g. scripts/helper.py"
-                        className="flex-1 px-2 py-1 text-xs bg-white/[0.06] border border-white/[0.1] rounded focus:border-indigo-400 focus:outline-none text-white"
+                        className="flex-1 px-2 py-1 text-xs rounded wf-input"
                       />
-                      <button onClick={handleCreateFile} className="px-2 py-1 text-[10px] font-medium bg-white/20 text-white rounded hover:bg-white/30">
+                      <button onClick={handleCreateFile} className="px-2 py-1 text-[10px] font-medium rounded wf-header-action-btn">
                         <Check className="w-3 h-3" />
                       </button>
                     </div>
                   ) : (
                     <button
                       onClick={() => setShowNewFile(true)}
-                      className="flex items-center gap-1.5 w-full px-2 py-1 text-xs text-white/50 hover:text-white/80 hover:bg-white/[0.04] rounded transition-colors"
+                      className="flex items-center gap-1.5 w-full px-2 py-1 text-xs rounded transition-colors wf-menu-item"
                     >
                       <Plus className="w-3 h-3" />
                       <span>New File</span>
@@ -736,16 +736,16 @@ export function WorkspaceExplorer({ flowId, workspaceInfo, variables, onRefresh,
                         onChange={e => setNewSubdir(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter') handleCreateSubdir(); if (e.key === 'Escape') setShowNewSubdir(false); }}
                         placeholder="e.g. models"
-                        className="flex-1 px-2 py-1 text-xs bg-white/[0.06] border border-white/[0.1] rounded focus:border-indigo-400 focus:outline-none text-white"
+                        className="flex-1 px-2 py-1 text-xs rounded wf-input"
                       />
-                      <button onClick={handleCreateSubdir} className="px-2 py-1 text-[10px] font-medium bg-white/20 text-white rounded hover:bg-white/30">
+                      <button onClick={handleCreateSubdir} className="px-2 py-1 text-[10px] font-medium rounded wf-header-action-btn">
                         <Check className="w-3 h-3" />
                       </button>
                     </div>
                   ) : (
                     <button
                       onClick={() => setShowNewSubdir(true)}
-                      className="flex items-center gap-1.5 w-full px-2 py-1 text-xs text-white/50 hover:text-white/80 hover:bg-white/[0.04] rounded transition-colors"
+                      className="flex items-center gap-1.5 w-full px-2 py-1 text-xs rounded transition-colors wf-menu-item"
                     >
                       <FolderPlus className="w-3 h-3" />
                       <span>New Folder</span>
@@ -762,11 +762,11 @@ export function WorkspaceExplorer({ flowId, workspaceInfo, variables, onRefresh,
             {/* Exported Functions (from sub-workflows) */}
             {wsFunctions.length > 0 && (
               <div>
-                <h4 className="text-[11px] font-semibold text-white/90 mb-2 flex items-center gap-1.5">
+                <h4 className="text-[11px] font-semibold wf-fg mb-2 flex items-center gap-1.5">
                   <Upload className="w-3.5 h-3.5 text-indigo-400" />
                   Exported Functions
                 </h4>
-                <p className="text-[10px] text-white/40 mb-2">
+                <p className="text-[10px] wf-fg-faint mb-2">
                   Sub-workflows you can call from the main workflow. Click to copy the path.
                 </p>
                 <div className="space-y-2">
@@ -781,16 +781,16 @@ export function WorkspaceExplorer({ flowId, workspaceInfo, variables, onRefresh,
                         <RefPill value={fn.path} label="copy path" />
                       </div>
                       {fn.description && (
-                        <p className="text-[10px] text-white/50 mb-1">{fn.description}</p>
+                        <p className="text-[10px] wf-fg-muted mb-1">{fn.description}</p>
                       )}
                       {fn.inputParams && fn.inputParams.length > 0 && (
                         <div className="mt-1">
-                          <span className="text-[9px] font-bold text-white/40 uppercase">Inputs:</span>
+                          <span className="text-[9px] font-bold wf-fg-faint uppercase">Inputs:</span>
                           <div className="flex flex-wrap gap-1 mt-0.5">
                             {fn.inputParams.map((p: any, i: number) => (
-                              <span key={i} className="inline-flex items-center px-1.5 py-0 text-[10px] bg-white/[0.06] border border-white/[0.1] rounded text-white/70">
+                              <span key={i} className="inline-flex items-center px-1.5 py-0 text-[10px] rounded wf-surface-muted wf-fg-muted">
                                 {p.name}
-                                {p.type && <span className="text-white/40 ml-0.5">:{p.type}</span>}
+                                {p.type && <span className="wf-fg-faint ml-0.5">:{p.type}</span>}
                                 {p.required && <span className="text-red-400 ml-0.5">*</span>}
                               </span>
                             ))}
@@ -804,7 +804,7 @@ export function WorkspaceExplorer({ flowId, workspaceInfo, variables, onRefresh,
                         >
                           <FileText className="w-2.5 h-2.5" /> Edit
                         </button>
-                        <span className="text-white/20">|</span>
+                        <span className="wf-fg-faint">|</span>
                         <RefPill
                           value={`call_workspace_function(path="${fn.path}")`}
                           label="copy call"
@@ -813,7 +813,7 @@ export function WorkspaceExplorer({ flowId, workspaceInfo, variables, onRefresh,
                     </div>
                   ))}
                 </div>
-                <div className="mt-2 px-2 py-1.5 bg-indigo-500/10 rounded text-[10px] text-white/50 leading-relaxed">
+                <div className="mt-2 px-2 py-1.5 bg-indigo-500/10 rounded text-[10px] wf-fg-muted leading-relaxed">
                   Add a <code className="text-indigo-400 font-medium">Call Workspace Function</code> node and set the path to call these.
                 </div>
               </div>
@@ -821,12 +821,12 @@ export function WorkspaceExplorer({ flowId, workspaceInfo, variables, onRefresh,
 
             {/* How to Export */}
             {wsFunctions.length === 0 && (
-              <div className="bg-white/[0.02] rounded-lg p-3 border border-white/[0.04]">
-                <h4 className="text-[11px] font-semibold text-white/70 mb-1.5 flex items-center gap-1.5">
+              <div className="rounded-lg p-3 wf-surface-muted">
+                <h4 className="text-[11px] font-semibold wf-fg mb-1.5 flex items-center gap-1.5">
                   <Upload className="w-3.5 h-3.5 text-indigo-400" />
                   Export Functions
                 </h4>
-                <p className="text-[10px] text-white/50 leading-relaxed">
+                <p className="text-[10px] wf-fg-muted leading-relaxed">
                   Create sub-workflows to organize reusable logic, like components in React.
                   Each <code className="text-indigo-400">.stuard</code> file with a <strong>function trigger</strong> becomes a callable function.
                 </p>
@@ -841,26 +841,26 @@ export function WorkspaceExplorer({ flowId, workspaceInfo, variables, onRefresh,
 
             {/* Workspace Path References */}
             <div>
-              <h4 className="text-[11px] font-semibold text-white/90 mb-2 flex items-center gap-1.5">
+              <h4 className="text-[11px] font-semibold wf-fg mb-2 flex items-center gap-1.5">
                 <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
                 Import Paths
               </h4>
-              <p className="text-[10px] text-white/40 mb-1.5">Use these in any step to reference workspace paths.</p>
+              <p className="text-[10px] wf-fg-faint mb-1.5">Use these in any step to reference workspace paths.</p>
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-white/50">Root</span>
+                  <span className="text-[10px] wf-fg-muted">Root</span>
                   <RefPill value="{{$workspace.path}}" />
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-white/50">Data</span>
+                  <span className="text-[10px] wf-fg-muted">Data</span>
                   <RefPill value="{{$workspace.data}}" />
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-white/50">Scripts</span>
+                  <span className="text-[10px] wf-fg-muted">Scripts</span>
                   <RefPill value="{{$workspace.scripts}}" />
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-white/50">Assets</span>
+                  <span className="text-[10px] wf-fg-muted">Assets</span>
                   <RefPill value="{{$workspace.assets}}" />
                 </div>
               </div>
@@ -869,11 +869,11 @@ export function WorkspaceExplorer({ flowId, workspaceInfo, variables, onRefresh,
             {/* File References */}
             {workspaceInfo && workspaceInfo.files.filter(f => f.type === 'file' && !f.name.endsWith('.stuard')).length > 0 && (
               <div>
-                <h4 className="text-[11px] font-semibold text-white/90 mb-2 flex items-center gap-1.5">
+                <h4 className="text-[11px] font-semibold wf-fg mb-2 flex items-center gap-1.5">
                   <Download className="w-3.5 h-3.5 text-blue-400" />
                   File References
                 </h4>
-                <p className="text-[10px] text-white/40 mb-1.5">Click to copy file path references for use in steps.</p>
+                <p className="text-[10px] wf-fg-faint mb-1.5">Click to copy file path references for use in steps.</p>
                 <div className="space-y-1">
                   {workspaceInfo.files
                     .filter(f => f.type === 'file' && !f.name.endsWith('.stuard'))
@@ -881,7 +881,7 @@ export function WorkspaceExplorer({ flowId, workspaceInfo, variables, onRefresh,
                       <div key={f.path} className="flex items-center justify-between">
                         <div className="flex items-center gap-1 min-w-0">
                           {fileIcon(f.name)}
-                          <span className="text-[10px] text-white/50 truncate">{f.path}</span>
+                          <span className="text-[10px] wf-fg-muted truncate">{f.path}</span>
                         </div>
                         <RefPill value={`{{$workspace.file.${f.path.replace(/\//g, '.')}}}`} label="copy" />
                       </div>
@@ -893,7 +893,7 @@ export function WorkspaceExplorer({ flowId, workspaceInfo, variables, onRefresh,
             {/* Workflow Variables */}
             {variables && variables.length > 0 && (
               <div>
-                <h4 className="text-[11px] font-semibold text-white/90 mb-2 flex items-center gap-1.5">
+                <h4 className="text-[11px] font-semibold wf-fg mb-2 flex items-center gap-1.5">
                   <Variable className="w-3.5 h-3.5 text-violet-400" />
                   Variables
                 </h4>
@@ -901,8 +901,8 @@ export function WorkspaceExplorer({ flowId, workspaceInfo, variables, onRefresh,
                   {variables.map(v => (
                     <div key={v.name} className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="text-white/40 shrink-0">{varTypeIcon(v.type)}</span>
-                        <span className="text-[10px] text-white/60 truncate">{v.name}</span>
+                        <span className="wf-fg-faint shrink-0">{varTypeIcon(v.type)}</span>
+                        <span className="text-[10px] wf-fg-muted truncate">{v.name}</span>
                       </div>
                       <RefPill value={`{{$vars.${v.name}}}`} label={v.name} />
                     </div>
@@ -913,11 +913,11 @@ export function WorkspaceExplorer({ flowId, workspaceInfo, variables, onRefresh,
 
             {/* Step Output References */}
             <div>
-              <h4 className="text-[11px] font-semibold text-white/90 mb-2 flex items-center gap-1.5">
+              <h4 className="text-[11px] font-semibold wf-fg mb-2 flex items-center gap-1.5">
                 <Braces className="w-3.5 h-3.5 text-emerald-400" />
                 Step Outputs
               </h4>
-              <div className="px-2 py-1.5 bg-white/[0.02] rounded text-[10px] text-white/50 leading-relaxed space-y-1">
+              <div className="px-2 py-1.5 rounded text-[10px] leading-relaxed space-y-1 wf-surface-muted wf-fg-muted">
                 <p>Reference any previous step's output:</p>
                 <code className="block text-indigo-400">{"{{step_id.fieldName}}"}</code>
                 <p className="mt-1">Common fields:</p>

@@ -478,7 +478,6 @@ export {
   file_search_similar,
   process_pending_file_index,
   process_pending_file_index_batch,
-  sync_file_index_batch_jobs,
   semantic_file_search,
 } from './device/file-index';
 

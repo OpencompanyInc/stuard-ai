@@ -1,5 +1,5 @@
 import React, { useCallback, useState, forwardRef, useImperativeHandle, useRef } from "react";
-import { Link2, Square, Plus } from "lucide-react";
+import { Link2, Square, Plus, ImagePlus, X } from "lucide-react";
 import { ModelSelector } from "../../../components/ModelSelector";
 import type { ReasoningLevel } from "../../../hooks/usePreferences";
 import type { ContextUsageMetrics } from "../../../utils/contextUsage";
@@ -11,12 +11,64 @@ function extractAnyUrl(text: string): string | null {
   return match ? match[0] : null;
 }
 
+type AttachedImage = {
+  path: string;
+  name: string;
+  dataUrl?: string;
+  data?: string;
+  mimeType?: string;
+};
+
+function isImageFile(file: File): boolean {
+  if (typeof file?.type === 'string' && file.type.startsWith('image/')) return true;
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file?.name || '');
+}
+
+function buildImageDataUrl(data?: string, mimeType?: string): string | undefined {
+  if (!data) return undefined;
+  if (data.startsWith('data:')) return data;
+  return `data:${mimeType || 'image/png'};base64,${data}`;
+}
+
+async function droppedFileToAttachedImage(file: File): Promise<AttachedImage | null> {
+  try {
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onerror = () => reject(reader.error || new Error('failed_to_read_image'));
+      reader.readAsDataURL(file);
+    });
+
+    const inferredPath = (file as any)?.path || file.name;
+    return {
+      path: String(inferredPath || file.name || 'image'),
+      name: file.name || 'image',
+      dataUrl,
+      data: dataUrl,
+      mimeType: file.type || 'image/png',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function mergeImages(existing: AttachedImage[], incoming: AttachedImage[]): AttachedImage[] {
+  const merged = [...existing];
+  for (const img of incoming) {
+    const key = `${img.path}::${img.name}`;
+    if (!merged.some(m => `${m.path}::${m.name}` === key)) {
+      merged.push(img);
+    }
+  }
+  return merged;
+}
+
 export interface ChatInputRef {
   focus: () => void;
 }
 
 export const ChatInput = forwardRef<ChatInputRef, {
-  onSend: (text: string) => void;
+  onSend: (text: string, attachedImages?: AttachedImage[]) => void;
   busy: boolean;
   onStop?: () => void;
   contextMetrics?: ContextUsageMetrics | null;
@@ -27,8 +79,10 @@ export const ChatInput = forwardRef<ChatInputRef, {
 }>(({ onSend, busy, onStop, contextMetrics, selectedModelId, onSelectModel, reasoningLevel, onReasoningLevelChange }, ref) => {
   const [text, setText] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
-  const [hasDragUrl, setHasDragUrl] = useState(false);
+  const [dragKind, setDragKind] = useState<'url' | 'images' | null>(null);
+  const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useImperativeHandle(ref, () => ({
     focus: () => textareaRef.current?.focus(),
@@ -36,21 +90,60 @@ export const ChatInput = forwardRef<ChatInputRef, {
 
   const send = useCallback(() => {
     const t = text.trim();
-    if (!t || busy) return;
-    onSend(t);
+    if ((!t && attachedImages.length === 0) || busy) return;
+    onSend(t, attachedImages);
     setText("");
-  }, [text, busy, onSend]);
+    setAttachedImages([]);
+  }, [text, attachedImages, busy, onSend]);
+
+  const addImages = useCallback((images: AttachedImage[]) => {
+    if (!images.length) return;
+    setAttachedImages(prev => mergeImages(prev, images));
+  }, []);
+
+  const removeImage = useCallback((idx: number) => {
+    setAttachedImages(prev => prev.filter((_, i) => i !== idx));
+  }, []);
+
+  const handlePickImages = useCallback(async () => {
+    if (busy) return;
+    try {
+      const api = (window as any).desktopAPI;
+      if (api?.selectImages) {
+        const images = await api.selectImages();
+        if (Array.isArray(images) && images.length > 0) {
+          addImages(images.map((img: any) => ({
+            path: String(img?.path || img?.name || 'image'),
+            name: String(img?.name || 'image'),
+            data: typeof img?.data === 'string' ? img.data : undefined,
+            dataUrl: buildImageDataUrl(typeof img?.data === 'string' ? img.data : undefined, typeof img?.mimeType === 'string' ? img.mimeType : undefined),
+            mimeType: typeof img?.mimeType === 'string' ? img.mimeType : undefined,
+          })));
+          return;
+        }
+      }
+    } catch { }
+    fileInputRef.current?.click();
+  }, [busy, addImages]);
+
+  const handleFileInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []).filter(isImageFile);
+    if (files.length > 0) {
+      const images = (await Promise.all(files.map(droppedFileToAttachedImage))).filter((img): img is AttachedImage => !!img);
+      addImages(images);
+    }
+    e.target.value = '';
+  }, [addImages]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
 
-    // Check what's being dragged
+    const hasImageFiles = Array.from(e.dataTransfer.items || []).some(item => item.kind === 'file' && item.type.startsWith('image/'));
     const textData = e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text/uri-list');
-    if (textData) {
-      setHasDragUrl(!!extractAnyUrl(textData));
-    }
-    setIsDragOver(true);
+    const hasUrl = !!extractAnyUrl(textData);
+    setDragKind(hasImageFiles ? 'images' : hasUrl ? 'url' : null);
+    setIsDragOver(hasImageFiles || hasUrl);
   }, []);
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
@@ -68,35 +161,37 @@ export const ChatInput = forwardRef<ChatInputRef, {
     const y = e.clientY;
     if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
       setIsDragOver(false);
-      setHasDragUrl(false);
+      setDragKind(null);
     }
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(false);
-    setHasDragUrl(false);
+    setDragKind(null);
 
-    // Try to get URL from various data types
+    const droppedFiles = Array.from(e.dataTransfer.files || []).filter(isImageFile);
+    if (droppedFiles.length > 0) {
+      const images = (await Promise.all(droppedFiles.map(droppedFileToAttachedImage))).filter((img): img is AttachedImage => !!img);
+      addImages(images);
+      return;
+    }
+
     const uriList = e.dataTransfer.getData('text/uri-list');
     const plainText = e.dataTransfer.getData('text/plain');
     const htmlText = e.dataTransfer.getData('text/html');
 
-    // Extract URL from the dropped data
     let droppedUrl: string | null = null;
 
-    // First try uri-list (most reliable for dragged links)
     if (uriList) {
       droppedUrl = extractAnyUrl(uriList);
     }
 
-    // Then try plain text
     if (!droppedUrl && plainText) {
       droppedUrl = extractAnyUrl(plainText);
     }
 
-    // Try to extract from HTML if available
     if (!droppedUrl && htmlText) {
       const hrefMatch = htmlText.match(/href=["']([^"']+)["']/);
       if (hrefMatch) {
@@ -105,38 +200,65 @@ export const ChatInput = forwardRef<ChatInputRef, {
     }
 
     if (droppedUrl) {
-      // Append to existing text or set as new text
       const newText = text.trim()
         ? `${text.trim()} ${droppedUrl}`
         : droppedUrl;
       setText(newText);
     }
-  }, [text]);
+  }, [text, addImages]);
 
   return (
     <div
-      className={`w-full bg-black/40 backdrop-blur-md border rounded-2xl shadow-xl shadow-black/50 ring-1 transition-all duration-200 ${isDragOver && hasDragUrl
+      className={`w-full wf-bg-sunken backdrop-blur-md border rounded-2xl shadow-xl ring-1 transition-all duration-200 ${isDragOver && dragKind
           ? 'border-indigo-500/50 ring-indigo-500/30 bg-indigo-500/10'
-          : 'border-white/[0.08] ring-white/[0.04]'
+          : 'wf-border-subtle ring-[color:var(--wf-border-subtle)]'
         }`}
       onDragOver={handleDragOver}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* Drop indicator overlay */}
-      {isDragOver && hasDragUrl && (
+      {isDragOver && dragKind && (
         <div className="flex items-center justify-center gap-2 px-3 py-2 text-[12px] font-medium bg-indigo-500/20 text-indigo-400">
-          <Link2 className="w-4 h-4" />
-          Drop link here
+          {dragKind === 'images' ? <ImagePlus className="w-4 h-4" /> : <Link2 className="w-4 h-4" />}
+          {dragKind === 'images' ? 'Drop image here' : 'Drop link here'}
         </div>
       )}
 
       <div className="flex flex-col p-2.5">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={handleFileInputChange}
+        />
+        {attachedImages.length > 0 && (
+          <div className="flex flex-wrap gap-2 px-1 pb-2">
+            {attachedImages.map((img, idx) => {
+              const src = img.dataUrl || buildImageDataUrl(img.data, img.mimeType) || img.path;
+              return (
+                <div key={`${img.path}-${idx}`} className="relative rounded-xl overflow-hidden border wf-border-subtle wf-bg-overlay">
+                  <img src={src} alt={img.name} className="w-16 h-16 object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => removeImage(idx)}
+                    className="absolute top-1 right-1 p-1 rounded-full wf-bg-elevated wf-fg wf-hover-fg transition-colors"
+                    title={`Remove ${img.name}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                  <div className="px-2 py-1 text-[10px] wf-fg-muted max-w-16 truncate">{img.name}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
-          className="w-full resize-none outline-none text-[13px] text-white/90 placeholder:text-white/40 bg-transparent min-h-[44px] max-h-[140px] py-1 px-1 scrollbar-minimal"
-          placeholder={busy ? "Working..." : "Tell Stuard what to do"}
+          className="w-full resize-none outline-none text-[13px] wf-fg placeholder:wf-fg-faint bg-transparent min-h-[44px] max-h-[140px] py-1 px-1 scrollbar-minimal"
+          placeholder={busy ? "Working..." : "Tell Stuard what to do, or drop images here"}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
@@ -151,9 +273,12 @@ export const ChatInput = forwardRef<ChatInputRef, {
           <div className="flex items-center gap-1">
             <button
               type="button"
-              className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/[0.06] transition-colors"
+              onClick={handlePickImages}
+              disabled={busy}
+              className="p-1.5 rounded-lg wf-fg-faint wf-hover-fg wf-hover-bg transition-colors"
+              title="Attach images"
             >
-              <Plus className="w-4 h-4" />
+              {attachedImages.length > 0 ? <ImagePlus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
             </button>
           </div>
 
@@ -182,7 +307,7 @@ export const ChatInput = forwardRef<ChatInputRef, {
                 <Square className="w-3 h-3 fill-current" />
                 Stop
               </button>
-            ) : (text.trim().length > 0 && (
+            ) : ((text.trim().length > 0 || attachedImages.length > 0) && (
               <button
                 type="button"
                 onClick={send}

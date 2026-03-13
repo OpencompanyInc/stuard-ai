@@ -189,7 +189,7 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
     return reminders.sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime());
   }, [tasks]);
 
-  if (loading) {
+  if (loading && compact) {
     return (
       <div className="flex items-center justify-center h-full">
         <Loader2 className="w-6 h-6 animate-spin text-primary" />
@@ -199,65 +199,81 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
 
   return (
     <div className={clsx("flex flex-col h-full bg-theme-bg", compact ? "p-3" : "pb-16 max-w-6xl mx-auto w-full")}>
-      {/* Header with Sub-tabs */}
-      <div className={clsx("flex items-center justify-between shrink-0", compact ? "mb-3" : "mb-6")}>
-        {!compact && <h1 className="text-xl font-black text-theme-fg tracking-tight font-stuard">Tasks</h1>}
-        
-        {/* Sub-tabs: Todo / Reminders */}
-        <div className="flex items-center gap-1 bg-theme-card/50 p-1 rounded-xl border border-theme/10">
-          <button
-            onClick={() => handleSubTabChange('todo')}
-            className={clsx(
-              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all",
-              subTab === 'todo' ? "bg-primary text-primary-fg shadow-sm" : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
-            )}
-          >
-            <ListChecks className="w-3.5 h-3.5" />
-            To-do
-            {filteredTasks.length > 0 && (
-              <span className={clsx(
-                "min-w-[18px] h-[18px] flex items-center justify-center rounded-full text-[10px] font-bold",
-                subTab === 'todo' ? "bg-white/20" : "bg-primary/10 text-primary"
-              )}>
-                {filteredTasks.length}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => handleSubTabChange('reminders')}
-            className={clsx(
-              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all",
-              subTab === 'reminders' ? "bg-amber-500 text-white shadow-sm" : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
-            )}
-          >
-            <Bell className="w-3.5 h-3.5" />
-            Reminders
-            {allReminders.length > 0 && (
-              <span className={clsx(
-                "min-w-[18px] h-[18px] flex items-center justify-center rounded-full text-[10px] font-bold",
-                subTab === 'reminders' ? "bg-white/20" : "bg-amber-500/10 text-amber-500"
-              )}>
-                {allReminders.length}
-              </span>
-            )}
-          </button>
-        </div>
-
-        {/* Filter (only for todo tab) */}
-        {subTab === 'todo' && !compact && (
-          <div className="flex items-center gap-1 bg-theme-card/50 p-1 rounded-xl border border-theme/10">
-            {(['pending', 'completed'] as const).map(f => (
+      <div className={clsx("shrink-0", compact ? "mb-3" : "mb-6")}>
+        {compact ? (
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1 bg-theme-card/50 p-1 rounded-xl border border-theme/10">
               <button
-                key={f}
-                onClick={() => setFilter(f)}
+                onClick={() => handleSubTabChange('todo')}
                 className={clsx(
-                  "px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all capitalize",
-                  filter === f ? "bg-theme-card shadow-sm text-theme-fg" : "text-theme-muted hover:text-theme-fg"
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all",
+                  subTab === 'todo' ? "bg-primary text-primary-fg shadow-sm" : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
                 )}
               >
-                {f}
+                <ListChecks className="w-3.5 h-3.5" />
+                To-do
+                {filteredTasks.length > 0 && (
+                  <span className={clsx(
+                    "min-w-[18px] h-[18px] flex items-center justify-center rounded-full text-[10px] font-bold",
+                    subTab === 'todo' ? "bg-white/20" : "bg-primary/10 text-primary"
+                  )}>
+                    {filteredTasks.length}
+                  </span>
+                )}
               </button>
-            ))}
+              <button
+                onClick={() => handleSubTabChange('reminders')}
+                className={clsx(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all",
+                  subTab === 'reminders' ? "bg-amber-500 text-white shadow-sm" : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
+                )}
+              >
+                <Bell className="w-3.5 h-3.5" />
+                Reminders
+                {allReminders.length > 0 && (
+                  <span className={clsx(
+                    "min-w-[18px] h-[18px] flex items-center justify-center rounded-full text-[10px] font-bold",
+                    subTab === 'reminders' ? "bg-white/20" : "bg-amber-500/10 text-amber-500"
+                  )}>
+                    {allReminders.length}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {subTab === 'todo' && (
+              <div className="flex items-center gap-1 bg-theme-card/50 p-1 rounded-xl border border-theme/10">
+                {(['pending', 'completed'] as const).map(f => (
+                  <button
+                    key={f}
+                    onClick={() => setFilter(f)}
+                    className={clsx(
+                      "px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all capitalize",
+                      filter === f ? "bg-theme-card shadow-sm text-theme-fg" : "text-theme-muted hover:text-theme-fg"
+                    )}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex justify-center">
+            <div className="inline-flex items-center rounded-full border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-hover)] p-1 shadow-sm">
+              {(['pending', 'completed'] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setFilter(f)}
+                  className={clsx(
+                    "px-5 py-2 text-[13px] font-semibold rounded-full transition-all capitalize min-w-[70px]",
+                    filter === f ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg shadow-sm" : "text-theme-muted hover:text-theme-fg"
+                  )}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -376,79 +392,144 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
       {/* Todo Tab Content */}
       {subTab === 'todo' && (
         <>
-          {/* Quick Add Input */}
-          <div className={clsx(
-            "relative transition-all duration-300 ease-in-out shrink-0 group",
-            compact ? "mb-3" : "mb-4",
-            isAdding ? "ring-2 ring-primary/20 rounded-xl" : ""
-          )}>
+          {compact ? (
             <div className={clsx(
-              "flex items-center gap-3 bg-theme-card border border-theme/10 rounded-xl shadow-sm transition-all",
-              compact ? "px-3 py-2" : "px-4 py-3",
-              isAdding ? "shadow-lg border-primary/20" : "hover:border-theme/20"
+              "relative transition-all duration-300 ease-in-out shrink-0 group",
+              compact ? "mb-3" : "mb-4",
+              isAdding ? "ring-2 ring-primary/20 rounded-xl" : ""
             )}>
               <div className={clsx(
-                "w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors shrink-0",
-                isAdding ? "border-primary text-primary" : "border-theme-muted/30 text-transparent"
+                "flex items-center gap-3 bg-theme-card border border-theme/10 rounded-xl shadow-sm transition-all",
+                compact ? "px-3 py-2" : "px-4 py-3",
+                isAdding ? "shadow-lg border-primary/20" : "hover:border-theme/20"
               )}>
-                <Plus className="w-3.5 h-3.5" />
-              </div>
-              <input
-                type="text"
-                placeholder="Add a task..."
-                className={clsx(
-                  "flex-1 bg-transparent border-none outline-none text-theme-fg placeholder:text-theme-muted/60",
-                  compact ? "text-[12px]" : "text-sm"
+                <div className={clsx(
+                  "w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors shrink-0",
+                  isAdding ? "border-primary text-primary" : "border-theme-muted/30 text-transparent"
+                )}>
+                  <Plus className="w-3.5 h-3.5" />
+                </div>
+                <input
+                  type="text"
+                  placeholder="Add a task..."
+                  className={clsx(
+                    "flex-1 bg-transparent border-none outline-none text-theme-fg placeholder:text-theme-muted/60",
+                    compact ? "text-[12px]" : "text-sm"
+                  )}
+                  value={newTask.title}
+                  onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
+                  onFocus={() => setIsAdding(true)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleAddTask();
+                    if (e.key === 'Escape') setIsAdding(false);
+                  }}
+                />
+                {isAdding && (
+                  <div className="flex items-center gap-2 animate-in fade-in slide-in-from-right-4 duration-200">
+                    <input
+                      type="date"
+                      value={newTask.dueDate}
+                      onChange={(e) => setNewTask({ ...newTask, dueDate: e.target.value })}
+                      className="bg-theme-hover border border-theme/10 rounded-lg text-[10px] text-theme-muted px-2 py-1 outline-none focus:ring-1 focus:ring-primary/20"
+                    />
+                    <select
+                      value={newTask.priority}
+                      onChange={(e) => setNewTask({ ...newTask, priority: e.target.value as TaskPriority })}
+                      className="bg-theme-hover border border-theme/10 rounded-lg text-[10px] text-theme-muted px-2 py-1 outline-none focus:ring-1 focus:ring-primary/20 cursor-pointer"
+                    >
+                      <option value="low">Low</option>
+                      <option value="normal">Normal</option>
+                      <option value="high">High</option>
+                      <option value="urgent">Urgent</option>
+                    </select>
+                    <button 
+                      onClick={handleAddTask}
+                      disabled={!newTask.title.trim()}
+                      className="p-1.5 bg-primary text-primary-fg rounded-lg hover:opacity-90 disabled:opacity-50 transition-all"
+                    >
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 )}
-                value={newTask.title}
-                onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
-                onFocus={() => setIsAdding(true)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleAddTask();
-                  if (e.key === 'Escape') setIsAdding(false);
-                }}
-              />
-              {isAdding && (
-                <div className="flex items-center gap-2 animate-in fade-in slide-in-from-right-4 duration-200">
+              </div>
+            </div>
+          ) : (
+            <div className="shrink-0 mb-6 flex justify-center">
+              <div className="w-full max-w-[560px] flex items-center gap-2.5">
+                <div className="flex-1 h-10 rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-transparent px-4 flex items-center">
+                  <input
+                    type="text"
+                    placeholder="Add task"
+                    className="w-full bg-transparent border-none outline-none text-[15px] text-theme-fg placeholder:text-theme-muted/65"
+                    value={newTask.title}
+                    onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleAddTask();
+                    }}
+                  />
+                </div>
+                <label className="relative h-10 w-10 rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-transparent flex items-center justify-center text-theme-muted hover:text-theme-fg transition-colors cursor-pointer overflow-hidden">
+                  <Calendar className="w-4 h-4" />
                   <input
                     type="date"
                     value={newTask.dueDate}
                     onChange={(e) => setNewTask({ ...newTask, dueDate: e.target.value })}
-                    className="bg-theme-hover border border-theme/10 rounded-lg text-[10px] text-theme-muted px-2 py-1 outline-none focus:ring-1 focus:ring-primary/20"
+                    className="absolute inset-0 opacity-0 cursor-pointer"
                   />
+                </label>
+                <div className="relative h-10 min-w-[108px] rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-transparent overflow-hidden">
                   <select
                     value={newTask.priority}
                     onChange={(e) => setNewTask({ ...newTask, priority: e.target.value as TaskPriority })}
-                    className="bg-theme-hover border border-theme/10 rounded-lg text-[10px] text-theme-muted px-2 py-1 outline-none focus:ring-1 focus:ring-primary/20 cursor-pointer"
+                    className="w-full h-full appearance-none bg-transparent px-4 pr-8 text-[15px] text-theme-fg outline-none cursor-pointer"
                   >
                     <option value="low">Low</option>
                     <option value="normal">Normal</option>
                     <option value="high">High</option>
                     <option value="urgent">Urgent</option>
                   </select>
-                  <button 
-                    onClick={handleAddTask}
-                    disabled={!newTask.title.trim()}
-                    className="p-1.5 bg-primary text-primary-fg rounded-lg hover:opacity-90 disabled:opacity-50 transition-all"
-                  >
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
+                  <ChevronDown className="w-4 h-4 text-theme-muted absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
-              )}
+                <button
+                  onClick={handleAddTask}
+                  disabled={!newTask.title.trim()}
+                  className="h-10 w-10 shrink-0 rounded-2xl bg-primary text-primary-fg flex items-center justify-center hover:opacity-90 disabled:opacity-50 transition-all"
+                >
+                  <Check className="w-4 h-4" />
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Task List */}
-          <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1.5 -mx-2 px-2 pb-4">
-            {filteredTasks.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-48 text-center">
-                <div className="w-14 h-14 bg-theme-muted/5 rounded-full flex items-center justify-center mb-4">
-                  <CheckCircle2 className="w-7 h-7 text-theme-muted/30" />
-                </div>
-                <p className="text-theme-fg font-semibold text-sm">All caught up</p>
-                <p className="text-[11px] text-theme-muted mt-1 max-w-[200px]">
-                  {filter === 'pending' ? "No pending tasks. Enjoy!" : "No completed tasks yet."}
-                </p>
+          <div className={clsx(
+            "flex-1 overflow-y-auto custom-scrollbar pb-4",
+            compact ? "space-y-1.5 -mx-2 px-2" : "space-y-3"
+          )}>
+            {loading && !compact ? (
+              Array.from({ length: 5 }).map((_, idx) => (
+                <div key={idx} className="h-[64px] rounded-[18px] bg-transparent border border-[color:var(--dashboard-panel-border)] animate-pulse" />
+              ))
+            ) : filteredTasks.length === 0 ? (
+              <div className={clsx("flex flex-col items-center justify-center text-center", compact ? "h-48" : "h-[360px]")}>
+                {!compact && filter === 'pending' ? (
+                  <>
+                    <p className="text-theme-fg font-semibold text-[24px]">You have no Tasks</p>
+                    <p className="text-[15px] text-theme-muted mt-2 max-w-[520px]">
+                      Start chatting with Stuard to get help with your tasks, coding, and questions.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-14 h-14 bg-theme-muted/5 rounded-full flex items-center justify-center mb-4">
+                      <CheckCircle2 className="w-7 h-7 text-theme-muted/30" />
+                    </div>
+                    <p className="text-theme-fg font-semibold text-sm">All caught up</p>
+                    <p className="text-[11px] text-theme-muted mt-1 max-w-[200px]">
+                      {filter === 'pending' ? "No pending tasks. Enjoy!" : "No completed tasks yet."}
+                    </p>
+                  </>
+                )}
               </div>
             ) : (
               filteredTasks.map(task => (
@@ -578,8 +659,8 @@ const TaskCard: React.FC<TaskCardProps> = ({
     <div className={clsx(
       "group relative transition-all duration-200",
       expanded 
-        ? "bg-theme-card border border-theme/20 shadow-lg rounded-xl z-10 my-1" 
-        : "hover:bg-theme-card/50 border border-transparent rounded-xl hover:border-theme/10"
+        ? "bg-transparent border border-[color:var(--dashboard-panel-border)] shadow-lg rounded-xl z-10 my-1" 
+        : "hover:bg-[color:var(--dashboard-hover)] border border-transparent rounded-xl hover:border-[color:var(--dashboard-panel-border)]"
     )}>
       {/* Main Row */}
       <div className={clsx("flex items-start gap-3", compact ? "p-2.5" : "p-3")}>

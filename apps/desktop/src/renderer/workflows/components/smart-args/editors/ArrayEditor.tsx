@@ -96,7 +96,7 @@ export function ArrayEditor({
     <div className="space-y-2">
       {/* Mode toggle - only show when variables are available */}
       {hasVariables && (
-        <div className="flex items-center gap-1 p-0.5 bg-white/[0.03] rounded-lg border border-white/[0.06] w-fit">
+        <div className="flex items-center gap-1 p-0.5 wf-bg-overlay rounded-lg border wf-border-subtle w-fit">
           <button
             type="button"
             onClick={() => {
@@ -104,8 +104,8 @@ export function ArrayEditor({
               if (typeof value === 'string') onChange([]);
             }}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${mode === 'manual'
-              ? 'bg-white/[0.08] text-white/80 shadow-sm'
-              : 'text-white/40 hover:text-white/60'
+              ? 'wf-bg-elevated wf-fg shadow-sm'
+              : 'wf-fg-faint hover:wf-fg-muted'
               }`}
           >
             <List className="w-3 h-3" />
@@ -119,7 +119,7 @@ export function ArrayEditor({
             }}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${mode === 'variable'
               ? 'bg-indigo-500/20 text-indigo-400 shadow-sm'
-              : 'text-white/40 hover:text-white/60'
+              : 'wf-fg-faint hover:wf-fg-muted'
               }`}
           >
             <Variable className="w-3 h-3" />
@@ -138,7 +138,7 @@ export function ArrayEditor({
             upstreamNodes={upstreamNodes}
             workflowVariables={workflowVariables}
           />
-          <p className="text-[10px] text-white/35 px-1">
+          <p className="text-[10px] wf-fg-faint px-1">
             Reference a list from a previous step or workflow variable. The value will be resolved at runtime.
           </p>
         </div>
@@ -146,11 +146,11 @@ export function ArrayEditor({
         /* Manual list mode */
         <>
           {items.length === 0 ? (
-            <div className="text-center py-6 bg-white/[0.06] rounded-xl border border-dashed border-white/[0.08]">
-              <div className="w-10 h-10 mx-auto mb-3 rounded-full bg-white/[0.06] flex items-center justify-center">
-                {isPathArray ? <FileText className="w-5 h-5 text-white/40" /> : <Plus className="w-5 h-5 text-white/40" />}
+            <div className="text-center py-6 wf-bg-overlay rounded-xl border border-dashed wf-border-subtle">
+              <div className="w-10 h-10 mx-auto mb-3 rounded-full wf-bg-overlay flex items-center justify-center">
+                {isPathArray ? <FileText className="w-5 h-5 wf-fg-faint" /> : <Plus className="w-5 h-5 wf-fg-faint" />}
               </div>
-              <p className="text-sm text-white/50 mb-3">No {getItemLabel()}s added yet</p>
+              <p className="text-sm wf-fg-muted mb-3">No {getItemLabel()}s added yet</p>
               <button
                 onClick={addItem}
                 className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-indigo-400 bg-indigo-500/10 rounded-lg hover:bg-indigo-500/20 transition-colors"
@@ -162,9 +162,9 @@ export function ArrayEditor({
           ) : (
             <>
               {items.map((item, i) => (
-                <div key={i} className="flex gap-2 items-center group p-2 bg-white/[0.06] rounded-xl border border-white/[0.04] hover:border-white/[0.08] transition-colors">
+                <div key={i} className="flex gap-2 items-center group p-2 wf-bg-overlay rounded-xl border wf-border-subtle hover:wf-border-subtle transition-colors">
                   {/* Index indicator */}
-                  <div className="w-6 h-6 rounded-lg bg-slate-200 flex items-center justify-center text-xs font-medium text-white/50 shrink-0">
+                  <div className="w-6 h-6 rounded-lg wf-bg-overlay flex items-center justify-center text-xs font-medium wf-fg-muted shrink-0">
                     {i + 1}
                   </div>
 
@@ -199,7 +199,7 @@ export function ArrayEditor({
                               }
                             } catch {}
                           }}
-                          className="px-3 py-2 bg-white/[0.04] border border-white/[0.08] rounded-lg text-white/50 hover:text-indigo-400 hover:border-indigo-500/40 transition-colors shrink-0"
+                          className="px-3 py-2 wf-bg-overlay border wf-border-subtle rounded-lg wf-fg-muted hover:text-indigo-400 hover:border-indigo-500/40 transition-colors shrink-0"
                           title="Browse files"
                         >
                           <FolderOpen className="w-4 h-4" />
@@ -211,7 +211,7 @@ export function ArrayEditor({
                         onChange={e => {
                           try { updateItem(i, JSON.parse(e.target.value)); } catch { /* ignore */ }
                         }}
-                        className="w-full px-3 py-2 text-xs font-mono bg-white/[0.04] border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 resize-none"
+                        className="w-full px-3 py-2 text-xs font-mono wf-bg-overlay border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 resize-none"
                         rows={3}
                       />
                     ) : (
@@ -228,7 +228,7 @@ export function ArrayEditor({
                   {/* Remove button */}
                   <button
                     onClick={() => removeItem(i)}
-                    className="p-2 text-white/40 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                    className="p-2 wf-fg-faint hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
                     title="Remove"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -238,7 +238,7 @@ export function ArrayEditor({
 
               <button
                 onClick={addItem}
-                className="w-full py-2.5 border border-dashed border-white/[0.08] rounded-xl text-xs font-semibold text-white/50 hover:text-indigo-400 hover:border-indigo-500/40 hover:bg-indigo-500/10 transition-all flex items-center justify-center gap-2"
+                className="w-full py-2.5 border border-dashed wf-border-subtle rounded-xl text-xs font-semibold wf-fg-muted hover:text-indigo-400 hover:border-indigo-500/40 hover:bg-indigo-500/10 transition-all flex items-center justify-center gap-2"
               >
                 <Plus className="w-4 h-4" />
                 Add {getItemLabel()}

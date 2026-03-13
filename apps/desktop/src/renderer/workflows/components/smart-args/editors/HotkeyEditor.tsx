@@ -104,17 +104,17 @@ export function HotkeyEditor({ value, onChange }: HotkeyEditorProps) {
               <div className="flex items-center gap-2 flex-wrap justify-center">
                 {keys.map((k, i) => (
                   <React.Fragment key={i}>
-                    <span className="px-2.5 py-1 bg-white/[0.08] border border-white/[0.12] rounded-lg font-medium text-white/90 text-sm">
+                    <span className="px-2.5 py-1 wf-bg-overlay border wf-border-subtle rounded-lg font-medium wf-fg text-sm">
                       {formatKey(k)}
                     </span>
-                    {i < keys.length - 1 && <span className="text-white/30 text-sm">+</span>}
+                    {i < keys.length - 1 && <span className="wf-fg-faint text-sm">+</span>}
                   </React.Fragment>
                 ))}
               </div>
             ) : (
-              <span className="font-medium text-white">Press your keys...</span>
+              <span className="font-medium wf-fg">Press your keys...</span>
             )}
-            <span className="text-xs text-white/50">Press keys to add · Enter to confirm · Esc to cancel</span>
+            <span className="text-xs wf-fg-muted">Press keys to add · Enter to confirm · Esc to cancel</span>
             <button
               onMouseDown={(e) => { e.preventDefault(); finishEditing(); }}
               className="mt-1 px-4 py-1.5 text-xs font-medium bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 rounded-lg text-blue-300 transition-all"
@@ -135,21 +135,21 @@ export function HotkeyEditor({ value, onChange }: HotkeyEditorProps) {
         <div className="flex gap-3">
           <button
             onClick={() => startEditing()}
-            className="flex-1 px-4 py-3 text-sm border border-white/[0.08] rounded-2xl bg-white/[0.02] hover:bg-white/[0.04] flex items-center justify-center transition-all shadow-sm"
+            className="flex-1 px-4 py-3 text-sm border wf-border-subtle rounded-2xl wf-bg-overlay hover:bg-white/[0.04] flex items-center justify-center transition-all shadow-sm"
           >
             {keys.length > 0 ? (
               <div className="flex items-center gap-3">
                 {keys.map((k, i) => (
                   <React.Fragment key={k}>
-                    <span className="px-3 py-1.5 bg-white/[0.06] border border-white/[0.08] rounded-xl font-medium text-white/80 text-sm shadow-sm">
+                    <span className="px-3 py-1.5 wf-bg-overlay border wf-border-subtle rounded-xl font-medium wf-fg text-sm shadow-sm">
                       {formatKey(k)}
                     </span>
-                    {i < keys.length - 1 && <span className="text-white/40 text-lg font-light">+</span>}
+                    {i < keys.length - 1 && <span className="wf-fg-faint text-lg font-light">+</span>}
                   </React.Fragment>
                 ))}
               </div>
             ) : (
-              <div className="flex items-center gap-2 text-white/40 py-1.5">
+              <div className="flex items-center gap-2 wf-fg-faint py-1.5">
                 <Keyboard className="w-4 h-4" />
                 <span>Click to record shortcut</span>
               </div>
@@ -158,7 +158,7 @@ export function HotkeyEditor({ value, onChange }: HotkeyEditorProps) {
 
           <button
             onClick={() => { setKeys([]); onChange([]); }}
-            className="px-10 flex items-center justify-center text-white/60 hover:text-white bg-white/[0.02] hover:bg-white/[0.04] border border-white/[0.08] rounded-2xl transition-all h-auto"
+            className="px-10 flex items-center justify-center wf-fg-muted hover:wf-fg wf-bg-overlay wf-hover-bg border wf-border-subtle rounded-2xl transition-all h-auto"
             title="Clear"
           >
             <RotateCcw className="w-5 h-5" />

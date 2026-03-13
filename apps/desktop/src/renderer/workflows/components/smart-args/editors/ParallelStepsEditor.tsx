@@ -117,7 +117,7 @@ export function ParallelStepsEditor({
                 key={i}
                 className={`border rounded-xl transition-all ${isExpanded
                   ? 'border-indigo-500/30 bg-indigo-500/100/10 shadow-sm'
-                  : 'border-white/[0.08] bg-white/[0.04] hover:border-white/[0.12]'
+                  : 'wf-border-subtle wf-bg-overlay hover:wf-border-subtle'
                   }`}
               >
                 {/* Step Header */}
@@ -130,41 +130,41 @@ export function ParallelStepsEditor({
                     <button
                       onClick={(e) => { e.stopPropagation(); moveStep(i, i - 1); }}
                       disabled={i === 0}
-                      className={`p-0.5 rounded transition-colors ${i === 0 ? 'text-slate-200' : 'text-white/40 hover:text-white/70 hover:bg-white/[0.1]'}`}
+                      className={`p-0.5 rounded transition-colors ${i === 0 ? 'wf-fg-faint opacity-50 cursor-default' : 'wf-fg-faint wf-hover-fg wf-hover-bg'}`}
                     >
                       <ChevronRight className="w-3 h-3 -rotate-90" />
                     </button>
                     <button
                       onClick={(e) => { e.stopPropagation(); moveStep(i, i + 1); }}
                       disabled={i === steps.length - 1}
-                      className={`p-0.5 rounded transition-colors ${i === steps.length - 1 ? 'text-slate-200' : 'text-white/40 hover:text-white/70 hover:bg-white/[0.1]'}`}
+                      className={`p-0.5 rounded transition-colors ${i === steps.length - 1 ? 'wf-fg-faint opacity-50 cursor-default' : 'wf-fg-faint wf-hover-fg wf-hover-bg'}`}
                     >
                       <ChevronRight className="w-3 h-3 rotate-90" />
                     </button>
                   </div>
 
                   {/* Step Number */}
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${isExpanded ? 'bg-indigo-500/100 text-white' : 'bg-white/[0.06] text-white/50'}`}>
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${isExpanded ? 'bg-indigo-500/100 text-white' : 'bg-white/[0.06] wf-fg-muted'}`}>
                     {i + 1}
                   </div>
 
                   {/* Tool Name */}
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-white/80 truncate">
+                    <div className="text-sm font-medium wf-fg truncate">
                       {toolInfo?.label || toolId || 'Select Tool'}
                     </div>
                     {toolInfo?.category && (
-                      <div className="text-[10px] text-white/40">{toolInfo.category}</div>
+                      <div className="text-[10px] wf-fg-faint">{toolInfo.category}</div>
                     )}
                   </div>
 
                   {/* Expand Icon */}
-                  <ChevronRight className={`w-4 h-4 text-white/40 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                  <ChevronRight className={`w-4 h-4 wf-fg-faint transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
 
                   {/* Delete Button */}
                   <button
                     onClick={(e) => { e.stopPropagation(); removeStep(i); }}
-                    className="p-1.5 text-white/40 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
+                    className="p-1.5 wf-fg-faint hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -172,7 +172,7 @@ export function ParallelStepsEditor({
 
                 {/* Step Settings */}
                 {isExpanded && (
-                  <div className="px-3 pb-3 pt-1 border-t border-white/[0.04] space-y-4">
+                  <div className="px-3 pb-3 pt-1 border-t wf-border-subtle space-y-4">
                     {/* Tool Selector */}
                     <div>
                       <label className="text-xs font-semibold text-white/70 mb-1.5 block">Tool</label>
@@ -183,7 +183,7 @@ export function ParallelStepsEditor({
                           const newToolInfo = allTools.find(t => t.id === newTool);
                           updateStep(i, { tool: newTool, args: newToolInfo?.args || {} });
                         }}
-                        className="w-full px-3 py-2 text-sm border border-white/[0.08] rounded-lg bg-white/[0.04] focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50"
+                        className="w-full px-3 py-2 text-sm border border-white/[0.08] rounded-lg wf-bg-overlay focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50"
                       >
                         <option value="">Select a tool...</option>
                         {Object.entries(groupedTools).map(([category, tools]) => (
@@ -203,9 +203,9 @@ export function ParallelStepsEditor({
                           <Settings2 className="w-3.5 h-3.5" />
                           Settings
                         </label>
-                        <React.Suspense fallback={<div className="text-xs text-white/40">Loading...</div>}>
+                        <React.Suspense fallback={<div className="text-xs wf-fg-faint">Loading...</div>}>
                           {Object.keys(schema.args).map(argKey => (
-                            <div key={argKey} className="pl-2 border-l-2 border-white/[0.04]">
+                            <div key={argKey} className="pl-2 border-l-2 wf-border-subtle">
                               <SmartArgEditorLazy
                                 toolName={toolId}
                                 argKey={argKey}
@@ -218,7 +218,7 @@ export function ParallelStepsEditor({
                           ))}
                         </React.Suspense>
                         {Object.keys(schema.args).length === 0 && (
-                          <div className="text-xs text-white/40 italic py-2">
+                          <div className="text-xs wf-fg-faint italic py-2">
                             No configuration needed for this tool
                           </div>
                         )}
@@ -252,8 +252,8 @@ export function ParallelStepsEditor({
 
       {/* Add Step Button / Tool Picker */}
       {showToolPicker ? (
-        <div className="border border-indigo-500/30 rounded-xl bg-white/[0.04] shadow-lg overflow-hidden">
-          <div className="p-2 border-b border-white/[0.04]">
+        <div className="border border-indigo-500/30 rounded-xl wf-bg-overlay shadow-lg overflow-hidden">
+          <div className="p-2 border-b wf-border-subtle">
             <input
               type="text"
               value={searchQuery}
@@ -268,7 +268,7 @@ export function ParallelStepsEditor({
             {Object.entries(groupedTools).length > 0 ? (
               Object.entries(groupedTools).map(([category, tools]) => (
                 <div key={category}>
-                  <div className="px-3 py-1.5 text-[10px] font-bold text-white/40 uppercase tracking-wider bg-white/[0.06] sticky top-0">
+                  <div className="px-3 py-1.5 text-[10px] font-bold wf-fg-faint uppercase tracking-wider bg-white/[0.06] sticky top-0">
                     {category}
                   </div>
                   {tools.map(tool => (
@@ -278,23 +278,23 @@ export function ParallelStepsEditor({
                       className="w-full px-3 py-2 text-left text-sm hover:bg-indigo-500/200/10 flex items-center gap-2 transition-colors"
                     >
                       <Play className="w-3.5 h-3.5 text-indigo-400" />
-                      <span className="font-medium text-white/80">{tool.label}</span>
-                      <span className="text-xs text-white/40 ml-auto">{tool.id}</span>
+                      <span className="font-medium wf-fg">{tool.label}</span>
+                      <span className="text-xs wf-fg-faint ml-auto">{tool.id}</span>
                     </button>
                   ))}
                 </div>
               ))
             ) : (
-              <div className="px-4 py-8 text-sm text-white/40 text-center">
+              <div className="px-4 py-8 text-sm wf-fg-faint text-center">
                 No tools found matching "{searchQuery}"
               </div>
             )}
           </div>
 
-          <div className="p-2 border-t border-white/[0.04] bg-white/[0.06]">
+          <div className="p-2 border-t wf-border-subtle bg-white/[0.06]">
             <button
               onClick={() => { setShowToolPicker(false); setSearchQuery(''); }}
-              className="w-full py-2 text-sm text-white/50 hover:text-white/80 font-medium"
+              className="w-full py-2 text-sm wf-fg-muted hover:wf-fg font-medium"
             >
               Cancel
             </button>
@@ -303,7 +303,7 @@ export function ParallelStepsEditor({
       ) : (
         <button
           onClick={() => setShowToolPicker(true)}
-          className="w-full py-3 border-2 border-dashed border-white/[0.08] rounded-xl text-sm font-medium text-white/50 hover:text-indigo-400 hover:border-indigo-500/40 hover:bg-indigo-500/200/10 transition-all flex items-center justify-center gap-2 group"
+          className="w-full py-3 border-2 border-dashed border-white/[0.08] rounded-xl text-sm font-medium wf-fg-muted hover:text-indigo-400 hover:border-indigo-500/40 hover:bg-indigo-500/200/10 transition-all flex items-center justify-center gap-2 group"
         >
           <div className="w-7 h-7 rounded-full bg-white/[0.06] group-hover:bg-indigo-500/200/20 flex items-center justify-center transition-colors">
             <Plus className="w-4 h-4" />
@@ -314,7 +314,7 @@ export function ParallelStepsEditor({
 
       {/* Info */}
       {steps.length > 0 && (
-        <div className="flex items-center gap-2 px-3 py-2 bg-white/[0.06] rounded-lg text-xs text-white/50">
+        <div className="flex items-center gap-2 px-3 py-2 bg-white/[0.06] rounded-lg text-xs wf-fg-muted">
           <Zap className="w-3.5 h-3.5 text-indigo-400" />
           {isParallel
             ? `${steps.length} step${steps.length !== 1 ? 's' : ''} will run simultaneously`

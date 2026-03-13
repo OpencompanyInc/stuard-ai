@@ -89,36 +89,36 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
   }, [searchQuery, paletteCategories]);
 
   return (
-    <div className="flex flex-col h-full bg-transparent border-r border-white/[0.08]" data-onboarding="node-palette">
+    <div className="flex flex-col h-full wf-bg-elevated border-r wf-border-subtle" data-onboarding="node-palette">
       {/* Header */}
-      <div className="h-14 px-4 py-2 border-b border-white/[0.08] flex items-center justify-between shrink-0 bg-transparent">
-        <div className="flex items-center gap-2.5 text-sm font-bold text-white">
-          <div className="p-1.5 bg-indigo-500/20 rounded-lg text-indigo-400">
+      <div className="h-14 px-4 py-2 border-b wf-border-subtle flex items-center justify-between shrink-0 bg-transparent">
+          <div className="flex items-center gap-2.5 text-sm font-bold wf-fg">
+          <div className="p-1.5 rounded-lg wf-accent-soft [color:var(--wf-accent)]">
             <Box className="w-4 h-4" />
           </div>
           <span>Toolbox</span>
         </div>
-        <div className="flex items-center gap-2 text-xs font-medium text-white/50 bg-white/[0.04] px-2 py-1 rounded-md border border-white/[0.06]">
+        <div className="flex items-center gap-2 text-xs font-medium wf-fg-muted wf-bg-overlay px-2 py-1 rounded-md border wf-border-subtle">
           <span>{filteredCategories.reduce((acc, cat) => acc + cat.items.length, 0)}</span>
-          <span className="text-white/40">tools</span>
+          <span className="wf-fg-muted">tools</span>
         </div>
       </div>
 
       {/* Search */}
-      <div className="relative group px-4 py-3">
+      <div className="p-3 pb-2 shrink-0 relative group">
         <input
           ref={searchInputRef}
           type="text"
           placeholder="Search tools..."
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
-          className="w-full pl-9 pr-3 py-2 text-xs bg-white/[0.04] hover:bg-white/[0.06] focus:bg-white/[0.08] border border-white/[0.08] focus:border-indigo-500/50 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all placeholder:text-white/40 text-white/90 font-medium"
+          className="w-full pl-9 pr-3 py-2 text-xs border wf-border-subtle focus:border-indigo-500/50 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all font-medium wf-input wf-hover-bg"
         />
-        <Search className="absolute left-7 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-indigo-400 w-3.5 h-3.5 transition-colors" />
+        <Search className="absolute left-7 top-1/2 -translate-y-1/2 wf-fg-muted group-focus-within:[color:var(--wf-accent)] w-3.5 h-3.5 transition-colors" />
         {searchQuery && (
           <button
             onClick={() => setSearchQuery('')}
-            className="absolute right-6 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70 p-0.5 rounded-full hover:bg-white/[0.08] transition-all"
+            className="absolute right-6 top-1/2 -translate-y-1/2 p-0.5 rounded-full transition-all wf-fg-muted wf-hover-fg wf-hover-bg"
           >
             <X className="w-3 h-3" />
           </button>
@@ -153,27 +153,27 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
             <div key={cat.id} className="rounded-xl overflow-hidden transition-all duration-300">
               <button
                 onClick={() => toggleCategory(cat.id)}
-                className={`w-full px-3 py-2.5 flex items-center justify-between text-left transition-all select-none group border border-transparent ${isExpanded ? 'bg-white/[0.04] shadow-sm border-white/[0.06] mb-1 rounded-xl' : 'hover:bg-white/[0.02] rounded-xl'
+                className={`w-full px-3 py-2.5 flex items-center justify-between text-left transition-all select-none group border border-transparent ${isExpanded ? 'shadow-sm border-current mb-1 rounded-xl wf-bg-overlay' : 'rounded-xl wf-hover-bg'
                   }`}
               >
                 <div className="flex items-center gap-3">
-                  <div className={`p-1.5 rounded-lg transition-colors ${isExpanded ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/40 group-hover:text-white/70'
+                  <div className={`p-1.5 rounded-lg transition-colors ${isExpanded ? 'wf-accent-soft [color:var(--wf-accent)]' : 'wf-bg-overlay wf-fg-muted group-hover:wf-fg'
                     }`}>
                     <Icon className="w-4 h-4" />
                   </div>
-                  <span className={`text-xs font-bold transition-colors ${isExpanded ? 'text-white' : 'text-white/70 group-hover:text-white'
+                  <span className={`text-xs font-bold transition-colors ${isExpanded ? 'wf-fg [color:var(--wf-accent)]' : 'wf-fg-muted group-hover:wf-fg'
                     }`}>
                     {cat.label}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   {!isExpanded && (
-                    <span className="text-[10px] font-medium text-white/40 bg-white/[0.04] px-1.5 py-0.5 rounded-md min-w-[1.5em] text-center">
+                    <span className="text-[10px] font-medium wf-fg-muted wf-bg-overlay px-1.5 py-0.5 rounded-md min-w-[1.5em] text-center">
                       {cat.items.length}
                     </span>
                   )}
                   <ChevronRight
-                    className={`w-3.5 h-3.5 text-white/30 group-hover:text-white/60 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}
+                    className={`w-3.5 h-3.5 wf-fg-muted group-hover:wf-fg transition-transform duration-200 ${isExpanded ? 'rotate-90 [color:var(--wf-accent)]' : ''}`}
                   />
                 </div>
               </button>
@@ -189,24 +189,24 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
                         key={`${item.t}-${i}`}
                         draggable={!disabled}
                         onDragStart={e => !disabled && onDragStart(e, dragData)}
-                        className={`flex items-center gap-3 px-3 py-2 bg-transparent border border-white/[0.04] rounded-lg transition-all group/item relative overflow-hidden ${disabled
+                        className={`flex items-center gap-3 px-3 py-2 bg-transparent border wf-border-subtle rounded-lg transition-all group/item relative overflow-hidden ${disabled
                           ? 'opacity-50 cursor-not-allowed'
-                          : `cursor-grab hover:bg-white/[0.04] hover:border-white/[0.1] hover:shadow-sm hover:translate-x-1 active:cursor-grabbing`
+                          : `cursor-grab wf-hover-bg hover:border-[var(--wf-border)] hover:shadow-sm hover:translate-x-1 active:cursor-grabbing`
                           }`}
                       >
                         {/* Hover accent strip */}
-                        <div className={`absolute left-0 top-0 bottom-0 w-1 bg-white/20 opacity-0 ${!disabled && 'group-hover/item:opacity-100'} transition-opacity`} />
+                        <div className={`absolute left-0 top-0 bottom-0 w-1 opacity-0 ${!disabled && 'group-hover/item:opacity-100'} transition-opacity`} style={{ background: 'var(--wf-accent)' }} />
 
-                        <div className={`p-1.5 rounded-md text-white/40 ${!disabled && `group-hover/item:text-white group-hover/item:bg-white/10`} transition-colors`}>
+                        <div className={`p-1.5 rounded-md wf-fg-muted ${!disabled && 'group-hover/item:wf-fg group-hover/item:bg-[var(--wf-hover)]'} transition-colors`}>
                           <ItemIcon className="w-3.5 h-3.5" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className={`text-xs font-semibold truncate ${disabled ? 'text-white/40' : 'text-white/70 group-hover/item:text-white/90'}`}>
+                          <div className={`text-xs font-semibold truncate ${disabled ? 'wf-fg-muted opacity-60' : 'wf-fg group-hover/item:wf-fg'}`}>
                             {item.label}
                           </div>
                         </div>
                         {!disabled && (
-                          <GripVertical className="w-3 h-3 text-white/20 group-hover/item:text-white/50 opacity-0 group-hover/item:opacity-100 transition-all" />
+                          <GripVertical className="w-3 h-3 wf-fg-muted group-hover/item:wf-fg opacity-0 group-hover/item:opacity-100 transition-all" />
                         )}
                       </div>
                     );
@@ -219,11 +219,11 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
 
         {filteredCategories.length === 0 && (
           <div className="py-12 text-center">
-            <div className="w-12 h-12 bg-white/[0.02] rounded-2xl flex items-center justify-center mx-auto mb-3 text-white/30 border border-white/[0.04]">
+            <div className="w-12 h-12 wf-bg-overlay rounded-2xl flex items-center justify-center mx-auto mb-3 wf-fg-muted border wf-border-subtle">
               <Search className="w-5 h-5" />
             </div>
-            <p className="text-xs font-bold text-white/60">No tools found</p>
-            <p className="text-[10px] text-white/40 mt-1">Try searching for something else</p>
+            <p className="text-xs font-bold wf-fg">No tools found</p>
+            <p className="text-[10px] wf-fg-muted mt-1">Try searching for something else</p>
           </div>
         )}
       </div>

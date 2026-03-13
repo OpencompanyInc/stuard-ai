@@ -489,12 +489,31 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
           
           const chunkData = chunk?.data !== undefined ? chunk.data : chunk;
           const chunkStr = typeof chunkData === 'string' ? chunkData : JSON.stringify(chunkData);
+          const chunkFields = chunkData && typeof chunkData === 'object' && !Array.isArray(chunkData) && !('__ref' in (chunkData as any))
+            ? chunkData
+            : {};
+          // Extract chunk-level metadata (e.g. volume from audio streams)
+          // These are fields on the chunk object itself, not inside chunk.data
+          const chunkMeta: Record<string, any> = {};
+          if (chunk && typeof chunk === 'object') {
+            for (const key of Object.keys(chunk)) {
+              if (key !== 'data' && key !== 'index' && key !== 'timestamp') {
+                chunkMeta[key] = (chunk as any)[key];
+                // Also expose volumePercent alias for volume field
+                if (key === 'volume') {
+                  chunkMeta['volumePercent'] = (chunk as any)[key];
+                }
+              }
+            }
+          }
           accumulatedText += chunkStr;
           
           // Override source step's output in ctx so {{sourceStepId.text}} resolves to chunk
           // This is the key UX improvement — consumers just use {{sourceStep.text}}
           baseCtx[sourceStepId] = {
             ...originalSourceOutput,
+            ...chunkFields,
+            ...chunkMeta,
             text: chunkStr,
             chunk: chunkData,
             chunkIndex,

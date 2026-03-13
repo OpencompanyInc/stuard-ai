@@ -71,12 +71,12 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
     <div ref={containerRef} className="relative">
       <button
         onClick={() => { if (!open) updateDropdownPos(); setOpen(!open); }}
-        className="w-full px-4 py-2.5 text-sm border border-white/[0.08] rounded-xl bg-white/[0.04] hover:bg-white/[0.06] hover:border-white/[0.12] flex items-center justify-between gap-2 transition-all shadow-sm"
+        className="w-full px-4 py-2.5 text-sm border wf-border-subtle rounded-xl wf-bg-overlay wf-hover-bg flex items-center justify-between gap-2 transition-all shadow-sm wf-fg"
       >
-        <span className={selectedOption || isCustomValue ? 'text-white/80 font-medium' : 'text-white/40'}>
+        <span className={selectedOption || isCustomValue ? 'wf-fg font-medium' : 'wf-fg-faint'}>
           {selectedOption?.label || (isCustomValue ? String(value) : (placeholder || 'Select an option...'))}
         </span>
-        <ChevronDown className={`w-4 h-4 text-white/40 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`w-4 h-4 wf-fg-faint transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && dropdownPos && createPortal(
@@ -89,10 +89,10 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
             width: dropdownPos.width,
             zIndex: 9999,
           }}
-          className="bg-black/90 backdrop-blur-2xl border border-white/[0.08] rounded-xl shadow-2xl shadow-black/50 max-h-72 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150"
+          className="wf-bg-elevated backdrop-blur-2xl border wf-border-subtle rounded-xl shadow-2xl shadow-black/20 max-h-72 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150"
         >
           {showSearchInput && (
-            <div className="p-2 border-b border-white/[0.04] bg-white/[0.04]">
+            <div className="p-2 border-b wf-border-subtle wf-bg-overlay">
               <input
                 type="text"
                 value={search}
@@ -105,7 +105,7 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
                   }
                 }}
                 placeholder={allowFreeform ? 'Search or type a custom value...' : 'Search options...'}
-                className="w-full px-3 py-2 text-sm bg-white/[0.04] border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50"
+                className="w-full px-3 py-2 text-sm wf-bg-overlay border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 wf-fg wf-input"
                 autoFocus
               />
             </div>
@@ -125,20 +125,20 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
                 onClick={() => { onChange(opt.value); setOpen(false); setSearch(''); }}
                 className={`w-full px-3 py-2 text-left text-sm rounded-lg flex items-center justify-between gap-2 transition-colors mb-0.5 ${opt.value == value
                   ? 'bg-indigo-500/10 text-indigo-400 font-medium'
-                  : 'text-white/80 hover:bg-white/[0.06]'
+                  : 'wf-fg wf-hover-bg'
                   }`}
               >
                 <div>
                   <div>{opt.label}</div>
                   {opt.description && (
-                    <div className="text-xs text-white/40 font-normal">{opt.description}</div>
+                    <div className="text-xs wf-fg-faint font-normal">{opt.description}</div>
                   )}
                 </div>
                 {opt.value == value && <Check className="w-4 h-4 text-indigo-400" />}
               </button>
             ))}
             {filteredOptions.length === 0 && (
-              <div className="px-3 py-8 text-sm text-white/40 text-center">No matching options</div>
+              <div className="px-3 py-8 text-sm wf-fg-faint text-center">No matching options</div>
             )}
           </div>
         </div>,

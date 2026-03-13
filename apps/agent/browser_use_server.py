@@ -2505,7 +2505,12 @@ async def handle_sync_chrome(req: web.Request) -> web.Response:
                 browser_running = False
                 restarted = True
 
-            if force_clone or not browser_running:
+            # Only clone the profile on first-time setup or when explicitly forced.
+            # Re-cloning when the browser is not running would destroy any sessions
+            # the user logged into manually in the browser-use window.
+            managed_profile_exists = (_current_profile_dir() / desired_target_profile_name).exists()
+            should_clone = force_clone or (not browser_running and not managed_profile_exists)
+            if should_clone:
                 try:
                     clone_result = await asyncio.to_thread(
                         _clone_profile_into_managed_root,
@@ -2524,11 +2529,10 @@ async def handle_sync_chrome(req: web.Request) -> web.Response:
 
             injected = 0
             failed = 0
-            should_inject_cookies = bool(cookies) and (browser_running or clone_result.get("cloned"))
+            # Only inject cookies if the browser is already running — don't launch
+            # the browser just to inject cookies during background sync
+            should_inject_cookies = bool(cookies) and browser_running
             if should_inject_cookies:
-                ok, err = await _ensure_browser()
-                if not ok:
-                    return _err(err or "Browser init failed", status=500)
                 try:
                     inject_result = await _inject_cookies_into_session(cookies)
                     injected = inject_result["injected"]

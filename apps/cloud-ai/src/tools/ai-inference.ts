@@ -167,7 +167,7 @@ export const aiInferenceTool = createTool({
     });
 
     if (mode === 'embedding') {
-      const embeddingModelId = modelId.includes('embedding') ? modelId : 'openai/text-embedding-3-large';
+      const embeddingModelId = modelId.includes('embedding') ? modelId : 'google/gemini-embedding-2-preview';
       const aiEmbeddingModel = buildProviderEmbeddingModel(embeddingModelId);
       
       if (!aiEmbeddingModel) {

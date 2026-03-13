@@ -11,7 +11,7 @@
 import { buildProviderModel } from '../utils/models';
 import { getDefaultModelForCategory } from '../pricing';
 import { embed, generateObject, generateText } from 'ai';
-import { openai } from '@ai-sdk/openai';
+import { google } from '../utils/models';
 import { z } from 'zod';
 import { execLocalTool } from '../tools/bridge';
 import { writeLog } from '../utils/logger';
@@ -91,7 +91,7 @@ export interface SpaceItem {
 // EMBEDDING
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const EMBEDDING_MODEL = 'text-embedding-3-large';
+const EMBEDDING_MODEL = 'gemini-embedding-2-preview';
 
 function normalizeConversationContent(content: unknown): string {
   const text = contentToText(content);
@@ -107,8 +107,8 @@ function normalizeConversationContent(content: unknown): string {
 export async function generateEmbedding(text: string): Promise<number[]> {
   try {
     const { embedding } = await embed({
-      model: openai.embedding(EMBEDDING_MODEL),
-      value: text.slice(0, 8000), // Limit input length
+      model: google.textEmbeddingModel(EMBEDDING_MODEL),
+      value: text.slice(0, 8000),
     });
     return embedding;
   } catch (error) {

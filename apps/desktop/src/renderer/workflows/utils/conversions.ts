@@ -57,6 +57,7 @@ export function specToDesignerModel(spec: any): DesignerModel {
         loopBreak: (w as any)?.loopBreak,
         loopFanoutMode: (w as any)?.loopFanoutMode,
         stream: (w as any)?.stream,
+        callNode: (w as any)?.callNode || undefined,
       })).filter((w: any) => w.from && w.to);
 
       console.log('[conversions] Detected DesignerModel format:', { triggers: trigNodes.length, nodes: normNodes.length, wires: normWires.length });
@@ -111,6 +112,7 @@ export function specToDesignerModel(spec: any): DesignerModel {
             loopBreak: (e as any)?.loopBreak,
             loopFanoutMode: (e as any)?.loopFanoutMode,
             stream: (e as any)?.stream,
+            callNode: (e as any)?.callNode || undefined,
           });
         }
       }
@@ -205,6 +207,10 @@ export function designerModelToStuardSpec(m: any): StuardSpec {
           mode: stream.mode || 'reactive',
           ...(stream.bufferSize ? { bufferSize: stream.bufferSize } : {}),
         };
+      }
+
+      if ((w as any)?.callNode) {
+        edge.callNode = true;
       }
       return edge;
     });

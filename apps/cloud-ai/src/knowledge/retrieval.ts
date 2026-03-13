@@ -5,7 +5,7 @@
  */
 
 import { embed } from 'ai';
-import { openai } from '@ai-sdk/openai';
+import { google } from '../utils/models';
 import { execLocalTool, hasClientBridge } from '../tools/bridge';
 import { writeLog } from '../utils/logger';
 
@@ -351,7 +351,7 @@ export async function buildKnowledgeContext(
       const embeddingVec = opts.queryEmbedding && opts.queryEmbedding.length > 0
         ? opts.queryEmbedding
         : (await embed({
-            model: openai.embedding('text-embedding-3-large'),
+            model: google.textEmbeddingModel('gemini-embedding-2-preview'),
             value: userMessage,
           })).embedding;
 

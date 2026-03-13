@@ -141,6 +141,7 @@ const CONTEXT_WINDOWS: Record<string, number> = {
   'openai/gpt-5.2-codex': 700000,
   'openai/gpt-5.3-codex': 1000000,
   'xai/grok-4': 256000,
+  'xai/grok-4.20-beta-latest-non-reasoning': 2000000,
   'xai/grok-4-fast': 2000000,
   'xai/grok-3': 128000,
   'deepseek/deepseek-chat': 128000,
@@ -162,6 +163,7 @@ const CONTEXT_WINDOWS: Record<string, number> = {
 
 const MODEL_CATEGORIES: Record<string, 'fast' | 'balanced' | 'smart' | 'research'> = {
   'xai/grok-4': 'smart',
+  'xai/grok-4.20-beta-latest-non-reasoning': 'balanced',
   'xai/grok-4-1-fast': 'balanced',
   'xai/grok-4-1-fast-non-reasoning': 'balanced',
   'xai/grok-4-fast': 'balanced',

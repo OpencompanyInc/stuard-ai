@@ -66,30 +66,30 @@ export function WorkflowHeader({
   return (
     <div className="absolute top-6 left-6 right-6 flex items-center justify-between z-30 pointer-events-none">
       <div className="flex items-center gap-4 min-w-0 pointer-events-auto">
-        <div className="flex items-center gap-2 bg-white/[0.06] backdrop-blur-2xl border border-white/[0.1] rounded-full shadow-lg px-2 py-1.5">
+        <div className="flex items-center gap-2 rounded-full shadow-lg px-2 py-1.5 border wf-panel" style={{ backdropFilter: 'var(--wf-glass-blur)' }}>
           <div className="flex items-center gap-2 select-none shrink-0 pl-1 pr-2">
             {onClose ? (
               <button
                 onClick={onClose}
-                className="flex items-center justify-center p-1 rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+                className="flex items-center justify-center p-1 rounded-full wf-fg-muted wf-hover-fg transition-colors"
                 title="Home"
               >
                 <Home className="w-4 h-4" />
               </button>
             ) : (
-              <div className="flex items-center justify-center p-1 text-white/60">
+              <div className="flex items-center justify-center p-1 wf-fg-muted">
                 <Home className="w-4 h-4" />
               </div>
             )}
-            <div className="h-4 w-px bg-white/10 mx-1" />
-            <span className="text-[13px] font-bold text-white/90 tracking-tight">{model?.name || selectedId || 'Workflow'}</span>
+            <div className="h-4 w-px mx-1 wf-border-subtle" style={{ background: 'var(--wf-border)' }} />
+            <span className="text-[13px] font-bold tracking-tight wf-fg">{model?.name || selectedId || 'Workflow'}</span>
           </div>
 
           {model && dirty && (
             <>
-              <div className="h-4 w-px bg-white/10 mx-1" />
+              <div className="h-4 w-px mx-1" style={{ background: 'var(--wf-border)' }} />
               <div className="flex items-center gap-2 no-drag min-w-0 pr-2">
-                <div className="flex items-center gap-1.5 px-2 py-1 bg-white/[0.04] rounded-full border border-white/[0.06]">
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded-full border" style={{ background: 'var(--wf-bg-overlay)', borderColor: 'var(--wf-border)' }}>
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse shrink-0" title="Unsaved changes" />
                   <span className="text-[10px] font-medium text-amber-500/80">Unsaved</span>
                 </div>
@@ -101,21 +101,21 @@ export function WorkflowHeader({
 
       <div className="flex items-center gap-2 no-drag shrink-0 pointer-events-auto">
         {model && (
-          <div className="flex items-center gap-2 bg-white/[0.06] backdrop-blur-2xl border border-white/[0.1] rounded-full shadow-lg p-1.5">
+          <div className="flex items-center gap-2 rounded-full shadow-lg p-1.5 border wf-panel" style={{ backdropFilter: 'var(--wf-glass-blur)' }}>
             {/* Undo/Redo/Save */}
             <div className="flex items-center gap-0.5 px-1">
-              <button onClick={onUndo} disabled={!canUndo || model.locked} className={`p-1.5 rounded-full transition-all ${canUndo && !model.locked ? "text-white/60 hover:bg-white/10 hover:text-white" : "text-white/20"}`} title="Undo">
+              <button onClick={onUndo} disabled={!canUndo || model.locked} className={`p-1.5 rounded-full transition-all ${canUndo && !model.locked ? "wf-fg-muted wf-hover-fg" : "wf-fg-faint opacity-40"}`} title="Undo">
                 <Undo2 className="w-3.5 h-3.5" />
               </button>
-              <button onClick={onRedo} disabled={!canRedo || model.locked} className={`p-1.5 rounded-full transition-all ${canRedo && !model.locked ? "text-white/60 hover:bg-white/10 hover:text-white" : "text-white/20"}`} title="Redo">
+              <button onClick={onRedo} disabled={!canRedo || model.locked} className={`p-1.5 rounded-full transition-all ${canRedo && !model.locked ? "wf-fg-muted wf-hover-fg" : "wf-fg-faint opacity-40"}`} title="Redo">
                 <Redo2 className="w-3.5 h-3.5" />
               </button>
-              <button onClick={onSave} disabled={!dirty} className={`p-1.5 rounded-full transition-all ${dirty ? "text-white/60 hover:bg-white/10 hover:text-white" : "text-white/20"}`} title="Save">
+              <button onClick={onSave} disabled={!dirty} className={`p-1.5 rounded-full transition-all ${dirty ? "wf-fg-muted wf-hover-fg" : "wf-fg-faint opacity-40"}`} title="Save">
                 <Save className="w-3.5 h-3.5" />
               </button>
             </div>
 
-            <div className="h-4 w-px bg-white/10 mx-1" />
+            <div className="h-4 w-px mx-1" style={{ background: 'var(--wf-border)' }} />
 
             {/* Run / Stop */}
             {isRunning ? (
@@ -125,25 +125,25 @@ export function WorkflowHeader({
             ) : manualTriggers.length > 1 ? (
               <div className="relative">
                 <div className="flex">
-                  <button onClick={() => onRun()} className="px-3 py-1.5 hover:bg-white/10 text-white rounded-l-full flex items-center gap-1.5 text-[11px] font-medium transition-all border border-transparent hover:border-white/10">
+                  <button onClick={() => onRun()} className="px-3 py-1.5 rounded-l-full flex items-center gap-1.5 text-[11px] font-medium transition-all wf-header-action-btn">
                     <Play className="w-3 h-3 fill-current" /> Run
                   </button>
-                  <button onClick={() => setShowRunMenu(!showRunMenu)} className="px-1.5 py-1.5 hover:bg-white/10 text-white rounded-r-full border-l border-white/10 transition-all border border-transparent hover:border-white/10">
+                  <button onClick={() => setShowRunMenu(!showRunMenu)} className="px-1.5 py-1.5 rounded-r-full transition-all wf-header-action-btn wf-header-action-btn-split">
                     <ChevronDown className="w-3 h-3" />
                   </button>
                 </div>
                 {showRunMenu && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setShowRunMenu(false)} />
-                    <div className="absolute right-0 top-full mt-2 z-50 bg-white/[0.08] backdrop-blur-2xl rounded-2xl shadow-2xl border border-white/[0.1] py-1 min-w-[170px] overflow-hidden">
-                      <div className="px-3 py-2 text-[10px] font-medium text-white/40 uppercase tracking-wider border-b border-white/[0.04] mb-1">Triggers</div>
+                    <div className="absolute right-0 top-full mt-2 z-50 rounded-2xl shadow-2xl py-1 min-w-[170px] overflow-hidden wf-menu">
+                      <div className="px-3 py-2 text-[10px] font-medium uppercase tracking-wider mb-1 wf-menu-header">Triggers</div>
                       {manualTriggers.map((trigger) => (
-                        <button key={trigger.id} onClick={() => onRun(trigger.id)} className="w-full px-4 py-2 text-left text-[12px] text-white/80 hover:bg-white/10 flex items-center gap-2 transition-colors">
+                        <button key={trigger.id} onClick={() => onRun(trigger.id)} className="w-full px-4 py-2 text-left text-[12px] flex items-center gap-2 transition-colors wf-menu-item">
                           <Play className="w-3 h-3 text-emerald-400" /> {trigger.label || trigger.id}
                         </button>
                       ))}
-                      <div className="border-t border-white/[0.04] mt-1 pt-1">
-                        <button onClick={() => onRun()} className="w-full px-4 py-2 text-left text-[12px] text-white/80 hover:bg-white/10 flex items-center gap-2 transition-colors">
+                      <div className="mt-1 pt-1 wf-menu-header" style={{ borderBottom: 'none' }}>
+                        <button onClick={() => onRun()} className="w-full px-4 py-2 text-left text-[12px] flex items-center gap-2 transition-colors wf-menu-item">
                           <Zap className="w-3 h-3 text-indigo-400" /> Run All
                         </button>
                       </div>
@@ -152,7 +152,7 @@ export function WorkflowHeader({
                 )}
               </div>
             ) : (
-              <button onClick={() => onRun()} className="px-3 py-1.5 hover:bg-white/10 text-white rounded-full flex items-center gap-1.5 text-[11px] font-medium transition-all border border-transparent hover:border-white/10">
+              <button onClick={() => onRun()} className="px-3 py-1.5 rounded-full flex items-center gap-1.5 text-[11px] font-medium transition-all wf-header-action-btn">
                 <Play className="w-3 h-3 fill-current" /> Run
               </button>
             )}
@@ -162,12 +162,12 @@ export function WorkflowHeader({
               onClick={onToggleDeployPanel}
               className={`flex items-center gap-1.5 px-4 py-1.5 text-[11px] font-semibold rounded-full transition-all ${deployStatus?.deployed
                 ? "border border-emerald-500 text-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20"
-                : "shadow-md bg-blue-600 text-white hover:bg-blue-500 hover:shadow-blue-500/20"
+                : "wf-primary-btn"
                 }`}
             >
               <Rocket className="w-3 h-3" />
               {deployStatus?.deployed ? "Live" : "Deploy"}
-              {deployStatus?.running && <span className={`w-1.5 h-1.5 rounded-full animate-pulse ml-0.5 ${deployStatus.deployed ? 'bg-emerald-500' : 'bg-white/80'}`} />}
+              {deployStatus?.running && <span className={`w-1.5 h-1.5 rounded-full animate-pulse ml-0.5 ${deployStatus.deployed ? 'bg-emerald-500' : 'bg-current'}`} />}
             </button>
           </div>
         )}

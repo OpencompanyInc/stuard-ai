@@ -54,7 +54,7 @@ export function WorkflowContextMenuOverlay({
   return (
     <div className="fixed inset-0 z-[100]" onClick={onClose}>
       <div
-        className="absolute bg-black/60 backdrop-blur-xl rounded-[20px] shadow-2xl border border-white/[0.1] py-2 min-w-[200px] animate-in fade-in zoom-in-95 duration-100 overflow-hidden"
+        className="absolute rounded-[20px] shadow-2xl py-2 min-w-[200px] animate-in fade-in zoom-in-95 duration-100 overflow-hidden wf-menu"
         style={{
           top: Math.min(contextMenu.y, window.innerHeight - 200),
           left: Math.min(contextMenu.x, window.innerWidth - 200),
@@ -73,7 +73,7 @@ export function WorkflowContextMenuOverlay({
                         onRunStep(contextMenu.nodeId!);
                         onClose();
                       }}
-                      className="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-emerald-500/10 flex items-center gap-2.5 transition-colors"
+                      className="w-full text-left px-4 py-2.5 text-sm hover:bg-emerald-500/10 flex items-center gap-2.5 transition-colors wf-menu-item"
                     >
                       <Play className="w-4 h-4 text-emerald-400" />
                       <span>Run Step</span>
@@ -84,25 +84,25 @@ export function WorkflowContextMenuOverlay({
                       onRunFromHere(contextMenu.nodeId!);
                       onClose();
                     }}
-                    className="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-indigo-500/10 flex items-center gap-2.5 transition-colors"
+                    className="w-full text-left px-4 py-2.5 text-sm hover:bg-indigo-500/10 flex items-center gap-2.5 transition-colors wf-menu-item"
                   >
                     <SkipForward className="w-4 h-4 text-indigo-400" />
                     <span>{isTrigger ? "Run from Trigger" : "Run from Here"}</span>
                   </button>
-                  <div className="h-px bg-white/[0.06] my-1" />
+                  <div className="h-px my-1 wf-menu-divider" />
                 </>
               );
             })()}
 
             {model?.locked ? (
-              <div className="px-4 py-2.5 text-xs text-white/40 flex items-center gap-2">
+              <div className="px-4 py-2.5 text-xs flex items-center gap-2 wf-menu-item-muted">
                 <Lock className="w-3.5 h-3.5" />
                 <span>Editing locked</span>
               </div>
             ) : (
               <>
                 {selectedNodeIds.size > 1 && (
-                  <div className="px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-blue-400 border-b border-white/[0.06] flex items-center gap-1.5">
+                  <div className="px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-blue-500 border-b flex items-center gap-1.5 wf-menu-header">
                     <span>{selectedNodeIds.size} nodes selected</span>
                   </div>
                 )}
@@ -111,23 +111,23 @@ export function WorkflowContextMenuOverlay({
                     onDuplicateNode();
                     onClose();
                   }}
-                  className="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-white/[0.04] flex items-center gap-2.5 transition-colors"
+                  className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 transition-colors wf-menu-item"
                 >
-                  <Copy className="w-4 h-4 text-white/40" />
+                  <Copy className="w-4 h-4 wf-menu-item-muted" />
                   <span>Duplicate{selectedNodeIds.size > 1 ? ` ${selectedNodeIds.size} nodes` : ""}</span>
-                  <span className="ml-auto text-[10px] font-medium text-white/40 bg-white/[0.06] px-1.5 py-0.5 rounded border border-white/[0.08]">
+                  <span className="ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded wf-menu-shortcut">
                     Ctrl+D
                   </span>
                 </button>
 
-                <div className="h-px bg-white/[0.06] my-1" />
+                <div className="h-px my-1 wf-menu-divider" />
 
                 <button
                   onClick={() => {
                     onDeleteNode();
                     onClose();
                   }}
-                  className="w-full text-left px-4 py-2.5 text-sm text-red-500 hover:bg-red-500/10 flex items-center gap-2.5 transition-colors group"
+                  className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 transition-colors group wf-menu-item-danger"
                 >
                   <Trash className="w-4 h-4 text-red-400 group-hover:text-red-500" />
                   <span>Delete{selectedNodeIds.size > 1 ? ` ${selectedNodeIds.size} nodes` : ""}</span>
@@ -141,7 +141,8 @@ export function WorkflowContextMenuOverlay({
         ) : contextMenu.type === "wire" && contextMenu.wireIndex !== undefined ? (
           <>
             {(() => {
-              const wire = model?.wires[contextMenu.wireIndex];
+              const wireIndex = contextMenu.wireIndex;
+              const wire = model?.wires[wireIndex];
               const sourceNode = wire
                 ? [...(model?.triggers || []), ...(model?.nodes || [])].find((n) => n.id === wire.from)
                 : null;
@@ -151,12 +152,12 @@ export function WorkflowContextMenuOverlay({
 
               return (
                 <>
-                  <div className="px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-white/40 border-b border-white/[0.06]">
+                  <div className="px-4 py-2 text-[10px] font-bold uppercase tracking-wider wf-menu-header">
                     Connection
                   </div>
 
                   {model?.locked ? (
-                    <div className="px-4 py-2.5 text-xs text-white/40 flex items-center gap-2">
+                    <div className="px-4 py-2.5 text-xs flex items-center gap-2 wf-menu-item-muted">
                       <Lock className="w-3.5 h-3.5" />
                       <span>Editing locked</span>
                     </div>
@@ -164,51 +165,51 @@ export function WorkflowContextMenuOverlay({
                     <>
                       <button
                         onClick={() => {
-                          onStartReconnect(contextMenu.wireIndex!, "from");
+                          onStartReconnect(wireIndex, "from");
                         }}
-                        className="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-amber-500/10 flex items-center gap-2.5 transition-colors"
+                        className="w-full text-left px-4 py-2.5 text-sm hover:bg-amber-500/10 flex items-center gap-2.5 transition-colors wf-menu-item"
                       >
                         <Zap className="w-4 h-4 text-amber-500" />
                         <span>Change Source</span>
-                        <span className="ml-auto text-[10px] text-white/40 truncate max-w-[80px]">
+                        <span className="ml-auto text-[10px] truncate max-w-[80px] wf-menu-item-muted">
                           {sourceNode?.label || wire?.from}
                         </span>
                       </button>
 
                       <button
                         onClick={() => {
-                          onStartReconnect(contextMenu.wireIndex!, "to");
+                          onStartReconnect(wireIndex, "to");
                         }}
-                        className="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-amber-500/10 flex items-center gap-2.5 transition-colors"
+                        className="w-full text-left px-4 py-2.5 text-sm hover:bg-amber-500/10 flex items-center gap-2.5 transition-colors wf-menu-item"
                       >
                         <Zap className="w-4 h-4 text-amber-500" />
                         <span>Change Target</span>
-                        <span className="ml-auto text-[10px] text-white/40 truncate max-w-[80px]">
+                        <span className="ml-auto text-[10px] truncate max-w-[80px] wf-menu-item-muted">
                           {targetNode?.label || wire?.to}
                         </span>
                       </button>
 
-                      <div className="h-px bg-white/[0.06] my-1" />
+                      <div className="h-px my-1 wf-menu-divider" />
 
                       <button
                         onClick={() => {
-                          onEditWire(contextMenu.wireIndex!);
+                          onEditWire(wireIndex);
                           onClose();
                         }}
-                        className="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-white/[0.04] flex items-center gap-2.5 transition-colors"
+                        className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 transition-colors wf-menu-item"
                       >
-                        <Settings className="w-4 h-4 text-white/40" />
+                        <Settings className="w-4 h-4 wf-menu-item-muted" />
                         <span>Edit Properties</span>
                       </button>
 
-                      <div className="h-px bg-white/[0.06] my-1" />
+                      <div className="h-px my-1 wf-menu-divider" />
 
                       <button
                         onClick={() => {
-                          onDeleteWire(contextMenu.wireIndex!);
+                          onDeleteWire(wireIndex);
                           onClose();
                         }}
-                        className="w-full text-left px-4 py-2.5 text-sm text-red-500 hover:bg-red-500/10 flex items-center gap-2.5 transition-colors group"
+                        className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 transition-colors group wf-menu-item-danger"
                       >
                         <Trash className="w-4 h-4 text-red-400 group-hover:text-red-500" />
                         <span>Delete Connection</span>
@@ -226,7 +227,7 @@ export function WorkflowContextMenuOverlay({
                 onAutoOrganize();
                 onClose();
               }}
-              className="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-indigo-500/10 flex items-center gap-2.5 transition-colors"
+              className="w-full text-left px-4 py-2.5 text-sm hover:bg-indigo-500/10 flex items-center gap-2.5 transition-colors wf-menu-item"
             >
               <LayoutGrid className="w-4 h-4 text-indigo-400" />
               <span>Auto Arrange</span>
@@ -237,22 +238,22 @@ export function WorkflowContextMenuOverlay({
                 onZoomReset();
                 onClose();
               }}
-              className="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-white/[0.04] flex items-center gap-2.5 transition-colors"
+              className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 transition-colors wf-menu-item"
             >
-              <Maximize2 className="w-4 h-4 text-white/40" />
+              <Maximize2 className="w-4 h-4 wf-menu-item-muted" />
               <span>Fit to Screen</span>
             </button>
 
-            <div className="h-px bg-white/[0.06] my-1" />
+            <div className="h-px my-1 wf-menu-divider" />
 
             <button
               onClick={() => {
                 onZoomIn();
                 onClose();
               }}
-              className="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-white/[0.04] flex items-center gap-2.5 transition-colors"
+              className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 transition-colors wf-menu-item"
             >
-              <ZoomIn className="w-4 h-4 text-white/40" />
+              <ZoomIn className="w-4 h-4 wf-menu-item-muted" />
               <span>Zoom In</span>
             </button>
 
@@ -261,9 +262,9 @@ export function WorkflowContextMenuOverlay({
                 onZoomOut();
                 onClose();
               }}
-              className="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-white/[0.04] flex items-center gap-2.5 transition-colors"
+              className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 transition-colors wf-menu-item"
             >
-              <ZoomOut className="w-4 h-4 text-white/40" />
+              <ZoomOut className="w-4 h-4 wf-menu-item-muted" />
               <span>Zoom Out</span>
             </button>
           </>

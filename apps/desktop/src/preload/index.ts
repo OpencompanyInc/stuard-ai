@@ -563,4 +563,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   vaultStats: () => ipcRenderer.invoke('vault:stats'),
 
   setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => ipcRenderer.send('window:ignore-mouse-events', ignore, options),
+
+  // Cloud Engine agent data sync
+  uploadAgentData: (cloudAiUrl: string, token: string) => ipcRenderer.invoke('cloud:uploadAgentData', cloudAiUrl, token),
 });

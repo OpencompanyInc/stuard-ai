@@ -34,14 +34,14 @@ html {
 }
 
 body {
-  background-color: transparent;
+  background-color: #F3F1EB;
   color: #111827;
   font-family: var(--font-primary);
   position: relative;
 }
 
-/* Grid background pattern */
-body::before {
+/* Grid background pattern - only on homepage */
+body.show-grid::before {
   content: "";
   position: fixed;
   inset: 0;
@@ -56,7 +56,7 @@ body::before {
 }
 
 /* Plain background overlay (no grid) */
-body::after {
+body.show-grid::after {
   content: "";
   position: fixed;
   inset: 0;

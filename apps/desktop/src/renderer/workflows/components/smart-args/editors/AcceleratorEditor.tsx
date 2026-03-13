@@ -114,8 +114,8 @@ export function AcceleratorEditor({ value, onChange }: AcceleratorEditorProps) {
             <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center animate-pulse">
               <Keyboard className="w-5 h-5 text-blue-400" />
             </div>
-            <span className="font-medium text-white">Press your shortcut keys...</span>
-            <span className="text-xs text-white/50">Example: Ctrl + Shift + K</span>
+            <span className="font-medium wf-fg">Press your shortcut keys...</span>
+            <span className="text-xs wf-fg-faint">Example: Ctrl + Shift + K</span>
           </div>
           <input
             ref={inputRef}
@@ -130,21 +130,21 @@ export function AcceleratorEditor({ value, onChange }: AcceleratorEditorProps) {
         <div className="flex gap-3">
           <button
             onClick={() => setEditing(true)}
-            className="flex-1 px-4 py-3 text-sm border border-white/[0.08] rounded-2xl bg-white/[0.02] hover:bg-white/[0.04] flex items-center justify-center transition-all shadow-sm"
+            className="flex-1 px-4 py-3 text-sm border wf-border-subtle rounded-2xl wf-bg-overlay wf-hover-bg flex items-center justify-center transition-all shadow-sm"
           >
             {parts.length > 0 ? (
               <div className="flex items-center gap-3">
                 {parts.map((p, i) => (
                   <React.Fragment key={`${p}-${i}`}>
-                    <span className="px-3 py-1.5 bg-white/[0.06] border border-white/[0.08] rounded-xl font-medium text-white/80 text-sm shadow-sm">
+                    <span className="px-3 py-1.5 wf-bg-overlay border wf-border-subtle rounded-xl font-medium wf-fg text-sm shadow-sm">
                       {displayPart(p)}
                     </span>
-                    {i < parts.length - 1 && <span className="text-white/40 text-lg font-light">+</span>}
+                    {i < parts.length - 1 && <span className="wf-fg-faint text-lg font-light">+</span>}
                   </React.Fragment>
                 ))}
               </div>
             ) : (
-              <div className="flex items-center gap-2 text-white/40 py-1.5">
+              <div className="flex items-center gap-2 wf-fg-faint py-1.5">
                 <Keyboard className="w-4 h-4" />
                 <span>Click to record shortcut</span>
               </div>
@@ -153,7 +153,7 @@ export function AcceleratorEditor({ value, onChange }: AcceleratorEditorProps) {
 
           <button
             onClick={() => { setParts([]); onChange(''); }}
-            className="px-10 flex items-center justify-center text-white/60 hover:text-white bg-white/[0.02] hover:bg-white/[0.04] border border-white/[0.08] rounded-2xl transition-all h-auto"
+            className="px-10 flex items-center justify-center wf-fg-muted hover:wf-fg wf-bg-overlay wf-hover-bg border wf-border-subtle rounded-2xl transition-all h-auto"
             title="Clear"
           >
             <RotateCcw className="w-5 h-5" />

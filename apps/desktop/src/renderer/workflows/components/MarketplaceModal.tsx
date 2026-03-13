@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { getMarketplaceApi, MarketplaceWorkflow, MarketplaceCategory, MarketplaceVersion, MarketplaceUpdate, MarketplaceCreatorProfile, MarketplaceWorkflowMedia } from "../../utils/cloud";
 import { supabase } from "../../lib/supabaseClient";
 import { Search, Download, Star, Tag, User, Calendar, X, AlertCircle, Loader2, Globe, Check, ChevronRight, Hash, Sparkles, Rocket, Plus, CheckCircle2, Pencil, Trash2, Clock, History, ArrowUpCircle, Package, Lock, Unlock, RefreshCw, ExternalLink, Info, Eye, EyeOff, Upload, ImagePlus, PlayCircle, Users } from "lucide-react";
+import { useWorkflowTheme } from "../WorkflowThemeContext";
 import "../../scrollbar.css";
 
 // Helper to get token from Supabase auth
@@ -86,15 +87,24 @@ function ModalShell({
   children: React.ReactNode;
   maxWidth?: string;
 }) {
+  const { isDark } = useWorkflowTheme();
+  const d = isDark;
   return (
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-white/90 backdrop-blur-md p-4 animate-in fade-in duration-200">
-      <div className={`w-full ${maxWidth} bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200`}>
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
-          <div className="text-[15px] font-semibold text-slate-900">{title}</div>
+    <div
+      className="fixed inset-0 z-[1000] flex items-center justify-center backdrop-blur-md p-4 animate-in fade-in duration-200"
+      style={{ background: d ? "rgba(2, 6, 23, 0.78)" : "rgba(15, 23, 42, 0.18)" }}
+    >
+      <div
+        className={`w-full ${maxWidth} rounded-[28px] border shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200`}
+        style={{ background: d ? "#0f1117" : "#ffffff", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
+      >
+        <div className="px-6 py-4 border-b flex items-center justify-between shrink-0" style={{ background: d ? "#0c0f14" : "#ffffff", borderColor: "var(--wf-border)" }}>
+          <div className="text-[16px] font-semibold wf-fg">{title}</div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            className="p-1.5 rounded-lg transition-colors"
+            style={{ color: "var(--wf-fg-faint)" }}
           >
             <X className="w-5 h-5" />
           </button>
@@ -107,6 +117,8 @@ function ModalShell({
 
 function TagInput({ tags, onChange }: { tags: string[], onChange: (tags: string[]) => void }) {
   const [input, setInput] = useState("");
+  const { isDark } = useWorkflowTheme();
+  const d = isDark;
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ',') {
@@ -122,14 +134,18 @@ function TagInput({ tags, onChange }: { tags: string[], onChange: (tags: string[
   };
 
   return (
-    <div className="flex flex-wrap gap-2 p-2 border border-slate-200 rounded-lg focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:border-indigo-500 bg-white min-h-[42px] transition-all">
+    <div
+      className="flex flex-wrap gap-2 p-2 border rounded-lg focus-within:ring-2 focus-within:ring-indigo-500/20 min-h-[42px] transition-all"
+      style={{ background: d ? "rgba(255,255,255,0.04)" : "#ffffff", borderColor: "var(--wf-input-border)" }}
+    >
       {tags.map(tag => (
-        <span key={tag} className="flex items-center gap-1 pl-2 pr-1 py-1 bg-indigo-50 text-indigo-700 text-xs font-medium rounded-md border border-indigo-100 animate-in zoom-in-95 duration-200">
+        <span key={tag} className="flex items-center gap-1 pl-2 pr-1 py-1 text-xs font-medium rounded-md border animate-in zoom-in-95 duration-200" style={{ background: d ? "rgba(96,165,250,0.12)" : "#eef2ff", color: d ? "#bfdbfe" : "#4338ca", borderColor: d ? "rgba(96,165,250,0.18)" : "#c7d2fe" }}>
           {tag}
           <button
             type="button"
             onClick={() => onChange(tags.filter(t => t !== tag))}
-            className="p-0.5 hover:bg-indigo-100 rounded text-indigo-400 hover:text-indigo-700 transition-colors"
+            className="p-0.5 rounded transition-colors"
+            style={{ color: d ? "#93c5fd" : "#6366f1" }}
           >
             <X className="w-3 h-3" />
           </button>
@@ -147,7 +163,8 @@ function TagInput({ tags, onChange }: { tags: string[], onChange: (tags: string[
             setInput("");
           }
         }}
-        className="flex-1 min-w-[120px] text-sm outline-none bg-transparent placeholder:text-slate-400"
+        className="flex-1 min-w-[120px] text-sm outline-none bg-transparent"
+        style={{ color: "var(--wf-fg)" }}
         placeholder={tags.length === 0 ? "Add tags (press Enter)..." : ""}
       />
     </div>
@@ -189,6 +206,12 @@ export function PublishModal({
   const thumbnailInputRef = useRef<HTMLInputElement | null>(null);
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
+  const { isDark } = useWorkflowTheme();
+  const d = isDark;
+  const cardStyle = { background: d ? "rgba(255,255,255,0.03)" : "#ffffff", borderColor: "var(--wf-border)" };
+  const subtleCardStyle = { background: d ? "rgba(255,255,255,0.02)" : "var(--wf-bg)", borderColor: "var(--wf-border)" };
+  const inputStyle = { background: d ? "rgba(255,255,255,0.04)" : "#ffffff", borderColor: "var(--wf-input-border)", color: "var(--wf-fg)" } as React.CSSProperties;
+  const footerStyle = { background: d ? "#0c0f14" : "#ffffff", borderColor: "var(--wf-border)" };
 
   // State for handling existing published workflows
   const [existingWorkflow, setExistingWorkflow] = useState<MarketplaceWorkflow | null>(null);
@@ -388,13 +411,13 @@ export function PublishModal({
   // Success state handling for new publish
   if (success) {
     return (
-      <ModalShell title="Published!" onClose={onClose}>
+      <ModalShell title="Published!" onClose={onClose} maxWidth="max-w-3xl">
         <div className="p-10 flex flex-col items-center justify-center text-center">
           <div className="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mb-6 animate-in zoom-in duration-300">
             <CheckCircle2 className="w-10 h-10 text-emerald-600" />
           </div>
-          <h3 className="text-xl font-bold text-slate-900 mb-2">Successfully Published!</h3>
-          <p className="text-sm text-slate-600 max-w-xs">
+          <h3 className="text-xl font-bold wf-fg mb-2">Successfully Published!</h3>
+          <p className="text-sm wf-fg-muted max-w-xs">
             Your workflow "{name}" is now live on the Stuard Marketplace and available for others to discover.
           </p>
         </div>
@@ -405,7 +428,7 @@ export function PublishModal({
   // Ownership checking loading state
   if (checkingOwnership) {
     return (
-      <ModalShell title="Checking Status..." onClose={onClose}>
+      <ModalShell title="Checking Status..." onClose={onClose} maxWidth="max-w-3xl">
         <div className="h-[300px] flex items-center justify-center">
           <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
         </div>
@@ -416,17 +439,17 @@ export function PublishModal({
   // If already published (and we own it), show the "Manage" screen
   if (existingWorkflow) {
     return (
-      <ModalShell title="Manage Published Workflow" onClose={onClose}>
+      <ModalShell title="Manage Published Workflow" onClose={onClose} maxWidth="max-w-3xl">
         <div className="p-6 space-y-6">
-          <div className="bg-white border border-slate-200 rounded-xl p-5 flex items-start gap-4 shadow-sm">
-            <div className="w-12 h-12 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-sm">
+          <div className="rounded-2xl p-5 flex items-start gap-4 shadow-sm border" style={cardStyle}>
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center shadow-sm border" style={{ background: d ? "rgba(96,165,250,0.12)" : "#eef2ff", borderColor: d ? "rgba(96,165,250,0.18)" : "#c7d2fe", color: d ? "#93c5fd" : "#4f46e5" }}>
               <Globe className="w-6 h-6" />
             </div>
             <div className="flex-1">
-              <h3 className="font-bold text-slate-900 text-lg">{existingWorkflow.name}</h3>
-              <p className="text-sm text-slate-500 mt-1 line-clamp-2">{existingWorkflow.description}</p>
-              <div className="flex items-center gap-3 mt-3 text-xs text-slate-500 font-medium">
-                <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-100">
+              <h3 className="font-bold wf-fg text-lg">{existingWorkflow.name}</h3>
+              <p className="text-sm wf-fg-muted mt-1 line-clamp-2">{existingWorkflow.description}</p>
+              <div className="flex items-center gap-3 mt-3 text-xs wf-fg-muted font-medium">
+                <span className="px-2 py-0.5 rounded-full border" style={{ background: d ? "rgba(96,165,250,0.12)" : "#eef2ff", color: d ? "#bfdbfe" : "#4338ca", borderColor: d ? "rgba(96,165,250,0.18)" : "#c7d2fe" }}>
                   v{existingWorkflow.version}
                 </span>
                 <span>{existingWorkflow.download_count} downloads</span>
@@ -445,49 +468,52 @@ export function PublishModal({
           <div className="grid grid-cols-1 gap-3">
             <button
               onClick={() => setShowUpdateMode(true)}
-              className="flex items-center justify-between p-4 rounded-xl border border-indigo-100 bg-indigo-50/50 hover:bg-indigo-50 hover:border-indigo-200 text-left group transition-all"
+              className="flex items-center justify-between p-4 rounded-2xl border text-left group transition-all"
+              style={{ background: d ? "rgba(96,165,250,0.08)" : "#eef2ff", borderColor: d ? "rgba(96,165,250,0.18)" : "#c7d2fe" }}
             >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center group-hover:scale-105 transition-transform">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform" style={{ background: d ? "rgba(96,165,250,0.14)" : "#dbeafe", color: d ? "#93c5fd" : "#2563eb" }}>
                   <ArrowUpCircle className="w-5 h-5" />
                 </div>
                 <div>
-                  <div className="font-semibold text-indigo-900">Update Workflow</div>
-                  <div className="text-xs text-indigo-700/70">Publish a new version with your current changes</div>
+                  <div className="font-semibold" style={{ color: d ? "#dbeafe" : "#1e40af" }}>Update Workflow</div>
+                  <div className="text-xs" style={{ color: d ? "rgba(219,234,254,0.72)" : "rgba(30,64,175,0.72)" }}>Publish a new version with your current changes</div>
                 </div>
               </div>
-              <ChevronRight className="w-5 h-5 text-indigo-300 group-hover:text-indigo-500" />
+              <ChevronRight className="w-5 h-5 group-hover:text-indigo-500" style={{ color: d ? "rgba(147,197,253,0.7)" : "#818cf8" }} />
             </button>
 
             <button
               onClick={handleUnpublish}
               disabled={unpublishLoading}
-              className="flex items-center justify-between p-4 rounded-xl border border-slate-200 hover:border-rose-200 hover:bg-rose-50 text-left group transition-all disabled:opacity-50"
+              className="flex items-center justify-between p-4 rounded-2xl border text-left group transition-all disabled:opacity-50"
+              style={subtleCardStyle}
             >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center group-hover:bg-rose-100 group-hover:text-rose-500 transition-colors">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center transition-colors" style={{ background: d ? "rgba(255,255,255,0.05)" : "#f1f5f9", color: d ? "rgba(255,255,255,0.55)" : "#64748b" }}>
                   {unpublishLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 className="w-5 h-5" />}
                 </div>
                 <div>
-                  <div className="font-semibold text-slate-900 group-hover:text-rose-700">Unpublish from Marketplace</div>
-                  <div className="text-xs text-slate-500 group-hover:text-rose-600/70">Remove this workflow permanently from the store</div>
+                  <div className="font-semibold wf-fg">Unpublish from Marketplace</div>
+                  <div className="text-xs wf-fg-muted">Remove this workflow permanently from the store</div>
                 </div>
               </div>
             </button>
           </div>
         </div>
 
-        <div className="p-5 border-t border-slate-200 bg-white rounded-b-2xl flex justify-between gap-3">
+        <div className="p-5 border-t rounded-b-[28px] flex justify-between gap-3" style={footerStyle}>
           <button
             onClick={() => setExistingWorkflow(null)}
-            className="text-xs text-slate-500 hover:text-slate-700 font-medium px-2"
+            className="text-xs wf-fg-muted hover:opacity-80 font-medium px-2"
           >
             Publish as new instead
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-lg text-sm border border-slate-300 text-slate-700 hover:bg-slate-50 hover:shadow-sm font-medium transition-all"
+            className="px-4 py-2 rounded-xl text-sm border font-medium transition-all"
+            style={{ background: d ? "rgba(255,255,255,0.03)" : "#ffffff", borderColor: "var(--wf-input-border)", color: "var(--wf-fg)" }}
           >
             Close
           </button>
@@ -498,7 +524,7 @@ export function PublishModal({
 
   // STANDARD PUBLISH FORM (for new workflows or "Publish as new")
   return (
-    <ModalShell title="Publish to Marketplace" onClose={onClose}>
+    <ModalShell title="Publish to Marketplace" onClose={onClose} maxWidth="max-w-5xl">
       <div className="p-6 space-y-6">
         <input
           ref={thumbnailInputRef}
@@ -522,9 +548,9 @@ export function PublishModal({
           className="hidden"
           onChange={(e) => void handleUploadFiles(e.target.files, 'media')}
         />
-        <div className="bg-indigo-50/50 rounded-xl p-4 border border-indigo-100/50">
-          <h3 className="text-sm font-semibold text-indigo-900 mb-1">Share your workflow</h3>
-          <p className="text-xs text-indigo-700/80 leading-relaxed">
+        <div className="rounded-2xl p-5 border" style={{ background: d ? "rgba(96,165,250,0.08)" : "#eff6ff", borderColor: d ? "rgba(96,165,250,0.18)" : "#bfdbfe" }}>
+          <h3 className="text-sm font-semibold mb-1" style={{ color: d ? "#dbeafe" : "#1d4ed8" }}>Share your workflow</h3>
+          <p className="text-xs leading-relaxed" style={{ color: d ? "rgba(219,234,254,0.78)" : "rgba(29,78,216,0.78)" }}>
             Publishing makes your workflow available to other users in the Stuard Marketplace.
             Make sure to remove any sensitive API keys or personal data before publishing.
           </p>
@@ -539,137 +565,146 @@ export function PublishModal({
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">Workflow Name</label>
+            <label className="text-sm font-medium wf-fg">Workflow Name</label>
             <input
               type="text"
               value={name}
               onChange={e => setName(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+              className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
+              style={inputStyle}
               placeholder="e.g., Smart Inbox Assistant"
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">Short Store Description</label>
+            <label className="text-sm font-medium wf-fg">Short Store Description</label>
             <input
               type="text"
               maxLength={160}
               value={shortDescription}
               onChange={e => setShortDescription(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+              className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
+              style={inputStyle}
               placeholder="A concise one-line summary shown on cards"
             />
             <div className="flex justify-end">
-              <span className="text-xs text-slate-400">{shortDescription.length}/160</span>
+              <span className="text-xs wf-fg-faint">{shortDescription.length}/160</span>
             </div>
           </div>
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-slate-700">Description</label>
+          <label className="text-sm font-medium wf-fg">Description</label>
           <textarea
             value={description}
             onChange={e => setDescription(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm min-h-[110px] resize-none transition-all"
+            className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm min-h-[110px] resize-none transition-all"
+            style={inputStyle}
             placeholder="Describe what your workflow does, how it works, and any setup users should know about..."
           />
           <div className="flex justify-end">
-            <span className="text-xs text-slate-400">{description.length} chars</span>
+            <span className="text-xs wf-fg-faint">{description.length} chars</span>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">Category</label>
+            <label className="text-sm font-medium wf-fg">Category</label>
             <div className="relative">
               <select
                 value={category}
                 onChange={e => setCategory(e.target.value)}
                 disabled={fetchingCats}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm bg-white text-slate-900 appearance-none pr-8 transition-all"
+                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm appearance-none pr-8 transition-all"
+                style={inputStyle}
               >
                 <option value="general">General</option>
                 {categories.map(c => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none wf-fg-faint">
                 <ChevronRight className="w-4 h-4 rotate-90" />
               </div>
             </div>
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">Tags</label>
+            <label className="text-sm font-medium wf-fg">Tags</label>
             <TagInput tags={tags} onChange={setTags} />
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-4 shadow-sm">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+        <div className="rounded-2xl border p-5 space-y-4 shadow-sm" style={cardStyle}>
+          <div className="flex items-center gap-2 text-sm font-semibold wf-fg">
             <Users className="w-4 h-4 text-indigo-400" />
             Creator Profile
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">Display Name</label>
+              <label className="text-sm font-medium wf-fg">Display Name</label>
               <input
                 type="text"
                 value={creatorProfile.display_name || ''}
                 onChange={e => setCreatorProfile(prev => ({ ...prev, display_name: e.target.value }))}
-                className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
+                style={inputStyle}
                 placeholder="How your name appears in the store"
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-500">Handle</label>
+              <label className="text-sm font-medium wf-fg-muted">Handle</label>
               <input
                 type="text"
                 value={creatorProfile.handle || ''}
                 onChange={e => setCreatorProfile(prev => ({ ...prev, handle: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-') }))}
-                className="w-full px-3 py-2 border border-slate-200 bg-white text-slate-500 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
+                style={inputStyle}
                 placeholder="creator-name"
               />
             </div>
             <div className="space-y-1.5 md:col-span-2">
-              <label className="text-sm font-medium text-slate-500">Creator Bio</label>
+              <label className="text-sm font-medium wf-fg-muted">Creator Bio</label>
               <textarea
                 value={creatorProfile.bio || ''}
                 onChange={e => setCreatorProfile(prev => ({ ...prev, bio: e.target.value }))}
-                className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm min-h-[72px] resize-none transition-all"
+                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm min-h-[72px] resize-none transition-all"
+                style={inputStyle}
                 placeholder="Tell people what kind of workflows you build"
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">Website</label>
+              <label className="text-sm font-medium wf-fg">Website</label>
               <input
                 type="url"
                 value={creatorProfile.website_url || ''}
                 onChange={e => setCreatorProfile(prev => ({ ...prev, website_url: e.target.value }))}
-                className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
+                style={inputStyle}
                 placeholder="https://your-site.com"
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">Avatar URL</label>
+              <label className="text-sm font-medium wf-fg">Avatar URL</label>
               <input
                 type="url"
                 value={creatorProfile.avatar_url || ''}
                 onChange={e => setCreatorProfile(prev => ({ ...prev, avatar_url: e.target.value }))}
-                className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
+                style={inputStyle}
                 placeholder="Optional avatar image URL"
               />
             </div>
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-4 shadow-sm">
+        <div className="rounded-2xl border p-5 space-y-4 shadow-sm" style={cardStyle}>
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
-              <div className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+              <div className="text-sm font-semibold wf-fg flex items-center gap-2">
                 <ImagePlus className="w-4 h-4 text-indigo-400" />
                 Store Artwork & Media
               </div>
-              <p className="text-xs text-slate-500 mt-1">Add thumbnail art, a cover image, and screenshots or videos like a store listing.</p>
+              <p className="text-xs wf-fg-muted mt-1">Add thumbnail art, a cover image, and screenshots or videos like a store listing.</p>
             </div>
             {uploadingAsset && (
               <div className="flex items-center gap-2 text-xs text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-full border border-indigo-100">
@@ -683,15 +718,16 @@ export function PublishModal({
             <button
               type="button"
               onClick={() => thumbnailInputRef.current?.click()}
-              className="group rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 p-4 text-left hover:border-indigo-300 hover:bg-indigo-50/60 transition-all"
+              className="group rounded-2xl border border-dashed p-4 text-left transition-all"
+              style={subtleCardStyle}
             >
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
                   <Upload className="w-4 h-4" />
                 </div>
                 <div>
-                  <div className="text-sm font-semibold text-slate-900">Thumbnail</div>
-                  <div className="text-xs text-slate-500">Used on search cards and compact listings</div>
+                  <div className="text-sm font-semibold wf-fg">Thumbnail</div>
+                  <div className="text-xs wf-fg-muted">Used on search cards and compact listings</div>
                 </div>
               </div>
               {thumbnailUrl && (
@@ -702,15 +738,16 @@ export function PublishModal({
             <button
               type="button"
               onClick={() => coverInputRef.current?.click()}
-              className="group rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 p-4 text-left hover:border-indigo-300 hover:bg-indigo-50/60 transition-all"
+              className="group rounded-2xl border border-dashed p-4 text-left transition-all"
+              style={subtleCardStyle}
             >
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100">
                   <ImagePlus className="w-4 h-4" />
                 </div>
                 <div>
-                  <div className="text-sm font-semibold text-slate-900">Hero Cover</div>
-                  <div className="text-xs text-slate-500">Large banner shown on the detail page</div>
+                  <div className="text-sm font-semibold wf-fg">Hero Cover</div>
+                  <div className="text-xs wf-fg-muted">Large banner shown on the detail page</div>
                 </div>
               </div>
               {coverImageUrl && (
@@ -719,11 +756,11 @@ export function PublishModal({
             </button>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-4">
+          <div className="rounded-2xl border p-4 space-y-4" style={subtleCardStyle}>
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
-                <div className="text-sm font-semibold text-slate-900">Gallery</div>
-                <div className="text-xs text-slate-500">Upload screenshots or short preview videos</div>
+                <div className="text-sm font-semibold wf-fg">Gallery</div>
+                <div className="text-xs wf-fg-muted">Upload screenshots or short preview videos</div>
               </div>
               <button
                 type="button"
@@ -737,7 +774,7 @@ export function PublishModal({
             {media.length > 0 ? (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 {media.map((item, index) => (
-                  <div key={`${item.url}-${index}`} className="relative rounded-2xl overflow-hidden border border-slate-200 bg-white group shadow-sm">
+                  <div key={`${item.url}-${index}`} className="relative rounded-2xl overflow-hidden border group shadow-sm" style={cardStyle}>
                     {isVideoMedia(item) ? (
                       <div className="h-28 flex items-center justify-center bg-slate-900 text-white/70">
                         <PlayCircle className="w-8 h-8" />
@@ -778,11 +815,11 @@ export function PublishModal({
             <div className="flex-1">
               <div className="flex items-center gap-2">
                 {locked ? <Lock className="w-4 h-4 text-amber-600" /> : <Unlock className="w-4 h-4 text-slate-400" />}
-                <span className={`text-sm font-semibold ${locked ? 'text-amber-900' : 'text-slate-800'}`}>
+                <span className={`text-sm font-semibold ${locked ? '' : 'wf-fg'}`} style={locked ? { color: d ? "#fde68a" : "#78350f" } : undefined}>
                   {locked ? 'Locked Workflow' : 'Open Workflow'}
                 </span>
               </div>
-              <p className={`text-xs mt-1 leading-relaxed ${locked ? 'text-amber-700/80' : 'text-slate-500'}`}>
+              <p className={`text-xs mt-1 leading-relaxed ${locked ? '' : 'wf-fg-muted'}`} style={locked ? { color: d ? "rgba(253,230,138,0.82)" : "rgba(146,64,14,0.82)" } : undefined}>
                 {locked
                   ? 'Users who download this workflow will not be able to view the code, use AI to modify it, or manually edit it. They can only run the workflow and wait for your updates.'
                   : 'Users can view, modify, and customize this workflow after downloading.'}
@@ -792,11 +829,12 @@ export function PublishModal({
         </div>
       </div>
 
-      <div className="p-5 border-t border-slate-200 bg-white rounded-b-2xl flex justify-end gap-3">
+      <div className="p-5 border-t rounded-b-[28px] flex justify-end gap-3" style={footerStyle}>
         <button
           type="button"
           onClick={onClose}
-          className="px-4 py-2 rounded-lg text-sm border border-slate-300 text-slate-700 hover:bg-slate-50 hover:shadow-sm font-medium transition-all"
+          className="px-4 py-2 rounded-xl text-sm border font-medium transition-all"
+          style={{ background: d ? "rgba(255,255,255,0.03)" : "#ffffff", borderColor: "var(--wf-input-border)", color: "var(--wf-fg)" }}
         >
           Cancel
         </button>
@@ -857,6 +895,12 @@ export function UpdateWorkflowModal({
   const thumbnailInputRef = useRef<HTMLInputElement | null>(null);
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
+  const { isDark } = useWorkflowTheme();
+  const d = isDark;
+  const cardStyle = { background: d ? "rgba(255,255,255,0.03)" : "#ffffff", borderColor: "var(--wf-border)" };
+  const subtleCardStyle = { background: d ? "rgba(255,255,255,0.02)" : "var(--wf-bg)", borderColor: "var(--wf-border)" };
+  const inputStyle = { background: d ? "rgba(255,255,255,0.04)" : "#ffffff", borderColor: "var(--wf-input-border)", color: "var(--wf-fg)" } as React.CSSProperties;
+  const footerStyle = { background: d ? "#0c0f14" : "#ffffff", borderColor: "var(--wf-border)" };
 
   // Fetch categories and versions on mount
   useEffect(() => {
@@ -968,8 +1012,8 @@ export function UpdateWorkflowModal({
           <div className="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mb-6 animate-in zoom-in duration-300">
             <ArrowUpCircle className="w-10 h-10 text-emerald-600" />
           </div>
-          <h3 className="text-xl font-bold text-slate-900 mb-2">Successfully Updated!</h3>
-          <p className="text-sm text-slate-600 max-w-xs">
+          <h3 className="text-xl font-bold wf-fg mb-2">Successfully Updated!</h3>
+          <p className="text-sm wf-fg-muted max-w-xs">
             Your workflow "{name}" has been updated to a new version and is now live on the marketplace.
           </p>
         </div>
@@ -978,7 +1022,7 @@ export function UpdateWorkflowModal({
   }
 
   return (
-    <ModalShell title="Update Published Workflow" onClose={onClose}>
+    <ModalShell title="Update Published Workflow" onClose={onClose} maxWidth="max-w-5xl">
       <div className="p-6 space-y-6">
         <input
           ref={thumbnailInputRef}
@@ -1002,12 +1046,12 @@ export function UpdateWorkflowModal({
           className="hidden"
           onChange={(e) => void handleUploadFiles(e.target.files, 'media')}
         />
-        <div className="bg-amber-50/50 rounded-xl p-4 border border-amber-100/50">
-          <h3 className="text-sm font-semibold text-amber-900 mb-1 flex items-center gap-2">
+        <div className="rounded-2xl p-5 border" style={{ background: d ? "rgba(245,158,11,0.10)" : "#fffbeb", borderColor: d ? "rgba(245,158,11,0.20)" : "#fde68a" }}>
+          <h3 className="text-sm font-semibold mb-1 flex items-center gap-2" style={{ color: d ? "#fde68a" : "#92400e" }}>
             <ArrowUpCircle className="w-4 h-4" />
             Publishing an Update
           </h3>
-          <p className="text-xs text-amber-700/80 leading-relaxed">
+          <p className="text-xs leading-relaxed" style={{ color: d ? "rgba(253,230,138,0.82)" : "rgba(146,64,14,0.82)" }}>
             This will create a new version of your workflow. Users who downloaded previous versions will be notified of the update.
             Current version: <span className="font-semibold">{workflow.version}</span>
           </p>
@@ -1022,135 +1066,145 @@ export function UpdateWorkflowModal({
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">Workflow Name</label>
+            <label className="text-sm font-medium wf-fg">Workflow Name</label>
             <input
               type="text"
               value={name}
               onChange={e => setName(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+              className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
+              style={inputStyle}
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">Short Store Description</label>
+            <label className="text-sm font-medium wf-fg">Short Store Description</label>
             <input
               type="text"
               maxLength={160}
               value={shortDescription}
               onChange={e => setShortDescription(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+              className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
+              style={inputStyle}
             />
             <div className="flex justify-end">
-              <span className="text-xs text-slate-400">{shortDescription.length}/160</span>
+              <span className="text-xs wf-fg-faint">{shortDescription.length}/160</span>
             </div>
           </div>
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-slate-700">Description</label>
+          <label className="text-sm font-medium wf-fg">Description</label>
           <textarea
             value={description}
             onChange={e => setDescription(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm min-h-[100px] resize-none transition-all"
+            className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm min-h-[100px] resize-none transition-all"
+            style={inputStyle}
           />
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-slate-700">What's New (Changelog)</label>
+          <label className="text-sm font-medium wf-fg">What's New (Changelog)</label>
           <textarea
             value={changelog}
             onChange={e => setChangelog(e.target.value)}
-            className="w-full px-3 py-2 border border-amber-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-sm text-slate-900 min-h-[80px] resize-none transition-all bg-amber-50/60"
+            className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/20 text-sm min-h-[80px] resize-none transition-all"
+            style={{ background: d ? "rgba(245,158,11,0.10)" : "#fffbeb", borderColor: d ? "rgba(245,158,11,0.20)" : "#fcd34d", color: "var(--wf-fg)" }}
             placeholder="Describe what changed in this update..."
           />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">Category</label>
+            <label className="text-sm font-medium wf-fg">Category</label>
             <div className="relative">
               <select
                 value={category}
                 onChange={e => setCategory(e.target.value)}
                 disabled={fetchingData}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm bg-white text-slate-900 appearance-none pr-8 transition-all"
+                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm appearance-none pr-8 transition-all"
+                style={inputStyle}
               >
                 <option value="general">General</option>
                 {categories.map(c => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none wf-fg-faint">
                 <ChevronRight className="w-4 h-4 rotate-90" />
               </div>
             </div>
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">Tags</label>
+            <label className="text-sm font-medium wf-fg">Tags</label>
             <TagInput tags={tags} onChange={setTags} />
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-4 shadow-sm">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+        <div className="rounded-2xl border p-5 space-y-4 shadow-sm" style={cardStyle}>
+          <div className="flex items-center gap-2 text-sm font-semibold wf-fg">
             <Users className="w-4 h-4 text-indigo-400" />
             Creator Profile
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">Display Name</label>
+              <label className="text-sm font-medium wf-fg">Display Name</label>
               <input
                 type="text"
                 value={creatorProfile.display_name || ''}
                 onChange={e => setCreatorProfile(prev => ({ ...prev, display_name: e.target.value }))}
-                className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
+                style={inputStyle}
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">Handle</label>
+              <label className="text-sm font-medium wf-fg">Handle</label>
               <input
                 type="text"
                 value={creatorProfile.handle || ''}
                 onChange={e => setCreatorProfile(prev => ({ ...prev, handle: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-') }))}
-                className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
+                style={inputStyle}
               />
             </div>
             <div className="space-y-1.5 md:col-span-2">
-              <label className="text-sm font-medium text-slate-700">Creator Bio</label>
+              <label className="text-sm font-medium wf-fg">Creator Bio</label>
               <textarea
                 value={creatorProfile.bio || ''}
                 onChange={e => setCreatorProfile(prev => ({ ...prev, bio: e.target.value }))}
-                className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm min-h-[72px] resize-none transition-all"
+                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm min-h-[72px] resize-none transition-all"
+                style={inputStyle}
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">Website</label>
+              <label className="text-sm font-medium wf-fg">Website</label>
               <input
                 type="url"
                 value={creatorProfile.website_url || ''}
                 onChange={e => setCreatorProfile(prev => ({ ...prev, website_url: e.target.value }))}
-                className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
+                style={inputStyle}
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">Avatar URL</label>
+              <label className="text-sm font-medium wf-fg">Avatar URL</label>
               <input
                 type="url"
                 value={creatorProfile.avatar_url || ''}
                 onChange={e => setCreatorProfile(prev => ({ ...prev, avatar_url: e.target.value }))}
-                className="w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
+                style={inputStyle}
               />
             </div>
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-4 shadow-sm">
+        <div className="rounded-2xl border p-5 space-y-4 shadow-sm" style={cardStyle}>
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
-              <div className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+              <div className="text-sm font-semibold wf-fg flex items-center gap-2">
                 <ImagePlus className="w-4 h-4 text-indigo-400" />
                 Store Artwork & Media
               </div>
-              <p className="text-xs text-slate-500 mt-1">Refresh your cover art, thumbnails, screenshots, or preview clips.</p>
+              <p className="text-xs wf-fg-muted mt-1">Refresh your cover art, thumbnails, screenshots, or preview clips.</p>
             </div>
             {uploadingAsset && (
               <div className="flex items-center gap-2 text-xs text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-full border border-indigo-100">
@@ -1164,15 +1218,16 @@ export function UpdateWorkflowModal({
             <button
               type="button"
               onClick={() => thumbnailInputRef.current?.click()}
-              className="group rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 p-4 text-left hover:border-indigo-300 hover:bg-indigo-50/60 transition-all"
+              className="group rounded-2xl border border-dashed p-4 text-left transition-all"
+              style={subtleCardStyle}
             >
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
                   <Upload className="w-4 h-4" />
                 </div>
                 <div>
-                  <div className="text-sm font-semibold text-slate-900">Thumbnail</div>
-                  <div className="text-xs text-slate-500">Updated compact card artwork</div>
+                  <div className="text-sm font-semibold wf-fg">Thumbnail</div>
+                  <div className="text-xs wf-fg-muted">Updated compact card artwork</div>
                 </div>
               </div>
               {thumbnailUrl && (
@@ -1183,15 +1238,16 @@ export function UpdateWorkflowModal({
             <button
               type="button"
               onClick={() => coverInputRef.current?.click()}
-              className="group rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 p-4 text-left hover:border-indigo-300 hover:bg-indigo-50/60 transition-all"
+              className="group rounded-2xl border border-dashed p-4 text-left transition-all"
+              style={subtleCardStyle}
             >
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100">
                   <ImagePlus className="w-4 h-4" />
                 </div>
                 <div>
-                  <div className="text-sm font-semibold text-slate-900">Hero Cover</div>
-                  <div className="text-xs text-slate-500">Update your detail page banner</div>
+                  <div className="text-sm font-semibold wf-fg">Hero Cover</div>
+                  <div className="text-xs wf-fg-muted">Update your detail page banner</div>
                 </div>
               </div>
               {coverImageUrl && (
@@ -1200,11 +1256,11 @@ export function UpdateWorkflowModal({
             </button>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-4">
+          <div className="rounded-2xl border p-4 space-y-4" style={subtleCardStyle}>
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
-                <div className="text-sm font-semibold text-slate-900">Gallery</div>
-                <div className="text-xs text-slate-500">Keep your listing fresh with media previews</div>
+                <div className="text-sm font-semibold wf-fg">Gallery</div>
+                <div className="text-xs wf-fg-muted">Keep your listing fresh with media previews</div>
               </div>
               <button
                 type="button"
@@ -1218,7 +1274,7 @@ export function UpdateWorkflowModal({
             {media.length > 0 ? (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 {media.map((item, index) => (
-                  <div key={`${item.url}-${index}`} className="relative rounded-2xl overflow-hidden border border-slate-200 bg-white group shadow-sm">
+                  <div key={`${item.url}-${index}`} className="relative rounded-2xl overflow-hidden border group shadow-sm" style={cardStyle}>
                     {isVideoMedia(item) ? (
                       <div className="h-28 flex items-center justify-center bg-slate-900 text-white/70">
                         <PlayCircle className="w-8 h-8" />
@@ -1233,19 +1289,19 @@ export function UpdateWorkflowModal({
                     >
                       <X className="w-4 h-4" />
                     </button>
-                    <div className="p-2 text-[11px] text-slate-500 truncate">{item.alt_text || item.media_type}</div>
+                    <div className="p-2 text-[11px] wf-fg-muted truncate">{item.alt_text || item.media_type}</div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+              <div className="rounded-xl border border-dashed p-6 text-center text-sm wf-fg-muted" style={{ borderColor: "var(--wf-input-border)" }}>
                 Add screenshots or preview clips for your updated listing.
               </div>
             )}
           </div>
         </div>
 
-        <div className={`rounded-xl p-4 border transition-all ${locked ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50/50 border-slate-200'}`}>
+        <div className="rounded-2xl p-4 border transition-all" style={locked ? { background: d ? "rgba(245, 158, 11, 0.10)" : "#fffbeb", borderColor: d ? "rgba(245,158,11,0.22)" : "#fcd34d" } : subtleCardStyle}>
           <div className="flex items-start gap-3">
             <button
               type="button"
@@ -1257,11 +1313,11 @@ export function UpdateWorkflowModal({
             <div className="flex-1">
               <div className="flex items-center gap-2">
                 {locked ? <Lock className="w-4 h-4 text-amber-600" /> : <Unlock className="w-4 h-4 text-slate-400" />}
-                <span className={`text-sm font-semibold ${locked ? 'text-amber-900' : 'text-slate-800'}`}>
+                <span className={`text-sm font-semibold ${locked ? '' : 'wf-fg'}`} style={locked ? { color: d ? "#fde68a" : "#78350f" } : undefined}>
                   {locked ? 'Locked Workflow' : 'Open Workflow'}
                 </span>
               </div>
-              <p className={`text-xs mt-1 leading-relaxed ${locked ? 'text-amber-700/80' : 'text-slate-500'}`}>
+              <p className={`text-xs mt-1 leading-relaxed ${locked ? '' : 'wf-fg-muted'}`} style={locked ? { color: d ? "rgba(253,230,138,0.82)" : "rgba(146,64,14,0.82)" } : undefined}>
                 {locked
                   ? 'Downloaders will only be able to run this workflow and receive updates from you.'
                   : 'Downloaders can inspect and customize the workflow after installing it.'}
@@ -1272,22 +1328,22 @@ export function UpdateWorkflowModal({
 
         {versions.length > 1 && (
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
-              <History className="w-4 h-4 text-slate-400" />
+            <label className="text-sm font-medium wf-fg flex items-center gap-2">
+              <History className="w-4 h-4 wf-fg-faint" />
               Version History
             </label>
-            <div className="bg-white rounded-lg border border-slate-200 p-3 max-h-32 overflow-y-auto shadow-sm">
+            <div className="rounded-xl border p-3 max-h-32 overflow-y-auto shadow-sm" style={cardStyle}>
               {versions.slice(0, 5).map((v, i) => (
-                <div key={v.version + i} className={`flex items-center justify-between py-1.5 ${i > 0 ? 'border-t border-slate-100' : ''}`}>
+                <div key={v.version + i} className={`flex items-center justify-between py-1.5 ${i > 0 ? 'border-t' : ''}`} style={i > 0 ? { borderColor: "var(--wf-border)" } : undefined}>
                   <div className="flex items-center gap-2">
-                    <span className={`text-xs font-mono font-semibold ${v.current ? 'text-indigo-600' : 'text-slate-500'}`}>
+                    <span className={`text-xs font-mono font-semibold ${v.current ? 'text-indigo-600' : 'wf-fg-muted'}`}>
                       v{v.version}
                     </span>
                     {v.current && (
                       <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-medium">Current</span>
                     )}
                   </div>
-                  <span className="text-xs text-slate-400">
+                  <span className="text-xs wf-fg-faint">
                     {new Date(v.created_at).toLocaleDateString()}
                   </span>
                 </div>
@@ -1297,11 +1353,12 @@ export function UpdateWorkflowModal({
         )}
       </div>
 
-      <div className="p-5 border-t border-slate-200 bg-white rounded-b-2xl flex justify-end gap-3">
+      <div className="p-5 border-t rounded-b-[28px] flex justify-end gap-3" style={footerStyle}>
         <button
           type="button"
           onClick={onClose}
-          className="px-4 py-2 rounded-lg text-sm border border-slate-300 text-slate-700 hover:bg-slate-50 hover:shadow-sm font-medium transition-all"
+          className="px-4 py-2 rounded-xl text-sm border font-medium transition-all"
+          style={{ background: d ? "rgba(255,255,255,0.03)" : "#ffffff", borderColor: "var(--wf-input-border)", color: "var(--wf-fg)" }}
         >
           Cancel
         </button>

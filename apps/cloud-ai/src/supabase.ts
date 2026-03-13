@@ -3,8 +3,8 @@ import { estimateCostUsd, monthlyCreditLimitForPlan, creditsPerUsd } from './pri
 import { DEV_MODE, SYNC_ACCOUNTS_FALLBACK } from './utils/config';
 import { normalizeUsage } from './utils/usage';
 import { embedMany } from 'ai';
-import { openai } from '@ai-sdk/openai';
 import { DEFAULT_EMBEDDER } from './utils/config';
+import { buildProviderEmbeddingModel } from './utils/models';
 import {
   localGetExternalAccount,
   localListExternalAccounts,
@@ -119,8 +119,9 @@ export async function enqueueMemoryJob(input: {
   const texts = Array.isArray(input.texts) ? input.texts.filter((s) => typeof s === 'string' && s.trim()) : [];
   if (texts.length === 0) return;
   try {
-    const modelId = DEFAULT_EMBEDDER.replace('openai/', '');
-    const { embeddings } = await embedMany({ model: openai.embedding(modelId), values: texts });
+    const embeddingModel = buildProviderEmbeddingModel(DEFAULT_EMBEDDER);
+    if (!embeddingModel) throw new Error(`Failed to resolve embedding model: ${DEFAULT_EMBEDDER}`);
+    const { embeddings } = await embedMany({ model: embeddingModel, values: texts });
     const items = texts.map((t, i) => ({
       text: String(t),
       vector: embeddings[i] as number[],

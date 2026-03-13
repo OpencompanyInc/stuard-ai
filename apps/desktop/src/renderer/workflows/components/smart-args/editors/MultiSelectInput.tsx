@@ -121,12 +121,12 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="w-full px-4 py-2.5 text-sm border border-white/[0.08] rounded-xl bg-white/[0.04] hover:bg-white/[0.06] hover:border-white/[0.12] flex items-center justify-between gap-2 transition-all shadow-sm"
+        className="w-full px-4 py-2.5 text-sm border wf-border-subtle rounded-xl wf-input hover:wf-hover-bg hover:wf-border-emphasis flex items-center justify-between gap-2 transition-all shadow-sm"
       >
-        <span className={selected.size > 0 ? 'text-white/80 font-medium' : 'text-white/40'}>
+        <span className={selected.size > 0 ? 'wf-fg font-medium' : 'wf-fg-faint'}>
           {displayLabel}
         </span>
-        <ChevronDown className={`w-4 h-4 text-white/40 transition-transform shrink-0 ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`w-4 h-4 wf-fg-faint transition-transform shrink-0 ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {/* Selected chips */}
@@ -148,14 +148,14 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
             </span>
           ))}
           {overflowCount > 0 && (
-            <span className="inline-flex items-center px-2.5 py-1 text-xs font-medium bg-white/[0.06] text-white/50 rounded-lg">
+            <span className="inline-flex items-center px-2.5 py-1 text-xs font-medium wf-bg-overlay wf-fg-muted rounded-lg">
               +{overflowCount} more
             </span>
           )}
           <button
             type="button"
             onClick={selectNone}
-            className="inline-flex items-center px-2 py-1 text-xs text-white/40 hover:text-red-500 transition-colors"
+            className="inline-flex items-center px-2 py-1 text-xs wf-fg-faint hover:text-red-500 transition-colors"
           >
             Clear all
           </button>
@@ -166,16 +166,16 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
       {open && (
         <div className="absolute z-50 w-full mt-2 bg-white/[0.04] border border-white/[0.04] rounded-xl shadow-2xl shadow-black/50 max-h-80 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
           {/* Search + bulk actions */}
-          <div className="p-2.5 border-b border-white/[0.04] bg-white/[0.04] space-y-2">
+          <div className="p-2.5 border-b wf-border-subtle wf-bg-overlay space-y-2">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/40" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 wf-fg-faint" />
               <input
                 ref={searchRef}
                 type="text"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder="Search tools..."
-                className="w-full pl-9 pr-3 py-2 text-sm bg-white/[0.04] border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50"
+                className="w-full pl-9 pr-3 py-2 text-sm wf-input border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50"
               />
             </div>
             {!search && (
@@ -190,7 +190,7 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
                 <button
                   type="button"
                   onClick={selectNone}
-                  className="px-3 py-1.5 text-xs font-medium text-white/50 bg-white/[0.06] hover:bg-slate-200 rounded-lg transition-colors"
+                  className="px-3 py-1.5 text-xs font-medium wf-fg-muted wf-bg-overlay wf-hover-bg rounded-lg transition-colors"
                 >
                   Clear All
                 </button>
@@ -212,16 +212,16 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
                   <button
                     type="button"
                     onClick={() => selectGroup(groupName)}
-                    className="w-full px-3 py-1.5 text-left text-[11px] font-bold uppercase tracking-wider text-white/40 hover:text-indigo-400 hover:bg-indigo-500/200/10 flex items-center gap-2 transition-colors sticky top-0 bg-black/60 backdrop-blur-xl"
+                    className="w-full px-3 py-1.5 text-left text-[11px] font-bold uppercase tracking-wider wf-fg-faint hover:text-indigo-400 hover:bg-indigo-500/200/10 flex items-center gap-2 transition-colors sticky top-0 wf-bg-elevated backdrop-blur-xl"
                   >
                     <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
-                      allGroupSelected ? 'bg-indigo-600 border-indigo-600' : someGroupSelected ? 'bg-indigo-500/20 border-indigo-500/40' : 'border-white/[0.12]'
+                      allGroupSelected ? 'bg-indigo-600 border-indigo-600' : someGroupSelected ? 'bg-indigo-500/20 border-indigo-500/40' : 'wf-border-subtle'
                     }`}>
                       {allGroupSelected && <Check className="w-2.5 h-2.5 text-white" />}
                       {someGroupSelected && !allGroupSelected && <div className="w-1.5 h-1.5 bg-indigo-500/100 rounded-sm" />}
                     </div>
                     {groupName}
-                    <span className="text-[10px] font-normal normal-case text-white/40 ml-auto">
+                    <span className="text-[10px] font-normal normal-case wf-fg-faint ml-auto">
                       {groupOpts.filter(o => selected.has(String(o.value))).length}/{groupOpts.length}
                     </span>
                   </button>
@@ -234,18 +234,18 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
                         type="button"
                         onClick={() => toggle(opt.value)}
                         className={`w-full px-3 py-1.5 pl-7 text-left text-sm rounded-lg flex items-center gap-2 transition-colors mb-0.5 ${
-                          isSelected ? 'bg-indigo-500/10 text-indigo-400' : 'text-white/70 hover:bg-white/[0.06]'
+                          isSelected ? 'bg-indigo-500/10 text-indigo-400' : 'wf-fg-muted wf-hover-bg'
                         }`}
                       >
                         <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
-                          isSelected ? 'bg-indigo-600 border-indigo-600' : 'border-white/[0.12] bg-white/[0.04]'
+                          isSelected ? 'bg-indigo-600 border-indigo-600' : 'wf-border-subtle wf-bg-overlay'
                         }`}>
                           {isSelected && <Check className="w-3 h-3 text-white" />}
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-[13px]">{opt.label}</div>
                           {opt.description && (
-                            <div className="text-[11px] text-white/40 truncate">{opt.description}</div>
+                            <div className="text-[11px] wf-fg-faint truncate">{opt.description}</div>
                           )}
                         </div>
                       </button>

@@ -1,25 +1,31 @@
 import { openai } from '@ai-sdk/openai';
+import { google } from './models';
 
-const DEFAULT_EMBEDDER = process.env.MEMORY_EMBEDDER_MODEL || process.env.EMBEDDER_MODEL_ID || 'openai/text-embedding-3-large';
+const DEFAULT_EMBEDDER = process.env.MEMORY_EMBEDDER_MODEL || process.env.EMBEDDER_MODEL_ID || 'google/gemini-embedding-2-preview';
+
+export const EMBEDDING_DIMENSIONS = 3072;
 
 export function embeddingDimForModel(modelId: string): number {
   const m = (modelId || '').toLowerCase();
+  if (m.includes('gemini-embedding')) return 3072;
   if (m.includes('text-embedding-3-large')) return 3072;
   if (m.includes('text-embedding-004')) return 768;
   if (m.includes('text-embedding-ada-002')) return 1536;
-  return 3072; // Default to text-embedding-3-large dimensions
+  return 3072;
 }
 
 export async function resolveEmbedder(_writer?: any, _override?: string) {
   const modelId = _override || DEFAULT_EMBEDDER;
   let embedder;
-  if (modelId.startsWith('openai/')) {
-    // Use OpenAI embedding models
+  if (modelId.startsWith('google/')) {
+    const googleModelId = modelId.replace('google/', '');
+    embedder = google.textEmbeddingModel(googleModelId);
+  } else if (modelId.startsWith('openai/')) {
     const openaiModelId = modelId.replace('openai/', '');
     embedder = openai.embedding(openaiModelId);
   } else {
-    // Default to OpenAI text-embedding-3-large
-    embedder = openai.embedding('text-embedding-3-large');
+    // Default to Gemini embedding
+    embedder = google.textEmbeddingModel('gemini-embedding-2-preview');
   }
   return { embedder, modelId } as const;
 }

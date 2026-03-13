@@ -163,10 +163,9 @@ export default function RootLayout({
         />
       </head>
       <body className="antialiased min-h-screen text-gray-900 font-sans">
-        {/* Grid fade overlay - controlled by HeroSection via body.grid-faded class */}
         <div className="relative z-10">
-          <div className="bg-[#007AFF] text-white text-center py-2 text-sm font-medium">
-            🚀 Stuard Beta is here!!!
+          <div className="bg-gray-900 text-white text-center py-2.5 text-sm font-medium tracking-wide">
+            Stuard AI is now available &mdash; <a href="/signup" className="underline underline-offset-2 hover:text-blue-300 transition-colors">Get started free</a>
           </div>
           <AuthProvider>
             <div className="flex flex-col min-h-screen">

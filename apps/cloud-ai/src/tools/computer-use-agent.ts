@@ -1,149 +1,128 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { generateText } from 'ai';
-import { Buffer } from 'node:buffer';
-import { buildProviderModel } from '../utils/models';
+import OpenAI from 'openai';
 import { execLocalTool, hasClientBridge, safeToolWrite } from './bridge';
-
-function extractJson(text: string): any | null {
-  try {
-    const raw = String(text || '').trim();
-    if (!raw) return null;
-
-    const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    const candidate = fenced ? String(fenced[1] || '').trim() : raw;
-
-    try {
-      return JSON.parse(candidate);
-    } catch {
-      const start = candidate.indexOf('{');
-      const end = candidate.lastIndexOf('}');
-      if (start >= 0 && end > start) {
-        return JSON.parse(candidate.slice(start, end + 1));
-      }
-      return null;
-    }
-  } catch {
-    return null;
-  }
-}
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function normalizeModelAction(input: any): any {
-  if (!input || typeof input !== 'object') return input;
+const MODEL = 'gpt-5.4';
 
-  const obj: any = { ...input };
-  const rawAction =
-    (typeof obj.action === 'string' ? obj.action : '') ||
-    (typeof obj.type === 'string' ? obj.type : '') ||
-    (typeof obj.tool === 'string' ? obj.tool : '');
+/**
+ * Capture a screenshot via the local agent and return {filePath, imageB64, display}.
+ */
+async function captureScreenshot(
+  writer: any,
+  monitorIndex?: number,
+): Promise<{ filePath: string; imageB64: string; display?: { width: number; height: number } } | null> {
+  const shot = await execLocalTool(
+    'computer_use',
+    {
+      action: 'wait',
+      time: 0,
+      includeScreenshot: true,
+      returnDataUrl: false,
+      ...(monitorIndex !== undefined ? { monitorIndex } : {}),
+    },
+    writer,
+  );
+  const filePath = typeof shot?.filePath === 'string' ? shot.filePath : '';
+  if (!filePath) return null;
 
-  const key = String(rawAction || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, '_');
+  const bin = await execLocalTool('read_file_binary', { path: filePath }, writer);
+  const imageB64 = typeof bin?.data === 'string' ? bin.data : '';
+  if (!imageB64) return null;
 
-  const actionMap: Record<string, string> = {
-    click: 'left_click',
-    tap: 'left_click',
-    leftclick: 'left_click',
-    left_click: 'left_click',
-    doubleclick: 'double_click',
-    rightclick: 'right_click',
-    middleclick: 'middle_click',
-    move: 'mouse_move',
-    mousemove: 'mouse_move',
-    drag: 'left_click_drag',
-    press: 'key',
-    hotkey: 'key',
-    shortcut: 'key',
-    type_text: 'type',
-    input: 'type',
-    write: 'type',
-  };
+  const display =
+    shot?.display && typeof shot.display === 'object' && typeof shot.display.width === 'number'
+      ? { width: shot.display.width as number, height: shot.display.height as number }
+      : undefined;
 
-  const mappedAction = actionMap[key] || key;
-
-  if (mappedAction) obj.action = mappedAction;
-
-  if (obj.coordinate === undefined && typeof obj.x === 'number' && typeof obj.y === 'number') {
-    obj.coordinate = [obj.x, obj.y];
-  }
-
-  if (obj.action === 'answer' && obj.text === undefined && typeof obj.answer === 'string') {
-    obj.text = obj.answer;
-  }
-
-  if (obj.action === 'terminate' && obj.status === undefined && typeof obj.result === 'string') {
-    obj.status = obj.result;
-  }
-
-  if (obj.action === 'key' && (!Array.isArray(obj.keys) || obj.keys.length === 0)) {
-    if (typeof obj.hotkey === 'string') {
-      obj.keys = obj.hotkey
-        .split(/[+,\s]+/g)
-        .map((s: string) => s.trim())
-        .filter(Boolean);
-    } else if (typeof obj.key === 'string') {
-      obj.keys = [obj.key];
-    } else if (typeof obj.keys === 'string') {
-      obj.keys = obj.keys
-        .split(/[+,\s]+/g)
-        .map((s: string) => s.trim())
-        .filter(Boolean);
-    }
-  }
-
-  if (obj.action === 'scroll' && obj.pixels === undefined) {
-    if (typeof obj.deltaY === 'number') obj.pixels = obj.deltaY;
-    if (typeof obj.delta === 'number') obj.pixels = obj.delta;
-  }
-
-  if (obj.action === 'wait' && obj.time === undefined) {
-    if (typeof obj.seconds === 'number') obj.time = obj.seconds;
-    if (typeof obj.duration === 'number') obj.time = obj.duration;
-  }
-
-  return obj;
+  return { filePath, imageB64, display };
 }
 
-const ComputerUseActionSchema = z.object({
-  action: z.enum([
-    'key',
-    'type',
-    'mouse_move',
-    'left_click',
-    'left_click_drag',
-    'right_click',
-    'middle_click',
-    'double_click',
-    'scroll',
-    'hscroll',
-    'wait',
-    'answer',
-    'terminate',
-  ]),
-  keys: z.array(z.string()).optional(),
-  text: z.string().optional(),
-  coordinate: z.array(z.number()).length(2).optional(),
-  pixels: z.number().optional(),
-  time: z.number().optional(),
-  status: z.enum(['success', 'failure']).optional(),
-  monitorIndex: z.number().int().optional(),
-  useClipboardFallback: z.boolean().optional(),
-});
+/**
+ * Execute a single GPT-5.4 computer_call action using the local agent tools.
+ * Uses specific tools (click_at_coordinates, move_cursor, etc.) to avoid
+ * the 0-1000 normalisation in the generic computer_use handler.
+ */
+async function executeAction(action: any, writer: any, monitorIndex?: number): Promise<any> {
+  const type = action?.type;
+  if (!type) return null;
 
-type ComputerUseAction = z.infer<typeof ComputerUseActionSchema>;
+  switch (type) {
+    case 'click': {
+      const button = action.button || 'left';
+      if (button === 'back' || button === 'forward') {
+        // Browser nav — send Alt+Left / Alt+Right as keyboard shortcut
+        const key = button === 'back' ? 'left' : 'right';
+        return execLocalTool('send_hotkey', { keys: ['alt', key] }, writer);
+      }
+      return execLocalTool(
+        'click_at_coordinates',
+        { x: action.x, y: action.y, button },
+        writer,
+      );
+    }
 
-const DEFAULT_MODEL_ID = 'openrouter/qwen/qwen3-vl-30b-a3b-instruct';
+    case 'double_click':
+      return execLocalTool(
+        'double_click_at_coordinates',
+        { x: action.x, y: action.y, button: 'left' },
+        writer,
+      );
+
+    case 'type':
+      return execLocalTool('type_text', { text: action.text || '' }, writer);
+
+    case 'keypress':
+      return execLocalTool('send_hotkey', { keys: action.keys || [] }, writer);
+
+    case 'scroll':
+      return execLocalTool(
+        'scroll',
+        {
+          deltaY: action.scroll_y || 0,
+          deltaX: action.scroll_x || 0,
+        },
+        writer,
+      );
+
+    case 'drag': {
+      const path: { x: number; y: number }[] = action.path || [];
+      if (path.length < 2) return null;
+      const first = path[0];
+      const last = path[path.length - 1];
+      return execLocalTool(
+        'drag_and_drop',
+        { fromX: first.x, fromY: first.y, toX: last.x, toY: last.y },
+        writer,
+      );
+    }
+
+    case 'move':
+      return execLocalTool('move_cursor', { x: action.x, y: action.y }, writer);
+
+    case 'wait':
+      await sleep(action.ms || 1000);
+      return { ok: true };
+
+    case 'screenshot':
+      // Screenshot is handled by the loop after all actions execute
+      return null;
+
+    default:
+      return null;
+  }
+}
 
 export const computer_use_agent = createTool({
   id: 'computer_use_agent',
   description:
-    'Autonomous computer control loop. Provide a goal and optional context. The tool will repeatedly capture the screen, ask a vision model (e.g., Qwen3-VL via OpenRouter) what action to take next, execute it using computer_use, and stop when it returns answer/terminate.',
+    'Autonomous computer control loop using GPT-5.4 native computer use. Provide a goal and optional context. ' +
+    'Uses the OpenAI Responses API with the built-in computer tool to repeatedly analyse screenshots, ' +
+    'execute batched actions, and loop until the task is complete.',
   inputSchema: z.object({
     goal: z.string().min(1),
     context: z.string().optional(),
@@ -156,184 +135,163 @@ export const computer_use_agent = createTool({
     status: z.enum(['success', 'failure']).optional(),
     answer: z.string().optional(),
     error: z.string().optional(),
-    modelResponsePreview: z.string().optional(),
-    modelAction: z.any().optional(),
-    modelValidationIssues: z.array(z.any()).optional(),
     steps: z.array(z.any()).optional(),
   }),
   execute: async (inputData: any, { writer }: any) => {
     const c = inputData as any;
     const goal = String(c.goal || '').trim();
     const extra = typeof c.context === 'string' ? c.context : '';
-    const modelId = DEFAULT_MODEL_ID;
     const maxSteps = Number.isFinite(c.maxSteps) ? Number(c.maxSteps) : 30;
     const timeoutMs = Number.isFinite(c.timeoutMs) ? Number(c.timeoutMs) : 120000;
     const fixedMonitorIndex = typeof c.monitorIndex === 'number' ? Number(c.monitorIndex) : undefined;
 
-    const model = buildProviderModel(modelId);
-    if (!model) {
-      return { ok: false, error: `model_unavailable: ${modelId}` };
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return { ok: false, error: 'OPENAI_API_KEY not set' };
     }
 
     if (!hasClientBridge()) {
       return { ok: false, error: 'no_client_bridge' };
     }
 
+    const client = new OpenAI({ apiKey });
     const start = Date.now();
     const steps: any[] = [];
-    let lastResult: any = null;
 
-    await safeToolWrite(writer, { type: 'tool_event', tool: 'computer_use_agent', status: 'started', modelId, maxSteps, timeoutMs });
+    await safeToolWrite(writer, {
+      type: 'tool_event',
+      tool: 'computer_use_agent',
+      status: 'started',
+      modelId: MODEL,
+      maxSteps,
+      timeoutMs,
+    });
 
+    // --- Capture initial screenshot ---
+    const initShot = await captureScreenshot(writer, fixedMonitorIndex);
+    if (!initShot) {
+      return { ok: false, error: 'screenshot_failed', steps };
+    }
+
+    const userText = `${goal}${extra ? `\n\nContext: ${extra}` : ''}`;
+
+    // --- Initial request to GPT-5.4 Responses API ---
+    let response: any;
+    try {
+      response = await (client as any).responses.create({
+        model: MODEL,
+        tools: [{ type: 'computer' }],
+        instructions:
+          'You are a computer-using assistant. Analyse the screenshot and perform actions to accomplish the user\'s goal. ' +
+          'Use the computer tool to interact with the desktop. When finished, provide your final answer as a text message.',
+        input: [
+          {
+            role: 'user',
+            content: [
+              { type: 'input_text', text: userText },
+              {
+                type: 'input_image',
+                image_url: `data:image/png;base64,${initShot.imageB64}`,
+                detail: 'original',
+              },
+            ],
+          },
+        ],
+        reasoning: { summary: 'concise' },
+      });
+    } catch (err: any) {
+      return { ok: false, error: `openai_api_error: ${err.message || err}`, steps };
+    }
+
+    // --- Agentic loop ---
     for (let i = 0; i < maxSteps; i++) {
       if (Date.now() - start > timeoutMs) {
         await safeToolWrite(writer, { type: 'tool_event', tool: 'computer_use_agent', status: 'timeout', step: i + 1 });
         return { ok: false, error: 'timeout', steps };
       }
 
-      const shot = await execLocalTool(
-        'computer_use',
-        {
-          action: 'wait',
-          time: 0,
-          includeScreenshot: true,
-          returnDataUrl: false,
-          ...(fixedMonitorIndex !== undefined ? { monitorIndex: fixedMonitorIndex } : {}),
-        },
-        writer as any,
-      );
-      const filePath = typeof shot?.filePath === 'string' ? shot.filePath : '';
-      const display = shot?.display && typeof shot.display === 'object' ? shot.display : undefined;
-      if (!filePath) {
-        await safeToolWrite(writer, { type: 'tool_event', tool: 'computer_use_agent', status: 'error', error: 'screenshot_failed' });
+      const output: any[] = response.output || [];
+
+      // Find computer_call items
+      const computerCalls = output.filter((item: any) => item.type === 'computer_call');
+
+      if (computerCalls.length === 0) {
+        // No more computer calls — extract final text answer
+        let answer = '';
+        for (const item of output) {
+          if (item.type === 'message' && Array.isArray(item.content)) {
+            for (const part of item.content) {
+              if (part.type === 'output_text') answer += part.text || '';
+            }
+          }
+        }
+        await safeToolWrite(writer, { type: 'tool_event', tool: 'computer_use_agent', status: 'completed', result: 'success' });
+        steps.push({ step: i + 1, result: { ok: true, answer: answer.trim() } });
+        return { ok: true, status: 'success' as const, answer: answer.trim(), steps };
+      }
+
+      const computerCall = computerCalls[0];
+      const callId = computerCall.call_id;
+      const actions: any[] = computerCall.actions || [];
+
+      await safeToolWrite(writer, {
+        type: 'tool_event',
+        tool: 'computer_use_agent',
+        status: 'action',
+        step: i + 1,
+        actions,
+      });
+
+      // Execute each action in the batch
+      for (const gptAction of actions) {
+        if (gptAction.type === 'screenshot') continue; // screenshot taken after all actions
+        await executeAction(gptAction, writer, fixedMonitorIndex);
+        await sleep(100); // small delay between batched actions
+      }
+
+      // Capture screenshot after executing all actions
+      await sleep(250);
+      const shot = await captureScreenshot(writer, fixedMonitorIndex);
+      if (!shot) {
         return { ok: false, error: 'screenshot_failed', steps };
       }
 
-      const bin = await execLocalTool('read_file_binary', { path: filePath }, writer as any);
-      const imageB64 = typeof bin?.data === 'string' ? bin.data : '';
-      const mimeType = typeof bin?.mimeType === 'string' ? bin.mimeType : 'image/png';
-      if (!imageB64) {
-        await safeToolWrite(writer, { type: 'tool_event', tool: 'computer_use_agent', status: 'error', error: 'read_screenshot_failed', filePath });
-        return { ok: false, error: 'read_screenshot_failed', steps };
-      }
+      // Handle pending safety checks — auto-acknowledge
+      const safetyChecks: any[] = computerCall.pending_safety_checks || [];
+      const acknowledged = safetyChecks.map((sc: any) => ({
+        id: sc.id,
+        code: sc.code,
+        message: sc.message,
+      }));
 
-      const imageBuf = Buffer.from(imageB64, 'base64');
+      steps.push({ step: i + 1, actions, screenshot: shot.filePath, safetyChecks });
+      await safeToolWrite(writer, { type: 'tool_event', tool: 'computer_use_agent', status: 'step', step: i + 1, filePath: shot.filePath });
 
-      await safeToolWrite(writer, { type: 'tool_event', tool: 'computer_use_agent', status: 'step', step: i + 1, filePath });
-
-      const instruction = [
-        `Goal: ${goal}`,
-        extra ? `Context: ${extra}` : '',
-        display && typeof display.width === 'number' && typeof display.height === 'number'
-          ? `Screen: ${display.width}x${display.height}`
-          : '',
-        `You can control the computer by outputting a single JSON object describing the next action.`,
-        `Actions: key, type, mouse_move, left_click, left_click_drag, right_click, middle_click, double_click, scroll, hscroll, wait, answer, terminate.`,
-        `Coordinates: prefer coordinate=[x,y] in normalized screen space where x and y are 0..1000. (You may also use absolute pixel coordinates.)`,
-        `For scrolling, set pixels (positive=down, negative=up).`,
-        `For wait, set time in seconds.`,
-        `For key, set keys=[...] like ["ctrl","l"].`,
-        `For type, set text="...". If typing emojis/special characters, you may set useClipboardFallback=true.`,
-        `IMPORTANT: If you include Windows paths in JSON strings, you MUST escape backslashes (use double \\). Example: "C:\\Users\\solar\\Desktop\\stuard_demo.txt".`,
-        `To finish: use action="answer" with text="..." OR action="terminate" with status="success" or "failure".`,
-        lastResult ? `Last result: ${JSON.stringify(lastResult).slice(0, 1500)}` : '',
-        `Return ONLY JSON.`,
-      ].filter(Boolean).join('\n');
-
-      const messages: any[] = [
-        {
-          role: 'system',
-          content:
-            'You are a computer-using assistant. Decide the next single action to accomplish the goal based on the screenshot. Output strictly valid JSON with no extra text.',
-        },
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: instruction },
-            { type: 'image', image: imageBuf, mediaType: mimeType },
-          ],
-        },
-      ];
-
-      const res = await generateText({ model: model as any, messages, temperature: 0.2 });
-      const raw = String((res as any)?.text || '').trim();
-      const parsed = extractJson(raw);
-      const responsePreview = raw.slice(0, 2000);
-      const normalized = parsed && typeof parsed === 'object' ? normalizeModelAction(parsed) : null;
-
-      if (!normalized || typeof normalized !== 'object') {
-        await safeToolWrite(writer, {
-          type: 'tool_event',
-          tool: 'computer_use_agent',
-          status: 'error',
-          error: 'invalid_model_action',
-          step: i + 1,
-          responsePreview,
-        });
-        steps.push({ step: i + 1, screenshot: filePath, error: 'invalid_model_action', modelResponsePreview: responsePreview });
-        return { ok: false, error: 'invalid_model_action', modelResponsePreview: responsePreview, steps };
-      }
-
-      const actionParsed = ComputerUseActionSchema.safeParse(normalized);
-
-      if (!actionParsed.success) {
-        await safeToolWrite(writer, {
-          type: 'tool_event',
-          tool: 'computer_use_agent',
-          status: 'error',
-          error: 'invalid_model_action',
-          step: i + 1,
-          responsePreview,
-          validationIssues: actionParsed.error.issues,
-        });
-        steps.push({
-          step: i + 1,
-          screenshot: filePath,
-          error: 'invalid_model_action',
-          modelResponsePreview: responsePreview,
-          modelAction: normalized,
-          modelValidationIssues: actionParsed.error.issues,
-        });
-        return {
-          ok: false,
-          error: 'invalid_model_action',
-          modelResponsePreview: responsePreview,
-          modelAction: normalized,
-          modelValidationIssues: actionParsed.error.issues,
-          steps,
+      // Send computer_call_output back to GPT-5.4
+      try {
+        const callOutput: any = {
+          call_id: callId,
+          type: 'computer_call_output',
+          output: {
+            type: 'computer_screenshot',
+            image_url: `data:image/png;base64,${shot.imageB64}`,
+            detail: 'original',
+          },
         };
+        if (acknowledged.length > 0) {
+          callOutput.acknowledged_safety_checks = acknowledged;
+        }
+
+        response = await (client as any).responses.create({
+          model: MODEL,
+          previous_response_id: response.id,
+          tools: [{ type: 'computer' }],
+          input: [callOutput],
+          reasoning: { summary: 'concise' },
+        });
+      } catch (err: any) {
+        return { ok: false, error: `openai_api_error: ${err.message || err}`, steps };
       }
-
-      const action: ComputerUseAction = actionParsed.data;
-      await safeToolWrite(writer, { type: 'tool_event', tool: 'computer_use_agent', status: 'action', step: i + 1, action });
-
-      if (action.action === 'answer') {
-        const answer = String(action.text || '').trim();
-        await safeToolWrite(writer, { type: 'tool_event', tool: 'computer_use_agent', status: 'completed', result: 'answer' });
-        steps.push({ step: i + 1, screenshot: filePath, action, result: { ok: true, answer } });
-        return { ok: true, status: 'success' as const, answer, steps };
-      }
-
-      if (action.action === 'terminate') {
-        const status = (action.status || 'success') as 'success' | 'failure';
-        await safeToolWrite(writer, { type: 'tool_event', tool: 'computer_use_agent', status: 'completed', result: status });
-        steps.push({ step: i + 1, screenshot: filePath, action, result: { ok: true, status } });
-        return { ok: status === 'success', status, steps };
-      }
-
-      const execArgs: any = {
-        ...action,
-        includeScreenshot: false,
-      };
-      if (fixedMonitorIndex !== undefined && execArgs.monitorIndex === undefined) {
-        execArgs.monitorIndex = fixedMonitorIndex;
-      }
-
-      const execRes = await execLocalTool('computer_use', execArgs, writer as any);
-      lastResult = execRes;
-      steps.push({ step: i + 1, screenshot: filePath, action, result: execRes });
-
-      await sleep(250);
     }
 
     await safeToolWrite(writer, { type: 'tool_event', tool: 'computer_use_agent', status: 'error', error: 'max_steps_reached' });

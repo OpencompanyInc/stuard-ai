@@ -1,11 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { generateText, generateObject, embed, embedMany } from 'ai';
 import { openai } from '@ai-sdk/openai';
-import { google } from '../utils/models';
+import { google, buildProviderEmbeddingModel } from '../utils/models';
 import { z } from 'zod';
 import { verifyToken } from '../supabase';
 import { CORS_ALLOWED_ORIGINS, IS_DEVELOPMENT } from '../utils/config';
-import { buildProviderEmbeddingModel } from '../utils/models';
 
 /**
  * Extracts and validates Supabase auth token from request.
@@ -318,7 +317,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
 
       const body = await readJsonBody(req);
       const texts = Array.isArray(body?.texts) ? body.texts : [];
-      const modelId = String(body?.model || 'text-embedding-3-large').trim() || 'text-embedding-3-large';
+      const modelId = String(body?.model || 'google/gemini-embedding-2-preview').trim() || 'google/gemini-embedding-2-preview';
 
       const values = texts
         .map((t: any) => String(t || '').trim())
@@ -330,8 +329,14 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         return true;
       }
 
+      const embModel = buildProviderEmbeddingModel(modelId);
+      if (!embModel) {
+        writeJson(res, 400, { ok: false, error: `unknown_embedding_model: ${modelId}` }, corsOrigin);
+        return true;
+      }
+
       const out = await embedMany({
-        model: openai.embedding(modelId),
+        model: embModel,
         values,
       });
 
@@ -520,7 +525,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       }
 
       if (mode === 'embedding') {
-        const embeddingModelId = body?.model || 'openai/text-embedding-3-large';
+        const embeddingModelId = body?.model || 'google/gemini-embedding-2-preview';
         const aiEmbeddingModel = buildProviderEmbeddingModel(embeddingModelId);
         
         if (!aiEmbeddingModel) {
@@ -627,14 +632,20 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
 
       const body = await readJsonBody(req);
       const text = String(body?.text || '').trim();
-      const modelId = String(body?.model || 'text-embedding-3-large').trim() || 'text-embedding-3-large';
+      const modelId = String(body?.model || 'google/gemini-embedding-2-preview').trim() || 'google/gemini-embedding-2-preview';
       if (!text) {
         writeJson(res, 400, { ok: false, error: 'missing_text' }, corsOrigin);
         return true;
       }
 
+      const embModel = buildProviderEmbeddingModel(modelId);
+      if (!embModel) {
+        writeJson(res, 400, { ok: false, error: `unknown_embedding_model: ${modelId}` }, corsOrigin);
+        return true;
+      }
+
       const out = await embed({
-        model: openai.embedding(modelId),
+        model: embModel,
         value: text.slice(0, 12000),
       });
 

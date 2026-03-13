@@ -96,9 +96,9 @@ export const file_index_update = makeLocalTool(
     file_id: z.string().describe('ID of the file to update'),
     summary: z.string().describe('AI-generated summary of the file content'),
     keywords: z.string().describe('Comma-separated keywords'),
-    vector: z.array(z.number()).describe('Embedding vector (3072 dimensions for text-embedding-3-large)'),
-    summary_model: z.string().optional().default('gemini-3-flash-preview'),
-    embedding_model: z.string().optional().default('text-embedding-3-large'),
+    vector: z.array(z.number()).describe('Embedding vector (3072 dimensions)'),
+    summary_model: z.string().optional().default('none'),
+    embedding_model: z.string().optional().default('gemini-embedding-2-preview'),
   }),
   z.object({ ok: z.boolean() }),
 );
@@ -222,7 +222,7 @@ export const file_search_similar = makeLocalTool(
 export const process_pending_file_index = createTool({
   id: 'process_pending_file_index',
   description:
-    'Process pending files in the index by generating AI summaries and embeddings. Call this after scanning a folder to complete the indexing. This uses Gemini for summarization and text-embedding-3-large for vectors. For large volumes (>100 files), use process_pending_file_index_batch instead.',
+    'Process pending files in the index by chunking content and generating embeddings using Gemini Embedding 2. Images are embedded directly via multimodal embedding. For large volumes (>100 files), use process_pending_file_index_batch instead.',
   inputSchema: z.object({
     limit: z.number().optional().default(20).describe('Max files to process in this batch'),
   }),
@@ -274,14 +274,16 @@ export const process_pending_file_index = createTool({
 export const process_pending_file_index_batch = createTool({
   id: 'process_pending_file_index_batch',
   description:
-    'Start a Gemini Batch API job to process a large number of pending files asynchronously. This is much cheaper (50% cost) and handles higher limits, but takes longer (up to 24h). Use this for non-urgent large-scale indexing.',
+    'Process a large number of pending files using parallel chunking and Gemini Embedding 2. Handles higher limits than process_pending_file_index. Images are embedded directly via multimodal embedding.',
   inputSchema: z.object({
-    limit: z.number().optional().default(500).describe('Max files to include in the batch job'),
+    limit: z.number().optional().default(500).describe('Max files to process'),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
-    jobId: z.string().optional(),
     count: z.number().optional(),
+    total: z.number().optional(),
+    successful: z.number().optional(),
+    failed: z.number().optional(),
     error: z.string().optional(),
   }),
   execute: async (inputData, { writer }) => {
@@ -292,50 +294,18 @@ export const process_pending_file_index_batch = createTool({
       await (writer as any)?.write?.({
         type: 'tool_event',
         tool: 'process_pending_file_index_batch',
-        status: 'starting_batch',
+        status: 'processing',
         limit: c.limit || 500,
       });
 
-      const result = await fileIndexingService.startBatchIndexing(c.limit || 500);
+      const result = await fileIndexingService.processPendingFiles(c.limit || 500);
 
       return {
         ok: true,
-        jobId: result.jobId,
-        count: result.count,
-      };
-    } catch (error) {
-      return { ok: false, error: String(error) };
-    }
-  },
-});
-
-export const sync_file_index_batch_jobs = createTool({
-  id: 'sync_file_index_batch_jobs',
-  description:
-    'Check the status of ongoing Gemini Batch jobs and apply results to the file index if they are finished.',
-  inputSchema: z.object({}),
-  outputSchema: z.object({
-    ok: z.boolean(),
-    updated: z.number().optional(),
-    active: z.number().optional(),
-    error: z.string().optional(),
-  }),
-  execute: async ({ writer }) => {
-    if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
-
-    try {
-      await (writer as any)?.write?.({
-        type: 'tool_event',
-        tool: 'sync_file_index_batch_jobs',
-        status: 'syncing',
-      });
-
-      const result = await fileIndexingService.syncBatchJobs();
-
-      return {
-        ok: true,
-        updated: result.updated,
-        active: result.active,
+        count: result.successful,
+        total: result.total,
+        successful: result.successful,
+        failed: result.failed,
       };
     } catch (error) {
       return { ok: false, error: String(error) };

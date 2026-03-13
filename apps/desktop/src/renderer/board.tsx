@@ -66,6 +66,19 @@ function BoardApp() {
   }, [data?.title, titleEditing]);
 
   const boardId = String(data?.id || '');
+  const persistDocument = async (overrides?: Record<string, any>) => {
+    if (!boardId) return;
+    try {
+      await window.desktopAPI.canvasSaveDocument?.({
+        id: boardId,
+        title: String(overrides?.title ?? data?.title ?? 'Quick Note'),
+        content: String(overrides?.content ?? content ?? ''),
+        createdAt: overrides?.createdAt ?? data?.createdAt,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch {}
+  };
+
   // Debounced auto-save so readers can fetch up-to-date content without waiting for blur
   useEffect(() => {
     if (!boardId) return;
@@ -74,6 +87,7 @@ function BoardApp() {
       try {
         if (lastSavedRef.current !== content) {
           await window.desktopAPI.canvasUpdate?.({ id: boardId, content });
+          await persistDocument({ content });
           lastSavedRef.current = content;
         }
       } catch {}
@@ -85,11 +99,13 @@ function BoardApp() {
     const next = data?.template === 'notes' ? 'info' : 'notes';
     setData((prev: any) => ({ ...prev, template: next }));
     try { await window.desktopAPI.canvasUpdate?.({ id: boardId, template: next, content }); } catch {}
+    await persistDocument();
   };
   const handleCopy = async () => {
     try { await navigator.clipboard.writeText(String(content || '')); } catch {}
   };
   const handleClose = async () => {
+    await persistDocument({ title: data?.title, content });
     try { if (boardId) await window.desktopAPI.canvasDelete?.(boardId); } catch {}
     try { window.close(); } catch {}
   };
@@ -98,6 +114,8 @@ function BoardApp() {
     const t = String(titleDraft || '').trim();
     if (!boardId) return;
     try { await window.desktopAPI.canvasUpdate?.({ id: boardId, title: t }); } catch {}
+    setData((prev: any) => ({ ...prev, title: t }));
+    await persistDocument({ title: t });
   };
 
   return (
@@ -142,7 +160,7 @@ function BoardApp() {
             <textarea
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              onBlur={async () => { if (boardId) { try { await window.desktopAPI.canvasUpdate?.({ id: boardId, content }); } catch {} } }}
+              onBlur={async () => { if (boardId) { try { await window.desktopAPI.canvasUpdate?.({ id: boardId, content }); } catch {} await persistDocument({ content }); } }}
               className="w-full h-full bg-transparent outline-none text-[12.5px] p-2.5 custom-scrollbar border-t border-white/10 placeholder:text-white/40 resize-none text-white"
               placeholder="Type notes..."
             />

@@ -11,6 +11,7 @@ export function useWorkflows() {
 
   const refresh = async () => {
     setLoading(true);
+    const minDelay = new Promise<void>(r => setTimeout(r, 1600));
     try {
       const res = await (window as any).desktopAPI?.workflowsList?.();
       if (res && res.ok && Array.isArray(res.items)) {
@@ -51,6 +52,7 @@ export function useWorkflows() {
         }
       }
     } finally {
+      await minDelay;
       setLoading(false);
     }
   };

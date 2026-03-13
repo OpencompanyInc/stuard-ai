@@ -7,9 +7,9 @@
 
 import { getSupabaseService } from '../supabase';
 import { embed } from 'ai';
-import { openai } from '@ai-sdk/openai';
+import { google } from '../utils/models';
 
-const EMBEDDING_MODEL = 'text-embedding-3-large';
+const EMBEDDING_MODEL = 'gemini-embedding-2-preview';
 const EMBEDDING_CACHE_TTL_MS = 1000 * 60 * 60; // 1 hour
 
 const LEGACY_BROWSER_EXTENSION_TOOL_NAMES = new Set([
@@ -102,7 +102,7 @@ async function getQueryEmbedding(query: string): Promise<number[]> {
   }
 
   const { embedding } = await embed({
-    model: openai.embedding(EMBEDDING_MODEL),
+    model: google.textEmbeddingModel(EMBEDDING_MODEL),
     value: query,
   });
 

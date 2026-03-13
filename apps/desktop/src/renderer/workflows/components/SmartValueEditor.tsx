@@ -67,10 +67,10 @@ function VariableSuggestions({
 
   return (
     <div
-      className="absolute z-50 bg-white/[0.04] border border-white/[0.04] rounded-xl shadow-xl max-h-48 overflow-y-auto min-w-[200px] animate-in fade-in slide-in-from-top-2 duration-150"
+      className="absolute z-50 wf-bg-elevated border wf-border-subtle rounded-xl shadow-xl max-h-48 overflow-y-auto min-w-[200px] animate-in fade-in slide-in-from-top-2 duration-150"
       style={{ top: position.top, left: position.left }}
     >
-      <div className="px-3 py-2 bg-white/[0.06] border-b border-white/[0.04] text-[10px] font-bold text-white/40 uppercase tracking-wider flex items-center gap-1.5 sticky top-0">
+      <div className="px-3 py-2 wf-bg-overlay border-b wf-border-subtle text-[10px] font-bold wf-fg-faint uppercase tracking-wider flex items-center gap-1.5 sticky top-0">
         <Variable className="w-3 h-3" />
         Insert Variable
       </div>
@@ -81,17 +81,17 @@ function VariableSuggestions({
             onClick={() => onSelect(s.text)}
             className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 transition-all rounded-lg mb-0.5 ${
               i === selectedIndex
-                ? 'bg-indigo-50 text-indigo-700 shadow-sm'
-                : 'text-white/70 hover:bg-white/[0.06]'
+                ? 'bg-indigo-500/10 text-indigo-400 shadow-sm'
+                : 'wf-fg-muted wf-hover-bg'
             }`}
           >
             <code className={`px-1.5 py-0.5 rounded text-xs font-mono border ${
-              i === selectedIndex ? 'bg-white/[0.04] border-indigo-100 text-indigo-600' : 'bg-white/[0.06] border-white/[0.08] text-white/50'
+              i === selectedIndex ? 'wf-bg-overlay border-indigo-500/30 text-indigo-500' : 'wf-bg-overlay wf-border-subtle wf-fg-muted'
             }`}>
               {s.label}
             </code>
             {s.description && (
-              <span className="text-xs opacity-60 truncate ml-auto">{s.description}</span>
+              <span className="text-xs wf-fg-faint truncate ml-auto">{s.description}</span>
             )}
           </button>
         ))}
@@ -263,7 +263,7 @@ function TextInputWithSuggestions({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const baseInputClass = `w-full px-4 py-2.5 text-sm border border-white/[0.08] rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all bg-white/[0.04] shadow-sm placeholder:text-slate-300 ${className}`;
+  const baseInputClass = `w-full px-4 py-2.5 text-sm border wf-border-subtle rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all wf-input wf-fg shadow-sm placeholder:wf-fg-faint ${className}`;
 
   return (
     <div ref={containerRef} className="relative group">
@@ -292,7 +292,7 @@ function TextInputWithSuggestions({
           {availableVariables && availableVariables.length > 0 && (
              <button 
                onClick={triggerSuggestions}
-               className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+               className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg wf-fg-faint hover:text-indigo-500 hover:bg-indigo-500/10 transition-colors"
                title="Insert Variable"
              >
                <Plus className="w-4 h-4" />
@@ -328,7 +328,7 @@ export function SmartValueEditor({ value, onChange, keyName, availableVariables 
         className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-all border ${
           value 
             ? 'bg-emerald-50 border-emerald-200 text-emerald-700 shadow-sm' 
-            : 'bg-white/[0.06] border-white/[0.08] text-white/50 hover:bg-white/[0.1]'
+            : 'wf-bg-overlay wf-border-subtle wf-fg-muted wf-hover-bg'
         }`}
       >
         <div className={`w-10 h-6 rounded-full relative transition-colors ${value ? 'bg-emerald-500' : 'bg-slate-300'}`}>
@@ -355,7 +355,7 @@ export function SmartValueEditor({ value, onChange, keyName, availableVariables 
           const v = e.target.value;
           if (v !== '' && !isNaN(Number(v))) onChange(Number(v));
         }}
-        className="w-full px-4 py-2.5 text-sm border border-white/[0.08] rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all shadow-sm"
+        className="w-full px-4 py-2.5 text-sm border wf-border-subtle rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all wf-input wf-fg shadow-sm"
       />
     );
   }
@@ -381,13 +381,13 @@ export function SmartValueEditor({ value, onChange, keyName, availableVariables 
             />
             <button
               onClick={() => onChange(value.filter((_: any, j: number) => j !== i))}
-              className="p-2.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+              className="p-2.5 wf-fg-faint hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all"
             >✕</button>
           </div>
         ))}
         <button
           onClick={() => onChange([...value, ''])}
-          className="w-full py-2.5 border border-dashed border-white/[0.08] rounded-xl text-xs font-semibold text-white/50 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all flex items-center justify-center gap-2"
+          className="w-full py-2.5 border border-dashed wf-border-subtle rounded-xl text-xs font-semibold wf-fg-muted hover:text-indigo-500 hover:border-indigo-500/40 hover:bg-indigo-500/10 transition-all flex items-center justify-center gap-2"
         >
           <Plus className="w-3.5 h-3.5" />
           Add Item

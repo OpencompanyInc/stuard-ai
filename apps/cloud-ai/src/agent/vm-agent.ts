@@ -720,7 +720,7 @@ async function syncAgentData(args: any): Promise<any> {
 // OAuth Token Storage (synced from cloud-ai)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const OAUTH_TOKENS_PATH = path.join(AGENT_DATA_DIR, 'oauth-tokens.json');
+const OAUTH_TOKENS_PATH = `${AGENT_DATA_DIR}/oauth-tokens.json`;
 
 interface StoredOAuthToken {
   provider: string;

@@ -33,6 +33,7 @@ import { computeBudget, estimateTokens, shouldCompact } from './memory/token-bud
 import { registerWebhookClient, deliverQueuedWebhooks } from './webhooks/dispatch';
 import { getOrCreateQueryEmbedding } from './utils/shared-embedding';
 import { getRankedToolNames } from './utils/tool-ranking';
+import { searchFiles } from './services/file-indexing';
 import { normalizeUsage } from './utils/usage';
 import { hasProactiveModeMarker, mergeForcedToolNames } from './tools/proactive-task-tools';
 
@@ -1519,7 +1520,7 @@ ${skillLines}`;
             try {
               const queryEmbedding = await getOrCreateQueryEmbedding(prompt);
 
-              const [knowledgeCtx, segmentMatches] = await Promise.all([
+              const [knowledgeCtx, segmentMatches, fileMatches] = await Promise.all([
                 buildKnowledgeContext(prompt, {
                   includeIdentity: true,
                   includeDirectives: true,
@@ -1530,6 +1531,8 @@ ${skillLines}`;
                 }).catch(() => null),
                 memoryService.searchSegmentsByEmbedding(queryEmbedding, { limit: 3, threshold: 0.6 })
                   .catch(() => [] as Awaited<ReturnType<typeof memoryService.searchSegmentsByEmbedding>>),
+                searchFiles(prompt, { mode: 'semantic', limit: 5 })
+                  .catch(() => null),
               ]);
 
               // Build ONE merged context block
@@ -1547,6 +1550,18 @@ ${skillLines}`;
                   }
                   if (lines.length > 1) ctxParts.push(lines.join('\n'));
                 }
+              }
+              // Inject relevant file results from semantic search
+              if (fileMatches?.ok && Array.isArray(fileMatches.results) && fileMatches.results.length > 0) {
+                const topFiles = fileMatches.results.slice(0, 5);
+                const lines = ['[RELEVANT FILES]'];
+                for (const f of topFiles) {
+                  const name = f.filename || f.path || '';
+                  const score = typeof f.score === 'number' ? ` (${(f.score * 100).toFixed(0)}%)` : '';
+                  const summary = f.summary ? ` — ${String(f.summary).slice(0, 80)}` : '';
+                  lines.push(`- ${name}${score}${summary}`);
+                }
+                if (lines.length > 1) ctxParts.push(lines.join('\n'));
               }
               if (ctxParts.length > 0) {
                 inputMessages = [{ role: 'system', content: ctxParts.join('\n\n') }, ...inputMessages];
@@ -1877,7 +1892,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
 
             // Local Memory Storage - store conversation locally with encryption
             try {
-              if (conversationSource === 'stuard') {
+              if (conversationSource === 'stuard' || conversationSource === 'proactive') {
                 const localConvId = conversationId || thread;
 
                 // Store the user message locally

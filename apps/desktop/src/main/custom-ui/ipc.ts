@@ -304,6 +304,54 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
       // Emit step running event — animates the wire from the custom_ui to the target node
       emitStepEvent(winFlowId, nodeId, 'running', { wireFromId: callerStepId });
 
+      // ── Special handling: call_function is an engine-internal tool ──
+      // It needs the full workflow spec + engine context to execute the function trigger chain.
+      // execTool doesn't handle it, so we execute inline here.
+      if (toolName === 'call_function') {
+        const triggerId = String(resolvedArgs?.triggerId || '').trim();
+        const inputs = resolvedArgs?.inputs || {};
+
+        if (!triggerId) {
+          emitStepEvent(winFlowId!, nodeId, 'error', { error: 'missing triggerId' });
+          return { ok: false, error: 'missing triggerId for call_function' };
+        }
+
+        // Load full workflow model and convert to engine spec
+        const { readWorkflowModel, designerModelToStuardSpec } = require('../workflows/workflows');
+        const model = readWorkflowModel(winFlowId);
+        if (!model) {
+          emitStepEvent(winFlowId!, nodeId, 'error', { error: 'workflow_not_found' });
+          return { ok: false, error: `workflow_not_found: ${winFlowId}` };
+        }
+        const fullSpec = designerModelToStuardSpec(model);
+
+        // Build engine context — use logFlow so logs appear in the workflow's log panel
+        const stuardsDir = path.join(app.getPath('userData'), 'stuards');
+        const { logFlow } = require('../workflows/workflows');
+        const engineCtx = {
+          stuardsDir,
+          agentWsUrl: ctx.agentWsUrl || '',
+          cloudAiUrl: ctx.cloudAiUrl || '',
+          logFn: (msg: string) => {
+            try { logFlow(winFlowId, msg); } catch { }
+            ctx.logFn(msg);
+          },
+        };
+
+        // Build parent context with $vars (already in interpolationCtx)
+        const parentCtx: any = { ...interpolationCtx };
+
+        const { executeFromTrigger } = require('../engine/function-call');
+        try {
+          const fnResult = await executeFromTrigger(fullSpec, triggerId, inputs, parentCtx, engineCtx);
+          emitStepEvent(winFlowId!, nodeId, fnResult.ok ? 'completed' : 'error', fnResult);
+          return fnResult;
+        } catch (fnErr: any) {
+          emitStepEvent(winFlowId!, nodeId, 'error', { error: fnErr?.message });
+          return { ok: false, error: fnErr?.message || 'call_function failed' };
+        }
+      }
+
       try {
         const result = await execTool(toolName, resolvedArgs, ctx);
         // Emit completion — node turns green briefly

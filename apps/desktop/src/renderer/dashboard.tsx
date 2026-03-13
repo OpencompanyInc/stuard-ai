@@ -40,7 +40,6 @@ import {
 } from "lucide-react";
 import { clsx } from 'clsx';
 import 'katex/dist/katex.min.css';
-import EnvironmentBadge from './components/EnvironmentBadge';
 import { agentFetchJson, resolveAgentEndpoints } from './utils/agentEndpoints';
 
 const AGENT_HTTP = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
@@ -206,21 +205,19 @@ function SidebarItem({ id, label, icon: Icon, current, onClick }: { id: string; 
   return (
     <button
       className={clsx(
-        "w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl text-[13.5px] font-bold transition-all duration-300 group relative overflow-hidden",
-        active
-          ? "bg-primary/10 text-theme-fg shadow-[0_4px_12px_rgba(0,0,0,0.03)] border border-primary/5"
-          : "text-theme-muted hover:text-theme-fg hover:bg-theme-active/40"
+        "dashboard-sidebar-item w-full flex items-center gap-3 px-3.5 py-3 text-[13px] font-semibold transition-all duration-200 group relative",
+        active && "is-active"
       )}
       onClick={() => onClick(id)}
     >
-      <Icon className={clsx("w-[18px] h-[18px] transition-all duration-300",
-        active ? "text-primary scale-110 drop-shadow-[0_0_8px_rgba(0,122,204,0.4)]" : "text-theme-muted group-hover:text-theme-fg group-hover:scale-110")}
+      <Icon className={clsx("w-4 h-4 transition-all duration-200",
+        active ? "text-theme-fg" : "text-theme-muted group-hover:text-theme-fg")}
       />
-      <span className={clsx("transition-all duration-300", active ? "translate-x-0.5" : "group-hover:translate-x-0.5")}>
+      <span className="flex-1 text-left leading-none">
         {label}
       </span>
       {active && (
-        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1.5 h-6 rounded-r-full bg-primary shadow-[0_0_12px_rgba(0,122,204,0.5)]" />
+        <div className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_10px_rgba(0,122,204,0.45)]" />
       )}
     </button>
   );
@@ -248,6 +245,7 @@ function DashboardApp() {
   const [convMessages, setConvMessages] = useState<any[]>([]);
   const [convLoading, setConvLoading] = useState<boolean>(false);
   const [creditsInfo, setCreditsInfo] = useState<null | { ok?: boolean; plan?: string; limit?: number; used?: number; remaining?: number; unlimited?: boolean; creditsPerUsd?: number }>(null);
+  const [appVersion, setAppVersion] = useState<string>('0.1.10');
 
   // Preferences
   const { tone, setTone, customTone, setCustomTone, setOnboardingComplete, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, persona, setPersona, translucentMode, setTranslucentMode, wakewordEnabled, setWakewordEnabled, terminalEnabled, setTerminalEnabled, browserEnabled, setBrowserEnabled, screenCaptureInvisible, setScreenCaptureInvisible, chatMode, setChatMode, chatModels, setChatModels } = usePreferences();
@@ -334,7 +332,7 @@ function DashboardApp() {
   const [stuards, setStuards] = useState<any[]>([]);
   const [stuardsLoading, setStuardsLoading] = useState(false);
   // Calendar (Google-backed, Stuard blocks)
-  const [calendarView, setCalendarView] = useState<'today' | 'month'>('today');
+  const [calendarView, setCalendarView] = useState<'today' | 'month'>('month');
   const [calendarRefDate, setCalendarRefDate] = useState<Date>(new Date());
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [calendarError, setCalendarError] = useState<string | null>(null);
@@ -428,6 +426,22 @@ function DashboardApp() {
     return () => {
       if (unsub) unsub.unsubscribe();
     };
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const info = await (window as any).desktopAPI?.invoke?.('system:getAppInfo');
+        if (info?.ok && info?.version) {
+          setAppVersion(String(info.version));
+          return;
+        }
+      } catch { }
+      try {
+        const info = await (window as any).desktopAPI?.systemGetAppInfo?.();
+        if (info?.ok && info?.version) setAppVersion(String(info.version));
+      } catch { }
+    })();
   }, []);
 
   const signInViaBrowser = async () => {
@@ -1012,6 +1026,63 @@ function DashboardApp() {
 
   const userEmail = session?.user?.email ?? null;
 
+  const sidebarSections = [
+    {
+      key: 'primary',
+      items: [
+        { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+        { id: 'history', label: 'History', icon: Clock },
+        { id: 'planner', label: 'Planner', icon: Calendar },
+        { id: 'tasks', label: 'Tasks', icon: ListTodo },
+      ],
+    },
+    {
+      key: 'intelligence',
+      items: [
+        { id: 'memories', label: 'Memories', icon: Archive },
+        { id: 'proactive', label: 'Proactive', icon: Sparkles },
+        { id: 'automations', label: 'Automation', icon: Zap },
+      ],
+    },
+    {
+      key: 'cloud',
+      items: [
+        { id: 'cloud', label: 'Cloud Engine', icon: Cloud },
+        { id: 'vault', label: 'Vault', icon: Shield },
+        { id: 'storage', label: 'Storage', icon: HardDrive },
+      ],
+    },
+    {
+      key: 'system',
+      items: [
+        { id: 'integrations', label: 'Connected Apps', icon: Link },
+        { id: 'settings', label: 'Settings', icon: Settings },
+      ],
+    },
+  ];
+
+  const tabMeta: Record<string, { title: string; subtitle: string }> = {
+    overview: { title: 'Overview', subtitle: "Here's what's happening with your Stuard today." },
+    history: { title: 'History', subtitle: 'Review recent activity, conversations, and usage.' },
+    planner: { title: 'Planner', subtitle: 'Plan your day with Stuard to unlock maximum productivity.' },
+    tasks: { title: 'Tasks', subtitle: 'Track what matters and keep your day moving.' },
+    proactive: { title: 'Proactive', subtitle: 'Discover suggestions and actions Stuard can take for you.' },
+    memories: { title: 'Memories', subtitle: 'Browse notes, profile details, and remembered context.' },
+    automations: { title: 'Automation', subtitle: 'Build and manage your workflows from one studio.' },
+    integrations: { title: 'Connected Apps', subtitle: 'Manage the tools and services connected to Stuard.' },
+    settings: { title: 'Settings', subtitle: 'Tune themes, behavior, and personalization preferences.' },
+    cloud: { title: 'Cloud Engine', subtitle: 'Monitor remote runtime, deployment, and compute status.' },
+    storage: { title: 'Storage', subtitle: 'Review files, uploads, and your local or cloud storage usage.' },
+    vault: { title: 'Vault', subtitle: 'Keep protected data, secure items, and private resources organized.' },
+  };
+
+  const currentTabMeta = tabMeta[tab as keyof typeof tabMeta] ?? {
+    title: tab.charAt(0).toUpperCase() + tab.slice(1),
+    subtitle: 'Manage your Stuard workspace from a single dashboard.',
+  };
+  const showGlobalHeader = !['automations', 'integrations', 'settings', 'proactive'].includes(tab);
+  const showRefresh = showGlobalHeader && !['planner', 'memories'].includes(tab);
+
 
   // Apply theme to body
   useEffect(() => {
@@ -1038,56 +1109,48 @@ function DashboardApp() {
 
   return (
     <ErrorBoundary>
-      <div className="w-screen h-screen flex overflow-hidden bg-theme-bg text-theme-fg font-sans selection:bg-primary selection:text-white">
+      <div className="dashboard-root w-screen h-screen overflow-hidden text-theme-fg font-sans selection:bg-primary selection:text-white">
+        <div className="drag absolute top-0 left-0 right-0 h-10 z-50" />
+        <div className="flex h-full gap-3 p-3 pt-5">
         {/* Sidebar */}
-        <div className="w-[280px] border-r border-theme-sidebar bg-theme-sidebar/80 backdrop-blur-2xl flex flex-col z-20 transition-all duration-300">
-          <div className="drag h-10 w-full" />
-          <div className="px-8 pb-10 flex items-center gap-4 select-none">
-            <div className="h-10 w-10 rounded-2xl bg-gradient-to-br from-primary to-blue-600 text-primary-fg flex items-center justify-center shadow-lg shadow-primary/20 transition-transform hover:scale-105 active:scale-95">
-              <span className="font-black text-lg tracking-tighter">S</span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-[15px] text-theme-fg tracking-tight leading-none">Stuard</span>
-                <EnvironmentBadge variant="minimal" />
+        <aside className="dashboard-sidebar w-[228px] shrink-0 flex flex-col px-2.5 py-3 relative z-20 transition-all duration-300">
+          <div className="dashboard-sidebar-section dashboard-sidebar-brand px-5 py-4 select-none overflow-hidden mb-4">
+            <div className="min-w-0 relative z-10">
+              <div className="text-[18px] font-semibold text-theme-fg tracking-tight leading-none">Stuard Dashboard</div>
+              <div className="mt-2 text-[11px] text-theme-muted font-medium">
+                Beta V {appVersion}
               </div>
-              <div className="text-[10px] text-theme-muted font-bold uppercase tracking-[0.15em] mt-1 opacity-60">Dashboard</div>
             </div>
           </div>
 
-          <nav className="flex-1 px-4 space-y-1 overflow-y-auto custom-scrollbar" data-onboarding="sidebar-nav">
-            <div className="text-[10px] font-black text-theme-muted uppercase tracking-[0.2em] px-4 mb-2 opacity-40">Main</div>
-            <SidebarItem id="overview" label="Overview" icon={LayoutDashboard} current={tab} onClick={setTab} />
-            <SidebarItem id="history" label="History" icon={Clock} current={tab} onClick={setTab} />
-            <SidebarItem id="planner" label="Planner" icon={Calendar} current={tab} onClick={setTab} />
-            <SidebarItem id="tasks" label="Tasks" icon={ListTodo} current={tab} onClick={setTab} />
-
-            <div className="text-[10px] font-black text-theme-muted uppercase tracking-[0.2em] px-4 mt-6 mb-2 opacity-40">Intelligence</div>
-            <SidebarItem id="proactive" label="Proactive" icon={Sparkles} current={tab} onClick={setTab} />
-            <SidebarItem id="memories" label="Memories" icon={Archive} current={tab} onClick={setTab} />
-            <SidebarItem id="automations" label="Automations" icon={Zap} current={tab} onClick={setTab} />
-
-            <div className="text-[10px] font-black text-theme-muted uppercase tracking-[0.2em] px-4 mt-6 mb-2 opacity-40">Cloud</div>
-            <SidebarItem id="cloud" label="Cloud Engine" icon={Cloud} current={tab} onClick={setTab} />
-            <SidebarItem id="vault" label="Vault" icon={Shield} current={tab} onClick={setTab} />
-            <SidebarItem id="storage" label="Storage" icon={HardDrive} current={tab} onClick={setTab} />
-
-            <div className="text-[10px] font-black text-theme-muted uppercase tracking-[0.2em] px-4 mt-6 mb-2 opacity-40">System</div>
-            <SidebarItem id="integrations" label="Integrations" icon={Link} current={tab} onClick={setTab} />
-            <SidebarItem id="settings" label="Settings" icon={Settings} current={tab} onClick={setTab} />
+          <nav className="flex-1 min-h-0 px-1 pr-2 space-y-3 overflow-y-auto custom-scrollbar" data-onboarding="sidebar-nav">
+            {sidebarSections.map((section) => (
+              <div key={section.key} className="dashboard-sidebar-section p-2">
+                {section.items.map((item) => (
+                  <SidebarItem
+                    key={item.id}
+                    id={item.id}
+                    label={item.label}
+                    icon={item.icon}
+                    current={tab}
+                    onClick={setTab}
+                  />
+                ))}
+              </div>
+            ))}
           </nav>
 
-          <div className="p-4 mt-auto">
+          <div className="p-1 pt-3 mt-auto">
             {userEmail ? (
-              <div className="flex items-center gap-4 p-3 rounded-2xl bg-theme-hover/50 border border-theme/10 hover:bg-theme-hover transition-all duration-200 cursor-default group shadow-sm">
-                <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-black text-primary border border-primary/20 shadow-inner">
+              <div className="dashboard-sidebar-section flex items-center gap-3 p-3 cursor-default group">
+                <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-black text-primary border border-[color:var(--dashboard-panel-border)] shadow-inner">
                   {userEmail[0].toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-[13px] font-bold text-theme-fg truncate">{userEmail.split('@')[0]}</div>
                   <button
                     onClick={signOut}
-                    className="text-[10px] text-theme-muted hover:text-red-500 font-bold uppercase tracking-wider flex items-center gap-1.5 transition-colors mt-0.5"
+                    className="text-[10px] text-theme-muted hover:text-red-500 font-semibold uppercase tracking-wider flex items-center gap-1.5 transition-colors mt-0.5"
                   >
                     <LogOut className="w-3 h-3" />
                     Secure Logout
@@ -1097,16 +1160,17 @@ function DashboardApp() {
             ) : (
               <button
                 onClick={signInViaBrowser}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-primary text-primary-fg text-sm font-bold hover:opacity-90 transition-all shadow-lg shadow-primary/20"
+                className="dashboard-button-primary w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl text-sm font-semibold hover:opacity-95 transition-all"
               >
                 Sign in to Stuard
               </button>
             )}
           </div>
-        </div>
+        </aside>
 
         {/* Main Content */}
-        <div className="flex-1 flex flex-col min-w-0 bg-theme-bg relative transition-colors duration-200">
+        <div className="flex-1 min-w-0 relative">
+          <div className="dashboard-main-surface flex h-full flex-col overflow-hidden relative transition-colors duration-200">
           <div className="drag h-10 w-full shrink-0 absolute top-0 left-0 right-0 z-50 pointer-events-none" />
 
           {/* Content Wrapper */}
@@ -1116,8 +1180,8 @@ function DashboardApp() {
                 <MemoriesView />
               </div>
             ) : (
-              <main className="flex-1 overflow-y-auto custom-scrollbar p-10 pt-16">
-                <div className={clsx("mx-auto h-full", tab === 'proactive' ? "max-w-7xl" : "max-w-6xl")}>
+              <main className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
+                <div className="h-full">
                   {!userEmail && !['planner', 'automations'].includes(tab) ? (
                     <div className="flex flex-col items-center justify-center h-[70vh] text-center space-y-8 animate-in fade-in zoom-in duration-700">
                       <div className="h-32 w-32 rounded-[2.5rem] bg-theme-card/50 flex items-center justify-center mb-4 shadow-2xl border border-theme backdrop-blur-xl relative group">
@@ -1142,26 +1206,29 @@ function DashboardApp() {
                     <ErrorBoundary>
                       <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 h-full">
                         {/* Global Actions Header Area */}
-                        {!['automations', 'integrations', 'settings', 'proactive'].includes(tab) && (
-                          <div className="flex items-center justify-between mb-8">
-                            <div className="space-y-1">
-                              <h1 className="text-3xl font-black text-theme-fg tracking-tight capitalize font-stuard">
-                                {tab}
+                        {showGlobalHeader && (
+                          <div className="flex items-start justify-between gap-4 mb-6 px-1">
+                            <div className="min-w-0">
+                              <h1 className="text-[30px] font-semibold text-theme-fg tracking-tight font-stuard leading-none">
+                                {currentTabMeta.title}
                               </h1>
+                              <p className="mt-2 text-[13px] text-theme-muted font-medium flex items-center gap-2">
+                                <Sparkles className="w-3.5 h-3.5 text-primary/80 shrink-0" />
+                                <span>{currentTabMeta.subtitle}</span>
+                              </p>
                             </div>
 
-                            <div className="flex items-center gap-3">
-                              {!['planner', 'automations', 'memories'].includes(tab) && (
-                                <button
-                                  onClick={handleRefresh}
-                                  disabled={loading}
-                                  className="p-3 rounded-2xl bg-theme-hover/50 hover:bg-theme-hover text-theme-muted hover:text-theme-fg transition-all border border-theme/10 group active:scale-90"
-                                  title="Sync Hub Data"
-                                >
-                                  <RefreshCw className={clsx("w-4 h-4 transition-transform duration-500 group-hover:rotate-180", loading && "animate-spin")} />
-                                </button>
-                              )}
-                            </div>
+                            {showRefresh && (
+                              <button
+                                onClick={handleRefresh}
+                                disabled={loading}
+                                className="dashboard-refresh-button flex items-center gap-2 px-4 py-2.5 text-[13px] font-medium transition-all group active:scale-95"
+                                title="Sync Hub Data"
+                              >
+                                <RefreshCw className={clsx("w-3.5 h-3.5 transition-transform duration-500 group-hover:rotate-180", loading && "animate-spin")} />
+                                <span>Refresh</span>
+                              </button>
+                            )}
                           </div>
                         )}
 
@@ -1357,6 +1424,8 @@ function DashboardApp() {
             )}
           </div>
         </div>
+      </div>
+      </div>
       </div>
     </ErrorBoundary>
   );

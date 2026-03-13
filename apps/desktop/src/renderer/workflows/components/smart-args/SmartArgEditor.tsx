@@ -176,7 +176,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
     if (typeof value === 'boolean') {
       return (
         <div className="space-y-2">
-          <label className="text-sm font-semibold text-white/70">{argKey}</label>
+          <label className="text-sm font-semibold wf-fg">{argKey}</label>
           <BooleanToggle value={value} onChange={onChange} />
         </div>
       );
@@ -185,7 +185,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
     if (Array.isArray(value)) {
       return (
         <div className="space-y-2">
-          <label className="text-sm font-semibold text-white/70">{argKey}</label>
+          <label className="text-sm font-semibold wf-fg">{argKey}</label>
           <ArrayEditor
             value={value}
             onChange={onChange}
@@ -200,7 +200,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
     if (typeof value === 'object' && value !== null) {
       return (
         <div className="space-y-2">
-          <label className="text-sm font-semibold text-white/70">{argKey}</label>
+          <label className="text-sm font-semibold wf-fg">{argKey}</label>
           <JsonEditor
             value={value}
             onChange={onChange}
@@ -214,7 +214,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
     if (typeof value === 'number') {
       return (
         <div className="space-y-2">
-          <label className="text-sm font-semibold text-white/70">{argKey}</label>
+          <label className="text-sm font-semibold wf-fg">{argKey}</label>
           <TextInputWithVariables
             value={String(value)}
             onChange={(v: string) => {
@@ -232,7 +232,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
     // Default: string text input
     return (
       <div className="space-y-2">
-        <label className="text-sm font-semibold text-white/70">{argKey}</label>
+        <label className="text-sm font-semibold wf-fg">{argKey}</label>
         <TextInputWithVariables
           value={String(value ?? '')}
           onChange={onChange}
@@ -293,7 +293,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
             allowFreeform={googleProfileOptions.length === 0}
           />
           {!googleProfilesLoading && googleProfileOptions.length === 0 && (
-            <p className="text-[11px] text-white/40 leading-snug">
+            <p className="text-[11px] wf-fg-faint leading-snug">
               Connect a Google account in Integrations to populate this list.
             </p>
           )}
@@ -408,7 +408,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
                   console.error('Failed to pick path:', e);
                 }
               }}
-              className="px-3 py-2 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] rounded-xl text-white/60 hover:text-white/90 transition-all flex items-center gap-1.5 text-sm font-medium shrink-0"
+              className="px-3 py-2 wf-bg-overlay wf-hover-bg border wf-border-subtle rounded-xl wf-fg-muted wf-hover-fg transition-all flex items-center gap-1.5 text-sm font-medium shrink-0"
               title="Browse..."
             >
               Browse
@@ -486,12 +486,12 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
   return (
     <div className="space-y-2">
       <div className="flex flex-col gap-0.5 mb-1">
-        <label className="text-sm font-semibold text-white/70 flex items-center gap-1.5">
+        <label className="text-sm font-semibold wf-fg flex items-center gap-1.5">
           {label || argKey}
           {required && <span className="text-red-400 text-xs">*</span>}
         </label>
         {description && (
-          <p className="text-[11px] text-white/40 leading-snug">
+          <p className="text-[11px] wf-fg-faint leading-snug">
             {description}
           </p>
         )}
@@ -568,8 +568,8 @@ export function ToolArgsEditor({
     return (
       <div className="space-y-5">
         {/* React Component Editor - Primary mode */}
-        <details className="text-sm border border-white/[0.08] rounded-xl overflow-hidden" open>
-          <summary className="cursor-pointer text-white/60 hover:text-white/90 font-medium p-3 flex items-center gap-2 bg-gradient-to-r from-blue-500/10 to-sky-500/10 hover:from-blue-500/20 hover:to-sky-500/20 transition-colors">
+        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden" open>
+          <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 bg-gradient-to-r from-blue-500/10 to-sky-500/10 hover:from-blue-500/20 hover:to-sky-500/20 transition-colors">
             <Code2 className="w-4 h-4 text-blue-400" />
             <span className="text-blue-400">Component (React)</span>
             {hasComponent && (
@@ -577,8 +577,8 @@ export function ToolArgsEditor({
             )}
           </summary>
           <div className="p-4 space-y-3 bg-black/20">
-            <p className="text-[11px] text-white/40 leading-snug">
-              Define a function App() using JSX. <b className="text-white/55">Hooks:</b> useState, useEffect, useVar(name, default), useStyles(css), useInterval, useTimeout, useLocalStorage. <b className="text-white/55">Animation:</b> motion.div (Framer Motion), AnimatePresence, useAnimation, useMotionValue. <b className="text-white/55">Components:</b> Badge, Progress, Spinner, Skeleton, Tooltip, Switch, Toast, Avatar, Divider, Kbd. <b className="text-white/55">API:</b> stuard.submit(data), stuard.close(), stuard.callTool(name, args). <b className="text-white/55">Fonts:</b> Inter, Outfit, Space Grotesk, JetBrains Mono.
+            <p className="text-[11px] wf-fg-faint leading-snug">
+              Define a function App() using JSX. <b className="wf-fg-muted">Hooks:</b> useState, useEffect, useVar(name, default), useStyles(css), useInterval, useTimeout, useLocalStorage. <b className="wf-fg-muted">Animation:</b> motion.div (Framer Motion), AnimatePresence, useAnimation, useMotionValue. <b className="wf-fg-muted">Components:</b> Badge, Progress, Spinner, Skeleton, Tooltip, Switch, Toast, Avatar, Divider, Kbd. <b className="wf-fg-muted">API:</b> stuard.submit(data), stuard.close(), stuard.callTool(name, args). <b className="wf-fg-muted">Fonts:</b> Inter, Outfit, Space Grotesk, JetBrains Mono.
             </p>
             <button
               onClick={() => setShowUIBuilder(true)}
@@ -622,11 +622,11 @@ export function ToolArgsEditor({
         </div>
 
         {/* Window Configuration - Collapsible */}
-        <details className="text-sm border border-white/[0.08] rounded-xl overflow-hidden">
-          <summary className="cursor-pointer text-white/60 hover:text-white/90 font-medium p-3 flex items-center gap-2 bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
+        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden">
+          <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 wf-bg-overlay hover:wf-bg-overlay transition-colors">
             <Settings className="w-4 h-4" />
             Window Settings
-            <span className="ml-auto text-xs text-white/40">
+            <span className="ml-auto text-xs wf-fg-faint">
               {args.window?.width || args.width || 600}×{args.window?.height || args.height || 450}
             </span>
           </summary>
@@ -643,8 +643,8 @@ export function ToolArgsEditor({
         </details>
 
         {/* Pages System - Collapsible */}
-        <details className="text-sm border border-white/[0.08] rounded-xl overflow-hidden" open={hasPages}>
-          <summary className="cursor-pointer text-white/60 hover:text-white/90 font-medium p-3 flex items-center gap-2 bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
+        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden" open={hasPages}>
+          <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 wf-bg-overlay hover:wf-bg-overlay transition-colors">
             <LayoutGrid className="w-4 h-4" />
             Pages (Multi-page SPA)
             {hasPages && (
@@ -682,7 +682,7 @@ export function ToolArgsEditor({
               value={newArgKey}
               onChange={e => setNewArgKey(e.target.value)}
               placeholder="custom_property_name"
-              className="flex-1 px-3 py-2 text-sm border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/50 font-mono bg-white/[0.04] text-white/80"
+              className="flex-1 px-3 py-2 text-sm border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/50 font-mono wf-bg-overlay wf-fg"
               onKeyDown={e => e.key === 'Enter' && addCustomArg()}
               autoFocus
             />
@@ -694,7 +694,7 @@ export function ToolArgsEditor({
             </button>
             <button
               onClick={() => { setShowAddArg(false); setNewArgKey(''); }}
-              className="p-2 text-white/40 hover:text-white/80 hover:bg-white/[0.04] rounded-lg transition-colors"
+              className="p-2 wf-fg-faint wf-hover-fg hover:wf-bg-overlay rounded-lg transition-colors"
             >
               <X className="w-4 h-4" />
             </button>
@@ -702,9 +702,9 @@ export function ToolArgsEditor({
         ) : (
           <button
             onClick={() => setShowAddArg(true)}
-            className="w-full py-3 border border-dashed border-white/[0.08] rounded-xl text-xs font-semibold text-white/40 hover:text-blue-400 hover:border-blue-500/50 hover:bg-blue-500/10 transition-all flex items-center justify-center gap-2 group"
+            className="w-full py-3 border border-dashed wf-border-subtle rounded-xl text-xs font-semibold wf-fg-faint hover:text-blue-400 hover:border-blue-500/50 hover:bg-blue-500/10 transition-all flex items-center justify-center gap-2 group"
           >
-            <div className="w-6 h-6 rounded-full bg-white/[0.04] group-hover:bg-blue-500/20 flex items-center justify-center transition-colors">
+            <div className="w-6 h-6 rounded-full wf-bg-overlay group-hover:bg-blue-500/20 flex items-center justify-center transition-colors">
               <Plus className="w-3.5 h-3.5" />
             </div>
             Add Custom Property
@@ -807,15 +807,15 @@ export function ToolArgsEditor({
 
         {/* Pages Navigation - if pages exist */}
         {hasPages && (
-          <details className="text-sm border border-white/[0.08] rounded-xl overflow-hidden" open>
-            <summary className="cursor-pointer text-white/60 hover:text-white/90 font-medium p-3 flex items-center gap-2 bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
+          <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden" open>
+            <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 wf-bg-overlay hover:wf-bg-overlay transition-colors">
               <LayoutGrid className="w-4 h-4" />
               Pages
               <span className="ml-auto text-xs bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full">
                 {Object.keys(args.pages).length} page(s)
               </span>
             </summary>
-            <div className="p-4 space-y-4 bg-white/[0.04]">
+            <div className="p-4 space-y-4 wf-bg-overlay">
               <SmartArgEditor
                 toolName={toolName}
                 argKey="pages"
@@ -837,12 +837,12 @@ export function ToolArgsEditor({
         )}
 
         {/* Raw Code Editing */}
-        <details className="text-sm border border-white/[0.08] rounded-xl overflow-hidden">
-          <summary className="cursor-pointer text-white/60 hover:text-white/90 font-medium p-3 flex items-center gap-2 bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
+        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden">
+          <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 wf-bg-overlay hover:wf-bg-overlay transition-colors">
             <Code2 className="w-4 h-4" />
             Edit HTML/CSS/JS
           </summary>
-          <div className="p-4 space-y-4 bg-white/[0.04]">
+          <div className="p-4 space-y-4 wf-bg-overlay">
             <SmartArgEditor
               toolName={toolName}
               argKey="html"
@@ -940,11 +940,11 @@ export function ToolArgsEditor({
 
         {/* Media Sources */}
         <div className="space-y-2">
-          <label className="text-sm font-semibold text-white/70 flex items-center gap-1.5">
+          <label className="text-sm font-semibold wf-fg flex items-center gap-1.5">
             Media Sources
             <span className="text-red-400 text-xs">*</span>
           </label>
-          <p className="text-[11px] text-white/40 leading-snug">
+          <p className="text-[11px] wf-fg-faint leading-snug">
             Add the media files to analyze. Use template variables like {'{{step_N.filePath}}'} to reference outputs from previous steps.
           </p>
 
@@ -953,9 +953,9 @@ export function ToolArgsEditor({
               const sourceType = source.captureScreen ? 'screen' : source.url ? 'url' : source.data ? 'data' : 'file';
 
               return (
-                <div key={idx} className="border border-white/[0.08] rounded-xl overflow-hidden bg-white/[0.02]">
+                <div key={idx} className="border wf-border-subtle rounded-xl overflow-hidden wf-bg-overlay">
                   {/* Source type tabs */}
-                  <div className="flex items-center gap-1 p-1.5 bg-white/[0.02] border-b border-white/[0.06]">
+                  <div className="flex items-center gap-1 p-1.5 wf-bg-overlay border-b wf-border-subtle">
                     <button
                       type="button"
                       onClick={() => {
@@ -965,7 +965,7 @@ export function ToolArgsEditor({
                       }}
                       className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-semibold transition-all ${sourceType === 'file'
                         ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                        : 'text-white/40 hover:text-white/60 hover:bg-white/[0.04]'
+                        : 'wf-fg-faint hover:wf-fg-muted hover:wf-bg-overlay'
                         }`}
                     >
                       📁 File Path
@@ -979,7 +979,7 @@ export function ToolArgsEditor({
                       }}
                       className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-semibold transition-all ${sourceType === 'url'
                         ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                        : 'text-white/40 hover:text-white/60 hover:bg-white/[0.04]'
+                        : 'wf-fg-faint hover:wf-fg-muted hover:wf-bg-overlay'
                         }`}
                     >
                       🔗 URL
@@ -993,7 +993,7 @@ export function ToolArgsEditor({
                       }}
                       className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-semibold transition-all ${sourceType === 'screen'
                         ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                        : 'text-white/40 hover:text-white/60 hover:bg-white/[0.04]'
+                        : 'wf-fg-faint hover:wf-fg-muted hover:wf-bg-overlay'
                         }`}
                     >
                       🖥️ Screen
@@ -1002,7 +1002,7 @@ export function ToolArgsEditor({
                       <button
                         type="button"
                         onClick={() => removeSource(idx)}
-                        className="p-1 text-white/30 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+                        className="p-1 wf-fg-faint hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
                         title="Remove source"
                       >
                         <X className="w-3.5 h-3.5" />
@@ -1013,7 +1013,7 @@ export function ToolArgsEditor({
                   {/* Source value */}
                   <div className="p-3">
                     {sourceType === 'screen' ? (
-                      <p className="text-xs text-white/50 italic">Will capture the current screen when executed.</p>
+                      <p className="text-xs wf-fg-muted italic">Will capture the current screen when executed.</p>
                     ) : sourceType === 'url' ? (
                       <TextInputWithVariables
                         value={source.url || ''}
@@ -1055,7 +1055,7 @@ export function ToolArgsEditor({
                               console.error('Failed to pick file:', e);
                             }
                           }}
-                          className="px-3 py-2 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] rounded-xl text-white/60 hover:text-white/90 transition-all flex items-center gap-1.5 text-sm font-medium shrink-0"
+                          className="px-3 py-2 wf-bg-overlay wf-hover-bg border wf-border-subtle rounded-xl wf-fg-muted wf-hover-fg transition-all flex items-center gap-1.5 text-sm font-medium shrink-0"
                           title="Browse for media file"
                         >
                           Browse
@@ -1072,9 +1072,9 @@ export function ToolArgsEditor({
           <button
             type="button"
             onClick={addSource}
-            className="w-full py-2.5 border border-dashed border-white/[0.08] rounded-xl text-xs font-semibold text-white/40 hover:text-blue-400 hover:border-blue-500/50 hover:bg-blue-500/10 transition-all flex items-center justify-center gap-2 group"
+            className="w-full py-2.5 border border-dashed wf-border-subtle rounded-xl text-xs font-semibold wf-fg-faint hover:text-blue-400 hover:border-blue-500/50 hover:bg-blue-500/10 transition-all flex items-center justify-center gap-2 group"
           >
-            <div className="w-5 h-5 rounded-full bg-white/[0.04] group-hover:bg-blue-500/20 flex items-center justify-center transition-colors">
+            <div className="w-5 h-5 rounded-full wf-bg-overlay group-hover:bg-blue-500/20 flex items-center justify-center transition-colors">
               <Plus className="w-3 h-3" />
             </div>
             Add Another Source
@@ -1132,14 +1132,14 @@ export function ToolArgsEditor({
     return (
       <div className="space-y-5">
         {/* Input Source */}
-        <div className="border border-white/[0.08] rounded-xl overflow-hidden">
-          <div className="flex items-center gap-1 p-1.5 bg-white/[0.02]">
+        <div className="border wf-border-subtle rounded-xl overflow-hidden">
+          <div className="flex items-center gap-1 p-1.5 wf-bg-overlay">
             <button
               type="button"
               onClick={() => setInputMode('file')}
               className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${inputMode === 'file'
                 ? 'bg-white/[0.08] text-lime-400 shadow-sm border border-lime-500/30'
-                : 'text-white/50 hover:text-white/70 hover:bg-white/[0.04]'
+                : 'wf-fg-muted hover:wf-fg hover:wf-bg-overlay'
                 }`}
             >
               📁 Image File
@@ -1149,13 +1149,13 @@ export function ToolArgsEditor({
               onClick={() => setInputMode('base64')}
               className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${inputMode === 'base64'
                 ? 'bg-white/[0.08] text-lime-400 shadow-sm border border-lime-500/30'
-                : 'text-white/50 hover:text-white/70 hover:bg-white/[0.04]'
+                : 'wf-fg-muted hover:wf-fg hover:wf-bg-overlay'
                 }`}
             >
               🔗 Base64 / Data URL
             </button>
           </div>
-          <div className="p-3 bg-white/[0.04]">
+          <div className="p-3 wf-bg-overlay">
             {inputMode === 'file' ? (
               <SmartArgEditor
                 toolName={toolName}
@@ -1222,17 +1222,17 @@ export function ToolArgsEditor({
           const advKeys = Object.keys(schema.args).filter(k => schema.args[k]?.advanced && !['outputPath'].includes(k));
           if (advKeys.length === 0) return null;
           return (
-            <div className="border border-white/[0.08] rounded-xl overflow-hidden">
+            <div className="border wf-border-subtle rounded-xl overflow-hidden">
               <button
                 type="button"
                 onClick={() => setShowAdvancedArgs(v => !v)}
-                className="w-full flex items-center justify-between px-3 py-2 bg-white/[0.02] hover:bg-white/[0.04] transition-colors text-xs font-semibold text-white/60"
+                className="w-full flex items-center justify-between px-3 py-2 wf-bg-overlay hover:wf-bg-overlay transition-colors text-xs font-semibold wf-fg-muted"
               >
                 <span>Advanced Settings</span>
-                <span className="text-[10px] text-white/40">{advKeys.length} option(s)</span>
+                <span className="text-[10px] wf-fg-faint">{advKeys.length} option(s)</span>
               </button>
               {showAdvancedArgs && (
-                <div className="p-4 space-y-4 bg-white/[0.04] border-t border-white/[0.08]">
+                <div className="p-4 space-y-4 wf-bg-overlay border-t wf-border-subtle">
                   {advKeys.map(key => (
                     <SmartArgEditor
                       key={key}
@@ -1293,9 +1293,9 @@ export function ToolArgsEditor({
   return (
     <div className="space-y-6">
       {allBaseKeys.length === 0 && !showAddArg && advancedSchemaKeys.length === 0 ? (
-        <div className="py-8 px-4 text-center rounded-xl bg-white/[0.02] border border-dashed border-white/[0.08]">
-          <p className="text-sm text-white/50 font-medium">No configuration needed</p>
-          <p className="text-xs text-white/40 mt-1">This step doesn't require any settings.</p>
+        <div className="py-8 px-4 text-center rounded-xl wf-bg-overlay border border-dashed wf-border-subtle">
+          <p className="text-sm wf-fg-muted font-medium">No configuration needed</p>
+          <p className="text-xs wf-fg-faint mt-1">This step doesn't require any settings.</p>
         </div>
       ) : (
         allBaseKeys.map(key => {
@@ -1315,7 +1315,7 @@ export function ToolArgsEditor({
               {(isExtra || !argSchema?.required) && (
                 <button
                   onClick={() => deleteArg(key)}
-                  className="absolute right-0 top-0 p-1.5 text-white/30 hover:text-red-400 hover:bg-red-500/10 rounded-lg opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0"
+                  className="absolute right-0 top-0 p-1.5 wf-fg-faint hover:text-red-400 hover:bg-red-500/10 rounded-lg opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0"
                   title="Remove argument"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -1327,17 +1327,17 @@ export function ToolArgsEditor({
       )}
 
       {advancedSchemaKeys.length > 0 && (
-        <div className="border border-white/[0.08] rounded-xl overflow-hidden">
+        <div className="border wf-border-subtle rounded-xl overflow-hidden">
           <button
             type="button"
             onClick={() => setShowAdvancedArgs((v) => !v)}
-            className="w-full flex items-center justify-between px-3 py-2 bg-white/[0.02] hover:bg-white/[0.04] transition-colors text-xs font-semibold text-white/60"
+            className="w-full flex items-center justify-between px-3 py-2 wf-bg-overlay hover:wf-bg-overlay transition-colors text-xs font-semibold wf-fg-muted"
           >
             <span>Advanced Settings</span>
-            <span className="text-[10px] text-white/40">{advancedSchemaKeys.length} option(s)</span>
+            <span className="text-[10px] wf-fg-faint">{advancedSchemaKeys.length} option(s)</span>
           </button>
           {showAdvancedArgs && (
-            <div className="p-4 space-y-4 bg-white/[0.04] border-t border-white/[0.08]">
+            <div className="p-4 space-y-4 wf-bg-overlay border-t wf-border-subtle">
               {advancedSchemaKeys.map((key) => (
                 <SmartArgEditor
                   key={key}
@@ -1355,12 +1355,12 @@ export function ToolArgsEditor({
       )}
 
       {showAddArg ? (
-        <div className="flex gap-2 items-center p-3 bg-white/[0.04] rounded-xl border border-indigo-500/30 shadow-sm animate-in fade-in slide-in-from-bottom-2">
+        <div className="flex gap-2 items-center p-3 wf-bg-overlay rounded-xl border border-indigo-500/30 shadow-sm animate-in fade-in slide-in-from-bottom-2">
           <input
             value={newArgKey}
             onChange={e => setNewArgKey(e.target.value)}
             placeholder="custom_property_name"
-            className="flex-1 px-3 py-2 text-sm border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 font-mono bg-white/[0.04] text-white/80"
+            className="flex-1 px-3 py-2 text-sm border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 font-mono wf-bg-overlay wf-fg"
             onKeyDown={e => e.key === 'Enter' && addArg()}
             autoFocus
           />
@@ -1372,7 +1372,7 @@ export function ToolArgsEditor({
           </button>
           <button
             onClick={() => { setShowAddArg(false); setNewArgKey(''); }}
-            className="p-2 text-white/40 hover:text-white/60 hover:bg-white/[0.04] rounded-lg transition-colors"
+            className="p-2 wf-fg-faint hover:wf-fg-muted hover:wf-bg-overlay rounded-lg transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
@@ -1380,9 +1380,9 @@ export function ToolArgsEditor({
       ) : (
         <button
           onClick={() => setShowAddArg(true)}
-          className="w-full py-3 border border-dashed border-white/[0.08] rounded-xl text-xs font-semibold text-white/40 hover:text-blue-400 hover:border-blue-500/50 hover:bg-blue-500/10 transition-all flex items-center justify-center gap-2 group"
+          className="w-full py-3 border border-dashed wf-border-subtle rounded-xl text-xs font-semibold wf-fg-faint hover:text-blue-400 hover:border-blue-500/50 hover:bg-blue-500/10 transition-all flex items-center justify-center gap-2 group"
         >
-          <div className="w-6 h-6 rounded-full bg-white/[0.04] group-hover:bg-blue-500/20 flex items-center justify-center transition-colors">
+          <div className="w-6 h-6 rounded-full wf-bg-overlay group-hover:bg-blue-500/20 flex items-center justify-center transition-colors">
             <Plus className="w-3.5 h-3.5" />
           </div>
           Add Custom Property

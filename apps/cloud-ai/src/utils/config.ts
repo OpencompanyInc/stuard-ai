@@ -35,7 +35,7 @@ export const IS_DEVELOPMENT = ENVIRONMENT === 'development';
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const ENABLE_LOCAL_MEMORY = process.env.ENABLE_LOCAL_MEMORY !== '0'; // Enabled by default
-export const DEFAULT_EMBEDDER = process.env.MEMORY_EMBEDDER_MODEL || process.env.EMBEDDER_MODEL_ID || 'openai/text-embedding-3-large';
+export const DEFAULT_EMBEDDER = process.env.MEMORY_EMBEDDER_MODEL || process.env.EMBEDDER_MODEL_ID || 'google/gemini-embedding-2-preview';
 
 export const PORT = Number(process.env.PORT || process.env.CLOUD_AI_PORT || 8082);
 export const ENABLE_ROUTING = process.env.ENABLE_ROUTING !== '0';

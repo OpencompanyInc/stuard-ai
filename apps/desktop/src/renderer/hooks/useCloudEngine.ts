@@ -166,6 +166,20 @@ export function useCloudEngine() {
     setLoading(true);
     setError(null);
     try {
+      // Upload agent databases (knowledge.db, memory.db) to GCS before provisioning
+      // so the VM starts with the user's full memory and knowledge graph
+      try {
+        const token = await getAuthToken();
+        if (token && (window as any).desktopAPI?.uploadAgentData) {
+          const uploadResult = await (window as any).desktopAPI.uploadAgentData(CLOUD_AI_HTTP, token);
+          if (uploadResult?.ok) {
+            console.log('[cloud-engine] Agent data uploaded for VM sync', uploadResult);
+          }
+        }
+      } catch (e) {
+        console.warn('[cloud-engine] Agent data upload failed (non-fatal):', e);
+      }
+
       const body: any = { tier, diskSizeGb };
       if (vcpus) body.vcpus = vcpus;
       if (ramGb) body.ramGb = ramGb;
@@ -175,6 +189,8 @@ export function useCloudEngine() {
       });
       if (data.ok) {
         await fetchEngine();
+        // Sync OAuth tokens to VM after provisioning (fire-and-forget)
+        cloudFetch('/v1/cloud-engine/sync-oauth-to-vm', { method: 'POST' }).catch(() => {});
       } else {
         setError(data.message || data.error || 'Could not create your cloud engine. Please try again.');
       }
@@ -187,8 +203,20 @@ export function useCloudEngine() {
 
   const start = useCallback(async () => {
     try {
+      // Upload latest agent data before starting
+      try {
+        const token = await getAuthToken();
+        if (token && (window as any).desktopAPI?.uploadAgentData) {
+          await (window as any).desktopAPI.uploadAgentData(CLOUD_AI_HTTP, token);
+        }
+      } catch {}
+
       const data = await cloudFetch('/v1/cloud-engine/start', { method: 'POST' });
-      if (data.ok) await fetchEngine();
+      if (data.ok) {
+        await fetchEngine();
+        // Sync OAuth tokens after start (fire-and-forget)
+        cloudFetch('/v1/cloud-engine/sync-oauth-to-vm', { method: 'POST' }).catch(() => {});
+      }
       else setError(data.error || 'Failed to start engine');
     } catch {
       setError('Connection failed');

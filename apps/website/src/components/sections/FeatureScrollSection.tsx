@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useState } from 'react';
+import Link from 'next/link';
 
 import WorkflowBuilderDemo from './WorkflowBuilderDemo';
 import AutomationDemo from './AutomationDemo';
@@ -29,10 +30,10 @@ const features = [
     video: "/videos/memory-demo.mp4"
   },
   {
-    id: "join-waitlist",
+    id: "get-started",
     title: "Ready to automate?",
-    description: "Join the waitlist to get early access to the desktop assistant that actually does the work.",
-    video: null, // No video, special render
+    description: "Start building automations that actually work. Free plan included — no credit card required.",
+    video: null,
     isCta: true
   }
 ];

@@ -14,6 +14,7 @@ interface DiscoverTipsProps {
   intervalMs?: number;
   className?: string;
   compact?: boolean;
+  light?: boolean;
 }
 
 const DEFAULT_TIPS: DiscoverTipItem[] = [
@@ -45,6 +46,7 @@ export function DiscoverTips({
   intervalMs = 4200,
   className,
   compact = false,
+  light = false,
 }: DiscoverTipsProps) {
   const safeTips = useMemo(() => (tips.length > 0 ? tips : DEFAULT_TIPS), [tips]);
   const [index, setIndex] = useState(0);
@@ -62,31 +64,39 @@ export function DiscoverTips({
   return (
     <div
       className={clsx(
-        "rounded-2xl border backdrop-blur-xl",
-        compact
-          ? "border-white/10 bg-white/[0.04] px-4 py-3"
-          : "border-white/10 bg-white/[0.05] px-5 py-4",
+        "rounded-2xl border",
+        light
+          ? compact
+            ? "border-slate-200 bg-white shadow-sm px-4 py-3"
+            : "border-slate-200 bg-white shadow-sm px-5 py-4"
+          : compact
+            ? "border-white/10 bg-white/[0.04] backdrop-blur-xl px-4 py-3"
+            : "border-white/10 bg-white/[0.05] backdrop-blur-xl px-5 py-4",
         className,
       )}
     >
       <div className="flex items-start gap-3">
         <div className={clsx(
           "shrink-0 rounded-xl flex items-center justify-center",
-          compact ? "w-9 h-9 bg-blue-500/10 text-blue-300" : "w-10 h-10 bg-blue-500/10 text-blue-300"
+          compact ? "w-9 h-9" : "w-10 h-10",
+          light ? "bg-blue-50 text-blue-500" : "bg-blue-500/10 text-blue-300",
         )}>
           <Lightbulb className={compact ? "w-4 h-4" : "w-5 h-5"} />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-1.5">
-            <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.18em] text-white/35">
+            <div className={clsx(
+              "flex items-center gap-1.5 text-[11px] uppercase tracking-[0.18em]",
+              light ? "text-slate-400" : "text-white/35",
+            )}>
               <Compass className="w-3 h-3" />
               <span>{title}</span>
             </div>
-            <Sparkles className="w-3 h-3 text-blue-300/80" />
+            <Sparkles className={clsx("w-3 h-3", light ? "text-blue-400" : "text-blue-300/80")} />
           </div>
           <div key={activeTip.id} className="transition-all duration-300 ease-out">
-            <p className={clsx("font-medium text-white", compact ? "text-sm" : "text-[15px]")}>{activeTip.title}</p>
-            <p className={clsx("text-white/50 leading-relaxed mt-1", compact ? "text-xs" : "text-[13px]")}>{activeTip.description}</p>
+            <p className={clsx("font-medium", compact ? "text-sm" : "text-[15px]", light ? "text-slate-900" : "text-white")}>{activeTip.title}</p>
+            <p className={clsx("leading-relaxed mt-1", compact ? "text-xs" : "text-[13px]", light ? "text-slate-500" : "text-white/50")}>{activeTip.description}</p>
           </div>
           {safeTips.length > 1 && (
             <div className="flex items-center gap-1.5 mt-3">
@@ -95,7 +105,9 @@ export function DiscoverTips({
                   key={tip.id}
                   className={clsx(
                     "h-1.5 rounded-full transition-all duration-300",
-                    tipIndex === index ? "w-5 bg-blue-400/90" : "w-1.5 bg-white/15"
+                    tipIndex === index
+                      ? clsx("w-5", light ? "bg-blue-500" : "bg-blue-400/90")
+                      : clsx("w-1.5", light ? "bg-slate-300" : "bg-white/15"),
                   )}
                 />
               ))}

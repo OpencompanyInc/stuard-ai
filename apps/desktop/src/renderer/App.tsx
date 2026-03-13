@@ -50,6 +50,9 @@ import {
   Zap,
   CloudDownload,
   ExternalLink,
+  NotebookPen,
+  Terminal,
+  AppWindow,
 } from "lucide-react";
 
 import { useWorkflows } from "./workflows/hooks/useWorkflows";
@@ -118,8 +121,11 @@ export default function App() {
   const [marketplaceResults, setMarketplaceResults] = useState<CommandItem[]>(
     [],
   );
+  const [paletteAppResults, setPaletteAppResults] = useState<CommandItem[]>([]);
   const [isMarketplaceSearching, setMarketplaceSearching] = useState(false);
+  const [isPaletteAppSearching, setPaletteAppSearching] = useState(false);
   const marketplaceDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const paletteAppDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   // Marketplace Search Effect
   useEffect(() => {
@@ -172,6 +178,66 @@ export default function App() {
         clearTimeout(marketplaceDebounceRef.current);
     };
   }, [paletteQuery, showPalette, accessToken]);
+
+  useEffect(() => {
+    if (!showPalette) {
+      setPaletteAppResults([]);
+      setPaletteAppSearching(false);
+      return;
+    }
+
+    const q = paletteQuery.trim();
+    if (!q || q.length < 2) {
+      setPaletteAppResults([]);
+      setPaletteAppSearching(false);
+      return;
+    }
+
+    if (paletteAppDebounceRef.current)
+      clearTimeout(paletteAppDebounceRef.current);
+
+    setPaletteAppSearching(true);
+    paletteAppDebounceRef.current = setTimeout(async () => {
+      try {
+        const desktopApi = (window as any).desktopAPI;
+        const res = await desktopApi?.unifiedSearch?.(q, {
+          limit: 6,
+          includeApps: true,
+          includeFiles: false,
+        });
+
+        if (res?.ok && Array.isArray(res.results)) {
+          const items: CommandItem[] = res.results
+            .filter((item: any) => item?.source === "app-discovery")
+            .slice(0, 6)
+            .map((item: any) => ({
+              id: `app-${String(item.launchTarget || item.path || item.name || Math.random())}`,
+              title: String(item.name || item.display_name || "Application"),
+              description: String(item.path || item.launchTarget || "Launch application"),
+              group: "Applications",
+              icon: <AppWindow className="w-5 h-5" />,
+              run: async () => {
+                try {
+                  await desktopApi?.launchApp?.(item.launchTarget || item.path);
+                } catch {}
+              },
+            }));
+          setPaletteAppResults(items);
+        } else {
+          setPaletteAppResults([]);
+        }
+      } catch {
+        setPaletteAppResults([]);
+      } finally {
+        setPaletteAppSearching(false);
+      }
+    }, 150);
+
+    return () => {
+      if (paletteAppDebounceRef.current)
+        clearTimeout(paletteAppDebounceRef.current);
+    };
+  }, [paletteQuery, showPalette]);
 
   // UI State
   const [overlayMode, setOverlayMode] = useState<
@@ -1626,6 +1692,85 @@ export default function App() {
     window.desktopAPI.setMode("window");
   }, []);
 
+  const handleCreateQuickNote = useCallback(async () => {
+    const now = new Date().toISOString();
+    const note = {
+      id: `canvas_${Date.now()}`,
+      title: "Quick Note",
+      content: "",
+      createdAt: now,
+      updatedAt: now,
+    };
+    await window.desktopAPI?.canvasCreateDocument?.(note);
+    await window.desktopAPI?.canvasCreate?.({
+      id: note.id,
+      title: note.title,
+      content: note.content,
+      template: "notes",
+      createdAt: note.createdAt,
+      updatedAt: note.updatedAt,
+      size: { width: 320, height: 220 },
+    });
+  }, []);
+
+  const handleOpenQuickNotes = useCallback(async () => {
+    const listResult = await window.desktopAPI?.canvasListDocuments?.();
+    const documents = Array.isArray(listResult?.documents)
+      ? listResult.documents
+      : [];
+    const latest = documents
+      .slice()
+      .sort((a: any, b: any) => {
+        const aTime = new Date(a?.updatedAt || a?.createdAt || 0).getTime();
+        const bTime = new Date(b?.updatedAt || b?.createdAt || 0).getTime();
+        return bTime - aTime;
+      })[0];
+
+    if (latest?.id) {
+      await window.desktopAPI?.canvasCreate?.({
+        id: latest.id,
+        title: latest.title || "Quick Note",
+        content: latest.content || "",
+        template: "notes",
+        createdAt: latest.createdAt,
+        updatedAt: latest.updatedAt,
+        size: { width: 320, height: 220 },
+      });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const note = {
+      id: `canvas_${Date.now()}`,
+      title: "Quick Note",
+      content: "",
+      createdAt: now,
+      updatedAt: now,
+    };
+    await window.desktopAPI?.canvasCreateDocument?.(note);
+    await window.desktopAPI?.canvasCreate?.({
+      id: note.id,
+      title: note.title,
+      content: note.content,
+      template: "notes",
+      createdAt: note.createdAt,
+      updatedAt: note.updatedAt,
+      size: { width: 320, height: 220 },
+    });
+  }, []);
+
+  const handleOpenTerminal = useCallback(async () => {
+    await window.desktopAPI?.openSidebar?.({ tab: "terminal", expanded: true });
+  }, []);
+
+  const handleOpenSpacesPanel = useCallback(async () => {
+    await window.desktopAPI?.openSidebar?.({ tab: "spaces", expanded: true });
+  }, []);
+
+  const handleOpenWorkflowsPanel = useCallback(async () => {
+    await window.desktopAPI?.openWorkflows?.();
+  }, []);
+
   const commands = useMemo<CommandItem[]>(() => {
     const q = (paletteQuery || "").toLowerCase().trim();
     const staticItems: CommandItem[] = [
@@ -1667,11 +1812,44 @@ export default function App() {
       },
 
       {
-        id: "toggle-spaces",
-        title: "Spaces",
-        description: "Toggle spaces sidebar",
+        id: "new-quick-note",
+        title: "New Quick Note",
+        description: "Create and open a new quick note",
+        icon: <NotebookPen className="w-5 h-5" />,
+        group: "Launch",
+        run: handleCreateQuickNote,
+      },
+      {
+        id: "open-quick-notes",
+        title: "Open Quick Notes",
+        description: "Open your notes sidebar",
+        icon: <NotebookPen className="w-5 h-5" />,
+        group: "Launch",
+        run: handleOpenQuickNotes,
+      },
+      {
+        id: "open-terminal",
+        title: "Open Terminal",
+        description: "Launch the built-in terminal",
+        icon: <Terminal className="w-5 h-5" />,
+        group: "Launch",
+        run: handleOpenTerminal,
+      },
+      {
+        id: "open-spaces",
+        title: "Open Spaces",
+        description: "Open spaces and create a new space",
         icon: <LayoutGrid className="w-5 h-5" />,
-        run: () => window.desktopAPI.toggleSpaces(),
+        group: "Launch",
+        run: handleOpenSpacesPanel,
+      },
+      {
+        id: "open-workflows",
+        title: "Open Workflows",
+        description: "Open the workflows builder",
+        icon: <Zap className="w-5 h-5" />,
+        group: "Launch",
+        run: handleOpenWorkflowsPanel,
       },
       {
         id: "attach-files",
@@ -1814,6 +1992,10 @@ export default function App() {
       items.push(...marketplaceResults);
     }
 
+    if (paletteAppResults.length > 0) {
+      items.push(...paletteAppResults);
+    }
+
     return items;
   }, [
     signedIn,
@@ -1822,11 +2004,17 @@ export default function App() {
     setTone,
     localWorkflows,
     marketplaceResults,
+    paletteAppResults,
     query,
     handleShowCompact,
     handleShowSidebar,
     handleShowWindow,
     handleNewChat,
+    handleCreateQuickNote,
+    handleOpenQuickNotes,
+    handleOpenTerminal,
+    handleOpenSpacesPanel,
+    handleOpenWorkflowsPanel,
     handleAttachFiles,
     handleAttachImages,
   ]);
@@ -2230,7 +2418,7 @@ export default function App() {
             onClose={handleClosePalette}
             commands={commands}
             onQueryChange={setPaletteQuery}
-            loading={isMarketplaceSearching}
+            loading={isMarketplaceSearching || isPaletteAppSearching}
           />
           <HotkeysHelp open={showHotkeys} onClose={handleCloseHotkeys} />
 

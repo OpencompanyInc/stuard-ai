@@ -1,22 +1,18 @@
 /**
  * File Indexing Service
- * 
+ *
  * Processes pending files from the local agent:
  * 1. Reads file content via agent bridge
- * 2. Generates summaries using Gemini
- * 3. Creates embeddings using text-embedding-3-large
- * 4. Updates the local file index via agent
- * 
- * Uses batch processing for efficiency and cost savings.
+ * 2. Chunks text content for large files (token-aware splitting)
+ * 3. Embeds chunks in parallel using Gemini Embedding 2 (multimodal)
+ * 4. Averages chunk embeddings into a single file vector
+ * 5. For images: embeds directly via multimodal embedding (no LLM summary needed)
+ * 6. Updates the local file index via agent
  */
 
-import { embed, embedMany, generateText } from 'ai';
+import { embed, embedMany } from 'ai';
 import { google } from '../utils/models';
-import { openai } from '@ai-sdk/openai';
-import { buildProviderModel } from '../utils/models';
-import { getDefaultModelForCategory } from '../pricing';
 import { execLocalTool, hasClientBridge, getBridgeSecrets } from '../tools/bridge';
-import * as geminiBatch from './gemini-batch';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseService } from '../supabase';
 
@@ -32,22 +28,23 @@ function getSupabase(): SupabaseClient {
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const EMBEDDING_MODEL = 'text-embedding-3-large';
+const EMBEDDING_MODEL = 'gemini-embedding-2-preview';
 const EMBEDDING_DIMENSIONS = 3072;
-const SUMMARY_MODEL_ID = getDefaultModelForCategory('fast');
 
-const MAX_CONTENT_CHARS = 15000; // Max chars to send for summarization
-const BATCH_SIZE = 10; // Files per batch
-const MAX_RETRIES = 2;
+const MAX_CONTENT_CHARS = 100_000;   // Read up to 100k chars (chunking handles the rest)
+const CHUNK_SIZE_CHARS = 6000;       // ~2048 tokens — stays within gemini-embedding-2 input limit
+const CHUNK_OVERLAP_CHARS = 400;     // Overlap between chunks for context continuity
+const BATCH_SIZE = 10;               // Files per processing batch
+const EMBED_PARALLEL_LIMIT = 20;     // Max concurrent embedding calls
 
-// File types that should be summarized vs metadata-only
-const SUMMARIZABLE_KINDS = new Set(['document', 'code']);
-const VISION_KINDS = new Set(['image', 'video']);
-const METADATA_ONLY_KINDS = new Set(['binary', 'archive']);
+// File types
+const EMBEDDABLE_TEXT_KINDS = new Set(['document', 'code']);
+const IMAGE_KINDS = new Set(['image']);
+const METADATA_ONLY_KINDS = new Set(['binary', 'archive', 'video']);
 
-// Image extensions supported by Gemini vision
-const VISION_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
-const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20MB max for vision API
+// Image extensions supported by Gemini multimodal embedding
+const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
+const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20MB
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -77,13 +74,13 @@ interface IndexedResult {
 
 async function readFileContent(path: string, maxChars: number = MAX_CONTENT_CHARS): Promise<string | null> {
   try {
-    const result = await execLocalTool('read_file', { path, line_start: 1, line_end: 500 });
+    const result = await execLocalTool('read_file', { path, line_start: 1, line_end: 3000 });
     if (!result?.ok || !result?.content) {
       return null;
     }
     let content = String(result.content);
     if (content.length > maxChars) {
-      content = content.slice(0, maxChars) + '\n...[truncated]';
+      content = content.slice(0, maxChars);
     }
     return content;
   } catch (error) {
@@ -109,132 +106,59 @@ async function readFileBinary(path: string): Promise<{ base64: string; mimeType:
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SUMMARIZATION
+// CHUNKING
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const SUMMARY_PROMPT = `You are a file summarizer. Given a file's content, generate:
-1. A concise summary (2-4 sentences) describing what this file contains/does
-2. A comma-separated list of relevant keywords (5-15 keywords)
-
-Format your response EXACTLY as:
-SUMMARY: [your summary here]
-KEYWORDS: [keyword1, keyword2, keyword3, ...]
-
-Focus on the main purpose, key concepts, and searchable terms. For code files, mention the language, main functionality, and key dependencies.`;
-
-const IMAGE_SUMMARY_PROMPT = `You are an image analyzer. Describe this image concisely for a file search index.
-
-Generate:
-1. A brief description (2-3 sentences) of what's in the image
-2. Keywords for searching (objects, colors, people, activities, locations, mood, style)
-
-Format your response EXACTLY as:
-SUMMARY: [your description here]
-KEYWORDS: [keyword1, keyword2, keyword3, ...]
-
-Be specific about visible objects, people, text, colors, and the setting. Include searchable terms a user might use to find this image.`;
-
-async function generateFileSummary(
-  filename: string,
-  content: string,
-  kind: string
-): Promise<{ summary: string; keywords: string } | null> {
-  try {
-    const prompt = `${SUMMARY_PROMPT}
-
-File: ${filename}
-Type: ${kind}
-Content:
-${content}`;
-
-    const summaryModel = buildProviderModel(SUMMARY_MODEL_ID);
-    const result = await generateText({
-      model: summaryModel as any,
-      prompt,
-      temperature: 0.3,
-      maxOutputTokens: 300,
-    });
-
-    const text = result.text || '';
-    
-    // Parse the response
-    const summaryMatch = text.match(/SUMMARY:\s*(.+?)(?=KEYWORDS:|$)/is);
-    const keywordsMatch = text.match(/KEYWORDS:\s*(.+?)$/is);
-    
-    const summary = summaryMatch?.[1]?.trim() || `File: ${filename}`;
-    const keywords = keywordsMatch?.[1]?.trim() || filename.replace(/[._-]/g, ', ');
-    
-    return { summary, keywords };
-  } catch (error) {
-    console.error(`[file-indexing] Summary generation failed for ${filename}:`, error);
-    return null;
+/**
+ * Split text into overlapping chunks that fit within the embedding model's
+ * input token limit. Splits on paragraph/line boundaries when possible.
+ */
+function chunkText(text: string, chunkSize: number = CHUNK_SIZE_CHARS, overlap: number = CHUNK_OVERLAP_CHARS): string[] {
+  if (text.length <= chunkSize) {
+    return [text];
   }
-}
 
-async function generateImageSummary(
-  filename: string,
-  base64: string,
-  mimeType: string
-): Promise<{ summary: string; keywords: string } | null> {
-  try {
-    // Convert base64 to data URL format expected by AI SDK
-    const dataUrl = `data:${mimeType};base64,${base64}`;
-    
-    const summaryModel = buildProviderModel(SUMMARY_MODEL_ID);
-    const result = await generateText({
-      model: summaryModel as any,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: `${IMAGE_SUMMARY_PROMPT}\n\nFilename: ${filename}` },
-            { type: 'image', image: dataUrl },
-          ],
-        },
-      ],
-      temperature: 0.3,
-      maxOutputTokens: 300,
-    });
+  const chunks: string[] = [];
+  let start = 0;
 
-    const text = result.text || '';
-    
-    // Parse the response
-    const summaryMatch = text.match(/SUMMARY:\s*(.+?)(?=KEYWORDS:|$)/is);
-    const keywordsMatch = text.match(/KEYWORDS:\s*(.+?)$/is);
-    
-    const summary = summaryMatch?.[1]?.trim() || `Image: ${filename}`;
-    const keywords = keywordsMatch?.[1]?.trim() || `image, ${filename.replace(/[._-]/g, ', ')}`;
-    
-    return { summary, keywords };
-  } catch (error) {
-    console.error(`[file-indexing] Image summary generation failed for ${filename}:`, error);
-    return null;
+  while (start < text.length) {
+    let end = Math.min(start + chunkSize, text.length);
+
+    // Try to break on a paragraph or line boundary
+    if (end < text.length) {
+      // Look for paragraph break (double newline)
+      const paraBreak = text.lastIndexOf('\n\n', end);
+      if (paraBreak > start + chunkSize * 0.5) {
+        end = paraBreak + 2;
+      } else {
+        // Fall back to single newline
+        const lineBreak = text.lastIndexOf('\n', end);
+        if (lineBreak > start + chunkSize * 0.5) {
+          end = lineBreak + 1;
+        }
+      }
+    }
+
+    chunks.push(text.slice(start, end));
+    start = end - overlap;
+
+    // Avoid infinite loop on tiny overlap
+    if (start >= end) start = end;
   }
-}
 
-function generateMetadataSummary(file: PendingFile): { summary: string; keywords: string } {
-  // For non-summarizable files, create a simple metadata-based summary
-  const ext = file.extension?.replace('.', '') || 'unknown';
-  const sizeKB = Math.round(file.size / 1024);
-  
-  const summary = `${file.kind} file: ${file.filename} (${sizeKB}KB)`;
-  const keywords = [
-    file.filename.replace(/[._-]/g, ' '),
-    ext,
-    file.kind,
-  ].filter(Boolean).join(', ');
-  
-  return { summary, keywords };
+  return chunks;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // EMBEDDING
 // ═══════════════════════════════════════════════════════════════════════════════
 
+const embeddingModel = google.textEmbeddingModel(EMBEDDING_MODEL);
+
 async function generateEmbedding(text: string): Promise<number[] | null> {
   try {
     const result = await embed({
-      model: openai.embedding(EMBEDDING_MODEL),
+      model: embeddingModel,
       value: text,
     });
     return result.embedding;
@@ -245,15 +169,135 @@ async function generateEmbedding(text: string): Promise<number[] | null> {
 }
 
 async function generateEmbeddings(texts: string[]): Promise<(number[] | null)[]> {
+  if (texts.length === 0) return [];
   try {
     const result = await embedMany({
-      model: openai.embedding(EMBEDDING_MODEL),
+      model: embeddingModel,
       values: texts,
     });
     return result.embeddings;
   } catch (error) {
     console.error('[file-indexing] Batch embedding generation failed:', error);
     return texts.map(() => null);
+  }
+}
+
+/**
+ * Average multiple chunk embeddings into a single representative vector.
+ * L2-normalizes the result since non-3072 Gemini embeddings aren't pre-normalized.
+ */
+function averageEmbeddings(embeddings: number[][]): number[] {
+  if (embeddings.length === 0) return [];
+  if (embeddings.length === 1) return embeddings[0];
+
+  const dim = embeddings[0].length;
+  const avg = new Float64Array(dim);
+  for (const emb of embeddings) {
+    for (let i = 0; i < dim; i++) {
+      avg[i] += emb[i];
+    }
+  }
+
+  // Normalize
+  let norm = 0;
+  for (let i = 0; i < dim; i++) {
+    avg[i] /= embeddings.length;
+    norm += avg[i] * avg[i];
+  }
+  norm = Math.sqrt(norm);
+  if (norm > 0) {
+    for (let i = 0; i < dim; i++) {
+      avg[i] /= norm;
+    }
+  }
+
+  return Array.from(avg);
+}
+
+/**
+ * Embed a file's text content using chunking + parallel embedding.
+ * Returns the averaged embedding vector and a plain-text summary (first chunk).
+ */
+async function embedTextContent(
+  filename: string,
+  content: string
+): Promise<{ vector: number[]; summary: string; keywords: string } | null> {
+  // Prepend filename for context
+  const fullText = `${filename}\n\n${content}`;
+  const chunks = chunkText(fullText);
+
+  // Embed all chunks in parallel batches
+  const allEmbeddings: number[][] = [];
+  for (let i = 0; i < chunks.length; i += EMBED_PARALLEL_LIMIT) {
+    const batch = chunks.slice(i, i + EMBED_PARALLEL_LIMIT);
+    const results = await generateEmbeddings(batch);
+    for (const emb of results) {
+      if (emb) allEmbeddings.push(emb);
+    }
+  }
+
+  if (allEmbeddings.length === 0) return null;
+
+  const vector = averageEmbeddings(allEmbeddings);
+
+  // Use first ~500 chars as summary (no LLM needed)
+  const summary = content.slice(0, 500).trim();
+  // Extract basic keywords from filename
+  const keywords = filename.replace(/[._\-/\\]/g, ' ').trim();
+
+  return { vector, summary, keywords };
+}
+
+/**
+ * Embed an image file directly using Gemini Embedding 2's multimodal support.
+ */
+async function embedImageContent(
+  filename: string,
+  base64: string,
+  mimeType: string
+): Promise<{ vector: number[]; summary: string; keywords: string } | null> {
+  try {
+    // Use the Gemini API directly for multimodal embedding since AI SDK embed()
+    // only accepts text values. We call the REST endpoint.
+    const apiKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.error('[file-indexing] No Google API key for multimodal embedding');
+      return null;
+    }
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${EMBEDDING_MODEL}:embedContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: {
+            parts: [
+              { text: filename },
+              { inline_data: { mime_type: mimeType, data: base64 } },
+            ],
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error(`[file-indexing] Multimodal embedding failed (${response.status}):`, errText);
+      return null;
+    }
+
+    const data: any = await response.json();
+    const vector: number[] = data?.embedding?.values;
+    if (!vector || vector.length === 0) return null;
+
+    const summary = `Image: ${filename}`;
+    const keywords = `image, ${filename.replace(/[._\-/\\]/g, ' ')}`;
+
+    return { vector, summary, keywords };
+  } catch (error) {
+    console.error(`[file-indexing] Image embedding failed for ${filename}:`, error);
+    return null;
   }
 }
 
@@ -273,7 +317,7 @@ async function updateFileIndex(
       summary,
       keywords,
       vector,
-      summary_model: SUMMARY_MODEL_ID,
+      summary_model: 'none',
       embedding_model: EMBEDDING_MODEL,
     });
     return result?.ok === true;
@@ -295,59 +339,38 @@ async function markFileError(fileId: string, errorMessage: string): Promise<void
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// BATCH PROCESSING
+// FILE PROCESSING
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function prepareFileForIndexing(file: PendingFile): Promise<{ summary: string; keywords: string; embeddingText: string }> {
-  let summary: string;
-  let keywords: string;
-
-  // Determine processing strategy based on file kind
-  if (VISION_KINDS.has(file.kind) && VISION_EXTENSIONS.has(file.extension.toLowerCase()) && file.size <= MAX_IMAGE_SIZE) {
-    // Use Gemini Vision for images
+async function processFile(file: PendingFile): Promise<{ summary: string; keywords: string; vector: number[] } | null> {
+  // Image files — use multimodal embedding directly
+  if (IMAGE_KINDS.has(file.kind) && IMAGE_EXTENSIONS.has(file.extension.toLowerCase()) && file.size <= MAX_IMAGE_SIZE) {
     const binaryData = await readFileBinary(file.path);
-
     if (binaryData) {
-      const summaryResult = await generateImageSummary(file.filename, binaryData.base64, binaryData.mimeType);
-      if (summaryResult) {
-        summary = summaryResult.summary;
-        keywords = summaryResult.keywords;
-      } else {
-        const meta = generateMetadataSummary(file);
-        summary = meta.summary;
-        keywords = meta.keywords;
-      }
-    } else {
-      const meta = generateMetadataSummary(file);
-      summary = meta.summary;
-      keywords = meta.keywords;
+      return embedImageContent(file.filename, binaryData.base64, binaryData.mimeType);
     }
-  } else if (SUMMARIZABLE_KINDS.has(file.kind) && !METADATA_ONLY_KINDS.has(file.kind)) {
-    const content = await readFileContent(file.path);
-
-    if (content) {
-      const summaryResult = await generateFileSummary(file.filename, content, file.kind);
-      if (summaryResult) {
-        summary = summaryResult.summary;
-        keywords = summaryResult.keywords;
-      } else {
-        const meta = generateMetadataSummary(file);
-        summary = meta.summary;
-        keywords = meta.keywords;
-      }
-    } else {
-      const meta = generateMetadataSummary(file);
-      summary = meta.summary;
-      keywords = meta.keywords;
-    }
-  } else {
-    const meta = generateMetadataSummary(file);
-    summary = meta.summary;
-    keywords = meta.keywords;
   }
 
-  const embeddingText = `${file.filename}\n${summary}\n${keywords}`;
-  return { summary, keywords, embeddingText };
+  // Text/code files — chunk and embed
+  if (EMBEDDABLE_TEXT_KINDS.has(file.kind)) {
+    const content = await readFileContent(file.path);
+    if (content) {
+      return embedTextContent(file.filename, content);
+    }
+  }
+
+  // Metadata-only fallback (binary, archive, video, etc.)
+  const ext = file.extension?.replace('.', '') || 'unknown';
+  const sizeKB = Math.round(file.size / 1024);
+  const metaText = `${file.filename} ${ext} ${file.kind} ${sizeKB}KB`;
+  const vector = await generateEmbedding(metaText);
+  if (!vector) return null;
+
+  return {
+    summary: `${file.kind} file: ${file.filename} (${sizeKB}KB)`,
+    keywords: `${file.filename.replace(/[._-]/g, ' ')} ${ext} ${file.kind}`,
+    vector,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -366,7 +389,7 @@ export type ProgressCallback = (progress: IndexingProgress) => void;
 
 /**
  * Process pending files from the local index.
- * This should be called periodically or triggered after a scan completes.
+ * Chunks large files and embeds all chunks in parallel using Gemini Embedding 2.
  */
 export async function processPendingFiles(
   limit: number = 50,
@@ -375,83 +398,62 @@ export async function processPendingFiles(
   if (!hasClientBridge()) {
     throw new Error('No client bridge available');
   }
-  
-  // Get pending files from agent
+
   const pendingResult = await execLocalTool('file_index_get_pending', { limit });
   if (!pendingResult?.ok || !pendingResult?.files) {
     throw new Error('Failed to get pending files');
   }
-  
+
   const files: PendingFile[] = pendingResult.files;
-  
+
   const progress: IndexingProgress = {
     total: files.length,
     processed: 0,
     successful: 0,
     failed: 0,
   };
-  
+
   if (files.length === 0) {
     return progress;
   }
 
-  // Process in batches; summaries are per-file, embeddings use embedMany for efficiency.
+  // Process in batches
   for (let i = 0; i < files.length; i += BATCH_SIZE) {
     const batch = files.slice(i, i + BATCH_SIZE);
 
-    const prepared: Array<{ file: PendingFile; summary: string; keywords: string; embeddingText: string } | null> = [];
-    for (const file of batch) {
-      try {
+    // Process files in parallel within each batch
+    const results = await Promise.allSettled(
+      batch.map(async (file) => {
         progress.currentFile = file.filename;
         onProgress?.(progress);
-        const p = await prepareFileForIndexing(file);
-        prepared.push({ file, ...p });
-      } catch (error) {
-        prepared.push(null);
-        await markFileError(file.id, String(error));
-        progress.processed++;
-        progress.failed++;
-        onProgress?.(progress);
-      }
-    }
+        return { file, result: await processFile(file) };
+      })
+    );
 
-    const embeddingTexts = prepared.filter(Boolean).map((p) => (p as any).embeddingText as string);
-    const embeddings = embeddingTexts.length > 0 ? await generateEmbeddings(embeddingTexts) : [];
-
-    let embIdx = 0;
-    for (const p of prepared) {
-      if (!p) continue;
-
-      const vectorFromBatch = embeddings[embIdx] || null;
-      embIdx++;
-
-      let vector = vectorFromBatch;
-      if (!vector) {
-        // Fallback to single embedding for this one file
-        vector = await generateEmbedding(p.embeddingText);
-      }
-
-      if (!vector) {
-        await markFileError(p.file.id, 'Embedding generation failed');
+    for (const settled of results) {
+      if (settled.status === 'rejected' || !settled.value.result) {
+        const file = settled.status === 'fulfilled' ? settled.value.file : batch[0];
+        const err = settled.status === 'rejected' ? String(settled.reason) : 'Embedding generation failed';
+        await markFileError(file.id, err);
         progress.processed++;
         progress.failed++;
         onProgress?.(progress);
         continue;
       }
 
-      const updated = await updateFileIndex(p.file.id, p.summary, p.keywords, vector);
+      const { file, result } = settled.value;
+      const updated = await updateFileIndex(file.id, result.summary, result.keywords, result.vector);
       progress.processed++;
       if (updated) {
         progress.successful++;
       } else {
         progress.failed++;
-        await markFileError(p.file.id, 'Failed to update index');
+        await markFileError(file.id, 'Failed to update index');
       }
-
       onProgress?.(progress);
     }
   }
-  
+
   progress.currentFile = undefined;
   return progress;
 }
@@ -463,7 +465,7 @@ export async function getIndexStats(): Promise<any> {
   if (!hasClientBridge()) {
     return null;
   }
-  
+
   const result = await execLocalTool('file_index_stats', {});
   return result?.ok ? result : null;
 }
@@ -475,158 +477,13 @@ export async function triggerScan(rootIdOrPath: string): Promise<any> {
   if (!hasClientBridge()) {
     throw new Error('No client bridge available');
   }
-  
+
   const args = rootIdOrPath.includes('/') || rootIdOrPath.includes('\\')
     ? { path: rootIdOrPath }
     : { root_id: rootIdOrPath };
-  
+
   const result = await execLocalTool('file_index_scan', args);
   return result;
-}
-
-/**
- * Starts a batch indexing job for pending files.
- */
-export async function startBatchIndexing(limit: number = 500): Promise<{ ok: boolean; jobId?: string; count?: number }> {
-  if (!hasClientBridge()) throw new Error('No client bridge available');
-
-  // 1. Get pending files
-  const pendingResult = await execLocalTool('file_index_get_pending', { limit });
-  if (!pendingResult?.ok || !pendingResult?.files) {
-    throw new Error('Failed to get pending files');
-  }
-
-  const files: PendingFile[] = pendingResult.files;
-  if (files.length === 0) return { ok: true, count: 0 };
-
-  // 2. Prepare batch requests
-  const requests: geminiBatch.BatchRequest[] = [];
-  const fileMap: Record<string, PendingFile> = {};
-
-  for (const file of files) {
-    fileMap[file.id] = file;
-    
-    let prompt = '';
-    let inlineData: any = undefined;
-
-    if (VISION_KINDS.has(file.kind) && VISION_EXTENSIONS.has(file.extension.toLowerCase()) && file.size <= MAX_IMAGE_SIZE) {
-      const binaryData = await readFileBinary(file.path);
-      if (binaryData) {
-        prompt = `${IMAGE_SUMMARY_PROMPT}\n\nFilename: ${file.filename}`;
-        inlineData = { mime_type: binaryData.mimeType, data: binaryData.base64 };
-      }
-    } else if (SUMMARIZABLE_KINDS.has(file.kind) && !METADATA_ONLY_KINDS.has(file.kind)) {
-      const content = await readFileContent(file.path);
-      if (content) {
-        prompt = `${SUMMARY_PROMPT}\n\nFile: ${file.filename}\nType: ${file.kind}\nContent:\n${content}`;
-      }
-    }
-
-    if (prompt) {
-      const parts: any[] = [{ text: prompt }];
-      if (inlineData) parts.push({ inline_data: inlineData });
-
-      requests.push({
-        key: file.id,
-        request: {
-          contents: [{ role: 'user', parts }]
-        }
-      });
-    } else {
-      // Fallback for non-summarizable files (should we even put them in batch? probably not, just process metadata locally)
-      // For simplicity, we'll only batch files that need AI summary
-    }
-  }
-
-  if (requests.length === 0) {
-    // If nothing to batch, maybe they are all metadata-only?
-    // We could process them synchronously here or just skip.
-    return { ok: true, count: 0 };
-  }
-
-  // 3. Create Batch Job
-  const fileMetadata = files.reduce((acc, f) => {
-    acc[f.id] = { filename: f.filename };
-    return acc;
-  }, {} as Record<string, { filename: string }>);
-
-  // Get user ID from bridge context for multi-tenancy
-  const secrets = getBridgeSecrets();
-  const userId = secrets?.userId as string | undefined;
-
-  const job = await geminiBatch.createBatchJob(
-    requests, 
-    SUMMARY_MODEL_ID.replace('google/', ''), 
-    `Indexing-${new Date().toISOString()}`,
-    { fileMetadata },
-    userId
-  );
-  
-  return { ok: true, jobId: job.id, count: requests.length };
-}
-
-/**
- * Polls all pending batch jobs and applies results if finished.
- */
-export async function syncBatchJobs(): Promise<{ updated: number; active: number }> {
-  const { data: jobs, error } = await getSupabase()
-    .from('gemini_batch_jobs')
-    .select('id, status')
-    .in('status', ['JOB_STATE_PENDING', 'JOB_STATE_RUNNING']);
-
-  if (error || !jobs) return { updated: 0, active: 0 };
-
-  let updatedCount = 0;
-  for (const job of jobs) {
-    const updatedJob = await geminiBatch.pollBatchJob(job.id);
-    if (updatedJob.status === 'JOB_STATE_SUCCEEDED') {
-      await applyBatchResults(updatedJob.id);
-      updatedCount++;
-    }
-  }
-
-  return { updated: updatedCount, active: jobs.length };
-}
-
-/**
- * Downloads results for a job and updates the local file index.
- */
-async function applyBatchResults(id: string): Promise<void> {
-  const { data: job } = await getSupabase().from('gemini_batch_jobs').select('metadata').eq('id', id).single();
-  const fileMetadata = job?.metadata?.fileMetadata || {};
-
-  const results = await geminiBatch.getBatchResults(id);
-  
-  for (const item of results) {
-    const fileId = item.responseId || item.key; // Use key we provided
-    if (!fileId) continue;
-
-    try {
-      const text = item.response?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      if (!text) continue;
-
-      // Parse summary and keywords
-      const summaryMatch = text.match(/SUMMARY:\s*(.+?)(?=KEYWORDS:|$)/is);
-      const keywordsMatch = text.match(/KEYWORDS:\s*(.+?)$/is);
-      
-      const summary = summaryMatch?.[1]?.trim();
-      const keywords = keywordsMatch?.[1]?.trim();
-
-      if (summary && keywords) {
-        // We still need to generate embeddings. 
-        const filename = fileMetadata[fileId]?.filename || '';
-        const embeddingText = `${filename}\n${summary}\n${keywords}`;
-        const vector = await generateEmbedding(embeddingText);
-        
-        if (vector) {
-          await updateFileIndex(fileId, summary, keywords, vector);
-        }
-      }
-    } catch (error) {
-      console.error(`[file-indexing] Failed to apply batch result for ${fileId}:`, error);
-      await markFileError(fileId, String(error));
-    }
-  }
 }
 
 /**
@@ -643,10 +500,9 @@ export async function searchFiles(
   if (!hasClientBridge()) {
     throw new Error('No client bridge available');
   }
-  
+
   const { mode = 'hybrid', kind, limit = 20 } = options;
-  
-  // For semantic/hybrid search, we need to embed the query
+
   let vector: number[] | undefined;
   if (mode === 'semantic' || mode === 'hybrid') {
     const embedding = await generateEmbedding(query);
@@ -654,7 +510,7 @@ export async function searchFiles(
       vector = embedding;
     }
   }
-  
+
   const result = await execLocalTool('file_search', {
     query,
     vector,
@@ -662,6 +518,6 @@ export async function searchFiles(
     kind,
     limit,
   });
-  
+
   return result;
 }

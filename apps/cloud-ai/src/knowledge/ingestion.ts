@@ -6,7 +6,7 @@
  */
 
 import { embed } from 'ai';
-import { openai } from '@ai-sdk/openai';
+import { google } from '../utils/models';
 import { execLocalTool, hasClientBridge } from '../tools/bridge';
 import { writeLog } from '../utils/logger';
 import { extractKnowledge, ExtractionResult, KnowledgeAction } from './extraction';
@@ -18,7 +18,7 @@ import { extractKnowledge, ExtractionResult, KnowledgeAction } from './extractio
 async function getEmbedding(text: string): Promise<number[]> {
   try {
     const { embedding } = await embed({
-      model: openai.embedding('text-embedding-3-large'),
+      model: google.textEmbeddingModel('gemini-embedding-2-preview'),
       value: text,
     });
     return embedding;
