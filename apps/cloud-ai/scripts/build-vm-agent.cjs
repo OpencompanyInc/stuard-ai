@@ -64,35 +64,37 @@ if (!skipObfuscate) {
       identifierNamesGenerator: 'hexadecimal',
       renameGlobals: false,              // don't break require() / module.exports
       renameProperties: false,           // safe: don't rename obj.property
-      
+
       // ── String protection ─────────────────────────────────────────────
+      // NOTE: splitStrings MUST be false — it breaks JSON.parse/stringify
+      // of workflow payloads and structured data. stringArrayThreshold is
+      // lowered to avoid mangling JSON-heavy code paths.
       stringArray: true,
-      stringArrayThreshold: 0.75,        // encrypt ~75% of strings
+      stringArrayThreshold: 0.5,         // encrypt ~50% of strings (lower = safer for JSON)
       stringArrayEncoding: ['rc4'],      // RC4 encoded strings
       stringArrayWrappersCount: 2,
       stringArrayWrappersChainedCalls: true,
       rotateStringArray: true,
       shuffleStringArray: true,
-      splitStrings: true,
-      splitStringsChunkLength: 10,
-      
+      splitStrings: false,               // DISABLED: breaks workflow JSON and structured data
+
       // ── Control flow ──────────────────────────────────────────────────
       controlFlowFlattening: true,
-      controlFlowFlatteningThreshold: 0.5,
+      controlFlowFlatteningThreshold: 0.3, // lowered to reduce code bloat
       deadCodeInjection: true,
-      deadCodeInjectionThreshold: 0.2,
-      
+      deadCodeInjectionThreshold: 0.15,
+
       // ── Other protections ─────────────────────────────────────────────
-      transformObjectKeys: true,
+      transformObjectKeys: false,        // DISABLED: breaks JSON object keys
       unicodeEscapeSequence: false,      // keep size reasonable
       selfDefending: false,              // skip: can break in Node.js
       disableConsoleOutput: false,        // keep console.log for VM diagnostics
       debugProtection: false,             // not needed for server-side
-      
+
       // ── Performance ───────────────────────────────────────────────────
       compact: true,
       simplify: true,
-      numbersToExpressions: true,
+      numbersToExpressions: false,       // DISABLED: can break numeric comparisons in JSON
       target: 'node',
     });
 

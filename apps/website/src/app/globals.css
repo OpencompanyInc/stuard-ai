@@ -40,6 +40,10 @@ body {
   position: relative;
 }
 
+body.dashboard-shell [data-site-header-nav] {
+  display: none;
+}
+
 /* Grid background pattern - only on homepage */
 body.show-grid::before {
   content: "";

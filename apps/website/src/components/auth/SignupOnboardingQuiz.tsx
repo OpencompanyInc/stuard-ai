@@ -1,12 +1,12 @@
 'use client';
 
-import type { OnboardingGoal, OnboardingPath, OnboardingProfile, OnboardingRole, OnboardingTechnicalComfort } from '../../../../../shared/onboardingProfile';
+import type { OnboardingGoal, OnboardingPath, OnboardingProfile, OnboardingRole, OnboardingTechnicalComfort } from '@/lib/onboardingProfile';
 import {
   ONBOARDING_GOAL_OPTIONS,
   ONBOARDING_PATH_OPTIONS,
   ONBOARDING_ROLE_OPTIONS,
   ONBOARDING_TECHNICAL_COMFORT_OPTIONS,
-} from '../../../../../shared/onboardingProfile';
+} from '@/lib/onboardingProfile';
 
 interface SignupOnboardingQuizProps {
   value: OnboardingProfile;

@@ -83,11 +83,82 @@ jobs:
         if: ${{ github.event.inputs.build_desktop == 'true' }}
         run: pnpm turbo run test --filter=@stuardai/desktop
 
-  # 1. Deploy Cloud AI (Backend) to Cloud Run (Beta)
+  # 1. Build & upload VM agent bundles to GCS (only if source changed)
+  build-vm-agents:
+    name: VM Agent Bundles
+    runs-on: ubuntu-latest
+    needs: ci-checks
+    if: ${{ github.event.inputs.deploy_cloud == 'true' }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          fetch-depth: 2
+
+      - name: Check if agent source changed
+        id: agent-changed
+        run: |
+          if git diff HEAD~1 --name-only | grep -qE '^apps/cloud-ai/src/agent/|^apps/agent/'; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Auth to Google Cloud
+        if: steps.agent-changed.outputs.changed == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        if: steps.agent-changed.outputs.changed == 'true'
+        uses: google-github-actions/setup-gcloud@v2
+
+      - uses: pnpm/action-setup@v2
+        if: steps.agent-changed.outputs.changed == 'true'
+        with:
+          version: 8
+      - uses: actions/setup-node@v4
+        if: steps.agent-changed.outputs.changed == 'true'
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - uses: actions/setup-python@v5
+        if: steps.agent-changed.outputs.changed == 'true'
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        if: steps.agent-changed.outputs.changed == 'true'
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build & upload VM agent bundle
+        if: steps.agent-changed.outputs.changed == 'true'
+        working-directory: apps/cloud-ai
+        run: node scripts/build-vm-agent.cjs --upload
+        env:
+          CLOUD_ENGINE_BUCKET: ${{ secrets.CLOUD_ENGINE_BUCKET || 'stuard-user-data' }}
+
+      - name: Build & upload Python agent bundle
+        if: steps.agent-changed.outputs.changed == 'true'
+        working-directory: apps/cloud-ai
+        run: node scripts/build-python-agent.cjs --upload
+        env:
+          CLOUD_ENGINE_BUCKET: ${{ secrets.CLOUD_ENGINE_BUCKET || 'stuard-user-data' }}
+
+      - name: Skip — no agent changes
+        if: steps.agent-changed.outputs.changed == 'false'
+        run: echo "No changes to agent source — skipping bundle upload"
+
+  # 2. Deploy Cloud AI (Backend) to Cloud Run (Beta)
   deploy-beta-backend:
     name: Cloud AI (Beta)
     runs-on: ubuntu-latest
-    needs: ci-checks
+    needs: [ci-checks, build-vm-agents]
     if: ${{ github.event.inputs.deploy_cloud == 'true' }}
     permissions:
       contents: read
@@ -170,7 +241,7 @@ jobs:
             echo "::warning::Ops callback (failed) failed with HTTP $HTTP_CODE"
           fi
 
-  # 2. Deploy Website (Frontend) to Vercel Preview
+  # 3. Deploy Website (Frontend) to Vercel Preview
   deploy-beta-website:
     name: Website (Beta)
     runs-on: ubuntu-latest
@@ -207,7 +278,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }}
 
-  # 3. Build Desktop App for all platforms
+  # 4. Build Desktop App for all platforms
   build-beta-desktop:
     name: Desktop App (Beta - ${{ matrix.os }}${{ matrix.arch && format(' {0}', matrix.arch) || '' }})
     needs: ci-checks

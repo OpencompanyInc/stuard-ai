@@ -393,6 +393,15 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.54.0
         version: 2.76.0
+      '@xterm/addon-fit':
+        specifier: ^0.10.0
+        version: 0.10.0(@xterm/xterm@5.5.0)
+      '@xterm/addon-web-links':
+        specifier: ^0.11.0
+        version: 0.11.0(@xterm/xterm@5.5.0)
+      '@xterm/xterm':
+        specifier: ^5.5.0
+        version: 5.5.0
       next:
         specifier: 16.0.8
         version: 16.0.8(@babel/core@7.28.4)(react-dom@19.1.0)(react@19.1.0)
@@ -6882,7 +6891,7 @@ packages:
       '@vitest/spy': 4.0.10
       estree-walker: 3.0.3
       magic-string: 0.30.21
-      vite: 7.2.2(@types/node@24.10.1)(tsx@4.20.6)
+      vite: 7.2.2(@types/node@20.19.22)(terser@5.46.0)
     dev: true
 
   /@vitest/pretty-format@4.0.10:
@@ -6929,7 +6938,6 @@ packages:
       '@xterm/xterm': ^5.0.0
     dependencies:
       '@xterm/xterm': 5.5.0
-    dev: true
 
   /@xterm/addon-web-links@0.11.0(@xterm/xterm@5.5.0):
     resolution: {integrity: sha512-nIHQ38pQI+a5kXnRaTgwqSHnX7KE6+4SVoceompgHL26unAxdfP6IPqUTSYPQgSwM56hsElfoNrrW5V7BUED/Q==}
@@ -6937,11 +6945,9 @@ packages:
       '@xterm/xterm': ^5.0.0
     dependencies:
       '@xterm/xterm': 5.5.0
-    dev: true
 
   /@xterm/xterm@5.5.0:
     resolution: {integrity: sha512-hqJHYaQb5OptNunnyAnkHyM8aCjZ1MEIDTQu1iIbbTD/xops91NB5yq1ZK/dC2JDbVWtF23zUtl9JE2NqwT87A==}
-    dev: true
 
   /abbrev@1.1.1:
     resolution: {integrity: sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q==}

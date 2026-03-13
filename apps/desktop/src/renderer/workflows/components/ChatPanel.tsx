@@ -482,12 +482,16 @@ const OperationDetails = ({ args }: { args: any }) => {
 // UpdateWorkflowView shows the changes being applied - cleaner diff-style
 const UpdateWorkflowView = ({ args, result }: { args: any, result?: any }) => {
   const resultWorkflow = result?.workflow;
-  const resultChanges = result?.changes || result?.message;
+  const rawChanges = result?.changes || result?.message;
+  const resultChanges = typeof rawChanges === 'string' ? rawChanges
+    : rawChanges != null ? JSON.stringify(rawChanges, null, 2)
+    : null;
   const rawError = result?.error;
   
   const resultOk = result?.ok === true;
   const resultFailed = result?.ok === false;
-  const errorMessage = rawError || (resultFailed ? 'Update failed' : null);
+  const errorMessage = (typeof rawError === 'string' ? rawError : rawError ? String(rawError) : null)
+    || (resultFailed ? 'Update failed' : null);
 
   const showSuccess = resultOk && !errorMessage;
   const showError = !!errorMessage;

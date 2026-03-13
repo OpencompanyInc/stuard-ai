@@ -8,8 +8,8 @@ import { useAuthContext } from '@/components/providers/AuthProvider';
 const Header = () => {
   const { user } = useAuthContext();
   return (
-    <header className="fixed top-12 left-0 right-0 z-50 flex justify-center px-4 pointer-events-none">
-      <div className="bg-[#F3F1EB] border border-black/5 shadow-sm rounded-full px-4 py-2 flex items-center gap-6 pointer-events-auto max-w-5xl w-full justify-between">
+    <header className="flex justify-center px-4 pt-3 pointer-events-none">
+      <div className="bg-[#F3F1EB]/92 backdrop-blur-md border border-black/5 shadow-sm rounded-full px-4 py-2 flex items-center gap-6 pointer-events-auto max-w-5xl w-full justify-between">
 
         {/* Logo */}
         <Link href="/" className="flex-shrink-0">
@@ -24,10 +24,9 @@ const Header = () => {
 
         {/* Desktop Nav */}
         <nav className="hidden lg:flex items-center gap-6 text-[15px] font-medium text-gray-500 select-none">
-          <span className="cursor-not-allowed text-gray-400">Features</span>
+          <Link href="/download" className="hover:text-black transition-colors">Download</Link>
           <Link href="/marketplace" className="hover:text-black transition-colors">Marketplace</Link>
           <Link href="/pricing" className="hover:text-black transition-colors">Pricing</Link>
-          <span className="cursor-not-allowed text-gray-400">Blog</span>
         </nav>
 
         {/* Action Button */}

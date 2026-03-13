@@ -34,10 +34,10 @@ export default function Home() {
     operatingSystem: 'Windows 10, Windows 11, macOS, Linux',
     offers: {
       '@type': 'Offer',
-      price: '35',
+      price: '0',
       priceCurrency: 'USD',
-      priceValidUntil: '2025-12-31',
-      availability: 'https://schema.org/PreOrder',
+      priceValidUntil: '2026-12-31',
+      availability: 'https://schema.org/InStock',
     },
     aggregateRating: {
       '@type': 'AggregateRating',
@@ -75,9 +75,7 @@ export default function Home() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareSchema) }}
       />
-      <div id="waitlist">
-        <HeroSection />
-      </div>
+      <HeroSection />
       <FeatureScrollSection />
     </>
   );

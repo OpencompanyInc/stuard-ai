@@ -20,7 +20,7 @@ export default function FAQ() {
     },
     {
       question: 'What platforms does Stuard AI support?',
-      answer: 'Stuard AI is built for desktop users. We support Windows 10 and 11 today, and were actively bringing the same experience to macOS and Linux. Join the waitlist to be notified as soon as new platforms are available.',
+      answer: 'Stuard AI is built for desktop users. We support Windows 10 and 11 today, and were actively bringing the same experience to macOS and Linux. macOS and Linux support is on the way.',
     },
     {
       question: 'How does the memory system work?',

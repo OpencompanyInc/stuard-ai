@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { getCloudEngineStatus } from '@/lib/cloudApi';
 import { CloudOverview } from './components/CloudOverview';
 import { CloudTerminal } from './components/CloudTerminal';
@@ -16,27 +16,42 @@ export default function CloudDashboardPage() {
   const [activeTab, setActiveTab] = useState<CloudTab>('overview');
   const [engine, setEngine] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const hasEngine = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
 
-  const loadStatus = async () => {
+  const loadStatus = useCallback(async () => {
+    // Abort any in-flight status request
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
       const data = await getCloudEngineStatus();
-      if (data.ok) setEngine(data.engine);
-      else setEngine(null);
+      if (controller.signal.aborted) return;
+      if (data.ok) {
+        setEngine(data.engine);
+        hasEngine.current = true;
+      } else {
+        setEngine(null);
+        hasEngine.current = false;
+      }
     } catch {
+      if (controller.signal.aborted) return;
       setEngine(null);
+      hasEngine.current = false;
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { loadStatus(); }, []);
+  useEffect(() => { loadStatus(); }, [loadStatus]);
 
-  // Poll status every 30s when engine exists
+  // Poll status every 30s when engine exists — use stable ref to avoid interval churn
   useEffect(() => {
-    if (!engine) return;
+    if (!hasEngine.current && !engine) return;
     const timer = setInterval(loadStatus, 30_000);
     return () => clearInterval(timer);
-  }, [engine]);
+  }, [!!engine, loadStatus]);
 
   if (loading) {
     return (
@@ -81,12 +96,12 @@ export default function CloudDashboardPage() {
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex gap-1 mb-6 p-1 bg-gray-100 rounded-xl w-fit">
+      <div className="flex gap-1 mb-6 p-1 bg-gray-100 rounded-lg w-fit">
         {tabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+            className={`px-3.5 py-1.5 text-[13px] font-medium rounded-md transition-all ${
               activeTab === tab.id
                 ? 'bg-white text-gray-900 shadow-sm'
                 : 'text-gray-500 hover:text-gray-700'

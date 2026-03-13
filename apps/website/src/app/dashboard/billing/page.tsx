@@ -1,8 +1,6 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
 import { useAuthContext } from '@/components/providers/AuthProvider';
 import { supabase } from '@/lib/supabaseClient';
 
@@ -33,27 +31,19 @@ export default function BillingPage() {
         let isActive = true;
         async function loadCredits() {
             if (!user) {
-                if (isActive) {
-                    setCreditSummary(null);
-                    setCreditsLoading(false);
-                }
+                if (isActive) { setCreditSummary(null); setCreditsLoading(false); }
                 return;
             }
             try {
                 setCreditsLoading(true);
                 const { data: sessionDataRes } = await supabase.auth.getSession();
                 const token = sessionDataRes.session?.access_token;
-                if (!token) {
-                    if (isActive) setCreditsLoading(false);
-                    return;
-                }
+                if (!token) { if (isActive) setCreditsLoading(false); return; }
                 const res = await fetch(`${CLOUD_API_URL}/v1/credits`, {
                     headers: { Authorization: `Bearer ${token}` },
                 });
                 const data = await res.json();
-                if (isActive && data?.ok) {
-                    setCreditSummary(data);
-                }
+                if (isActive && data?.ok) setCreditSummary(data);
             } catch (e: any) {
                 if (isActive) setError((prev) => prev || String(e?.message || 'Failed to load credits.'));
             } finally {
@@ -61,9 +51,7 @@ export default function BillingPage() {
             }
         }
         loadCredits();
-        return () => {
-            isActive = false;
-        };
+        return () => { isActive = false; };
     }, [user]);
 
     const currentPlan = (() => {
@@ -82,30 +70,19 @@ export default function BillingPage() {
 
     const baseRate = 33;
     const tier = useMemo(() => {
-        if (amount >= 100) {
-            return { name: 'Whale', multiplier: 2.0, badge: '2.0x Credits', accent: 'text-amber-600' };
-        }
-        if (amount >= 30) {
-            return { name: 'Pro', multiplier: 1.5, badge: '1.5x Credits', accent: 'text-indigo-600' };
-        }
-        return { name: 'Starter', multiplier: 1.0, badge: 'Standard Rate', accent: 'text-emerald-600' };
+        if (amount >= 100) return { name: 'Whale', multiplier: 2.0, badge: '2.0x Credits', color: 'text-amber-600' };
+        if (amount >= 30) return { name: 'Pro', multiplier: 1.5, badge: '1.5x Credits', color: 'text-gray-900' };
+        return { name: 'Starter', multiplier: 1.0, badge: 'Standard Rate', color: 'text-gray-600' };
     }, [amount]);
 
     const credits = Math.floor(amount * baseRate * tier.multiplier);
-
     const canManage = Boolean(user);
     const isFreePlan = currentPlan === 'free';
 
     const handleCheckout = async () => {
         setError(null);
-        if (!user) {
-            setError('Please sign in to upgrade.');
-            return;
-        }
-        if (!payWhatYouWantProductId) {
-            setError('Missing Polar product id for pay-what-you-want pricing.');
-            return;
-        }
+        if (!user) { setError('Please sign in to upgrade.'); return; }
+        if (!payWhatYouWantProductId) { setError('Missing Polar product id for pay-what-you-want pricing.'); return; }
         try {
             const metadata = JSON.stringify({ userId: user.id });
             const qs = new URLSearchParams({
@@ -123,40 +100,23 @@ export default function BillingPage() {
 
     const handleManage = async () => {
         setError(null);
-
         if (isFreePlan) {
             document.getElementById('plans')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             return;
         }
-
-        if (!user) {
-            setError('Please sign in to manage your subscription.');
-            return;
-        }
+        if (!user) { setError('Please sign in to manage your subscription.'); return; }
         setIsManaging(true);
         try {
             const { data: sessionDataRes } = await supabase.auth.getSession();
             const token = sessionDataRes.session?.access_token;
-            if (!token) {
-                setError('Missing session token. Please sign in again.');
-                return;
-            }
-
+            if (!token) { setError('Missing session token. Please sign in again.'); return; }
             const response = await fetch('/api/polar/portal', {
                 method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                },
+                headers: { Authorization: `Bearer ${token}` },
             });
             const data = await response.json();
-            if (!response.ok) {
-                setError(data?.error || 'Failed to open customer portal.');
-                return;
-            }
-            if (data?.url) {
-                window.location.href = data.url;
-                return;
-            }
+            if (!response.ok) { setError(data?.error || 'Failed to open customer portal.'); return; }
+            if (data?.url) { window.location.href = data.url; return; }
             setError('No portal URL returned.');
         } catch (e: any) {
             setError(String(e?.message || 'Failed to open customer portal.'));
@@ -166,153 +126,159 @@ export default function BillingPage() {
     };
 
     return (
-        <div className="space-y-8 max-w-6xl mx-auto">
+        <div className="space-y-8 max-w-4xl">
+            {/* Header */}
             <div>
-                <h1 className="text-3xl font-bold text-gray-900">Billing & Plans</h1>
-                <p className="text-gray-500 mt-1">Manage your subscription and billing history.</p>
+                <h1 className="text-2xl font-bold text-gray-900">Billing & Plans</h1>
+                <p className="text-sm text-gray-500 mt-1">Manage your subscription and credits.</p>
             </div>
 
             {error && (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
                     {error}
                 </div>
             )}
 
-            {/* Current Usage / Plan summary */}
-            <Card className="bg-gradient-to-r from-gray-900 to-gray-800 text-white border-none shadow-lg">
-                <CardContent className="p-8 flex flex-col md:flex-row items-center justify-between gap-6">
+            {/* Current Plan Card */}
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-5">
                     <div>
-                        <h2 className="text-lg font-medium text-gray-300">Current Plan</h2>
-                        <div className="text-4xl font-bold mt-1 capitalize">{currentPlan}</div>
-                        <p className="text-gray-400 mt-2 text-sm">
-                            {currentPlan === 'free' ? 'Upgrade to unlock more power.' : 'Thanks for being a subscriber.'}
+                        <p className="text-[13px] font-medium text-gray-500">Current Plan</p>
+                        <p className="text-3xl font-bold text-gray-900 mt-1 capitalize">{currentPlan}</p>
+                        <p className="text-[13px] text-gray-500 mt-1">
+                            {isFreePlan ? 'Upgrade to unlock more power.' : 'Thanks for being a subscriber.'}
                         </p>
-                        {creditSummary && (
-                            <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-                                <div className="rounded-xl bg-white/10 px-4 py-3">
-                                    <div className="text-gray-300">Available now</div>
-                                    <div className="text-xl font-semibold text-white">
-                                        {creditSummary.unlimited ? 'Unlimited' : Number(creditSummary.remaining || 0).toLocaleString()}
-                                    </div>
-                                </div>
-                                <div className="rounded-xl bg-white/10 px-4 py-3">
-                                    <div className="text-gray-300">Subscription pool</div>
-                                    <div className="text-xl font-semibold text-white">{Number(creditSummary.includedRemaining || 0).toLocaleString()}</div>
-                                </div>
-                                <div className="rounded-xl bg-white/10 px-4 py-3">
-                                    <div className="text-gray-300">Add-on pool</div>
-                                    <div className="text-xl font-semibold text-white">{Number(creditSummary.addonRemaining || 0).toLocaleString()}</div>
-                                </div>
-                            </div>
-                        )}
                     </div>
-                    <div className="flex flex-col items-end gap-3 w-full md:w-auto">
-                        <Button
-                            variant="outline"
-                            className="bg-white/10 text-white border-white/20 hover:bg-white/20"
-                            onClick={handleManage}
-                            disabled={(!canManage && !isFreePlan) || isManaging || loading || creditsLoading}
-                            isLoading={isManaging}
-                        >
-                            {isFreePlan ? 'View Plans' : 'Manage Subscription'}
-                        </Button>
-                    </div>
-                </CardContent>
-            </Card>
+                    <button
+                        onClick={handleManage}
+                        disabled={(!canManage && !isFreePlan) || isManaging || loading || creditsLoading}
+                        className="px-4 py-2.5 text-[13px] font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+                    >
+                        {isManaging ? 'Loading…' : isFreePlan ? 'View Plans' : 'Manage Subscription'}
+                    </button>
+                </div>
 
-            {/* Plans */}
+                {creditSummary && (
+                    <div className="mt-6 pt-5 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div className="bg-gray-50 rounded-lg px-4 py-3">
+                            <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">Available Now</p>
+                            <p className="text-xl font-semibold text-gray-900 mt-0.5">
+                                {creditSummary.unlimited ? 'Unlimited' : Number(creditSummary.remaining || 0).toLocaleString()}
+                            </p>
+                        </div>
+                        <div className="bg-gray-50 rounded-lg px-4 py-3">
+                            <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">Subscription Pool</p>
+                            <p className="text-xl font-semibold text-gray-900 mt-0.5">
+                                {Number(creditSummary.includedRemaining || 0).toLocaleString()}
+                            </p>
+                        </div>
+                        <div className="bg-gray-50 rounded-lg px-4 py-3">
+                            <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">Add-on Pool</p>
+                            <p className="text-xl font-semibold text-gray-900 mt-0.5">
+                                {Number(creditSummary.addonRemaining || 0).toLocaleString()}
+                            </p>
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {/* Pay What You Want */}
             <div id="plans">
-                <h2 className="text-xl font-bold text-gray-900 mb-6">Choose your monthly amount</h2>
-                <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-6">
-                    <Card className="border border-black/5 shadow-sm bg-white/80 backdrop-blur-md">
-                        <CardHeader>
-                            <CardTitle className="text-lg">Pick your price</CardTitle>
-                            <CardDescription>Pay what you want. Minimum $5. Credits roll over for 30 days.</CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-6">
-                            <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-white via-white to-indigo-50 p-6">
-                                <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
-                                    <div>
-                                        <p className="text-sm text-gray-500">Your price</p>
-                                        <div className="text-4xl font-bold text-gray-900">${amount}</div>
-                                        <p className="text-sm text-gray-500">billed monthly</p>
-                                    </div>
-                                    <div className="text-left md:text-right">
-                                        <p className="text-sm text-gray-500">Tier status</p>
-                                        <div className={`text-2xl font-semibold ${tier.accent}`}>{tier.name}</div>
-                                        <div className="inline-flex items-center mt-1 rounded-full bg-black/90 px-3 py-1 text-xs font-semibold text-white">
-                                            {tier.badge}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="mt-6">
-                                    <input
-                                        type="range"
-                                        min={5}
-                                        max={200}
-                                        step={1}
-                                        value={amount}
-                                        onChange={(event) => setAmount(Number(event.target.value))}
-                                        className="w-full accent-indigo-600"
-                                    />
-                                    <div className="flex justify-between text-xs text-gray-500 mt-2">
-                                        <span>$5</span>
-                                        <span>$30</span>
-                                        <span>$100</span>
-                                        <span>$200</span>
-                                    </div>
-                                </div>
-                            </div>
+                <h2 className="text-[15px] font-semibold text-gray-900 mb-4">Choose your monthly amount</h2>
+                <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+                    {/* Slider */}
+                    <div className="lg:col-span-3 bg-white rounded-xl border border-gray-200 p-6">
+                        <p className="text-[13px] font-medium text-gray-900 mb-1">Pick your price</p>
+                        <p className="text-[12px] text-gray-500 mb-5">Pay what you want. Minimum $5. Credits roll over for 30 days.</p>
 
-                            <div className="flex flex-wrap gap-3">
-                                {[10, 30, 60, 100].map((preset) => (
-                                    <button
-                                        key={preset}
-                                        onClick={() => setAmount(preset)}
-                                        className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${amount === preset ? 'border-indigo-600 bg-indigo-600 text-white shadow-md' : 'border-gray-200 text-gray-700 hover:border-indigo-200 hover:text-indigo-700'}`}
-                                    >
-                                        ${preset}
-                                    </button>
-                                ))}
+                        <div className="rounded-lg border border-gray-100 bg-gray-50 p-5">
+                            <div className="flex items-end justify-between mb-1">
+                                <div>
+                                    <p className="text-[12px] text-gray-500">Your price</p>
+                                    <p className="text-3xl font-bold text-gray-900">${amount}</p>
+                                    <p className="text-[12px] text-gray-500">per month</p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-[12px] text-gray-500">Tier</p>
+                                    <p className={`text-xl font-semibold ${tier.color}`}>{tier.name}</p>
+                                    <span className="inline-flex mt-1 px-2 py-0.5 rounded-full bg-gray-900 text-[11px] font-medium text-white">
+                                        {tier.badge}
+                                    </span>
+                                </div>
                             </div>
-                        </CardContent>
-                    </Card>
+                            <div className="mt-5">
+                                <input
+                                    type="range"
+                                    min={5}
+                                    max={200}
+                                    step={1}
+                                    value={amount}
+                                    onChange={(e) => setAmount(Number(e.target.value))}
+                                    className="w-full accent-gray-900"
+                                />
+                                <div className="flex justify-between text-[11px] text-gray-400 mt-1">
+                                    <span>$5</span>
+                                    <span>$30</span>
+                                    <span>$100</span>
+                                    <span>$200</span>
+                                </div>
+                            </div>
+                        </div>
 
-                    <Card className="border border-black/5 shadow-sm bg-white/80 backdrop-blur-md">
-                        <CardHeader>
-                            <CardTitle className="text-lg">Estimated credits</CardTitle>
-                            <CardDescription>
-                                {creditSummary
-                                    ? `You currently have ${creditSummary.unlimited ? 'unlimited credits' : `${Number(creditSummary.remaining || 0).toLocaleString()} credits available`}.`
-                                    : 'Based on your chosen amount.'}
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-5">
-                            <div className="rounded-2xl bg-gray-900 p-6 text-white">
-                                <p className="text-sm text-gray-300">Monthly credits</p>
-                                <div className="text-4xl font-bold">{credits.toLocaleString()}</div>
-                                <p className="text-sm text-gray-300 mt-2">${amount} × {baseRate} × {tier.multiplier}x</p>
+                        <div className="flex flex-wrap gap-2 mt-4">
+                            {[10, 30, 60, 100].map((preset) => (
+                                <button
+                                    key={preset}
+                                    onClick={() => setAmount(preset)}
+                                    className={`rounded-lg border px-3.5 py-2 text-[13px] font-medium transition-colors ${
+                                        amount === preset
+                                            ? 'border-gray-900 bg-gray-900 text-white'
+                                            : 'border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    ${preset}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Credits estimate */}
+                    <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 p-6 flex flex-col">
+                        <p className="text-[13px] font-medium text-gray-900 mb-1">Estimated credits</p>
+                        <p className="text-[12px] text-gray-500 mb-5">
+                            {creditSummary
+                                ? `You have ${creditSummary.unlimited ? 'unlimited credits' : `${Number(creditSummary.remaining || 0).toLocaleString()} credits`} now.`
+                                : 'Based on your chosen amount.'}
+                        </p>
+
+                        <div className="rounded-lg bg-gray-900 p-5 text-white mb-5">
+                            <p className="text-[12px] text-gray-400">Monthly credits</p>
+                            <p className="text-3xl font-bold mt-0.5">{credits.toLocaleString()}</p>
+                            <p className="text-[12px] text-gray-400 mt-1">${amount} x {baseRate} x {tier.multiplier}x</p>
+                        </div>
+
+                        <div className="space-y-3 text-[13px] mb-5">
+                            <div className="flex justify-between">
+                                <span className="text-gray-500">Credit rollover</span>
+                                <span className="font-medium text-gray-900">30 days</span>
                             </div>
-                            <div className="space-y-3 text-sm text-gray-600">
-                                <div className="flex items-center justify-between">
-                                    <span>Credit rollover</span>
-                                    <span className="font-semibold text-gray-900">30 days</span>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <span>Upgrade anytime</span>
-                                    <span className="font-semibold text-gray-900">Instantly applied</span>
-                                </div>
+                            <div className="flex justify-between">
+                                <span className="text-gray-500">Upgrade anytime</span>
+                                <span className="font-medium text-gray-900">Instantly applied</span>
                             </div>
-                            <Button
-                                className="w-full gradient-primary text-white font-bold border-0 shadow-sm"
+                        </div>
+
+                        <div className="mt-auto space-y-2">
+                            <button
                                 disabled={!user || loading || isManaging}
                                 onClick={handleCheckout}
+                                className="w-full py-2.5 text-[13px] font-medium text-white bg-gray-900 rounded-lg hover:bg-black transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                             >
                                 Continue to checkout
-                            </Button>
-                            <p className="text-xs text-gray-500 text-center">Minimum $5/month. Cancel anytime.</p>
-                        </CardContent>
-                    </Card>
+                            </button>
+                            <p className="text-[11px] text-gray-400 text-center">Minimum $5/month. Cancel anytime.</p>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

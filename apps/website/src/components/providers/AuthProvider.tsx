@@ -3,7 +3,7 @@
 import { createContext, useContext, ReactNode } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import type { User } from '@supabase/supabase-js';
-import type { OnboardingPath, OnboardingProfile } from '../../../../../shared/onboardingProfile';
+import type { OnboardingPath, OnboardingProfile } from '@/lib/onboardingProfile';
 
 interface UserData {
   uid: string;

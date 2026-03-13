@@ -2,8 +2,7 @@ import type { Metadata } from "next";
 import { Inter, Playfair_Display } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from '@/components/providers/AuthProvider';
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
+import LayoutShell from '@/components/layout/LayoutShell';
 
 const fontPrimary = Inter({
   subsets: ["latin"],
@@ -163,20 +162,13 @@ export default function RootLayout({
         />
       </head>
       <body className="antialiased min-h-screen text-gray-900 font-sans">
-        <div className="relative z-10">
-          <div className="bg-gray-900 text-white text-center py-2.5 text-sm font-medium tracking-wide">
-            Stuard AI is now available &mdash; <a href="/signup" className="underline underline-offset-2 hover:text-blue-300 transition-colors">Get started free</a>
+        <AuthProvider>
+          <div className="relative min-h-screen">
+            <LayoutShell>
+              {children}
+            </LayoutShell>
           </div>
-          <AuthProvider>
-            <div className="flex flex-col min-h-screen">
-              <Header />
-              <main id="main" className="flex-1 pt-16 lg:pt-20">
-                {children}
-              </main>
-              <Footer />
-            </div>
-          </AuthProvider>
-        </div>
+        </AuthProvider>
       </body>
     </html>
   );

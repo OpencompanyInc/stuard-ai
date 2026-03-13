@@ -23,16 +23,35 @@ function buildHeaders(extra?: HeadersInit): Record<string, string> {
   return h;
 }
 
-async function apiFetch<T = any>(path: string, opts?: RequestInit): Promise<T & { ok: boolean; error?: string }> {
+async function apiFetch<T = any>(
+  path: string,
+  opts?: RequestInit & { timeoutMs?: number },
+): Promise<T & { ok: boolean; error?: string }> {
+  const timeout = opts?.timeoutMs ?? 15_000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+
+  // Allow caller to chain their own signal
+  if (opts?.signal) {
+    opts.signal.addEventListener('abort', () => controller.abort());
+  }
+
   try {
+    const { timeoutMs: _, ...fetchOpts } = opts ?? {} as any;
     const res = await fetch(`${CLOUD_API_URL}${path}`, {
-      ...opts,
-      headers: buildHeaders(opts?.headers),
+      ...fetchOpts,
+      headers: buildHeaders(fetchOpts?.headers),
+      signal: controller.signal,
     });
     const data = await res.json();
     return data;
   } catch (e: any) {
+    if (e?.name === 'AbortError') {
+      return { ok: false, error: 'request_timeout' } as any;
+    }
     return { ok: false, error: e?.message || 'network_error' } as any;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -53,6 +72,7 @@ export async function provisionCloudEngine(tier: string, diskSizeGb: number, vcp
   return apiFetch('/v1/cloud-engine/provision', {
     method: 'POST',
     body: JSON.stringify(body),
+    timeoutMs: 120_000, // VM creation can take up to 2 minutes
   });
 }
 

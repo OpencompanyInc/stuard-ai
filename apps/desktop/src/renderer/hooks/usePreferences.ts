@@ -44,6 +44,8 @@ export interface ModelMeta {
 
 export const ALL_CHAT_MODEL_IDS: string[] = [
   'xai/grok-4',
+  'xai/grok-4.20-beta-0309-reasoning',
+  'xai/grok-4.20-beta-0309-non-reasoning',
   'xai/grok-4-1-fast',
   'xai/grok-4-1-fast-non-reasoning',
   'xai/grok-4-fast',
@@ -111,6 +113,7 @@ const REASONING_MODEL_IDS = new Set<string>([
   'google/gemini-2.5-pro',
   'google/gemini-2.5-flash',
   'xai/grok-4',
+  'xai/grok-4.20-beta-0309-reasoning',
   'xai/grok-4-1-fast',
   'xai/grok-4-fast',
   'xai/grok-3',
@@ -141,7 +144,8 @@ const CONTEXT_WINDOWS: Record<string, number> = {
   'openai/gpt-5.2-codex': 700000,
   'openai/gpt-5.3-codex': 1000000,
   'xai/grok-4': 256000,
-  'xai/grok-4.20-beta-latest-non-reasoning': 2000000,
+  'xai/grok-4.20-beta-0309-reasoning': 2000000,
+  'xai/grok-4.20-beta-0309-non-reasoning': 2000000,
   'xai/grok-4-fast': 2000000,
   'xai/grok-3': 128000,
   'deepseek/deepseek-chat': 128000,
@@ -163,7 +167,8 @@ const CONTEXT_WINDOWS: Record<string, number> = {
 
 const MODEL_CATEGORIES: Record<string, 'fast' | 'balanced' | 'smart' | 'research'> = {
   'xai/grok-4': 'smart',
-  'xai/grok-4.20-beta-latest-non-reasoning': 'balanced',
+  'xai/grok-4.20-beta-0309-reasoning': 'smart',
+  'xai/grok-4.20-beta-0309-non-reasoning': 'balanced',
   'xai/grok-4-1-fast': 'balanced',
   'xai/grok-4-1-fast-non-reasoning': 'balanced',
   'xai/grok-4-fast': 'balanced',

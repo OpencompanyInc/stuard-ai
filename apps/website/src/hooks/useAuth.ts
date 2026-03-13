@@ -10,7 +10,7 @@ import {
   toOnboardingProfileRow,
   type OnboardingPath,
   type OnboardingProfile,
-} from '../../../../shared/onboardingProfile';
+} from '@/lib/onboardingProfile';
 
 interface UserData {
   uid: string;

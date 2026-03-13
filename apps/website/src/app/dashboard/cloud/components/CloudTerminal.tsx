@@ -83,7 +83,8 @@ export function CloudTerminal({ engine }: CloudTerminalProps) {
       term?.dispose();
       close();
     };
-  }, [engine.status, close, connect, onData, resize, sendData]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- hooks are stable via useCallback
+  }, [engine.status]);
 
   if (engine.status !== 'running') {
     return (

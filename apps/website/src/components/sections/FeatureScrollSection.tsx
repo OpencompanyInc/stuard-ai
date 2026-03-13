@@ -118,15 +118,21 @@ const FeatureScrollSection = () => {
 
                   {/* CTA Button for Final Slide */}
                   {feature.isCta && (
-                    <button 
-                      onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-                      className="mt-8 px-8 py-3 text-lg font-semibold text-white bg-[#171717] hover:bg-[#000000] rounded-lg transition-colors shadow-lg shadow-black/10 inline-flex items-center gap-2"
-                    >
-                      Join the Waitlist
-                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
-                      </svg>
-                    </button>
+                    <div className="flex flex-wrap gap-3 mt-8">
+                      <Link href="/signup">
+                        <button className="px-8 py-3 text-lg font-semibold text-white bg-[#171717] hover:bg-[#000000] rounded-lg transition-colors shadow-lg shadow-black/10 inline-flex items-center gap-2">
+                          Get Started Free
+                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                          </svg>
+                        </button>
+                      </Link>
+                      <Link href="/pricing">
+                        <button className="px-8 py-3 text-lg font-semibold text-gray-700 bg-white hover:bg-gray-50 rounded-lg transition-colors border border-gray-200 shadow-sm inline-flex items-center gap-2">
+                          View Pricing
+                        </button>
+                      </Link>
+                    </div>
                   )}
                 </div>
 
@@ -137,11 +143,11 @@ const FeatureScrollSection = () => {
                      <div className="text-center p-8">
                         <div className="w-24 h-24 bg-[#F3F1EB] rounded-2xl mx-auto flex items-center justify-center mb-6 text-gray-800">
                           <svg className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 19v-8.93a2 2 0 01.89-1.664l7-4.666a2 2 0 012.22 0l7 4.666A2 2 0 0121 10.07V19M3 19a2 2 0 002 2h14a2 2 0 002-2M3 19l6.75-4.5M21 19l-6.75-4.5M3 10l6.75 4.5M21 10l-6.75 4.5m0 0l-1.14.76a2 2 0 01-2.22 0l-1.14-.76" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
                           </svg>
                         </div>
-                        <h3 className="text-2xl font-serif text-gray-900 mb-2">Early Access</h3>
-                        <p className="text-gray-500">Secure your spot in line.</p>
+                        <h3 className="text-2xl font-serif text-gray-900 mb-2">Start Automating</h3>
+                        <p className="text-gray-500">Your AI assistant is ready.</p>
                      </div>
                    ) : feature.id === "build-tools" ? (
                      <WorkflowBuilderDemo />

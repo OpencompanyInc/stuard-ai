@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { getMetricsHistory } from '@/lib/cloudApi';
 
 interface CloudMonitoringProps {
@@ -29,29 +29,37 @@ export function CloudMonitoring({ engine }: CloudMonitoringProps) {
   const [metrics, setMetrics] = useState<MetricPoint[]>([]);
   const [range, setRange] = useState(1);
   const [loading, setLoading] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
 
-  const load = async (hours: number) => {
+  const load = useCallback(async (hours: number) => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
     try {
       const data = await getMetricsHistory(hours);
+      if (controller.signal.aborted) return;
       if (data.ok) setMetrics(data.metrics || []);
     } catch (e) {
+      if (controller.signal.aborted) return;
       console.error('Metrics fetch failed:', e);
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (engine.status === 'running') load(range);
-  }, [engine.status, range]);
+    return () => { abortRef.current?.abort(); };
+  }, [engine.status, range, load]);
 
   // Auto-refresh every 60s
   useEffect(() => {
     if (engine.status !== 'running') return;
     const iv = setInterval(() => load(range), 60_000);
     return () => clearInterval(iv);
-  }, [engine.status, range]);
+  }, [engine.status, range, load]);
 
   if (engine.status !== 'running') {
     return (

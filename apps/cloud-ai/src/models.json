@@ -11,14 +11,25 @@
     }
   },
   {
-    "id": "xai/grok-4.20-beta-latest-non-reasoning",
-    "name": "Grok 4.20 Beta (Non-Reasoning)",
+    "id": "xai/grok-4.20-beta-0309-reasoning",
+    "name": "Grok 4.20 Beta 0309 (Reasoning)",
+    "category": "smart",
+    "contextWindow": 2000000,
+    "pricing": {
+      "in": 2.0,
+      "out": 6.0,
+      "cached": 0.5
+    }
+  },
+  {
+    "id": "xai/grok-4.20-beta-0309-non-reasoning",
+    "name": "Grok 4.20 Beta 0309 (Non-Reasoning)",
     "category": "balanced",
     "contextWindow": 2000000,
     "pricing": {
-      "in": 0.2,
-      "out": 0.5,
-      "cached": 0.05
+      "in": 2.0,
+      "out": 6.0,
+      "cached": 0.5
     }
   },
   {
