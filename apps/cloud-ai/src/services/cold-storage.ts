@@ -338,7 +338,7 @@ export async function generateVMAssetUrls(): Promise<{
   } catch {}
 
   try {
-    const pyFile = bucket.file('python-agent/stuard-python-agent.tar.gz');
+    const pyFile = bucket.file('agent/stuard-python-agent.tar.gz');
     const [pyExists] = await pyFile.exists();
     if (pyExists) {
       const [url] = await pyFile.getSignedUrl({ version: 'v4', action: 'read', expires: ttl });

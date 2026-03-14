@@ -386,6 +386,57 @@ export function CloudEngineDashboard() {
     );
   }
 
+  // Show a "still booting" view if engine is running but agent is unreachable
+  // (e.g. e2-small VMs where agent takes >180s to start)
+  const isBooting = engine.status === 'running' && (engine.health_status === 'unreachable' || engine.health_status === 'unknown') && !metrics;
+  if (isBooting) {
+    return (
+      <div className="animate-in fade-in duration-500">
+        <div className="flex flex-col items-center justify-center min-h-[60vh]">
+          <div className="w-full max-w-md text-center">
+            <div className="w-16 h-16 rounded-3xl bg-amber-500/10 flex items-center justify-center mx-auto mb-4">
+              <Loader2 className="w-8 h-8 animate-spin text-amber-500" />
+            </div>
+            <h1 className="text-2xl font-black text-theme-fg tracking-tight">Your VM is still booting</h1>
+            <p className="text-theme-muted text-sm mt-2">
+              The machine is running but the AI agent is still installing packages and starting up.
+              This can take a few minutes on smaller plans.
+            </p>
+            <div className="mt-6 p-4 rounded-2xl bg-theme-card/30 border border-theme/10 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-theme-muted">Status</span>
+                <span className="font-bold text-amber-500">Agent starting...</span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-theme-muted">VM</span>
+                <span className="font-bold text-green-500">Running</span>
+              </div>
+              {engine.external_ip && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-theme-muted">IP Address</span>
+                  <span className="font-mono text-theme-fg">{engine.external_ip}</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-theme-muted">Plan</span>
+                <span className="font-bold text-theme-fg capitalize">{engine.tier}</span>
+              </div>
+            </div>
+            <p className="text-[10px] text-theme-muted mt-4">
+              This page will refresh automatically once the agent comes online.
+            </p>
+            <button
+              onClick={() => { if (confirm('This will permanently delete your cloud engine and all its data. Continue?')) destroy(); }}
+              className="mt-4 flex items-center gap-2 px-4 py-2 rounded-xl bg-red-600/10 text-red-500 text-xs font-black hover:bg-red-600/20 transition-all mx-auto"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> Delete Engine
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const statusColor = engine.status === 'running' ? 'text-green-500' : engine.status === 'stopped' ? 'text-amber-500' : 'text-red-500';
   const statusBgColor = engine.status === 'running' ? 'bg-green-500' : engine.status === 'stopped' ? 'bg-amber-500' : 'bg-red-500';
   const statusLabel = engine.status === 'running' ? 'Running' : engine.status === 'stopped' ? 'Paused' : engine.status;

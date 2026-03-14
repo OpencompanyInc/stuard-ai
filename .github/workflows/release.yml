@@ -34,6 +34,8 @@ env:
   GCP_REGION: ${{ secrets.GCP_REGION }}
   GAR_REPO: ${{ secrets.GAR_REPO }}
   GAR_HOST: ${{ secrets.GCP_REGION }}-docker.pkg.dev
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════
@@ -303,6 +305,16 @@ jobs:
         working-directory: apps/agent
         run: pip install -r requirements.txt
 
+      - name: Cache PyInstaller
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/agent/build
+            ~/.pyinstaller
+          key: pyinstaller-${{ runner.os }}-${{ hashFiles('apps/agent/requirements.txt', 'apps/agent/stuard-agent.spec') }}
+          restore-keys: |
+            pyinstaller-${{ runner.os }}-
+
       - name: Build Python Agent
         working-directory: apps/agent
         run: python build-agent.py
@@ -325,6 +337,28 @@ jobs:
       - uses: pnpm/action-setup@v2
         with:
           version: 8
+
+      - name: Cache npm modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-desktop-${{ runner.os }}-${{ hashFiles('apps/desktop/package-lock.json') }}
+          restore-keys: |
+            npm-desktop-${{ runner.os }}-
+
+      - name: Cache Electron & electron-builder
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/electron/Cache
+            ~/.cache/electron
+            ~/Library/Caches/electron
+            ~/AppData/Local/electron-builder/Cache
+            ~/.cache/electron-builder
+            ~/Library/Caches/electron-builder
+          key: electron-${{ runner.os }}-${{ hashFiles('apps/desktop/package-lock.json') }}
+          restore-keys: |
+            electron-${{ runner.os }}-
 
       - name: Install Desktop Dependencies
         working-directory: apps/desktop

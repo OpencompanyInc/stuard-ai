@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { verifyToken, checkAccess, getCloudEngine, upsertCloudEngine, updateCloudEngineStatus, deleteCloudEngine, getStorageUsage, upsertStorageUsage, updateEngineHealth, getCreditSummary, listExternalAccounts } from '../supabase';
+import { verifyToken, checkAccess, getCloudEngine, upsertCloudEngine, updateCloudEngineStatus, deleteCloudEngine, getStorageUsage, upsertStorageUsage, updateEngineHealth, getCreditSummary, listExternalAccounts, getSyncPreferences } from '../supabase';
 import { COMPUTE_TIER_CONFIG, DEFAULT_CLOUD_DISK_GB_BY_TIER, STORAGE_PRICING, estimateComputeCostCredits, estimateMachineCreditsPerHour, estimateStorageCostCredits, resolveComputeMachineSpec } from '../pricing';
 import { getComputeProvider } from '../services/compute';
 import { syncToCloud, restoreFromCloud, getSyncStatus } from '../services/sync-engine';
@@ -192,10 +192,15 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
         tierConfig = { machineType, vcpus: customVcpus, memoryGb: customRam, hourlyUsd };
         machineTypeOverride = machineType;
       }
+      // Fetch user timezone for VM env
+      const syncPrefs = await getSyncPreferences(user.userId);
+      const userTimezone = syncPrefs.timezone || null;
+
       const provider = getComputeProvider();
       setProvisionStep(user.userId, 'vm_creating');
       const { instanceName, zone, vmSecret } = await provider.provisionVM(user.userId, tier, diskSizeGb, {
         machineType: machineTypeOverride,
+        userTimezone,
       });
 
       // Insert cloud engine record (including per-VM secret for HMAC auth)
@@ -234,11 +239,11 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       // Fire-and-forget: wait for VM agent, restore data, then mark running
       (async () => {
         try {
-          // Wait for VM agent to be reachable (max 180s — agent starts fast
-          // now that heavy packages install in background)
+          // Wait for VM agent to be reachable (max 300s — e2-small needs
+          // ~2-4 min for apt-get + Node.js install before agent starts)
           let vmIp = externalIp;
           let vmReady = false;
-          for (let i = 0; i < 36; i++) {
+          for (let i = 0; i < 60; i++) {
             // Re-fetch IP if not available yet
             if (!vmIp) {
               setProvisionStep(user.userId, 'waiting_ip');

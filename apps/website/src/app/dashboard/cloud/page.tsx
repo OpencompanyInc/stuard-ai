@@ -164,6 +164,46 @@ export default function CloudDashboardPage() {
     );
   }
 
+  // Show "still booting" view when engine is running but agent hasn't come online yet
+  if (engine.status === 'running' && (engine.healthStatus === 'unreachable' || engine.healthStatus === 'unknown')) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[50vh]">
+        <div className="w-full max-w-md text-center">
+          <div className="w-14 h-14 rounded-2xl bg-amber-50 flex items-center justify-center mx-auto mb-4">
+            <svg className="w-7 h-7 text-amber-500 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          </div>
+          <h1 className="text-xl font-bold text-gray-900">Your VM is still booting</h1>
+          <p className="text-gray-500 text-sm mt-2">
+            The machine is running but the AI agent is still installing packages and starting up.
+            This can take a few minutes on smaller plans.
+          </p>
+          <div className="mt-6 p-4 rounded-xl bg-gray-50 space-y-2 text-left">
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-400">Status</span>
+              <span className="font-semibold text-amber-600">Agent starting...</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-400">VM</span>
+              <span className="font-semibold text-green-600">Running</span>
+            </div>
+            {engine.externalIp && (
+              <div className="flex justify-between text-xs">
+                <span className="text-gray-400">IP Address</span>
+                <span className="font-mono text-gray-700">{engine.externalIp}</span>
+              </div>
+            )}
+          </div>
+          <p className="text-[11px] text-gray-400 mt-4">
+            This page will refresh automatically once the agent comes online.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   const tabs: { id: CloudTab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
     { id: 'terminal', label: 'Terminal' },

@@ -6,7 +6,8 @@
       "Bash(do wc:*)",
       "mcp__supabase__execute_sql",
       "mcp__supabase__list_projects",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(gcloud compute:*)"
     ]
   }
 }

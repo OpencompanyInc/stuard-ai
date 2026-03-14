@@ -246,9 +246,11 @@ export class VMProactiveScheduler {
   async wakeup(): Promise<WakeupResult | null> {
     if (this.isRunning) return null;
 
-    // Quiet hours check
+    // Quiet hours check — use user's timezone if available (set via TZ env var)
     if (this.config.quietHoursStart !== undefined && this.config.quietHoursEnd !== undefined) {
-      const hour = new Date().getUTCHours();
+      // TZ env var is set on the VM from the user's profile timezone
+      // When TZ is set, new Date().getHours() returns local time in that timezone
+      const hour = process.env.TZ ? new Date().getHours() : new Date().getUTCHours();
       const { quietHoursStart, quietHoursEnd } = this.config;
       if (quietHoursStart < quietHoursEnd) {
         if (hour >= quietHoursStart && hour < quietHoursEnd) return null;
@@ -290,11 +292,10 @@ export class VMProactiveScheduler {
           },
           body: JSON.stringify({
             tasks: [...pendingTasks, ...inProgressTasks],
-            config: {
-              modelMode: this.config.modelMode,
-            },
-            channels: this.config.channels,
-            vmContext: {
+            modelMode: this.config.modelMode,
+            notificationChannels: this.config.channels,
+            deliverNotifications: this.config.channels.length > 0,
+            context: {
               isVM: true,
               hostname: require('os').hostname(),
               uptime: process.uptime(),

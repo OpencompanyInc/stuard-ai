@@ -51,8 +51,7 @@ def main():
     print(f"[build-agent] Output dir: {dist_dir}")
     print()
     
-    # Clean previous build artifacts
-    clean_directory(agent_dir / "build")
+    # Clean previous dist (keeps build/ cache for faster rebuilds)
     clean_directory(agent_dir / "dist")
     
     # Verify spec file exists
@@ -64,7 +63,6 @@ def main():
     # Run PyInstaller with verbose output
     cmd = [
         sys.executable, '-m', 'PyInstaller',
-        '--clean',
         '--noconfirm',
         '--log-level', 'INFO',
         str(spec_file)

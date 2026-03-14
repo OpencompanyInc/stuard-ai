@@ -866,6 +866,50 @@ export async function handleMarketplaceRoutes(
       return true;
     }
 
+    // Security checks for updated spec
+    const quickCheck = quickSecurityCheck(spec);
+    if (quickCheck.blocked) {
+      res.writeHead(403, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({
+        error: 'Security check failed',
+        reason: quickCheck.reason,
+        code: 'SECURITY_BLOCKED'
+      }));
+      return true;
+    }
+
+    let securityAnalysis: SecurityAnalysisResult | null = null;
+    try {
+      console.log('[marketplace] Running security analysis for update:', name || slug);
+      securityAnalysis = await analyzeWorkflowSecurity(spec, name || slug, description || '');
+      console.log('[marketplace] Update security analysis:', {
+        passed: securityAnalysis.passed,
+        score: securityAnalysis.overallScore,
+        riskLevel: securityAnalysis.riskLevel,
+        issueCount: securityAnalysis.issues.length
+      });
+
+      if (!securityAnalysis.passed) {
+        res.writeHead(403, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({
+          error: 'Workflow update did not pass security review',
+          code: 'SECURITY_REVIEW_FAILED',
+          analysis: {
+            passed: securityAnalysis.passed,
+            score: securityAnalysis.overallScore,
+            riskLevel: securityAnalysis.riskLevel,
+            issues: securityAnalysis.issues,
+            warnings: securityAnalysis.warnings,
+            summary: securityAnalysis.summary,
+            recommendations: securityAnalysis.recommendations
+          }
+        }));
+        return true;
+      }
+    } catch (analysisError) {
+      console.error('[marketplace] Update security analysis error (non-blocking):', analysisError);
+    }
+
     const supabase = getSupabaseService();
     if (!supabase) {
       res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -973,6 +1017,10 @@ export async function handleMarketplaceRoutes(
         updateData.cover_image_url = inferPrimaryImage(normalizedMedia);
       }
       if (embedding) updateData.embedding = embedding;
+      if (securityAnalysis) {
+        updateData.security_score = securityAnalysis.overallScore;
+        updateData.security_risk_level = securityAnalysis.riskLevel;
+      }
 
       const { data, error } = await supabase
         .from('marketplace_workflows')

@@ -124,7 +124,7 @@ export function useCloudEngine() {
           vcpus: e.vcpus,
           ram_gb: e.ram_gb ?? e.ramGb,
           created_at: e.created_at || e.createdAt || '',
-          last_heartbeat_at: e.last_heartbeat_at || e.lastHeartbeatAt,
+          last_heartbeat_at: e.last_heartbeat_at || e.lastHeartbeat || e.lastHeartbeatAt,
           health_status: e.health_status || e.healthStatus,
           external_ip: e.external_ip || e.externalIp,
           provision_step: e.provision_step || e.provisionStep || null,
@@ -390,25 +390,26 @@ export function useCloudEngine() {
 
     const isTransitional = status === 'provisioning' || status === 'starting' || status === 'stopping';
     const isRunning = status === 'running';
+    const isBooting = isRunning && (engine?.health_status === 'unreachable' || engine?.health_status === 'unknown');
 
-    if (isRunning) fetchMetrics();
+    if (isRunning && !isBooting) fetchMetrics();
 
-    // Poll faster during transitional states (5s) to pick up status changes quickly
-    const interval = isTransitional ? 5_000 : 30_000;
+    // Poll faster during transitional states or when agent is still booting (5s)
+    const interval = (isTransitional || isBooting) ? 5_000 : 30_000;
 
     if (isRunning || isTransitional) {
       pollRef.current = setInterval(() => {
         fetchEngine();
-        if (isRunning) fetchMetrics();
+        if (isRunning && !isBooting) fetchMetrics();
       }, interval);
     }
 
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [engine?.status, fetchEngine, fetchMetrics]);
+  }, [engine?.status, engine?.health_status, fetchEngine, fetchMetrics]);
 
-  // Load snapshots + deployments when engine exists
+  // Load snapshots + deployments when engine is running (not during provisioning/starting)
   useEffect(() => {
-    if (engine) {
+    if (engine && engine.status === 'running') {
       fetchSnapshots();
       fetchDeployments();
     }

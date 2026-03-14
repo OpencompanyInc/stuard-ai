@@ -5,6 +5,11 @@
 websockets>=12.0
 aiohttp>=3.9.0
 
+# FastAPI — needed because app.websocket.__init__ imports handler.py which uses FastAPI
+fastapi>=0.115.0
+pydantic>=2.9.0
+uvicorn>=0.30.0
+
 # Env / Config
 python-dotenv==1.0.0
 
@@ -19,6 +24,9 @@ numpy>=1.26.0
 
 # Encryption (for secure storage)
 cryptography>=42.0.0
+
+# Keyring — needed by app.storage.crypto (imported transitively via memory_db)
+keyring>=25.0.0
 
 # Optional: rich logging
 rich>=13.0.0

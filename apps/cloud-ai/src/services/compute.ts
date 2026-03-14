@@ -22,7 +22,7 @@ export interface IComputeProvider {
     userId: string,
     tier: string,
     diskSizeGb: number,
-    options?: { machineType?: string },
+    options?: { machineType?: string; userTimezone?: string | null },
   ): Promise<{ instanceName: string; zone: string; vmSecret: string }>;
   startVM(instanceName: string, zone: string): Promise<void>;
   stopVM(instanceName: string, zone: string): Promise<void>;
@@ -73,6 +73,7 @@ function buildStartupScript(
   vmSecret: string,
   vmToken?: string,
   signedUrls?: { agentBundleUrl?: string | null; agentDataUrl?: string | null; pythonAgentUrl?: string | null },
+  userTimezone?: string | null,
 ): string {
   const token = vmToken || '';
   const bucket = CLOUD_ENGINE_BUCKET || 'stuard-user-data';
@@ -96,7 +97,6 @@ echo "[stuard] ── VM startup $(date -u +%Y-%m-%dT%H:%M:%SZ) ──"
 # ── 1. Create stuard user + directory ────────────────────────────────────────
 id -u stuard &>/dev/null || useradd -m -s /bin/bash stuard
 mkdir -p /opt/stuard /home/stuard
-mkdir -p /home/stuard/memories /home/stuard/memories/topics /home/stuard/memories/conversations /home/stuard/memories/sync
 mkdir -p /home/stuard/proactive
 mkdir -p /home/stuard/deploys
 mkdir -p /home/stuard/workspace /home/stuard/data /home/stuard/scripts /home/stuard/assets
@@ -114,7 +114,6 @@ CLOUD_AI_URL=${cloudAiUrl}
 CLOUD_AI_WS=${cloudAiWsUrl}
 STUARD_VM_ROOT=/home/stuard
 STUARD_AGENT_PORT=7400
-STUARD_MEMORY_ROOT=/home/stuard/memories
 STUARD_PROACTIVE_ROOT=/home/stuard/proactive
 STUARD_DEPLOY_ROOT=/home/stuard/deploys
 AGENT_HOST=127.0.0.1
@@ -129,6 +128,8 @@ STUARD_AGENT_MODE=vm
 AGENT_DATA_DIR=/home/stuard/agent-data
 STUARD_VM_AGENT_URL=http://127.0.0.1:7400
 DISPLAY=:99
+TZ=${userTimezone || 'UTC'}
+STUARD_USER_TIMEZONE=${userTimezone || 'UTC'}
 ENVEOF
 
 # Also write to /etc/environment so interactive shells see them
@@ -142,7 +143,7 @@ fi
 
 # ── 4. Install Node.js + minimal deps (fast path — ~30s) ────────────────────
 apt-get update -y -q
-apt-get install -y -q cloud-guest-utils xfsprogs e2fsprogs jq curl wget git unzip 2>/dev/null || true
+apt-get install -y -q cloud-guest-utils xfsprogs e2fsprogs jq curl wget git unzip python3-venv 2>/dev/null || true
 
 if ! command -v node &>/dev/null; then
   echo "[stuard] Installing Node.js 20..."
@@ -258,7 +259,6 @@ fi
 # ── 7. Security hardening ────────────────────────────────────────────────────
 chmod 600 /opt/stuard/env
 chown stuard:stuard /opt/stuard/env
-chattr +i /opt/stuard/vm-agent-bundle.js 2>/dev/null || true
 chmod 750 /home/stuard
 grep -q '^stuard' /etc/sudoers 2>/dev/null && sed -i '/^stuard/d' /etc/sudoers 2>/dev/null || true
 
@@ -269,7 +269,9 @@ iptables -A OUTPUT -m owner --uid-owner stuard -d 169.254.169.254 -j DROP 2>/dev
 iptables -I INPUT -p tcp --dport 7400 -j ACCEPT 2>/dev/null || true
 iptables -A INPUT -p tcp --dport 8765 ! -s 127.0.0.1 -j DROP 2>/dev/null || true
 
+# chown BEFORE chattr — immutable files can't be chowned
 chown -R stuard:stuard /opt/stuard /home/stuard
+chattr +i /opt/stuard/vm-agent-bundle.js 2>/dev/null || true
 
 # ── 8. Create and START Node.js agent service IMMEDIATELY ────────────────────
 # This is the critical path — gets /health responding so cloud-ai knows we're alive.
@@ -585,7 +587,7 @@ export class GCEComputeProvider implements IComputeProvider {
     userId: string,
     tier: string,
     diskSizeGb: number,
-    options?: { machineType?: string },
+    options?: { machineType?: string; userTimezone?: string | null },
   ): Promise<{ instanceName: string; zone: string; vmSecret: string }> {
     return withProvisionLock(userId, () => this._doProvisionVM(userId, tier, diskSizeGb, options));
   }
@@ -642,7 +644,7 @@ export class GCEComputeProvider implements IComputeProvider {
     userId: string,
     tier: string,
     diskSizeGb: number,
-    options?: { machineType?: string },
+    options?: { machineType?: string; userTimezone?: string | null },
   ): Promise<{ instanceName: string; zone: string; vmSecret: string }> {
     const client = await this.getClient();
     const tierConfig = COMPUTE_TIER_CONFIG[tier];
@@ -714,7 +716,7 @@ export class GCEComputeProvider implements IComputeProvider {
           serviceAccounts,
           metadata: {
             items: [
-              { key: 'startup-script', value: buildStartupScript(userId, vmSecret, undefined, signedUrls) },
+              { key: 'startup-script', value: buildStartupScript(userId, vmSecret, undefined, signedUrls, options?.userTimezone) },
               { key: 'stuard-user-id', value: userId },
               { key: 'stuard-tier', value: tier },
             ],

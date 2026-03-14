@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { getMarketplaceApi, MarketplaceWorkflow, MarketplaceCategory, MarketplaceVersion, MarketplaceUpdate, MarketplaceCreatorProfile, MarketplaceWorkflowMedia } from "../../utils/cloud";
 import { supabase } from "../../lib/supabaseClient";
-import { Search, Download, Star, Tag, User, Calendar, X, AlertCircle, Loader2, Globe, Check, ChevronRight, Hash, Sparkles, Rocket, Plus, CheckCircle2, Pencil, Trash2, Clock, History, ArrowUpCircle, Package, Lock, Unlock, RefreshCw, ExternalLink, Info, Eye, EyeOff, Upload, ImagePlus, PlayCircle, Users } from "lucide-react";
+import { Search, Download, Star, Tag, User, Calendar, X, AlertCircle, Loader2, Globe, Check, ChevronRight, Hash, Sparkles, Rocket, Plus, CheckCircle2, Pencil, Trash2, Clock, History, ArrowUpCircle, Package, Lock, Unlock, RefreshCw, ExternalLink, Info, Eye, EyeOff, Upload, ImagePlus, PlayCircle, Users, Shield, ShieldAlert, ShieldCheck, ChevronDown } from "lucide-react";
 import { useWorkflowTheme } from "../WorkflowThemeContext";
 import "../../scrollbar.css";
 
@@ -171,6 +171,402 @@ function TagInput({ tags, onChange }: { tags: string[], onChange: (tags: string[
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECURITY REVIEW PANEL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function SecurityReviewPanel({
+  analysis,
+  reason,
+  code,
+  isDark,
+}: {
+  analysis?: any;
+  reason?: string;
+  code?: string;
+  isDark: boolean;
+}) {
+  const d = isDark;
+  const [expandedIssue, setExpandedIssue] = useState<number | null>(null);
+
+  // Simple blocked message (quick static check failed)
+  if (code === 'SECURITY_BLOCKED') {
+    return (
+      <div
+        className="rounded-2xl border p-5 space-y-3 animate-in slide-in-from-top-2 duration-300"
+        style={{
+          background: d ? "rgba(239,68,68,0.08)" : "#fef2f2",
+          borderColor: d ? "rgba(239,68,68,0.22)" : "#fecaca",
+        }}
+      >
+        <div className="flex items-start gap-3">
+          <div
+            className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+            style={{
+              background: d ? "rgba(239,68,68,0.15)" : "#fee2e2",
+              color: d ? "#fca5a5" : "#dc2626",
+            }}
+          >
+            <ShieldAlert className="w-5 h-5" />
+          </div>
+          <div>
+            <h4 className="font-semibold text-sm" style={{ color: d ? "#fca5a5" : "#991b1b" }}>
+              Security Check Blocked
+            </h4>
+            <p
+              className="text-xs mt-1 leading-relaxed"
+              style={{ color: d ? "rgba(252,165,165,0.85)" : "rgba(153,27,27,0.85)" }}
+            >
+              {reason || 'Your workflow was blocked by our security checks.'}
+            </p>
+          </div>
+        </div>
+        <p
+          className="text-xs leading-relaxed"
+          style={{ color: d ? "rgba(252,165,165,0.65)" : "rgba(153,27,27,0.65)" }}
+        >
+          Please review your workflow and remove any patterns that access sensitive system files,
+          contain destructive commands, or could be used for data exfiltration. Then try publishing again.
+        </p>
+      </div>
+    );
+  }
+
+  // No analysis data - generic error
+  if (!analysis) {
+    return (
+      <div
+        className="p-4 rounded-2xl border flex items-start gap-3 animate-in slide-in-from-top-2 duration-300"
+        style={{
+          background: d ? "rgba(239,68,68,0.08)" : "#fef2f2",
+          borderColor: d ? "rgba(239,68,68,0.22)" : "#fecaca",
+        }}
+      >
+        <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5" style={{ color: d ? "#fca5a5" : "#dc2626" }} />
+        <div>
+          <span className="text-sm font-medium" style={{ color: d ? "#fca5a5" : "#991b1b" }}>
+            {reason || 'Security review failed. Please try again.'}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  // Full detailed security review results
+  const { score, riskLevel, issues, warnings, summary, recommendations } = analysis;
+  const scorePercent = Math.max(0, Math.min(100, score || 0));
+
+  const riskColors: Record<string, { bg: string; border: string; text: string; badge: string }> = {
+    critical: {
+      bg: d ? "rgba(239,68,68,0.08)" : "#fef2f2",
+      border: d ? "rgba(239,68,68,0.22)" : "#fecaca",
+      text: d ? "#fca5a5" : "#991b1b",
+      badge: d ? "bg-red-900/40 text-red-300 border-red-700/30" : "bg-red-100 text-red-800 border-red-200",
+    },
+    high: {
+      bg: d ? "rgba(249,115,22,0.08)" : "#fff7ed",
+      border: d ? "rgba(249,115,22,0.22)" : "#fed7aa",
+      text: d ? "#fdba74" : "#9a3412",
+      badge: d ? "bg-orange-900/40 text-orange-300 border-orange-700/30" : "bg-orange-100 text-orange-800 border-orange-200",
+    },
+    medium: {
+      bg: d ? "rgba(245,158,11,0.08)" : "#fffbeb",
+      border: d ? "rgba(245,158,11,0.22)" : "#fde68a",
+      text: d ? "#fcd34d" : "#92400e",
+      badge: d ? "bg-amber-900/40 text-amber-300 border-amber-700/30" : "bg-amber-100 text-amber-800 border-amber-200",
+    },
+    low: {
+      bg: d ? "rgba(34,197,94,0.08)" : "#f0fdf4",
+      border: d ? "rgba(34,197,94,0.22)" : "#bbf7d0",
+      text: d ? "#86efac" : "#166534",
+      badge: d ? "bg-green-900/40 text-green-300 border-green-700/30" : "bg-green-100 text-green-800 border-green-200",
+    },
+  };
+  const colors = riskColors[riskLevel] || riskColors.high;
+
+  const severityConfig: Record<string, { color: string; bg: string; label: string }> = {
+    critical: { color: d ? "#fca5a5" : "#dc2626", bg: d ? "rgba(239,68,68,0.10)" : "#fef2f2", label: "CRITICAL" },
+    high: { color: d ? "#fdba74" : "#ea580c", bg: d ? "rgba(249,115,22,0.10)" : "#fff7ed", label: "HIGH" },
+    medium: { color: d ? "#fcd34d" : "#d97706", bg: d ? "rgba(245,158,11,0.10)" : "#fffbeb", label: "MEDIUM" },
+    low: { color: d ? "#86efac" : "#16a34a", bg: d ? "rgba(34,197,94,0.10)" : "#f0fdf4", label: "LOW" },
+  };
+
+  const scoreBarColor =
+    scorePercent >= 70 ? "#22c55e" : scorePercent >= 50 ? "#f59e0b" : scorePercent >= 30 ? "#f97316" : "#ef4444";
+
+  return (
+    <div
+      className="rounded-2xl border p-5 space-y-4 animate-in slide-in-from-top-2 duration-300"
+      style={{ background: colors.bg, borderColor: colors.border }}
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <div
+            className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+            style={{
+              background: d ? "rgba(239,68,68,0.15)" : "#fee2e2",
+              color: d ? "#fca5a5" : "#dc2626",
+            }}
+          >
+            <ShieldAlert className="w-5 h-5" />
+          </div>
+          <div>
+            <h4 className="font-semibold text-sm" style={{ color: colors.text }}>
+              Security Review Failed
+            </h4>
+            <p className="text-xs mt-0.5" style={{ color: d ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.5)" }}>
+              Your workflow did not pass the automated security review. Fix the issues below and try again.
+            </p>
+          </div>
+        </div>
+        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border shrink-0 ${colors.badge}`}>
+          {riskLevel}
+        </span>
+      </div>
+
+      {/* Score bar */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium" style={{ color: colors.text }}>Security Score</span>
+          <span className="text-xs font-bold" style={{ color: colors.text }}>{scorePercent}/100</span>
+        </div>
+        <div
+          className="h-2 rounded-full overflow-hidden"
+          style={{ background: d ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)" }}
+        >
+          <div
+            className="h-full rounded-full transition-all duration-700"
+            style={{ width: `${scorePercent}%`, background: scoreBarColor }}
+          />
+        </div>
+        <p className="text-[11px]" style={{ color: d ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.35)" }}>
+          A score of 40+ with no critical issues is required to publish.
+        </p>
+      </div>
+
+      {/* AI Summary */}
+      {summary && (
+        <div
+          className="rounded-xl p-3 border"
+          style={{
+            background: d ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.7)",
+            borderColor: d ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)",
+          }}
+        >
+          <p
+            className="text-xs leading-relaxed"
+            style={{ color: d ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.65)" }}
+          >
+            {summary}
+          </p>
+        </div>
+      )}
+
+      {/* Issues */}
+      {issues && issues.length > 0 && (
+        <div className="space-y-2">
+          <h5
+            className="text-[11px] font-semibold uppercase tracking-wide"
+            style={{ color: d ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)" }}
+          >
+            Issues ({issues.length})
+          </h5>
+          <div className="space-y-2">
+            {issues.map((issue: any, i: number) => {
+              const sev = severityConfig[issue.severity] || severityConfig.medium;
+              const isExpanded = expandedIssue === i;
+              return (
+                <button
+                  type="button"
+                  key={i}
+                  onClick={() => setExpandedIssue(isExpanded ? null : i)}
+                  className="w-full rounded-xl p-3 border text-left transition-all"
+                  style={{ background: sev.bg, borderColor: d ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)" }}
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                      style={{ background: sev.bg, color: sev.color, border: `1px solid ${sev.color}33` }}
+                    >
+                      {sev.label}
+                    </span>
+                    <span className="text-xs font-semibold flex-1" style={{ color: sev.color }}>
+                      {issue.title}
+                    </span>
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                      style={{ color: d ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.3)" }}
+                    />
+                  </div>
+                  {isExpanded && (
+                    <div className="mt-2 space-y-1.5 animate-in slide-in-from-top-1 duration-200">
+                      <p
+                        className="text-xs leading-relaxed"
+                        style={{ color: d ? "rgba(255,255,255,0.6)" : "rgba(0,0,0,0.55)" }}
+                      >
+                        {issue.description}
+                      </p>
+                      {issue.remediation && (
+                        <p className="text-xs flex items-start gap-1.5 pt-0.5" style={{ color: d ? "rgba(96,165,250,0.85)" : "#2563eb" }}>
+                          <span className="font-semibold shrink-0">Fix:</span> {issue.remediation}
+                        </p>
+                      )}
+                      {issue.location && (
+                        <p className="text-[10px] font-mono" style={{ color: d ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.25)" }}>
+                          Node: {issue.location}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Warnings */}
+      {warnings && warnings.length > 0 && (
+        <div className="space-y-2">
+          <h5
+            className="text-[11px] font-semibold uppercase tracking-wide"
+            style={{ color: d ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)" }}
+          >
+            Warnings ({warnings.length})
+          </h5>
+          <div className="space-y-1.5">
+            {warnings.map((w: any, i: number) => (
+              <div
+                key={i}
+                className="flex items-start gap-2 text-xs rounded-lg p-2.5"
+                style={{ background: d ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.03)" }}
+              >
+                <AlertCircle
+                  className="w-3.5 h-3.5 shrink-0 mt-0.5"
+                  style={{ color: d ? "#fcd34d" : "#d97706" }}
+                />
+                <div>
+                  <span className="font-medium" style={{ color: d ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.65)" }}>
+                    {w.category}:{' '}
+                  </span>
+                  <span style={{ color: d ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.5)" }}>
+                    {w.message}
+                  </span>
+                  {w.suggestion && (
+                    <p className="mt-0.5" style={{ color: d ? "rgba(96,165,250,0.7)" : "#3b82f6" }}>
+                      {w.suggestion}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Recommendations */}
+      {recommendations && recommendations.length > 0 && (
+        <div className="space-y-1.5">
+          <h5
+            className="text-[11px] font-semibold uppercase tracking-wide"
+            style={{ color: d ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)" }}
+          >
+            Recommendations
+          </h5>
+          <ul className="space-y-1">
+            {recommendations.map((rec: string, i: number) => (
+              <li
+                key={i}
+                className="flex items-start gap-2 text-xs"
+                style={{ color: d ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.5)" }}
+              >
+                <ShieldCheck className="w-3 h-3 shrink-0 mt-0.5" style={{ color: d ? "#86efac" : "#16a34a" }} />
+                <span>{rec}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PUBLISHING PROGRESS BANNER
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function PublishingProgress({ phase, isDark }: { phase: string; isDark: boolean }) {
+  const d = isDark;
+  const steps = [
+    { key: 'reviewing', label: 'Security Review', description: 'AI is analyzing your workflow for security issues...' },
+    { key: 'publishing', label: 'Publishing', description: 'Saving and indexing your workflow...' },
+  ];
+  const currentIndex = steps.findIndex(s => s.key === phase);
+
+  return (
+    <div
+      className="rounded-2xl p-5 border animate-in fade-in duration-300"
+      style={{
+        background: d ? "rgba(99,102,241,0.08)" : "#eef2ff",
+        borderColor: d ? "rgba(99,102,241,0.2)" : "#c7d2fe",
+      }}
+    >
+      <div className="flex items-center gap-4">
+        <div className="relative">
+          <Loader2 className="w-8 h-8 animate-spin" style={{ color: d ? "#818cf8" : "#4f46e5" }} />
+        </div>
+        <div className="flex-1">
+          <h4 className="text-sm font-semibold" style={{ color: d ? "#c7d2fe" : "#3730a3" }}>
+            {steps[currentIndex]?.label || 'Processing'}...
+          </h4>
+          <p className="text-xs mt-0.5" style={{ color: d ? "rgba(199,210,254,0.72)" : "rgba(55,48,163,0.72)" }}>
+            {steps[currentIndex]?.description || 'Please wait...'}
+          </p>
+        </div>
+      </div>
+      <div className="mt-3 flex gap-1.5">
+        {steps.map((step, i) => (
+          <div
+            key={step.key}
+            className="flex-1 h-1.5 rounded-full overflow-hidden"
+            style={{ background: d ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)" }}
+          >
+            <div
+              className={`h-full rounded-full transition-all duration-700 ${
+                i < currentIndex
+                  ? 'w-full'
+                  : i === currentIndex
+                  ? 'w-full animate-pulse'
+                  : 'w-0'
+              }`}
+              style={{
+                background: i <= currentIndex ? (d ? "#818cf8" : "#4f46e5") : 'transparent',
+              }}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 flex gap-1.5">
+        {steps.map((step, i) => (
+          <div key={step.key} className="flex-1">
+            <span
+              className="text-[10px] font-medium"
+              style={{
+                color: i <= currentIndex
+                  ? (d ? "#a5b4fc" : "#4338ca")
+                  : (d ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.2)"),
+              }}
+            >
+              {step.label}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function PublishModal({
   model,
   onClose,
@@ -183,6 +579,8 @@ export function PublishModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [publishPhase, setPublishPhase] = useState<'idle' | 'reviewing' | 'publishing' | 'done' | 'failed'>('idle');
+  const [securityResult, setSecurityResult] = useState<{ code?: string; reason?: string; analysis?: any } | null>(null);
   const [name, setName] = useState(model.name || "");
   const [description, setDescription] = useState("");
   const [shortDescription, setShortDescription] = useState("");
@@ -333,6 +731,8 @@ export function PublishModal({
 
     setLoading(true);
     setError(null);
+    setSecurityResult(null);
+    setPublishPhase('reviewing');
 
     try {
       const token = await getToken();
@@ -347,26 +747,34 @@ export function PublishModal({
         spec: model,
         category,
         tags,
-        icon: undefined, // TODO: Add icon picker
+        icon: undefined,
         thumbnailUrl: thumbnailUrl || undefined,
         coverImageUrl: coverImageUrl || undefined,
         media,
         creatorProfile,
         locked,
-      });
+      }) as any;
 
       if (res.ok) {
+        setPublishPhase('done');
         setSuccess(true);
-        // Notify via desktopAPI if available
         try { (window as any).desktopAPI?.notify?.('Published!', `${name} is now live on the marketplace.`); } catch { }
         onSuccess();
-        // Close after a brief delay to show success state
         setTimeout(() => onClose(), 1200);
+      } else if (res.code === 'SECURITY_BLOCKED' || res.code === 'SECURITY_REVIEW_FAILED') {
+        setPublishPhase('failed');
+        setSecurityResult({
+          code: res.code,
+          reason: res.reason || res.error,
+          analysis: res.analysis,
+        });
       } else {
-        setError(res.error || "Failed to publish");
+        setPublishPhase('failed');
+        setError(res.error || "Failed to publish workflow. Please try again.");
       }
     } catch (e: any) {
-      setError(e.message || "An error occurred");
+      setPublishPhase('failed');
+      setError(e.message || "An error occurred while publishing. Please check your connection.");
     } finally {
       setLoading(false);
     }
@@ -556,10 +964,34 @@ export function PublishModal({
           </p>
         </div>
 
-        {error && (
-          <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg flex items-start gap-2 text-rose-700 text-sm animate-in slide-in-from-top-2">
-            <AlertCircle className="w-5 h-5 shrink-0" />
-            <span>{error}</span>
+        {/* Publishing progress */}
+        {loading && (
+          <PublishingProgress phase={publishPhase} isDark={d} />
+        )}
+
+        {/* Security review results */}
+        {securityResult && !loading && (
+          <SecurityReviewPanel
+            analysis={securityResult.analysis}
+            reason={securityResult.reason}
+            code={securityResult.code}
+            isDark={d}
+          />
+        )}
+
+        {/* Generic error (non-security) */}
+        {error && !securityResult && !loading && (
+          <div
+            className="p-4 rounded-2xl border flex items-start gap-3 animate-in slide-in-from-top-2 duration-300"
+            style={{
+              background: d ? "rgba(239,68,68,0.08)" : "#fef2f2",
+              borderColor: d ? "rgba(239,68,68,0.22)" : "#fecaca",
+            }}
+          >
+            <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" style={{ color: d ? "#fca5a5" : "#dc2626" }} />
+            <div>
+              <span className="text-sm font-medium" style={{ color: d ? "#fca5a5" : "#991b1b" }}>{error}</span>
+            </div>
           </div>
         )}
 
@@ -842,10 +1274,24 @@ export function PublishModal({
           type="button"
           onClick={handlePublish}
           disabled={loading}
-          className="px-4 py-2 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-700 font-medium flex items-center gap-2 disabled:opacity-50 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0"
+          className="px-5 py-2.5 rounded-xl text-sm bg-indigo-600 text-white hover:bg-indigo-700 font-medium flex items-center gap-2 disabled:opacity-50 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0"
         >
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}
-          Publish Workflow
+          {loading ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              {publishPhase === 'reviewing' ? 'Reviewing...' : 'Publishing...'}
+            </>
+          ) : securityResult ? (
+            <>
+              <RefreshCw className="w-4 h-4" />
+              Fix & Retry
+            </>
+          ) : (
+            <>
+              <Globe className="w-4 h-4" />
+              Publish Workflow
+            </>
+          )}
         </button>
       </div>
     </ModalShell>
@@ -870,6 +1316,8 @@ export function UpdateWorkflowModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [updatePhase, setUpdatePhase] = useState<'idle' | 'reviewing' | 'publishing' | 'done' | 'failed'>('idle');
+  const [securityResult, setSecurityResult] = useState<{ code?: string; reason?: string; analysis?: any } | null>(null);
   const [name, setName] = useState(workflow.name);
   const [description, setDescription] = useState(workflow.description);
   const [shortDescription, setShortDescription] = useState(workflow.short_description || "");
@@ -968,6 +1416,8 @@ export function UpdateWorkflowModal({
   const handleUpdate = async () => {
     setLoading(true);
     setError(null);
+    setSecurityResult(null);
+    setUpdatePhase('reviewing');
 
     try {
       const token = await getToken();
@@ -988,18 +1438,28 @@ export function UpdateWorkflowModal({
         creatorProfile: creatorProfile,
         changelog: changelog.trim() || undefined,
         locked: locked !== Boolean(workflow.locked) ? locked : undefined,
-      });
+      }) as any;
 
       if (res.ok) {
+        setUpdatePhase('done');
         setSuccess(true);
         try { (window as any).desktopAPI?.notify?.('Updated!', `${name} v${res.workflow?.version} is now live.`); } catch { }
         onSuccess();
         setTimeout(() => onClose(), 1200);
+      } else if (res.code === 'SECURITY_BLOCKED' || res.code === 'SECURITY_REVIEW_FAILED') {
+        setUpdatePhase('failed');
+        setSecurityResult({
+          code: res.code,
+          reason: res.reason || res.error,
+          analysis: res.analysis,
+        });
       } else {
-        setError(res.error || "Failed to update");
+        setUpdatePhase('failed');
+        setError(res.error || "Failed to update workflow. Please try again.");
       }
     } catch (e: any) {
-      setError(e.message || "An error occurred");
+      setUpdatePhase('failed');
+      setError(e.message || "An error occurred while updating.");
     } finally {
       setLoading(false);
     }
@@ -1057,10 +1517,34 @@ export function UpdateWorkflowModal({
           </p>
         </div>
 
-        {error && (
-          <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg flex items-start gap-2 text-rose-700 text-sm animate-in slide-in-from-top-2">
-            <AlertCircle className="w-5 h-5 shrink-0" />
-            <span>{error}</span>
+        {/* Publishing progress */}
+        {loading && (
+          <PublishingProgress phase={updatePhase} isDark={d} />
+        )}
+
+        {/* Security review results */}
+        {securityResult && !loading && (
+          <SecurityReviewPanel
+            analysis={securityResult.analysis}
+            reason={securityResult.reason}
+            code={securityResult.code}
+            isDark={d}
+          />
+        )}
+
+        {/* Generic error (non-security) */}
+        {error && !securityResult && !loading && (
+          <div
+            className="p-4 rounded-2xl border flex items-start gap-3 animate-in slide-in-from-top-2 duration-300"
+            style={{
+              background: d ? "rgba(239,68,68,0.08)" : "#fef2f2",
+              borderColor: d ? "rgba(239,68,68,0.22)" : "#fecaca",
+            }}
+          >
+            <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" style={{ color: d ? "#fca5a5" : "#dc2626" }} />
+            <div>
+              <span className="text-sm font-medium" style={{ color: d ? "#fca5a5" : "#991b1b" }}>{error}</span>
+            </div>
           </div>
         )}
 
@@ -1366,10 +1850,24 @@ export function UpdateWorkflowModal({
           type="button"
           onClick={handleUpdate}
           disabled={loading}
-          className="px-4 py-2 rounded-lg text-sm bg-amber-600 text-white hover:bg-amber-700 font-medium flex items-center gap-2 disabled:opacity-50 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0"
+          className="px-5 py-2.5 rounded-xl text-sm bg-amber-600 text-white hover:bg-amber-700 font-medium flex items-center gap-2 disabled:opacity-50 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0"
         >
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowUpCircle className="w-4 h-4" />}
-          Publish Update
+          {loading ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              {updatePhase === 'reviewing' ? 'Reviewing...' : 'Updating...'}
+            </>
+          ) : securityResult ? (
+            <>
+              <RefreshCw className="w-4 h-4" />
+              Fix & Retry
+            </>
+          ) : (
+            <>
+              <ArrowUpCircle className="w-4 h-4" />
+              Publish Update
+            </>
+          )}
         </button>
       </div>
     </ModalShell>

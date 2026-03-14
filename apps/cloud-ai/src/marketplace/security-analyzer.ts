@@ -10,7 +10,7 @@
  */
 
 import { generateText } from 'ai';
-import { openai } from '@ai-sdk/openai';
+import { google } from '../utils/models';
 
 export interface SecurityAnalysisResult {
   passed: boolean;
@@ -528,9 +528,9 @@ RESPOND WITH VALID JSON ONLY (no markdown, no explanation):
 
   try {
     const result = await generateText({
-      model: openai('gpt-4o-mini'),
+      model: google('gemini-2.5-pro') as any,
       prompt,
-      maxOutputTokens: 2000,
+      maxOutputTokens: 4000,
     });
 
     const text = result.text.trim();
