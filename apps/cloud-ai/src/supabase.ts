@@ -1742,7 +1742,7 @@ export async function updateCloudEngineStatus(
   userId: string,
   status: string,
   expectedStatus?: string,
-  timestamps?: { started_at?: string; stopped_at?: string; deleted_at?: string },
+  timestamps?: { started_at?: string; stopped_at?: string; deleted_at?: string; health_status?: string },
 ): Promise<boolean> {
   if (!supabaseService) return false;
   try {
