@@ -1,6 +1,6 @@
 {
   "name": "@stuardai/desktop",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "private": true,
   "main": "dist/main/index.js",
   "type": "commonjs",
