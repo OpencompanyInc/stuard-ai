@@ -128,11 +128,15 @@ ENVEOF
 # Also write to /etc/environment so interactive shells see them
 grep -q STUARD_VM /etc/environment 2>/dev/null || cat /opt/stuard/env >> /etc/environment
 
-# ── 3. Install Node.js 20 LTS (if not already installed) ────────────────────
-# Also install guest disk utilities so the root filesystem can expand to the
-# requested boot disk size instead of staying at the image default.
-apt-get update -y
-apt-get install -y -q cloud-guest-utils xfsprogs e2fsprogs 2>/dev/null || true
+# ── 3. DNS — set up early so all downloads work reliably ─────────────────────
+if ! grep -q '8.8.8.8' /etc/resolv.conf 2>/dev/null; then
+  echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+  echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+fi
+
+# ── 4. Install Node.js + minimal deps (fast path — ~30s) ────────────────────
+apt-get update -y -q
+apt-get install -y -q cloud-guest-utils xfsprogs e2fsprogs jq curl wget git unzip 2>/dev/null || true
 
 if ! command -v node &>/dev/null; then
   echo "[stuard] Installing Node.js 20..."
@@ -143,19 +147,7 @@ else
   echo "[stuard] Node.js $(node --version) already installed"
 fi
 
-# Install node-pty native dependency and headless browser for automation
-apt-get install -y -q build-essential python3 python3-pip python3-venv \
-  chromium chromium-driver xvfb xdotool imagemagick \
-  ffmpeg jq curl wget git unzip 2>/dev/null || true
-npm install -g node-pty 2>/dev/null || echo "[stuard] node-pty global install skipped (will try local)"
-
-# Setup headless display for browser automation (Xvfb)
-export DISPLAY=:99
-Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &>/dev/null &
-echo "export DISPLAY=:99" >> /opt/stuard/env
-
-# Expand the root partition/filesystem to the full boot disk size if the image
-# came up with a smaller default filesystem.
+# ── 5. Expand root partition to full boot disk size ──────────────────────────
 ROOT_DEV="$(findmnt -n -o SOURCE / 2>/dev/null || true)"
 ROOT_FSTYPE="$(findmnt -n -o FSTYPE / 2>/dev/null || true)"
 ROOT_DISK="$(lsblk -no PKNAME "$ROOT_DEV" 2>/dev/null | head -n1 || true)"
@@ -170,7 +162,7 @@ if [ -n "$ROOT_DEV" ] && [ -n "$ROOT_DISK" ] && [ -n "$ROOT_PARTNUM" ] && comman
   fi
 fi
 
-# ── 4. Download VM agent bundle from GCS ────────────────────────────────────
+# ── 6. Download VM agent bundle from GCS ─────────────────────────────────────
 AGENT_PATH="/opt/stuard/vm-agent-bundle.js"
 AGENT_GCS="gs://${bucket}/agent/vm-agent-bundle.js"
 
@@ -180,7 +172,6 @@ for i in 1 2 3; do
     echo "[stuard] Agent downloaded ($(wc -c < "$AGENT_PATH") bytes)"
     break
   fi
-  # Fallback: try direct HTTPS (works if bucket has public access)
   AGENT_URL="https://storage.googleapis.com/${bucket}/agent/vm-agent-bundle.js"
   if curl -fsSL -o "$AGENT_PATH" "$AGENT_URL" 2>/dev/null; then
     echo "[stuard] Agent downloaded via HTTP ($(wc -c < "$AGENT_PATH") bytes)"
@@ -195,98 +186,133 @@ if [ ! -s "$AGENT_PATH" ]; then
   exit 1
 fi
 
-# Also install node-pty locally in /opt/stuard for the agent
+# Install ws (needed by agent) — node-pty deferred to background
 cd /opt/stuard
 npm init -y 2>/dev/null || true
-npm install node-pty ws 2>/dev/null || echo "[stuard] Warning: node-pty install failed (terminal may not work)"
+npm install ws 2>/dev/null || true
 cd /
 
-# ── 4b. Download & install Python agent (local tool provider) ───────────────
-PYAGENT_GCS="gs://${bucket}/agent/stuard-python-agent.tar.gz"
-PYAGENT_PATH="/opt/stuard/python-agent"
+# ── 6b. Restore agent databases from cold storage if available ──────────────
+AGENT_DB_GCS="gs://${bucket}/users/${userId}/agent-data.tar.gz"
+if gsutil -q stat "$AGENT_DB_GCS" 2>/dev/null; then
+  echo "[stuard] Restoring agent databases from cold storage..."
+  gsutil cp "$AGENT_DB_GCS" /tmp/agent-data.tar.gz 2>/dev/null
+  if [ -f /tmp/agent-data.tar.gz ]; then
+    # List contents to understand the archive structure
+    echo "[stuard] Archive contents:"
+    tar -tzf /tmp/agent-data.tar.gz 2>/dev/null | head -30 || true
 
-echo "[stuard] Downloading Python agent from $PYAGENT_GCS..."
-mkdir -p "$PYAGENT_PATH"
-if gsutil cp "$PYAGENT_GCS" /tmp/stuard-python-agent.tar.gz 2>/dev/null; then
-  tar -xzf /tmp/stuard-python-agent.tar.gz -C "$PYAGENT_PATH" --strip-components=1
-  rm -f /tmp/stuard-python-agent.tar.gz
-  echo "[stuard] Python agent extracted to $PYAGENT_PATH"
+    # Extract to a temp dir first, then move files to correct locations
+    mkdir -p /tmp/agent-extract
+    tar -xzf /tmp/agent-data.tar.gz -C /tmp/agent-extract 2>/dev/null
 
-  # Create virtual environment and install requirements
-  if [ -f "$PYAGENT_PATH/requirements-vm.txt" ]; then
-    echo "[stuard] Installing Python agent dependencies (VM-slim)..."
-    python3 -m venv "$PYAGENT_PATH/venv"
-    "$PYAGENT_PATH/venv/bin/pip" install --quiet --no-cache-dir -r "$PYAGENT_PATH/requirements-vm.txt" 2>&1 | tail -5
-  elif [ -f "$PYAGENT_PATH/requirements.txt" ]; then
-    echo "[stuard] Installing Python agent dependencies..."
-    python3 -m venv "$PYAGENT_PATH/venv"
-    "$PYAGENT_PATH/venv/bin/pip" install --quiet --no-cache-dir -r "$PYAGENT_PATH/requirements.txt" 2>&1 | tail -5
-  fi
-  echo "[stuard] Python agent ready"
-else
-  PYAGENT_URL="https://storage.googleapis.com/${bucket}/agent/stuard-python-agent.tar.gz"
-  if curl -fsSL -o /tmp/stuard-python-agent.tar.gz "$PYAGENT_URL" 2>/dev/null; then
-    tar -xzf /tmp/stuard-python-agent.tar.gz -C "$PYAGENT_PATH" --strip-components=1
-    rm -f /tmp/stuard-python-agent.tar.gz
-    if [ -f "$PYAGENT_PATH/requirements-vm.txt" ]; then
-      python3 -m venv "$PYAGENT_PATH/venv"
-      "$PYAGENT_PATH/venv/bin/pip" install --quiet --no-cache-dir -r "$PYAGENT_PATH/requirements-vm.txt" 2>&1 | tail -5
+    # New format: archive has agent/knowledge.db, agent/memory.db, lancedb/..., workflow.db
+    if [ -d /tmp/agent-extract/agent ]; then
+      echo "[stuard] New archive format detected (agent/ prefix)"
+      cp -a /tmp/agent-extract/agent/* /home/stuard/agent-data/ 2>/dev/null || true
+    else
+      # Old format: flat files (knowledge.db, memory.db at root of archive)
+      echo "[stuard] Legacy archive format (flat files)"
+      cp -a /tmp/agent-extract/* /home/stuard/agent-data/ 2>/dev/null || true
     fi
-    echo "[stuard] Python agent ready (via HTTP)"
-  else
-    echo "[stuard] Warning: Python agent not available — some tools will be limited"
+
+    # Restore lancedb embeddings if present
+    if [ -d /tmp/agent-extract/lancedb ]; then
+      mkdir -p /home/stuard/lancedb
+      cp -a /tmp/agent-extract/lancedb/* /home/stuard/lancedb/ 2>/dev/null || true
+      chown -R stuard:stuard /home/stuard/lancedb
+      echo "[stuard] LanceDB embeddings restored"
+    fi
+
+    # Restore workflow.db if present
+    if [ -f /tmp/agent-extract/workflow.db ]; then
+      cp -a /tmp/agent-extract/workflow.db /home/stuard/data/ 2>/dev/null || true
+      echo "[stuard] workflow.db restored"
+    fi
+
+    rm -rf /tmp/agent-extract /tmp/agent-data.tar.gz
+
+    # Log what we restored
+    echo "[stuard] Agent data restored:"
+    ls -la /home/stuard/agent-data/ 2>/dev/null || echo "  (empty)"
+    chown -R stuard:stuard /home/stuard/agent-data
+    echo "[stuard] Agent databases restored successfully"
   fi
+else
+  echo "[stuard] No agent database backup found — starting fresh"
 fi
 
-# Set ownership — agent runs as stuard, not root
-chown -R stuard:stuard /opt/stuard /home/stuard
-
-# ── 4c. Security hardening ──────────────────────────────────────────────────
-
-# Lock down env file — only stuard can read (contains VM_TOKEN_SECRET)
+# ── 7. Security hardening ────────────────────────────────────────────────────
 chmod 600 /opt/stuard/env
 chown stuard:stuard /opt/stuard/env
-
-# Prevent stuard user from modifying the agent binary or env file
 chattr +i /opt/stuard/vm-agent-bundle.js 2>/dev/null || true
-
-# Restrict home directory — no world-readable access
 chmod 750 /home/stuard
-
-# Disable sudo for stuard (belt-and-suspenders — user shouldn't be in sudoers)
 grep -q '^stuard' /etc/sudoers 2>/dev/null && sed -i '/^stuard/d' /etc/sudoers 2>/dev/null || true
 
-# ── 5. DNS — ensure reliable DNS before any network-dependent step ────────────
-# Debian 12 on GCE sometimes relies on 169.254.169.254 as the sole nameserver.
-# Add Google Public DNS as a fallback so stuard processes can always resolve.
-if ! grep -q '8.8.8.8' /etc/resolv.conf 2>/dev/null; then
-  echo "nameserver 8.8.8.8" >> /etc/resolv.conf
-  echo "nameserver 8.8.4.4" >> /etc/resolv.conf
-fi
-# Warm the DNS cache for storage.googleapis.com (used by deploy downloads)
-for i in 1 2 3; do
-  if getent hosts storage.googleapis.com >/dev/null 2>&1; then break; fi
-  sleep 2
-done
-
-# ── 6. Firewall — only allow agent port (7400) from external, lock down rest ─
-# Block metadata server for stuard user (prevent SSRF), but allow DNS (port 53)
-# so the agent can still resolve hostnames through the metadata DNS proxy.
+# Firewall
 iptables -A OUTPUT -m owner --uid-owner stuard -d 169.254.169.254 -p tcp --dport 53 -j ACCEPT 2>/dev/null || true
 iptables -A OUTPUT -m owner --uid-owner stuard -d 169.254.169.254 -p udp --dport 53 -j ACCEPT 2>/dev/null || true
 iptables -A OUTPUT -m owner --uid-owner stuard -d 169.254.169.254 -j DROP 2>/dev/null || true
-# Allow agent port from cloud-ai
 iptables -I INPUT -p tcp --dport 7400 -j ACCEPT 2>/dev/null || true
-# Python agent WS (8765) should only be accessible from localhost
 iptables -A INPUT -p tcp --dport 8765 ! -s 127.0.0.1 -j DROP 2>/dev/null || true
 
-# ── 6. Create systemd services ───────────────────────────────────────────────
+chown -R stuard:stuard /opt/stuard /home/stuard
 
-# Xvfb (virtual framebuffer) for headless browser/GUI automation
-if command -v Xvfb >/dev/null 2>&1; then
-cat > /etc/systemd/system/stuard-xvfb.service <<'XVFBEOF'
+# ── 8. Create and START Node.js agent service IMMEDIATELY ────────────────────
+# This is the critical path — gets /health responding so cloud-ai knows we're alive.
+cat > /etc/systemd/system/stuard-agent.service <<'SVCEOF'
 [Unit]
-Description=Xvfb Virtual Framebuffer (headless display)
+Description=Stuard VM Agent (HTTP server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/stuard/env
+ExecStart=/usr/bin/node /opt/stuard/vm-agent-bundle.js
+WorkingDirectory=/home/stuard
+User=stuard
+Group=stuard
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=stuard-agent
+
+LimitNOFILE=65536
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+systemctl daemon-reload
+systemctl enable stuard-agent
+systemctl start stuard-agent
+echo "[stuard] VM agent HTTP server started on port 7400"
+
+# ── 9. Install heavy packages + Python agent IN BACKGROUND ──────────────────
+# These take 3-8 minutes on e2-small. The Node.js agent is already serving
+# /health so cloud-ai won't time out waiting.
+(
+  exec > /var/log/stuard-background-setup.log 2>&1
+  echo "[stuard-bg] ── Background setup started $(date -u +%Y-%m-%dT%H:%M:%SZ) ──"
+
+  # Install build tools, browser, python, media tools
+  apt-get install -y -q build-essential python3 python3-pip python3-venv \\
+    chromium chromium-driver xvfb xdotool imagemagick \\
+    ffmpeg 2>/dev/null || true
+
+  # Install node-pty (needs build-essential)
+  cd /opt/stuard
+  npm install node-pty 2>/dev/null || echo "[stuard-bg] node-pty install failed (terminal may not work)"
+  cd /
+
+  # Start Xvfb
+  if command -v Xvfb >/dev/null 2>&1; then
+    cat > /etc/systemd/system/stuard-xvfb.service <<'XVFBEOF'
+[Unit]
+Description=Xvfb Virtual Framebuffer
 After=network.target
 
 [Service]
@@ -298,11 +324,43 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 XVFBEOF
-fi
+    systemctl daemon-reload
+    systemctl enable stuard-xvfb
+    systemctl start stuard-xvfb
+    echo "[stuard-bg] Xvfb started on display :99"
+  fi
 
-# Python agent service (provides local tools via WebSocket on port 8765)
-if [ -d /opt/stuard/python-agent ] && [ -f /opt/stuard/python-agent/vm_main.py ]; then
-cat > /etc/systemd/system/stuard-python-agent.service <<'PYEOF'
+  # Download & install Python agent
+  PYAGENT_GCS="gs://${bucket}/agent/stuard-python-agent.tar.gz"
+  PYAGENT_PATH="/opt/stuard/python-agent"
+  mkdir -p "$PYAGENT_PATH"
+
+  PYAGENT_DOWNLOADED=false
+  if gsutil cp "$PYAGENT_GCS" /tmp/stuard-python-agent.tar.gz 2>/dev/null; then
+    PYAGENT_DOWNLOADED=true
+  else
+    PYAGENT_URL="https://storage.googleapis.com/${bucket}/agent/stuard-python-agent.tar.gz"
+    if curl -fsSL -o /tmp/stuard-python-agent.tar.gz "$PYAGENT_URL" 2>/dev/null; then
+      PYAGENT_DOWNLOADED=true
+    fi
+  fi
+
+  if [ "$PYAGENT_DOWNLOADED" = true ]; then
+    tar -xzf /tmp/stuard-python-agent.tar.gz -C "$PYAGENT_PATH" --strip-components=1
+    rm -f /tmp/stuard-python-agent.tar.gz
+
+    if [ -f "$PYAGENT_PATH/requirements-vm.txt" ]; then
+      python3 -m venv "$PYAGENT_PATH/venv"
+      "$PYAGENT_PATH/venv/bin/pip" install --quiet --no-cache-dir -r "$PYAGENT_PATH/requirements-vm.txt" 2>&1 | tail -5
+    elif [ -f "$PYAGENT_PATH/requirements.txt" ]; then
+      python3 -m venv "$PYAGENT_PATH/venv"
+      "$PYAGENT_PATH/venv/bin/pip" install --quiet --no-cache-dir -r "$PYAGENT_PATH/requirements.txt" 2>&1 | tail -5
+    fi
+
+    chown -R stuard:stuard /opt/stuard/python-agent
+
+    if [ -f "$PYAGENT_PATH/vm_main.py" ]; then
+      cat > /etc/systemd/system/stuard-python-agent.service <<'PYEOF'
 [Unit]
 Description=Stuard Python Agent (local tool provider)
 After=network-online.target
@@ -324,85 +382,29 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=stuard-python
 
-# Resource limits
 LimitNOFILE=65536
 MemoryMax=256M
 
 [Install]
 WantedBy=multi-user.target
 PYEOF
-fi
+      systemctl daemon-reload
+      systemctl enable stuard-python-agent
+      systemctl start stuard-python-agent
+      echo "[stuard-bg] Python agent started on ws://127.0.0.1:8765"
+    fi
+    echo "[stuard-bg] Python agent ready"
+  else
+    echo "[stuard-bg] Warning: Python agent not available"
+  fi
 
-# Node.js VM agent service (HTTP server on port 7400)
-cat > /etc/systemd/system/stuard-agent.service <<'SVCEOF'
-[Unit]
-Description=Stuard VM Agent (HTTP server)
-After=network-online.target
-Wants=network-online.target
+  # Restart Node.js agent so it picks up node-pty for terminal support
+  systemctl restart stuard-agent
+  echo "[stuard-bg] ── Background setup complete $(date -u +%Y-%m-%dT%H:%M:%SZ) ──"
+) &
+disown
 
-[Service]
-Type=simple
-EnvironmentFile=/opt/stuard/env
-ExecStart=/usr/bin/node /opt/stuard/vm-agent-bundle.js
-WorkingDirectory=/home/stuard
-User=stuard
-Group=stuard
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=stuard-agent
-
-# Resource limits
-LimitNOFILE=65536
-MemoryMax=512M
-
-[Install]
-WantedBy=multi-user.target
-SVCEOF
-
-# ── 6b. Restore agent databases from cold storage if available ──────────────
-# The SQLite databases (knowledge.db, memory.db, etc.) are synced as part of
-# the workspace cold storage archive. Try to download and extract them so
-# the Python agent starts with the user's full memory and knowledge graph.
-AGENT_DB_GCS="gs://${bucket}/users/${userId}/agent-data.tar.gz"
-if gsutil -q stat "$AGENT_DB_GCS" 2>/dev/null; then
-  echo "[stuard] Restoring agent databases from cold storage..."
-  gsutil cp "$AGENT_DB_GCS" /tmp/agent-data.tar.gz 2>/dev/null && \\
-    tar -xzf /tmp/agent-data.tar.gz -C /home/stuard/agent-data/ 2>/dev/null && \\
-    rm -f /tmp/agent-data.tar.gz
-  chown -R stuard:stuard /home/stuard/agent-data
-  echo "[stuard] Agent databases restored"
-else
-  echo "[stuard] No agent database backup found — starting fresh"
-fi
-
-# ── 7. Start services ────────────────────────────────────────────────────────
-systemctl daemon-reload
-
-# Start Xvfb first (provides virtual display for headless automation)
-if [ -f /etc/systemd/system/stuard-xvfb.service ]; then
-  systemctl enable stuard-xvfb
-  systemctl start stuard-xvfb
-  echo "[stuard] Xvfb started on display :99"
-  sleep 1
-fi
-
-# Start Python agent first (provides local tools on ws://127.0.0.1:8765)
-if [ -f /etc/systemd/system/stuard-python-agent.service ]; then
-  systemctl enable stuard-python-agent
-  systemctl start stuard-python-agent
-  echo "[stuard] Python agent started on ws://127.0.0.1:8765"
-  # Give it a moment to bind the port
-  sleep 2
-fi
-
-# Start Node.js VM agent (provides HTTP API on port 7400)
-systemctl enable stuard-agent
-systemctl start stuard-agent
-
-echo "[stuard] VM agent HTTP server started on port 7400"
-echo "[stuard] ── VM ready for user ${userId} ──"
+echo "[stuard] ── VM ready for user ${userId} (heavy packages installing in background) ──"
 `;
 }
 

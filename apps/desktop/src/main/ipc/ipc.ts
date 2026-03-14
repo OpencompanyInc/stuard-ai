@@ -2290,6 +2290,7 @@ export function setupIpc() {
           ? path.join(os.homedir(), 'Library', 'Application Support')
           : (process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'));
       const agentDir = process.env.AGENT_DATA_DIR || path.join(base, 'StuardAI', 'agent');
+      const stuardRoot = path.dirname(agentDir); // %APPDATA%/StuardAI
 
       // Check if agent databases exist
       const knowledgePath = path.join(agentDir, 'knowledge.db');
@@ -2297,69 +2298,90 @@ export function setupIpc() {
       const hasKnowledge = fs.existsSync(knowledgePath);
       const hasMemory = fs.existsSync(memoryPath);
       if (!hasKnowledge && !hasMemory) {
+        logger.info('[cloud:uploadAgentData] No knowledge.db or memory.db found — skipping');
         return { ok: true, skipped: true, reason: 'no_agent_databases' };
       }
 
-      // Create tar.gz of the agent databases
-      const tmpDir = os.tmpdir();
-      const archivePath = path.join(tmpDir, `stuard-agent-data-${Date.now()}.tar.gz`);
+      // Skip file_index.db — it's the local file index (often 300MB+), not memories.
+      // The VM doesn't need the desktop's file index.
+      const SKIP_FILES = new Set(['file_index.db']);
 
-      // Build list of files to include
+      // Build list of files to include from agent/ directory
       const filesToInclude: string[] = [];
-      if (hasKnowledge) filesToInclude.push('knowledge.db');
-      if (hasMemory) filesToInclude.push('memory.db');
-      // Include any other .db files in the agent directory
       try {
         const files = fs.readdirSync(agentDir);
         for (const f of files) {
-          if (f.endsWith('.db') && !filesToInclude.includes(f)) {
+          if (SKIP_FILES.has(f)) continue;
+          // Include .db files and their WAL/SHM journal files for SQLite consistency
+          if (f.endsWith('.db') || f.endsWith('.db-wal') || f.endsWith('.db-shm')) {
             filesToInclude.push(f);
           }
         }
       } catch {}
 
-      if (process.platform === 'win32') {
-        // On Windows, use tar (available in Windows 10+)
-        try {
-          execFileSync('tar', ['-czf', archivePath, ...filesToInclude], {
-            cwd: agentDir,
-            timeout: 60_000,
-          });
-        } catch {
-          // Fallback: use node's built-in zlib
-          const zlib = require('zlib');
-          const archiver = require('archiver');
-          // If archiver isn't available, do a simple manual approach
-          // Just send the raw files as base64
-          const filesData: Record<string, string> = {};
-          for (const f of filesToInclude) {
-            const fp = path.join(agentDir, f);
-            if (fs.existsSync(fp)) {
-              filesData[f] = fs.readFileSync(fp).toString('base64');
-            }
-          }
-          // Upload individually
-          const resp = await fetch(`${cloudAiUrl}/v1/cloud-engine/upload-agent-data`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ files: filesData }),
-          });
-          const result = await resp.json();
-          return result;
-        }
-      } else {
-        execFileSync('tar', ['-czf', archivePath, ...filesToInclude], {
-          cwd: agentDir,
-          timeout: 60_000,
+      if (filesToInclude.length === 0) {
+        logger.info('[cloud:uploadAgentData] No eligible database files found');
+        return { ok: true, skipped: true, reason: 'no_eligible_files' };
+      }
+
+      logger.info(`[cloud:uploadAgentData] Packaging ${filesToInclude.length} files: ${filesToInclude.join(', ')}`);
+
+      // Also check for lancedb directory (vector embeddings for semantic search)
+      const lancedbDir = path.join(stuardRoot, 'lancedb');
+      const hasLancedb = fs.existsSync(lancedbDir) && fs.statSync(lancedbDir).isDirectory();
+
+      // Also check for workflow.db in the root StuardAI directory
+      const workflowDbPath = path.join(stuardRoot, 'workflow.db');
+      const hasWorkflowDb = fs.existsSync(workflowDbPath);
+
+      // Create tar.gz of all agent data
+      const tmpDir = os.tmpdir();
+      const archivePath = path.join(tmpDir, `stuard-agent-data-${Date.now()}.tar.gz`);
+
+      // Build tar arguments: include agent/*.db files, optionally lancedb/ and workflow.db
+      // We tar from stuardRoot so paths are relative: agent/knowledge.db, lancedb/..., workflow.db
+      const tarItems: string[] = filesToInclude.map(f => `agent/${f}`);
+      if (hasLancedb) tarItems.push('lancedb');
+      if (hasWorkflowDb) tarItems.push('workflow.db');
+
+      logger.info(`[cloud:uploadAgentData] Creating archive with items: ${tarItems.join(', ')}`);
+
+      try {
+        execFileSync('tar', ['-czf', archivePath, ...tarItems], {
+          cwd: stuardRoot,
+          timeout: 120_000,
         });
+      } catch (tarErr: any) {
+        logger.warn('[cloud:uploadAgentData] tar command failed, trying without lancedb:', tarErr?.message);
+        // Fallback: just the agent .db files (skip lancedb which may have issues)
+        const fallbackItems = filesToInclude.map(f => `agent/${f}`);
+        if (hasWorkflowDb) fallbackItems.push('workflow.db');
+        try {
+          execFileSync('tar', ['-czf', archivePath, ...fallbackItems], {
+            cwd: stuardRoot,
+            timeout: 120_000,
+          });
+        } catch (tarErr2: any) {
+          logger.error('[cloud:uploadAgentData] tar fallback also failed:', tarErr2?.message);
+          // Last resort: tar just from the agent directory
+          try {
+            execFileSync('tar', ['-czf', archivePath, ...filesToInclude], {
+              cwd: agentDir,
+              timeout: 120_000,
+            });
+          } catch (tarErr3: any) {
+            logger.error('[cloud:uploadAgentData] All tar attempts failed:', tarErr3?.message);
+            return { ok: false, error: 'tar_creation_failed: ' + String(tarErr3?.message) };
+          }
+        }
       }
 
       // Read the archive and send as base64
       const archiveBuffer = fs.readFileSync(archivePath);
       try { fs.unlinkSync(archivePath); } catch {}
+
+      const sizeMB = (archiveBuffer.length / (1024 * 1024)).toFixed(1);
+      logger.info(`[cloud:uploadAgentData] Archive created: ${sizeMB} MB — uploading to ${cloudAiUrl}`);
 
       const resp = await fetch(`${cloudAiUrl}/v1/cloud-engine/upload-agent-data`, {
         method: 'POST',
@@ -2369,7 +2391,13 @@ export function setupIpc() {
         },
         body: JSON.stringify({ data: archiveBuffer.toString('base64') }),
       });
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => 'unknown');
+        logger.error(`[cloud:uploadAgentData] Upload HTTP ${resp.status}: ${errText}`);
+        return { ok: false, error: `upload_http_${resp.status}`, details: errText };
+      }
       const result = await resp.json();
+      logger.info(`[cloud:uploadAgentData] Upload complete:`, result);
       return { ok: true, ...result, bytes: archiveBuffer.length };
     } catch (e: any) {
       logger.error('[cloud:uploadAgentData] Error:', e);

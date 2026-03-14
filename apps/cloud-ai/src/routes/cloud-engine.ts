@@ -216,10 +216,11 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       // Fire-and-forget: wait for VM agent, restore data, then mark running
       (async () => {
         try {
-          // Wait for VM agent to be reachable (max 120s for cold boot)
+          // Wait for VM agent to be reachable (max 180s — agent starts fast
+          // now that heavy packages install in background)
           let vmIp = externalIp;
           let vmReady = false;
-          for (let i = 0; i < 24; i++) {
+          for (let i = 0; i < 36; i++) {
             // Re-fetch IP if not available yet
             if (!vmIp) {
               try {
@@ -292,16 +293,28 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
             console.warn('[cloud-engine] VM not ready after provision, skipping restore for user', user.userId);
           }
 
-          // Transition to running
-          await updateCloudEngineStatus(user.userId, 'running', 'provisioning', {
-            started_at: new Date().toISOString(),
-          });
+          // Transition to running — only if the agent actually responded
+          if (vmReady) {
+            await updateCloudEngineStatus(user.userId, 'running', 'provisioning', {
+              started_at: new Date().toISOString(),
+            });
+          } else {
+            // Agent never responded — still transition to running so the user
+            // isn't stuck, but log prominently. The startup script may still be
+            // installing Node.js / downloading the agent.
+            console.error('[cloud-engine] VM agent never responded to health check for user', user.userId,
+              '— transitioning to running anyway (agent may still be booting)');
+            await updateCloudEngineStatus(user.userId, 'running', 'provisioning', {
+              started_at: new Date().toISOString(),
+              health_status: 'agent_not_ready',
+            });
+          }
         } catch (bgErr: any) {
           console.error('[cloud-engine] Background provision finalization failed:', bgErr?.message);
-          // Still try to mark as running so the user isn't stuck
           try {
             await updateCloudEngineStatus(user.userId, 'running', 'provisioning', {
               started_at: new Date().toISOString(),
+              health_status: 'provision_error',
             });
           } catch { /* last resort */ }
         }
@@ -602,20 +615,21 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
   }
 
   // ── POST /v1/cloud-engine/upload-agent-data ──────────────────────────────
-  // Desktop uploads knowledge.db + memory.db as tar.gz before VM provision/start.
-  // Accepts either:
-  //   - { data: "<base64 tar.gz>" } — inline upload (small files)
-  //   - {} — returns a signed GCS upload URL for the desktop to upload directly
+  // Desktop uploads agent databases (knowledge.db, memory.db, tasks.db, vault.db,
+  // lancedb/, workflow.db) as tar.gz before VM provision/start.
+  // Archive structure: agent/knowledge.db, agent/memory.db, lancedb/..., workflow.db
+  // Accepts: { data: "<base64 tar.gz>" }
   if (method === 'POST' && path === '/v1/cloud-engine/upload-agent-data') {
     const user = await authenticate(req, res);
     if (!user) return true;
     try {
-      const body = await readBody(req, 100 * 1024 * 1024); // 100 MB max
+      const body = await readBody(req, 300 * 1024 * 1024); // 300 MB max (lancedb + dbs)
       const base64Data = body?.data;
 
       if (typeof base64Data === 'string' && base64Data.length > 0) {
         // Inline upload — desktop sent the tar.gz as base64
         const buffer = Buffer.from(base64Data, 'base64');
+        console.log(`[cloud-engine] upload-agent-data: received ${(buffer.length / 1024 / 1024).toFixed(1)} MB for user ${user.userId}`);
         const result = await uploadAgentData(user.userId, buffer);
         json(res, 200, { ok: true, ...result });
       } else {

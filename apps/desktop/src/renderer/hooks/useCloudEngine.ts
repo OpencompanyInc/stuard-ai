@@ -166,8 +166,8 @@ export function useCloudEngine() {
     setLoading(true);
     setError(null);
     try {
-      // Upload agent databases (knowledge.db, memory.db) to GCS before provisioning
-      // so the VM starts with the user's full memory and knowledge graph
+      // Upload agent databases (knowledge.db, memory.db, tasks.db, vault.db, lancedb)
+      // to GCS before provisioning so the VM starts with the user's full memory
       let agentDataUploaded = false;
       try {
         const token = await getAuthToken();
@@ -176,15 +176,20 @@ export function useCloudEngine() {
           const uploadResult = await window.desktopAPI.uploadAgentData(CLOUD_AI_HTTP, token);
           if (uploadResult?.ok) {
             agentDataUploaded = !uploadResult.skipped;
-            console.log('[cloud-engine] Agent data uploaded for VM sync:', uploadResult);
+            if (uploadResult.skipped) {
+              console.log('[cloud-engine] Agent data upload skipped:', uploadResult.reason);
+            } else {
+              const mb = uploadResult.bytes ? (uploadResult.bytes / 1024 / 1024).toFixed(1) : '?';
+              console.log(`[cloud-engine] Agent data uploaded: ${mb} MB`);
+            }
           } else {
-            console.warn('[cloud-engine] Agent data upload returned not-ok:', uploadResult);
+            console.error('[cloud-engine] Agent data upload FAILED:', uploadResult?.error || uploadResult);
           }
         } else {
           console.log('[cloud-engine] Skipping agent data upload — no desktopAPI or no token');
         }
       } catch (e) {
-        console.warn('[cloud-engine] Agent data upload failed (non-fatal):', e);
+        console.error('[cloud-engine] Agent data upload error (non-fatal):', e);
       }
 
       const body: any = { tier, diskSizeGb };

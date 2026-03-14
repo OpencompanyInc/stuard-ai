@@ -701,14 +701,52 @@ async function syncAgentData(args: any): Promise<any> {
 
     const gcsPath = `gs://${GCS_BUCKET}/users/${USER_ID}/agent-data.tar.gz`;
     const tempPath = `/tmp/agent-data-download-${Date.now()}.tar.gz`;
+    const extractDir = `/tmp/agent-data-extract-${Date.now()}`;
     try {
       execFileSync('gsutil', ['cp', gcsPath, tempPath], { timeout: 120_000 });
+      fs.mkdirSync(extractDir, { recursive: true });
       fs.mkdirSync(AGENT_DATA_DIR, { recursive: true });
-      execFileSync('tar', ['-xzf', tempPath, '-C', AGENT_DATA_DIR], { timeout: 120_000 });
+      execFileSync('tar', ['-xzf', tempPath, '-C', extractDir], { timeout: 120_000 });
+
+      // Handle new archive format (agent/knowledge.db, lancedb/..., workflow.db)
+      const extractedAgentDir = `${extractDir}/agent`;
+      if (fs.existsSync(extractedAgentDir)) {
+        // New format: copy agent/* to AGENT_DATA_DIR
+        const agentFiles = fs.readdirSync(extractedAgentDir);
+        for (const f of agentFiles) {
+          const src = `${extractedAgentDir}/${f}`;
+          const dst = `${AGENT_DATA_DIR}/${f}`;
+          fs.copyFileSync(src, dst);
+        }
+        console.log(`[vm-agent] Restored ${agentFiles.length} files from new-format archive`);
+      } else {
+        // Old format: flat files at root — copy all to AGENT_DATA_DIR
+        const files = fs.readdirSync(extractDir);
+        for (const f of files) {
+          const src = `${extractDir}/${f}`;
+          const st = fs.statSync(src);
+          if (st.isFile()) fs.copyFileSync(src, `${AGENT_DATA_DIR}/${f}`);
+        }
+        console.log(`[vm-agent] Restored ${files.length} files from legacy archive`);
+      }
+
+      // Restore lancedb if present
+      const extractedLancedb = `${extractDir}/lancedb`;
+      if (fs.existsSync(extractedLancedb)) {
+        const vmLancedb = `${process.env.STUARD_VM_ROOT || '/home/stuard'}/lancedb`;
+        execFileSync('cp', ['-a', extractedLancedb, vmLancedb], { timeout: 30_000 });
+        console.log(`[vm-agent] LanceDB embeddings restored to ${vmLancedb}`);
+      }
+
+      try { fs.rmSync(extractDir, { recursive: true, force: true }); } catch {}
       try { fs.unlinkSync(tempPath); } catch {}
-      console.log(`[vm-agent] Agent data restored from ${gcsPath}`);
-      return { ok: true, direction: 'download', gcsPath };
+
+      // Log what we have now
+      const restored = fs.readdirSync(AGENT_DATA_DIR);
+      console.log(`[vm-agent] Agent data dir now contains: ${restored.join(', ')}`);
+      return { ok: true, direction: 'download', gcsPath, files: restored };
     } catch (e: any) {
+      try { fs.rmSync(extractDir, { recursive: true, force: true }); } catch {}
       try { fs.unlinkSync(tempPath); } catch {}
       return { ok: false, error: e?.message || 'sync_download_failed' };
     }
