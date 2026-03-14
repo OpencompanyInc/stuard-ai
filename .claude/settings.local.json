@@ -4,7 +4,8 @@
       "WebSearch",
       "Bash(grep:*)",
       "Bash(do wc:*)",
-      "mcp__supabase__execute_sql"
+      "mcp__supabase__execute_sql",
+      "mcp__supabase__list_projects"
     ]
   }
 }

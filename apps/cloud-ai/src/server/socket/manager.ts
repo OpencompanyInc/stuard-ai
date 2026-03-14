@@ -267,7 +267,11 @@ export class SocketManager {
         history: messages.slice(0, -1),
         userId,
         conversationId,
-        context: msg.context || {}
+        context: {
+          ...(msg.context || {}),
+          // Pass through hiddenContext (e.g. SMS formatting instructions)
+          ...(msg.hiddenContext ? { hiddenContext: String(msg.hiddenContext) } : {}),
+        },
       };
 
       try {

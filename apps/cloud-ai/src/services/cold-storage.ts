@@ -296,3 +296,55 @@ export async function generateAgentDataUploadUrl(userId: string): Promise<{ uplo
   });
   return { uploadUrl, objectName };
 }
+
+/**
+ * Generate a signed download URL for agent data.
+ * Used by VMs to download user data without needing direct GCS access.
+ */
+export async function generateAgentDataDownloadUrl(userId: string): Promise<{ downloadUrl: string; objectName: string } | null> {
+  const objectName = getAgentDataObjectName(userId);
+  const file = getBucket().file(objectName);
+  const [exists] = await file.exists();
+  if (!exists) return null;
+  const [downloadUrl] = await file.getSignedUrl({
+    version: 'v4',
+    action: 'read',
+    expires: Date.now() + DOWNLOAD_URL_TTL_MS,
+  });
+  return { downloadUrl, objectName };
+}
+
+/**
+ * Generate signed download URLs for VM startup assets (agent bundle, python agent).
+ * These are scoped to specific objects — VM never gets broad bucket access.
+ */
+export async function generateVMAssetUrls(): Promise<{
+  agentBundleUrl: string | null;
+  pythonAgentUrl: string | null;
+}> {
+  const bucket = getBucket();
+  const ttl = Date.now() + DOWNLOAD_URL_TTL_MS;
+
+  let agentBundleUrl: string | null = null;
+  let pythonAgentUrl: string | null = null;
+
+  try {
+    const bundleFile = bucket.file('agent/vm-agent-bundle.js');
+    const [bundleExists] = await bundleFile.exists();
+    if (bundleExists) {
+      const [url] = await bundleFile.getSignedUrl({ version: 'v4', action: 'read', expires: ttl });
+      agentBundleUrl = url;
+    }
+  } catch {}
+
+  try {
+    const pyFile = bucket.file('python-agent/stuard-python-agent.tar.gz');
+    const [pyExists] = await pyFile.exists();
+    if (pyExists) {
+      const [url] = await pyFile.getSignedUrl({ version: 'v4', action: 'read', expires: ttl });
+      pythonAgentUrl = url;
+    }
+  } catch {}
+
+  return { agentBundleUrl, pythonAgentUrl };
+}

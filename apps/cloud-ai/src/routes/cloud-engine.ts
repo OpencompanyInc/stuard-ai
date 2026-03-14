@@ -306,7 +306,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
               '— transitioning to running anyway (agent may still be booting)');
             await updateCloudEngineStatus(user.userId, 'running', 'provisioning', {
               started_at: new Date().toISOString(),
-              health_status: 'agent_not_ready',
+              health_status: 'unreachable',
             });
           }
         } catch (bgErr: any) {
@@ -314,7 +314,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
           try {
             await updateCloudEngineStatus(user.userId, 'running', 'provisioning', {
               started_at: new Date().toISOString(),
-              health_status: 'provision_error',
+              health_status: 'unhealthy',
             });
           } catch { /* last resort */ }
         }
@@ -615,27 +615,27 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
   }
 
   // ── POST /v1/cloud-engine/upload-agent-data ──────────────────────────────
-  // Desktop uploads agent databases (knowledge.db, memory.db, tasks.db, vault.db,
-  // lancedb/, workflow.db) as tar.gz before VM provision/start.
-  // Archive structure: agent/knowledge.db, agent/memory.db, lancedb/..., workflow.db
-  // Accepts: { data: "<base64 tar.gz>" }
+  // Returns a signed GCS upload URL. Desktop uploads tar.gz directly to GCS,
+  // bypassing Cloud Run body limits entirely. Supports any size (1GB+).
+  // Flow: Desktop → POST {} → gets signed URL → PUT binary to GCS
   if (method === 'POST' && path === '/v1/cloud-engine/upload-agent-data') {
     const user = await authenticate(req, res);
     if (!user) return true;
     try {
-      const body = await readBody(req, 300 * 1024 * 1024); // 300 MB max (lancedb + dbs)
+      const body = await readBody(req, 1 * 1024 * 1024); // 1 MB — only needs empty/small JSON
       const base64Data = body?.data;
 
       if (typeof base64Data === 'string' && base64Data.length > 0) {
-        // Inline upload — desktop sent the tar.gz as base64
+        // Legacy inline upload (old desktop versions) — accept if small enough
         const buffer = Buffer.from(base64Data, 'base64');
-        console.log(`[cloud-engine] upload-agent-data: received ${(buffer.length / 1024 / 1024).toFixed(1)} MB for user ${user.userId}`);
+        console.log(`[cloud-engine] upload-agent-data: inline upload ${(buffer.length / 1024 / 1024).toFixed(1)} MB for user ${user.userId}`);
         const result = await uploadAgentData(user.userId, buffer);
         json(res, 200, { ok: true, ...result });
       } else {
-        // Return a signed upload URL for the desktop to upload directly
+        // Return a signed upload URL for the desktop to upload directly to GCS
         const { generateAgentDataUploadUrl } = await import('../services/cold-storage');
         const { uploadUrl, objectName } = await generateAgentDataUploadUrl(user.userId);
+        console.log(`[cloud-engine] upload-agent-data: issued signed URL for user ${user.userId} → ${objectName}`);
         json(res, 200, { ok: true, uploadUrl, objectName });
       }
     } catch (e: any) {
@@ -723,11 +723,71 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
         return true;
       }
 
-      const result = await sendVMCommand(user.userId, 'sync_agent_data', { direction: 'download' }, 60_000);
+      // Generate signed download URL so the VM doesn't need direct GCS access
+      const { generateAgentDataDownloadUrl } = await import('../services/cold-storage');
+      const urlResult = await generateAgentDataDownloadUrl(user.userId);
+      if (!urlResult) {
+        json(res, 404, { ok: false, error: 'no_agent_data', message: 'No agent data found in cloud storage' });
+        return true;
+      }
+
+      const result = await sendVMCommand(user.userId, 'sync_agent_data', {
+        direction: 'download',
+        downloadUrl: urlResult.downloadUrl,
+      }, 60_000);
       json(res, 200, { ok: Boolean(result.ok), direction: 'download' });
     } catch (e: any) {
       console.error('[cloud-engine] sync-agent-data error:', e?.message);
       json(res, 500, { ok: false, error: 'sync_agent_data_failed', message: e?.message || 'failed' });
+    }
+    return true;
+  }
+
+  // ── POST /v1/cloud-engine/vm/agent-data-urls ───────────────────────
+  // Called BY the VM agent to get signed GCS URLs for uploading/downloading
+  // agent data. Auth: VM sends its userId + HMAC token (same format cloud-ai uses).
+  // This lets the VM sync data without having direct GCS access.
+  if (method === 'POST' && path === '/v1/cloud-engine/vm/agent-data-urls') {
+    try {
+      const body = await readBody(req, 4096);
+      const userId = body?.userId;
+      const vmToken = body?.vmToken;
+      if (!userId || !vmToken) {
+        json(res, 400, { ok: false, error: 'missing userId or vmToken' });
+        return true;
+      }
+
+      // Verify the VM token against the stored vm_secret for this user's engine
+      const engine = await getCloudEngine(userId);
+      if (!engine || !engine.vm_secret) {
+        json(res, 403, { ok: false, error: 'no_engine' });
+        return true;
+      }
+
+      // Verify HMAC signature using the VM's secret
+      const { verifyVMToken } = await import('../services/vm-tokens');
+      const tokenPayload = verifyVMToken(vmToken, engine.vm_secret);
+      if (!tokenPayload || tokenPayload.userId !== userId) {
+        json(res, 403, { ok: false, error: 'invalid_vm_token' });
+        return true;
+      }
+
+      // Generate signed URLs for this user only
+      const { generateAgentDataUploadUrl, generateAgentDataDownloadUrl } = await import('../services/cold-storage');
+      const [uploadResult, downloadResult] = await Promise.all([
+        generateAgentDataUploadUrl(userId),
+        generateAgentDataDownloadUrl(userId),
+      ]);
+
+      json(res, 200, {
+        ok: true,
+        uploadUrl: uploadResult.uploadUrl,
+        downloadUrl: downloadResult?.downloadUrl || null,
+        objectName: uploadResult.objectName,
+      });
+    } catch (e: any) {
+      console.error('[cloud-engine] vm/agent-data-urls error:', e?.message);
+      json(res, 500, { ok: false, error: 'failed', message: e?.message || 'failed' });
     }
     return true;
   }

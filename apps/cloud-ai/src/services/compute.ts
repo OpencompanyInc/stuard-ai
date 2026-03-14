@@ -66,8 +66,14 @@ function mapGceStatus(status: string | null | undefined): VMStatus {
  *  @param userId   Owner of this VM.
  *  @param vmSecret Per-VM unique HMAC secret (used by the agent to verify tokens).
  *  @param vmToken  Legacy provisioning token (backwards compat).
+ *  @param signedUrls Pre-generated signed GCS URLs so the VM never needs direct bucket access.
  */
-function buildStartupScript(userId: string, vmSecret: string, vmToken?: string): string {
+function buildStartupScript(
+  userId: string,
+  vmSecret: string,
+  vmToken?: string,
+  signedUrls?: { agentBundleUrl?: string | null; agentDataUrl?: string | null; pythonAgentUrl?: string | null },
+): string {
   const token = vmToken || '';
   const bucket = CLOUD_ENGINE_BUCKET || 'stuard-user-data';
   // Cloud-ai URL — the VM engine calls cloud tools + desktop relay via this
@@ -164,17 +170,19 @@ fi
 
 # ── 6. Download VM agent bundle from GCS ─────────────────────────────────────
 AGENT_PATH="/opt/stuard/vm-agent-bundle.js"
-AGENT_GCS="gs://${bucket}/agent/vm-agent-bundle.js"
+${signedUrls?.agentBundleUrl ? `AGENT_SIGNED_URL='${signedUrls.agentBundleUrl}'` : 'AGENT_SIGNED_URL=""'}
 
-echo "[stuard] Downloading agent from $AGENT_GCS..."
+echo "[stuard] Downloading agent bundle..."
 for i in 1 2 3; do
-  if gsutil cp "$AGENT_GCS" "$AGENT_PATH" 2>/dev/null; then
-    echo "[stuard] Agent downloaded ($(wc -c < "$AGENT_PATH") bytes)"
-    break
+  if [ -n "$AGENT_SIGNED_URL" ]; then
+    if curl -fsSL -o "$AGENT_PATH" "$AGENT_SIGNED_URL" 2>/dev/null; then
+      echo "[stuard] Agent downloaded via signed URL ($(wc -c < "$AGENT_PATH") bytes)"
+      break
+    fi
   fi
   AGENT_URL="https://storage.googleapis.com/${bucket}/agent/vm-agent-bundle.js"
   if curl -fsSL -o "$AGENT_PATH" "$AGENT_URL" 2>/dev/null; then
-    echo "[stuard] Agent downloaded via HTTP ($(wc -c < "$AGENT_PATH") bytes)"
+    echo "[stuard] Agent downloaded via public URL ($(wc -c < "$AGENT_PATH") bytes)"
     break
   fi
   echo "[stuard] Download attempt $i failed, retrying in 5s..."
@@ -193,10 +201,15 @@ npm install ws 2>/dev/null || true
 cd /
 
 # ── 6b. Restore agent databases from cold storage if available ──────────────
-AGENT_DB_GCS="gs://${bucket}/users/${userId}/agent-data.tar.gz"
-if gsutil -q stat "$AGENT_DB_GCS" 2>/dev/null; then
-  echo "[stuard] Restoring agent databases from cold storage..."
-  gsutil cp "$AGENT_DB_GCS" /tmp/agent-data.tar.gz 2>/dev/null
+${signedUrls?.agentDataUrl ? `AGENT_DATA_SIGNED_URL='${signedUrls.agentDataUrl}'` : 'AGENT_DATA_SIGNED_URL=""'}
+AGENT_DATA_DOWNLOADED=0
+if [ -n "$AGENT_DATA_SIGNED_URL" ]; then
+  echo "[stuard] Downloading agent data via signed URL..."
+  if curl -fsSL -o /tmp/agent-data.tar.gz "$AGENT_DATA_SIGNED_URL" 2>/dev/null; then
+    AGENT_DATA_DOWNLOADED=1
+  fi
+fi
+if [ "$AGENT_DATA_DOWNLOADED" -eq 1 ]; then
   if [ -f /tmp/agent-data.tar.gz ]; then
     # List contents to understand the archive structure
     echo "[stuard] Archive contents:"
@@ -331,14 +344,17 @@ XVFBEOF
   fi
 
   # Download & install Python agent
-  PYAGENT_GCS="gs://${bucket}/agent/stuard-python-agent.tar.gz"
+  ${signedUrls?.pythonAgentUrl ? `PYAGENT_SIGNED_URL='${signedUrls.pythonAgentUrl}'` : 'PYAGENT_SIGNED_URL=""'}
   PYAGENT_PATH="/opt/stuard/python-agent"
   mkdir -p "$PYAGENT_PATH"
 
   PYAGENT_DOWNLOADED=false
-  if gsutil cp "$PYAGENT_GCS" /tmp/stuard-python-agent.tar.gz 2>/dev/null; then
-    PYAGENT_DOWNLOADED=true
-  else
+  if [ -n "$PYAGENT_SIGNED_URL" ]; then
+    if curl -fsSL -o /tmp/stuard-python-agent.tar.gz "$PYAGENT_SIGNED_URL" 2>/dev/null; then
+      PYAGENT_DOWNLOADED=true
+    fi
+  fi
+  if [ "$PYAGENT_DOWNLOADED" = "false" ]; then
     PYAGENT_URL="https://storage.googleapis.com/${bucket}/agent/stuard-python-agent.tar.gz"
     if curl -fsSL -o /tmp/stuard-python-agent.tar.gz "$PYAGENT_URL" 2>/dev/null; then
       PYAGENT_DOWNLOADED=true
@@ -639,6 +655,20 @@ export class GCEComputeProvider implements IComputeProvider {
     // Generate a unique secret for this VM (never shared with other VMs)
     const vmSecret = generateVMSecret();
 
+    // Pre-generate signed GCS URLs so the VM downloads assets via short-lived,
+    // single-object URLs instead of using broad bucket access.
+    const { generateAgentDataDownloadUrl, generateVMAssetUrls } = await import('./cold-storage');
+    const [assetUrls, agentDataResult] = await Promise.all([
+      generateVMAssetUrls(),
+      generateAgentDataDownloadUrl(userId),
+    ]);
+    const signedUrls = {
+      agentBundleUrl: assetUrls.agentBundleUrl,
+      pythonAgentUrl: assetUrls.pythonAgentUrl,
+      agentDataUrl: agentDataResult?.downloadUrl || null,
+    };
+    console.log(`[compute:gce] Generated signed URLs for VM: bundle=${!!signedUrls.agentBundleUrl}, agentData=${!!signedUrls.agentDataUrl}, python=${!!signedUrls.pythonAgentUrl}`);
+
     // Ensure GCP VPC firewall rule exists for VM agent port 7400
     await this.ensureFirewallRule();
 
@@ -652,9 +682,15 @@ export class GCEComputeProvider implements IComputeProvider {
       accessConfigs: [{ name: 'External NAT', type: 'ONE_TO_ONE_NAT' }],
     }];
 
+    // Minimal scopes — VM uses signed URLs for GCS, no direct bucket access needed.
+    // Only logging + monitoring for basic VM telemetry.
+    const vmScopes = [
+      'https://www.googleapis.com/auth/logging.write',
+      'https://www.googleapis.com/auth/monitoring.write',
+    ];
     const serviceAccounts = GCP_VM_SERVICE_ACCOUNT
-      ? [{ email: GCP_VM_SERVICE_ACCOUNT, scopes: ['https://www.googleapis.com/auth/cloud-platform'] }]
-      : [{ email: 'default', scopes: ['https://www.googleapis.com/auth/cloud-platform'] }];
+      ? [{ email: GCP_VM_SERVICE_ACCOUNT, scopes: vmScopes }]
+      : [{ email: 'default', scopes: vmScopes }];
 
     console.log(`[compute:gce] Provisioning VM ${instanceName} (${machineTypeName}, ${diskSizeGb}GB) in ${zone}...`);
 
@@ -678,7 +714,7 @@ export class GCEComputeProvider implements IComputeProvider {
           serviceAccounts,
           metadata: {
             items: [
-              { key: 'startup-script', value: buildStartupScript(userId, vmSecret) },
+              { key: 'startup-script', value: buildStartupScript(userId, vmSecret, undefined, signedUrls) },
               { key: 'stuard-user-id', value: userId },
               { key: 'stuard-tier', value: tier },
             ],

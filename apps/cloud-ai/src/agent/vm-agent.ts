@@ -673,37 +673,93 @@ function handleProactiveTaskDelete(args: any): any {
 const AGENT_DATA_DIR = process.env.AGENT_DATA_DIR || '/home/stuard/agent-data';
 const GCS_BUCKET = process.env.STUARD_GCS_BUCKET || '';
 
+/** Request signed GCS URLs from the cloud-ai backend (VM → backend auth via HMAC). */
+async function requestSignedUrls(): Promise<{ uploadUrl?: string; downloadUrl?: string } | null> {
+  const cloudAiUrl = process.env.CLOUD_AI_URL || '';
+  if (!cloudAiUrl || !VM_SECRET || !USER_ID) return null;
+
+  try {
+    const payload = JSON.stringify({
+      userId: USER_ID, instanceName: 'vm-agent-sync',
+      nonce: Date.now().toString(36), iat: Date.now(), exp: Date.now() + 300_000,
+    });
+    const encodedPayload = Buffer.from(payload).toString('base64url');
+    const signature = createHmac('sha256', VM_SECRET).update(encodedPayload).digest('base64url');
+    const vmToken = `${encodedPayload}.${signature}`;
+
+    const resp = await fetch(`${cloudAiUrl}/v1/cloud-engine/vm/agent-data-urls`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: USER_ID, vmToken }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!resp.ok) return null;
+    const data: any = await resp.json();
+    return data.ok ? { uploadUrl: data.uploadUrl, downloadUrl: data.downloadUrl } : null;
+  } catch (e: any) {
+    console.warn('[vm-agent] Failed to get signed URLs:', e?.message);
+    return null;
+  }
+}
+
 async function syncAgentData(args: any): Promise<any> {
   const direction = String(args.direction || 'upload').toLowerCase();
   const { execFileSync } = require('child_process');
 
   if (direction === 'upload') {
-    // Compress and upload agent-data to GCS
-    if (!GCS_BUCKET) return { ok: false, error: 'no_gcs_bucket' };
     if (!fs.existsSync(AGENT_DATA_DIR)) return { ok: false, error: 'agent_data_dir_missing' };
 
     const archivePath = `/tmp/agent-data-sync-${Date.now()}.tar.gz`;
     try {
       execFileSync('tar', ['-czf', archivePath, '-C', AGENT_DATA_DIR, '.'], { timeout: 120_000 });
-      const gcsPath = `gs://${GCS_BUCKET}/users/${USER_ID}/agent-data.tar.gz`;
-      execFileSync('gsutil', ['cp', archivePath, gcsPath], { timeout: 120_000 });
       const stats = fs.statSync(archivePath);
+
+      // Get signed upload URL (from command args, or request from backend)
+      let uploadUrl = args.uploadUrl;
+      if (!uploadUrl) {
+        const urls = await requestSignedUrls();
+        uploadUrl = urls?.uploadUrl;
+      }
+      if (!uploadUrl) {
+        try { fs.unlinkSync(archivePath); } catch {}
+        return { ok: false, error: 'no_upload_url' };
+      }
+
+      // Upload directly to GCS via signed URL
+      const archiveData = fs.readFileSync(archivePath);
+      const resp = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/gzip' },
+        body: archiveData,
+        signal: AbortSignal.timeout(120_000),
+      });
       try { fs.unlinkSync(archivePath); } catch {}
-      console.log(`[vm-agent] Agent data synced to ${gcsPath} (${stats.size} bytes)`);
-      return { ok: true, direction: 'upload', bytes: stats.size, gcsPath };
+      if (!resp.ok) return { ok: false, error: `gcs_upload_http_${resp.status}` };
+
+      console.log(`[vm-agent] Agent data uploaded via signed URL (${stats.size} bytes)`);
+      return { ok: true, direction: 'upload', bytes: stats.size };
     } catch (e: any) {
       try { fs.unlinkSync(archivePath); } catch {}
       return { ok: false, error: e?.message || 'sync_upload_failed' };
     }
   } else if (direction === 'download') {
-    // Download and extract agent-data from GCS
-    if (!GCS_BUCKET) return { ok: false, error: 'no_gcs_bucket' };
+    // Get signed download URL (from command args, or request from backend)
+    let downloadUrl = args.downloadUrl;
+    if (!downloadUrl) {
+      const urls = await requestSignedUrls();
+      downloadUrl = urls?.downloadUrl;
+    }
+    if (!downloadUrl) return { ok: false, error: 'no_download_url' };
 
-    const gcsPath = `gs://${GCS_BUCKET}/users/${USER_ID}/agent-data.tar.gz`;
     const tempPath = `/tmp/agent-data-download-${Date.now()}.tar.gz`;
     const extractDir = `/tmp/agent-data-extract-${Date.now()}`;
     try {
-      execFileSync('gsutil', ['cp', gcsPath, tempPath], { timeout: 120_000 });
+      // Download from GCS via signed URL
+      const resp = await fetch(downloadUrl, { signal: AbortSignal.timeout(120_000) });
+      if (!resp.ok) return { ok: false, error: `download_http_${resp.status}` };
+      const buffer = Buffer.from(await resp.arrayBuffer());
+      fs.writeFileSync(tempPath, buffer);
+
       fs.mkdirSync(extractDir, { recursive: true });
       fs.mkdirSync(AGENT_DATA_DIR, { recursive: true });
       execFileSync('tar', ['-xzf', tempPath, '-C', extractDir], { timeout: 120_000 });
@@ -711,16 +767,12 @@ async function syncAgentData(args: any): Promise<any> {
       // Handle new archive format (agent/knowledge.db, lancedb/..., workflow.db)
       const extractedAgentDir = `${extractDir}/agent`;
       if (fs.existsSync(extractedAgentDir)) {
-        // New format: copy agent/* to AGENT_DATA_DIR
         const agentFiles = fs.readdirSync(extractedAgentDir);
         for (const f of agentFiles) {
-          const src = `${extractedAgentDir}/${f}`;
-          const dst = `${AGENT_DATA_DIR}/${f}`;
-          fs.copyFileSync(src, dst);
+          fs.copyFileSync(`${extractedAgentDir}/${f}`, `${AGENT_DATA_DIR}/${f}`);
         }
         console.log(`[vm-agent] Restored ${agentFiles.length} files from new-format archive`);
       } else {
-        // Old format: flat files at root — copy all to AGENT_DATA_DIR
         const files = fs.readdirSync(extractDir);
         for (const f of files) {
           const src = `${extractDir}/${f}`;
@@ -741,10 +793,9 @@ async function syncAgentData(args: any): Promise<any> {
       try { fs.rmSync(extractDir, { recursive: true, force: true }); } catch {}
       try { fs.unlinkSync(tempPath); } catch {}
 
-      // Log what we have now
       const restored = fs.readdirSync(AGENT_DATA_DIR);
       console.log(`[vm-agent] Agent data dir now contains: ${restored.join(', ')}`);
-      return { ok: true, direction: 'download', gcsPath, files: restored };
+      return { ok: true, direction: 'download', files: restored };
     } catch (e: any) {
       try { fs.rmSync(extractDir, { recursive: true, force: true }); } catch {}
       try { fs.unlinkSync(tempPath); } catch {}

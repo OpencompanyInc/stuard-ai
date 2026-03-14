@@ -2376,29 +2376,51 @@ export function setupIpc() {
         }
       }
 
-      // Read the archive and send as base64
+      // Read the archive
       const archiveBuffer = fs.readFileSync(archivePath);
       try { fs.unlinkSync(archivePath); } catch {}
 
       const sizeMB = (archiveBuffer.length / (1024 * 1024)).toFixed(1);
-      logger.info(`[cloud:uploadAgentData] Archive created: ${sizeMB} MB — uploading to ${cloudAiUrl}`);
+      logger.info(`[cloud:uploadAgentData] Archive created: ${sizeMB} MB`);
 
-      const resp = await fetch(`${cloudAiUrl}/v1/cloud-engine/upload-agent-data`, {
+      // Step 1: Request a signed GCS upload URL from the backend (tiny request)
+      logger.info(`[cloud:uploadAgentData] Requesting signed upload URL from ${cloudAiUrl}...`);
+      const urlResp = await fetch(`${cloudAiUrl}/v1/cloud-engine/upload-agent-data`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ data: archiveBuffer.toString('base64') }),
+        body: JSON.stringify({}), // empty body → server returns signed URL
       });
-      if (!resp.ok) {
-        const errText = await resp.text().catch(() => 'unknown');
-        logger.error(`[cloud:uploadAgentData] Upload HTTP ${resp.status}: ${errText}`);
-        return { ok: false, error: `upload_http_${resp.status}`, details: errText };
+      if (!urlResp.ok) {
+        const errText = await urlResp.text().catch(() => 'unknown');
+        logger.error(`[cloud:uploadAgentData] Failed to get signed URL: HTTP ${urlResp.status}: ${errText}`);
+        return { ok: false, error: `signed_url_http_${urlResp.status}`, details: errText };
       }
-      const result = await resp.json();
-      logger.info(`[cloud:uploadAgentData] Upload complete:`, result);
-      return { ok: true, ...result, bytes: archiveBuffer.length };
+      const urlResult = await urlResp.json();
+      if (!urlResult.ok || !urlResult.uploadUrl) {
+        logger.error(`[cloud:uploadAgentData] No upload URL returned:`, urlResult);
+        return { ok: false, error: 'no_upload_url', details: JSON.stringify(urlResult) };
+      }
+
+      // Step 2: Upload tar.gz binary directly to GCS via signed URL (no size limit)
+      logger.info(`[cloud:uploadAgentData] Uploading ${sizeMB} MB directly to GCS...`);
+      const gcsResp = await fetch(urlResult.uploadUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/gzip',
+        },
+        body: archiveBuffer,
+      });
+      if (!gcsResp.ok) {
+        const gcsErr = await gcsResp.text().catch(() => 'unknown');
+        logger.error(`[cloud:uploadAgentData] GCS upload failed: HTTP ${gcsResp.status}: ${gcsErr}`);
+        return { ok: false, error: `gcs_upload_http_${gcsResp.status}`, details: gcsErr };
+      }
+
+      logger.info(`[cloud:uploadAgentData] Upload complete: ${sizeMB} MB to ${urlResult.objectName}`);
+      return { ok: true, objectName: urlResult.objectName, bytes: archiveBuffer.length };
     } catch (e: any) {
       logger.error('[cloud:uploadAgentData] Error:', e);
       return { ok: false, error: String(e?.message || 'upload_failed') };

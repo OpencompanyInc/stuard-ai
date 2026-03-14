@@ -218,12 +218,18 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         contextPrefix = `[Context: The user has provided these local file/folder paths for reference]\n${pathsList}\n\n`;
       }
 
+      // Hidden context (e.g. SMS formatting instructions) — prepend as system-level guidance
+      const hiddenContextMsg = context.hiddenContext
+        ? { role: 'system', content: String(context.hiddenContext) }
+        : null;
+
       // Prepare input with context
       const userContent = contextPrefix + message.text;
       const buildInput = (extraMessages?: Array<{ role: string; content: string }>) => {
         const extra = extraMessages || [];
-        if (effectiveHistory.length > 0 || extra.length > 0) {
-          const base = [...effectiveHistory, ...extra, { role: 'user', content: userContent }];
+        if (effectiveHistory.length > 0 || extra.length > 0 || hiddenContextMsg) {
+          const prefix = hiddenContextMsg ? [hiddenContextMsg] : [];
+          const base = [...prefix, ...effectiveHistory, ...extra, { role: 'user', content: userContent }];
           if (agentType === 'workflow') {
             return [{ role: 'system', content: WORKFLOW_SYSTEM_PROMPT }, ...base];
           }
@@ -563,10 +569,11 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         };
       }
 
-      // Send final message
+      // Send final message (include conversationId for SMS multi-turn continuity)
       send(ws, {
         type: 'final',
         model: chosenModelId || model,
+        conversationId,
         result: { text: fullText, response: fullText, usage, modelId: chosenModelId || model },
         usage,
       });
