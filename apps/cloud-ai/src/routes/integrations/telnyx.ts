@@ -10,12 +10,14 @@ import {
   upsertSmsUserState,
   getSmsUserState,
   getCloudEngine,
+  debitCredits,
 } from '../../supabase';
 import { authenticateHttpLegacy, sendJson, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
 import { TELNYX_API_KEY, TELNYX_FROM_NUMBER, TELNYX_MESSAGING_PROFILE_ID } from '../../utils/config';
 import { stripMarkdownForSms, sendWelcomeSms, sendSmsRaw } from '../sms-utils';
 import { sendVMCommand } from '../../services/vm-command';
+import { messagingCreditCost } from '../../pricing';
 
 const TELNYX_API = 'https://api.telnyx.com/v2';
 
@@ -74,20 +76,25 @@ async function handleSmsSlashCommand(userId: string, fromPhone: string, command:
   const cmd = command.split(/\s+/)[0].toLowerCase();
   const arg = command.slice(cmd.length).trim();
 
+  const reply = async (text: string) => {
+    await sendSmsRaw(fromPhone, text).catch(() => {});
+    await deductTelnyxCredit(userId);
+  };
+
   switch (cmd) {
     case '/vm': {
       await upsertSmsUserState({ userId, agentTarget: 'vm' });
-      await sendSmsRaw(fromPhone, 'SMS routing set to Cloud VM. Your messages will be handled by the VM agent.\n\nText /auto to switch back to automatic routing.').catch(() => {});
+      await reply('SMS routing set to Cloud VM. Your messages will be handled by the VM agent.\n\nText /auto to switch back to automatic routing.');
       return true;
     }
     case '/desktop': {
       await upsertSmsUserState({ userId, agentTarget: 'desktop' });
-      await sendSmsRaw(fromPhone, 'SMS routing set to Desktop. Your messages will be queued for the desktop agent.\n\nText /auto to switch back to automatic routing.').catch(() => {});
+      await reply('SMS routing set to Desktop. Your messages will be queued for the desktop agent.\n\nText /auto to switch back to automatic routing.');
       return true;
     }
     case '/auto': {
       await upsertSmsUserState({ userId, agentTarget: 'auto' });
-      await sendSmsRaw(fromPhone, 'SMS routing set to Auto. Messages will try VM first, then fall back to desktop.\n\nText /status to check current routing.').catch(() => {});
+      await reply('SMS routing set to Auto. Messages will try VM first, then fall back to desktop.\n\nText /status to check current routing.');
       return true;
     }
     case '/status': {
@@ -96,46 +103,62 @@ async function handleSmsSlashCommand(userId: string, fromPhone: string, command:
       const vmStatus = engine?.status === 'running' ? 'Running' : engine?.status ? `${engine.status}` : 'Not provisioned';
       const targetLabel = { desktop: 'Desktop', vm: 'Cloud VM', auto: 'Auto (VM > Desktop)' }[state.agent_target] || 'Auto';
       const modeLabel = state.mode === 'proactive' ? 'Proactive' : 'Agent';
-      await sendSmsRaw(fromPhone,
+      await reply(
         `Stuard SMS Status:\n` +
         `Routing: ${targetLabel}\n` +
         `Mode: ${modeLabel}\n` +
         `Model: ${state.preferred_model}\n` +
         `Cloud VM: ${vmStatus}`
-      ).catch(() => {});
+      );
       return true;
     }
     case '/model': {
       const model = arg.toLowerCase();
       if (['fast', 'balanced', 'smart', 'research'].includes(model)) {
         await upsertSmsUserState({ userId, preferredModel: model as any });
-        await sendSmsRaw(fromPhone, `AI model set to "${model}".`).catch(() => {});
+        await reply(`AI model set to "${model}".`);
       } else {
-        await sendSmsRaw(fromPhone, 'Usage: /model <fast|balanced|smart|research>').catch(() => {});
+        await reply('Usage: /model <fast|balanced|smart|research>');
       }
       return true;
     }
     case '/agent': {
       await upsertSmsUserState({ userId, mode: 'agent', proactiveMessage: null });
-      await sendSmsRaw(fromPhone, 'Switched to Agent mode.').catch(() => {});
+      await reply('Switched to Agent mode.');
       return true;
     }
     case '/proactive': {
       await upsertSmsUserState({ userId, mode: 'proactive' });
-      await sendSmsRaw(fromPhone, 'Switched to Proactive mode. You will receive proactive notifications.').catch(() => {});
+      await reply('Switched to Proactive mode. You will receive proactive notifications.');
       return true;
     }
     case '/new': {
       await upsertSmsUserState({ userId, conversationId: null, resumeConversationId: null });
-      await sendSmsRaw(fromPhone, 'New conversation started. Previous context cleared.').catch(() => {});
+      await reply('New conversation started. Previous context cleared.');
       return true;
     }
     case '/help': {
-      await sendSmsRaw(fromPhone, SMS_HELP_TEXT).catch(() => {});
+      await reply(SMS_HELP_TEXT);
       return true;
     }
     default:
       return false;
+  }
+}
+
+async function deductTelnyxCredit(userId: string): Promise<void> {
+  const credits = messagingCreditCost('telnyx');
+  if (credits <= 0) return;
+  try {
+    await debitCredits(userId, {
+      sourceType: 'messaging:telnyx',
+      sourceRef: `sms_send:${Date.now()}`,
+      credits,
+      amountUsd: 0.004,
+      metadata: { provider: 'telnyx' },
+    });
+  } catch (e: any) {
+    console.error('[telnyx] credit deduction failed:', e?.message);
   }
 }
 
@@ -383,6 +406,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         return true;
       }
       await telnyxSendSms(meta.phone, String(body.message || '').slice(0, 1600));
+      await deductTelnyxCredit(auth.userId);
       sendJson(res, 200, { ok: true });
     } catch (e: any) {
       sendJson(res, 500, { ok: false, error: String(e?.message || e) });
@@ -452,6 +476,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         return true;
       }
       await telnyxSendSms(toPhone, text);
+      await deductTelnyxCredit(auth.userId);
       sendJson(res, 200, { ok: true });
     } catch (e: any) {
       sendJson(res, 500, { ok: false, error: String(e?.message || e) });
@@ -494,6 +519,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
       }
 
       await telnyxSendSms(targetPhone, replyText);
+      await deductTelnyxCredit(auth.userId);
       await markSmsQueueReplySent(queueItemId).catch(() => false);
       await upsertSmsUserState({
         userId: auth.userId,
@@ -639,14 +665,15 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
                   await sendSmsRaw(fromPhone, replyText).catch((e: any) => {
                     console.error('[telnyx] Failed to send VM agent SMS reply:', e?.message);
                   });
+                  await deductTelnyxCredit(userId);
                   handled = true;
-                  
+
                   // Track conversation ID returned by VM for next turn
                   const vmConvId = vmResult.result?.conversationId || null;
                   if (vmConvId && vmConvId !== smsState.conversation_id) {
                     await upsertSmsUserState({ userId, conversationId: vmConvId });
                   }
-                  
+
                   console.log('[telnyx] SMS routed to VM', { userId, conversationId: vmConvId, responseLen: replyText.length });
                 }
               } catch {
@@ -663,6 +690,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
                 await sendSmsRaw(fromPhone,
                   'Your Cloud VM is not running. Start it from the desktop app, or text /auto to enable automatic routing.'
                 ).catch(() => {});
+                await deductTelnyxCredit(userId);
               } else {
                 // Queue to desktop inbox — pass conversationId for multi-turn continuity
                 const queued = await enqueueSmsInboxItem({

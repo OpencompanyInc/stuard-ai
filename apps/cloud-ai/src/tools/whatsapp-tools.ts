@@ -1,8 +1,9 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { getExternalAccount } from '../supabase';
+import { getExternalAccount, debitCredits } from '../supabase';
 import { getBridgeSecrets } from './bridge';
 import { waSendText, waSendMedia, waSendReaction, waMarkRead, waUploadMediaFromUrl } from '../routes/integrations/whatsapp';
+import { messagingCreditCost } from '../pricing';
 
 async function requireUserId(): Promise<string> {
   const secrets = getBridgeSecrets();
@@ -40,6 +41,17 @@ export const whatsapp_send_message = createTool({
       const userId = await requireUserId();
       const { waId, phone } = await getConnectedWaId(userId);
       const result = await waSendText(waId, String(input.message || '').slice(0, 4096), !!input.preview_url);
+      // Deduct messaging credits
+      const credits = messagingCreditCost('whatsapp');
+      if (credits > 0) {
+        debitCredits(userId, {
+          sourceType: 'messaging:whatsapp',
+          sourceRef: `wa_tool:${result?.messages?.[0]?.id || Date.now()}`,
+          credits,
+          amountUsd: 0.005,
+          metadata: { provider: 'whatsapp', tool: 'whatsapp_send_message' },
+        }).catch((e: any) => console.error('[whatsapp-tools] credit deduction failed:', e?.message));
+      }
       return { ok: true, messageId: result?.messages?.[0]?.id, to: phone };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };

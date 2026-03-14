@@ -1,9 +1,23 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomBytes } from 'crypto';
-import { upsertExternalAccount, getExternalAccount } from '../../supabase';
+import {
+  upsertExternalAccount,
+  getExternalAccount,
+  findUserIdByWhatsApp,
+  enqueueSmsInboxItem,
+  getSmsUserState,
+  upsertSmsUserState,
+  getCloudEngine,
+  getSmsQueueItem,
+  markSmsQueueReplySent,
+  debitCredits,
+} from '../../supabase';
 import { authenticateHttpLegacy, sendJson, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
 import { WA_PHONE_NUMBER_ID, WA_ACCESS_TOKEN, WA_WEBHOOK_VERIFY_TOKEN } from '../../utils/config';
+import { stripMarkdownForSms } from '../sms-utils';
+import { sendVMCommand } from '../../services/vm-command';
+import { messagingCreditCost } from '../../pricing';
 
 const WA_API = 'https://graph.facebook.com/v22.0';
 
@@ -273,17 +287,22 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
         const msgType: string = msg?.type || '';
         const msgId: string = msg?.id || '';
 
-        // Extract text body
+        // Extract text body (preserve case for agent messages)
         let text = '';
         if (msgType === 'text') {
-          text = String(msg?.text?.body || '').trim().toUpperCase();
+          text = String(msg?.text?.body || '').trim();
         }
 
-        // Check if this is a link code message
-        if (text && pendingLinks.has(text)) {
-          const linkEntry = pendingLinks.get(text)!;
+        if (!from || !text) continue;
+
+        // Mark message as read
+        try { await waMarkRead(msgId); } catch { /* best-effort */ }
+
+        // Check if this is a link code message (case-insensitive)
+        const textUpper = text.toUpperCase();
+        if (pendingLinks.has(textUpper)) {
+          const linkEntry = pendingLinks.get(textUpper)!;
           if (Date.now() <= linkEntry.expiresAt) {
-            // Link the account
             const formattedPhone = `+${from}`;
             await upsertExternalAccount({
               userId: linkEntry.userId,
@@ -297,13 +316,115 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
                 connectedAt: new Date().toISOString(),
               },
             });
-            pendingLinks.delete(text);
-            // Send a confirmation message back to the user
+            pendingLinks.delete(textUpper);
             try {
               await waSendText(from, '✅ Your WhatsApp is now linked to Stuard! You\'ll receive notifications and messages here.');
             } catch { /* best-effort */ }
-            // Mark the linking message as read
-            try { await waMarkRead(msgId); } catch { /* best-effort */ }
+            continue; // link code handled, skip normal processing
+          }
+        }
+
+        // ── Regular incoming message: route to agent ────────────────────────
+        const userId = await findUserIdByWhatsApp(from);
+        if (!userId) {
+          console.warn('[whatsapp] inbound message did not match a connected user', {
+            from,
+            textPreview: text.slice(0, 80),
+          });
+          continue;
+        }
+
+        console.log('[whatsapp] inbound message matched user', {
+          from,
+          userId,
+          textPreview: text.slice(0, 80),
+        });
+
+        // ── Handle slash commands ──────────────────────────────────────────
+        const trimmedLower = text.toLowerCase().trim();
+        if (trimmedLower.startsWith('/')) {
+          const slashHandled = await handleWaSlashCommand(userId, from, trimmedLower);
+          if (slashHandled) continue;
+        }
+
+        // ── Route based on user's agent_target setting ─────────────────────
+        const smsState = await getSmsUserState(userId);
+        const target = smsState.agent_target;
+
+        const engine = await getCloudEngine(userId);
+        const vmRunning = !!(engine && engine.status === 'running');
+
+        let effectiveTarget: 'vm' | 'desktop' = 'desktop';
+        if (target === 'vm') {
+          effectiveTarget = vmRunning ? 'vm' : 'desktop';
+        } else if (target === 'auto') {
+          effectiveTarget = vmRunning ? 'vm' : 'desktop';
+        }
+
+        console.log('[whatsapp] message routing decision', {
+          userId, configuredTarget: target, vmRunning, effectiveTarget,
+        });
+
+        let handled = false;
+
+        if (effectiveTarget === 'vm') {
+          try {
+            const vmResult = await sendVMCommand(userId, 'agent_chat', {
+              message: text,
+              conversationId: smsState.conversation_id || undefined,
+              model: smsState.preferred_model || 'fast',
+              context: { source: 'whatsapp', fromWaId: from },
+            }, 60_000);
+
+            if (vmResult.ok && vmResult.result?.text) {
+              const replyText = stripMarkdownForSms(String(vmResult.result.text)).slice(0, 4096);
+              await waSendText(from, replyText).catch((e: any) => {
+                console.error('[whatsapp] Failed to send VM agent reply:', e?.message);
+              });
+              // Deduct credit for outbound message
+              await deductWhatsAppCredit(userId);
+              handled = true;
+
+              const vmConvId = vmResult.result?.conversationId || null;
+              if (vmConvId && vmConvId !== smsState.conversation_id) {
+                await upsertSmsUserState({ userId, conversationId: vmConvId });
+              }
+
+              console.log('[whatsapp] message routed to VM', { userId, conversationId: vmConvId, responseLen: replyText.length });
+            }
+          } catch {
+            // VM call failed — fall through to desktop
+          }
+        }
+
+        // Desktop fallback (or primary desktop target)
+        if (!handled) {
+          if (target === 'vm' && !vmRunning) {
+            await waSendText(from,
+              'Your Cloud VM is not running. Start it from the desktop app, or text /auto to enable automatic routing.'
+            ).catch(() => {});
+            await deductWhatsAppCredit(userId);
+          } else {
+            const queued = await enqueueSmsInboxItem({
+              userId,
+              provider: 'whatsapp',
+              providerMessageId: msgId || null,
+              fromPhone: `+${from}`,
+              replyToPhone: `+${from}`,
+              messageText: text,
+              conversationId: smsState.conversation_id,
+              metadata: {
+                waId: from,
+                receivedAt: new Date().toISOString(),
+              },
+            });
+            if (!queued) {
+              console.warn('[whatsapp] inbound message could not be queued', {
+                from,
+                userId,
+                textPreview: text.slice(0, 80),
+              });
+            }
           }
         }
       }
@@ -452,5 +573,241 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
     return true;
   }
 
+  // ── Desktop-owned WhatsApp reply submission ─────────────────────────────
+  if (req.method === 'POST' && pathname === '/integrations/whatsapp/wa-reply') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    try {
+      const body = JSON.parse(await readBody(req));
+      const queueItemId = String(body?.queueItemId || '').trim();
+      const replyText = stripMarkdownForSms(String(body?.replyText || '').trim()).slice(0, 4096);
+      const stateMode = body?.mode;
+      const preferredModel = body?.preferredModel;
+      const conversationId = typeof body?.conversationId === 'string' ? body.conversationId.trim() || null : undefined;
+      const resumeConversationId = typeof body?.resumeConversationId === 'string' ? body.resumeConversationId.trim() || null : undefined;
+      if (!queueItemId || !replyText) {
+        sendJson(res, 400, { ok: false, error: 'queueItemId and replyText are required.' });
+        return true;
+      }
+
+      const queueItem = await getSmsQueueItem(queueItemId);
+      if (!queueItem || queueItem.user_id !== auth.userId) {
+        sendJson(res, 404, { ok: false, error: 'sms_queue_item_not_found' });
+        return true;
+      }
+      // Extract waId from metadata or from_phone
+      const waId = String(
+        (queueItem.metadata as any)?.waId ||
+        (queueItem.from_phone || '').replace(/^\+/, '')
+      );
+      if (!waId) {
+        sendJson(res, 400, { ok: false, error: 'wa_id_missing' });
+        return true;
+      }
+      if (queueItem.reply_sent_at) {
+        sendJson(res, 200, { ok: true, duplicate: true });
+        return true;
+      }
+
+      await waSendText(waId, replyText);
+      await deductWhatsAppCredit(auth.userId);
+      await markSmsQueueReplySent(queueItemId).catch(() => false);
+      await upsertSmsUserState({
+        userId: auth.userId,
+        mode: stateMode,
+        preferredModel,
+        conversationId,
+        resumeConversationId,
+        proactiveMessage: stateMode === 'agent' ? null : undefined,
+      }).catch(() => false);
+      sendJson(res, 200, { ok: true });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
+  // ── Outbound WhatsApp notification (tool permission prompts, etc.) ──────
+  if (req.method === 'POST' && pathname === '/integrations/whatsapp/wa-notify') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    try {
+      const body = JSON.parse(await readBody(req));
+      const waId = String(body?.waId || body?.to || '').replace(/^\+/, '').trim();
+      const text = stripMarkdownForSms(String(body?.text || '').trim()).slice(0, 4096);
+      if (!waId || !text) {
+        sendJson(res, 400, { ok: false, error: 'waId (or to) and text are required.' });
+        return true;
+      }
+      await waSendText(waId, text);
+      await deductWhatsAppCredit(auth.userId);
+      sendJson(res, 200, { ok: true });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
+  // ── WhatsApp Settings: get/set agent routing target ─────────────────────
+  if (req.method === 'GET' && pathname === '/integrations/whatsapp/wa-settings') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    try {
+      const state = await getSmsUserState(auth.userId);
+      const engine = await getCloudEngine(auth.userId);
+      sendJson(res, 200, {
+        ok: true,
+        agentTarget: state.agent_target,
+        mode: state.mode,
+        preferredModel: state.preferred_model,
+        vmAvailable: !!(engine && engine.status === 'running'),
+      });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
+  if (req.method === 'POST' && pathname === '/integrations/whatsapp/wa-settings') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    try {
+      const body = JSON.parse(await readBody(req));
+      const updates: Parameters<typeof upsertSmsUserState>[0] = { userId: auth.userId };
+      if (body.agentTarget !== undefined) updates.agentTarget = body.agentTarget;
+      if (body.mode !== undefined) updates.mode = body.mode;
+      if (body.preferredModel !== undefined) updates.preferredModel = body.preferredModel;
+      await upsertSmsUserState(updates);
+      const state = await getSmsUserState(auth.userId);
+      sendJson(res, 200, {
+        ok: true,
+        agentTarget: state.agent_target,
+        mode: state.mode,
+        preferredModel: state.preferred_model,
+      });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
   return false;
+}
+
+// ── WhatsApp Slash Command Handler ────────────────────────────────────────────
+
+const WA_HELP_TEXT =
+  'Stuard WhatsApp Commands:\n' +
+  '/vm - Route messages to Cloud VM agent\n' +
+  '/desktop - Route messages to desktop agent\n' +
+  '/auto - Auto-detect best agent (default)\n' +
+  '/status - Show current routing & VM status\n' +
+  '/model <fast|balanced|smart> - Set AI model\n' +
+  '/agent - Switch to agent mode\n' +
+  '/proactive - Switch to proactive mode\n' +
+  '/new - Start a new conversation\n' +
+  '/help - Show this help message';
+
+async function handleWaSlashCommand(userId: string, waId: string, command: string): Promise<boolean> {
+  const cmd = command.split(/\s+/)[0].toLowerCase();
+  const arg = command.slice(cmd.length).trim();
+
+  const reply = async (text: string) => {
+    await waSendText(waId, text).catch(() => {});
+    await deductWhatsAppCredit(userId);
+  };
+
+  switch (cmd) {
+    case '/vm': {
+      await upsertSmsUserState({ userId, agentTarget: 'vm' });
+      await reply('Routing set to Cloud VM. Your messages will be handled by the VM agent.\n\nText /auto to switch back to automatic routing.');
+      return true;
+    }
+    case '/desktop': {
+      await upsertSmsUserState({ userId, agentTarget: 'desktop' });
+      await reply('Routing set to Desktop. Your messages will be queued for the desktop agent.\n\nText /auto to switch back to automatic routing.');
+      return true;
+    }
+    case '/auto': {
+      await upsertSmsUserState({ userId, agentTarget: 'auto' });
+      await reply('Routing set to Auto. Messages will try VM first, then fall back to desktop.\n\nText /status to check current routing.');
+      return true;
+    }
+    case '/status': {
+      const state = await getSmsUserState(userId);
+      const engine = await getCloudEngine(userId);
+      const vmStatus = engine?.status === 'running' ? 'Running' : engine?.status ? `${engine.status}` : 'Not provisioned';
+      const targetLabel = { desktop: 'Desktop', vm: 'Cloud VM', auto: 'Auto (VM > Desktop)' }[state.agent_target] || 'Auto';
+      const modeLabel = state.mode === 'proactive' ? 'Proactive' : 'Agent';
+      await reply(
+        `Stuard Status:\n` +
+        `Routing: ${targetLabel}\n` +
+        `Mode: ${modeLabel}\n` +
+        `Model: ${state.preferred_model}\n` +
+        `Cloud VM: ${vmStatus}`
+      );
+      return true;
+    }
+    case '/model': {
+      const model = arg.toLowerCase();
+      if (['fast', 'balanced', 'smart', 'research'].includes(model)) {
+        await upsertSmsUserState({ userId, preferredModel: model as any });
+        await reply(`AI model set to "${model}".`);
+      } else {
+        await reply('Usage: /model <fast|balanced|smart|research>');
+      }
+      return true;
+    }
+    case '/agent': {
+      await upsertSmsUserState({ userId, mode: 'agent', proactiveMessage: null });
+      await reply('Switched to Agent mode.');
+      return true;
+    }
+    case '/proactive': {
+      await upsertSmsUserState({ userId, mode: 'proactive' });
+      await reply('Switched to Proactive mode. You will receive proactive notifications.');
+      return true;
+    }
+    case '/new': {
+      await upsertSmsUserState({ userId, conversationId: null, resumeConversationId: null });
+      await reply('New conversation started. Previous context cleared.');
+      return true;
+    }
+    case '/help': {
+      await reply(WA_HELP_TEXT);
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+// ── Credit deduction helper ──────────────────────────────────────────────────
+
+async function deductWhatsAppCredit(userId: string): Promise<void> {
+  const credits = messagingCreditCost('whatsapp');
+  if (credits <= 0) return;
+  try {
+    await debitCredits(userId, {
+      sourceType: 'messaging:whatsapp',
+      sourceRef: `wa_send:${Date.now()}`,
+      credits,
+      amountUsd: 0.005,
+      metadata: { provider: 'whatsapp' },
+    });
+  } catch (e: any) {
+    console.error('[whatsapp] credit deduction failed:', e?.message);
+  }
 }

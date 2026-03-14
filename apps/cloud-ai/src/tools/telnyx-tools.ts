@@ -1,8 +1,9 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { getExternalAccount } from '../supabase';
+import { getExternalAccount, debitCredits } from '../supabase';
 import { getBridgeSecrets } from './bridge';
 import { TELNYX_API_KEY, TELNYX_FROM_NUMBER, TELNYX_MESSAGING_PROFILE_ID } from '../utils/config';
+import { messagingCreditCost } from '../pricing';
 
 const TELNYX_API = 'https://api.telnyx.com/v2';
 
@@ -68,6 +69,17 @@ export const telnyx_send_sms = createTool({
       }
 
       const result = await telnyxRequest('/messages', 'POST', body);
+      // Deduct messaging credits
+      const credits = messagingCreditCost('telnyx');
+      if (credits > 0) {
+        debitCredits(userId, {
+          sourceType: 'messaging:telnyx',
+          sourceRef: `sms_tool:${result?.data?.id || Date.now()}`,
+          credits,
+          amountUsd: 0.004,
+          metadata: { provider: 'telnyx', tool: 'telnyx_send_sms' },
+        }).catch((e: any) => console.error('[telnyx-tools] credit deduction failed:', e?.message));
+      }
       return {
         ok: true,
         messageId: result?.data?.id || '',

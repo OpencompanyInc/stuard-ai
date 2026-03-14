@@ -51,3 +51,22 @@ export async function sendWelcomeSms(toPhone: string): Promise<void> {
     console.error('[sms-utils] Welcome SMS failed:', e?.message)
   );
 }
+
+// ── WhatsApp send helpers ─────────────────────────────────────────────────────
+
+import { waSendText } from './integrations/whatsapp';
+
+export async function sendWhatsAppRaw(waId: string, text: string): Promise<void> {
+  await waSendText(waId, text.slice(0, 4096));
+}
+
+const WA_WELCOME_MESSAGE =
+  'Stuard AI ready on WhatsApp. Message me anything to chat with your agent.\n\n' +
+  'Routing: /vm /desktop /auto\n' +
+  'Commands: /agent /new /model /status /help';
+
+export async function sendWhatsAppWelcome(waId: string): Promise<void> {
+  await sendWhatsAppRaw(waId, WA_WELCOME_MESSAGE).catch((e) =>
+    console.error('[sms-utils] WhatsApp welcome failed:', e?.message)
+  );
+}

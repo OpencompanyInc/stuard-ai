@@ -140,6 +140,22 @@ export const STORAGE_PRICING = {
   coldPerGbMonthUsd: 0.02,  // GCS standard class
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Messaging Pricing (per outbound message)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const MESSAGING_PRICING: Record<string, { perMessageUsd: number; label: string }> = {
+  telnyx:   { perMessageUsd: 0.004, label: 'Telnyx SMS' },
+  whatsapp: { perMessageUsd: 0.005, label: 'WhatsApp' },
+};
+
+/** Return credit cost for a single outbound message on the given provider. */
+export function messagingCreditCost(provider: string): number {
+  const entry = MESSAGING_PRICING[String(provider || '').toLowerCase()];
+  if (!entry) return 0;
+  return creditsFromUsd(entry.perMessageUsd);
+}
+
 /** Estimate compute cost in credits for a given tier over `hours` hours. */
 export function estimateComputeCostCredits(tier: string, hours: number): number {
   const config = COMPUTE_TIER_CONFIG[tier];

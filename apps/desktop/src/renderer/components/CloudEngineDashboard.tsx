@@ -286,9 +286,109 @@ export function CloudEngineDashboard() {
 
   if (!engine) return null;
 
+  // ─── Provisioning Progress View ─────────────────────────────────────
+  if (engine.status === 'provisioning') {
+    const PROVISION_STEPS = [
+      { key: 'vm_creating',          label: 'Creating your machine',       detail: 'Spinning up a dedicated VM in the cloud' },
+      { key: 'vm_created',           label: 'Machine created',             detail: 'Your VM is ready, configuring network...' },
+      { key: 'waiting_ip',           label: 'Assigning network address',   detail: 'Getting a public IP for your machine' },
+      { key: 'waiting_agent',        label: 'Starting AI agent',           detail: 'Installing packages and booting your agent' },
+      { key: 'restoring_data',       label: 'Restoring your data',         detail: 'Syncing your memories, scripts, and files' },
+      { key: 'syncing_agent',        label: 'Syncing AI knowledge',        detail: 'Loading your knowledge base and databases' },
+      { key: 'syncing_integrations', label: 'Setting up integrations',     detail: 'Connecting your linked accounts' },
+      { key: 'finalizing',           label: 'Almost ready',                detail: 'Final checks and bringing everything online' },
+    ] as const;
+
+    const currentStep = engine.provision_step || 'vm_creating';
+    const currentIdx = PROVISION_STEPS.findIndex(s => s.key === currentStep);
+    const progress = Math.max(0, Math.min(100, ((currentIdx + 1) / PROVISION_STEPS.length) * 100));
+
+    return (
+      <div className="animate-in fade-in duration-500">
+        <div className="flex flex-col items-center justify-center min-h-[60vh]">
+          {/* Main card */}
+          <div className="w-full max-w-lg">
+            <div className="text-center mb-8">
+              <div className="w-16 h-16 rounded-3xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
+                <Loader2 className="w-8 h-8 animate-spin text-primary" />
+              </div>
+              <h1 className="text-2xl font-black text-theme-fg tracking-tight">Setting up your Cloud Engine</h1>
+              <p className="text-theme-muted text-sm mt-1">This usually takes 1–3 minutes. You can wait here or come back shortly.</p>
+            </div>
+
+            {/* Progress bar */}
+            <div className="mb-8">
+              <div className="flex items-center justify-between text-[10px] text-theme-muted font-bold mb-2">
+                <span>Progress</span>
+                <span>{Math.round(progress)}%</span>
+              </div>
+              <div className="h-2 rounded-full bg-theme-hover/50 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-primary transition-all duration-700 ease-out"
+                  style={{ width: `${Math.max(5, progress)}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Step list */}
+            <div className="space-y-2">
+              {PROVISION_STEPS.map((step, idx) => {
+                const isActive = idx === currentIdx;
+                const isDone = idx < currentIdx;
+                const isPending = idx > currentIdx;
+
+                return (
+                  <div
+                    key={step.key}
+                    className={clsx(
+                      'flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300',
+                      isActive && 'bg-primary/10 border border-primary/20',
+                      isDone && 'opacity-60',
+                      isPending && 'opacity-30',
+                    )}
+                  >
+                    <div className="shrink-0">
+                      {isDone ? (
+                        <CheckCircle2 className="w-4 h-4 text-green-500" />
+                      ) : isActive ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                      ) : (
+                        <Circle className="w-4 h-4 text-theme-muted/40" />
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <div className={clsx(
+                        'text-xs font-bold',
+                        isActive ? 'text-primary' : isDone ? 'text-theme-fg' : 'text-theme-muted',
+                      )}>
+                        {step.label}
+                      </div>
+                      {isActive && (
+                        <div className="text-[10px] text-theme-muted mt-0.5 animate-in fade-in duration-300">
+                          {step.detail}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Info footer */}
+            <div className="mt-8 p-3 rounded-xl bg-theme-hover/30 text-center">
+              <p className="text-[10px] text-theme-muted">
+                Your engine runs 24/7 once set up. Credits are only used while the engine is active.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const statusColor = engine.status === 'running' ? 'text-green-500' : engine.status === 'stopped' ? 'text-amber-500' : 'text-red-500';
   const statusBgColor = engine.status === 'running' ? 'bg-green-500' : engine.status === 'stopped' ? 'bg-amber-500' : 'bg-red-500';
-  const statusLabel = engine.status === 'running' ? 'Running' : engine.status === 'stopped' ? 'Paused' : engine.status === 'provisioning' ? 'Setting up...' : engine.status;
+  const statusLabel = engine.status === 'running' ? 'Running' : engine.status === 'stopped' ? 'Paused' : engine.status;
 
   const dashTabs: { id: DashTab; label: string; icon: any }[] = [
     { id: 'overview', label: 'Overview', icon: Server },

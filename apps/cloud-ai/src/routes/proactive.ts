@@ -25,6 +25,7 @@ import { getDefaultModelForCategory } from '../pricing';
 import { buildProactiveMessageContent, filterProactiveTools, generateWithToolRecovery } from './proactive-utils';
 import { verifyVMAuthFromRequest } from '../services/vm-tokens';
 import { telnyx_send_sms, telnyx_make_call } from '../tools/telnyx-tools';
+import { whatsapp_send_message } from '../tools/whatsapp-tools';
 import { stripMarkdownForSms } from './sms-utils';
 import { getBridgeSecrets } from '../tools/bridge';
 import { normalizeUsage } from '../utils/usage';
@@ -112,6 +113,26 @@ async function deliverProactiveNotifications(
           userId: resolvedUserId,
           mode: 'proactive',
           proactiveMessage: smsText.slice(0, 2000),
+        });
+      }
+    } catch {}
+  }
+  if (requested.has('whatsapp')) {
+    const waText = stripMarkdownForSms(message);
+    const waFooter = '\n\n(Proactive mode. Reply to respond, or text /agent to switch.)';
+    const maxWaBody = 4096 - waFooter.length;
+    const waWithFooter = waText.slice(0, maxWaBody) + waFooter;
+    results.whatsapp = await (whatsapp_send_message as any).execute({
+      message: waWithFooter,
+    }, {} as any);
+    // Persist WhatsApp mode + proactive message for reply context
+    try {
+      const resolvedUserId = userId || String((getBridgeSecrets() as any)?.userId || '');
+      if (resolvedUserId) {
+        await upsertSmsUserState({
+          userId: resolvedUserId,
+          mode: 'proactive',
+          proactiveMessage: waText.slice(0, 2000),
         });
       }
     } catch {}

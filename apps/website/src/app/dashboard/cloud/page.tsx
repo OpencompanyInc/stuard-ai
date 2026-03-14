@@ -68,6 +68,102 @@ export default function CloudDashboardPage() {
     return <ProvisionFlow onProvisioned={loadStatus} />;
   }
 
+  // Show provisioning progress view
+  if (engine.status === 'provisioning') {
+    const PROVISION_STEPS = [
+      { key: 'vm_creating',          label: 'Creating your machine',       detail: 'Spinning up a dedicated VM in the cloud' },
+      { key: 'vm_created',           label: 'Machine created',             detail: 'Your VM is ready, configuring network...' },
+      { key: 'waiting_ip',           label: 'Assigning network address',   detail: 'Getting a public IP for your machine' },
+      { key: 'waiting_agent',        label: 'Starting AI agent',           detail: 'Installing packages and booting your agent' },
+      { key: 'restoring_data',       label: 'Restoring your data',         detail: 'Syncing your memories, scripts, and files' },
+      { key: 'syncing_agent',        label: 'Syncing AI knowledge',        detail: 'Loading your knowledge base and databases' },
+      { key: 'syncing_integrations', label: 'Setting up integrations',     detail: 'Connecting your linked accounts' },
+      { key: 'finalizing',           label: 'Almost ready',                detail: 'Final checks and bringing everything online' },
+    ];
+
+    const currentStep = engine.provisionStep || 'vm_creating';
+    const currentIdx = PROVISION_STEPS.findIndex(s => s.key === currentStep);
+    const progress = Math.max(0, Math.min(100, ((currentIdx + 1) / PROVISION_STEPS.length) * 100));
+
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[50vh]">
+        <div className="w-full max-w-lg">
+          <div className="text-center mb-8">
+            <div className="w-14 h-14 rounded-2xl bg-blue-50 flex items-center justify-center mx-auto mb-4">
+              <svg className="w-7 h-7 text-blue-600 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            </div>
+            <h1 className="text-xl font-bold text-gray-900">Setting up your Cloud Engine</h1>
+            <p className="text-gray-500 text-sm mt-1">This usually takes 1-3 minutes.</p>
+          </div>
+
+          {/* Progress bar */}
+          <div className="mb-6">
+            <div className="flex justify-between text-xs text-gray-400 font-medium mb-1.5">
+              <span>Progress</span>
+              <span>{Math.round(progress)}%</span>
+            </div>
+            <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-blue-600 transition-all duration-700 ease-out"
+                style={{ width: `${Math.max(5, progress)}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Steps */}
+          <div className="space-y-1.5">
+            {PROVISION_STEPS.map((step, idx) => {
+              const isActive = idx === currentIdx;
+              const isDone = idx < currentIdx;
+              const isPending = idx > currentIdx;
+
+              return (
+                <div
+                  key={step.key}
+                  className={`flex items-center gap-3 px-3.5 py-2.5 rounded-lg transition-all ${
+                    isActive ? 'bg-blue-50 ring-1 ring-blue-200' : ''
+                  } ${isDone ? 'opacity-50' : ''} ${isPending ? 'opacity-25' : ''}`}
+                >
+                  <div className="shrink-0 w-4 h-4 flex items-center justify-center">
+                    {isDone ? (
+                      <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    ) : isActive ? (
+                      <svg className="w-4 h-4 text-blue-600 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                    ) : (
+                      <div className="w-2 h-2 rounded-full bg-gray-300" />
+                    )}
+                  </div>
+                  <div>
+                    <div className={`text-xs font-semibold ${isActive ? 'text-blue-700' : 'text-gray-700'}`}>
+                      {step.label}
+                    </div>
+                    {isActive && (
+                      <div className="text-[11px] text-gray-500 mt-0.5">{step.detail}</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-6 p-3 rounded-lg bg-gray-50 text-center">
+            <p className="text-[11px] text-gray-400">
+              Your engine runs 24/7 once set up. Credits are only used while active.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const tabs: { id: CloudTab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
     { id: 'terminal', label: 'Terminal' },

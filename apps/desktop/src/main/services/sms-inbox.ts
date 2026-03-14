@@ -17,12 +17,14 @@ type SmsPreferredModel = 'fast' | 'balanced' | 'smart' | 'research';
 type SmsQueueItem = {
   id: string;
   user_id: string;
+  provider?: string | null;
   reply_to_phone?: string | null;
   message_text?: string | null;
   mode?: SmsMode;
   preferred_model?: SmsPreferredModel;
   conversation_id?: string | null;
   reply_sent_at?: string | null;
+  metadata?: any;
 };
 
 type SmsUserState = {
@@ -110,25 +112,36 @@ function getCloudAiWsUrl(): string {
   return ws.endsWith('/ws') ? ws : ws + '/ws';
 }
 
-async function sendSmsNotify(toPhone: string, text: string): Promise<void> {
+async function sendSmsNotify(toPhone: string, text: string, provider?: string | null): Promise<void> {
   const session = getMainAuthSession();
   const token = session?.access_token;
   if (!token || !toPhone) return;
   try {
-    const resp = await net.fetch(`${getCloudAiUrl()}/integrations/telnyx/sms-notify`, {
+    const isWhatsApp = String(provider || '').toLowerCase() === 'whatsapp';
+    const endpoint = isWhatsApp
+      ? `${getCloudAiUrl()}/integrations/whatsapp/wa-notify`
+      : `${getCloudAiUrl()}/integrations/telnyx/sms-notify`;
+    const bodyPayload = isWhatsApp
+      ? { waId: toPhone.replace(/^\+/, ''), text }
+      : { to: toPhone, text };
+    const resp = await net.fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify({ to: toPhone, text }),
+      body: JSON.stringify(bodyPayload),
     });
-    if (!resp.ok) logger.warn(`[sms-inbox] sms-notify failed: ${resp.status}`);
+    if (!resp.ok) logger.warn(`[sms-inbox] ${isWhatsApp ? 'wa' : 'sms'}-notify failed: ${resp.status}`);
   } catch (e: any) {
-    logger.warn('[sms-inbox] sms-notify error:', e?.message);
+    logger.warn('[sms-inbox] notify error:', e?.message);
   }
 }
 
 // GSM-7 concatenated: 153 chars/segment × 10 segments = 1530
 // Unicode concatenated:  67 chars/segment × 10 segments = 670
-function truncateForSms(text: string): string {
+// WhatsApp: 4096 char limit
+function truncateForSms(text: string, provider?: string | null): string {
+  if (String(provider || '').toLowerCase() === 'whatsapp') {
+    return text.slice(0, 4096);
+  }
   const isUnicode = /[^\x00-\x7F]/.test(text);
   return text.slice(0, isUnicode ? 670 : 1530);
 }
@@ -225,12 +238,18 @@ async function submitSmsReply(input: {
   preferredModel: SmsPreferredModel;
   conversationId: string | null;
   resumeConversationId: string | null;
+  provider?: string | null;
 }): Promise<void> {
   const session = getMainAuthSession();
   const token = session?.access_token;
   if (!token) throw new Error('desktop_auth_missing');
 
-  const resp = await net.fetch(`${getCloudAiUrl()}/integrations/telnyx/sms-reply`, {
+  const isWhatsApp = String(input.provider || '').toLowerCase() === 'whatsapp';
+  const endpoint = isWhatsApp
+    ? `${getCloudAiUrl()}/integrations/whatsapp/wa-reply`
+    : `${getCloudAiUrl()}/integrations/telnyx/sms-reply`;
+
+  const resp = await net.fetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -421,6 +440,7 @@ async function runSmsTurn(input: {
   userId: string;
   replyToPhone: string;
   proactiveMessage?: string | null;
+  provider?: string | null;
 }): Promise<{ replyText: string; conversationId: string | null }> {
   const session = getMainAuthSession();
   const token = session?.access_token;
@@ -544,6 +564,7 @@ async function runSmsTurn(input: {
           void sendSmsNotify(
             input.replyToPhone,
             `Stuard wants to run: ${toolName}\n${argsPreview}\nReply YES to allow, NO to deny.`,
+            input.provider,
           );
           return;
         }
@@ -559,7 +580,7 @@ async function runSmsTurn(input: {
         const result = msg?.result || {};
         const replyText = truncateForSms(stripMarkdownForSms(
           String(result?.text || result?.response || '').trim(),
-        ));
+        ), input.provider);
         const nextConversationId = msg?.conversationId
           ? String(msg.conversationId)
           : conversationId;
@@ -625,6 +646,7 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
   }
 
   // ── SMS commands ──────────────────────────────────────────────────────────
+  const itemProvider = item.provider || 'telnyx';
   const commandResult = handleSmsCommand(incomingText, effectiveState);
   if (commandResult.handled && commandResult.replyText && commandResult.nextState) {
     await submitSmsReply({
@@ -634,6 +656,7 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
       preferredModel: commandResult.nextState.preferred_model,
       conversationId: commandResult.nextState.conversation_id,
       resumeConversationId: commandResult.nextState.resume_conversation_id,
+      provider: itemProvider,
     });
     await completeSmsItem(item.id);
     return;
@@ -649,6 +672,7 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
     userId,
     replyToPhone,
     proactiveMessage: effectiveState.proactive_message,
+    provider: itemProvider,
   });
   if (!turn.replyText) throw new Error('sms_empty_agent_reply');
 
@@ -659,6 +683,7 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
     preferredModel: effectiveState.preferred_model,
     conversationId: turn.conversationId,
     resumeConversationId: turn.conversationId || effectiveState.resume_conversation_id,
+    provider: itemProvider,
   });
   await completeSmsItem(item.id);
 }

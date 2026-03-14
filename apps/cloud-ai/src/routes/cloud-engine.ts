@@ -19,6 +19,22 @@ const PROVISION_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 // Prevent double-click / rapid-fire provision requests per user
 const _activeProvisions = new Set<string>();
 
+// In-memory provision progress tracking — cleared once provisioning completes
+export type ProvisionStep = 'vm_creating' | 'vm_created' | 'waiting_ip' | 'waiting_agent' | 'restoring_data' | 'syncing_agent' | 'syncing_integrations' | 'finalizing' | 'done';
+const _provisionProgress = new Map<string, { step: ProvisionStep; updatedAt: number }>();
+
+function setProvisionStep(userId: string, step: ProvisionStep) {
+  if (step === 'done') {
+    _provisionProgress.delete(userId);
+  } else {
+    _provisionProgress.set(userId, { step, updatedAt: Date.now() });
+  }
+}
+
+export function getProvisionStep(userId: string): { step: ProvisionStep; updatedAt: number } | null {
+  return _provisionProgress.get(userId) || null;
+}
+
 function json(res: ServerResponse, status: number, body: any): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
@@ -177,6 +193,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
         machineTypeOverride = machineType;
       }
       const provider = getComputeProvider();
+      setProvisionStep(user.userId, 'vm_creating');
       const { instanceName, zone, vmSecret } = await provider.provisionVM(user.userId, tier, diskSizeGb, {
         machineType: machineTypeOverride,
       });
@@ -211,6 +228,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
 
       // Return immediately with provisioning status — background task will
       // wait for VM agent readiness, restore data, and transition to running.
+      setProvisionStep(user.userId, 'vm_created');
       json(res, 201, { ok: true, engine: { ...engine, status: 'provisioning', external_ip: externalIp, vm_secret: undefined } });
 
       // Fire-and-forget: wait for VM agent, restore data, then mark running
@@ -223,6 +241,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
           for (let i = 0; i < 36; i++) {
             // Re-fetch IP if not available yet
             if (!vmIp) {
+              setProvisionStep(user.userId, 'waiting_ip');
               try {
                 vmIp = await provider.getVMExternalIP(instanceName, zone);
                 if (vmIp) {
@@ -231,6 +250,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
               } catch { /* retry */ }
             }
             if (vmIp) {
+              setProvisionStep(user.userId, 'waiting_agent');
               try {
                 const pingResp = await fetch(`http://${vmIp}:7400/health`, {
                   signal: AbortSignal.timeout(5000),
@@ -247,6 +267,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
           // Restore from cold storage if VM is ready
           if (vmReady) {
             // 1. Restore workspace backup (memories, deploys, scripts, etc.)
+            setProvisionStep(user.userId, 'restoring_data');
             const restoreResult = await restoreFromCloud(user.userId);
             if (!restoreResult.success && restoreResult.error !== 'no_backup_exists') {
               console.warn('[cloud-engine] Post-provision workspace restore failed:', restoreResult.error);
@@ -256,6 +277,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
 
             // 2. Explicitly sync agent databases (knowledge.db, memory.db) from GCS
             // The startup script also tries this via gsutil, but belt-and-suspenders
+            setProvisionStep(user.userId, 'syncing_agent');
             try {
               const agentSyncResult = await sendVMCommand(user.userId, 'sync_agent_data', { direction: 'download' }, 60_000);
               if (agentSyncResult.ok) {
@@ -268,6 +290,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
             }
 
             // 3. Push OAuth tokens to VM so integrations work
+            setProvisionStep(user.userId, 'syncing_integrations');
             try {
               const accounts = await listExternalAccounts(user.userId);
               const tokens = accounts
@@ -293,30 +316,50 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
             console.warn('[cloud-engine] VM not ready after provision, skipping restore for user', user.userId);
           }
 
-          // Transition to running — only if the agent actually responded
+          // Transition to running
+          setProvisionStep(user.userId, 'finalizing');
+          const now = new Date().toISOString();
           if (vmReady) {
-            await updateCloudEngineStatus(user.userId, 'running', 'provisioning', {
-              started_at: new Date().toISOString(),
+            const ok = await updateCloudEngineStatus(user.userId, 'running', 'provisioning', {
+              started_at: now,
             });
+            if (!ok) {
+              // Retry without health_status in case constraint is blocking
+              console.warn('[cloud-engine] Status update failed, retrying bare status transition');
+              await updateCloudEngineStatus(user.userId, 'running', 'provisioning', { started_at: now });
+            }
           } else {
             // Agent never responded — still transition to running so the user
             // isn't stuck, but log prominently. The startup script may still be
             // installing Node.js / downloading the agent.
             console.error('[cloud-engine] VM agent never responded to health check for user', user.userId,
               '— transitioning to running anyway (agent may still be booting)');
-            await updateCloudEngineStatus(user.userId, 'running', 'provisioning', {
-              started_at: new Date().toISOString(),
+            // Try with health_status first, fall back to bare transition if constraint fails
+            const ok = await updateCloudEngineStatus(user.userId, 'running', 'provisioning', {
+              started_at: now,
               health_status: 'unreachable',
             });
+            if (!ok) {
+              console.warn('[cloud-engine] Status update with health_status failed, retrying without it');
+              await updateCloudEngineStatus(user.userId, 'running', 'provisioning', { started_at: now });
+              // Update health_status separately so it doesn't block the transition
+              await updateEngineHealth(user.userId, { health_status: 'unreachable' }).catch(() => {});
+            }
           }
+          setProvisionStep(user.userId, 'done');
         } catch (bgErr: any) {
           console.error('[cloud-engine] Background provision finalization failed:', bgErr?.message);
-          try {
-            await updateCloudEngineStatus(user.userId, 'running', 'provisioning', {
+          // Always transition to running — don't leave user stuck at provisioning
+          const ok = await updateCloudEngineStatus(user.userId, 'running', 'provisioning', {
+            started_at: new Date().toISOString(),
+          }).catch(() => false);
+          if (!ok) {
+            // Last resort: update status without expectedStatus guard
+            await updateCloudEngineStatus(user.userId, 'running', undefined, {
               started_at: new Date().toISOString(),
-              health_status: 'unhealthy',
-            });
-          } catch { /* last resort */ }
+            }).catch(() => {});
+          }
+          setProvisionStep(user.userId, 'done');
         }
       })();
       } finally {
@@ -324,6 +367,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       }
     } catch (e: any) {
       _activeProvisions.delete(user.userId);
+      setProvisionStep(user.userId, 'done');
       // Extract a meaningful error message from GCP errors
       const gcpMsg = e?.error?.message || e?.errors?.[0]?.message || e?.message || 'failed';
       const gcpCode = e?.code ?? e?.error?.code;
@@ -571,6 +615,9 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
         ? Number((computeUsage.compute / computeCreditsPerHour).toFixed(2))
         : 0;
 
+      // Include provision progress if still provisioning
+      const provisionProgress = engine.status === 'provisioning' ? getProvisionStep(user.userId) : null;
+
       json(res, 200, {
         ok: true,
         engine: {
@@ -591,6 +638,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
           healthStatus: engine.health_status,
           lastHeartbeat: engine.last_heartbeat_at,
           agentVersion: engine.agent_version,
+          provisionStep: provisionProgress?.step ?? null,
         },
         storage: syncStatus,
         billing: {

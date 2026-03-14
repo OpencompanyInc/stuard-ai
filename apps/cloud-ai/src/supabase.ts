@@ -169,7 +169,7 @@ function chooseFresherAccount(preferredOnTie: ExternalAccount, other: ExternalAc
 
 const _syncCache = new Map<string, { val: boolean; ts: number }>();
 const SYNC_CACHE_TTL = 60_000;
-const ALWAYS_SYNC_EXTERNAL_ACCOUNT_PROVIDERS = new Set(['telnyx']);
+const ALWAYS_SYNC_EXTERNAL_ACCOUNT_PROVIDERS = new Set(['telnyx', 'whatsapp']);
 
 function shouldAlwaysSyncExternalAccount(provider: string): boolean {
   return ALWAYS_SYNC_EXTERNAL_ACCOUNT_PROVIDERS.has(String(provider || '').toLowerCase());
@@ -941,6 +941,35 @@ export async function findUserIdByPhone(phone: string): Promise<string | null> {
       .select('user_id')
       .eq('provider', 'telnyx')
       .eq('meta->>phone2', normalizedPhone)
+      .limit(1)
+      .maybeSingle();
+    if (d2?.user_id) return d2.user_id as string;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Find a user by their WhatsApp waId (digits without +)
+export async function findUserIdByWhatsApp(waId: string): Promise<string | null> {
+  if (!supabaseService) return null;
+  try {
+    const normalizedWaId = String(waId || '').replace(/[^\d]/g, '');
+    if (!normalizedWaId) return null;
+    const { data } = await supabaseService
+      .from('external_accounts')
+      .select('user_id')
+      .eq('provider', 'whatsapp')
+      .eq('meta->>waId', normalizedWaId)
+      .limit(1)
+      .maybeSingle();
+    if (data?.user_id) return data.user_id as string;
+    // Fallback: check by formatted phone (+waId)
+    const { data: d2 } = await supabaseService
+      .from('external_accounts')
+      .select('user_id')
+      .eq('provider', 'whatsapp')
+      .eq('meta->>phone', `+${normalizedWaId}`)
       .limit(1)
       .maybeSingle();
     if (d2?.user_id) return d2.user_id as string;

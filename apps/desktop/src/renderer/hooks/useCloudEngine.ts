@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabaseClient';
 
 const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || 'http://127.0.0.1:8082';
 
+export type ProvisionStep = 'vm_creating' | 'vm_created' | 'waiting_ip' | 'waiting_agent' | 'restoring_data' | 'syncing_agent' | 'syncing_integrations' | 'finalizing';
+
 export interface CloudEngine {
   id: string;
   user_id: string;
@@ -17,6 +19,7 @@ export interface CloudEngine {
   last_heartbeat_at?: string;
   health_status?: string;
   external_ip?: string;
+  provision_step?: ProvisionStep | null;
 }
 
 export interface CloudMetrics {
@@ -124,6 +127,7 @@ export function useCloudEngine() {
           last_heartbeat_at: e.last_heartbeat_at || e.lastHeartbeatAt,
           health_status: e.health_status || e.healthStatus,
           external_ip: e.external_ip || e.externalIp,
+          provision_step: e.provision_step || e.provisionStep || null,
         });
         // Extract billing from status response
         if (data.billing) {
