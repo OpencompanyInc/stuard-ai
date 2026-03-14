@@ -221,6 +221,10 @@ declare global {
         Promise<{ ok: boolean; entries?: Array<{ id: string; name: string; category: string; service?: string; favorite: boolean; tags?: string[] }>; count?: number; error?: string }>;
       vaultStats: () =>
         Promise<{ ok: boolean; total?: number; by_category?: Record<string, number>; favorites?: number; categories?: string[]; error?: string }>;
+
+      // Cloud Engine agent data sync
+      uploadAgentData: (cloudAiUrl: string, token: string) =>
+        Promise<{ ok: boolean; skipped?: boolean; reason?: string; bytes?: number; error?: string }>;
     };
   }
 }

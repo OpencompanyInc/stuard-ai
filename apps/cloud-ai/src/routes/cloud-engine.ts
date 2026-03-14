@@ -5,6 +5,7 @@ import { getComputeProvider } from '../services/compute';
 import { syncToCloud, restoreFromCloud, getSyncStatus } from '../services/sync-engine';
 import { deleteAllUserData, uploadAgentData } from '../services/cold-storage';
 import { getUserComputeUsage } from '../services/compute-billing';
+import { sendVMCommand } from '../services/vm-command';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -203,17 +204,108 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
         externalIp = vmStatus || null;
       } catch { /* IP not yet assigned — health monitor will update it later */ }
 
-      // Transition to running (VM is live after provisioning)
-      await updateCloudEngineStatus(user.userId, 'running', 'provisioning', {
-        started_at: new Date().toISOString(),
-      });
-
       // Store external IP if we got one
       if (externalIp) {
         await updateEngineHealth(user.userId, { external_ip: externalIp });
       }
 
-      json(res, 201, { ok: true, engine: { ...engine, status: 'running', external_ip: externalIp, vm_secret: undefined } });
+      // Return immediately with provisioning status — background task will
+      // wait for VM agent readiness, restore data, and transition to running.
+      json(res, 201, { ok: true, engine: { ...engine, status: 'provisioning', external_ip: externalIp, vm_secret: undefined } });
+
+      // Fire-and-forget: wait for VM agent, restore data, then mark running
+      (async () => {
+        try {
+          // Wait for VM agent to be reachable (max 120s for cold boot)
+          let vmIp = externalIp;
+          let vmReady = false;
+          for (let i = 0; i < 24; i++) {
+            // Re-fetch IP if not available yet
+            if (!vmIp) {
+              try {
+                vmIp = await provider.getVMExternalIP(instanceName, zone);
+                if (vmIp) {
+                  await updateEngineHealth(user.userId, { external_ip: vmIp });
+                }
+              } catch { /* retry */ }
+            }
+            if (vmIp) {
+              try {
+                const pingResp = await fetch(`http://${vmIp}:7400/health`, {
+                  signal: AbortSignal.timeout(5000),
+                });
+                if (pingResp.ok) {
+                  vmReady = true;
+                  break;
+                }
+              } catch { /* retry */ }
+            }
+            await new Promise(r => setTimeout(r, 5000));
+          }
+
+          // Restore from cold storage if VM is ready
+          if (vmReady) {
+            // 1. Restore workspace backup (memories, deploys, scripts, etc.)
+            const restoreResult = await restoreFromCloud(user.userId);
+            if (!restoreResult.success && restoreResult.error !== 'no_backup_exists') {
+              console.warn('[cloud-engine] Post-provision workspace restore failed:', restoreResult.error);
+            } else {
+              console.log('[cloud-engine] Post-provision workspace restore complete for user', user.userId);
+            }
+
+            // 2. Explicitly sync agent databases (knowledge.db, memory.db) from GCS
+            // The startup script also tries this via gsutil, but belt-and-suspenders
+            try {
+              const agentSyncResult = await sendVMCommand(user.userId, 'sync_agent_data', { direction: 'download' }, 60_000);
+              if (agentSyncResult.ok) {
+                console.log('[cloud-engine] Post-provision agent data sync complete for user', user.userId);
+              } else {
+                console.warn('[cloud-engine] Post-provision agent data sync failed:', agentSyncResult.error);
+              }
+            } catch (e: any) {
+              console.warn('[cloud-engine] Post-provision agent data sync error:', e?.message);
+            }
+
+            // 3. Push OAuth tokens to VM so integrations work
+            try {
+              const accounts = await listExternalAccounts(user.userId);
+              const tokens = accounts
+                .filter(a => a.access_token && a.access_token !== 'verified')
+                .map(a => ({
+                  provider: a.provider,
+                  profileLabel: a.profile_label,
+                  isDefault: a.is_default,
+                  accessToken: a.access_token,
+                  refreshToken: a.refresh_token || null,
+                  expiresAt: a.expires_at || null,
+                  scopes: a.scopes || [],
+                  accountEmail: a.account_email || null,
+                }));
+              if (tokens.length > 0) {
+                await sendVMCommand(user.userId, 'store_oauth_tokens', { tokens }, 15_000);
+                console.log(`[cloud-engine] Synced ${tokens.length} OAuth tokens to VM for user`, user.userId);
+              }
+            } catch (e: any) {
+              console.warn('[cloud-engine] Post-provision OAuth sync error:', e?.message);
+            }
+          } else {
+            console.warn('[cloud-engine] VM not ready after provision, skipping restore for user', user.userId);
+          }
+
+          // Transition to running
+          await updateCloudEngineStatus(user.userId, 'running', 'provisioning', {
+            started_at: new Date().toISOString(),
+          });
+        } catch (bgErr: any) {
+          console.error('[cloud-engine] Background provision finalization failed:', bgErr?.message);
+          // Still try to mark as running so the user isn't stuck
+          try {
+            await updateCloudEngineStatus(user.userId, 'running', 'provisioning', {
+              started_at: new Date().toISOString(),
+            });
+          } catch { /* last resort */ }
+        }
+      })();
       } finally {
         _activeProvisions.delete(user.userId);
       }
@@ -300,9 +392,42 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       // Restore from cold storage AFTER VM is running
       let restoreResult: { success: boolean; error?: string } = { success: false, error: 'vm_not_ready' };
       if (vmReady) {
+        // 1. Restore workspace backup (memories, deploys, scripts, etc.)
         restoreResult = await restoreFromCloud(user.userId);
         if (!restoreResult.success) {
           console.warn('[cloud-engine] Restore failed:', restoreResult.error);
+        }
+
+        // 2. Sync agent databases (knowledge.db, memory.db)
+        try {
+          const agentSync = await sendVMCommand(user.userId, 'sync_agent_data', { direction: 'download' }, 60_000);
+          if (agentSync.ok) {
+            console.log('[cloud-engine] Agent data synced on start for user', user.userId);
+          }
+        } catch (e: any) {
+          console.warn('[cloud-engine] Agent data sync on start failed:', e?.message);
+        }
+
+        // 3. Push OAuth tokens
+        try {
+          const accounts = await listExternalAccounts(user.userId);
+          const tokens = accounts
+            .filter(a => a.access_token && a.access_token !== 'verified')
+            .map(a => ({
+              provider: a.provider,
+              profileLabel: a.profile_label,
+              isDefault: a.is_default,
+              accessToken: a.access_token,
+              refreshToken: a.refresh_token || null,
+              expiresAt: a.expires_at || null,
+              scopes: a.scopes || [],
+              accountEmail: a.account_email || null,
+            }));
+          if (tokens.length > 0) {
+            await sendVMCommand(user.userId, 'store_oauth_tokens', { tokens }, 15_000);
+          }
+        } catch (e: any) {
+          console.warn('[cloud-engine] OAuth sync on start failed:', e?.message);
         }
       } else {
         console.warn('[cloud-engine] VM not ready for restore, skipping');
@@ -394,6 +519,14 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
 
       // Mark engine as deleted
       await deleteCloudEngine(user.userId);
+
+      // Reset storage_usage so stale values don't persist
+      await upsertStorageUsage(user.userId, {
+        hot_storage_gb: 0,
+        cold_storage_bytes: 0,
+        backup_object_name: null,
+        last_sync_at: null,
+      });
 
       json(res, 200, { ok: true, message: 'Engine and all storage deleted' });
     } catch (e: any) {
@@ -554,12 +687,33 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
         }));
 
       // Send tokens to VM agent
-      const { sendVMCommand } = await import('../services/vm-command');
       const result = await sendVMCommand(user.userId, 'store_oauth_tokens', { tokens }, 15_000);
       json(res, 200, { ok: true, synced: tokens.length, vmResult: result.ok });
     } catch (e: any) {
       console.error('[cloud-engine] sync-oauth error:', e?.message);
       json(res, 500, { ok: false, error: 'sync_oauth_failed', message: e?.message || 'failed' });
+    }
+    return true;
+  }
+
+  // ── POST /v1/cloud-engine/sync-agent-data ────────────────────────────
+  // Tells the running VM to download agent databases (knowledge.db, memory.db)
+  // from GCS, so the headless agent has the user's full memory/knowledge.
+  if (method === 'POST' && path === '/v1/cloud-engine/sync-agent-data') {
+    const user = await authenticate(req, res);
+    if (!user) return true;
+    try {
+      const engine = await getCloudEngine(user.userId);
+      if (!engine || engine.status !== 'running') {
+        json(res, 409, { ok: false, error: 'engine_not_running' });
+        return true;
+      }
+
+      const result = await sendVMCommand(user.userId, 'sync_agent_data', { direction: 'download' }, 60_000);
+      json(res, 200, { ok: Boolean(result.ok), direction: 'download' });
+    } catch (e: any) {
+      console.error('[cloud-engine] sync-agent-data error:', e?.message);
+      json(res, 500, { ok: false, error: 'sync_agent_data_failed', message: e?.message || 'failed' });
     }
     return true;
   }

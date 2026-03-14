@@ -46,12 +46,14 @@ export default function CloudDashboardPage() {
 
   useEffect(() => { loadStatus(); }, [loadStatus]);
 
-  // Poll status every 30s when engine exists — use stable ref to avoid interval churn
+  // Poll status — faster during transitional states, slower when stable
   useEffect(() => {
     if (!hasEngine.current && !engine) return;
-    const timer = setInterval(loadStatus, 30_000);
+    const isTransitional = engine && ['provisioning', 'starting', 'stopping'].includes(engine.status);
+    const interval = isTransitional ? 5_000 : 30_000;
+    const timer = setInterval(loadStatus, interval);
     return () => clearInterval(timer);
-  }, [!!engine, loadStatus]);
+  }, [engine?.status, loadStatus]);
 
   if (loading) {
     return (

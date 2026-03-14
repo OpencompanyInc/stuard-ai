@@ -105,7 +105,7 @@ export interface UserStorageInfo {
  */
 export async function getUserStorageInfo(userId: string): Promise<UserStorageInfo> {
   let usage = await getStorageUsage(userId);
-  
+
   // Initialize storage_usage record for new users
   if (!usage) {
     const defaultPlan = STORAGE_PLANS.free;
@@ -118,17 +118,29 @@ export async function getUserStorageInfo(userId: string): Promise<UserStorageInf
     } as any);
     usage = await getStorageUsage(userId);
   }
-  
+
   const planId = (usage as any)?.storage_plan_id || 'free';
   const plan = STORAGE_PLANS[planId] || STORAGE_PLANS.free;
 
   const coldBytes = await getUserStorageBytes(userId).catch(() => Number(usage?.cold_storage_bytes || 0));
 
+  // hot_storage_gb in the DB is the ALLOCATED disk size (set during provision),
+  // NOT actual disk usage. Use the VM's actual disk size from cloud_engines
+  // for the total, and derive actual usage from cold storage backup size
+  // (since we can't query the VM's disk usage in real-time from this endpoint).
+  const engine = await getCloudEngine(userId);
+  const actualDiskGb = engine?.disk_size_gb || plan.hotDiskGb;
+
+  // Estimate hot disk usage: cold backup size approximates what's on disk.
+  // If no backup exists yet, we don't know actual usage — show 0.
+  const coldGbForEstimate = coldBytes / (1024 * 1024 * 1024);
+  const estimatedHotUsedGb = coldBytes > 0 ? Math.min(coldGbForEstimate, actualDiskGb) : 0;
+
   return {
     planId,
     plan,
-    hotDiskGb: plan.hotDiskGb,
-    hotUsedGb: Number(usage?.hot_storage_gb || 0),
+    hotDiskGb: actualDiskGb,
+    hotUsedGb: estimatedHotUsedGb,
     coldStorageBytes: coldBytes,
     coldQuotaGb: plan.coldStorageGb,
     lastSyncAt: usage?.last_sync_at || null,

@@ -207,13 +207,19 @@ export async function uninstallBrowserUse(): Promise<{ ok: boolean; error?: stri
 }
 
 function getServerScript(): string {
+  // Dev mode: app.getAppPath() is apps/desktop, so ../agent/ reaches apps/agent/
   const devPath = path.join(app.getAppPath(), '..', 'agent', 'browser_use_server.py');
   if (fs.existsSync(devPath)) return devPath;
+
+  // Packaged mode: extraResources copies scripts into resources/agent/
+  const resourcesPath = path.join(process.resourcesPath, 'agent', 'browser_use_server.py');
+  if (fs.existsSync(resourcesPath)) return resourcesPath;
 
   const altPath = path.resolve(__dirname, '..', '..', '..', '..', 'agent', 'browser_use_server.py');
   if (fs.existsSync(altPath)) return altPath;
 
-  return devPath;
+  // Return the resources path for better error messages in packaged mode
+  return app.isPackaged ? resourcesPath : devPath;
 }
 
 async function killPortProcess(port: number): Promise<void> {

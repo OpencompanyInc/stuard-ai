@@ -62,9 +62,21 @@ export function CloudMonitoring({ engine }: CloudMonitoringProps) {
   }, [engine.status, range, load]);
 
   if (engine.status !== 'running') {
+    const isBooting = engine.status === 'provisioning' || engine.status === 'starting';
     return (
-      <div className="flex items-center justify-center h-64 bg-gray-50 rounded-2xl border border-gray-200">
-        <p className="text-gray-500">Start your engine to view monitoring data.</p>
+      <div className="flex flex-col items-center justify-center h-64 bg-gray-50 rounded-2xl border border-gray-200 gap-3">
+        {isBooting ? (
+          <>
+            <svg className="w-6 h-6 animate-spin text-blue-500" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="opacity-25" />
+              <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+            </svg>
+            <p className="text-gray-600 font-medium text-sm">Your engine is starting up...</p>
+            <p className="text-gray-400 text-xs">Metrics will appear once the VM is fully ready. This may take 1-2 minutes.</p>
+          </>
+        ) : (
+          <p className="text-gray-500">Start your engine to view monitoring data.</p>
+        )}
       </div>
     );
   }
@@ -110,9 +122,18 @@ export function CloudMonitoring({ engine }: CloudMonitoringProps) {
 
       {/* Mini charts */}
       {loading && metrics.length === 0 ? (
-        <div className="text-center text-gray-500 py-8">Loading metrics...</div>
+        <div className="flex flex-col items-center gap-2 py-8">
+          <svg className="w-5 h-5 animate-spin text-blue-500" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="opacity-25" />
+            <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+          </svg>
+          <p className="text-gray-500 text-sm">Collecting metrics...</p>
+        </div>
       ) : metrics.length === 0 ? (
-        <div className="text-center text-gray-500 py-8">No metrics data available yet.</div>
+        <div className="flex flex-col items-center gap-2 py-8">
+          <p className="text-gray-500 text-sm">No metrics data available yet.</p>
+          <p className="text-gray-400 text-xs">Metrics typically appear within a few minutes after your VM starts running.</p>
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <MiniChart title="CPU %" data={metrics} extract={(m) => m.cpu} color="#3b82f6" max={100} />

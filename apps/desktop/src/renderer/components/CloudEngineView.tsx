@@ -126,8 +126,19 @@ export const CloudEngineView: React.FC<CloudEngineViewProps> = ({ className }) =
 
   if (!engine) return null;
 
-  const statusColor = engine.status === 'running' ? 'text-green-500' : engine.status === 'stopped' ? 'text-amber-500' : 'text-red-500';
-  const statusLabel = engine.status === 'running' ? 'Running' : engine.status === 'stopped' ? 'Paused' : engine.status === 'provisioning' ? 'Setting up...' : engine.status;
+  const isTransitional = ['provisioning', 'starting', 'stopping'].includes(engine.status);
+  const statusColor =
+    engine.status === 'running' ? 'text-green-500' :
+    engine.status === 'stopped' ? 'text-amber-500' :
+    isTransitional ? 'text-blue-400' :
+    'text-red-500';
+  const statusLabel =
+    engine.status === 'running' ? 'Running' :
+    engine.status === 'stopped' ? 'Paused' :
+    engine.status === 'provisioning' ? 'Setting up...' :
+    engine.status === 'starting' ? 'Starting...' :
+    engine.status === 'stopping' ? 'Stopping...' :
+    engine.status;
 
   const tabs: { id: CloudTab; label: string; icon: any }[] = [
     { id: 'overview', label: 'Info', icon: Server },
@@ -164,11 +175,30 @@ export const CloudEngineView: React.FC<CloudEngineViewProps> = ({ className }) =
       <div className="flex-1 min-h-0 overflow-hidden">
         {tab === 'overview' && (
           <div className="p-3 space-y-3 overflow-y-auto h-full">
+            {/* Transitional Status Banner */}
+            {isTransitional && (
+              <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-3 flex items-center gap-2.5">
+                <Loader2 className="w-4 h-4 text-blue-400 animate-spin shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-[11px] font-bold text-blue-300">
+                    {engine.status === 'provisioning' && 'Setting up your cloud engine...'}
+                    {engine.status === 'starting' && 'Starting & restoring data...'}
+                    {engine.status === 'stopping' && 'Syncing data & shutting down...'}
+                  </div>
+                  <div className="text-[9px] text-blue-400/60 mt-0.5">
+                    {engine.status === 'provisioning' && 'Creating VM, installing dependencies, and syncing your memories. This takes 1\u20132 minutes.'}
+                    {engine.status === 'starting' && 'Booting VM and restoring your data from cloud storage.'}
+                    {engine.status === 'stopping' && 'Your data is being backed up to cloud storage before the VM stops.'}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Status Card */}
             <div className="rounded-xl border border-theme/10 bg-theme-card/30 p-3 space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className={clsx('w-2 h-2 rounded-full', statusColor.replace('text-', 'bg-'))} />
+                  <div className={clsx('w-2 h-2 rounded-full', isTransitional && 'animate-pulse', statusColor.replace('text-', 'bg-'))} />
                   <span className="text-xs font-bold text-theme-fg capitalize">{statusLabel}</span>
                 </div>
                 <button onClick={refresh} className="p-1 rounded hover:bg-theme-hover text-theme-muted">
@@ -199,9 +229,15 @@ export const CloudEngineView: React.FC<CloudEngineViewProps> = ({ className }) =
                   <PowerOff className="w-3 h-3" /> Pause
                 </button>
               )}
+              {isTransitional && (
+                <span className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-theme-hover/50 text-theme-muted text-[10px] font-medium italic">
+                  Please wait...
+                </span>
+              )}
               <button
                 onClick={() => { if (confirm('This will permanently delete your cloud engine and all its data. Continue?')) destroy(); }}
-                className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-red-600/10 text-red-500 text-xs font-bold hover:bg-red-600/20 transition-all"
+                disabled={isTransitional}
+                className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-red-600/10 text-red-500 text-xs font-bold hover:bg-red-600/20 transition-all disabled:opacity-30"
               >
                 <Trash2 className="w-3 h-3" />
               </button>
@@ -224,8 +260,22 @@ export const CloudEngineView: React.FC<CloudEngineViewProps> = ({ className }) =
             {metrics ? (
               <CloudResourceMonitor metrics={metrics} expanded />
             ) : (
-              <div className="text-xs text-theme-muted text-center py-8">
-                {engine.status === 'running' ? 'Loading performance data...' : 'Resume your engine to see stats'}
+              <div className="flex flex-col items-center gap-2 py-8">
+                {isTransitional ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                    <div className="text-[10px] text-theme-muted font-medium">Your engine is starting up...</div>
+                    <div className="text-[9px] text-theme-muted/60">Metrics will appear once the VM is fully ready.</div>
+                  </>
+                ) : engine.status === 'running' ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                    <div className="text-[10px] text-theme-muted font-medium">Collecting initial metrics...</div>
+                    <div className="text-[9px] text-theme-muted/60">This may take a minute after your VM starts.</div>
+                  </>
+                ) : (
+                  <div className="text-xs text-theme-muted">Resume your engine to see stats</div>
+                )}
               </div>
             )}
           </div>

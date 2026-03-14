@@ -34,7 +34,8 @@ function main() {
   const distDir = path.join(rootDir, "dist");
   const buildDir = path.join(__dirname, "..", "build");
   const outDir = path.join(buildDir, "agent");
-  
+  const agentSrcDir = path.join(rootDir, "apps", "agent");
+
   console.log(`[prepare-agent] Root dir: ${rootDir}`);
   console.log(`[prepare-agent] Dist dir: ${distDir}`);
   console.log(`[prepare-agent] Output dir: ${outDir}`);
@@ -63,6 +64,17 @@ function main() {
   if (fs.existsSync(envFile)) {
     fs.copyFileSync(envFile, agentEnvFile);
     console.log(`[prepare-agent] Copied .env to agent dir: ${agentEnvFile}`);
+  }
+
+  // ── Copy Python scripts needed at runtime (browser_use_server, etc.) ──
+  const pythonScripts = ["browser_use_server.py"];
+  for (const script of pythonScripts) {
+    const src = path.join(agentSrcDir, script);
+    if (fs.existsSync(src)) {
+      copyFileSync(src, path.join(outDir, script));
+    } else {
+      console.warn(`[prepare-agent] Python script not found: ${src} — skipping`);
+    }
   }
 
   const platform = process.platform;

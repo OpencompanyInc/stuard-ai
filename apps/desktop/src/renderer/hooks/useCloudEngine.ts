@@ -9,7 +9,7 @@ export interface CloudEngine {
   instance_name: string;
   zone: string;
   tier: string;
-  status: 'provisioning' | 'running' | 'stopped' | 'terminated' | 'error';
+  status: 'provisioning' | 'starting' | 'running' | 'stopping' | 'stopped' | 'terminated' | 'error';
   disk_size_gb: number;
   vcpus?: number;
   ram_gb?: number;
@@ -168,13 +168,20 @@ export function useCloudEngine() {
     try {
       // Upload agent databases (knowledge.db, memory.db) to GCS before provisioning
       // so the VM starts with the user's full memory and knowledge graph
+      let agentDataUploaded = false;
       try {
         const token = await getAuthToken();
-        if (token && (window as any).desktopAPI?.uploadAgentData) {
-          const uploadResult = await (window as any).desktopAPI.uploadAgentData(CLOUD_AI_HTTP, token);
+        if (token && window.desktopAPI?.uploadAgentData) {
+          console.log('[cloud-engine] Uploading agent data for VM sync...');
+          const uploadResult = await window.desktopAPI.uploadAgentData(CLOUD_AI_HTTP, token);
           if (uploadResult?.ok) {
-            console.log('[cloud-engine] Agent data uploaded for VM sync', uploadResult);
+            agentDataUploaded = !uploadResult.skipped;
+            console.log('[cloud-engine] Agent data uploaded for VM sync:', uploadResult);
+          } else {
+            console.warn('[cloud-engine] Agent data upload returned not-ok:', uploadResult);
           }
+        } else {
+          console.log('[cloud-engine] Skipping agent data upload — no desktopAPI or no token');
         }
       } catch (e) {
         console.warn('[cloud-engine] Agent data upload failed (non-fatal):', e);
@@ -189,8 +196,6 @@ export function useCloudEngine() {
       });
       if (data.ok) {
         await fetchEngine();
-        // Sync OAuth tokens to VM after provisioning (fire-and-forget)
-        cloudFetch('/v1/cloud-engine/sync-oauth-to-vm', { method: 'POST' }).catch(() => {});
       } else {
         setError(data.message || data.error || 'Could not create your cloud engine. Please try again.');
       }
@@ -203,25 +208,59 @@ export function useCloudEngine() {
 
   const start = useCallback(async () => {
     try {
-      // Upload latest agent data before starting
+      // Upload latest agent data before starting so it's available for restore
       try {
         const token = await getAuthToken();
-        if (token && (window as any).desktopAPI?.uploadAgentData) {
-          await (window as any).desktopAPI.uploadAgentData(CLOUD_AI_HTTP, token);
+        if (token && window.desktopAPI?.uploadAgentData) {
+          console.log('[cloud-engine] Uploading agent data before start...');
+          await window.desktopAPI.uploadAgentData(CLOUD_AI_HTTP, token);
         }
-      } catch {}
+      } catch (e) {
+        console.warn('[cloud-engine] Pre-start agent data upload failed:', e);
+      }
 
       const data = await cloudFetch('/v1/cloud-engine/start', { method: 'POST' });
       if (data.ok) {
         await fetchEngine();
-        // Sync OAuth tokens after start (fire-and-forget)
-        cloudFetch('/v1/cloud-engine/sync-oauth-to-vm', { method: 'POST' }).catch(() => {});
       }
       else setError(data.error || 'Failed to start engine');
     } catch {
       setError('Connection failed');
     }
   }, [fetchEngine]);
+
+  /** Manually sync local agent data (memories, knowledge) to the running VM */
+  const syncData = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      // 1. Upload latest agent databases to GCS
+      const token = await getAuthToken();
+      if (token && window.desktopAPI?.uploadAgentData) {
+        console.log('[cloud-engine] Uploading agent data for sync...');
+        const uploadResult = await window.desktopAPI.uploadAgentData(CLOUD_AI_HTTP, token);
+        if (!uploadResult?.ok && !uploadResult?.skipped) {
+          return { ok: false, error: 'Failed to upload agent data' };
+        }
+      }
+
+      // 2. Tell VM to download agent data from GCS
+      const syncResult = await cloudFetch('/v1/cloud-engine/sync-agent-data', {
+        method: 'POST',
+      });
+
+      if (syncResult.ok) {
+        console.log('[cloud-engine] Agent data synced to VM');
+      } else {
+        console.warn('[cloud-engine] Agent data sync failed:', syncResult.error);
+      }
+
+      // 3. Also sync OAuth tokens
+      cloudFetch('/v1/cloud-engine/sync-oauth-to-vm', { method: 'POST' }).catch(() => {});
+
+      return syncResult;
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'sync_failed' };
+    }
+  }, []);
 
   const stop = useCallback(async () => {
     try {
@@ -337,13 +376,24 @@ export function useCloudEngine() {
   }, [fetchEngine]);
 
   useEffect(() => {
-    if (engine?.status === 'running') {
-      fetchMetrics();
+    const status = engine?.status;
+    if (!status) return;
+
+    const isTransitional = status === 'provisioning' || status === 'starting' || status === 'stopping';
+    const isRunning = status === 'running';
+
+    if (isRunning) fetchMetrics();
+
+    // Poll faster during transitional states (5s) to pick up status changes quickly
+    const interval = isTransitional ? 5_000 : 30_000;
+
+    if (isRunning || isTransitional) {
       pollRef.current = setInterval(() => {
         fetchEngine();
-        fetchMetrics();
-      }, 30_000);
+        if (isRunning) fetchMetrics();
+      }, interval);
     }
+
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [engine?.status, fetchEngine, fetchMetrics]);
 
@@ -367,6 +417,7 @@ export function useCloudEngine() {
     start,
     stop,
     destroy,
+    syncData,
     listFiles,
     readFile,
     refresh: fetchEngine,
