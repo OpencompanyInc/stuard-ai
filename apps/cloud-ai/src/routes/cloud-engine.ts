@@ -640,7 +640,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
             updateEngineHealth(user.userId, {
               last_heartbeat_at: now,
               health_status: 'healthy',
-              agent_version: liveAgentVersion,
+              agent_version: liveAgentVersion ?? undefined,
             }).catch(() => {});
           } else {
             const staleMs = engine.last_heartbeat_at
