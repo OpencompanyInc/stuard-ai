@@ -13,6 +13,7 @@ import path from 'path';
 import https from 'https';
 import http from 'http';
 import { VMWorkflowEngine } from './vm-engine';
+import { mintVMToken } from '../services/vm-tokens';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -501,13 +502,22 @@ export class DeployExecutor extends EventEmitter {
           },
         );
 
+        const finalStatus = result.ok ? 'completed' : 'failed';
         this.appendLog(deployDir, `[engine] Workflow finished: ok=${result.ok}${result.error ? ' error=' + result.error : ''}`);
         deploy.status = result.ok ? 'stopped' : 'failed';
         this.emit('status', config.deployId, deploy.status);
+
+        // Report completion back to cloud-ai so it can update the DB
+        this.reportDeployStatus(config.deployId, finalStatus, cloudAiUrl, userId, vmTokenSecret, result.error).catch((e) => {
+          this.appendLog(deployDir, `[engine] Status callback failed: ${e?.message}`);
+        });
       } catch (e: any) {
         this.appendLog(deployDir, `[engine] Workflow crashed: ${e.message}`);
         deploy.status = 'failed';
         this.emit('status', config.deployId, 'failed');
+
+        // Report failure back to cloud-ai
+        this.reportDeployStatus(config.deployId, 'failed', cloudAiUrl, userId, vmTokenSecret, e?.message).catch(() => {});
 
         // Auto-restart if configured
         if (deploy.autoRestart && deploy.restartCount < deploy.maxRestarts) {
@@ -793,6 +803,42 @@ ${startCmd}
     });
 
     return child.pid || null;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Status Callback — report deploy completion to cloud-ai
+  // ─────────────────────────────────────────────────────────────────────────
+
+  private async reportDeployStatus(
+    deployId: string,
+    status: 'completed' | 'failed' | 'stopped',
+    cloudAiUrl: string,
+    userId: string,
+    vmTokenSecret: string,
+    errorMessage?: string,
+  ): Promise<void> {
+    if (!userId || !vmTokenSecret) return;
+
+    const token = mintVMToken(vmTokenSecret, userId, 'deploy-executor');
+    const url = `${cloudAiUrl}/v1/cloud-engine/deploys/status-callback`;
+
+    const body: any = { deployId, status };
+    if (errorMessage) body.errorMessage = errorMessage;
+
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'X-VM-User-Id': userId,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`HTTP ${resp.status}: ${text}`);
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────

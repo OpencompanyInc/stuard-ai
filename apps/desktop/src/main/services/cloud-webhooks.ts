@@ -3,6 +3,8 @@ import { net } from 'electron';
 import { handleCloudWebhookEvent } from '../workflows';
 import logger from '../utils/logger';
 import { getMainAccessToken } from './auth-session';
+import { execTool } from '../tools/index';
+import type { RouterContext } from '../tools/types';
 
 let ws: WebSocket | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
@@ -52,6 +54,42 @@ export function stopCloudWebhooks() {
     }
 }
 
+/**
+ * Handle a tool_request message from cloud-ai (VM → desktop relay).
+ * Executes the tool locally and sends back a tool_result on the same WS.
+ */
+async function handleToolRequest(msg: any, socket: WebSocket): Promise<void> {
+    const { id, tool, args } = msg;
+    if (!id || !tool) {
+        logger.warn(`[cloud-webhooks] tool_request missing id or tool`);
+        return;
+    }
+
+    logger.info(`[cloud-webhooks] tool_request: ${tool} (id=${id})`);
+
+    const ctx: RouterContext = {
+        agentWsUrl: 'ws://127.0.0.1:8765/ws',
+        cloudAiUrl: getCloudAiHttpBase(),
+        logFn: (m: string) => logger.info(`[cloud-webhooks][tool] ${m}`),
+    };
+
+    try {
+        const result = await execTool(tool, args || {}, ctx);
+        if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'tool_result', id, result }));
+        }
+    } catch (e: any) {
+        logger.error(`[cloud-webhooks] tool_request error (${tool}): ${e?.message}`);
+        if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({
+                type: 'tool_result',
+                id,
+                result: { ok: false, error: e?.message || 'tool_execution_failed' },
+            }));
+        }
+    }
+}
+
 async function connect() {
     if (!isStarted) return;
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
@@ -88,6 +126,8 @@ async function connect() {
                 } else if (msg.type === 'webhook_trigger' || msg.type === 'provider_webhook') {
                     logger.info(`[cloud-webhooks] Received webhook event: ${msg.type}`);
                     handleCloudWebhookEvent(msg);
+                } else if (msg.type === 'tool_request') {
+                    handleToolRequest(msg, ws!);
                 } else if (msg.type === 'handshake') {
                     // Check for token and auth if we haven't already
                     getAuthToken().then(token => {

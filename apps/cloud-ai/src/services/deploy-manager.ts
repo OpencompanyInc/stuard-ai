@@ -198,7 +198,7 @@ async function insertDeployment(userId: string, req: DeployRequest, gcsObject: s
   return data as Deployment;
 }
 
-async function updateDeployStatus(
+export async function updateDeployStatus(
   deployId: string,
   status: DeployStatus,
   extra?: Partial<Pick<Deployment, 'pid' | 'logs_tail' | 'error_message' | 'started_at' | 'stopped_at'>>,

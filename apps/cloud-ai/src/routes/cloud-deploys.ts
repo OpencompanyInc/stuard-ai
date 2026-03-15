@@ -15,6 +15,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import { verifyToken, getCloudEngine } from '../supabase';
+import { verifyVMAuthFromRequest } from '../services/vm-tokens';
 import {
   createDeployment,
   listDeployments,
@@ -23,6 +24,7 @@ import {
   restartDeployment,
   deleteDeployment,
   getDeployLogs,
+  updateDeployStatus,
 } from '../services/deploy-manager';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,10 +84,49 @@ export async function handleCloudDeploysRoutes(req: IncomingMessage, res: Server
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-VM-User-Id',
       'Access-Control-Max-Age': '86400',
     });
     res.end();
+    return true;
+  }
+
+  // ── POST /v1/cloud-engine/deploys/status-callback — VM reports deploy status
+  // Uses VM HMAC auth (no user JWT on VM)
+  if (method === 'POST' && path === '/v1/cloud-engine/deploys/status-callback') {
+    const authHeader = String(req.headers['authorization'] || '');
+    const vmUserIdHeader = req.headers['x-vm-user-id'] as string | undefined;
+    const vmUser = await verifyVMAuthFromRequest(authHeader, vmUserIdHeader);
+
+    if (!vmUser) {
+      json(res, 401, { ok: false, error: 'unauthorized' });
+      return true;
+    }
+
+    try {
+      const body = await readBody(req);
+      const deployId = String(body.deployId || '').trim();
+      const status = String(body.status || '').trim();
+
+      if (!deployId || !['completed', 'failed', 'stopped'].includes(status)) {
+        json(res, 400, { ok: false, error: 'invalid_payload', message: 'deployId and status (completed|failed|stopped) are required' });
+        return true;
+      }
+
+      const extra: any = {};
+      if (status === 'completed' || status === 'stopped') {
+        extra.stopped_at = new Date().toISOString();
+      }
+      if (body.errorMessage) {
+        extra.error_message = String(body.errorMessage).slice(0, 2000);
+      }
+
+      await updateDeployStatus(deployId, status as any, extra);
+      json(res, 200, { ok: true });
+    } catch (e: any) {
+      console.error('[cloud-deploys] status-callback error:', e?.message);
+      json(res, 500, { ok: false, error: 'status_update_failed', message: e?.message });
+    }
     return true;
   }
 

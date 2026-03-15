@@ -656,66 +656,87 @@ async function execLocalTool(tool: string, args: any, ctx: RouterContext, timeou
  * Flow: VM engine → HTTP POST cloud-ai /v1/vm/exec-desktop-tool → WS to desktop → result
  * Uses per-VM HMAC auth (no user tokens on the VM).
  *
- * If desktop is offline, provides graceful degradation with clear error messages
- * and suggests VM-native alternatives where possible.
+ * If desktop is offline, retries up to 2 times (3s apart) before falling back to
+ * VM-native alternatives or returning a clear error.
  */
 async function execDesktopRelayTool(tool: string, args: any, ctx: RouterContext, timeoutMs = 90_000): Promise<any> {
-  try {
-    const url = `${ctx.cloudAiUrl}/v1/vm/exec-desktop-tool`;
-    ctx.logFn(`Desktop relay: ${tool}`);
+  const url = `${ctx.cloudAiUrl}/v1/vm/exec-desktop-tool`;
+  const MAX_RETRIES = 2;
+  const RETRY_DELAY_MS = 3_000;
 
-    const headers = buildVMAuthHeaders(ctx);
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ tool, args }),
-        signal: controller.signal,
-      });
-
-      if (!resp.ok) {
-        const errText = await resp.text().catch(() => '');
-        if (resp.status === 503 || errText.includes('desktop_offline')) {
-          // Provide VM-native alternatives where possible
-          const alternative = getDesktopToolAlternative(tool, args);
-          if (alternative) {
-            ctx.logFn(`Desktop offline — using VM alternative for '${tool}'`);
-            return alternative;
-          }
-          return {
-            ok: false,
-            error: `desktop_offline: The Stuard desktop app must be running to use '${tool}'. This tool requires direct access to your PC.`,
-            desktopRequired: true,
-            toolName: tool,
-          };
-        }
-        return { ok: false, error: `desktop_relay_error_${resp.status}: ${errText}` };
+      if (attempt > 0) {
+        ctx.logFn(`Desktop relay: ${tool} (retry ${attempt}/${MAX_RETRIES})`);
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+      } else {
+        ctx.logFn(`Desktop relay: ${tool}`);
       }
 
-      const result: any = await resp.json();
-      return result?.result ?? result;
-    } finally {
-      clearTimeout(timer);
-    }
-  } catch (e: any) {
-    if (e?.name === 'AbortError') {
-      return { ok: false, error: `desktop_relay_timeout: Tool '${tool}' timed out waiting for desktop response` };
-    }
-    ctx.logFn(`Desktop relay error: ${e?.message}`);
+      const headers = buildVMAuthHeaders(ctx);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-    // Try VM-native alternative on connection failure
-    const alternative = getDesktopToolAlternative(tool, args);
-    if (alternative) {
-      ctx.logFn(`Desktop unreachable — using VM alternative for '${tool}'`);
-      return alternative;
-    }
+      try {
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ tool, args }),
+          signal: controller.signal,
+        });
 
-    return { ok: false, error: String(e?.message || 'desktop_relay_failed') };
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '');
+          const isOffline = resp.status === 503 || errText.includes('desktop_offline');
+
+          if (isOffline && attempt < MAX_RETRIES) {
+            ctx.logFn(`Desktop offline for '${tool}', will retry...`);
+            continue;
+          }
+
+          if (isOffline) {
+            const alternative = getDesktopToolAlternative(tool, args);
+            if (alternative) {
+              ctx.logFn(`Desktop offline — using VM alternative for '${tool}'`);
+              return alternative;
+            }
+            return {
+              ok: false,
+              error: `desktop_offline: The Stuard desktop app must be running to use '${tool}'. This tool requires direct access to your PC.`,
+              desktopRequired: true,
+              toolName: tool,
+            };
+          }
+          return { ok: false, error: `desktop_relay_error_${resp.status}: ${errText}` };
+        }
+
+        const result: any = await resp.json();
+        return result?.result ?? result;
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (e: any) {
+      if (e?.name === 'AbortError') {
+        return { ok: false, error: `desktop_relay_timeout: Tool '${tool}' timed out waiting for desktop response` };
+      }
+
+      if (attempt < MAX_RETRIES) {
+        ctx.logFn(`Desktop relay error for '${tool}': ${e?.message}, will retry...`);
+        continue;
+      }
+
+      ctx.logFn(`Desktop relay error: ${e?.message}`);
+      const alternative = getDesktopToolAlternative(tool, args);
+      if (alternative) {
+        ctx.logFn(`Desktop unreachable — using VM alternative for '${tool}'`);
+        return alternative;
+      }
+      return { ok: false, error: String(e?.message || 'desktop_relay_failed') };
+    }
   }
+
+  // Should not reach here, but safety fallback
+  return { ok: false, error: `desktop_relay_failed: exhausted retries for '${tool}'` };
 }
 
 /**
@@ -725,20 +746,49 @@ async function execDesktopRelayTool(tool: string, args: any, ctx: RouterContext,
 function getDesktopToolAlternative(tool: string, args: any): any | null {
   switch (tool) {
     case 'get_clipboard':
-      // Can't access desktop clipboard, but return a clear message
       return { ok: false, error: 'clipboard_unavailable: Desktop is offline. Use read_file or get_variable instead.', fallback: true };
     case 'set_clipboard':
-      // Store as a variable instead
       return { ok: true, fallback: true, message: 'Desktop offline — clipboard content stored as variable "clipboard_content"' };
     case 'show_notification':
-      // Log the notification instead
       return { ok: true, fallback: true, message: `Notification (desktop offline): ${args?.title || ''} - ${args?.message || args?.body || ''}` };
+    case 'show_dialog':
+      return { ok: true, fallback: true, message: `Dialog (desktop offline): ${args?.title || ''} - ${args?.message || args?.body || ''}` };
     case 'open_url':
-      // Can use headless browser instead
       return null; // Let the workflow handle this via http_request or browser-use
     case 'open_file':
     case 'open_application':
       return { ok: false, error: `${tool}: Desktop is offline. This operation requires the desktop app.`, fallback: true };
+    case 'take_screenshot':
+    case 'capture_screen':
+    case 'capture_media':
+      return { ok: false, error: `${tool}: Desktop is offline. Screen capture requires the desktop app.`, fallback: true, desktopRequired: true };
+    case 'click_at':
+    case 'double_click':
+    case 'right_click':
+    case 'drag_to':
+    case 'mouse_move':
+    case 'mouse_click':
+      return { ok: false, error: `${tool}: Desktop is offline. Mouse automation requires the desktop app.`, fallback: true, desktopRequired: true };
+    case 'send_hotkey':
+    case 'type_text':
+    case 'press_key':
+      return { ok: false, error: `${tool}: Desktop is offline. Keyboard automation requires the desktop app.`, fallback: true, desktopRequired: true };
+    case 'scroll_up':
+    case 'scroll_down':
+    case 'scroll_to':
+      return { ok: false, error: `${tool}: Desktop is offline. Scroll automation requires the desktop app.`, fallback: true, desktopRequired: true };
+    case 'smart_focus':
+    case 'focus_window':
+    case 'list_windows':
+    case 'close_window':
+    case 'minimize_window':
+    case 'maximize_window':
+    case 'resize_window':
+      return { ok: false, error: `${tool}: Desktop is offline. Window management requires the desktop app.`, fallback: true, desktopRequired: true };
+    case 'ocr_screen':
+    case 'find_element':
+    case 'wait_for_element':
+      return { ok: false, error: `${tool}: Desktop is offline. Screen analysis requires the desktop app.`, fallback: true, desktopRequired: true };
     default:
       return null;
   }
