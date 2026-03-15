@@ -31,6 +31,12 @@ import { getBridgeSecrets } from '../tools/bridge';
 import { normalizeUsage } from '../utils/usage';
 import { search_past_conversations, get_conversation_context } from '../tools/device-tools';
 import { upsertSmsUserState } from '../supabase';
+import { buildKnowledgeContext } from '../knowledge/retrieval';
+import { getOrCreateQueryEmbedding } from '../utils/shared-embedding';
+import * as memoryService from '../memory/conversations';
+import { withClientBridge } from '../tools/bridge';
+import { getDesktopWs } from '../services/vm-bridge';
+import { sendVMCommand } from '../services/vm-command';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -301,6 +307,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       modelMode = 'balanced',
       modelId,
       context = {},
+      memoryContext: preBuiltMemoryContext,
       skills: incomingSkills = [],
       notificationChannels = [],
       deliverNotifications = false,
@@ -336,6 +343,64 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
     let systemPrompt = PROACTIVE_SYSTEM_PROMPT;
     if (instructions.trim()) {
       systemPrompt += `\n\n## USER INSTRUCTIONS\n${instructions.trim()}`;
+    }
+
+    // ── Inject memory context for personalization ──
+    // The VM sends pre-built memoryContext (built locally from its Python agent).
+    // For desktop-originated wakeups, use the desktop WS bridge to query knowledge.
+    try {
+      if (typeof preBuiltMemoryContext === 'string' && preBuiltMemoryContext.trim()) {
+        // VM path: memory context was built on the VM, use it directly
+        systemPrompt += `\n\n${preBuiltMemoryContext.trim()}`;
+      } else {
+        // Desktop path: build memory context via desktop bridge
+        const proactiveQuery = prompt || instructions || 'proactive check-in';
+        const queryEmbedding = await getOrCreateQueryEmbedding(proactiveQuery).catch(() => undefined as number[] | undefined);
+        const KNOWLEDGE_MAX_CHARS = 2000;
+
+        const desktopWs = getDesktopWs(auth.userId);
+
+        const fetchMemoryCtx = async (): Promise<string[]> => {
+          const [knowledgeCtx, segmentMatches] = await Promise.all([
+            buildKnowledgeContext(proactiveQuery, {
+              includeIdentity: true,
+              includeDirectives: true,
+              includeBio: false,
+              maxGlobalFacts: 4,
+              detectEntities: false,
+              queryEmbedding,
+            }).catch(() => null),
+            queryEmbedding
+              ? memoryService.searchSegmentsByEmbedding(queryEmbedding, { limit: 3, threshold: 0.6 }).catch(() => [])
+              : memoryService.listRecentSegments({ limit: 3 }).catch(() => []),
+          ]);
+
+          const parts: string[] = [];
+          if (knowledgeCtx?.text?.trim()) {
+            parts.push(knowledgeCtx.text.trim().slice(0, KNOWLEDGE_MAX_CHARS));
+          }
+          if (Array.isArray(segmentMatches) && segmentMatches.length > 0) {
+            const lines = ['[PAST CONTEXT]'];
+            for (const match of segmentMatches.slice(0, 3)) {
+              const seg = (match as any).segment || match;
+              const summary = String(seg.summary || '').trim().slice(0, 100);
+              if (summary) lines.push(`- ${summary}`);
+            }
+            if (lines.length > 1) parts.push(lines.join('\n'));
+          }
+          return parts;
+        };
+
+        const ctxParts: string[] = desktopWs
+          ? await withClientBridge(desktopWs, fetchMemoryCtx) as string[]
+          : await fetchMemoryCtx();
+
+        if (ctxParts.length > 0) {
+          systemPrompt += `\n\n${ctxParts.join('\n\n')}`;
+        }
+      }
+    } catch (e: any) {
+      console.warn('[proactive] Memory context injection failed:', e?.message);
     }
 
     // Set up secrets context so get_skill_info can access skills
@@ -437,6 +502,46 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       }
     });
 
+    return true;
+  }
+
+  // ── Sync proactive config to VM ─────────────────────────────────────────────
+  // Desktop calls this when executionTarget changes to 'cloud' to enable
+  // the VM's own standalone proactive scheduler.
+  if (req.method === 'POST' && path === '/v1/proactive/vm-config') {
+    const auth = await requireProactiveAuth(req, res);
+    if (!auth) return true;
+
+    const body = await readJsonBody(req);
+    const {
+      enabled,
+      interval,
+      modelMode,
+      instructions,
+      notificationChannels,
+    } = body;
+
+    // Map desktop config shape to VM ProactiveConfig shape
+    const intervalMap: Record<string, number> = {
+      '10m': 10 * 60_000, '15m': 15 * 60_000, '30m': 30 * 60_000,
+      '1h': 60 * 60_000, '2h': 2 * 60 * 60_000, 'random': 20 * 60_000,
+    };
+
+    const vmUpdates: Record<string, any> = {};
+    if (typeof enabled === 'boolean') vmUpdates.enabled = enabled;
+    if (typeof interval === 'string' && intervalMap[interval]) {
+      vmUpdates.intervalMs = intervalMap[interval];
+    }
+    if (typeof modelMode === 'string') vmUpdates.modelMode = modelMode;
+    if (Array.isArray(notificationChannels)) vmUpdates.channels = notificationChannels.filter((c: any) => c !== 'app');
+    if (typeof instructions === 'string') vmUpdates.instructions = instructions;
+
+    try {
+      const result = await sendVMCommand(auth.userId, 'proactive_config', { updates: vmUpdates }, 15_000);
+      writeJson(res, 200, { ok: result.ok, config: result.result?.config, error: result.error });
+    } catch (e: any) {
+      writeJson(res, 200, { ok: false, error: e?.message || 'vm_unreachable' });
+    }
     return true;
   }
 

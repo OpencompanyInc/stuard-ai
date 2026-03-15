@@ -128,6 +128,60 @@ async function billEngine(engine: CloudEngine, billingHour: Date): Promise<void>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// On-demand catch-up billing (for Cloud Run where setInterval is unreliable)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Catch up on any unbilled hours for a single engine.
+ * Safe to call on every request — insertBillingEvent upserts by
+ * (user_id, event_type, billing_hour) so duplicate calls are no-ops.
+ *
+ * Compute is only billed from `started_at` (current running session).
+ * Storage is billed from `created_at` or month start, whichever is later.
+ */
+export async function catchUpBilling(engine: CloudEngine): Promise<void> {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  const truncateToHour = (d: Date) => {
+    const h = new Date(d);
+    h.setMinutes(0, 0, 0);
+    return h;
+  };
+
+  const currentHour = truncateToHour(now);
+
+  // Storage: bill from max(month_start, created_at)
+  const engineCreated = engine.created_at ? new Date(engine.created_at) : now;
+  const storageFrom = truncateToHour(engineCreated > monthStart ? engineCreated : monthStart);
+
+  // Compute: only bill from started_at if currently running
+  let computeFrom: Date | null = null;
+  if (engine.status === 'running' && engine.started_at) {
+    const started = new Date(engine.started_at);
+    computeFrom = truncateToHour(started > monthStart ? started : monthStart);
+  }
+
+  // Walk each hour and bill appropriately
+  const cursor = new Date(storageFrom);
+  while (cursor <= currentHour) {
+    const billingHour = new Date(cursor);
+    const inComputeWindow = computeFrom && cursor >= computeFrom;
+
+    try {
+      // Build a view of the engine with the correct status for this hour
+      const engineForHour = inComputeWindow
+        ? engine
+        : { ...engine, status: 'stopped' }; // suppress compute billing outside running window
+      await billEngine(engineForHour, billingHour);
+    } catch (err: any) {
+      console.error(`[billing] catchUp error for user ${engine.user_id} at ${billingHour.toISOString()}:`, err?.message);
+    }
+    cursor.setTime(cursor.getTime() + 3_600_000);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Usage Aggregation
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { supabase, getValidAccessToken, getFastAccessToken, ensureFreshToken, setupAutoRefresh } from '../auth/authManager';
-import { fetchRendererSyncPrefs } from '../utils/syncPrefs';
 import { agentFetchJson, resolveAgentEndpoints } from '../utils/agentEndpoints';
 import type { ChatMode, ChatModelsConfig } from './usePreferences';
 
@@ -2316,9 +2315,11 @@ export function useAgent(options?: string | UseAgentOptions) {
 
     if (!loaded) {
       try {
+        // Always try Supabase fallback when local agent fails — reading
+        // conversation history should not be gated by sync_conversations pref
+        // (that pref controls writing new conversations to cloud, not reading).
         const sessionToken = await getValidAccessToken();
-        const syncPrefs = await fetchRendererSyncPrefs();
-        if (sessionToken && syncPrefs.sync_conversations) {
+        if (sessionToken) {
           const { data, error } = await supabase
             .from('messages')
             .select('role, content, metadata, created_at')
@@ -2355,8 +2356,7 @@ export function useAgent(options?: string | UseAgentOptions) {
 
     try {
       const sessionToken = await getValidAccessToken();
-      const syncPrefs = await fetchRendererSyncPrefs();
-      if (sessionToken && syncPrefs.sync_conversations) {
+      if (sessionToken) {
         const { data: conv } = await supabase
           .from('conversations')
           .select('title')

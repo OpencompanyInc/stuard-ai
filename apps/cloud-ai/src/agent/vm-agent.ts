@@ -40,6 +40,7 @@ import { DeployExecutor } from './deploy-executor';
 import { getVMMemoryStore, type MemoryEntry } from './vm-memory';
 import { getVMProactiveScheduler } from './vm-proactive';
 import * as fileManager from './file-manager';
+import { getAgentWs, sendToAgent, buildVMMemoryContext, isAgentWsConnected, closeAgentWs, LOCAL_AGENT_WS_URL } from './vm-agent-ws';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuration
@@ -56,82 +57,8 @@ const AGENT_VERSION = '3.0.0';
 
 const shellExecutor = new ShellExecutor();
 const deployExecutor = new DeployExecutor();
-const LOCAL_AGENT_WS_URL = process.env.STUARD_LOCAL_AGENT_WS || 'ws://127.0.0.1:8765/ws';
-
-/** Shared reference to Python agent WS (lazy connected, auto-reconnects) */
-let _agentWs: WebSocket | null = null;
-let _agentWsConnecting = false;
-const _agentPendingRequests = new Map<string, {
-  resolve: (result: any) => void;
-  timer: ReturnType<typeof setTimeout>;
-}>();
-
-function getAgentWs(): Promise<WebSocket> {
-  return new Promise((resolve, reject) => {
-    if (_agentWs?.readyState === WebSocket.OPEN) {
-      return resolve(_agentWs);
-    }
-    if (_agentWsConnecting) {
-      // Wait for the connection to complete
-      const check = setInterval(() => {
-        if (_agentWs?.readyState === WebSocket.OPEN) {
-          clearInterval(check);
-          resolve(_agentWs);
-        }
-      }, 100);
-      setTimeout(() => { clearInterval(check); reject(new Error('agent_ws_connect_timeout')); }, 10_000);
-      return;
-    }
-
-    _agentWsConnecting = true;
-    const ws = new WebSocket(LOCAL_AGENT_WS_URL);
-    ws.on('open', () => {
-      _agentWs = ws;
-      _agentWsConnecting = false;
-      console.log('[vm-agent] Connected to Python agent WS');
-      resolve(ws);
-    });
-    ws.on('message', (data) => {
-      try {
-        const msg = JSON.parse(String(data));
-        const id = msg.id || msg.requestId;
-        if (id && _agentPendingRequests.has(id)) {
-          const pending = _agentPendingRequests.get(id)!;
-          clearTimeout(pending.timer);
-          _agentPendingRequests.delete(id);
-          pending.resolve(msg);
-        }
-      } catch { /* non-JSON message, ignore */ }
-    });
-    ws.on('close', () => {
-      _agentWs = null;
-      _agentWsConnecting = false;
-      // Auto-reconnect after 5s
-      setTimeout(() => { getAgentWs().catch(() => {}); }, 5000);
-    });
-    ws.on('error', (err) => {
-      _agentWsConnecting = false;
-      if (_agentWs === ws) _agentWs = null;
-      reject(err);
-    });
-  });
-}
-
-/** Send a message to the Python agent and await a response */
-async function sendToAgent(msg: Record<string, any>, timeoutMs = 120_000): Promise<any> {
-  const ws = await getAgentWs();
-  const id = msg.id || randomUUID();
-
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      _agentPendingRequests.delete(id);
-      reject(new Error('agent_response_timeout'));
-    }, timeoutMs);
-
-    _agentPendingRequests.set(id, { resolve, timer });
-    ws.send(JSON.stringify({ ...msg, id }));
-  });
-}
+// Python agent WS communication is shared via vm-agent-ws.ts
+// (sendToAgent, getAgentWs, buildVMMemoryContext are imported above)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth — verify HMAC bearer token on each request
@@ -406,6 +333,20 @@ async function handleAgentChat(args: any): Promise<any> {
   const model = args.model || 'balanced';
 
   try {
+    // Build memory context from the synced SQLite DB via Python agent.
+    // Returns a formatted text string matching desktop's format.
+    const memoryContext = await buildVMMemoryContext(
+      args.memoryQuery || message,
+      args.queryEmbedding,
+    );
+
+    // Store user message in local DB (mirrors desktop's storeMessageLocally)
+    sendToAgent({
+      type: 'tool_exec',
+      tool: 'message_add',
+      args: { conversation_id: conversationId, role: 'user', content: message },
+    }, 10_000).catch(() => {});
+
     // Forward chat to Python agent via WebSocket
     const result = await sendToAgent({
       type: 'chat',
@@ -417,21 +358,16 @@ async function handleAgentChat(args: any): Promise<any> {
         userId: USER_ID,
         ...(args.context || {}),
       },
-      // Include memory context so agent has access to user memories
-      memoryContext: getAgentMemoryContext(args.memoryQuery || message),
+      memoryContext,
     }, 180_000); // 3 min timeout for chat
 
-    // Store conversation summary in VM memory
-    const memStore = getVMMemoryStore();
-    memStore.addConversation({
-      id: conversationId,
-      title: message.slice(0, 100),
-      summary: typeof result?.text === 'string' ? result.text.slice(0, 500) : '',
-      model,
-      source: 'agent',
-      message_count: 1,
-      topics: [],
-    });
+    // Store assistant response and process turn (mirrors desktop's post-response flow)
+    const assistantText = result?.text || '';
+    if (assistantText) {
+      processVMConversationTurn(conversationId, message, assistantText).catch((e) => {
+        console.warn('[vm-agent] post-response memory processing failed:', e?.message);
+      });
+    }
 
     return { ok: true, conversationId, ...result };
   } catch (e: any) {
@@ -464,6 +400,8 @@ async function handleAgentExecute(args: any): Promise<any> {
   const model = args.model || 'balanced';
 
   try {
+    const memoryContext = await buildVMMemoryContext(task, args.queryEmbedding);
+
     const result = await sendToAgent({
       type: 'tool_exec',
       tool: 'agent_execute',
@@ -477,20 +415,9 @@ async function handleAgentExecute(args: any): Promise<any> {
           userId: USER_ID,
           ...(args.context || {}),
         },
-        memoryContext: getAgentMemoryContext(task),
+        memoryContext,
       },
     }, 300_000); // 5 min timeout for task execution
-
-    // Store memory of the executed task
-    const memStore = getVMMemoryStore();
-    memStore.add({
-      topic: 'tasks',
-      content: `Executed task: ${task.slice(0, 200)}${result?.ok ? ' (success)' : ' (failed)'}`,
-      metadata: { task: task.slice(0, 500), result: typeof result === 'string' ? result.slice(0, 500) : undefined },
-      tags: ['task', 'executed'],
-      source: 'agent',
-      importance: 3,
-    });
 
     return { ok: true, ...result };
   } catch (e: any) {
@@ -498,28 +425,96 @@ async function handleAgentExecute(args: any): Promise<any> {
   }
 }
 
-/** Build memory context for agent prompts */
-function getAgentMemoryContext(query: string): any {
-  const memStore = getVMMemoryStore();
+// buildVMMemoryContext is imported from vm-agent-ws.ts
 
-  // Search for relevant memories
-  const searchResults = memStore.search(query, 10);
-  const recentMemories = memStore.list({ limit: 5, minImportance: 5 });
-  const preferences = memStore.getPreferences();
+/**
+ * Post-response memory processing — mirrors the desktop's
+ * storeMessageLocally + processConversationTurn pipeline.
+ *
+ * Stores the assistant message, then triggers the Python agent's
+ * conversation segmentation (topic analysis, embedding generation).
+ */
+async function processVMConversationTurn(
+  conversationId: string,
+  userMessage: string,
+  assistantMessage: string,
+): Promise<void> {
+  // Store assistant message
+  await sendToAgent({
+    type: 'tool_exec',
+    tool: 'message_add',
+    args: { conversation_id: conversationId, role: 'assistant', content: assistantMessage },
+  }, 10_000).catch(() => {});
 
-  return {
-    relevantMemories: searchResults.map(r => ({
-      content: r.entry.content,
-      topic: r.entry.topic,
-      importance: r.entry.importance,
-      score: r.score,
-    })),
-    recentImportant: recentMemories.map(m => ({
-      content: m.content,
-      topic: m.topic,
-    })),
-    preferences: Object.keys(preferences).length > 0 ? preferences : undefined,
-  };
+  // Get existing segments to determine current state
+  const segListResult = await sendToAgent({
+    type: 'tool_exec',
+    tool: 'segment_list',
+    args: { conversation_id: conversationId },
+  }, 10_000).catch(() => null);
+
+  const existingSegments: any[] = segListResult?.segments || segListResult?.result || [];
+  const lastSegment = existingSegments[existingSegments.length - 1] || null;
+
+  // Use a lightweight AI call via the Python agent to analyze the turn.
+  // The Python agent's 'conversation_analyze_segment' may not exist, so we
+  // create a summary ourselves and store a new segment when appropriate.
+  // For simplicity, create/update a segment for every meaningful turn.
+  const summaryText = `User: ${userMessage.slice(0, 200)}. Assistant: ${assistantMessage.slice(0, 200)}`;
+  const topics = extractSimpleTopics(userMessage);
+
+  // Generate embedding for the segment
+  let segmentEmbedding: number[] | undefined;
+  try {
+    const embedText = `${summaryText} Topics: ${topics.join(', ')}`;
+    const embedResult = await sendToAgent({
+      type: 'tool_exec',
+      tool: 'generate_embedding',
+      args: { text: embedText },
+    }, 15_000).catch(() => null);
+    segmentEmbedding = embedResult?.embedding || embedResult?.result?.embedding;
+  } catch { /* non-fatal */ }
+
+  // Create a new segment for this turn
+  const turnCount = existingSegments.length + 1;
+  await sendToAgent({
+    type: 'tool_exec',
+    tool: 'segment_create',
+    args: {
+      conversation_id: conversationId,
+      start_turn: turnCount,
+      summary: summaryText.slice(0, 500),
+      topics,
+      ...(segmentEmbedding ? { embedding: segmentEmbedding } : {}),
+    },
+  }, 10_000).catch((e: any) => {
+    console.warn('[vm-agent] segment_create failed:', e?.message);
+  });
+
+  console.log(`[vm-agent] Processed conversation turn: ${conversationId}, segments: ${turnCount}`);
+}
+
+/** Extract simple topic keywords from text. */
+function extractSimpleTopics(text: string): string[] {
+  const words = text.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/);
+  const stopWords = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
+    'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
+    'may', 'might', 'can', 'shall', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by',
+    'from', 'as', 'into', 'through', 'during', 'before', 'after', 'about', 'between',
+    'out', 'up', 'down', 'it', 'its', 'this', 'that', 'these', 'those', 'i', 'me', 'my',
+    'you', 'your', 'we', 'our', 'they', 'their', 'what', 'which', 'who', 'whom', 'how',
+    'when', 'where', 'why', 'not', 'no', 'and', 'or', 'but', 'if', 'so', 'just', 'than',
+    'too', 'very', 'hi', 'hello', 'hey', 'please', 'thanks', 'thank']);
+  const freq = new Map<string, number>();
+  for (const w of words) {
+    if (w.length > 2 && !stopWords.has(w)) {
+      freq.set(w, (freq.get(w) || 0) + 1);
+    }
+  }
+  return [...freq.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([w]) => w);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -986,7 +981,7 @@ const server = http.createServer(async (req, res) => {
         pendingTasks: proactive.getStatus().pendingTasks,
       },
       deploys: deployExecutor.list().length,
-      pythonAgent: _agentWs?.readyState === WebSocket.OPEN ? 'connected' : 'disconnected',
+      pythonAgent: isAgentWsConnected() ? 'connected' : 'disconnected',
     });
     return;
   }
@@ -1449,9 +1444,7 @@ export function startAgent(): void {
       await syncAgentData({ direction: 'upload' }).catch(() => {});
       console.log('[vm-agent] Final agent data sync complete');
     }
-    if (_agentWs) {
-      try { _agentWs.close(); } catch {}
-    }
+    closeAgentWs();
     server.close();
     process.exit(0);
   };

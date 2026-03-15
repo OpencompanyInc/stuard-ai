@@ -305,6 +305,7 @@ export async function startBrowserUseServer(sessionId = 'default', { skipChromeS
         BROWSER_USE_PROFILE_DIR: profileDir,
         BROWSER_USE_AUTH_TOKEN,
       },
+      cwd: path.dirname(script),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });

@@ -1722,10 +1722,68 @@ export function setupIpc() {
   });
 
   // Proactive Agent System
+
+  /** Sync proactive config to VM so it can run its own standalone scheduler. */
+  async function syncProactiveConfigToVM(config: any): Promise<void> {
+    const cloudAiUrl = String(
+      process.env.CLOUD_AI_HTTP ||
+      process.env.CLOUD_PUBLIC_URL ||
+      process.env.VITE_CLOUD_AI_URL ||
+      "",
+    ).trim().replace(/\/+$/, "");
+    if (!cloudAiUrl) return;
+
+    // Get auth token from renderer (same pattern as proactive-scheduler)
+    let token: string | null = null;
+    const { BrowserWindow } = await import("electron");
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        try {
+          token = await win.webContents.executeJavaScript(
+            `(async () => { try { const { data } = await window.supabase?.auth?.getSession(); return data?.session?.access_token || null; } catch { return null; } })()`,
+            true
+          );
+          if (token) break;
+        } catch { /* ignore */ }
+      }
+    }
+    if (!token) return;
+
+    const { net } = await import("electron");
+    await net.fetch(`${cloudAiUrl}/v1/proactive/vm-config`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        enabled: config.enabled,
+        interval: config.interval,
+        modelMode: config.modelMode,
+        instructions: config.instructions,
+        notificationChannels: config.notificationChannels,
+      }),
+    });
+  }
+
   ipcMain.handle("proactive:getConfig", () => proactiveService.getConfig());
-  ipcMain.handle("proactive:updateConfig", (_e, updates: any) => {
+  ipcMain.handle("proactive:updateConfig", async (_e, updates: any) => {
     try {
-      return proactiveService.updateConfig(updates || {});
+      const result = proactiveService.updateConfig(updates || {});
+
+      // When executionTarget changes to 'cloud', sync proactive config to VM
+      // so its standalone scheduler runs independently of the desktop.
+      const config = result.config;
+      if (config.executionTarget === "cloud") {
+        syncProactiveConfigToVM(config).catch((e: any) => {
+          logger.warn("[proactive] VM config sync failed:", e?.message);
+        });
+      } else if (updates.executionTarget === "local") {
+        // Disable VM scheduler when switching back to local
+        syncProactiveConfigToVM({ ...config, enabled: false }).catch(() => {});
+      }
+
+      return result;
     } catch (e: any) {
       return { ok: false, error: String(e?.message || "failed") };
     }

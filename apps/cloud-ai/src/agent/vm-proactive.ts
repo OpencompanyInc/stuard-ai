@@ -15,6 +15,7 @@ import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { mintVMToken } from '../services/vm-tokens';
+import { buildVMMemoryContext } from './vm-agent-ws';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -278,6 +279,18 @@ export class VMProactiveScheduler {
       const pendingTasks = this.listTasks({ status: 'pending' });
       const inProgressTasks = this.listTasks({ status: 'in_progress' });
 
+      // Build memory context locally from the Python agent's SQLite DB.
+      // This is what gives proactive notifications personalization.
+      let memoryContext: string | undefined;
+      try {
+        memoryContext = await buildVMMemoryContext('proactive check-in');
+        if (memoryContext) {
+          this.log(`Memory context built: ${memoryContext.length} chars`);
+        }
+      } catch (e: any) {
+        this.log(`Memory context build failed (non-fatal): ${e?.message}`);
+      }
+
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 180_000); // 3 min timeout
 
@@ -295,6 +308,8 @@ export class VMProactiveScheduler {
             modelMode: this.config.modelMode,
             notificationChannels: this.config.channels,
             deliverNotifications: this.config.channels.length > 0,
+            // Pre-built memory context from local Python agent
+            memoryContext,
             context: {
               isVM: true,
               hostname: require('os').hostname(),

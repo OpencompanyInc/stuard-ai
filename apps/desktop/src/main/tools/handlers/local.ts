@@ -315,6 +315,11 @@ export function calcToolTimeout(tool: string, args: any): number {
     return 1200000; // 20 min
   }
 
+  // mediapipe_setup: creates venv + installs mediapipe, opencv-python, numpy
+  if (tool === 'mediapipe_setup') {
+    return 600000; // 10 min
+  }
+
   // ffmpeg operations: respect timeoutMs when provided, otherwise use a reasonable default
   if (
     tool === 'ffmpeg_run' ||

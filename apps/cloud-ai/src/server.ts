@@ -41,6 +41,7 @@ import { getAgentForQuery } from './agents/stuard/index';
 
 
 import { startVMHealthMonitor } from './services/vm-health';
+import { startBillingCron } from './services/compute-billing';
 import { registerConnection, getDesktopWs, getConnectionInfo } from './services/vm-bridge';
 import { verifyVMToken, mintVMToken } from './services/vm-tokens';
 import { handleDesktopRelayResult } from './routes/desktop-tool-relay';
@@ -430,6 +431,13 @@ server.listen(PORT, () => {
     console.log('[cloud-ai] VM health monitor started');
   } catch (e) {
     console.warn('[cloud-ai] VM health monitor failed to start:', e);
+  }
+
+  // Start compute billing cron (fallback — primary billing is on-demand in status endpoint)
+  try {
+    startBillingCron();
+  } catch (e) {
+    console.warn('[cloud-ai] Billing cron failed to start:', e);
   }
 });
 

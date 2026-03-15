@@ -538,6 +538,22 @@ async def get_local_time(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "iso": iso, "tzName": tz_name, "offsetMinutes": offset_minutes, "epochMs": epoch_ms}
 
 
+def _get_system_python() -> str:
+    """Return a real Python interpreter path, handling frozen/PyInstaller builds.
+
+    In dev mode ``sys.executable`` already points at the interpreter.  In a
+    PyInstaller-frozen build it points at the packaged ``.exe`` which cannot
+    create venvs or run ``-m pip``.  In that case we fall back to whichever
+    Python is available on the system PATH.
+    """
+    is_frozen = getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS")
+    if is_frozen:
+        found = shutil.which("python") or shutil.which("python3") or shutil.which("py")
+        if found:
+            return found
+    return sys.executable
+
+
 def _envs_base_dir() -> str:
     if sys.platform.startswith("win"):
         base = os.environ.get("APPDATA") or os.path.expanduser("~\\AppData\\Roaming")
@@ -601,7 +617,8 @@ async def python_install(args: Dict[str, Any], emit: Callable[[str, Dict[str, An
 
         if not os.path.exists(py_bin):
             # Use --without-pip to avoid venvlauncher.exe copy issues on Python 3.13+
-            create_cmd = [sys.executable, "-m", "venv", "--without-pip", env_dir]
+            system_python = await asyncio.to_thread(_get_system_python)
+            create_cmd = [system_python, "-m", "venv", "--without-pip", env_dir]
             try:
                 await asyncio.to_thread(subprocess.run, create_cmd, check=True, capture_output=True, text=True)
             except Exception as e:
@@ -723,7 +740,8 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
                 try:
                     os.makedirs(envs_root, exist_ok=True)
                     # Use --without-pip to avoid venvlauncher.exe copy issues on Python 3.13+
-                    create_cmd = [sys.executable, "-m", "venv", "--without-pip", env_dir]
+                    system_python = await asyncio.to_thread(_get_system_python)
+                    create_cmd = [system_python, "-m", "venv", "--without-pip", env_dir]
                     proc = await asyncio.to_thread(subprocess.run, create_cmd, capture_output=True, text=True)
                     if proc.returncode != 0:
                         return {"ok": False, "error": f"venv_create_failed: {proc.stderr}", "stdout": proc.stdout}

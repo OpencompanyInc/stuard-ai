@@ -77,6 +77,24 @@ function main() {
     }
   }
 
+  // ── Copy the app/ Python package (browser_cookies etc.) needed by browser_use_server ──
+  const appPkgSrc = path.join(agentSrcDir, "app");
+  const appPkgDest = path.join(outDir, "app");
+  const appFiles = ["__init__.py", "browser_cookies.py"];
+  if (fs.existsSync(appPkgSrc)) {
+    ensureDirSync(appPkgDest);
+    for (const f of appFiles) {
+      const src = path.join(appPkgSrc, f);
+      if (fs.existsSync(src)) {
+        copyFileSync(src, path.join(appPkgDest, f));
+      } else {
+        console.warn(`[prepare-agent] app/${f} not found — skipping`);
+      }
+    }
+  } else {
+    console.warn(`[prepare-agent] app/ package not found at ${appPkgSrc} — skipping`);
+  }
+
   const platform = process.platform;
 
   if (!fs.existsSync(distDir)) {

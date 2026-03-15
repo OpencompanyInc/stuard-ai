@@ -293,8 +293,14 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     setMpInstalling(true);
     try {
       const res = await (window as any).desktopAPI?.execTool?.('mediapipe_setup', {});
-      if (res && typeof res === 'object') setMpStatus(res);
-    } catch {
+      if (res && typeof res === 'object') {
+        setMpStatus(res);
+        if (!res.ok && res.error) {
+          console.error('[mediapipe_setup] failed:', res.error);
+        }
+      }
+    } catch (e) {
+      console.error('[mediapipe_setup] exception:', e);
     } finally {
       await refreshMediapipeStatus();
       setMpInstalling(false);

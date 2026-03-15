@@ -568,13 +568,17 @@ export async function createConversation(
   firstMessage: string,
   model: string,
   firstMessageMetadata?: MessageMetadata,
-  source: 'stuard' | 'workflow' | 'skill' | 'proactive' = 'stuard'
+  source: 'stuard' | 'workflow' | 'skill' | 'proactive' = 'stuard',
+  /** When true, bypass sync_conversations check (e.g. SMS-originated conversations must always persist). */
+  forcePersist = false,
 ): Promise<string | null> {
   if (!supabaseService) return null;
-  const prefs = await getSyncPreferences(userId);
-  if (!prefs.sync_conversations) {
-    console.log('[sync] sync_conversations disabled — skipping cloud conversation storage');
-    return null;
+  if (!forcePersist) {
+    const prefs = await getSyncPreferences(userId);
+    if (!prefs.sync_conversations) {
+      console.log('[sync] sync_conversations disabled — skipping cloud conversation storage');
+      return null;
+    }
   }
   try {
     const { data: conv, error: convErr } = await supabaseService
@@ -634,11 +638,15 @@ export async function addAssistantMessage(
   userId: string,
   conversationId: string,
   text: string,
-  metadata?: MessageMetadata
+  metadata?: MessageMetadata,
+  /** When true, bypass sync_conversations check (e.g. SMS-originated messages). */
+  forcePersist = false,
 ): Promise<void> {
   if (!supabaseService) return;
-  const prefs = await getSyncPreferences(userId);
-  if (!prefs.sync_conversations) return;
+  if (!forcePersist) {
+    const prefs = await getSyncPreferences(userId);
+    if (!prefs.sync_conversations) return;
+  }
   try {
     await supabaseService.from('messages').insert([
       {
@@ -656,11 +664,15 @@ export async function addUserMessage(
   userId: string,
   conversationId: string,
   text: string,
-  metadata?: MessageMetadata
+  metadata?: MessageMetadata,
+  /** When true, bypass sync_conversations check (e.g. SMS-originated messages). */
+  forcePersist = false,
 ): Promise<void> {
   if (!supabaseService) return;
-  const prefs = await getSyncPreferences(userId);
-  if (!prefs.sync_conversations) return;
+  if (!forcePersist) {
+    const prefs = await getSyncPreferences(userId);
+    if (!prefs.sync_conversations) return;
+  }
   try {
     await supabaseService.from('messages').insert([
       {

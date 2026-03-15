@@ -234,6 +234,11 @@ export class SocketManager {
       let conversationId = msg.conversationId || null;
       const userId = authUser?.userId || null;
 
+      // SMS-originated chats must always persist regardless of sync_conversations pref
+      const hiddenCtx = String(msg.hiddenContext || '');
+      const isSmsChat = hiddenCtx.includes('[SMS MODE]') || hiddenCtx.includes('[PROACTIVE FOLLOW-UP]');
+      const forcePersist = isSmsChat;
+
       // Create or continue conversation
       if (userId) {
         if (!conversationId) {
@@ -242,7 +247,7 @@ export class SocketManager {
             mode: modelName,
             tier: modelName === 'auto' ? undefined : modelName,
             modelId: chosenModelId,
-          });
+          }, 'stuard', forcePersist);
           if (conversationId) {
             this.send(ws, { type: 'conversation', conversationId });
           }
@@ -252,7 +257,7 @@ export class SocketManager {
             mode: modelName,
             tier: modelName === 'auto' ? undefined : modelName,
             modelId: chosenModelId,
-          });
+          }, forcePersist);
         }
       }
 
@@ -302,7 +307,7 @@ export class SocketManager {
             mode: modelName,
             tier: modelName === 'auto' ? undefined : modelName,
             modelId: chosenModelId,
-          });
+          }, forcePersist);
         }
       } finally {
         try { wsIsRunning.set(ws, false); } catch { }

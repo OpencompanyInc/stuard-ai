@@ -11,6 +11,9 @@ import {
   getSmsUserState,
   getCloudEngine,
   debitCredits,
+  createConversation,
+  addUserMessage,
+  addAssistantMessage,
 } from '../../supabase';
 import { authenticateHttpLegacy, sendJson, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
@@ -18,6 +21,7 @@ import { TELNYX_API_KEY, TELNYX_FROM_NUMBER, TELNYX_MESSAGING_PROFILE_ID } from 
 import { stripMarkdownForSms, sendWelcomeSms, sendSmsRaw } from '../sms-utils';
 import { sendVMCommand } from '../../services/vm-command';
 import { messagingCreditCost } from '../../pricing';
+import { getOrCreateQueryEmbedding } from '../../utils/shared-embedding';
 
 const TELNYX_API = 'https://api.telnyx.com/v2';
 
@@ -650,14 +654,39 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
             let handled = false;
 
             if (effectiveTarget === 'vm') {
-              // Relay to VM — the VM owns conversation state, memory, and multi-turn.
-              // We just pass the conversationId and forward the reply as SMS.
+              // Relay to VM — generate embedding in cloud-ai so the VM can
+              // run similarity search against its synced SQLite memory DB.
               try {
+                // Generate embedding for the inbound text so the VM's Python agent
+                // can do vector similarity search in its local SQLite DB.
+                let queryEmbedding: number[] | undefined;
+                try {
+                  queryEmbedding = await getOrCreateQueryEmbedding(inboundText);
+                } catch {
+                  // Non-fatal: VM will still work with recent-segments fallback
+                }
+
+                // Ensure conversation is persisted in Supabase (forcePersist=true bypasses sync pref)
+                let convId = smsState.conversation_id || null;
+                if (!convId) {
+                  convId = await createConversation(userId, inboundText, smsState.preferred_model || 'fast', {
+                    mode: smsState.preferred_model || 'fast',
+                  }, 'stuard', true);
+                } else {
+                  // Store the inbound user message
+                  await addUserMessage(userId, convId, inboundText, {
+                    mode: smsState.preferred_model || 'fast',
+                  }, true);
+                }
+
                 const vmResult = await sendVMCommand(userId, 'agent_chat', {
                   message: inboundText,
-                  conversationId: smsState.conversation_id || undefined,
+                  conversationId: convId || undefined,
                   model: smsState.preferred_model || 'fast',
                   context: { source: 'sms', fromPhone },
+                  memoryQuery: inboundText,
+                  // Pass pre-computed embedding so VM can do similarity search locally
+                  ...(queryEmbedding ? { queryEmbedding } : {}),
                 }, 60_000);
 
                 if (vmResult.ok && vmResult.result?.text) {
@@ -668,8 +697,15 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
                   await deductTelnyxCredit(userId);
                   handled = true;
 
+                  // Store assistant reply in Supabase for chat history visibility
+                  const vmConvId = vmResult.result?.conversationId || convId;
+                  if (vmConvId) {
+                    await addAssistantMessage(userId, vmConvId, String(vmResult.result.text), {
+                      mode: smsState.preferred_model || 'fast',
+                    }, true);
+                  }
+
                   // Track conversation ID returned by VM for next turn
-                  const vmConvId = vmResult.result?.conversationId || null;
                   if (vmConvId && vmConvId !== smsState.conversation_id) {
                     await upsertSmsUserState({ userId, conversationId: vmConvId });
                   }

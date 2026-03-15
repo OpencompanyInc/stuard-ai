@@ -1293,6 +1293,11 @@ const StandardCard: React.FC<StandardCardProps> = ({
               </>
             )}
           </div>
+          {!mpInstalling && !mpAvailable && (mpStatus as any)?.error && (
+            <div className="text-[10px] text-red-400 break-all">
+              {String((mpStatus as any).error).slice(0, 200)}
+            </div>
+          )}
         </div>
       )}
 

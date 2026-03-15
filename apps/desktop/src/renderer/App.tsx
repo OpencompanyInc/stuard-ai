@@ -1004,48 +1004,66 @@ export default function App() {
   // Fetch Conversations from local agent (works offline, no sign-in required)
   const fetchConversations = async () => {
     setLoadingConvs(true);
+    let localConvs: any[] = [];
+
+    // Primary: fetch from local agent which stores everything locally
     try {
-      // Primary: fetch from local agent which stores everything locally
       const json = await agentFetchJson(
         resolveAgentEndpoints(),
         "/v1/memory/conversations?limit=20&source=stuard",
         { accessToken },
       );
       if (json.ok && Array.isArray(json.conversations)) {
-        const convs = json.conversations
-          .map((c: any) => ({
-            id: c.id || c.conversation_id,
-            title: c.title,
-            created_at: c.created_at || c.updated_at,
-          }))
-          .sort(
-            (a: any, b: any) =>
-              new Date(b.created_at || 0).getTime() -
-              new Date(a.created_at || 0).getTime(),
-          )
-          .slice(0, 20);
-        setConvList(convs);
-        setLoadingConvs(false);
-        return;
+        localConvs = json.conversations.map((c: any) => ({
+          id: c.id || c.conversation_id,
+          title: c.title,
+          created_at: c.created_at || c.updated_at,
+        }));
       }
     } catch {
       // Agent not running, fall through
     }
-    // Fallback: try Supabase if signed in
+
+    // Always merge Supabase conversations (includes SMS conversations
+    // and any created when local agent wasn't running). Reading is not
+    // gated by sync_conversations — that pref controls writing only.
+    let cloudConvs: any[] = [];
     try {
-      const syncPrefs = await fetchRendererSyncPrefs();
-      if (signedIn && syncPrefs.sync_conversations) {
+      if (signedIn) {
         const { data, error } = await supabase
           .from("conversations")
           .select("id, title, created_at")
           .eq("source", "stuard")
           .order("created_at", { ascending: false })
           .limit(20);
-        if (!error) {
-          setConvList(Array.isArray(data) ? data : []);
+        if (!error && Array.isArray(data)) {
+          cloudConvs = data;
         }
       }
     } catch {}
+
+    // Merge and deduplicate by ID, preferring local agent data
+    const seenIds = new Set<string>();
+    const merged: any[] = [];
+    for (const c of localConvs) {
+      if (c.id && !seenIds.has(String(c.id))) {
+        seenIds.add(String(c.id));
+        merged.push(c);
+      }
+    }
+    for (const c of cloudConvs) {
+      if (c.id && !seenIds.has(String(c.id))) {
+        seenIds.add(String(c.id));
+        merged.push(c);
+      }
+    }
+
+    merged.sort(
+      (a: any, b: any) =>
+        new Date(b.created_at || 0).getTime() -
+        new Date(a.created_at || 0).getTime(),
+    );
+    setConvList(merged.slice(0, 20));
     setLoadingConvs(false);
   };
   // --- Sidebar & Tabs State ---

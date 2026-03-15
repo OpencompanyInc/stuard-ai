@@ -4,7 +4,7 @@ import { COMPUTE_TIER_CONFIG, DEFAULT_CLOUD_DISK_GB_BY_TIER, STORAGE_PRICING, es
 import { getComputeProvider } from '../services/compute';
 import { syncToCloud, restoreFromCloud, getSyncStatus } from '../services/sync-engine';
 import { deleteAllUserData, uploadAgentData } from '../services/cold-storage';
-import { getUserComputeUsage } from '../services/compute-billing';
+import { getUserComputeUsage, catchUpBilling } from '../services/compute-billing';
 import { sendVMCommand, pingVMAgent } from '../services/vm-command';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -608,6 +608,9 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
         json(res, 200, { ok: true, engine: null });
         return true;
       }
+
+      // Catch up on any unbilled hours (setInterval is unreliable on Cloud Run)
+      await catchUpBilling(engine);
 
       const syncStatus = await getSyncStatus(user.userId);
       const computeUsage = await getUserComputeUsage(user.userId);
