@@ -24,6 +24,41 @@ const OUTFILE = path.join(ROOT, 'dist', 'vm-agent-bundle.js');
 
 const skipObfuscate = process.argv.includes('--no-obfuscate');
 
+/**
+ * Upload a file to GCS using the JSON API directly.
+ * Only requires storage.objects.create — avoids the LIST/GET pre-checks
+ * that gsutil and gcloud storage cp perform.
+ */
+async function uploadToGCS(localPath, bucket, objectName) {
+  const https = require('https');
+  const token = execSync('gcloud auth print-access-token', { encoding: 'utf8' }).trim();
+  const fileData = fs.readFileSync(localPath);
+
+  return new Promise((resolve, reject) => {
+    const url = `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(objectName)}`;
+    const req = https.request(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/javascript',
+        'Content-Length': fileData.length,
+      },
+    }, (res) => {
+      let body = '';
+      res.on('data', (chunk) => body += chunk);
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve(body);
+        } else {
+          reject(new Error(`GCS upload returned ${res.statusCode}: ${body}`));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.end(fileData);
+  });
+}
+
 // Ensure dist/ exists
 fs.mkdirSync(path.join(ROOT, 'dist'), { recursive: true });
 
@@ -121,10 +156,10 @@ async function build() {
   // ── Step 3: Upload to GCS ───────────────────────────────────────────────────
   if (process.argv.includes('--upload')) {
     const bucket = process.env.CLOUD_ENGINE_BUCKET || 'stuard-user-data';
-    const dest = `gs://${bucket}/agent/vm-agent-bundle.js`;
-    console.log(`[build-vm-agent] Uploading to ${dest}...`);
+    const objectName = 'agent/vm-agent-bundle.js';
+    console.log(`[build-vm-agent] Uploading to gs://${bucket}/${objectName}...`);
     try {
-      execSync(`gcloud storage cp "${OUTFILE}" "${dest}"`, { cwd: ROOT, stdio: 'inherit' });
+      await uploadToGCS(OUTFILE, bucket, objectName);
       console.log(`[build-vm-agent] Uploaded successfully.`);
     } catch (err) {
       console.error('[build-vm-agent] Upload failed:', err.message);

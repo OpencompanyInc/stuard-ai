@@ -28,6 +28,24 @@ const GCS_BUCKET = process.env.CLOUD_ENGINE_BUCKET || 'stuard-user-data';
 const GCS_PATH = `gs://${GCS_BUCKET}/agent/stuard-python-agent.tar.gz`;
 
 const doUpload = process.argv.includes('--upload');
+
+/**
+ * Upload a file to GCS using the JSON API directly.
+ * Only requires storage.objects.create — avoids the LIST/GET pre-checks
+ * that gsutil and gcloud storage cp perform.
+ */
+function uploadToGCS(localPath, bucket, objectName, contentType) {
+  const token = execSync('gcloud auth print-access-token', { encoding: 'utf8' }).trim();
+  const url = `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(objectName)}`;
+
+  execSync(
+    `curl -sf -X POST "${url}" ` +
+    `-H "Authorization: Bearer ${token}" ` +
+    `-H "Content-Type: ${contentType}" ` +
+    `--data-binary @"${localPath}"`,
+    { stdio: ['pipe', 'pipe', 'inherit'] }
+  );
+}
 const keepSource = process.argv.includes('--keep-source');
 
 // Desktop-only modules to exclude from VM bundle
@@ -195,9 +213,10 @@ try {
 
 // ── 8. Upload to GCS ───────────────────────────────────────────────────────
 if (doUpload) {
-  console.log(`☁️ Uploading to ${GCS_PATH}...`);
+  const objectName = 'agent/stuard-python-agent.tar.gz';
+  console.log(`☁️ Uploading to gs://${GCS_BUCKET}/${objectName}...`);
   try {
-    execSync(`gcloud storage cp "${OUTPUT_FILE}" "${GCS_PATH}"`, { stdio: 'inherit' });
+    uploadToGCS(OUTPUT_FILE, GCS_BUCKET, objectName, 'application/gzip');
     console.log(`✅ Uploaded to ${GCS_PATH}`);
   } catch (e) {
     console.error('❌ Upload failed:', e.message);
