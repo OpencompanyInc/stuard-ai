@@ -35,7 +35,9 @@ const doUpload = process.argv.includes('--upload');
  * that gsutil and gcloud storage cp perform.
  */
 function uploadToGCS(localPath, bucket, objectName, contentType) {
-  const token = execSync('gcloud auth print-access-token', { encoding: 'utf8' }).trim();
+  const sa = process.env.GCS_SERVICE_ACCOUNT;
+  const acctFlag = sa ? ` --account=${sa}` : '';
+  const token = execSync(`gcloud auth print-access-token${acctFlag}`, { encoding: 'utf8' }).trim();
   const url = `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(objectName)}`;
 
   execSync(

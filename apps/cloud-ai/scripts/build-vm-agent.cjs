@@ -31,7 +31,9 @@ const skipObfuscate = process.argv.includes('--no-obfuscate');
  */
 async function uploadToGCS(localPath, bucket, objectName) {
   const https = require('https');
-  const token = execSync('gcloud auth print-access-token', { encoding: 'utf8' }).trim();
+  const sa = process.env.GCS_SERVICE_ACCOUNT;
+  const acctFlag = sa ? ` --account=${sa}` : '';
+  const token = execSync(`gcloud auth print-access-token${acctFlag}`, { encoding: 'utf8' }).trim();
   const fileData = fs.readFileSync(localPath);
 
   return new Promise((resolve, reject) => {
