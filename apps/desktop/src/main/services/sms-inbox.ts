@@ -36,6 +36,40 @@ type SmsUserState = {
   proactive_message: string | null;
 };
 
+/**
+ * Format tool args into a human-readable SMS description instead of raw JSON.
+ */
+function formatToolArgsForSms(toolName: string, args: any): string {
+  try {
+    if (toolName === 'capture_media') {
+      const kind = String(args?.kind || 'photo');
+      const mode = String(args?.mode || 'fixed');
+      const dur = args?.duration ? ` for ${args.duration}s` : '';
+      return `take a ${kind}${dur} (${mode} mode)`;
+    }
+    if (toolName === 'capture_screen') {
+      return 'take a screenshot';
+    }
+    if (toolName === 'capture_system_audio') {
+      const dur = args?.duration ? ` for ${args.duration}s` : '';
+      return `record system audio${dur}`;
+    }
+    if (toolName === 'run_command' || toolName === 'run_system_command') {
+      const cmd = String(args?.command || '').slice(0, 80);
+      return `run command: ${cmd}`;
+    }
+    if (toolName === 'run_python_script') {
+      return 'run a Python script';
+    }
+    if (toolName.startsWith('terminal_')) {
+      const action = toolName.replace('terminal_', '');
+      return `terminal ${action}`;
+    }
+  } catch {}
+  // Fallback
+  return `${toolName}`;
+}
+
 // Tools that need explicit SMS approval before the desktop executes them
 const SMS_PERMISSION_TOOLS = new Set([
   'run_command', 'run_system_command', 'run_python_script', 'run_node_script',
@@ -560,10 +594,10 @@ async function runSmsTurn(input: {
             },
           });
 
-          const argsPreview = JSON.stringify(args).slice(0, 120);
+          const argsPreview = formatToolArgsForSms(toolName, args);
           void sendSmsNotify(
             input.replyToPhone,
-            `Stuard wants to run: ${toolName}\n${argsPreview}\nReply YES to allow, NO to deny.`,
+            `Stuard wants to: ${argsPreview}\nReply YES to allow, NO to deny.`,
             input.provider,
           );
           return;
@@ -688,8 +722,56 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
   await completeSmsItem(item.id);
 }
 
+/**
+ * When the main drain loop is blocked inside runSmsTurn() waiting for a tool
+ * permission, the user's YES/NO reply sits in the queue but can't be processed
+ * (draining=true). This function breaks that deadlock by claiming the next
+ * queue item and resolving the pending permission directly.
+ */
+async function tryResolvePermissionFromQueue(): Promise<boolean> {
+  const session = getMainAuthSession();
+  const userId = session?.user?.id || null;
+  if (!userId) return false;
+
+  const pending = pendingToolPermissions.get(userId);
+  if (!pending) return false;
+
+  let item: SmsQueueItem | null;
+  try {
+    item = await claimNextSmsItem(userId);
+  } catch {
+    return false;
+  }
+  if (!item) return false;
+
+  const text = String(item.message_text || '').toLowerCase().trim();
+  const isYes = text === 'yes' || text === 'y';
+  const isNo = text === 'no' || text === 'n' || text === 'deny';
+
+  if (isYes || isNo) {
+    logger.info(`[sms-inbox] Resolved tool permission from queue: ${isYes ? 'YES' : 'NO'} for ${pending.toolName}`);
+    pendingToolPermissions.delete(userId);
+    pending.allow(isYes);
+    try { await completeSmsItem(item.id); } catch {}
+    return true;
+  }
+
+  // Not a YES/NO response — fail the item so it gets retried after the
+  // current turn finishes (or the permission times out).
+  try { await failSmsItem(item.id, 'pending_tool_permission'); } catch {}
+  return false;
+}
+
 async function drainInbox(reason: string): Promise<void> {
   if (draining) {
+    // DEADLOCK FIX: When a tool permission is pending, the main drain loop is
+    // blocked inside runSmsTurn() waiting for the user's YES/NO reply. But that
+    // reply is queued and can't be processed because draining=true. Break the
+    // deadlock by resolving the permission directly from the queue.
+    if (pendingToolPermissions.size > 0) {
+      const resolved = await tryResolvePermissionFromQueue();
+      if (resolved) return; // runSmsTurn will continue and drain will finish naturally
+    }
     drainQueued = true;
     return;
   }
