@@ -24,7 +24,7 @@ const AGENT_DIR = path.resolve(ROOT, '..', 'agent');
 const OUTPUT_DIR = path.resolve(ROOT, 'dist');
 const STAGING_DIR = path.resolve(OUTPUT_DIR, '_python_staging');
 const OUTPUT_FILE = path.join(OUTPUT_DIR, 'stuard-python-agent.tar.gz');
-const GCS_BUCKET = 'stuard-user-data';
+const GCS_BUCKET = process.env.CLOUD_ENGINE_BUCKET || 'stuard-user-data';
 const GCS_PATH = `gs://${GCS_BUCKET}/agent/stuard-python-agent.tar.gz`;
 
 const doUpload = process.argv.includes('--upload');
@@ -197,7 +197,7 @@ try {
 if (doUpload) {
   console.log(`☁️ Uploading to ${GCS_PATH}...`);
   try {
-    execSync(`gsutil cp "${OUTPUT_FILE}" "${GCS_PATH}"`, { stdio: 'inherit' });
+    execSync(`gcloud storage cp "${OUTPUT_FILE}" "${GCS_PATH}"`, { stdio: 'inherit' });
     console.log(`✅ Uploaded to ${GCS_PATH}`);
   } catch (e) {
     console.error('❌ Upload failed:', e.message);

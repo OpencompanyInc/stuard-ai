@@ -501,6 +501,54 @@ def _find_local_browser_executable(browser_name: str) -> str | None:
     return None
 
 
+_DEBUG_PORT_SETUP_DONE = False  # Only attempt setup once per server lifetime
+
+
+def _auto_setup_debug_port_if_needed(user_data_dir: str) -> None:
+    """
+    Automatically enable Chrome's debug port if not already configured.
+    This is a safe, non-destructive operation — it only adds a flag to Chrome
+    shortcuts so that NEXT TIME Chrome starts, it opens a debug port.
+    Does nothing if already set up. Only runs once per server session.
+    """
+    global _DEBUG_PORT_SETUP_DONE
+    if _DEBUG_PORT_SETUP_DONE:
+        return
+    _DEBUG_PORT_SETUP_DONE = True
+
+    # Check if debug port is already active — nothing to do
+    if _detect_chrome_debug_port(user_data_dir):
+        return
+
+    # Check if we already set up the shortcuts before (persistent marker)
+    marker = Path(user_data_dir) / ".stuard_debug_port_configured"
+    if marker.exists():
+        print(f"[browser-use-server] Chrome debug port was configured previously. "
+              f"Restart Chrome to activate it (close fully, including system tray).",
+              flush=True)
+        return
+
+    try:
+        from app.browser_cookies import enable_chrome_debug_port
+    except ImportError:
+        from browser_cookies import enable_chrome_debug_port  # type: ignore[no-redef]
+
+    result = enable_chrome_debug_port(9222)
+    if result.get("success"):
+        # Write marker so we don't modify shortcuts again
+        try:
+            marker.write_text("9222")
+        except Exception:
+            pass
+        print(f"[browser-use-server] Auto-configured Chrome debug port for future sessions. "
+              f"Restart Chrome to activate (close fully, then reopen).",
+              flush=True)
+    else:
+        print(f"[browser-use-server] Chrome is running without a debug port. "
+              f"For full auth support, close Chrome or add --remote-debugging-port=9222 "
+              f"to your Chrome shortcut.", flush=True)
+
+
 def _detect_chrome_debug_port(user_data_dir: str) -> int | None:
     """Check if Chrome is running with --remote-debugging-port.
     Chrome writes the port to DevToolsActivePort in the user data dir.
@@ -1135,11 +1183,10 @@ async def _ensure_browser() -> tuple[bool, Optional[str]]:
                 pass
             _browser = _context = _page = None
 
-    # If Chrome is running but has no debug port, warn the user
+    # If Chrome is running but has no debug port, set it up for next time
+    # and fall back to browser-use library for now.
     if browser_is_running and use_real_profile:
-        print(f"[browser-use-server] Chrome is running without a debug port. "
-              f"For best experience, close Chrome or restart it with: "
-              f"chrome.exe --remote-debugging-port=9222", flush=True)
+        _auto_setup_debug_port_if_needed(effective_user_data_dir)
         print(f"[browser-use-server] Falling back to browser-use library (no auth persistence).", flush=True)
 
     # ── Strategy 2: browser-use library (fallback) ──
@@ -1311,6 +1358,17 @@ async def handle_status(_req: web.Request) -> web.Response:
         # Guard against slow/frozen browser targets stalling status checks.
         title = await _get_page_title(timeout=0.75)
 
+    # Check Chrome debug port status
+    resolved = _resolve_real_browser_profile(sync_meta)
+    chrome_debug_port = None
+    chrome_is_running = False
+    debug_port_configured = False
+    if resolved:
+        chrome_is_running = resolved.get("wasActive", False)
+        chrome_debug_port = _detect_chrome_debug_port(resolved["userDataDir"])
+        marker = Path(resolved["userDataDir"]) / ".stuard_debug_port_configured"
+        debug_port_configured = marker.exists() or chrome_debug_port is not None
+
     return _ok({
         "installed": has_browser_use,
         "running": browser_running,
@@ -1328,7 +1386,62 @@ async def handle_status(_req: web.Request) -> web.Response:
             "lastSyncedAt": sync_meta.get("syncedAt"),
             "mode": sync_meta.get("mode"),
         },
+        "debugPort": {
+            "active": chrome_debug_port is not None,
+            "port": chrome_debug_port,
+            "configured": debug_port_configured,
+            "chromeRunning": chrome_is_running,
+        },
     })
+
+
+async def handle_setup_debug_port(req: web.Request) -> web.Response:
+    """Enable Chrome's remote debugging port for CDP connection.
+
+    This modifies Chrome's shortcuts to include --remote-debugging-port=9222.
+    Safe and non-destructive — only adds a flag. Chrome must be restarted
+    for the change to take effect.
+
+    POST /setup-debug-port
+    Optional body: {"port": 9222, "undo": false}
+    """
+    body = await _safe_json(req)
+    port = _clamp_int(body.get("port", 9222), 9222, 1024, 65535)
+    undo = bool(body.get("undo", False))
+
+    if undo:
+        # Remove the debug port from shortcuts
+        try:
+            from app.browser_cookies import enable_chrome_debug_port
+        except ImportError:
+            from browser_cookies import enable_chrome_debug_port  # type: ignore[no-redef]
+
+        # To undo, we'd need a separate function. For now, just remove the marker.
+        resolved = _resolve_real_browser_profile(_read_sync_meta(_current_profile_dir()))
+        if resolved:
+            marker = Path(resolved["userDataDir"]) / ".stuard_debug_port_configured"
+            if marker.exists():
+                marker.unlink()
+        return _ok({"undone": True, "message": "Debug port marker removed. Manually remove --remote-debugging-port from your Chrome shortcut to fully disable."})
+
+    try:
+        from app.browser_cookies import enable_chrome_debug_port
+    except ImportError:
+        from browser_cookies import enable_chrome_debug_port  # type: ignore[no-redef]
+
+    result = enable_chrome_debug_port(port)
+
+    if result.get("success"):
+        # Write marker
+        resolved = _resolve_real_browser_profile(_read_sync_meta(_current_profile_dir()))
+        if resolved:
+            try:
+                marker = Path(resolved["userDataDir"]) / ".stuard_debug_port_configured"
+                marker.write_text(str(port))
+            except Exception:
+                pass
+
+    return _ok(result)
 
 
 async def handle_configure(req: web.Request) -> web.Response:
@@ -3146,6 +3259,7 @@ def create_app() -> web.Application:
     app.router.add_post("/tabs", handle_tabs)
     app.router.add_post("/cookies", handle_cookies)
     app.router.add_post("/sync-chrome", handle_sync_chrome)
+    app.router.add_post("/setup-debug-port", handle_setup_debug_port)
     app.router.add_post("/hover", handle_hover)
     app.router.add_post("/select_option", handle_select_option)
     app.router.add_post("/get_interactive_elements", handle_get_interactive_elements)

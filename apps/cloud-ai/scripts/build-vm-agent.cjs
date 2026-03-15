@@ -124,7 +124,7 @@ async function build() {
     const dest = `gs://${bucket}/agent/vm-agent-bundle.js`;
     console.log(`[build-vm-agent] Uploading to ${dest}...`);
     try {
-      execSync(`gsutil cp "${OUTFILE}" "${dest}"`, { cwd: ROOT, stdio: 'inherit' });
+      execSync(`gcloud storage cp "${OUTFILE}" "${dest}"`, { cwd: ROOT, stdio: 'inherit' });
       console.log(`[build-vm-agent] Uploaded successfully.`);
     } catch (err) {
       console.error('[build-vm-agent] Upload failed:', err.message);
