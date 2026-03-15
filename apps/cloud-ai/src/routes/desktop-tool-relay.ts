@@ -35,7 +35,7 @@ const DESKTOP_RELAY_ALLOWLIST = new Set([
   // Desktop-specific
   'open_url', 'open_file', 'open_application',
   'get_clipboard', 'set_clipboard',
-  'show_notification', 'show_dialog',
+  'send_notification', 'show_notification', 'show_dialog',
   // OCR / vision on desktop
   'ocr_screen', 'find_element', 'wait_for_element',
   // Python agent tools that need desktop context

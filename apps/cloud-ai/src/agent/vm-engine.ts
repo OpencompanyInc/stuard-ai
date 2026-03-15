@@ -161,7 +161,7 @@ const DESKTOP_ONLY_TOOLS = new Set([
   // Desktop-specific
   'open_url', 'open_file', 'open_application',
   'get_clipboard', 'set_clipboard',
-  'show_notification', 'show_dialog',
+  'send_notification', 'show_notification', 'show_dialog',
   // OCR / vision on desktop
   'ocr_screen', 'find_element', 'wait_for_element',
 ]);
@@ -749,6 +749,7 @@ function getDesktopToolAlternative(tool: string, args: any): any | null {
       return { ok: false, error: 'clipboard_unavailable: Desktop is offline. Use read_file or get_variable instead.', fallback: true };
     case 'set_clipboard':
       return { ok: true, fallback: true, message: 'Desktop offline — clipboard content stored as variable "clipboard_content"' };
+    case 'send_notification':
     case 'show_notification':
       return { ok: true, fallback: true, message: `Notification (desktop offline): ${args?.title || ''} - ${args?.message || args?.body || ''}` };
     case 'show_dialog':
