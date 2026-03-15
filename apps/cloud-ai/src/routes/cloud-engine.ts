@@ -5,7 +5,7 @@ import { getComputeProvider } from '../services/compute';
 import { syncToCloud, restoreFromCloud, getSyncStatus } from '../services/sync-engine';
 import { deleteAllUserData, uploadAgentData } from '../services/cold-storage';
 import { getUserComputeUsage } from '../services/compute-billing';
-import { sendVMCommand } from '../services/vm-command';
+import { sendVMCommand, pingVMAgent } from '../services/vm-command';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -623,6 +623,36 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       // Include provision progress if still provisioning
       const provisionProgress = engine.status === 'provisioning' ? getProvisionStep(user.userId) : null;
 
+      // Active health check: ping the VM now instead of relying on background intervals
+      // (Cloud Run CPU may not be allocated between requests, so intervals are unreliable)
+      let liveHealthStatus = engine.health_status;
+      let liveHeartbeat = engine.last_heartbeat_at;
+      let liveAgentVersion = engine.agent_version;
+      if (engine.status === 'running' && engine.external_ip) {
+        try {
+          const ping = await pingVMAgent(engine.external_ip, 5_000);
+          if (ping.ok) {
+            const now = new Date().toISOString();
+            liveHealthStatus = 'healthy';
+            liveHeartbeat = now;
+            liveAgentVersion = ping.result?.agentVersion || engine.agent_version;
+            // Fire-and-forget DB update
+            updateEngineHealth(user.userId, {
+              last_heartbeat_at: now,
+              health_status: 'healthy',
+              agent_version: liveAgentVersion,
+            }).catch(() => {});
+          } else {
+            const staleMs = engine.last_heartbeat_at
+              ? Date.now() - new Date(engine.last_heartbeat_at).getTime()
+              : Infinity;
+            liveHealthStatus = staleMs < 120_000 ? 'unhealthy' : 'unreachable';
+          }
+        } catch {
+          // Non-fatal — fall back to DB values
+        }
+      }
+
       json(res, 200, {
         ok: true,
         engine: {
@@ -640,9 +670,9 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
           startedAt: engine.started_at,
           stoppedAt: engine.stopped_at,
           externalIp: engine.external_ip,
-          healthStatus: engine.health_status,
-          lastHeartbeat: engine.last_heartbeat_at,
-          agentVersion: engine.agent_version,
+          healthStatus: liveHealthStatus,
+          lastHeartbeat: liveHeartbeat,
+          agentVersion: liveAgentVersion,
           provisionStep: provisionProgress?.step ?? null,
         },
         storage: syncStatus,

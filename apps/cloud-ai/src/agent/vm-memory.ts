@@ -90,14 +90,7 @@ export class VMMemoryStore {
   // ── Directory setup ──
 
   private ensureDirectories(): void {
-    for (const dir of [
-      MEMORY_ROOT,
-      path.join(MEMORY_ROOT, 'topics'),
-      path.join(MEMORY_ROOT, 'conversations'),
-      path.join(MEMORY_ROOT, 'sync'),
-    ]) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+    fs.mkdirSync(MEMORY_ROOT, { recursive: true });
   }
 
   // ── Load / Save ──

@@ -173,6 +173,17 @@ fi
 AGENT_PATH="/opt/stuard/vm-agent-bundle.js"
 ${signedUrls?.agentBundleUrl ? `AGENT_SIGNED_URL='${signedUrls.agentBundleUrl}'` : 'AGENT_SIGNED_URL=""'}
 
+# Helper: download from GCS using the VM's own service account token (metadata server)
+gcs_download() {
+  local GCS_OBJ="$1" LOCAL_PATH="$2"
+  local TOKEN=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])" 2>/dev/null || true)
+  if [ -n "$TOKEN" ]; then
+    curl -fsSL -o "$LOCAL_PATH" -H "Authorization: Bearer $TOKEN" "https://storage.googleapis.com/storage/v1/b/${bucket}/o/$(echo "$GCS_OBJ" | sed 's|/|%2F|g')?alt=media" 2>/dev/null && return 0
+  fi
+  return 1
+}
+export -f gcs_download
+
 echo "[stuard] Downloading agent bundle..."
 for i in 1 2 3; do
   if [ -n "$AGENT_SIGNED_URL" ]; then
@@ -184,6 +195,11 @@ for i in 1 2 3; do
   AGENT_URL="https://storage.googleapis.com/${bucket}/agent/vm-agent-bundle.js"
   if curl -fsSL -o "$AGENT_PATH" "$AGENT_URL" 2>/dev/null; then
     echo "[stuard] Agent downloaded via public URL ($(wc -c < "$AGENT_PATH") bytes)"
+    break
+  fi
+  # Fallback: use VM's own SA token to auth directly with GCS
+  if gcs_download "agent/vm-agent-bundle.js" "$AGENT_PATH"; then
+    echo "[stuard] Agent downloaded via VM service account ($(wc -c < "$AGENT_PATH") bytes)"
     break
   fi
   echo "[stuard] Download attempt $i failed, retrying in 5s..."
@@ -284,6 +300,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/opt/stuard/env
+Environment=NODE_PATH=/opt/stuard/node_modules
 ExecStart=/usr/bin/node /opt/stuard/vm-agent-bundle.js
 WorkingDirectory=/home/stuard
 User=stuard
@@ -318,9 +335,16 @@ echo "[stuard] VM agent HTTP server started on port 7400"
     chromium chromium-driver xvfb xdotool imagemagick \\
     ffmpeg 2>/dev/null || true
 
-  # Install node-pty (needs build-essential)
+  # Install node-pty (needs build-essential + python3 for node-gyp)
+  echo "[stuard-bg] Installing node-pty..."
   cd /opt/stuard
-  npm install node-pty 2>/dev/null || echo "[stuard-bg] node-pty install failed (terminal may not work)"
+  if npm install node-pty 2>&1; then
+    echo "[stuard-bg] node-pty installed successfully"
+  else
+    echo "[stuard-bg] node-pty install failed, retrying with verbose..."
+    npm install node-pty --foreground-scripts 2>&1 || echo "[stuard-bg] node-pty install FAILED (terminal will not work)"
+  fi
+  chown -R stuard:stuard /opt/stuard/node_modules 2>/dev/null || true
   cd /
 
   # Start Xvfb
@@ -352,14 +376,31 @@ XVFBEOF
 
   PYAGENT_DOWNLOADED=false
   if [ -n "$PYAGENT_SIGNED_URL" ]; then
-    if curl -fsSL -o /tmp/stuard-python-agent.tar.gz "$PYAGENT_SIGNED_URL" 2>/dev/null; then
+    echo "[stuard-bg] Downloading Python agent via signed URL..."
+    if curl -fsSL -o /tmp/stuard-python-agent.tar.gz "$PYAGENT_SIGNED_URL" 2>&1; then
+      echo "[stuard-bg] Python agent downloaded via signed URL ($(wc -c < /tmp/stuard-python-agent.tar.gz) bytes)"
+      PYAGENT_DOWNLOADED=true
+    else
+      echo "[stuard-bg] Signed URL download failed, trying public URL..."
+    fi
+  else
+    echo "[stuard-bg] No signed URL for Python agent"
+  fi
+  if [ "$PYAGENT_DOWNLOADED" = "false" ]; then
+    PYAGENT_URL="https://storage.googleapis.com/${bucket}/agent/stuard-python-agent.tar.gz"
+    echo "[stuard-bg] Downloading Python agent from public URL..."
+    if curl -fsSL -o /tmp/stuard-python-agent.tar.gz "$PYAGENT_URL" 2>&1; then
+      echo "[stuard-bg] Python agent downloaded via public URL ($(wc -c < /tmp/stuard-python-agent.tar.gz) bytes)"
       PYAGENT_DOWNLOADED=true
     fi
   fi
   if [ "$PYAGENT_DOWNLOADED" = "false" ]; then
-    PYAGENT_URL="https://storage.googleapis.com/${bucket}/agent/stuard-python-agent.tar.gz"
-    if curl -fsSL -o /tmp/stuard-python-agent.tar.gz "$PYAGENT_URL" 2>/dev/null; then
+    echo "[stuard-bg] Trying VM service account download..."
+    if gcs_download "agent/stuard-python-agent.tar.gz" "/tmp/stuard-python-agent.tar.gz"; then
+      echo "[stuard-bg] Python agent downloaded via VM service account ($(wc -c < /tmp/stuard-python-agent.tar.gz) bytes)"
       PYAGENT_DOWNLOADED=true
+    else
+      echo "[stuard-bg] ERROR: Python agent download FAILED from all sources"
     fi
   fi
 
@@ -409,9 +450,19 @@ PYEOF
       systemctl daemon-reload
       systemctl enable stuard-python-agent
       systemctl start stuard-python-agent
-      echo "[stuard-bg] Python agent started on ws://127.0.0.1:8765"
+      sleep 3
+      if systemctl is-active --quiet stuard-python-agent; then
+        echo "[stuard-bg] Python agent running on ws://127.0.0.1:8765"
+      else
+        echo "[stuard-bg] ERROR: Python agent failed to start! Logs:"
+        journalctl -u stuard-python-agent --no-pager -n 30
+      fi
+    else
+      echo "[stuard-bg] ERROR: vm_main.py not found in $PYAGENT_PATH — Python agent cannot start"
+      echo "[stuard-bg] Contents of $PYAGENT_PATH:"
+      ls -la "$PYAGENT_PATH" 2>&1 || true
     fi
-    echo "[stuard-bg] Python agent ready"
+    echo "[stuard-bg] Python agent setup complete"
 
     # Start browser_use_server.py in headless mode for browser automation
     if [ -f "$PYAGENT_PATH/browser_use_server.py" ]; then

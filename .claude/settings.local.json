@@ -8,7 +8,8 @@
       "mcp__supabase__list_projects",
       "Bash(cd:*)",
       "Bash(gcloud compute:*)",
-      "Bash(gh api:*)"
+      "Bash(gh api:*)",
+      "Bash(gcloud storage:*)"
     ]
   }
 }

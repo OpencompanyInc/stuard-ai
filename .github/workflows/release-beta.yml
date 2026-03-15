@@ -85,7 +85,9 @@ jobs:
         if: ${{ github.event.inputs.build_desktop == 'true' }}
         run: pnpm turbo run test --filter=@stuardai/desktop
 
-  # 1. Build & upload VM agent bundles to GCS (only if source changed)
+  # 1. Build & upload VM agent bundles to GCS
+  # Always rebuild+upload to ensure GCS has the latest bundles.
+  # The old HEAD~1 diff check was unreliable (missed multi-commit changes).
   build-vm-agents:
     name: VM Agent Bundles
     runs-on: ubuntu-latest
@@ -98,63 +100,41 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.ref || github.ref }}
-          fetch-depth: 2
-
-      - name: Check if agent source changed
-        id: agent-changed
-        run: |
-          if git diff HEAD~1 --name-only | grep -qE '^apps/cloud-ai/src/agent/|^apps/agent/'; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-          else
-            echo "changed=false" >> $GITHUB_OUTPUT
-          fi
 
       - name: Auth to Google Cloud
-        if: steps.agent-changed.outputs.changed == 'true'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - name: Set up Cloud SDK
-        if: steps.agent-changed.outputs.changed == 'true'
         uses: google-github-actions/setup-gcloud@v2
 
       - uses: pnpm/action-setup@v2
-        if: steps.agent-changed.outputs.changed == 'true'
         with:
           version: 8
       - uses: actions/setup-node@v4
-        if: steps.agent-changed.outputs.changed == 'true'
         with:
           node-version: 20
           cache: 'pnpm'
       - uses: actions/setup-python@v5
-        if: steps.agent-changed.outputs.changed == 'true'
         with:
           python-version: '3.11'
 
       - name: Install dependencies
-        if: steps.agent-changed.outputs.changed == 'true'
         run: pnpm install --no-frozen-lockfile
 
       - name: Build & upload VM agent bundle
-        if: steps.agent-changed.outputs.changed == 'true'
         working-directory: apps/cloud-ai
         run: node scripts/build-vm-agent.cjs --upload
         env:
           CLOUD_ENGINE_BUCKET: ${{ secrets.CLOUD_ENGINE_BUCKET || 'stuard-user-data' }}
 
       - name: Build & upload Python agent bundle
-        if: steps.agent-changed.outputs.changed == 'true'
         working-directory: apps/cloud-ai
         run: node scripts/build-python-agent.cjs --upload
         env:
           CLOUD_ENGINE_BUCKET: ${{ secrets.CLOUD_ENGINE_BUCKET || 'stuard-user-data' }}
-
-      - name: Skip — no agent changes
-        if: steps.agent-changed.outputs.changed == 'false'
-        run: echo "No changes to agent source — skipping bundle upload"
 
   # 2. Deploy Cloud AI (Backend) to Cloud Run (Beta)
   deploy-beta-backend:
