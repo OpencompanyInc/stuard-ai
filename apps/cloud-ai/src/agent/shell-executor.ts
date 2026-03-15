@@ -33,8 +33,11 @@ export class ShellExecutor extends EventEmitter {
     try {
       this.pty = require('node-pty');
     } catch {
-      // Fallback: try dynamic import
-      this.pty = await import('node-pty');
+      try {
+        this.pty = await import('node-pty');
+      } catch {
+        throw new Error('node-pty is not installed yet — terminal will be available shortly');
+      }
     }
     return this.pty;
   }

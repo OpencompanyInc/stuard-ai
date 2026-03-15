@@ -330,12 +330,9 @@ echo "[stuard] VM agent HTTP server started on port 7400"
   exec > /var/log/stuard-background-setup.log 2>&1
   echo "[stuard-bg] ── Background setup started $(date -u +%Y-%m-%dT%H:%M:%SZ) ──"
 
-  # Install build tools, browser, python, media tools
-  apt-get install -y -q build-essential python3 python3-pip python3-venv \\
-    chromium chromium-driver xvfb xdotool imagemagick \\
-    ffmpeg 2>/dev/null || true
+  # Install build-essential + node-pty FIRST so terminal works ASAP
+  apt-get install -y -q build-essential python3 2>/dev/null || true
 
-  # Install node-pty (needs build-essential + python3 for node-gyp)
   echo "[stuard-bg] Installing node-pty..."
   cd /opt/stuard
   if npm install node-pty 2>&1; then
@@ -346,6 +343,15 @@ echo "[stuard] VM agent HTTP server started on port 7400"
   fi
   chown -R stuard:stuard /opt/stuard/node_modules 2>/dev/null || true
   cd /
+
+  # Restart agent immediately so terminal is available while heavy packages install
+  systemctl restart stuard-agent
+  echo "[stuard-bg] Agent restarted with node-pty support"
+
+  # Install remaining heavy packages (browser, media tools, etc.)
+  apt-get install -y -q python3-pip python3-venv \\
+    chromium chromium-driver xvfb xdotool imagemagick \\
+    ffmpeg 2>/dev/null || true
 
   # Start Xvfb
   if command -v Xvfb >/dev/null 2>&1; then
@@ -506,8 +512,6 @@ BUEOF
     echo "[stuard-bg] Warning: Python agent not available"
   fi
 
-  # Restart Node.js agent so it picks up node-pty for terminal support
-  systemctl restart stuard-agent
   echo "[stuard-bg] ── Background setup complete $(date -u +%Y-%m-%dT%H:%M:%SZ) ──"
 ) &
 disown
