@@ -1,19 +1,41 @@
 import asyncio
 import json
+import os
 import websockets
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from ..logging_config import get_logger
 from ..config import CLOUD_WS
 from .session import WebSocketSession
 
 logger = get_logger("agent")
 
+_IS_VM = os.environ.get("STUARD_AGENT_MODE") == "vm"
+
+
+def _get_vm_client_integrations() -> List[str]:
+    """Return the list of locally-available integrations on this VM.
+
+    On a VM, browser_use runs headlessly via browser_use_server.py,
+    terminal is always available, and telnyx/whatsapp are handled by
+    cloud-ai but we still report them so tool selection includes them.
+    """
+    if not _IS_VM:
+        return []
+    integrations = ["browser_use", "telnyx"]
+    # Check for optional integrations that may be installed
+    try:
+        import aiohttp  # noqa: F401 — presence means browser_use_server deps available
+    except ImportError:
+        # browser_use_server.py not installed — remove from list
+        integrations = [i for i in integrations if i != "browser_use"]
+    return integrations
+
 async def handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
     request_id = msg.get("requestId")
     if not isinstance(request_id, str) or not request_id.strip():
         request_id = None
 
-    text = str(msg.get("text") or "").strip()
+    text = str(msg.get("text") or msg.get("message") or "").strip()
     context = msg.get("context") or {}
     attachments = msg.get("attachments") or []
     model = msg.get("model")
@@ -37,6 +59,22 @@ async def handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
                 "context": context,
                 "attachments": attachments,
             }
+            # On VM, report locally-available integrations so cloud-ai
+            # includes browser_use / telnyx / etc. in tool selection
+            vm_integrations = _get_vm_client_integrations()
+            if vm_integrations:
+                payload["clientIntegrations"] = vm_integrations
+            # Also merge any client-reported integrations from the original message
+            msg_ci = msg.get("clientIntegrations")
+            if isinstance(msg_ci, list) and msg_ci:
+                existing = set(payload.get("clientIntegrations") or [])
+                merged = list(existing)
+                for ci in msg_ci:
+                    if isinstance(ci, str) and ci not in existing:
+                        merged.append(ci)
+                        existing.add(ci)
+                if merged:
+                    payload["clientIntegrations"] = merged
             if isinstance(model, str) and model.strip():
                 payload["model"] = model.strip()
             if isinstance(model_id, str) and model_id.strip():

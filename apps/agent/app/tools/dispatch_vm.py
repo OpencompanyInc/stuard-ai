@@ -187,6 +187,25 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "stuards_stop": ("flow", "Stop a running Stuard automation"),
     "show_json_workflow_code": ("flow", "Show workflow JSON source code"),
 
+    # ── Browser Use (headless on VM) ────────────────────────────────────────
+    "browser_use_status": ("browser", "Check browser-use status"),
+    "browser_use_configure": ("browser", "Configure browser mode/profile"),
+    "browser_use_navigate": ("browser", "Navigate to a URL"),
+    "browser_use_click": ("browser", "Click an element"),
+    "browser_use_type": ("browser", "Type text into an input"),
+    "browser_use_press_key": ("browser", "Press a keyboard key"),
+    "browser_use_screenshot": ("browser", "Take a screenshot"),
+    "browser_use_content": ("browser", "Get page text or HTML"),
+    "browser_use_scroll": ("browser", "Scroll the page"),
+    "browser_use_tabs": ("browser", "Manage browser tabs"),
+    "browser_use_cookies": ("browser", "Manage cookies"),
+    "browser_use_hover": ("browser", "Hover over an element"),
+    "browser_use_select_option": ("browser", "Select dropdown option"),
+    "browser_use_get_interactive_elements": ("browser", "Get interactive elements"),
+    "browser_use_fill_form": ("browser", "Fill form fields"),
+    "browser_use_wait_for": ("browser", "Wait for condition"),
+    "browser_use_execute_script": ("browser", "Execute JavaScript"),
+
     # ── VM Terminal ──────────────────────────────────────────────────────────
     "terminal_create": ("system", "Create a PTY terminal session"),
     "terminal_send_input": ("system", "Send input to a terminal session"),
@@ -503,6 +522,57 @@ async def _vm_terminal_send_raw(args: Dict[str, Any]) -> Dict[str, Any]:
     })
 
 
+# ── VM browser-use handlers (route to local browser_use_server.py) ───────
+# On the VM, browser_use_server.py runs headless on port 18082.
+# We proxy tool calls to it via HTTP, mirroring the desktop handler pattern.
+
+_BROWSER_USE_URL = os.environ.get("BROWSER_USE_URL", "http://127.0.0.1:18082")
+_BROWSER_USE_TOKEN = os.environ.get("BROWSER_USE_AUTH_TOKEN", "")
+
+
+async def _browser_use_call(endpoint: str, body: Dict[str, Any], timeout: float = 60.0) -> Dict[str, Any]:
+    """POST to the local browser_use_server.py and return the JSON response."""
+    import urllib.request
+    import urllib.error
+
+    url = f"{_BROWSER_USE_URL}{endpoint}"
+    data = json.dumps(body).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if _BROWSER_USE_TOKEN:
+        headers["x-stuard-browser-token"] = _BROWSER_USE_TOKEN
+    req = urllib.request.Request(url, data=data, headers=headers)
+
+    loop = asyncio.get_event_loop()
+    try:
+        def _do():
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                try:
+                    err_body = json.loads(e.read().decode("utf-8"))
+                except Exception:
+                    err_body = {}
+                return {"ok": False, "error": err_body.get("error", f"http_{e.code}")}
+            except urllib.error.URLError as e:
+                return {"ok": False, "error": f"browser_use_server unreachable: {e.reason}. Is browser_use_server.py running?"}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
+        return await loop.run_in_executor(None, _do)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+async def _vm_browser_use_generic(args: Dict[str, Any], tool_name: str = "") -> Dict[str, Any]:
+    """Generic handler — strips the browser_use_ prefix and POSTs to /api/<action>."""
+    action = tool_name.replace("browser_use_", "", 1) if tool_name else ""
+    if not action:
+        return {"ok": False, "error": "missing browser_use action"}
+    timeout = float(args.pop("timeout", 60000)) / 1000.0 if "timeout" in args else 60.0
+    return await _browser_use_call(f"/api/{action}", args, timeout=max(timeout, 5.0))
+
+
 # ── Desktop-only tools (stubbed) ────────────────────────────────────────────
 _DESKTOP_ONLY_STUBS = [
     # GUI tools
@@ -701,7 +771,25 @@ _HANDLERS.update({
     "terminal_destroy": _vm_terminal_destroy,
     "terminal_send_keys": _vm_terminal_send_keys,
     "terminal_send_raw": _vm_terminal_send_raw,
+})
 
+# ── Register browser_use handlers (each routes to browser_use_server.py) ──
+_BROWSER_USE_TOOLS = [
+    "browser_use_status", "browser_use_configure", "browser_use_navigate",
+    "browser_use_click", "browser_use_type", "browser_use_press_key",
+    "browser_use_screenshot", "browser_use_content", "browser_use_scroll",
+    "browser_use_tabs", "browser_use_cookies", "browser_use_hover",
+    "browser_use_select_option", "browser_use_get_interactive_elements",
+    "browser_use_fill_form", "browser_use_wait_for", "browser_use_execute_script",
+]
+
+for _bu_tool in _BROWSER_USE_TOOLS:
+    _tool_name_capture = _bu_tool  # capture for closure
+    async def _make_handler(args, _tn=_tool_name_capture):
+        return await _vm_browser_use_generic(args, tool_name=_tn)
+    _HANDLERS[_bu_tool] = _make_handler
+
+_HANDLERS.update({
     # File Index & Search
     "file_index_add_root": file_scanner.add_index_root,
     "file_index_remove_root": file_scanner.remove_index_root,

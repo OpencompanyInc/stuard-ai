@@ -65,7 +65,9 @@ CLIENT_TOOLS = {
     "proactive_task_update",
     "proactive_task_create",
 }
-CLIENT_PREFIXES = ("terminal_", "browser_use_")
+# On VM, browser_use_* tools are handled locally (headless) — not forwarded to desktop
+_IS_VM = os.environ.get("STUARD_AGENT_MODE") == "vm"
+CLIENT_PREFIXES = ("terminal_",) if _IS_VM else ("terminal_", "browser_use_")
 SENSITIVE_CLIENT_TOOLS = {
     "terminal_create",
     "terminal_send_input",

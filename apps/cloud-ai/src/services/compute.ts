@@ -412,6 +412,45 @@ PYEOF
       echo "[stuard-bg] Python agent started on ws://127.0.0.1:8765"
     fi
     echo "[stuard-bg] Python agent ready"
+
+    # Start browser_use_server.py in headless mode for browser automation
+    if [ -f "$PYAGENT_PATH/browser_use_server.py" ]; then
+      # Install playwright + chromium for headless browser support
+      "$PYAGENT_PATH/venv/bin/pip" install --quiet --no-cache-dir playwright browser-use 2>&1 | tail -3
+      "$PYAGENT_PATH/venv/bin/python" -m playwright install chromium 2>&1 | tail -3
+      "$PYAGENT_PATH/venv/bin/python" -m playwright install-deps chromium 2>&1 | tail -3
+
+      cat > /etc/systemd/system/stuard-browser-use.service <<'BUEOF'
+[Unit]
+Description=Stuard Browser Use Server (headless)
+After=stuard-python-agent.service
+Wants=stuard-python-agent.service
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/stuard/env
+Environment=DISPLAY=:99
+Environment=BROWSER_USE_HOST=127.0.0.1
+Environment=BROWSER_USE_PORT=18082
+Environment=BROWSER_USE_MODE=headless
+ExecStart=/opt/stuard/python-agent/venv/bin/python browser_use_server.py
+WorkingDirectory=/opt/stuard/python-agent
+User=stuard
+Group=stuard
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=stuard-browser
+
+[Install]
+WantedBy=multi-user.target
+BUEOF
+      systemctl daemon-reload
+      systemctl enable stuard-browser-use
+      systemctl start stuard-browser-use
+      echo "[stuard-bg] Browser use server started on :18082 (headless)"
+    fi
   else
     echo "[stuard-bg] Warning: Python agent not available"
   fi

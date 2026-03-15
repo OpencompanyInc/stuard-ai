@@ -375,6 +375,10 @@ async function handleCommand(command: string, args: any): Promise<any> {
     case 'proactive_task_delete':
       return handleProactiveTaskDelete(args);
 
+    // ── Tool Execution (proxy to Python agent) ─────────────────────────
+    case 'tool_exec':
+      return await handleToolExec(args);
+
     // ── Database Sync ────────────────────────────────────────────────────
     case 'sync_agent_data':
       return await syncAgentData(args);
@@ -432,6 +436,22 @@ async function handleAgentChat(args: any): Promise<any> {
     return { ok: true, conversationId, ...result };
   } catch (e: any) {
     return { ok: false, error: String(e?.message || 'agent_chat_failed') };
+  }
+}
+
+async function handleToolExec(args: any): Promise<any> {
+  const tool = String(args.tool || '').trim();
+  if (!tool) return { ok: false, error: 'missing tool name' };
+
+  try {
+    const result = await sendToAgent({
+      type: 'tool_exec',
+      tool,
+      args: args.args || {},
+    }, 120_000);
+    return result;
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'tool_exec_failed') };
   }
 }
 

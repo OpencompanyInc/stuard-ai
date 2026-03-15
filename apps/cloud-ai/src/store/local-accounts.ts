@@ -1,14 +1,16 @@
 /**
- * Local encrypted file-based store for OAuth tokens.
- * Tokens are stored locally by default; only synced to Supabase
- * when SYNC_ACCOUNTS=1 is explicitly set.
+ * Local SQLite-based store for OAuth tokens.
+ * Tokens persist across restarts without requiring Supabase sync.
  *
- * Encryption: AES-256-GCM using INTEGRATION_STATE_SECRET as key material.
- * File: {DATA_DIR}/external-accounts.enc
+ * Sensitive fields (access_token, refresh_token) are encrypted at rest
+ * with AES-256-GCM using INTEGRATION_STATE_SECRET as key material.
+ *
+ * Database: {DATA_DIR}/external-accounts.db
  */
 
+import Database from 'better-sqlite3';
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'crypto';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { INTEGRATION_STATE_SECRET } from '../utils/config';
 import type { ExternalAccount } from '../supabase';
@@ -16,7 +18,7 @@ import type { ExternalAccount } from '../supabase';
 // ─── Paths ───────────────────────────────────────────────────────────────────
 
 const DATA_DIR = process.env.STUARD_DATA_DIR || join(process.cwd(), '.data');
-const ACCOUNTS_FILE = join(DATA_DIR, 'external-accounts.enc');
+const DB_FILE = join(DATA_DIR, 'external-accounts.db');
 
 // ─── Crypto helpers ──────────────────────────────────────────────────────────
 
@@ -24,23 +26,23 @@ const ALGO = 'aes-256-gcm';
 const IV_LEN = 16;
 const TAG_LEN = 16;
 
-/** Derive a 32-byte key from the secret */
 function deriveKey(): Buffer {
   return createHash('sha256').update(INTEGRATION_STATE_SECRET).digest();
 }
 
-function encrypt(plaintext: string): Buffer {
+function encrypt(plaintext: string): string {
   const key = deriveKey();
   const iv = randomBytes(IV_LEN);
   const cipher = createCipheriv(ALGO, key, iv);
   const enc = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
-  // Layout: [iv 16B][tag 16B][ciphertext ...]
-  return Buffer.concat([iv, tag, enc]);
+  // Pack as base64: iv + tag + ciphertext
+  return Buffer.concat([iv, tag, enc]).toString('base64');
 }
 
-function decrypt(blob: Buffer): string {
+function decrypt(encoded: string): string {
   const key = deriveKey();
+  const blob = Buffer.from(encoded, 'base64');
   const iv = blob.subarray(0, IV_LEN);
   const tag = blob.subarray(IV_LEN, IV_LEN + TAG_LEN);
   const enc = blob.subarray(IV_LEN + TAG_LEN);
@@ -49,53 +51,59 @@ function decrypt(blob: Buffer): string {
   return Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8');
 }
 
-// ─── In-memory cache ─────────────────────────────────────────────────────────
+// ─── Database ────────────────────────────────────────────────────────────────
 
-interface StoredAccount {
-  id: string;
-  user_id: string;
-  provider: string;
-  profile_label: string;
-  is_default: boolean;
-  account_email: string | null;
-  scopes: string[];
-  access_token: string;
-  refresh_token: string | null;
-  expires_at: string | null;
-  meta: any;
-  created_at: string;
-  updated_at: string;
-}
+let _db: Database.Database | null = null;
 
-let cache: StoredAccount[] | null = null;
-
-function ensureDir(): void {
+function db(): Database.Database {
+  if (_db) return _db;
   if (!existsSync(DATA_DIR)) {
     mkdirSync(DATA_DIR, { recursive: true });
   }
+  _db = new Database(DB_FILE);
+  _db.pragma('journal_mode = WAL');
+  _db.pragma('foreign_keys = ON');
+  _db.exec(`
+    CREATE TABLE IF NOT EXISTS external_accounts (
+      id             TEXT PRIMARY KEY,
+      user_id        TEXT NOT NULL,
+      provider       TEXT NOT NULL,
+      profile_label  TEXT NOT NULL,
+      is_default     INTEGER NOT NULL DEFAULT 0,
+      account_email  TEXT,
+      scopes         TEXT NOT NULL DEFAULT '[]',
+      access_token   TEXT NOT NULL,
+      refresh_token  TEXT,
+      expires_at     TEXT,
+      meta           TEXT,
+      created_at     TEXT NOT NULL,
+      updated_at     TEXT NOT NULL,
+      UNIQUE(user_id, provider, profile_label)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ea_user_provider
+      ON external_accounts(user_id, provider);
+  `);
+  return _db;
 }
 
-function load(): StoredAccount[] {
-  if (cache) return cache;
-  try {
-    if (existsSync(ACCOUNTS_FILE)) {
-      const blob = readFileSync(ACCOUNTS_FILE);
-      const json = decrypt(blob);
-      cache = JSON.parse(json) as StoredAccount[];
-      return cache;
-    }
-  } catch (e: any) {
-    console.error('[local-accounts] Failed to load store, starting fresh:', e?.message);
-  }
-  cache = [];
-  return cache;
-}
+// ─── Row helpers ─────────────────────────────────────────────────────────────
 
-function save(): void {
-  ensureDir();
-  const json = JSON.stringify(cache ?? [], null, 2);
-  const blob = encrypt(json);
-  writeFileSync(ACCOUNTS_FILE, blob);
+function rowToAccount(row: any): ExternalAccount {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    provider: row.provider,
+    profile_label: row.profile_label,
+    is_default: !!row.is_default,
+    account_email: row.account_email ?? null,
+    scopes: JSON.parse(row.scopes || '[]'),
+    access_token: decrypt(row.access_token),
+    refresh_token: row.refresh_token ? decrypt(row.refresh_token) : null,
+    expires_at: row.expires_at ?? null,
+    meta: row.meta ? JSON.parse(row.meta) : null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
 }
 
 // ─── Public API (mirrors supabase external account functions) ────────────────
@@ -105,43 +113,45 @@ export async function localGetExternalAccount(
   provider: string,
   profileLabel?: string,
 ): Promise<ExternalAccount | null> {
-  const accounts = load();
+  const d = db();
   if (profileLabel) {
     // Try matching by profile_label first
-    const byLabel = accounts.find(
-      (a) => a.user_id === userId && a.provider === provider && a.profile_label === profileLabel,
-    );
-    if (byLabel) return byLabel;
+    const byLabel = d.prepare(
+      'SELECT * FROM external_accounts WHERE user_id = ? AND provider = ? AND profile_label = ?',
+    ).get(userId, provider, profileLabel);
+    if (byLabel) return rowToAccount(byLabel);
     // Fallback: match by account_email (AI may pass email instead of label)
-    const byEmail = accounts.find(
-      (a) => a.user_id === userId && a.provider === provider && a.account_email === profileLabel,
-    );
-    if (byEmail) return byEmail;
+    const byEmail = d.prepare(
+      'SELECT * FROM external_accounts WHERE user_id = ? AND provider = ? AND account_email = ?',
+    ).get(userId, provider, profileLabel);
+    if (byEmail) return rowToAccount(byEmail);
     return null;
   }
   // Default profile
-  const defaultAcc = accounts.find(
-    (a) => a.user_id === userId && a.provider === provider && a.is_default,
-  );
-  if (defaultAcc) return defaultAcc;
+  const defaultAcc = d.prepare(
+    'SELECT * FROM external_accounts WHERE user_id = ? AND provider = ? AND is_default = 1',
+  ).get(userId, provider);
+  if (defaultAcc) return rowToAccount(defaultAcc);
   // Fallback: oldest
-  const matching = accounts
-    .filter((a) => a.user_id === userId && a.provider === provider)
-    .sort((a, b) => a.created_at.localeCompare(b.created_at));
-  return matching[0] ?? null;
+  const oldest = d.prepare(
+    'SELECT * FROM external_accounts WHERE user_id = ? AND provider = ? ORDER BY created_at ASC LIMIT 1',
+  ).get(userId, provider);
+  return oldest ? rowToAccount(oldest) : null;
 }
 
 export async function localListExternalAccounts(
   userId: string,
   provider?: string,
 ): Promise<ExternalAccount[]> {
-  const accounts = load();
-  return accounts
-    .filter((a) => a.user_id === userId && (!provider || a.provider === provider))
-    .sort((a, b) => {
-      if (a.is_default !== b.is_default) return a.is_default ? -1 : 1;
-      return a.created_at.localeCompare(b.created_at);
-    });
+  const d = db();
+  const rows = provider
+    ? d.prepare(
+        'SELECT * FROM external_accounts WHERE user_id = ? AND provider = ? ORDER BY is_default DESC, created_at ASC',
+      ).all(userId, provider)
+    : d.prepare(
+        'SELECT * FROM external_accounts WHERE user_id = ? ORDER BY is_default DESC, created_at ASC',
+      ).all(userId);
+  return rows.map(rowToAccount);
 }
 
 export async function localUpsertExternalAccount(input: {
@@ -155,45 +165,44 @@ export async function localUpsertExternalAccount(input: {
   profileLabel?: string;
   accountEmail?: string | null;
 }): Promise<void> {
-  const accounts = load();
+  const d = db();
   const profileLabel = input.profileLabel || 'default';
   const now = new Date().toISOString();
 
-  const isFirstProfile = !accounts.some(
-    (a) => a.user_id === input.userId && a.provider === input.provider,
+  const existing = d.prepare(
+    'SELECT id, is_default, created_at FROM external_accounts WHERE user_id = ? AND provider = ? AND profile_label = ?',
+  ).get(input.userId, input.provider, profileLabel) as any;
+
+  const isFirstProfile = !d.prepare(
+    'SELECT 1 FROM external_accounts WHERE user_id = ? AND provider = ? LIMIT 1',
+  ).get(input.userId, input.provider);
+
+  const id = existing?.id ?? randomBytes(16).toString('hex');
+  const isDefault = existing ? existing.is_default : (isFirstProfile ? 1 : 0);
+  const createdAt = existing?.created_at ?? now;
+  const scopes = JSON.stringify(Array.isArray(input.scopes) ? input.scopes : []);
+  const meta = input.meta != null ? JSON.stringify(input.meta) : null;
+  const encAccessToken = encrypt(input.access_token);
+  const encRefreshToken = input.refresh_token ? encrypt(input.refresh_token) : null;
+
+  d.prepare(`
+    INSERT INTO external_accounts (id, user_id, provider, profile_label, is_default, account_email, scopes, access_token, refresh_token, expires_at, meta, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, provider, profile_label) DO UPDATE SET
+      account_email = excluded.account_email,
+      scopes = excluded.scopes,
+      access_token = excluded.access_token,
+      refresh_token = excluded.refresh_token,
+      expires_at = excluded.expires_at,
+      meta = excluded.meta,
+      updated_at = excluded.updated_at
+  `).run(
+    id, input.userId, input.provider, profileLabel,
+    isDefault, input.accountEmail ?? null,
+    scopes, encAccessToken,
+    encRefreshToken, input.expires_at ?? null,
+    meta, createdAt, now,
   );
-
-  const idx = accounts.findIndex(
-    (a) =>
-      a.user_id === input.userId &&
-      a.provider === input.provider &&
-      a.profile_label === profileLabel,
-  );
-
-  const record: StoredAccount = {
-    id: idx >= 0 ? accounts[idx].id : randomBytes(16).toString('hex'),
-    user_id: input.userId,
-    provider: input.provider,
-    profile_label: profileLabel,
-    is_default: idx >= 0 ? accounts[idx].is_default : isFirstProfile,
-    account_email: input.accountEmail ?? null,
-    access_token: input.access_token,
-    scopes: Array.isArray(input.scopes) ? input.scopes : [],
-    refresh_token: input.refresh_token ?? null,
-    expires_at: input.expires_at ?? null,
-    meta: input.meta ?? null,
-    created_at: idx >= 0 ? accounts[idx].created_at : now,
-    updated_at: now,
-  };
-
-  if (idx >= 0) {
-    accounts[idx] = record;
-  } else {
-    accounts.push(record);
-  }
-
-  cache = accounts;
-  save();
 }
 
 export async function localSetDefaultExternalAccount(
@@ -201,17 +210,18 @@ export async function localSetDefaultExternalAccount(
   provider: string,
   profileLabel: string,
 ): Promise<boolean> {
-  const accounts = load();
-  let found = false;
-  for (const a of accounts) {
-    if (a.user_id === userId && a.provider === provider) {
-      a.is_default = a.profile_label === profileLabel;
-      a.updated_at = new Date().toISOString();
-      if (a.profile_label === profileLabel) found = true;
-    }
-  }
-  if (found) save();
-  return found;
+  const d = db();
+  const now = new Date().toISOString();
+  const txn = d.transaction(() => {
+    d.prepare(
+      'UPDATE external_accounts SET is_default = 0, updated_at = ? WHERE user_id = ? AND provider = ?',
+    ).run(now, userId, provider);
+    const result = d.prepare(
+      'UPDATE external_accounts SET is_default = 1, updated_at = ? WHERE user_id = ? AND provider = ? AND profile_label = ?',
+    ).run(now, userId, provider, profileLabel);
+    return result.changes > 0;
+  });
+  return txn();
 }
 
 export async function localDeleteExternalAccount(
@@ -219,28 +229,31 @@ export async function localDeleteExternalAccount(
   provider: string,
   profileLabel: string,
 ): Promise<boolean> {
-  const accounts = load();
-  const idx = accounts.findIndex(
-    (a) => a.user_id === userId && a.provider === provider && a.profile_label === profileLabel,
-  );
-  if (idx < 0) return false;
-  const wasDefault = accounts[idx].is_default;
-  accounts.splice(idx, 1);
+  const d = db();
+  const now = new Date().toISOString();
+  const txn = d.transaction(() => {
+    const row = d.prepare(
+      'SELECT is_default FROM external_accounts WHERE user_id = ? AND provider = ? AND profile_label = ?',
+    ).get(userId, provider, profileLabel) as any;
+    if (!row) return false;
 
-  // If deleted was default, promote next oldest
-  if (wasDefault) {
-    const next = accounts
-      .filter((a) => a.user_id === userId && a.provider === provider)
-      .sort((a, b) => a.created_at.localeCompare(b.created_at))[0];
-    if (next) {
-      next.is_default = true;
-      next.updated_at = new Date().toISOString();
+    d.prepare(
+      'DELETE FROM external_accounts WHERE user_id = ? AND provider = ? AND profile_label = ?',
+    ).run(userId, provider, profileLabel);
+
+    if (row.is_default) {
+      const next = d.prepare(
+        'SELECT profile_label FROM external_accounts WHERE user_id = ? AND provider = ? ORDER BY created_at ASC LIMIT 1',
+      ).get(userId, provider) as any;
+      if (next) {
+        d.prepare(
+          'UPDATE external_accounts SET is_default = 1, updated_at = ? WHERE user_id = ? AND provider = ? AND profile_label = ?',
+        ).run(now, userId, provider, next.profile_label);
+      }
     }
-  }
-
-  cache = accounts;
-  save();
-  return true;
+    return true;
+  });
+  return txn();
 }
 
 export async function localGetExternalAccessToken(

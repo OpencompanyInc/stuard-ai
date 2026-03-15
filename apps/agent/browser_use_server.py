@@ -22,6 +22,28 @@ from typing import Any, Optional
 
 from aiohttp import web
 
+# Standalone cross-platform cookie extraction module
+try:
+    from app.browser_cookies import (
+        discover_browsers,
+        read_cookies_as_dicts,
+        import_cookies as import_browser_cookies,
+        resolve_browser,
+        list_cookie_domains,
+    )
+except ImportError:
+    # When running browser_use_server.py directly (not as part of the app package)
+    _agent_dir = Path(__file__).resolve().parent
+    if str(_agent_dir) not in sys.path:
+        sys.path.insert(0, str(_agent_dir))
+    from app.browser_cookies import (  # type: ignore[no-redef]
+        discover_browsers,
+        read_cookies_as_dicts,
+        import_cookies as import_browser_cookies,
+        resolve_browser,
+        list_cookie_domains,
+    )
+
 # ---------------------------------------------------------------------------
 # Globals
 # ---------------------------------------------------------------------------
@@ -31,7 +53,7 @@ _context = None          # Playwright BrowserContext (persistent in Strategy 1)
 _page = None             # Active Playwright Page
 _playwright = None       # Playwright instance (only set when using Strategy 1)
 _config: dict[str, Any] = {
-    "mode": "headed",    # headed | headless | connect
+    "mode": os.environ.get("BROWSER_USE_MODE", "headed"),  # headed | headless | connect
     "cdp_url": None,     # only used when mode == "connect"
     "profile": "default",
     "profile_dir": None, # resolved at startup
@@ -479,6 +501,161 @@ def _find_local_browser_executable(browser_name: str) -> str | None:
     return None
 
 
+def _detect_chrome_debug_port(user_data_dir: str) -> int | None:
+    """Check if Chrome is running with --remote-debugging-port.
+    Chrome writes the port to DevToolsActivePort in the user data dir.
+    Returns the port number, or None if debugging is not enabled.
+    """
+    dt_file = Path(user_data_dir) / "DevToolsActivePort"
+    if not dt_file.exists():
+        return None
+    try:
+        content = dt_file.read_text().strip()
+        lines = content.split("\n")
+        if lines:
+            port = int(lines[0].strip())
+            if 1024 <= port <= 65535:
+                # Verify the port is actually responding
+                import urllib.request
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=2)
+                return port
+    except Exception:
+        pass
+    return None
+
+
+def _is_browser_user_data_dir_locked(user_data_dir: str) -> bool:
+    """Check if a browser's User Data dir is locked by a running instance.
+    Checks for Chrome's SingletonLock (Unix) or lockfile (Windows).
+    """
+    ud = Path(user_data_dir)
+
+    # Windows: Chrome uses "lockfile" in the User Data dir
+    if sys.platform == "win32":
+        lockfile = ud / "lockfile"
+        if lockfile.exists():
+            # The lockfile exists — try to remove it to see if Chrome holds a lock.
+            # If we can't, Chrome is running.
+            try:
+                lockfile.unlink()
+                # We could delete it — Chrome isn't holding it. (Shouldn't normally happen
+                # because Chrome removes it on exit, but stale locks exist.)
+                return False
+            except (PermissionError, OSError):
+                return True
+    else:
+        # macOS/Linux: Chrome uses "SingletonLock" (a symlink)
+        singleton = ud / "SingletonLock"
+        if singleton.exists() or singleton.is_symlink():
+            # Check if the process pointed to by the symlink is alive
+            try:
+                target = os.readlink(str(singleton))
+                # target is like "hostname-pid"
+                parts = target.rsplit("-", 1)
+                if len(parts) == 2:
+                    pid = int(parts[1])
+                    # Check if this process is alive
+                    os.kill(pid, 0)
+                    return True  # Process is alive — locked
+            except (OSError, ValueError):
+                pass
+            # Symlink exists but process is dead — stale lock
+            return False
+
+    return False
+
+
+def _resolve_real_browser_profile(sync_meta: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    Find a usable real browser profile, handling locked profiles.
+
+    Priority:
+    1. Use the profile from sync_meta (what the user configured)
+    2. Auto-detect Chrome Default profile
+    3. If the preferred profile's User Data dir is locked (browser running),
+       try other profiles in different browsers that aren't locked
+    4. Return None if nothing is available
+
+    Returns dict with: browser, userDataDir, profileName, profilePath, wasActive
+    """
+    candidates: list[dict[str, Any]] = []
+
+    # Priority 1: sync_meta source
+    source_profile_path = str(sync_meta.get("sourceProfilePath") or "").strip()
+    source_user_data_dir = str(sync_meta.get("sourceUserDataDir") or "").strip()
+    source_browser = str(sync_meta.get("sourceBrowser") or "").strip()
+
+    if source_profile_path and source_user_data_dir and Path(source_user_data_dir).is_dir():
+        candidates.append({
+            "browser": source_browser or "Chrome",
+            "userDataDir": source_user_data_dir,
+            "profileName": Path(source_profile_path).name or "Default",
+            "profilePath": source_profile_path,
+            "preferred": True,
+        })
+
+    # Priority 2: auto-detect all browsers
+    try:
+        browsers = discover_browsers()
+        for b in browsers:
+            if b.get("isFirefox"):
+                continue  # Firefox profiles can't be used with Chromium's launch_persistent_context
+            for profile in b.get("profiles", []):
+                entry = {
+                    "browser": b["browser"],
+                    "userDataDir": b["userDataDir"],
+                    "profileName": Path(profile["path"]).name,
+                    "profilePath": profile["path"],
+                    "preferred": False,
+                }
+                # Avoid duplicates with the sync_meta source
+                if not (source_user_data_dir and entry["userDataDir"] == source_user_data_dir
+                        and entry["profileName"] == (Path(source_profile_path).name if source_profile_path else "")):
+                    candidates.append(entry)
+    except Exception:
+        pass
+
+    if not candidates:
+        return None
+
+    # Try the preferred profile first, then fall back to others
+    for candidate in candidates:
+        user_data_dir = candidate["userDataDir"]
+        if _is_browser_user_data_dir_locked(user_data_dir):
+            continue  # This browser is running — skip all its profiles
+
+        return {
+            "browser": candidate["browser"],
+            "userDataDir": user_data_dir,
+            "profileName": candidate["profileName"],
+            "profilePath": candidate["profilePath"],
+            "wasActive": False,
+        }
+
+    # All profiles are locked. Report which browsers are running.
+    running_browsers = set()
+    for c in candidates:
+        if _is_browser_user_data_dir_locked(c["userDataDir"]):
+            running_browsers.add(c["browser"])
+
+    running_str = ", ".join(sorted(running_browsers)) if running_browsers else "Unknown"
+    print(f"[browser-use-server] All browser profiles are locked. "
+          f"Running browsers: {running_str}. "
+          f"Close one of them to allow Playwright to use its profile, "
+          f"or the managed profile will be used as fallback.",
+          flush=True)
+
+    # Return the preferred one with wasActive flag so the caller knows
+    preferred = candidates[0]
+    return {
+        "browser": preferred["browser"],
+        "userDataDir": preferred["userDataDir"],
+        "profileName": preferred["profileName"],
+        "profilePath": preferred["profilePath"],
+        "wasActive": True,
+    }
+
+
 def _browser_launch_overrides(sync_meta: dict[str, Any]) -> dict[str, Any]:
     source_browser = _guess_source_browser_name(sync_meta)
 
@@ -842,24 +1019,76 @@ async def _ensure_browser() -> tuple[bool, Optional[str]]:
     headless = _config["mode"] == "headless"
     cdp_url = _config.get("cdp_url") if _config["mode"] == "connect" else None
 
-    # Build the full profile path (user-data-dir + profile-directory)
-    full_profile_path = profile_dir / managed_profile_dir_name
+    # ── Resolve profile: use Chrome's REAL profile when possible ──
+    # Chrome v127+ uses App-Bound Encryption (v20) for cookies. Cloned profiles
+    # can't decrypt these cookies. Using Chrome's real User Data dir + real binary
+    # means Chrome handles its own cookie decryption natively — everything just works.
+    resolved_profile = _resolve_real_browser_profile(sync_meta)
+
+    if resolved_profile:
+        effective_user_data_dir = resolved_profile["userDataDir"]
+        effective_profile_name = resolved_profile["profileName"]
+        use_real_profile = True
+        browser_is_running = resolved_profile.get("wasActive", False)
+    else:
+        effective_user_data_dir = str(profile_dir)
+        effective_profile_name = managed_profile_dir_name
+        use_real_profile = False
+        browser_is_running = False
+
+    full_profile_path = Path(effective_user_data_dir) / effective_profile_name
     if not full_profile_path.exists():
-        # Fallback: maybe the profile IS the profile_dir itself
-        full_profile_path = profile_dir
+        full_profile_path = Path(effective_user_data_dir)
+
+    # ── Strategy 0: Connect to running Chrome via CDP ──
+    # If Chrome is already running with --remote-debugging-port, connect to it
+    # directly. This is the best option when Chrome is open — we piggyback on the
+    # existing session with all auth intact, no new process needed.
+    if not cdp_url and browser_is_running and use_real_profile:
+        cdp_port = _detect_chrome_debug_port(effective_user_data_dir)
+        if cdp_port:
+            cdp_url = f"http://127.0.0.1:{cdp_port}"
+            print(f"[browser-use-server] Chrome is running with debug port {cdp_port} — connecting via CDP",
+                  flush=True)
+
+    if cdp_url:
+        try:
+            from playwright.async_api import async_playwright
+            pw_instance = await async_playwright().start()
+            _playwright = pw_instance
+
+            browser_obj = await pw_instance.chromium.connect_over_cdp(cdp_url)
+            contexts = browser_obj.contexts
+            if contexts:
+                _context = contexts[0]
+                pages = _context.pages
+                _page = pages[0] if pages else await _context.new_page()
+            else:
+                _context = await browser_obj.new_context()
+                _page = await _context.new_page()
+
+            _browser = None
+            print(f"[browser-use-server] Connected to running Chrome via CDP ({cdp_url})",
+                  flush=True)
+            return True, None
+        except Exception as cdp_err:
+            print(f"[browser-use-server] CDP connection failed: {cdp_err}", flush=True)
+            _browser = _context = _page = None
+            cdp_url = None  # Fall through to other strategies
 
     # ── Strategy 1: Playwright persistent context (BEST for auth) ──
     # launch_persistent_context opens Chrome with a REAL persistent profile.
-    # Unlike new_context(), this reads cookies/localStorage/IndexedDB from disk.
-    # This is why auth actually works — Chrome uses its own encrypted cookie store.
-    if not cdp_url:
+    # Using the user's actual Chrome binary + real profile directory means Chrome
+    # handles v20 App-Bound Encryption natively — no external decryption needed.
+    # NOTE: This only works when Chrome is NOT running (profile lock conflict).
+    if not cdp_url and not browser_is_running:
         try:
             from playwright.async_api import async_playwright
 
             pw_instance = await async_playwright().start()
 
             launch_args: list[str] = [
-                f"--profile-directory={managed_profile_dir_name}",
+                f"--profile-directory={effective_profile_name}",
                 "--disable-blink-features=AutomationControlled",
                 "--no-first-run",
                 "--no-default-browser-check",
@@ -868,7 +1097,8 @@ async def _ensure_browser() -> tuple[bool, Optional[str]]:
             launch_kwargs: dict[str, Any] = {
                 "headless": headless,
                 "args": launch_args,
-                "ignore_default_args": ["--enable-automation"],
+                # Suppress the "--no-sandbox" unsupported flag warning banner
+                "ignore_default_args": ["--enable-automation", "--no-sandbox"],
                 "viewport": {"width": 1280, "height": 900},
                 "no_viewport": False,
             }
@@ -882,22 +1112,17 @@ async def _ensure_browser() -> tuple[bool, Optional[str]]:
                 launch_kwargs["channel"] = channel
 
             _context = await pw_instance.chromium.launch_persistent_context(
-                str(profile_dir),
+                effective_user_data_dir,
                 **launch_kwargs,
             )
             _browser = None  # No separate browser object in persistent mode
             pages = _context.pages
             _page = pages[0] if pages else await _context.new_page()
 
-            print(f"[browser-use-server] Launched persistent context from {profile_dir} "
-                  f"(profile: {managed_profile_dir_name}, exe: {exe or channel or 'default'})",
+            mode_label = "REAL profile" if use_real_profile else "managed profile"
+            print(f"[browser-use-server] Launched persistent context ({mode_label}) from {effective_user_data_dir} "
+                  f"(profile: {effective_profile_name}, exe: {exe or channel or 'default'})",
                   flush=True)
-
-            # Also inject decrypted cookies as a boost (covers edge cases)
-            try:
-                await _auto_inject_cookies_on_startup()
-            except Exception as cookie_err:
-                print(f"[browser-use-server] Cookie boost inject (non-fatal): {cookie_err}", flush=True)
 
             return True, None
         except Exception as pw_err:
@@ -909,6 +1134,13 @@ async def _ensure_browser() -> tuple[bool, Optional[str]]:
             except Exception:
                 pass
             _browser = _context = _page = None
+
+    # If Chrome is running but has no debug port, warn the user
+    if browser_is_running and use_real_profile:
+        print(f"[browser-use-server] Chrome is running without a debug port. "
+              f"For best experience, close Chrome or restart it with: "
+              f"chrome.exe --remote-debugging-port=9222", flush=True)
+        print(f"[browser-use-server] Falling back to browser-use library (no auth persistence).", flush=True)
 
     # ── Strategy 2: browser-use library (fallback) ──
     try:
@@ -2089,223 +2321,21 @@ async def handle_cookies(req: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 def _find_chrome_user_data_dirs() -> list[dict[str, Any]]:
-    """Detect Chrome/Edge/Brave user data directories on this system."""
-    results: list[dict[str, Any]] = []
-    home = Path.home()
-
-    if sys.platform == "win32":
-        local = Path(os.environ.get("LOCALAPPDATA", str(home / "AppData" / "Local")))
-        candidates = [
-            ("Chrome", local / "Google" / "Chrome" / "User Data"),
-            ("Chrome Beta", local / "Google" / "Chrome Beta" / "User Data"),
-            ("Edge", local / "Microsoft" / "Edge" / "User Data"),
-            ("Brave", local / "BraveSoftware" / "Brave-Browser" / "User Data"),
-        ]
-    elif sys.platform == "darwin":
-        candidates = [
-            ("Chrome", home / "Library" / "Application Support" / "Google" / "Chrome"),
-            ("Chrome Beta", home / "Library" / "Application Support" / "Google" / "Chrome Beta"),
-            ("Edge", home / "Library" / "Application Support" / "Microsoft Edge"),
-            ("Brave", home / "Library" / "Application Support" / "BraveSoftware" / "Brave-Browser"),
-        ]
-    else:  # Linux
-        candidates = [
-            ("Chrome", home / ".config" / "google-chrome"),
-            ("Chrome Beta", home / ".config" / "google-chrome-beta"),
-            ("Edge", home / ".config" / "microsoft-edge"),
-            ("Brave", home / ".config" / "BraveSoftware" / "Brave-Browser"),
-        ]
-
-    for browser_name, user_data_dir in candidates:
-        if not user_data_dir.is_dir():
-            continue
-        profiles: list[dict[str, str]] = []
-        # Default profile
-        default_cookies = user_data_dir / "Default" / "Network" / "Cookies"
-        if not default_cookies.exists():
-            default_cookies = user_data_dir / "Default" / "Cookies"
-        if default_cookies.exists():
-            default_profile = user_data_dir / "Default"
-            profiles.append({"name": _resolve_profile_display_name(default_profile, "Default"), "path": str(default_profile)})
-        # Numbered profiles
-        for p in sorted(user_data_dir.iterdir()):
-            if p.name.startswith("Profile ") and p.is_dir():
-                profile_display = _resolve_profile_display_name(p, p.name)
-                cookies_path = p / "Network" / "Cookies"
-                if not cookies_path.exists():
-                    cookies_path = p / "Cookies"
-                if cookies_path.exists():
-                    profiles.append({"name": profile_display, "path": str(p)})
-        if profiles:
-            results.append({
-                "browser": browser_name,
-                "userDataDir": str(user_data_dir),
-                "profiles": profiles,
-            })
-    return results
-
-
-def _get_chrome_encryption_key(user_data_dir: str) -> bytes | None:
-    """Extract the AES key Chrome uses to encrypt cookie values (v10/v80+)."""
-    local_state_path = Path(user_data_dir) / "Local State"
-    if not local_state_path.exists():
-        return None
-    try:
-        local_state = json.loads(local_state_path.read_text(encoding="utf-8", errors="replace"))
-        encrypted_key_b64 = local_state.get("os_crypt", {}).get("encrypted_key", "")
-        if not encrypted_key_b64:
-            return None
-        encrypted_key = base64.b64decode(encrypted_key_b64)
-        # Strip the "DPAPI" prefix (5 bytes)
-        if encrypted_key[:5] == b"DPAPI":
-            encrypted_key = encrypted_key[5:]
-        else:
-            return None
-
-        if sys.platform == "win32":
-            import ctypes
-            import ctypes.wintypes
-
-            class DATA_BLOB(ctypes.Structure):
-                _fields_ = [
-                    ("cbData", ctypes.wintypes.DWORD),
-                    ("pbData", ctypes.POINTER(ctypes.c_char)),
-                ]
-
-            blob_in = DATA_BLOB(len(encrypted_key), ctypes.create_string_buffer(encrypted_key, len(encrypted_key)))
-            blob_out = DATA_BLOB()
-
-            if ctypes.windll.crypt32.CryptUnprotectData(
-                ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
-            ):
-                key = ctypes.string_at(blob_out.pbData, blob_out.cbData)
-                ctypes.windll.kernel32.LocalFree(blob_out.pbData)
-                return key
-            return None
-        elif sys.platform == "darwin":
-            import subprocess
-            proc = subprocess.run(
-                ["security", "find-generic-password", "-w", "-s", "Chrome Safe Storage", "-a", "Chrome"],
-                capture_output=True, text=True, timeout=10,
-            )
-            if proc.returncode != 0:
-                return None
-            password = proc.stdout.strip()
-            import hashlib
-            return hashlib.pbkdf2_hmac("sha1", password.encode(), b"saltysalt", 1003, dklen=16)
-        else:
-            # Linux: fixed key derivation
-            import hashlib
-            password = "peanuts"
-            return hashlib.pbkdf2_hmac("sha1", password.encode(), b"saltysalt", 1, dklen=16)
-    except Exception as e:
-        print(f"[chrome-sync] Failed to get encryption key: {e}", flush=True)
-        return None
-
-
-def _decrypt_cookie_value(encrypted_value: bytes, key: bytes | None) -> str:
-    """Decrypt a Chrome-encrypted cookie value."""
-    if not encrypted_value:
-        return ""
-
-    # v10/v80 prefix = AES-256-GCM (Windows) or AES-128-CBC (macOS/Linux)
-    if sys.platform == "win32" and encrypted_value[:3] == b"v10":
-        if key is None:
-            return ""
-        try:
-            nonce = encrypted_value[3:15]
-            ciphertext_tag = encrypted_value[15:]
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-            aes = AESGCM(key)
-            return aes.decrypt(nonce, ciphertext_tag, None).decode("utf-8", errors="replace")
-        except Exception:
-            return ""
-    elif encrypted_value[:3] in (b"v10", b"v11"):
-        if key is None:
-            return ""
-        try:
-            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-            from cryptography.hazmat.primitives import padding as sym_padding
-            iv = b" " * 16
-            ciphertext = encrypted_value[3:]
-            cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
-            decryptor = cipher.decryptor()
-            decrypted = decryptor.update(ciphertext) + decryptor.finalize()
-            # Remove PKCS7 padding
-            unpadder = sym_padding.PKCS7(128).unpadder()
-            return (unpadder.update(decrypted) + unpadder.finalize()).decode("utf-8", errors="replace")
-        except Exception:
-            return ""
-
-    # Unencrypted
-    try:
-        return encrypted_value.decode("utf-8", errors="replace")
-    except Exception:
-        return ""
-
-
-def _chrome_timestamp_to_unix(chrome_ts: int) -> float:
-    """Convert Chrome's microsecond timestamp (epoch 1601-01-01) to Unix epoch seconds."""
-    if chrome_ts == 0:
-        return -1
-    # Chrome epoch offset: Jan 1, 1601 to Jan 1, 1970 in seconds
-    return (chrome_ts / 1_000_000) - 11644473600
+    """Detect Chrome/Edge/Brave/Arc/Opera/Vivaldi user data dirs on this system.
+    Delegates to the standalone browser_cookies module.
+    """
+    return discover_browsers()
 
 
 def _read_chrome_cookies(profile_path: str, user_data_dir: str) -> list[dict[str, Any]]:
-    """Read and decrypt cookies from a Chrome profile's Cookies SQLite DB."""
-    profile = Path(profile_path)
-    cookies_db = profile / "Network" / "Cookies"
-    if not cookies_db.exists():
-        cookies_db = profile / "Cookies"
-    if not cookies_db.exists():
-        return []
-
-    key = _get_chrome_encryption_key(user_data_dir)
-
-    # Copy DB to temp file to avoid locking issues with a running Chrome
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".db")
-    os.close(tmp_fd)
-    try:
-        shutil.copy2(str(cookies_db), tmp_path)
-        conn = sqlite3.connect(tmp_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT host_key, name, path, encrypted_value, value, "
-            "is_secure, is_httponly, expires_utc, samesite "
-            "FROM cookies"
-        )
-        cookies: list[dict[str, Any]] = []
-        sameSiteMap = {0: "None", 1: "Lax", 2: "Strict", -1: "None"}
-        for row in cursor.fetchall():
-            value = row["value"]
-            if not value and row["encrypted_value"]:
-                value = _decrypt_cookie_value(bytes(row["encrypted_value"]), key)
-            if not value:
-                continue
-            domain = row["host_key"]
-            expires = _chrome_timestamp_to_unix(row["expires_utc"])
-            cookies.append({
-                "name": row["name"],
-                "value": value,
-                "domain": domain,
-                "path": row["path"] or "/",
-                "secure": bool(row["is_secure"]),
-                "httpOnly": bool(row["is_httponly"]),
-                "sameSite": sameSiteMap.get(row["samesite"], "None"),
-                **({"expires": expires} if expires > 0 else {}),
-            })
-        conn.close()
-        return cookies
-    except Exception as e:
-        print(f"[chrome-sync] Failed to read cookies: {e}", flush=True)
-        return []
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
+    """Read and decrypt cookies from a Chrome-compatible profile.
+    Delegates to the standalone browser_cookies module.
+    """
+    return read_cookies_as_dicts(
+        profile_path=profile_path,
+        user_data_dir=user_data_dir,
+        is_firefox=False,
+    )
 
 
 def _resolve_sync_source(
@@ -2460,6 +2490,27 @@ async def handle_sync_chrome(req: web.Request) -> web.Response:
         profiles = await asyncio.to_thread(_find_chrome_user_data_dirs)
         return _ok({"browsers": profiles})
 
+    if action == "list_domains":
+        resolved = await asyncio.to_thread(
+            _resolve_sync_source,
+            body.get("profile_path"),
+            body.get("user_data_dir"),
+            body.get("browser") or body.get("browser_name"),
+            body.get("profile_name"),
+        )
+        if not resolved or not resolved.get("profilePath"):
+            return _err("No Chrome-compatible profile found.")
+        domains = await asyncio.to_thread(
+            list_cookie_domains,
+            resolved["profilePath"],
+            False,
+        )
+        return _ok({
+            "domains": domains,
+            "browser": resolved.get("browser"),
+            "profile": resolved.get("profileName"),
+        })
+
     if action == "sync":
         resolved = await asyncio.to_thread(
             _resolve_sync_source,
@@ -2477,8 +2528,16 @@ async def handle_sync_chrome(req: web.Request) -> web.Response:
         browser_name = str(resolved.get("browser") or "Chrome")
         force_clone = bool(body.get("force_clone"))
         restart_browser = bool(body.get("restart_browser"))
+        domain_filter = body.get("domains")  # Optional: list of domains to import
 
-        cookies = await asyncio.to_thread(_read_chrome_cookies, profile_path, user_data_dir)
+        cookies = await asyncio.to_thread(
+            lambda: read_cookies_as_dicts(
+                profile_path=profile_path,
+                user_data_dir=user_data_dir,
+                domains=domain_filter,
+                is_firefox=False,
+            )
+        )
         desired_target_profile_name = Path(profile_path).name or "Default"
         clone_result: dict[str, Any] = {
             "cloned": False,
