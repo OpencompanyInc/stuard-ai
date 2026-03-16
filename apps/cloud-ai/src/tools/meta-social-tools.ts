@@ -4,6 +4,7 @@ import { getExternalAccount } from '../supabase';
 import { getBridgeSecrets } from './bridge';
 
 const FACEBOOK_API = 'https://graph.facebook.com/v22.0';
+const INSTAGRAM_API = 'https://graph.instagram.com/v22.0';
 const THREADS_API = 'https://graph.threads.net/v1.0';
 
 const profileField = z.string().optional().describe(
@@ -105,7 +106,7 @@ async function getInstagramProfile(profileLabel?: string) {
   const token = String(acc.access_token);
   const userId = pickExternalUserId(acc);
   const profile = acc?.meta?.profile || await fetchJson(
-    `${FACEBOOK_API}/me?fields=id,username,account_type,profile_picture_url&access_token=${encodeURIComponent(token)}`
+    `${INSTAGRAM_API}/me?fields=id,user_id,username,name,account_type,profile_picture_url&access_token=${encodeURIComponent(token)}`
   );
   return { acc, token, userId: userId || String(profile?.id || profile?.user_id || '').trim(), profile };
 }
@@ -246,7 +247,7 @@ export const instagram_list_media = createTool({
     const { token, userId } = await getInstagramProfile(profile);
     if (!userId) throw new Error('instagram_user_missing: Could not resolve the Instagram account ID. Reconnect Instagram and try again.');
     const data = await fetchJson(
-      `${FACEBOOK_API}/${userId}/media?fields=id,caption,media_type,media_url,permalink,thumbnail_url,timestamp,username&limit=${encodeURIComponent(String(limit || 10))}&access_token=${encodeURIComponent(token)}`
+      `${INSTAGRAM_API}/${userId}/media?fields=id,caption,media_type,media_url,permalink,thumbnail_url,timestamp,username&limit=${encodeURIComponent(String(limit || 10))}&access_token=${encodeURIComponent(token)}`
     );
     const items = Array.isArray(data?.data) ? data.data : [];
     return { items, count: items.length, paging: data?.paging || null };
@@ -275,7 +276,7 @@ export const instagram_publish_media = createTool({
     if ((media_type === 'VIDEO' || media_type === 'REELS') && !video_url) {
       throw new Error('instagram_video_url_required: video_url is required for VIDEO and REELS posts.');
     }
-    const container = await postForm(`${FACEBOOK_API}/${userId}/media`, {
+    const container = await postForm(`${INSTAGRAM_API}/${userId}/media`, {
       access_token: token,
       media_type: media_type === 'IMAGE' ? undefined : media_type,
       image_url,
@@ -284,7 +285,7 @@ export const instagram_publish_media = createTool({
       alt_text,
       thumb_offset,
     });
-    const published = await postForm(`${FACEBOOK_API}/${userId}/media_publish`, {
+    const published = await postForm(`${INSTAGRAM_API}/${userId}/media_publish`, {
       access_token: token,
       creation_id: String(container?.id || ''),
     });
