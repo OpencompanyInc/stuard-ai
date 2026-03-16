@@ -52,6 +52,7 @@ function targetForScopes(required: string[]): string | '' {
   if (/spreadsheets(\.| |$)/.test(s)) return 'sheets';
   if (/documents(\.| |$)/.test(s)) return 'docs';
   if (/tasks/.test(s)) return 'tasks';
+  if (/forms(\.| |$)/.test(s)) return 'forms';
   return '';
 }
 
@@ -67,6 +68,7 @@ const SCOPE_HIERARCHY: Record<string, string[]> = {
   'https://www.googleapis.com/auth/documents': ['https://www.googleapis.com/auth/documents.readonly'],
   'https://www.googleapis.com/auth/spreadsheets': ['https://www.googleapis.com/auth/spreadsheets.readonly'],
   'https://www.googleapis.com/auth/gmail.modify': ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send'],
+  'https://www.googleapis.com/auth/forms.body': ['https://www.googleapis.com/auth/forms.body.readonly'],
 };
 
 async function ensureConnectedAndScopes(required: string[], profileLabel?: string) {
@@ -718,6 +720,672 @@ export const drive_list_files = createTool({
     const data = await googleAuthorizedFetch(`https://www.googleapis.com/drive/v3/files?${params.toString()}`);
     const files = Array.isArray((data as any)?.files) ? (data as any).files : [];
     return { files, count: files.length, nextPageToken: (data as any)?.nextPageToken };
+  },
+});
+
+// ─── MIME type helper for Drive uploads ───
+function guessMimeType(filename: string): string {
+  const ext = filename.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] || '';
+  const m: Record<string, string> = {
+    pdf: 'application/pdf', doc: 'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xls: 'application/vnd.ms-excel',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ppt: 'application/vnd.ms-powerpoint',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+    webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp',
+    mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime',
+    mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg',
+    txt: 'text/plain', csv: 'text/csv', json: 'application/json',
+    xml: 'application/xml', html: 'text/html', zip: 'application/zip',
+    gz: 'application/gzip', tar: 'application/x-tar',
+    py: 'text/x-python', js: 'text/javascript', ts: 'text/typescript',
+  };
+  return m[ext] || 'application/octet-stream';
+}
+
+async function googleAuthorizedBinaryFetch(url: string, profileLabel?: string): Promise<Buffer> {
+  const userId = await requireUserId();
+  const profile = resolveProfile(profileLabel);
+  let acc = await getGoogleAccountOrThrow(userId, profile);
+  let accessToken = await refreshGoogleTokenIfNeeded(userId, acc, acc.profile_label);
+
+  async function doFetch(token: string) {
+    return fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  }
+
+  let res = await doFetch(accessToken);
+  if (res.status === 401 && acc?.refresh_token && GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) {
+    try {
+      const params = new URLSearchParams();
+      params.set('client_id', GOOGLE_CLIENT_ID);
+      params.set('client_secret', GOOGLE_CLIENT_SECRET);
+      params.set('grant_type', 'refresh_token');
+      params.set('refresh_token', String(acc.refresh_token));
+      const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString(),
+      });
+      const tBody: any = await (async () => { try { return await tokenRes.json(); } catch { return null; } })();
+      if (tokenRes.ok && tBody?.access_token) {
+        const newAccess = String(tBody.access_token);
+        const expiresIn = Number(tBody.expires_in || 3600);
+        const expires_at = new Date(Date.now() + expiresIn * 1000).toISOString();
+        const refresh_token = String(tBody.refresh_token || acc.refresh_token || '');
+        try {
+          await upsertExternalAccount({
+            userId, provider: 'google', access_token: newAccess,
+            scopes: Array.isArray(acc.scopes) ? acc.scopes : [],
+            refresh_token: refresh_token || null, expires_at,
+            meta: { token_type: tBody.token_type || (acc.meta?.token_type || 'Bearer') },
+            profileLabel: acc.profile_label || 'default',
+            accountEmail: acc.account_email || null,
+          });
+        } catch { }
+        accessToken = newAccess;
+        res = await doFetch(accessToken);
+      }
+    } catch { }
+  }
+
+  if (!res.ok) {
+    let errBody: any = null;
+    try { errBody = await res.json(); } catch { }
+    const msg = errBody?.error?.message || errBody?.error || `${res.status} ${res.statusText}`;
+    throw new Error(msg);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
+// ─── Google Drive Tools ───
+
+export const drive_get_file = createTool({
+  id: 'drive_get_file',
+  description: 'Get metadata for a Google Drive file by ID. Returns name, size, mimeType, parents, permissions, etc.',
+  inputSchema: z.object({
+    fileId: z.string(),
+    fields: z.string().optional().describe('Comma-separated fields to return (default: comprehensive set). Use "*" for all.'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { fileId, fields, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive.readonly'], profile);
+    if ((gate as any).ok !== true) return gate;
+    const f = fields || 'id,name,mimeType,size,createdTime,modifiedTime,parents,webViewLink,webContentLink,owners,shared,sharingUser,permissions,description,starred,trashed';
+    const data = await googleAuthorizedFetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=${encodeURIComponent(f)}`,
+      undefined, profile,
+    );
+    return { file: data };
+  },
+});
+
+export const drive_upload_file = createTool({
+  id: 'drive_upload_file',
+  description: 'Upload a local file to Google Drive. Reads the file from the user\'s machine via bridge and uploads it. Supports optional folder placement and Google Workspace conversion.',
+  inputSchema: z.object({
+    path: z.string().describe('Local file path to upload'),
+    name: z.string().optional().describe('Override filename in Drive (defaults to original filename)'),
+    folderId: z.string().optional().describe('Parent folder ID in Drive. Omit for root.'),
+    mimeType: z.string().optional().describe('Override MIME type (auto-detected from extension if omitted)'),
+    convertToGoogleFormat: z.boolean().optional().describe('Convert to Google Docs/Sheets/Slides format on upload (e.g. .docx → Google Doc, .xlsx → Google Sheet)'),
+    description: z.string().optional(),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { path, name, folderId, mimeType, convertToGoogleFormat, description, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive.file'], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    const { execLocalTool, hasClientBridge } = await import('./bridge');
+    if (!hasClientBridge()) return { ok: false, error: 'No client bridge available to read local files' };
+
+    const result = await execLocalTool('read_file_base64', { path }, undefined, 60000, { silent: true });
+    if (!result?.ok || !result?.data) {
+      return { ok: false, error: result?.error || 'Failed to read file' };
+    }
+
+    const fileBase64: string = result.data;
+    const originalFilename = path.replace(/\\/g, '/').split('/').pop() || 'file';
+    const fileName = name || originalFilename;
+    const fileMime = mimeType || guessMimeType(fileName);
+
+    const metadata: any = { name: fileName };
+    if (folderId) metadata.parents = [folderId];
+    if (description) metadata.description = description;
+
+    const boundary = `drive_upload_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const metadataJson = JSON.stringify(metadata);
+    const multipartBody = [
+      `--${boundary}`,
+      'Content-Type: application/json; charset=UTF-8',
+      '',
+      metadataJson,
+      `--${boundary}`,
+      `Content-Type: ${fileMime}`,
+      'Content-Transfer-Encoding: base64',
+      '',
+      fileBase64,
+      `--${boundary}--`,
+    ].join('\r\n');
+
+    let uploadUrl = `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
+    if (convertToGoogleFormat) uploadUrl += '&convert=true';
+
+    const data = await googleAuthorizedFetch(uploadUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': `multipart/related; boundary=${boundary}` } as any,
+      body: multipartBody,
+    }, profile);
+
+    return {
+      ok: true,
+      file: {
+        id: (data as any)?.id,
+        name: (data as any)?.name,
+        mimeType: (data as any)?.mimeType,
+        webViewLink: (data as any)?.webViewLink,
+      },
+    };
+  },
+});
+
+export const drive_download_file = createTool({
+  id: 'drive_download_file',
+  description: 'Download a Google Drive file to the user\'s local machine. For Google Workspace files (Docs/Sheets/Slides), use drive_export_file instead.',
+  inputSchema: z.object({
+    fileId: z.string(),
+    path: z.string().describe('Local path to save the downloaded file'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { fileId, path, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive.readonly'], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    const { execLocalTool, hasClientBridge } = await import('./bridge');
+    if (!hasClientBridge()) return { ok: false, error: 'No client bridge available to save files locally' };
+
+    const buffer = await googleAuthorizedBinaryFetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
+      profile,
+    );
+
+    const b64 = buffer.toString('base64');
+    const res = await execLocalTool('write_file_base64', { path, content: b64 }, undefined, 60000, { silent: true });
+    if (!res?.ok) return { ok: false, error: res?.error || 'Failed to write file' };
+
+    return { ok: true, path, size: buffer.length };
+  },
+});
+
+export const drive_export_file = createTool({
+  id: 'drive_export_file',
+  description: 'Export a Google Workspace file (Docs, Sheets, Slides, Drawings) to a different format and save locally. Use this instead of drive_download_file for Google-native files.',
+  inputSchema: z.object({
+    fileId: z.string(),
+    path: z.string().describe('Local path to save the exported file'),
+    exportMimeType: z.enum([
+      'application/pdf',
+      'text/plain',
+      'text/html',
+      'text/csv',
+      'text/tab-separated-values',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'application/rtf',
+      'application/zip',
+      'image/png',
+      'image/jpeg',
+      'image/svg+xml',
+      'application/epub+zip',
+    ]).describe('Target format. Common: PDF for any, DOCX for Docs, XLSX for Sheets, PPTX for Slides, CSV for single-sheet export.'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { fileId, path, exportMimeType, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive.readonly'], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    const { execLocalTool, hasClientBridge } = await import('./bridge');
+    if (!hasClientBridge()) return { ok: false, error: 'No client bridge available to save files locally' };
+
+    const buffer = await googleAuthorizedBinaryFetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMimeType)}`,
+      profile,
+    );
+
+    const b64 = buffer.toString('base64');
+    const res = await execLocalTool('write_file_base64', { path, content: b64 }, undefined, 60000, { silent: true });
+    if (!res?.ok) return { ok: false, error: res?.error || 'Failed to write file' };
+
+    return { ok: true, path, size: buffer.length, exportMimeType };
+  },
+});
+
+export const drive_create_folder = createTool({
+  id: 'drive_create_folder',
+  description: 'Create a folder in Google Drive.',
+  inputSchema: z.object({
+    name: z.string(),
+    parentId: z.string().optional().describe('Parent folder ID. Omit for root.'),
+    description: z.string().optional(),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { name, parentId, description, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive.file'], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    const metadata: any = {
+      name,
+      mimeType: 'application/vnd.google-apps.folder',
+    };
+    if (parentId) metadata.parents = [parentId];
+    if (description) metadata.description = description;
+
+    const data = await googleAuthorizedFetch(
+      'https://www.googleapis.com/drive/v3/files',
+      { method: 'POST', body: JSON.stringify(metadata) },
+      profile,
+    );
+    return { folder: { id: (data as any)?.id, name: (data as any)?.name, webViewLink: (data as any)?.webViewLink } };
+  },
+});
+
+export const drive_delete_file = createTool({
+  id: 'drive_delete_file',
+  description: 'Delete a file or folder from Google Drive permanently (bypasses trash). Use drive_trash_file to move to trash instead.',
+  inputSchema: z.object({
+    fileId: z.string(),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { fileId, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive'], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    await googleAuthorizedFetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`,
+      { method: 'DELETE' },
+      profile,
+    );
+    return { ok: true, deleted: fileId };
+  },
+});
+
+export const drive_trash_file = createTool({
+  id: 'drive_trash_file',
+  description: 'Move a file or folder to Google Drive trash (recoverable). Use drive_delete_file for permanent deletion.',
+  inputSchema: z.object({
+    fileId: z.string(),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { fileId, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive'], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    const data = await googleAuthorizedFetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`,
+      { method: 'PATCH', body: JSON.stringify({ trashed: true }) },
+      profile,
+    );
+    return { ok: true, trashed: fileId, name: (data as any)?.name };
+  },
+});
+
+export const drive_move_file = createTool({
+  id: 'drive_move_file',
+  description: 'Move a file or folder to a different parent folder in Google Drive.',
+  inputSchema: z.object({
+    fileId: z.string(),
+    newParentId: z.string().describe('Target folder ID'),
+    removeFromCurrentParents: z.boolean().default(true).describe('Remove from all current parents (default true for a true "move")'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { fileId, newParentId, removeFromCurrentParents, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive'], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    let removeParents = '';
+    if (removeFromCurrentParents !== false) {
+      const meta = await googleAuthorizedFetch(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=parents`,
+        undefined, profile,
+      );
+      removeParents = (Array.isArray((meta as any)?.parents) ? (meta as any).parents : []).join(',');
+    }
+
+    const params = new URLSearchParams();
+    params.set('addParents', newParentId);
+    if (removeParents) params.set('removeParents', removeParents);
+
+    const data = await googleAuthorizedFetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params.toString()}`,
+      { method: 'PATCH', body: JSON.stringify({}) },
+      profile,
+    );
+    return { ok: true, file: { id: (data as any)?.id, name: (data as any)?.name, parents: (data as any)?.parents } };
+  },
+});
+
+export const drive_copy_file = createTool({
+  id: 'drive_copy_file',
+  description: 'Copy a file in Google Drive. Optionally place the copy in a different folder or rename it.',
+  inputSchema: z.object({
+    fileId: z.string(),
+    name: z.string().optional().describe('Name for the copy (defaults to "Copy of <original>")'),
+    folderId: z.string().optional().describe('Target folder ID for the copy'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { fileId, name, folderId, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive'], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    const body: any = {};
+    if (name) body.name = name;
+    if (folderId) body.parents = [folderId];
+
+    const data = await googleAuthorizedFetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/copy`,
+      { method: 'POST', body: JSON.stringify(body) },
+      profile,
+    );
+    return { file: { id: (data as any)?.id, name: (data as any)?.name, mimeType: (data as any)?.mimeType, webViewLink: (data as any)?.webViewLink } };
+  },
+});
+
+export const drive_rename_file = createTool({
+  id: 'drive_rename_file',
+  description: 'Rename a file or folder in Google Drive.',
+  inputSchema: z.object({
+    fileId: z.string(),
+    name: z.string(),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { fileId, name, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive'], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    const data = await googleAuthorizedFetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`,
+      { method: 'PATCH', body: JSON.stringify({ name }) },
+      profile,
+    );
+    return { ok: true, file: { id: (data as any)?.id, name: (data as any)?.name } };
+  },
+});
+
+export const drive_share_file = createTool({
+  id: 'drive_share_file',
+  description: 'Share a file or folder in Google Drive by creating a permission. Can share with specific users, groups, domains, or make it public.',
+  inputSchema: z.object({
+    fileId: z.string(),
+    role: z.enum(['reader', 'commenter', 'writer', 'organizer', 'fileOrganizer', 'owner']).describe('Permission level'),
+    type: z.enum(['user', 'group', 'domain', 'anyone']).describe('"user" or "group" requires emailAddress. "domain" requires domain. "anyone" makes it public.'),
+    emailAddress: z.string().optional().describe('Required for type "user" or "group"'),
+    domain: z.string().optional().describe('Required for type "domain"'),
+    sendNotificationEmail: z.boolean().default(true),
+    emailMessage: z.string().optional().describe('Custom message in the sharing notification email'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { fileId, role, type, emailAddress, domain, sendNotificationEmail, emailMessage, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive'], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    const permission: any = { role, type };
+    if (emailAddress) permission.emailAddress = emailAddress;
+    if (domain) permission.domain = domain;
+
+    const params = new URLSearchParams();
+    if (sendNotificationEmail === false) params.set('sendNotificationEmail', 'false');
+    if (emailMessage) params.set('emailMessage', emailMessage);
+
+    const data = await googleAuthorizedFetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/permissions?${params.toString()}`,
+      { method: 'POST', body: JSON.stringify(permission) },
+      profile,
+    );
+    return { ok: true, permission: { id: (data as any)?.id, role: (data as any)?.role, type: (data as any)?.type, emailAddress: (data as any)?.emailAddress } };
+  },
+});
+
+export const drive_list_permissions = createTool({
+  id: 'drive_list_permissions',
+  description: 'List permissions (sharing settings) for a Google Drive file or folder.',
+  inputSchema: z.object({
+    fileId: z.string(),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { fileId, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive.readonly'], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    const data = await googleAuthorizedFetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/permissions?fields=permissions(id,role,type,emailAddress,domain,displayName)`,
+      undefined, profile,
+    );
+    return { permissions: (data as any)?.permissions || [] };
+  },
+});
+
+export const drive_remove_permission = createTool({
+  id: 'drive_remove_permission',
+  description: 'Remove a sharing permission from a Google Drive file. Use drive_list_permissions to find permission IDs.',
+  inputSchema: z.object({
+    fileId: z.string(),
+    permissionId: z.string(),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { fileId, permissionId, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive'], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    await googleAuthorizedFetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/permissions/${encodeURIComponent(permissionId)}`,
+      { method: 'DELETE' },
+      profile,
+    );
+    return { ok: true, removed: permissionId };
+  },
+});
+
+export const drive_create_file = createTool({
+  id: 'drive_create_file',
+  description: 'Create a new file in Google Drive with text content directly (no local file needed). Good for creating text, JSON, CSV, or HTML files.',
+  inputSchema: z.object({
+    name: z.string(),
+    content: z.string().describe('Text content for the file'),
+    mimeType: z.string().default('text/plain').describe('MIME type of the file content'),
+    folderId: z.string().optional().describe('Parent folder ID. Omit for root.'),
+    description: z.string().optional(),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { name, content, mimeType, folderId, description, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive.file'], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    const metadata: any = { name };
+    if (folderId) metadata.parents = [folderId];
+    if (description) metadata.description = description;
+
+    const boundary = `drive_create_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const multipartBody = [
+      `--${boundary}`,
+      'Content-Type: application/json; charset=UTF-8',
+      '',
+      JSON.stringify(metadata),
+      `--${boundary}`,
+      `Content-Type: ${mimeType || 'text/plain'}; charset=UTF-8`,
+      '',
+      content,
+      `--${boundary}--`,
+    ].join('\r\n');
+
+    const data = await googleAuthorizedFetch(
+      `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': `multipart/related; boundary=${boundary}` } as any,
+        body: multipartBody,
+      },
+      profile,
+    );
+
+    return { file: { id: (data as any)?.id, name: (data as any)?.name, mimeType: (data as any)?.mimeType, webViewLink: (data as any)?.webViewLink } };
+  },
+});
+
+export const drive_update_file = createTool({
+  id: 'drive_update_file',
+  description: 'Update/replace the content of an existing file in Google Drive using a local file. The file metadata (name, etc.) stays the same unless you also patch it.',
+  inputSchema: z.object({
+    fileId: z.string(),
+    path: z.string().describe('Local file path with new content'),
+    mimeType: z.string().optional().describe('Override MIME type (auto-detected if omitted)'),
+    name: z.string().optional().describe('Optionally rename the file at the same time'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { fileId, path, mimeType, name, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive.file'], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    const { execLocalTool, hasClientBridge } = await import('./bridge');
+    if (!hasClientBridge()) return { ok: false, error: 'No client bridge available to read local files' };
+
+    const result = await execLocalTool('read_file_base64', { path }, undefined, 60000, { silent: true });
+    if (!result?.ok || !result?.data) return { ok: false, error: result?.error || 'Failed to read file' };
+
+    const originalFilename = path.replace(/\\/g, '/').split('/').pop() || 'file';
+    const fileMime = mimeType || guessMimeType(originalFilename);
+
+    const metadata: any = {};
+    if (name) metadata.name = name;
+
+    const boundary = `drive_update_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const multipartBody = [
+      `--${boundary}`,
+      'Content-Type: application/json; charset=UTF-8',
+      '',
+      JSON.stringify(metadata),
+      `--${boundary}`,
+      `Content-Type: ${fileMime}`,
+      'Content-Transfer-Encoding: base64',
+      '',
+      result.data,
+      `--${boundary}--`,
+    ].join('\r\n');
+
+    const data = await googleAuthorizedFetch(
+      `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(fileId)}?uploadType=multipart`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': `multipart/related; boundary=${boundary}` } as any,
+        body: multipartBody,
+      },
+      profile,
+    );
+
+    return { ok: true, file: { id: (data as any)?.id, name: (data as any)?.name, mimeType: (data as any)?.mimeType } };
+  },
+});
+
+export const drive_search_files = createTool({
+  id: 'drive_search_files',
+  description: 'Search Google Drive with full-text search across file names and content. Returns file metadata. More convenient than drive_list_files for simple text searches.',
+  inputSchema: z.object({
+    query: z.string().describe('Search text (searches file names and content)'),
+    pageSize: z.number().int().min(1).max(100).default(20),
+    fileType: z.enum(['document', 'spreadsheet', 'presentation', 'form', 'drawing', 'pdf', 'image', 'video', 'audio', 'folder', 'any']).default('any').describe('Filter by file type'),
+    trashedOnly: z.boolean().optional().describe('Search only in trash'),
+    sharedWithMe: z.boolean().optional().describe('Search only files shared with me'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { query, pageSize, fileType, trashedOnly, sharedWithMe, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive.readonly'], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    const typeMimeMap: Record<string, string> = {
+      document: 'application/vnd.google-apps.document',
+      spreadsheet: 'application/vnd.google-apps.spreadsheet',
+      presentation: 'application/vnd.google-apps.presentation',
+      form: 'application/vnd.google-apps.form',
+      drawing: 'application/vnd.google-apps.drawing',
+      pdf: 'application/pdf',
+      folder: 'application/vnd.google-apps.folder',
+    };
+
+    const clauses: string[] = [];
+    clauses.push(`fullText contains '${query.replace(/'/g, "\\'")}'`);
+
+    if (fileType && fileType !== 'any') {
+      if (typeMimeMap[fileType]) {
+        clauses.push(`mimeType = '${typeMimeMap[fileType]}'`);
+      } else if (fileType === 'image') {
+        clauses.push(`mimeType contains 'image/'`);
+      } else if (fileType === 'video') {
+        clauses.push(`mimeType contains 'video/'`);
+      } else if (fileType === 'audio') {
+        clauses.push(`mimeType contains 'audio/'`);
+      }
+    }
+
+    if (trashedOnly) clauses.push('trashed = true');
+    else clauses.push('trashed = false');
+
+    if (sharedWithMe) clauses.push('sharedWithMe = true');
+
+    const q = clauses.join(' and ');
+    const params = new URLSearchParams();
+    params.set('q', q);
+    params.set('pageSize', String(pageSize || 20));
+    params.set('fields', 'files(id,name,mimeType,size,modifiedTime,webViewLink,owners,shared),nextPageToken');
+
+    const data = await googleAuthorizedFetch(
+      `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+      undefined, profile,
+    );
+    const files = Array.isArray((data as any)?.files) ? (data as any).files : [];
+    return { files, count: files.length, query: q, nextPageToken: (data as any)?.nextPageToken };
+  },
+});
+
+export const drive_get_storage_quota = createTool({
+  id: 'drive_get_storage_quota',
+  description: 'Get Google Drive storage usage and quota information.',
+  inputSchema: z.object({ profile: profileField }),
+  execute: async (inputData, context) => {
+    const { profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/drive.readonly'], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    const data = await googleAuthorizedFetch(
+      'https://www.googleapis.com/drive/v3/about?fields=storageQuota,user',
+      undefined, profile,
+    );
+    const sq = (data as any)?.storageQuota || {};
+    return {
+      user: (data as any)?.user,
+      storage: {
+        limit: sq.limit ? `${(Number(sq.limit) / (1024 ** 3)).toFixed(2)} GB` : 'unlimited',
+        usage: sq.usage ? `${(Number(sq.usage) / (1024 ** 3)).toFixed(2)} GB` : '0 GB',
+        usageInDrive: sq.usageInDrive ? `${(Number(sq.usageInDrive) / (1024 ** 3)).toFixed(2)} GB` : '0 GB',
+        usageInDriveTrash: sq.usageInDriveTrash ? `${(Number(sq.usageInDriveTrash) / (1024 ** 3)).toFixed(2)} GB` : '0 GB',
+      },
+    };
   },
 });
 
@@ -1871,5 +2539,522 @@ export const gmail_retrieve_messages_with_attachments = createTool({
       attachmentsDownloaded: totalAttachmentsDownloaded,
       query: q || null,
     };
+  },
+});
+
+// ─── Google Forms Tools ───
+
+const FORMS_SCOPE = 'https://www.googleapis.com/auth/forms.body';
+const FORMS_READONLY_SCOPE = 'https://www.googleapis.com/auth/forms.body.readonly';
+const FORMS_RESPONSES_SCOPE = 'https://www.googleapis.com/auth/forms.responses.readonly';
+
+export const forms_create = createTool({
+  id: 'forms_create',
+  description: 'Create a new Google Form with a title. After creation, use forms_add_questions to add questions.',
+  inputSchema: z.object({
+    title: z.string().describe('Form title displayed to respondents'),
+    documentTitle: z.string().optional().describe('Internal document title in Drive (defaults to form title)'),
+    description: z.string().optional().describe('Form description shown below the title'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { title, documentTitle, description, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes([FORMS_SCOPE], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    // Step 1: Create the form
+    const data = await googleAuthorizedFetch(
+      'https://forms.googleapis.com/v1/forms',
+      { method: 'POST', body: JSON.stringify({ info: { title, documentTitle: documentTitle || title } }) },
+      profile,
+    );
+
+    const formId = (data as any)?.formId;
+    const responderUri = (data as any)?.responderUri;
+
+    // Step 2: Set description if provided
+    if (description && formId) {
+      try {
+        await googleAuthorizedFetch(
+          `https://forms.googleapis.com/v1/forms/${encodeURIComponent(formId)}:batchUpdate`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              requests: [{ updateFormInfo: { info: { description }, updateMask: 'description' } }],
+            }),
+          },
+          profile,
+        );
+      } catch { }
+    }
+
+    return { formId, title, responderUri, editUrl: `https://docs.google.com/forms/d/${formId}/edit` };
+  },
+});
+
+export const forms_get = createTool({
+  id: 'forms_get',
+  description: 'Get a Google Form structure: title, description, questions, settings. Useful to inspect an existing form.',
+  inputSchema: z.object({
+    formId: z.string(),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { formId, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes([FORMS_READONLY_SCOPE], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    const data = await googleAuthorizedFetch(
+      `https://forms.googleapis.com/v1/forms/${encodeURIComponent(formId)}`,
+      undefined, profile,
+    );
+    return { form: data };
+  },
+});
+
+export const forms_add_questions = createTool({
+  id: 'forms_add_questions',
+  description: `Add questions to a Google Form. Supports all question types: short text, paragraph, multiple choice, checkbox, dropdown, linear scale, date, time, file upload, and grid.
+
+Example questions array:
+[
+  { "title": "Your name?", "type": "SHORT_TEXT", "required": true },
+  { "title": "Feedback", "type": "PARAGRAPH" },
+  { "title": "Favorite color?", "type": "MULTIPLE_CHOICE", "options": ["Red", "Blue", "Green"] },
+  { "title": "Select all that apply", "type": "CHECKBOX", "options": ["A", "B", "C"] },
+  { "title": "Rate 1-5", "type": "LINEAR_SCALE", "low": 1, "high": 5, "lowLabel": "Poor", "highLabel": "Excellent" },
+  { "title": "Date of birth", "type": "DATE" }
+]`,
+  inputSchema: z.object({
+    formId: z.string(),
+    questions: z.array(z.object({
+      title: z.string(),
+      description: z.string().optional(),
+      required: z.boolean().optional(),
+      type: z.enum([
+        'SHORT_TEXT', 'PARAGRAPH',
+        'MULTIPLE_CHOICE', 'CHECKBOX', 'DROPDOWN',
+        'LINEAR_SCALE', 'DATE', 'TIME',
+        'CHECKBOX_GRID', 'MULTIPLE_CHOICE_GRID',
+      ]),
+      options: z.array(z.string()).optional().describe('Options for MULTIPLE_CHOICE, CHECKBOX, DROPDOWN'),
+      low: z.number().optional().describe('Low end for LINEAR_SCALE (default 1)'),
+      high: z.number().optional().describe('High end for LINEAR_SCALE (default 5)'),
+      lowLabel: z.string().optional().describe('Label for low end'),
+      highLabel: z.string().optional().describe('Label for high end'),
+      rowLabels: z.array(z.string()).optional().describe('Row labels for grid questions'),
+      columnLabels: z.array(z.string()).optional().describe('Column labels for grid questions'),
+      includeYear: z.boolean().optional().describe('Include year in DATE questions'),
+      includeTime: z.boolean().optional().describe('Include time in DATE questions'),
+    })),
+    insertAtIndex: z.number().optional().describe('0-based index to insert at (appends to end if omitted)'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { formId, questions, insertAtIndex, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes([FORMS_SCOPE], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    const requests: any[] = [];
+
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i];
+      const idx = typeof insertAtIndex === 'number' ? insertAtIndex + i : i;
+
+      let questionItem: any = {};
+
+      const buildChoiceQuestion = (type: string) => ({
+        choiceQuestion: {
+          type,
+          options: (q.options || []).map((o: string) => ({ value: o })),
+        },
+      });
+
+      switch (q.type) {
+        case 'SHORT_TEXT':
+          questionItem = { textQuestion: { paragraph: false } };
+          break;
+        case 'PARAGRAPH':
+          questionItem = { textQuestion: { paragraph: true } };
+          break;
+        case 'MULTIPLE_CHOICE':
+          questionItem = buildChoiceQuestion('RADIO');
+          break;
+        case 'CHECKBOX':
+          questionItem = buildChoiceQuestion('CHECKBOX');
+          break;
+        case 'DROPDOWN':
+          questionItem = buildChoiceQuestion('DROP_DOWN');
+          break;
+        case 'LINEAR_SCALE':
+          questionItem = {
+            scaleQuestion: {
+              low: q.low ?? 1,
+              high: q.high ?? 5,
+              lowLabel: q.lowLabel || '',
+              highLabel: q.highLabel || '',
+            },
+          };
+          break;
+        case 'DATE':
+          questionItem = {
+            dateQuestion: {
+              includeYear: q.includeYear !== false,
+              includeTime: q.includeTime === true,
+            },
+          };
+          break;
+        case 'TIME':
+          questionItem = { timeQuestion: { duration: false } };
+          break;
+        case 'CHECKBOX_GRID':
+        case 'MULTIPLE_CHOICE_GRID':
+          questionItem = {
+            rowQuestion: {
+              title: q.title,
+            },
+            ...((q.type === 'CHECKBOX_GRID')
+              ? { choiceQuestion: { type: 'CHECKBOX', options: (q.columnLabels || []).map((c: string) => ({ value: c })) } }
+              : { choiceQuestion: { type: 'RADIO', options: (q.columnLabels || []).map((c: string) => ({ value: c })) } }),
+          };
+          // Grid questions use questionGroupItem instead of questionItem
+          requests.push({
+            createItem: {
+              item: {
+                title: q.title,
+                description: q.description || undefined,
+                questionGroupItem: {
+                  grid: {
+                    columns: {
+                      type: q.type === 'CHECKBOX_GRID' ? 'CHECKBOX' : 'RADIO',
+                      options: (q.columnLabels || []).map((c: string) => ({ value: c })),
+                    },
+                  },
+                  questions: (q.rowLabels || []).map((r: string) => ({
+                    required: q.required || false,
+                    rowQuestion: { title: r },
+                  })),
+                },
+              },
+              location: { index: idx },
+            },
+          });
+          continue; // skip the normal push below
+      }
+
+      requests.push({
+        createItem: {
+          item: {
+            title: q.title,
+            description: q.description || undefined,
+            questionItem: {
+              question: {
+                required: q.required || false,
+                ...questionItem,
+              },
+            },
+          },
+          location: { index: idx },
+        },
+      });
+    }
+
+    const data = await googleAuthorizedFetch(
+      `https://forms.googleapis.com/v1/forms/${encodeURIComponent(formId)}:batchUpdate`,
+      { method: 'POST', body: JSON.stringify({ requests }) },
+      profile,
+    );
+
+    return { ok: true, questionsAdded: questions.length, replies: (data as any)?.replies?.length || 0 };
+  },
+});
+
+export const forms_update_settings = createTool({
+  id: 'forms_update_settings',
+  description: 'Update Google Form settings: quiz mode, collect email, response limits, confirmation message, etc.',
+  inputSchema: z.object({
+    formId: z.string(),
+    isQuiz: z.boolean().optional().describe('Enable quiz mode (allows point values and correct answers)'),
+    collectEmail: z.boolean().optional().describe('Collect respondent email addresses'),
+    limitOneResponsePerUser: z.boolean().optional().describe('Limit to one response per user'),
+    confirmationMessage: z.string().optional().describe('Message shown after form submission'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { formId, isQuiz, collectEmail, limitOneResponsePerUser, confirmationMessage, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes([FORMS_SCOPE], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    const requests: any[] = [];
+
+    // Quiz mode
+    if (typeof isQuiz === 'boolean') {
+      requests.push({
+        updateSettings: {
+          settings: { quizSettings: { isQuiz } },
+          updateMask: 'quizSettings.isQuiz',
+        },
+      });
+    }
+
+    // Form info updates (confirmation message)
+    if (confirmationMessage) {
+      requests.push({
+        updateFormInfo: {
+          info: { description: confirmationMessage },
+          updateMask: 'description',
+        },
+      });
+    }
+
+    if (requests.length === 0) return { ok: true, message: 'No settings to update' };
+
+    const data = await googleAuthorizedFetch(
+      `https://forms.googleapis.com/v1/forms/${encodeURIComponent(formId)}:batchUpdate`,
+      { method: 'POST', body: JSON.stringify({ requests }) },
+      profile,
+    );
+    return { ok: true, updated: requests.length };
+  },
+});
+
+export const forms_list_responses = createTool({
+  id: 'forms_list_responses',
+  description: 'List all responses to a Google Form. Returns each response with answers mapped to question IDs.',
+  inputSchema: z.object({
+    formId: z.string(),
+    pageSize: z.number().int().min(1).max(5000).optional().describe('Max responses to return (default all)'),
+    pageToken: z.string().optional(),
+    filter: z.string().optional().describe('Filter expression, e.g. "timestamp >= 2024-01-01T00:00:00Z"'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { formId, pageSize, pageToken, filter, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes([FORMS_RESPONSES_SCOPE], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    const params = new URLSearchParams();
+    if (pageSize) params.set('pageSize', String(pageSize));
+    if (pageToken) params.set('pageToken', pageToken);
+    if (filter) params.set('filter', filter);
+
+    const data = await googleAuthorizedFetch(
+      `https://forms.googleapis.com/v1/forms/${encodeURIComponent(formId)}/responses?${params.toString()}`,
+      undefined, profile,
+    );
+
+    const responses = Array.isArray((data as any)?.responses) ? (data as any).responses : [];
+    return {
+      responses,
+      count: responses.length,
+      nextPageToken: (data as any)?.nextPageToken || null,
+    };
+  },
+});
+
+export const forms_get_response = createTool({
+  id: 'forms_get_response',
+  description: 'Get a single form response by response ID.',
+  inputSchema: z.object({
+    formId: z.string(),
+    responseId: z.string(),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { formId, responseId, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes([FORMS_RESPONSES_SCOPE], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    const data = await googleAuthorizedFetch(
+      `https://forms.googleapis.com/v1/forms/${encodeURIComponent(formId)}/responses/${encodeURIComponent(responseId)}`,
+      undefined, profile,
+    );
+    return { response: data };
+  },
+});
+
+export const forms_get_responses_summary = createTool({
+  id: 'forms_get_responses_summary',
+  description: 'Get a summary of all form responses with question titles mapped to answers. More user-friendly than raw forms_list_responses.',
+  inputSchema: z.object({
+    formId: z.string(),
+    maxResponses: z.number().int().min(1).max(1000).default(100),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { formId, maxResponses, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes([FORMS_READONLY_SCOPE, FORMS_RESPONSES_SCOPE], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    // Get the form structure to map question IDs to titles
+    const formData = await googleAuthorizedFetch(
+      `https://forms.googleapis.com/v1/forms/${encodeURIComponent(formId)}`,
+      undefined, profile,
+    );
+
+    const questionMap: Record<string, string> = {};
+    const items = Array.isArray((formData as any)?.items) ? (formData as any).items : [];
+    for (const item of items) {
+      if (item.questionItem?.question?.questionId) {
+        questionMap[item.questionItem.question.questionId] = item.title || 'Untitled';
+      }
+      if (item.questionGroupItem?.questions) {
+        for (const q of item.questionGroupItem.questions) {
+          if (q.questionId) {
+            questionMap[q.questionId] = `${item.title || 'Grid'} - ${q.rowQuestion?.title || 'Row'}`;
+          }
+        }
+      }
+    }
+
+    // Get responses
+    const params = new URLSearchParams();
+    params.set('pageSize', String(maxResponses));
+    const respData = await googleAuthorizedFetch(
+      `https://forms.googleapis.com/v1/forms/${encodeURIComponent(formId)}/responses?${params.toString()}`,
+      undefined, profile,
+    );
+
+    const responses = Array.isArray((respData as any)?.responses) ? (respData as any).responses : [];
+
+    // Map responses to human-readable format
+    const mapped = responses.map((r: any) => {
+      const answers: Record<string, any> = {};
+      const rawAnswers = r.answers || {};
+      for (const [qId, answer] of Object.entries(rawAnswers)) {
+        const questionTitle = questionMap[qId] || qId;
+        const a = answer as any;
+        if (a.textAnswers?.answers) {
+          const vals = a.textAnswers.answers.map((v: any) => v.value);
+          answers[questionTitle] = vals.length === 1 ? vals[0] : vals;
+        } else if (a.fileUploadAnswers?.answers) {
+          answers[questionTitle] = a.fileUploadAnswers.answers.map((f: any) => ({ fileId: f.fileId, filename: f.fileName, mimeType: f.mimeType }));
+        } else {
+          answers[questionTitle] = a;
+        }
+      }
+      return {
+        responseId: r.responseId,
+        createTime: r.createTime,
+        lastSubmittedTime: r.lastSubmittedTime,
+        respondentEmail: r.respondentEmail || null,
+        answers,
+      };
+    });
+
+    return {
+      formTitle: (formData as any)?.info?.title || '',
+      totalResponses: mapped.length,
+      responses: mapped,
+      questionMap,
+    };
+  },
+});
+
+export const forms_delete_question = createTool({
+  id: 'forms_delete_question',
+  description: 'Delete a question/item from a Google Form by its index.',
+  inputSchema: z.object({
+    formId: z.string(),
+    index: z.number().int().min(0).describe('0-based index of the item to delete. Use forms_get to see items.'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { formId, index, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes([FORMS_SCOPE], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    // We need the item ID to delete it — get the form first
+    const formData = await googleAuthorizedFetch(
+      `https://forms.googleapis.com/v1/forms/${encodeURIComponent(formId)}`,
+      undefined, profile,
+    );
+
+    const items = Array.isArray((formData as any)?.items) ? (formData as any).items : [];
+    if (index >= items.length) return { ok: false, error: `Index ${index} out of range (form has ${items.length} items)` };
+
+    const itemId = items[index]?.itemId;
+    if (!itemId) return { ok: false, error: 'Could not find item ID' };
+
+    const data = await googleAuthorizedFetch(
+      `https://forms.googleapis.com/v1/forms/${encodeURIComponent(formId)}:batchUpdate`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          requests: [{ deleteItem: { location: { index } } }],
+        }),
+      },
+      profile,
+    );
+    return { ok: true, deletedIndex: index };
+  },
+});
+
+export const forms_update_question = createTool({
+  id: 'forms_update_question',
+  description: 'Update an existing question in a Google Form: change title, description, options, or required flag.',
+  inputSchema: z.object({
+    formId: z.string(),
+    index: z.number().int().min(0).describe('0-based index of the item to update'),
+    title: z.string().optional(),
+    description: z.string().optional(),
+    required: z.boolean().optional(),
+    options: z.array(z.string()).optional().describe('Replace options for choice-type questions'),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { formId, index, title, description, required, options, profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes([FORMS_SCOPE], profile);
+    if ((gate as any).ok !== true) return gate;
+
+    // Get the current form to know the item structure
+    const formData = await googleAuthorizedFetch(
+      `https://forms.googleapis.com/v1/forms/${encodeURIComponent(formId)}`,
+      undefined, profile,
+    );
+
+    const items = Array.isArray((formData as any)?.items) ? (formData as any).items : [];
+    if (index >= items.length) return { ok: false, error: `Index ${index} out of range (form has ${items.length} items)` };
+
+    const currentItem = items[index];
+    const requests: any[] = [];
+
+    // Build update request
+    const updatedItem: any = { ...currentItem };
+    const updateMask: string[] = [];
+
+    if (title !== undefined) {
+      updatedItem.title = title;
+      updateMask.push('title');
+    }
+    if (description !== undefined) {
+      updatedItem.description = description;
+      updateMask.push('description');
+    }
+    if (required !== undefined && updatedItem.questionItem?.question) {
+      updatedItem.questionItem.question.required = required;
+      updateMask.push('questionItem.question.required');
+    }
+    if (options && updatedItem.questionItem?.question?.choiceQuestion) {
+      updatedItem.questionItem.question.choiceQuestion.options = options.map((o: string) => ({ value: o }));
+      updateMask.push('questionItem.question.choiceQuestion.options');
+    }
+
+    if (updateMask.length === 0) return { ok: true, message: 'Nothing to update' };
+
+    requests.push({
+      updateItem: {
+        item: updatedItem,
+        location: { index },
+        updateMask: updateMask.join(','),
+      },
+    });
+
+    const data = await googleAuthorizedFetch(
+      `https://forms.googleapis.com/v1/forms/${encodeURIComponent(formId)}:batchUpdate`,
+      { method: 'POST', body: JSON.stringify({ requests }) },
+      profile,
+    );
+    return { ok: true, updatedFields: updateMask };
   },
 });

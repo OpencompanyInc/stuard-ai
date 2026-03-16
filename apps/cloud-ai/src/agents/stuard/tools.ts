@@ -33,6 +33,7 @@ import { telnyx_send_sms, telnyx_make_call, telnyx_phone_status } from '../../to
 import { whatsapp_send_message, whatsapp_send_media, whatsapp_send_reaction, whatsapp_mark_read, whatsapp_upload_media, whatsapp_status } from '../../tools/whatsapp-tools';
 import { facebook_get_me, facebook_list_pages, facebook_list_page_posts, facebook_create_page_post, instagram_get_me, instagram_list_media, instagram_publish_media, threads_get_me, threads_list_posts, threads_publish_post } from '../../tools/meta-social-tools';
 import { text_to_speech, list_tts_voices, get_tts_models, elevenlabs_list_agents, elevenlabs_get_signed_conversation_url, elevenlabs_get_webrtc_token, elevenlabs_list_conversations, elevenlabs_get_conversation, elevenlabs_twilio_outbound_call } from '../../tools/tts-tools';
+import { cloud_storage_upload, cloud_storage_get_url, cloud_storage_list, cloud_storage_delete, cloud_storage_set_visibility } from '../../tools/cloud-storage-tools';
 import { http_request } from '../../tools/http-tools';
 import { proactive_task_create, proactive_task_list, proactive_task_update, proactive_task_delete } from '../../tools/proactive-task-tools';
 import { createRequire } from 'node:module';
@@ -144,6 +145,12 @@ export const ALL_TOOLS = {
   run_command,
   http_request,
   run_python_script,
+  // Cloud Storage (GCS upload/download with public/private visibility)
+  cloud_storage_upload,
+  cloud_storage_get_url,
+  cloud_storage_list,
+  cloud_storage_delete,
+  cloud_storage_set_visibility,
   // Background terminal polling (non-interactive)
   list_terminals,
   read_terminal,

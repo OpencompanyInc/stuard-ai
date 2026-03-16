@@ -696,7 +696,6 @@ export async function execBrowserUseContent(args: any, _ctx: RouterContext): Pro
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         mode: args?.mode,
-        viewport_only: args?.viewport_only,
         max_length: args?.max_length,
         wait_for_selector: args?.wait_for_selector,
         wait_timeout: args?.wait_timeout,

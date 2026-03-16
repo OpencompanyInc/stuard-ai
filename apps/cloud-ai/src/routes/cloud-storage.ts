@@ -10,6 +10,9 @@ import {
   listUserFiles,
   createFolder,
   renameUserFile,
+  makeFilePublic,
+  makeFilePrivate,
+  getPublicUrl,
 } from '../services/cold-storage';
 import { checkColdStorageQuota } from '../services/hot-storage';
 
@@ -357,6 +360,45 @@ export async function handleCloudStorageRoutes(req: IncomingMessage, res: Server
     } catch (e: any) {
       console.error('[cloud-storage] rename error:', e?.message);
       json(res, 500, { ok: false, error: 'rename_failed', message: e?.message || 'failed' });
+    }
+    return true;
+  }
+
+  // ── POST /v1/cloud-storage/set-visibility ────────────────────────────────
+  // Change file visibility between public and private.
+  if (method === 'POST' && path === '/v1/cloud-storage/set-visibility') {
+    const user = await authenticate(req, res);
+    if (!user) return true;
+    try {
+      const body = await readBody(req);
+      let objectName = String(body.objectName || '').trim();
+      const visibility = String(body.visibility || '').trim();
+      if (!objectName) {
+        json(res, 400, { ok: false, error: 'missing_object_name' });
+        return true;
+      }
+      if (visibility !== 'public' && visibility !== 'private') {
+        json(res, 400, { ok: false, error: 'invalid_visibility', valid: ['public', 'private'] });
+        return true;
+      }
+      if (!objectName.startsWith(`${user.userId}/`)) {
+        objectName = `${user.userId}/${objectName}`;
+      }
+      if (!validateObjectName(objectName)) {
+        json(res, 400, { ok: false, error: 'invalid_object_name' });
+        return true;
+      }
+
+      if (visibility === 'public') {
+        const { publicUrl } = await makeFilePublic(user.userId, objectName);
+        json(res, 200, { ok: true, visibility: 'public', url: publicUrl, objectName });
+      } else {
+        await makeFilePrivate(user.userId, objectName);
+        json(res, 200, { ok: true, visibility: 'private', objectName });
+      }
+    } catch (e: any) {
+      console.error('[cloud-storage] set-visibility error:', e?.message);
+      json(res, 500, { ok: false, error: 'set_visibility_failed', message: e?.message || 'failed' });
     }
     return true;
   }

@@ -250,6 +250,20 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       // Notify start
       send(ws, { type: 'progress', event: 'start', data: {} });
 
+      // Send initial token estimate so UI has a baseline before any step finishes
+      const initialEstimate = estimateTokens(effectiveHistory as any[]);
+      send(ws, {
+        type: 'progress',
+        event: 'usage_update',
+        data: {
+          promptTokens: initialEstimate.totalTokens,
+          completionTokens: 0,
+          totalTokens: initialEstimate.totalTokens,
+          contextWindow: budget.contextWindow,
+          modelId: chosenModelId || model,
+        },
+      });
+
       // Build stream options
       // Workflow agent needs more steps for tool discovery and testing
       const maxToolSteps = (agentType === 'workflow' || agentType === 'skill') ? 60 : 40;
@@ -280,7 +294,21 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
             const summary = await generateMidTurnSummary(preTurnMessages);
             messages.splice(0, safeCurrentTurnStart, { role: 'system', content: summary });
             midTurnCompacted = true;
-            console.log(`[compactor] Mid-turn compacted: ${estimateTokens(messages as any[]).totalTokens} tokens remaining`);
+            const postCompactEstimate = estimateTokens(messages as any[]);
+            console.log(`[compactor] Mid-turn compacted: ${postCompactEstimate.totalTokens} tokens remaining`);
+            // Notify UI of reduced context after compaction
+            send(ws, {
+              type: 'progress',
+              event: 'usage_update',
+              data: {
+                promptTokens: postCompactEstimate.totalTokens,
+                completionTokens: 0,
+                totalTokens: postCompactEstimate.totalTokens,
+                contextWindow: budget.contextWindow,
+                modelId: chosenModelId || model,
+                compacted: true,
+              },
+            });
           } catch (err) {
             console.warn('[compactor] Mid-turn summarization failed, falling back to pruning:', err);
             pruneToolOutputs(messages as any[], budget);
@@ -292,6 +320,18 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
           if (!stepUsage) return;
           const normalized = normalizeUsage(stepUsage);
           cumulativeInputTokens += normalized.promptTokens;
+          // Emit live usage update so the UI can update token counts mid-stream
+          send(ws, {
+            type: 'progress',
+            event: 'usage_update',
+            data: {
+              promptTokens: cumulativeInputTokens,
+              completionTokens: normalized.completionTokens || 0,
+              totalTokens: cumulativeInputTokens + (normalized.completionTokens || 0),
+              contextWindow: budget.contextWindow,
+              modelId: chosenModelId || model,
+            },
+          });
         },
       };
 

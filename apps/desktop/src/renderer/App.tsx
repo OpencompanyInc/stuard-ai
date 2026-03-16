@@ -357,6 +357,7 @@ export default function App() {
     revertFiles,
     activeGenUITools,
     respondToGenUI,
+    liveUsage,
   } = useAgent({
     onTitleUpdate: handleTitleUpdate,
     initialChatMode: defaultChatMode,
@@ -385,6 +386,12 @@ export default function App() {
     () => getLatestAssistantContext(messages as any[]),
     [messages],
   );
+
+  // Use live usage when streaming, fall back to last committed message usage
+  const effectiveContextUsage = liveUsage
+    ? { promptTokens: liveUsage.promptTokens, contextWindow: liveUsage.contextWindow }
+    : latestAgentContext.usage;
+  const effectiveContextModelId = liveUsage?.modelId || latestAgentContext.modelId;
 
   // Track when reasoning/thinking starts
   useEffect(() => {
@@ -2275,9 +2282,9 @@ export default function App() {
                         ? (ai as any).model
                         : ""
                     }
-                    contextUsage={latestAgentContext.usage}
+                    contextUsage={effectiveContextUsage}
                     contextModelId={
-                      latestAgentContext.modelId ||
+                      effectiveContextModelId ||
                       (typeof (ai as any)?.model === "string"
                         ? (ai as any).model
                         : undefined)

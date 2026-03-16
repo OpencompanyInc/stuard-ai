@@ -386,6 +386,7 @@ interface ConversationTab {
   currentReasoning: string;
   currentToolCalls: ToolCall[]; // Tool calls for current streaming response
   currentStreamChunks: StreamChunk[]; // Interleaved chunks in order
+  liveUsage: { promptTokens: number; completionTokens: number; totalTokens: number; contextWindow?: number; modelId?: string } | null; // Live token usage updated mid-stream
   aiState: AIStatus;
   agentState: AgentState;
   lastError: { code: string; data?: any } | null;
@@ -421,6 +422,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     currentReasoning: '',
     currentToolCalls: [],
     currentStreamChunks: [],
+    liveUsage: null,
     aiState: { phase: 'idle', statusText: 'Idle' },
     agentState: { connected: false, connecting: false, status: 'disconnected' },
     lastError: null,
@@ -614,6 +616,7 @@ export function useAgent(options?: string | UseAgentOptions) {
       currentReasoning: '',
       currentToolCalls: [],
       currentStreamChunks: [],
+      liveUsage: null,
       aiState: { phase: 'idle', statusText: 'Idle' },
       agentState: { connected: state.connected, connecting: state.connecting, status: state.status },
       lastError: null,
@@ -828,6 +831,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                 currentReasoning: '',
                 currentToolCalls: [],
                 currentStreamChunks: [],
+                liveUsage: null,
                 lastError: null
               };
             }
@@ -1616,6 +1620,18 @@ export function useAgent(options?: string | UseAgentOptions) {
                   return { ...t, currentResponse: newResponse, currentStreamChunks: chunks };
                 });
               }
+            } else if (evt.event === 'usage_update') {
+              // Live token usage update from server (emitted on each step finish + after compaction)
+              const d = evt.data || {};
+              const promptTokens = typeof d.promptTokens === 'number' ? d.promptTokens : 0;
+              const completionTokens = typeof d.completionTokens === 'number' ? d.completionTokens : 0;
+              const totalTokens = typeof d.totalTokens === 'number' ? d.totalTokens : promptTokens + completionTokens;
+              const contextWindow = typeof d.contextWindow === 'number' ? d.contextWindow : undefined;
+              const modelId = typeof d.modelId === 'string' ? d.modelId : undefined;
+              updateStreamingTab(t => ({
+                ...t,
+                liveUsage: { promptTokens, completionTokens, totalTokens, contextWindow, modelId },
+              }));
             } else {
               setStreamingState((s) => ({ ...s, status: evt.event }));
             }
@@ -1722,6 +1738,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                 currentReasoning: '',
                 currentToolCalls: [],
                 currentStreamChunks: [],
+                liveUsage: null,
                 aiState: { ...t.aiState, phase: 'idle', statusText: isAborted ? 'Stopped' : 'Idle' }
               };
             });
@@ -1854,6 +1871,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                   currentReasoning: '',
                   currentToolCalls: [],
                   currentStreamChunks: [],
+                  liveUsage: null,
                 };
               }
               // No accumulated work - still commit a visible assistant error message
@@ -1869,6 +1887,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                 currentReasoning: '',
                 currentToolCalls: [],
                 currentStreamChunks: [],
+                liveUsage: null,
               };
             });
             // Clean up request tracking and mark tab as no longer running
@@ -2429,6 +2448,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     currentReasoning,
     currentToolCalls,
     currentStreamChunks,
+    liveUsage: activeTab?.liveUsage || null,
     sendMessage,
     stopGeneration,
     connect,

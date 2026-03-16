@@ -1749,6 +1749,24 @@ ${skillLines}`;
           maxSteps,
           providerOptions,
           abortSignal: abortController.signal,
+          onStepFinish: ({ usage: stepUsage }: any) => {
+            if (!stepUsage) return;
+            const normalized = normalizeUsage(stepUsage);
+            cumulativeInputTokens += normalized.promptTokens;
+            try {
+              send(ws, {
+                type: 'progress',
+                event: 'usage_update',
+                data: {
+                  promptTokens: cumulativeInputTokens,
+                  completionTokens: normalized.completionTokens || 0,
+                  totalTokens: cumulativeInputTokens + (normalized.completionTokens || 0),
+                  contextWindow: budget.contextWindow,
+                  modelId: chosenModelId || routedTier,
+                },
+              }, requestId);
+            } catch { }
+          },
           onFinish: async ({ text, steps, finishReason, usage, response }: any) => {
             if (didSendFinal) {
               try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
@@ -1943,6 +1961,24 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
           streamOptions.memory = { resource, thread };
         }
 
+        // Send initial token estimate so the UI can show context usage from the start
+        try {
+          const initialEstimate = estimateTokens(inputMessages as any[]);
+          send(ws, {
+            type: 'progress',
+            event: 'usage_update',
+            data: {
+              promptTokens: initialEstimate.totalTokens,
+              completionTokens: 0,
+              totalTokens: initialEstimate.totalTokens,
+              contextWindow: budget.contextWindow,
+              modelId: chosenModelId || routedTier,
+            },
+          }, requestId);
+        } catch { }
+
+        let cumulativeInputTokens = 0;
+
         const stream: any = await agent.stream(inputMessages, streamOptions);
 
         const hasFull = !!(stream as any)?.fullStream;
@@ -2122,7 +2158,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                   case 'step-finish':
                   case 'step-start':
                   case 'response-metadata':
-                    // Control chunks - don't need to forward to UI
+                    // Control chunks - usage_update is emitted via onStepFinish callback
                     handledChunk = true;
                     break;
                 }

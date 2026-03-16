@@ -176,10 +176,9 @@ export const browser_use_screenshot = makeLocalTool(
 
 export const browser_use_content = makeLocalTool(
   'browser_use_content',
-  'Get the text or HTML content of the current page. By default extracts only content visible in the current viewport (use browser_use_scroll to see more). Set viewport_only=false to get the full page. For interactive elements, prefer browser_use_get_interactive_elements instead.',
+  'Get the text or HTML content visible in the current viewport. Use browser_use_scroll to see more of the page. For interactive elements, prefer browser_use_get_interactive_elements instead.',
   z.object({
     mode: z.enum(['text', 'html']).optional().describe('Content mode: "text" for readable text (default), "html" for raw HTML'),
-    viewport_only: z.boolean().optional().describe('If true (default), only extract content visible in the current viewport. Set to false for full page content.'),
     max_length: z.number().optional().describe('Maximum content length in characters (default: 15000)'),
     wait_for_selector: z.string().optional().describe('Optional CSS selector to wait for before extracting content'),
     wait_timeout: z.number().optional().describe('Wait timeout in ms for wait_for_selector (default: 5000)'),
@@ -190,7 +189,6 @@ export const browser_use_content = makeLocalTool(
     title: z.string().optional(),
     content: z.string().optional(),
     mode: z.string().optional(),
-    viewport_only: z.boolean().optional(),
     error: z.string().optional(),
   }),
   15000,

@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -70,7 +71,7 @@ async def handle_content(req: web.Request) -> web.Response:
             if mode not in ("text", "html"):
                 mode = "text"
             max_length = _clamp_int(body.get("max_length", 15000), 15000, 500, 200000)
-            viewport_only = bool(body.get("viewport_only", True))
+            viewport_only = True
             selector = str(body.get("wait_for_selector") or "").strip()
             wait_timeout = _clamp_int(body.get("wait_timeout", 5000), 5000, 500, 60000)
             if selector:
@@ -170,7 +171,6 @@ async def handle_content(req: web.Request) -> web.Response:
                 "title": title,
                 "content": str(content or "")[:max_length],
                 "mode": mode,
-                "viewport_only": viewport_only,
             })
         except Exception as e:
             return _err(f"Content extraction failed: {e}")
@@ -195,10 +195,16 @@ async def handle_execute_script(req: web.Request) -> web.Response:
     wait_for_selector = str(body.get("wait_for_selector") or "").strip()
     wait_timeout = _clamp_int(body.get("wait_timeout", 5000), 5000, 250, 120000)
     timeout_ms = _clamp_int(body.get("timeout", 30000), 30000, 250, 300000)
+    # Inline args as JSON so we don't need to pass them through evaluate().
+    # Outer () => wrapper satisfies browser-use's format validation (must start
+    # with "("), and the inner async IIFE preserves await support for user scripts.
+    args_json = json.dumps(script_args, default=str)
     wrapped_script = (
-        "async (input) => {\n"
-        "  const args = (input && typeof input === 'object' && !Array.isArray(input)) ? input : {};\n"
-        f"{script}\n"
+        "() => {\n"
+        "  const args = " + args_json + ";\n"
+        "  return (async () => {\n"
+        + script + "\n"
+        "  })();\n"
         "}"
     )
 
@@ -214,7 +220,7 @@ async def handle_execute_script(req: web.Request) -> web.Response:
 
             started_at = asyncio.get_event_loop().time()
             result = await asyncio.wait_for(
-                _evaluate(wrapped_script, script_args),
+                _evaluate(wrapped_script),
                 timeout=max(0.25, float(timeout_ms) / 1000.0),
             )
             elapsed_ms = int((asyncio.get_event_loop().time() - started_at) * 1000)

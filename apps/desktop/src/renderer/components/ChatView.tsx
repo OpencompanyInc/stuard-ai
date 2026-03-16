@@ -279,6 +279,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
       buildContextUsageMetrics({
         usage: contextUsage,
         modelId: contextModelId,
+        contextWindow: contextUsage?.contextWindow,
         modelById,
       }),
     [contextUsage, contextModelId, modelById],

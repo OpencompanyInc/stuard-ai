@@ -51,7 +51,7 @@ export interface ToolSchema {
 // TOOL DEFINITIONS (synced from cloud-ai/src/tools/definitions.ts)
 // ============================================================================
 
-type ToolCategory = 'core' | 'system' | 'input' | 'ui' | 'vision' | 'data' | 'integrations' | 'flow' | 'utils' | 'ollama';
+type ToolCategory = 'core' | 'system' | 'input' | 'ui' | 'vision' | 'data' | 'integrations' | 'flow' | 'utils' | 'ollama' | 'cloud_storage';
 
 interface ToolDefinition {
   id: string;
@@ -223,6 +223,13 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'show_info_card', category: 'ui', kind: 'local', description: 'Display a rich information card with optional action', argsTemplate: { title: 'Info', message: '', variant: 'info', actionLabel: '', footer: '' }, outputSchema: { action: 'string' } },
   { id: 'show_progress', category: 'ui', kind: 'local', description: 'Display a progress bar for long-running tasks', argsTemplate: { progress: 50, label: '', sublabel: '', variant: 'download', status: 'active', color: 'blue' }, outputSchema: { ok: 'boolean' } },
   { id: 'show_form', category: 'ui', kind: 'local', description: 'Display a multi-page form/wizard to collect structured user input. Supports select, multiselect, text, textarea, toggle, number, slider fields.', argsTemplate: { title: 'User Input', description: '', pages: [{ id: 'page1', title: 'Page 1', fields: [] }], submitLabel: 'Submit', cancelLabel: 'Cancel', showProgress: true }, outputSchema: { submitted: 'boolean', cancelled: 'boolean', data: 'object' } },
+
+  // --- CLOUD STORAGE ---
+  { id: 'cloud_storage_upload', category: 'cloud_storage', kind: 'cloud', description: 'Upload a local file to cloud storage with public or private visibility', argsTemplate: { path: '', folder: '', visibility: 'private', filename: '' }, outputSchema: { ok: 'boolean', objectName: 'string', url: 'string', visibility: 'string', bytesWritten: 'number', contentType: 'string' } },
+  { id: 'cloud_storage_get_url', category: 'cloud_storage', kind: 'cloud', description: 'Get a download URL for a file in cloud storage (public or signed)', argsTemplate: { objectName: '', visibility: 'private' }, outputSchema: { ok: 'boolean', url: 'string', visibility: 'string', objectName: 'string' } },
+  { id: 'cloud_storage_list', category: 'cloud_storage', kind: 'cloud', description: 'List files in your cloud storage', argsTemplate: { prefix: '', limit: 100 }, outputSchema: { ok: 'boolean', files: 'any[]', count: 'number' } },
+  { id: 'cloud_storage_delete', category: 'cloud_storage', kind: 'cloud', description: 'Delete a file from cloud storage', argsTemplate: { objectName: '' }, outputSchema: { ok: 'boolean', deleted: 'string' } },
+  { id: 'cloud_storage_set_visibility', category: 'cloud_storage', kind: 'cloud', description: 'Change file visibility between public and private', argsTemplate: { objectName: '', visibility: 'public' }, outputSchema: { ok: 'boolean', visibility: 'string', url: 'string', objectName: 'string' } },
 
   // --- INTEGRATIONS ---
   { id: 'google_get_userinfo', category: 'integrations', kind: 'cloud', description: 'Get Google account profile via oauth2 v3 userinfo (Current user profile info).', argsTemplate: { profile: 'default' }, outputSchema: { me: 'object' } },
@@ -1334,6 +1341,111 @@ if (TOOL_SCHEMAS['whatsapp_status']) {
   TOOL_SCHEMAS['whatsapp_status'].description = 'Check whether the current user has a WhatsApp number connected and ready for workflow messages.';
 }
 
+// --- Cloud Storage tool args ---
+const VISIBILITY_OPTIONS = [
+  { value: 'private', label: 'Private (Signed URL)', description: 'Time-limited signed URL — secure, expires in 1 hour' },
+  { value: 'public', label: 'Public (Permanent URL)', description: 'Permanent public URL — anyone with the link can access' },
+];
+
+if (TOOL_SCHEMAS['cloud_storage_upload']) {
+  TOOL_SCHEMAS['cloud_storage_upload'].args = {
+    path: {
+      type: 'string',
+      label: 'File Path',
+      description: 'Local file path to upload.',
+      required: true,
+      placeholder: 'C:\\Users\\me\\photo.jpg',
+    },
+    folder: {
+      type: 'string',
+      label: 'Folder',
+      description: 'Subfolder in cloud storage.',
+      placeholder: 'instagram',
+    },
+    visibility: {
+      type: 'select',
+      label: 'Visibility',
+      description: 'Public files get a permanent URL (useful for Instagram). Private files get a signed URL.',
+      options: VISIBILITY_OPTIONS,
+      default: 'private',
+    },
+    filename: {
+      type: 'string',
+      label: 'Filename Override',
+      description: 'Override the filename in storage. Defaults to the original filename.',
+      placeholder: 'my-photo.jpg',
+      advanced: true,
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['cloud_storage_get_url']) {
+  TOOL_SCHEMAS['cloud_storage_get_url'].args = {
+    objectName: {
+      type: 'string',
+      label: 'Object Name',
+      description: 'The file path in cloud storage.',
+      required: true,
+      placeholder: 'instagram/photo.jpg',
+    },
+    visibility: {
+      type: 'select',
+      label: 'URL Type',
+      description: 'Public returns a permanent URL. Private returns a time-limited signed URL.',
+      options: VISIBILITY_OPTIONS,
+      default: 'private',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['cloud_storage_list']) {
+  TOOL_SCHEMAS['cloud_storage_list'].args = {
+    prefix: {
+      type: 'string',
+      label: 'Folder Prefix',
+      description: 'Filter files by folder prefix.',
+      placeholder: 'instagram/',
+    },
+    limit: {
+      type: 'number',
+      label: 'Max Results',
+      description: 'Maximum number of files to return.',
+      default: 100,
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['cloud_storage_delete']) {
+  TOOL_SCHEMAS['cloud_storage_delete'].args = {
+    objectName: {
+      type: 'string',
+      label: 'Object Name',
+      description: 'The file path to delete from cloud storage.',
+      required: true,
+      placeholder: 'instagram/photo.jpg',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['cloud_storage_set_visibility']) {
+  TOOL_SCHEMAS['cloud_storage_set_visibility'].args = {
+    objectName: {
+      type: 'string',
+      label: 'Object Name',
+      description: 'The file path in cloud storage.',
+      required: true,
+      placeholder: 'instagram/photo.jpg',
+    },
+    visibility: {
+      type: 'select',
+      label: 'Visibility',
+      description: 'Set the file to public or private.',
+      options: VISIBILITY_OPTIONS,
+      default: 'public',
+    },
+  };
+}
+
 // --- Tool-specific 'mode' overrides ---
 // (mode was removed from generic KNOWN_SELECT_OPTIONS to avoid capture_media modes leaking into AI tools)
 
@@ -2371,6 +2483,13 @@ const AGENT_AVAILABLE_TOOLS: ArgOption[] = [
   { value: 'whatsapp_mark_read', label: 'WhatsApp Read Receipt', description: 'Mark a WhatsApp message as read', group: 'Integrations' },
   { value: 'whatsapp_upload_media', label: 'WhatsApp Upload', description: 'Upload media to WhatsApp', group: 'Integrations' },
   { value: 'whatsapp_status', label: 'WhatsApp Status', description: 'Check WhatsApp connection status', group: 'Integrations' },
+
+  // Cloud Storage
+  { value: 'cloud_storage_upload', label: 'Upload File', description: 'Upload file to cloud storage (public/private)', group: 'Cloud Storage' },
+  { value: 'cloud_storage_get_url', label: 'Get File URL', description: 'Get download URL for a stored file', group: 'Cloud Storage' },
+  { value: 'cloud_storage_list', label: 'List Files', description: 'List files in cloud storage', group: 'Cloud Storage' },
+  { value: 'cloud_storage_delete', label: 'Delete File', description: 'Delete a file from cloud storage', group: 'Cloud Storage' },
+  { value: 'cloud_storage_set_visibility', label: 'Set Visibility', description: 'Change file to public or private', group: 'Cloud Storage' },
 
   // Headless Agents
   { value: 'deploy_headless_agent', label: 'Deploy Agent', description: 'Launch a background agent', group: 'Agents' },
