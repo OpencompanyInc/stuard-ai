@@ -156,8 +156,12 @@ export function useStorage() {
       const data = await cloudFetch(`/v1/cloud-storage/files${qs}`);
       if (data.ok && data.files) {
         setFiles(data.files);
+      } else if (data.error) {
+        console.warn('[useStorage] fetchFiles failed:', data.error);
       }
-    } catch {}
+    } catch (e: any) {
+      console.warn('[useStorage] fetchFiles error:', e?.message);
+    }
   }, []);
 
   // ── Purchase Plan ────────────────────────────────────────────────────────
@@ -372,13 +376,13 @@ export function useStorage() {
     setLoading(true);
     setError(null);
     try {
-      await Promise.all([fetchPlans(), fetchInfo(), fetchQuota(), fetchSyncStatus()]);
+      await Promise.all([fetchPlans(), fetchInfo(), fetchQuota(), fetchSyncStatus(), fetchFiles()]);
     } catch (e: any) {
       console.error('[useStorage] refresh failed:', e?.message);
       setError('Could not load storage data');
     }
     setLoading(false);
-  }, [fetchPlans, fetchInfo, fetchQuota, fetchSyncStatus]);
+  }, [fetchPlans, fetchInfo, fetchQuota, fetchSyncStatus, fetchFiles]);
 
   // Initial load
   useEffect(() => {

@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { verifyToken, getStorageUsage } from '../supabase';
+import { verifyToken, getStorageUsage, upsertStorageUsage } from '../supabase';
 import {
   generateUserUploadUrl,
   generateUserDownloadUrl,
@@ -230,6 +230,15 @@ export async function handleCloudStorageRoutes(req: IncomingMessage, res: Server
       }
 
       await deleteUserFile(user.userId, objectName);
+
+      // Update cold_storage_bytes after deletion
+      try {
+        const totalBytes = await getUserStorageBytes(user.userId);
+        await upsertStorageUsage(user.userId, { cold_storage_bytes: totalBytes });
+      } catch (e: any) {
+        console.warn('[cloud-storage] failed to update cold_storage_bytes after delete:', e?.message);
+      }
+
       json(res, 200, { ok: true, message: 'File deleted' });
     } catch (e: any) {
       console.error('[cloud-storage] delete error:', e?.message);
@@ -293,6 +302,15 @@ export async function handleCloudStorageRoutes(req: IncomingMessage, res: Server
       console.log(`[cloud-storage] upload starting: user=${user.userId} file=${filename} folder=${folderPath || '/'} size=${req.headers['content-length'] || 'unknown'} type=${contentType}`);
       const result = await uploadUserFileStream(user.userId, filename, req, contentType, MAX_UPLOAD_BYTES, folderPath);
       console.log(`[cloud-storage] upload complete: ${result.objectName} (${result.bytesWritten} bytes)`);
+
+      // Update cold_storage_bytes so billing and UI stay accurate
+      try {
+        const totalBytes = await getUserStorageBytes(user.userId);
+        await upsertStorageUsage(user.userId, { cold_storage_bytes: totalBytes });
+      } catch (e: any) {
+        console.warn('[cloud-storage] failed to update cold_storage_bytes after upload:', e?.message);
+      }
+
       json(res, 200, { ok: true, objectName: result.objectName, bytesWritten: result.bytesWritten });
     } catch (e: any) {
       console.error('[cloud-storage] upload error:', e?.stack || e?.message || e);

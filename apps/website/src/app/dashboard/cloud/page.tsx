@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { getCloudEngineStatus } from '@/lib/cloudApi';
 import { CloudOverview } from './components/CloudOverview';
+import { CloudChat } from './components/CloudChat';
 import { CloudTerminal } from './components/CloudTerminal';
 import { CloudFileBrowser } from './components/CloudFileBrowser';
 import { CloudMonitoring } from './components/CloudMonitoring';
@@ -10,7 +11,7 @@ import { CloudSnapshots } from './components/CloudSnapshots';
 import { CloudBilling } from './components/CloudBilling';
 import { ProvisionFlow } from './components/ProvisionFlow';
 
-type CloudTab = 'overview' | 'terminal' | 'files' | 'monitoring' | 'snapshots' | 'billing';
+type CloudTab = 'overview' | 'chat' | 'terminal' | 'files' | 'monitoring' | 'snapshots' | 'billing';
 
 export default function CloudDashboardPage() {
   const [activeTab, setActiveTab] = useState<CloudTab>('overview');
@@ -206,6 +207,7 @@ export default function CloudDashboardPage() {
 
   const tabs: { id: CloudTab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
+    { id: 'chat', label: 'Chat' },
     { id: 'terminal', label: 'Terminal' },
     { id: 'files', label: 'Files' },
     { id: 'monitoring', label: 'Monitoring' },
@@ -253,6 +255,7 @@ export default function CloudDashboardPage() {
       {/* Tab Content */}
       <div className="mt-4">
         {activeTab === 'overview' && <CloudOverview engine={engine} onRefresh={loadStatus} />}
+        {activeTab === 'chat' && <CloudChat engine={engine} />}
         {activeTab === 'terminal' && <CloudTerminal engine={engine} />}
         {activeTab === 'files' && <CloudFileBrowser engine={engine} />}
         {activeTab === 'monitoring' && <CloudMonitoring engine={engine} />}

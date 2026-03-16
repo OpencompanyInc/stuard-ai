@@ -1875,25 +1875,36 @@ export async function insertBillingEvent(
 ): Promise<void> {
   if (!supabaseService) return;
   try {
+    const billingHourStr = (billingHour || new Date()).toISOString();
+
+    // Use INSERT (not upsert) so we can detect whether the row already existed.
+    // If the unique constraint (user_id, event_type, billing_hour) fires, the
+    // billing event was already recorded and credits were already debited — skip.
     const { error } = await supabaseService
       .from('compute_billing_events')
-      .upsert({
+      .insert({
         user_id: userId,
         event_type: eventType,
         credits_deducted: creditsDeducted,
         details,
-        billing_hour: (billingHour || new Date()).toISOString(),
-      }, { onConflict: 'user_id,event_type,billing_hour' });
+        billing_hour: billingHourStr,
+      });
+
     if (error) {
+      // 23505 = unique_violation — this hour was already billed, nothing to do
+      if (error.code === '23505') return;
       console.error('[supabase] insertBillingEvent error:', error.message);
-    } else if (creditsDeducted > 0) {
-      const timeKey = (billingHour || new Date()).toISOString();
+      return;
+    }
+
+    // Only debit credits when we successfully inserted a NEW billing event
+    if (creditsDeducted > 0) {
       const amountUsd = Number(details?.hourlyUsd ?? details?.hourly_usd ?? details?.monthly_usd ?? 0) || null;
       await debitCredits(userId, {
         sourceType: `billing_${eventType}`,
         sourceRef: eventType === 'storage_purchase'
-          ? `${eventType}:${details?.plan_id || 'plan'}:${timeKey}`
-          : `${eventType}:${timeKey}`,
+          ? `${eventType}:${details?.plan_id || 'plan'}:${billingHourStr}`
+          : `${eventType}:${billingHourStr}`,
         credits: creditsDeducted,
         amountUsd,
         metadata: details,

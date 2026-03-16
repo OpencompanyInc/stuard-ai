@@ -174,3 +174,13 @@ export async function getComputeUsage() {
     engine_status: data.billing?.engine_status || data.engine?.status,
   };
 }
+
+// ── VM Agent Chat ──────────────────────────────────────────────────────────
+
+export async function sendVMAgentChat(message: string, conversationId?: string, model?: string) {
+  return apiFetch<{ text?: string; conversationId?: string }>('/v1/vm/agent/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message, conversationId, model }),
+    timeoutMs: 180_000, // 3 min — agent can take a while
+  });
+}

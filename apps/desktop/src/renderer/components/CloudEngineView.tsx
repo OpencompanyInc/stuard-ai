@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { clsx } from 'clsx';
-import { Cloud, Terminal, FolderOpen, Activity, Power, PowerOff, Trash2, RefreshCw, Server, Loader2, Sparkles, CreditCard, Camera, RotateCcw, Plus, X } from 'lucide-react';
+import { Cloud, Terminal, FolderOpen, Activity, Power, PowerOff, Trash2, RefreshCw, Server, Loader2, Sparkles, CreditCard, Camera, RotateCcw, Plus, X, MessageSquare } from 'lucide-react';
 import { useCloudEngine } from '../hooks/useCloudEngine';
 import { CloudTerminalPanel } from './CloudTerminalPanel';
 import { CloudFileBrowser } from './CloudFileBrowser';
 import { CloudResourceMonitor } from './CloudResourceMonitor';
+import { CloudChatPanel } from './CloudChatPanel';
 
-type CloudTab = 'overview' | 'terminal' | 'files' | 'monitoring' | 'billing' | 'snapshots';
+type CloudTab = 'overview' | 'chat' | 'terminal' | 'files' | 'monitoring' | 'billing' | 'snapshots';
 
 interface CloudEngineViewProps {
   className?: string;
@@ -142,6 +143,7 @@ export const CloudEngineView: React.FC<CloudEngineViewProps> = ({ className }) =
 
   const tabs: { id: CloudTab; label: string; icon: any }[] = [
     { id: 'overview', label: 'Info', icon: Server },
+    { id: 'chat', label: 'Chat', icon: MessageSquare },
     { id: 'terminal', label: 'Shell', icon: Terminal },
     { id: 'files', label: 'Files', icon: FolderOpen },
     { id: 'monitoring', label: 'Stats', icon: Activity },
@@ -245,6 +247,10 @@ export const CloudEngineView: React.FC<CloudEngineViewProps> = ({ className }) =
 
             {error && <div className="text-[10px] text-red-500 text-center">{error}</div>}
           </div>
+        )}
+
+        {tab === 'chat' && (
+          <CloudChatPanel engine={engine} className="w-full h-full" />
         )}
 
         {tab === 'terminal' && (
