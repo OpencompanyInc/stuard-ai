@@ -211,14 +211,14 @@ describe('pricing module', () => {
 
     it('should return credits for PRO plan', () => {
       const credits = monthlyCreditLimitForPlan('PRO');
-      // $29.25 budget * 33 credits/USD ≈ 965 credits
-      expect(credits).toBe(965);
+      // $31.50 budget (70%) * 33 credits/USD ≈ 1040 credits
+      expect(credits).toBe(1040);
     });
 
     it('should return credits for POWER plan', () => {
       const credits = monthlyCreditLimitForPlan('POWER');
-      // $65 budget * 33 credits/USD = 2145 credits
-      expect(credits).toBe(2145);
+      // $75 budget (75%) * 33 credits/USD = 2475 credits
+      expect(credits).toBe(2475);
     });
 
     it('should return -1 (unlimited) for BYOK plan', () => {
@@ -266,14 +266,14 @@ describe('pricing module', () => {
 
     it('should have correct configuration for PRO', () => {
       expect(PLAN_CONFIG.PRO.priceUsd).toBe(45);
-      expect(PLAN_CONFIG.PRO.budgetUsd).toBe(29.25);
+      expect(PLAN_CONFIG.PRO.budgetUsd).toBe(31.50);
       expect(PLAN_CONFIG.PRO.isRecurring).toBe(true);
       expect(PLAN_CONFIG.PRO.allModels).toBe(true);
     });
 
     it('should have correct configuration for POWER', () => {
       expect(PLAN_CONFIG.POWER.priceUsd).toBe(100);
-      expect(PLAN_CONFIG.POWER.budgetUsd).toBe(65);
+      expect(PLAN_CONFIG.POWER.budgetUsd).toBe(75);
       expect(PLAN_CONFIG.POWER.isRecurring).toBe(true);
       expect(PLAN_CONFIG.POWER.allModels).toBe(true);
     });

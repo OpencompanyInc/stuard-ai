@@ -54,7 +54,7 @@ const PROVIDERS: ProviderConfig[] = [
     clientSecret: FACEBOOK_APP_SECRET,
     redirectPath: FACEBOOK_REDIRECT_PATH,
     authorizeUrl: 'https://www.facebook.com/v22.0/dialog/oauth',
-    requestedScopes: () => process.env.FACEBOOK_SCOPES || 'public_profile,email',
+    requestedScopes: () => process.env.FACEBOOK_SCOPES || 'public_profile,email,pages_show_list,pages_read_engagement,pages_manage_posts',
     exchangeCode: async (code, redirectUri) => {
       const tokenUrl = new URL('https://graph.facebook.com/v22.0/oauth/access_token');
       tokenUrl.searchParams.set('client_id', FACEBOOK_APP_ID);
@@ -153,11 +153,11 @@ const PROVIDERS: ProviderConfig[] = [
     },
     fetchProfile: async (accessToken) => {
       const profileUrl = new URL('https://graph.instagram.com/v22.0/me');
-      profileUrl.searchParams.set('fields', 'user_id,username,name,account_type,profile_picture_url');
+      profileUrl.searchParams.set('fields', 'id,user_id,username,name,account_type,profile_picture_url');
       profileUrl.searchParams.set('access_token', accessToken);
       const res = await fetch(profileUrl.toString());
       const body = await res.json().catch(() => null) as any;
-      if (!res.ok || !body?.id) {
+      if (!res.ok || (!body?.id && !body?.user_id)) {
         const msg = body?.error?.message || `${res.status} ${res.statusText}`;
         throw new Error(`Profile lookup failed: ${msg}`);
       }
@@ -408,7 +408,7 @@ export async function handleMetaRoutes(req: IncomingMessage, res: ServerResponse
         expires_at: expiresAt,
         meta: {
           token_type: token.token_type || 'bearer',
-          external_user_id: profile?.id || token.raw?.user_id || null,
+          external_user_id: profile?.id || profile?.user_id || token.raw?.user_id || null,
           profile,
           provider: cfg.provider,
         },

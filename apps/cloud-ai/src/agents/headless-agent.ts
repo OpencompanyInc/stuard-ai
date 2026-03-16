@@ -11,6 +11,8 @@ import { listHeadlessAgentTasks } from '../tools/list-headless-agent-tasks';
 import { outlook_get_me, outlook_list_messages, outlook_search_messages, outlook_send_mail } from '../tools/outlook-tools';
 import { github_get_me, github_list_repos, github_list_issues, github_create_issue } from '../tools/github-tools';
 import { google_get_userinfo, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, calendar_list_events, calendar_create_event, calendar_delete_event, calendar_update_event, tasks_list, drive_list_files, sheets_read_range, sheets_create_spreadsheet, sheets_write_range, sheets_append_rows, sheets_clear_range, sheets_get_spreadsheet, sheets_add_sheet, sheets_format_cells, sheets_batch_update_values, sheets_delete_rows_columns, sheets_sort_range, sheets_auto_resize, docs_get_document, docs_create_document, docs_write_text } from '../tools/google-tools';
+import { facebook_get_me, facebook_list_pages, facebook_list_page_posts, facebook_create_page_post, instagram_get_me, instagram_list_media, instagram_publish_media, threads_get_me, threads_list_posts, threads_publish_post } from '../tools/meta-social-tools';
+import { whatsapp_send_message, whatsapp_send_media, whatsapp_send_reaction, whatsapp_mark_read, whatsapp_upload_media, whatsapp_status } from '../tools/whatsapp-tools';
 import { send_hotkey, list_directory, read_file, write_file, create_directory, move_file, canvas_list, canvas_read, canvas_write, canvas_create, canvas_delete, calendar_crud, task_crud, task_reminders, planner_list_items, capture_media, describe_media_capture_capabilities, run_command, run_system_command, search_local_workflows, import_workflow, run_automation, stop_automation, search_past_conversations, get_conversation_context, agent_decision, agent_extract, glob, grep, browser_use_status, browser_use_configure, browser_use_execute_script, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies, browser_use_hover, browser_use_select_option, browser_use_get_interactive_elements, browser_use_fill_form, browser_use_wait_for } from '../tools/device-tools';
 import { web_search } from '../tools/perplexity-tools';
 
@@ -132,6 +134,22 @@ export function getHeadlessAgent(
     github_list_repos,
     github_list_issues,
     github_create_issue,
+    facebook_get_me,
+    facebook_list_pages,
+    facebook_list_page_posts,
+    facebook_create_page_post,
+    instagram_get_me,
+    instagram_list_media,
+    instagram_publish_media,
+    threads_get_me,
+    threads_list_posts,
+    threads_publish_post,
+    whatsapp_send_message,
+    whatsapp_send_media,
+    whatsapp_send_reaction,
+    whatsapp_mark_read,
+    whatsapp_upload_media,
+    whatsapp_status,
 
     // Local Device Tools
     send_hotkey,
@@ -257,6 +275,34 @@ export function getHeadlessAgent(
     tools.github_list_repos = github_list_repos;
     tools.github_list_issues = github_list_issues;
     tools.github_create_issue = github_create_issue;
+  }
+
+  if (enabledIntegrations.includes('facebook')) {
+    tools.facebook_get_me = facebook_get_me;
+    tools.facebook_list_pages = facebook_list_pages;
+    tools.facebook_list_page_posts = facebook_list_page_posts;
+    tools.facebook_create_page_post = facebook_create_page_post;
+  }
+
+  if (enabledIntegrations.includes('instagram')) {
+    tools.instagram_get_me = instagram_get_me;
+    tools.instagram_list_media = instagram_list_media;
+    tools.instagram_publish_media = instagram_publish_media;
+  }
+
+  if (enabledIntegrations.includes('threads')) {
+    tools.threads_get_me = threads_get_me;
+    tools.threads_list_posts = threads_list_posts;
+    tools.threads_publish_post = threads_publish_post;
+  }
+
+  if (enabledIntegrations.includes('whatsapp')) {
+    tools.whatsapp_send_message = whatsapp_send_message;
+    tools.whatsapp_send_media = whatsapp_send_media;
+    tools.whatsapp_send_reaction = whatsapp_send_reaction;
+    tools.whatsapp_mark_read = whatsapp_mark_read;
+    tools.whatsapp_upload_media = whatsapp_upload_media;
+    tools.whatsapp_status = whatsapp_status;
   }
 
   // If specific tools are allowed, filter the final tools list

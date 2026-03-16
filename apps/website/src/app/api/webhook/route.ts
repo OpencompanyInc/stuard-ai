@@ -49,9 +49,9 @@ function getAmountCents(payload: any): number | null {
 }
 
 function tierFromAmount(amountDollars: number): { plan: PlanTier; multiplier: number } {
-  if (amountDollars >= 100) return { plan: 'power', multiplier: 2.0 };
-  if (amountDollars >= 30) return { plan: 'pro', multiplier: 1.5 };
-  return { plan: 'starter', multiplier: 1.0 };
+  if (amountDollars >= 100) return { plan: 'power', multiplier: 0.75 };
+  if (amountDollars >= 30) return { plan: 'pro', multiplier: 0.70 };
+  return { plan: 'starter', multiplier: 0.65 };
 }
 
 function getStringCandidate(...candidates: any[]): string | null {

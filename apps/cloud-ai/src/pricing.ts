@@ -29,9 +29,9 @@ export const PLAN_CONFIG: Record<PlanType, {
   allModels: boolean;
 }> = {
   FREE_TRIAL: { priceUsd: 0, budgetUsd: 0.45, isRecurring: false, allModels: false },
-  STARTER: { priceUsd: 10, budgetUsd: 6.50, isRecurring: true, allModels: true },
-  PRO: { priceUsd: 45, budgetUsd: 29.25, isRecurring: true, allModels: true },
-  POWER: { priceUsd: 100, budgetUsd: 65, isRecurring: true, allModels: true },
+  STARTER: { priceUsd: 10, budgetUsd: 6.50, isRecurring: true, allModels: true },   // 65%
+  PRO: { priceUsd: 45, budgetUsd: 31.50, isRecurring: true, allModels: true },     // 70%
+  POWER: { priceUsd: 100, budgetUsd: 75, isRecurring: true, allModels: true },      // 75%
   BYOK: { priceUsd: 0, budgetUsd: Infinity, isRecurring: false, allModels: true },
 };
 

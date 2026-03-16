@@ -18,12 +18,12 @@ export default function PricingPage() {
   const baseRate = 33;
   const tier = useMemo(() => {
     if (amount >= 100) {
-      return { name: 'Whale', multiplier: 2.0, badge: '2.0x Credits', accent: 'text-amber-600' };
+      return { name: 'Whale', multiplier: 0.75, badge: 'Best Rate', accent: 'text-amber-600' };
     }
     if (amount >= 30) {
-      return { name: 'Pro', multiplier: 1.5, badge: '1.5x Credits', accent: 'text-indigo-600' };
+      return { name: 'Pro', multiplier: 0.70, badge: 'Boosted Rate', accent: 'text-indigo-600' };
     }
-    return { name: 'Starter', multiplier: 1.0, badge: 'Standard Rate', accent: 'text-emerald-600' };
+    return { name: 'Starter', multiplier: 0.65, badge: 'Standard Rate', accent: 'text-emerald-600' };
   }, [amount]);
 
   const credits = Math.floor(amount * baseRate * tier.multiplier);
@@ -194,13 +194,13 @@ export default function PricingPage() {
                     {
                       title: 'Pro',
                       price: '$30 - $99',
-                      bonus: '1.5x credits (50% bonus)',
+                      bonus: 'Boosted rate — more credits per dollar',
                       accent: 'text-indigo-600',
                     },
                     {
                       title: 'Whale',
                       price: '$100+',
-                      bonus: '2.0x credits (double)',
+                      bonus: 'Best rate — maximum credits per dollar',
                       accent: 'text-amber-600',
                     },
                   ].map((plan) => (
@@ -223,7 +223,7 @@ export default function PricingPage() {
                 <div className="rounded-2xl bg-gray-900 p-6 text-white">
                   <p className="text-sm text-gray-300">Estimated credits</p>
                   <div className="text-4xl font-bold">{credits.toLocaleString()}</div>
-                  <p className="text-sm text-gray-300 mt-2">${amount} × {baseRate} × {tier.multiplier}x</p>
+                  <p className="text-sm text-gray-300 mt-2">${amount}/mo · {tier.name} tier</p>
                 </div>
                 <div className="space-y-3 text-sm text-gray-600">
                   <div className="flex items-center justify-between">

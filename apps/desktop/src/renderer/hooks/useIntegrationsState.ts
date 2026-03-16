@@ -104,7 +104,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
         try {
           const resp = await fetch(url, { headers });
           const j = await resp.json().catch(() => null);
-          serverConnected[slug] = !!(j && (j as any).ok && (j as any).connected);
+          if (j && (j as any).ok) {
+            // Server confirmed the check succeeded — trust the result
+            serverConnected[slug] = !!(j as any).connected;
+          } else {
+            // Server returned an error (auth failure, 500, etc.) — treat as transient
+            serverConnected[slug] = null;
+          }
         } catch {
           // Keep previous state on transient errors.
           serverConnected[slug] = null;
@@ -143,7 +149,12 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
             next[slug] = true;
             continue;
           }
-          if (connected === null && prev[slug]) {
+          // Preserve previously-connected state on transient errors (null)
+          // AND when server says not-connected (false) — the server's local
+          // token DB may have been wiped by a redeploy.  Explicit disconnects
+          // go through their own handlers that update connectedMap directly,
+          // so this won't prevent real user-initiated disconnects.
+          if (prev[slug]) {
             next[slug] = true;
           }
         }

@@ -69,12 +69,12 @@ async function billEngine(engine: CloudEngine, billingHour: Date): Promise<void>
         hourlyUsd,
       }, billingHour);
 
-      // Also log to usage_events for unified credit tracking
+      // Log to usage_events for analytics only — credits already debited above
       await logUsageEvent(userId, null, 'cloud_compute', {
         promptTokens: 0,
         completionTokens: 0,
         totalTokens: 0,
-        costUsd: hourlyUsd,
+        costUsd: 0,
       });
     }
   }

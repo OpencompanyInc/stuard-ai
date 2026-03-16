@@ -95,6 +95,19 @@ function main() {
     console.warn(`[prepare-agent] app/ package not found at ${appPkgSrc} — skipping`);
   }
 
+  // ── Copy the browser_server/ Python package (split from browser_use_server.py) ──
+  const browserServerSrc = path.join(agentSrcDir, "browser_server");
+  const browserServerDest = path.join(outDir, "browser_server");
+  if (fs.existsSync(browserServerSrc)) {
+    ensureDirSync(browserServerDest);
+    const serverFiles = fs.readdirSync(browserServerSrc).filter(f => f.endsWith(".py"));
+    for (const f of serverFiles) {
+      copyFileSync(path.join(browserServerSrc, f), path.join(browserServerDest, f));
+    }
+  } else {
+    console.warn(`[prepare-agent] browser_server/ package not found at ${browserServerSrc} — skipping`);
+  }
+
   const platform = process.platform;
 
   if (!fs.existsSync(distDir)) {

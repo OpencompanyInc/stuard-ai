@@ -46,6 +46,13 @@ export const DEFAULT_MAX_STEPS = Number(process.env.MASTRA_MAX_STEPS || process.
 // Clean helpers to avoid CR/LF or trailing slashes from secrets/envs
 const clean = (v: any) => String(v ?? '').trim();
 const cleanUrlBase = (v: any) => clean(v).replace(/\/+$/, '');
+const normalizeMetaRedirectPath = (value: string, callbackPath: string) => {
+  const cleaned = clean(value || callbackPath) || callbackPath;
+  if (cleaned === callbackPath) return callbackPath;
+  if (/\/connect\/?$/i.test(cleaned)) return callbackPath;
+  if (!cleaned.startsWith('/')) return callbackPath;
+  return cleaned;
+};
 
 export const CLOUD_PUBLIC_URL = cleanUrlBase(process.env.CLOUD_PUBLIC_URL || '');
 export const PREVIEW = process.env.PREVIEW === '1';
@@ -83,13 +90,13 @@ export const META_APP_ID = clean(process.env.META_APP_ID || process.env.INSTAGRA
 export const META_APP_SECRET = clean(process.env.META_APP_SECRET || process.env.INSTAGRAM_APP_SECRET || '');
 export const FACEBOOK_APP_ID = clean(process.env.FACEBOOK_APP_ID || META_APP_ID || '');
 export const FACEBOOK_APP_SECRET = clean(process.env.FACEBOOK_APP_SECRET || META_APP_SECRET || '');
-export const FACEBOOK_REDIRECT_PATH = clean(process.env.FACEBOOK_REDIRECT_PATH || '/integrations/facebook/callback');
+export const FACEBOOK_REDIRECT_PATH = normalizeMetaRedirectPath(process.env.FACEBOOK_REDIRECT_PATH || '', '/integrations/facebook/callback');
 export const INSTAGRAM_APP_ID = clean(process.env.INSTAGRAM_APP_ID || META_APP_ID || '');
 export const INSTAGRAM_APP_SECRET = clean(process.env.INSTAGRAM_APP_SECRET || META_APP_SECRET || '');
-export const INSTAGRAM_REDIRECT_PATH = clean(process.env.INSTAGRAM_REDIRECT_PATH || '/integrations/instagram/callback');
+export const INSTAGRAM_REDIRECT_PATH = normalizeMetaRedirectPath(process.env.INSTAGRAM_REDIRECT_PATH || '', '/integrations/instagram/callback');
 export const THREADS_APP_ID = clean(process.env.THREADS_APP_ID || META_APP_ID || '');
 export const THREADS_APP_SECRET = clean(process.env.THREADS_APP_SECRET || META_APP_SECRET || '');
-export const THREADS_REDIRECT_PATH = clean(process.env.THREADS_REDIRECT_PATH || '/integrations/threads/callback');
+export const THREADS_REDIRECT_PATH = normalizeMetaRedirectPath(process.env.THREADS_REDIRECT_PATH || '', '/integrations/threads/callback');
 
 export const WA_PHONE_NUMBER_ID = clean(process.env.WA_PHONE_NUMBER_ID || '');
 export const WA_ACCESS_TOKEN = clean(process.env.WA_ACCESS_TOKEN || '');

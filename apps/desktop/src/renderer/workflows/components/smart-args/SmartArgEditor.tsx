@@ -40,31 +40,31 @@ interface IntegrationProfile {
   account_email?: string | null;
 }
 
-function buildGoogleProfileOptions(profiles: IntegrationProfile[]): ArgOption[] {
-  const googleProfiles = [...profiles]
-    .filter((profile) => profile.provider === 'google')
+function buildIntegrationProfileOptions(profiles: IntegrationProfile[], provider: string, providerLabel: string): ArgOption[] {
+  const filteredProfiles = [...profiles]
+    .filter((profile) => profile.provider === provider)
     .sort((a, b) => {
       if (a.is_default !== b.is_default) return a.is_default ? -1 : 1;
       return String(a.account_email || a.profile_label || '').localeCompare(String(b.account_email || b.profile_label || ''));
     });
 
-  if (googleProfiles.length === 0) {
+  if (filteredProfiles.length === 0) {
     return [];
   }
 
-  const defaultProfile = googleProfiles.find((profile) => profile.is_default);
+  const defaultProfile = filteredProfiles.find((profile) => profile.is_default);
   const options: ArgOption[] = [
     {
       value: '',
-      label: defaultProfile?.account_email ? `Default: ${defaultProfile.account_email}` : 'Default Google account',
+      label: defaultProfile?.account_email ? `Default: ${defaultProfile.account_email}` : `Default ${providerLabel} account`,
       description: defaultProfile?.profile_label
         ? `Uses profile "${defaultProfile.profile_label}"`
-        : 'Use the default connected Google account',
+        : `Use the default connected ${providerLabel} account`,
     },
   ];
 
-  for (const profile of googleProfiles) {
-    const label = profile.account_email || profile.profile_label || 'Google account';
+  for (const profile of filteredProfiles) {
+    const label = profile.account_email || profile.profile_label || `${providerLabel} account`;
     const suffix = profile.is_default ? 'default' : `profile "${profile.profile_label}"`;
     options.push({
       value: profile.profile_label,
@@ -76,6 +76,21 @@ function buildGoogleProfileOptions(profiles: IntegrationProfile[]): ArgOption[] 
   }
 
   return options;
+}
+
+function getProfileProvider(toolName: string, argKey: string): { provider: string; label: string } | null {
+  if (argKey !== 'profile' && argKey !== 'account') return null;
+  if (toolName.startsWith('google_') || toolName.startsWith('gmail_') || toolName.startsWith('calendar_') || toolName.startsWith('drive_') || toolName.startsWith('docs_') || toolName.startsWith('sheets_') || toolName.startsWith('tasks_') || toolName === 'gmail_send') {
+    return { provider: 'google', label: 'Google' };
+  }
+  if (toolName.startsWith('facebook_')) return { provider: 'facebook', label: 'Facebook' };
+  if (toolName.startsWith('instagram_')) return { provider: 'instagram', label: 'Instagram' };
+  if (toolName.startsWith('threads_')) return { provider: 'threads', label: 'Threads' };
+  if (toolName.startsWith('outlook_')) return { provider: 'outlook', label: 'Outlook' };
+  if (toolName.startsWith('github_')) return { provider: 'github', label: 'GitHub' };
+  if (toolName.startsWith('discord_')) return { provider: 'discord', label: 'Discord' };
+  if (toolName.startsWith('reddit_')) return { provider: 'reddit', label: 'Reddit' };
+  return null;
 }
 
 /**
@@ -114,53 +129,52 @@ export interface SmartArgEditorProps {
 export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNodes, workflowVariables }: SmartArgEditorProps) {
   const schema = useMemo(() => getToolSchema(toolName), [toolName]);
   const argSchema = schema?.args[argKey];
-  const shouldUseGoogleAccountDropdown =
-    (toolName === 'gmail_send_message' || toolName === 'gmail_send') &&
-    (argKey === 'profile' || argKey === 'account');
-  const [googleProfileOptions, setGoogleProfileOptions] = useState<ArgOption[]>([]);
-  const [googleProfilesLoading, setGoogleProfilesLoading] = useState(false);
+  const profileProvider = useMemo(() => getProfileProvider(toolName, argKey), [toolName, argKey]);
+  const shouldUseIntegrationProfileDropdown = !!profileProvider;
+  const [integrationProfileOptions, setIntegrationProfileOptions] = useState<ArgOption[]>([]);
+  const [integrationProfilesLoading, setIntegrationProfilesLoading] = useState(false);
 
   useEffect(() => {
-    if (!shouldUseGoogleAccountDropdown) return;
+    if (!shouldUseIntegrationProfileDropdown || !profileProvider) return;
 
     let cancelled = false;
 
-    const loadGoogleProfiles = async () => {
-      setGoogleProfilesLoading(true);
+    const loadProfiles = async () => {
+      setIntegrationProfilesLoading(true);
       try {
         const { data } = await supabase.auth.getSession();
         const token = data.session?.access_token;
         if (!token) {
-          if (!cancelled) setGoogleProfileOptions([]);
+          if (!cancelled) setIntegrationProfileOptions([]);
           return;
         }
 
-        const resp = await fetch(`${CLOUD_AI_HTTP}/integrations/profiles?provider=google`, {
+        const resp = await fetch(`${CLOUD_AI_HTTP}/integrations/profiles?provider=${encodeURIComponent(profileProvider.provider)}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const json = await resp.json().catch(() => null);
         const rawProfiles = Array.isArray(json?.profiles) ? json.profiles : [];
         const profiles: IntegrationProfile[] = rawProfiles.map((profile: any) => ({
-          provider: profile.provider || 'google',
+          provider: profile.provider || profileProvider.provider,
           profile_label: profile.profile || profile.profile_label || 'default',
           is_default: !!(profile.isDefault ?? profile.is_default),
           account_email: profile.email || profile.account_email || null,
         }));
 
         if (!cancelled) {
-          setGoogleProfileOptions(buildGoogleProfileOptions(profiles));
+          setIntegrationProfileOptions(buildIntegrationProfileOptions(profiles, profileProvider.provider, profileProvider.label));
         }
       } catch {
-        if (!cancelled) setGoogleProfileOptions([]);
+        if (!cancelled) setIntegrationProfileOptions([]);
       } finally {
-        if (!cancelled) setGoogleProfilesLoading(false);
+        if (!cancelled) setIntegrationProfilesLoading(false);
       }
     };
 
-    void loadGoogleProfiles();
+    void loadProfiles();
 
     const handleProfilesChanged = () => {
-      void loadGoogleProfiles();
+      void loadProfiles();
     };
 
     window.addEventListener('integrations.connected.changed', handleProfilesChanged);
@@ -168,7 +182,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
       cancelled = true;
       window.removeEventListener('integrations.connected.changed', handleProfilesChanged);
     };
-  }, [shouldUseGoogleAccountDropdown]);
+  }, [shouldUseIntegrationProfileDropdown, profileProvider]);
 
   // If no schema, infer the best editor from the value type
   if (!argSchema) {
@@ -276,25 +290,25 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
       );
     }
 
-    if (shouldUseGoogleAccountDropdown) {
+    if (shouldUseIntegrationProfileDropdown && profileProvider) {
       return (
         <div className="space-y-2">
           <SelectInput
             value={String(value ?? '')}
             onChange={onChange}
-            options={googleProfileOptions}
+            options={integrationProfileOptions}
             placeholder={
-              googleProfilesLoading
-                ? 'Loading connected Google accounts...'
-                : googleProfileOptions.length > 0
-                  ? 'Select connected Google account'
-                  : 'No Google accounts connected'
+              integrationProfilesLoading
+                ? `Loading connected ${profileProvider.label} accounts...`
+                : integrationProfileOptions.length > 0
+                  ? `Select connected ${profileProvider.label} account`
+                  : `No ${profileProvider.label} accounts connected`
             }
-            allowFreeform={googleProfileOptions.length === 0}
+            allowFreeform={integrationProfileOptions.length === 0}
           />
-          {!googleProfilesLoading && googleProfileOptions.length === 0 && (
+          {!integrationProfilesLoading && integrationProfileOptions.length === 0 && (
             <p className="text-[11px] wf-fg-faint leading-snug">
-              Connect a Google account in Integrations to populate this list.
+              Connect a {profileProvider.label} account in Integrations to populate this list.
             </p>
           )}
         </div>

@@ -244,10 +244,27 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'docs_create_document', category: 'integrations', kind: 'cloud', description: 'Create a new Google Doc', argsTemplate: { title: '', profile: '' }, outputSchema: { document: 'object' } },
   { id: 'docs_write_text', category: 'integrations', kind: 'cloud', description: 'Write text to a Google Doc', argsTemplate: { documentId: '', text: '', profile: '' }, outputSchema: { result: 'object' } },
   { id: 'tasks_list', category: 'integrations', kind: 'cloud', description: 'List Google Tasks', argsTemplate: { tasklist: '', maxResults: 10, profile: '' }, outputSchema: { items: 'any[]', count: 'number' } },
+  { id: 'facebook_get_me', category: 'integrations', kind: 'cloud', description: 'Get the connected Facebook profile and managed Pages', argsTemplate: { profile: '' }, outputSchema: { me: 'object', pages: 'any[]', count: 'number' } },
+  { id: 'facebook_list_pages', category: 'integrations', kind: 'cloud', description: 'List Facebook Pages the connected user can manage', argsTemplate: { profile: '' }, outputSchema: { pages: 'any[]', count: 'number' } },
+  { id: 'facebook_list_page_posts', category: 'integrations', kind: 'cloud', description: 'List posts from a Facebook Page', argsTemplate: { page_id: '', limit: 10, profile: '' }, outputSchema: { page: 'object', posts: 'any[]', count: 'number', paging: 'object' } },
+  { id: 'facebook_create_page_post', category: 'integrations', kind: 'cloud', description: 'Create a post on a Facebook Page', argsTemplate: { page_id: '', message: '', link: '', published: true, profile: '' }, outputSchema: { ok: 'boolean', id: 'string', page: 'object', permalink_url: 'string' } },
+  { id: 'instagram_get_me', category: 'integrations', kind: 'cloud', description: 'Get the connected Instagram professional account profile', argsTemplate: { profile: '' }, outputSchema: { me: 'object', userId: 'string' } },
+  { id: 'instagram_list_media', category: 'integrations', kind: 'cloud', description: 'List media from the connected Instagram professional account', argsTemplate: { limit: 10, profile: '' }, outputSchema: { items: 'any[]', count: 'number', paging: 'object' } },
+  { id: 'instagram_publish_media', category: 'integrations', kind: 'cloud', description: 'Publish IMAGE, VIDEO, or REELS media to Instagram from a public URL', argsTemplate: { media_type: 'IMAGE', image_url: '', video_url: '', caption: '', alt_text: '', thumb_offset: 0, profile: '' }, outputSchema: { ok: 'boolean', creation_id: 'string', id: 'string', media_type: 'string' } },
+  { id: 'threads_get_me', category: 'integrations', kind: 'cloud', description: 'Get the connected Threads profile', argsTemplate: { profile: '' }, outputSchema: { me: 'object', userId: 'string' } },
+  { id: 'threads_list_posts', category: 'integrations', kind: 'cloud', description: 'List recent posts from the connected Threads profile', argsTemplate: { limit: 10, profile: '' }, outputSchema: { items: 'any[]', count: 'number', paging: 'object' } },
+  { id: 'threads_publish_post', category: 'integrations', kind: 'cloud', description: 'Publish a text post to Threads', argsTemplate: { text: '', reply_control: 'everyone', profile: '' }, outputSchema: { ok: 'boolean', creation_id: 'string', id: 'string', text: 'string' } },
   // Telnyx (SMS / Voice — verified number only)
   { id: 'telnyx_send_sms', category: 'integrations', kind: 'cloud', description: 'Send an SMS to the user\'s verified phone number', argsTemplate: { message: '' }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
   { id: 'telnyx_make_call', category: 'integrations', kind: 'cloud', description: 'Call the user\'s verified phone and speak a message via TTS', argsTemplate: { message: '', voice: 'female' }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', error: 'string' } },
   { id: 'telnyx_phone_status', category: 'integrations', kind: 'cloud', description: 'Check if the user has a verified phone number', argsTemplate: {}, outputSchema: { ok: 'boolean', verified: 'boolean', phone: 'string', error: 'string' } },
+  // WhatsApp
+  { id: 'whatsapp_send_message', category: 'integrations', kind: 'cloud', description: 'Send a WhatsApp text message to the connected number', argsTemplate: { message: '', preview_url: false }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
+  { id: 'whatsapp_send_media', category: 'integrations', kind: 'cloud', description: 'Send media to the connected WhatsApp number', argsTemplate: { type: 'image', url: '', caption: '', filename: '' }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
+  { id: 'whatsapp_send_reaction', category: 'integrations', kind: 'cloud', description: 'React to a WhatsApp message with an emoji', argsTemplate: { message_id: '', emoji: '👍' }, outputSchema: { ok: 'boolean', error: 'string' } },
+  { id: 'whatsapp_mark_read', category: 'integrations', kind: 'cloud', description: 'Mark a WhatsApp message as read', argsTemplate: { message_id: '' }, outputSchema: { ok: 'boolean', error: 'string' } },
+  { id: 'whatsapp_upload_media', category: 'integrations', kind: 'cloud', description: 'Upload media to WhatsApp servers and get a reusable media ID', argsTemplate: { url: '', mime_type: '' }, outputSchema: { ok: 'boolean', mediaId: 'string', error: 'string' } },
+  { id: 'whatsapp_status', category: 'integrations', kind: 'cloud', description: 'Check whether WhatsApp is connected for the current user', argsTemplate: {}, outputSchema: { ok: 'boolean', connected: 'boolean', phone: 'string', error: 'string' } },
   // Discord
   { id: 'discord_list_guilds', category: 'integrations', kind: 'cloud', description: 'List Discord servers the user is in', argsTemplate: {}, outputSchema: { guilds: 'any[]', count: 'number' } },
   { id: 'discord_list_channels', category: 'integrations', kind: 'cloud', description: 'List text channels in a Discord server', argsTemplate: { guild_id: '' }, outputSchema: { channels: 'any[]', count: 'number' } },
@@ -546,6 +563,34 @@ const VARIANT_OPTIONS: ArgOption[] = [
   { value: 'success', label: 'Success' },
   { value: 'error', label: 'Error' },
   { value: 'default', label: 'Default' },
+];
+
+const INSTAGRAM_MEDIA_TYPE_OPTIONS: ArgOption[] = [
+  { value: 'IMAGE', label: 'Image Post', description: 'Publish a single image using a public image URL' },
+  { value: 'VIDEO', label: 'Video Post', description: 'Publish a standard video post using a public video URL' },
+  { value: 'REELS', label: 'Reel', description: 'Publish a Reel using a public video URL' },
+];
+
+const THREADS_REPLY_CONTROL_OPTIONS: ArgOption[] = [
+  { value: 'everyone', label: 'Everyone', description: 'Anyone can reply to the post' },
+  { value: 'accounts_you_follow', label: 'Accounts You Follow', description: 'Only accounts you follow can reply' },
+  { value: 'mentioned_only', label: 'Mentioned Only', description: 'Only mentioned accounts can reply' },
+];
+
+const WHATSAPP_MEDIA_TYPE_OPTIONS: ArgOption[] = [
+  { value: 'image', label: 'Image', description: 'Send an image from a public URL' },
+  { value: 'audio', label: 'Audio / Voice Note', description: 'Send audio from a public URL' },
+  { value: 'video', label: 'Video', description: 'Send a video from a public URL' },
+  { value: 'document', label: 'Document', description: 'Send a file or document from a public URL' },
+];
+
+const WHATSAPP_MIME_TYPE_OPTIONS: ArgOption[] = [
+  { value: 'image/jpeg', label: 'JPEG Image', description: 'Standard JPG image upload' },
+  { value: 'image/png', label: 'PNG Image', description: 'PNG image upload' },
+  { value: 'audio/ogg', label: 'OGG Audio', description: 'Voice-note style audio file' },
+  { value: 'audio/mpeg', label: 'MP3 Audio', description: 'MP3 audio file' },
+  { value: 'video/mp4', label: 'MP4 Video', description: 'Standard MP4 video upload' },
+  { value: 'application/pdf', label: 'PDF Document', description: 'PDF file upload' },
 ];
 
 const KNOWN_SELECT_OPTIONS: Record<string, ArgOption[]> = {
@@ -966,6 +1011,327 @@ if (TOOL_SCHEMAS['gmail_send_message']) {
       placeholder: 'default',
     },
   };
+}
+
+if (TOOL_SCHEMAS['facebook_get_me']) {
+  TOOL_SCHEMAS['facebook_get_me'].args = {
+    profile: {
+      type: 'string',
+      label: 'Facebook Profile',
+      description: 'Which connected Facebook profile to use. Leave empty to use the default connected profile.',
+      placeholder: 'default',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['facebook_list_pages']) {
+  TOOL_SCHEMAS['facebook_list_pages'].args = {
+    profile: {
+      type: 'string',
+      label: 'Facebook Profile',
+      description: 'Which connected Facebook profile to use when listing manageable Pages.',
+      placeholder: 'default',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['facebook_list_page_posts']) {
+  TOOL_SCHEMAS['facebook_list_page_posts'].args = {
+    page_id: {
+      type: 'string',
+      label: 'Facebook Page ID',
+      description: 'Page to read posts from. Leave empty if this profile only manages one Page. If multiple Pages exist, call facebook_list_pages first and pass the selected Page ID.',
+      placeholder: '{{facebook_list_pages.pages[0].id}}',
+    },
+    limit: {
+      type: 'number',
+      label: 'Number of Posts',
+      description: 'How many recent Page posts to fetch (1-100).',
+      default: 10,
+    },
+    profile: {
+      type: 'string',
+      label: 'Facebook Profile',
+      description: 'Which connected Facebook profile to use.',
+      placeholder: 'default',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['facebook_create_page_post']) {
+  TOOL_SCHEMAS['facebook_create_page_post'].args = {
+    page_id: {
+      type: 'string',
+      label: 'Facebook Page ID',
+      description: 'Page to publish to. Leave empty if this profile only manages one Page.',
+      placeholder: '{{facebook_list_pages.pages[0].id}}',
+    },
+    message: {
+      type: 'string',
+      label: 'Post Message',
+      description: 'Main text content for the Facebook Page post.',
+      required: true,
+      placeholder: 'Announcing our new launch today...',
+    },
+    link: {
+      type: 'string',
+      label: 'Optional Link',
+      description: 'Optional URL to attach to the post.',
+      placeholder: 'https://example.com/blog-post',
+    },
+    published: {
+      type: 'boolean',
+      label: 'Publish Immediately',
+      description: 'Turn off to create the post in an unpublished state if supported by the API/account.',
+      default: true,
+    },
+    profile: {
+      type: 'string',
+      label: 'Facebook Profile',
+      description: 'Which connected Facebook profile to use for publishing.',
+      placeholder: 'default',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['instagram_get_me']) {
+  TOOL_SCHEMAS['instagram_get_me'].args = {
+    profile: {
+      type: 'string',
+      label: 'Instagram Profile',
+      description: 'Which connected Instagram professional profile to use.',
+      placeholder: 'default',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['instagram_list_media']) {
+  TOOL_SCHEMAS['instagram_list_media'].args = {
+    limit: {
+      type: 'number',
+      label: 'Number of Media Items',
+      description: 'How many recent Instagram media items to fetch (1-100).',
+      default: 10,
+    },
+    profile: {
+      type: 'string',
+      label: 'Instagram Profile',
+      description: 'Which connected Instagram professional profile to use.',
+      placeholder: 'default',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['instagram_publish_media']) {
+  TOOL_SCHEMAS['instagram_publish_media'].args = {
+    media_type: {
+      type: 'select',
+      label: 'Post Type',
+      description: 'Choose whether you want to publish an image post, video post, or Reel.',
+      options: INSTAGRAM_MEDIA_TYPE_OPTIONS,
+      default: 'IMAGE',
+    },
+    image_url: {
+      type: 'string',
+      label: 'Image URL',
+      description: 'Publicly accessible image URL for image posts.',
+      placeholder: 'https://cdn.example.com/post-image.jpg',
+      showWhen: { field: 'media_type', value: 'IMAGE' },
+    },
+    video_url: {
+      type: 'string',
+      label: 'Video URL',
+      description: 'Publicly accessible video URL for video posts or Reels.',
+      placeholder: 'https://cdn.example.com/reel.mp4',
+      showWhen: { field: 'media_type', values: ['VIDEO', 'REELS'] },
+    },
+    caption: {
+      type: 'string',
+      label: 'Caption',
+      description: 'Caption text that will appear with the Instagram post.',
+      placeholder: 'Behind the scenes of our latest release ✨',
+    },
+    alt_text: {
+      type: 'string',
+      label: 'Alt Text',
+      description: 'Accessibility description for image posts.',
+      placeholder: 'A product photo on a wooden desk beside a coffee mug',
+      showWhen: { field: 'media_type', value: 'IMAGE' },
+    },
+    thumb_offset: {
+      type: 'number',
+      label: 'Thumbnail Offset (ms)',
+      description: 'Choose the preview frame for video posts/Reels by providing the offset in milliseconds.',
+      default: 0,
+      advanced: true,
+      showWhen: { field: 'media_type', values: ['VIDEO', 'REELS'] },
+    },
+    profile: {
+      type: 'string',
+      label: 'Instagram Profile',
+      description: 'Which connected Instagram professional profile to use.',
+      placeholder: 'default',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['threads_get_me']) {
+  TOOL_SCHEMAS['threads_get_me'].args = {
+    profile: {
+      type: 'string',
+      label: 'Threads Profile',
+      description: 'Which connected Threads profile to use.',
+      placeholder: 'default',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['threads_list_posts']) {
+  TOOL_SCHEMAS['threads_list_posts'].args = {
+    limit: {
+      type: 'number',
+      label: 'Number of Posts',
+      description: 'How many recent Threads posts to fetch (1-100).',
+      default: 10,
+    },
+    profile: {
+      type: 'string',
+      label: 'Threads Profile',
+      description: 'Which connected Threads profile to use.',
+      placeholder: 'default',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['threads_publish_post']) {
+  TOOL_SCHEMAS['threads_publish_post'].args = {
+    text: {
+      type: 'string',
+      label: 'Post Text',
+      description: 'Text content for the Threads post. Keep it concise and conversational.',
+      required: true,
+      placeholder: 'Shipping a new feature today. Here is what changed...',
+    },
+    reply_control: {
+      type: 'select',
+      label: 'Who Can Reply',
+      description: 'Control who is allowed to reply to the Threads post.',
+      options: THREADS_REPLY_CONTROL_OPTIONS,
+      default: 'everyone',
+    },
+    profile: {
+      type: 'string',
+      label: 'Threads Profile',
+      description: 'Which connected Threads profile to use for publishing.',
+      placeholder: 'default',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['whatsapp_send_message']) {
+  TOOL_SCHEMAS['whatsapp_send_message'].args = {
+    message: {
+      type: 'string',
+      label: 'Message Text',
+      description: 'Text to send to the connected WhatsApp number.',
+      required: true,
+      placeholder: 'Your workflow finished successfully.',
+    },
+    preview_url: {
+      type: 'boolean',
+      label: 'Show Link Preview',
+      description: 'Enable this if the message contains a URL and you want WhatsApp to render a preview.',
+      default: false,
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['whatsapp_send_media']) {
+  TOOL_SCHEMAS['whatsapp_send_media'].args = {
+    type: {
+      type: 'select',
+      label: 'Media Type',
+      description: 'Choose what kind of media to send.',
+      options: WHATSAPP_MEDIA_TYPE_OPTIONS,
+      default: 'image',
+    },
+    url: {
+      type: 'string',
+      label: 'Public Media URL',
+      description: 'Publicly accessible file URL that WhatsApp can download.',
+      required: true,
+      placeholder: 'https://cdn.example.com/file.png',
+    },
+    caption: {
+      type: 'string',
+      label: 'Caption',
+      description: 'Optional caption for images, videos, or documents.',
+      placeholder: 'Here is the latest report.',
+      showWhen: { field: 'type', values: ['image', 'video', 'document'] },
+    },
+    filename: {
+      type: 'string',
+      label: 'Document Filename',
+      description: 'Optional filename shown to the recipient for documents.',
+      placeholder: 'monthly-report.pdf',
+      showWhen: { field: 'type', value: 'document' },
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['whatsapp_send_reaction']) {
+  TOOL_SCHEMAS['whatsapp_send_reaction'].args = {
+    message_id: {
+      type: 'string',
+      label: 'Target Message ID',
+      description: 'The WhatsApp message ID to react to. Usually comes from a previous WhatsApp step output.',
+      required: true,
+      placeholder: '{{previous_whatsapp_step.messageId}}',
+    },
+    emoji: {
+      type: 'string',
+      label: 'Emoji Reaction',
+      description: 'Emoji to react with, like 👍, ✅, 🎉, or ❤️.',
+      required: true,
+      placeholder: '👍',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['whatsapp_mark_read']) {
+  TOOL_SCHEMAS['whatsapp_mark_read'].args = {
+    message_id: {
+      type: 'string',
+      label: 'Message ID',
+      description: 'The WhatsApp message ID to mark as read.',
+      required: true,
+      placeholder: '{{previous_whatsapp_step.messageId}}',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['whatsapp_upload_media']) {
+  TOOL_SCHEMAS['whatsapp_upload_media'].args = {
+    url: {
+      type: 'string',
+      label: 'Public File URL',
+      description: 'Publicly accessible file URL to upload into WhatsApp media storage.',
+      required: true,
+      placeholder: 'https://cdn.example.com/invoice.pdf',
+    },
+    mime_type: {
+      type: 'select',
+      label: 'MIME Type',
+      description: 'Choose a common MIME type or type your own custom value.',
+      options: WHATSAPP_MIME_TYPE_OPTIONS,
+      allowFreeform: true,
+      placeholder: 'application/pdf',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['whatsapp_status']) {
+  TOOL_SCHEMAS['whatsapp_status'].description = 'Check whether the current user has a WhatsApp number connected and ready for workflow messages.';
 }
 
 // --- Tool-specific 'mode' overrides ---
@@ -1987,6 +2353,24 @@ const AGENT_AVAILABLE_TOOLS: ArgOption[] = [
   { value: 'agent_decision', label: 'AI Decision', description: 'Quick yes/no or choice decision', group: 'AI Helpers' },
   { value: 'agent_extract', label: 'AI Extract', description: 'Extract structured data from text', group: 'AI Helpers' },
   { value: 'generate_image', label: 'Generate Image', description: 'Generate images from text prompts or reference images', group: 'AI Helpers' },
+
+  // Integrations
+  { value: 'facebook_get_me', label: 'Facebook Profile', description: 'Get Facebook profile and Pages', group: 'Integrations' },
+  { value: 'facebook_list_pages', label: 'Facebook Pages', description: 'List manageable Facebook Pages', group: 'Integrations' },
+  { value: 'facebook_list_page_posts', label: 'Facebook Posts', description: 'List posts from a Facebook Page', group: 'Integrations' },
+  { value: 'facebook_create_page_post', label: 'Facebook Publish', description: 'Publish a Facebook Page post', group: 'Integrations' },
+  { value: 'instagram_get_me', label: 'Instagram Profile', description: 'Get Instagram professional profile', group: 'Integrations' },
+  { value: 'instagram_list_media', label: 'Instagram Media', description: 'List Instagram media', group: 'Integrations' },
+  { value: 'instagram_publish_media', label: 'Instagram Publish', description: 'Publish media to Instagram', group: 'Integrations' },
+  { value: 'threads_get_me', label: 'Threads Profile', description: 'Get Threads profile', group: 'Integrations' },
+  { value: 'threads_list_posts', label: 'Threads Posts', description: 'List Threads posts', group: 'Integrations' },
+  { value: 'threads_publish_post', label: 'Threads Publish', description: 'Publish a Threads post', group: 'Integrations' },
+  { value: 'whatsapp_send_message', label: 'WhatsApp Message', description: 'Send a WhatsApp text message', group: 'Integrations' },
+  { value: 'whatsapp_send_media', label: 'WhatsApp Media', description: 'Send WhatsApp media', group: 'Integrations' },
+  { value: 'whatsapp_send_reaction', label: 'WhatsApp Reaction', description: 'React to a WhatsApp message', group: 'Integrations' },
+  { value: 'whatsapp_mark_read', label: 'WhatsApp Read Receipt', description: 'Mark a WhatsApp message as read', group: 'Integrations' },
+  { value: 'whatsapp_upload_media', label: 'WhatsApp Upload', description: 'Upload media to WhatsApp', group: 'Integrations' },
+  { value: 'whatsapp_status', label: 'WhatsApp Status', description: 'Check WhatsApp connection status', group: 'Integrations' },
 
   // Headless Agents
   { value: 'deploy_headless_agent', label: 'Deploy Agent', description: 'Launch a background agent', group: 'Agents' },

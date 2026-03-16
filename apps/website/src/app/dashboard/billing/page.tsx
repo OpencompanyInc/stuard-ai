@@ -70,9 +70,9 @@ export default function BillingPage() {
 
     const baseRate = 33;
     const tier = useMemo(() => {
-        if (amount >= 100) return { name: 'Whale', multiplier: 2.0, badge: '2.0x Credits', color: 'text-amber-600' };
-        if (amount >= 30) return { name: 'Pro', multiplier: 1.5, badge: '1.5x Credits', color: 'text-gray-900' };
-        return { name: 'Starter', multiplier: 1.0, badge: 'Standard Rate', color: 'text-gray-600' };
+        if (amount >= 100) return { name: 'Whale', multiplier: 0.75, badge: 'Best Rate', color: 'text-amber-600' };
+        if (amount >= 30) return { name: 'Pro', multiplier: 0.70, badge: 'Boosted Rate', color: 'text-gray-900' };
+        return { name: 'Starter', multiplier: 0.65, badge: 'Standard Rate', color: 'text-gray-600' };
     }, [amount]);
 
     const credits = Math.floor(amount * baseRate * tier.multiplier);
@@ -254,7 +254,7 @@ export default function BillingPage() {
                         <div className="rounded-lg bg-gray-900 p-5 text-white mb-5">
                             <p className="text-[12px] text-gray-400">Monthly credits</p>
                             <p className="text-3xl font-bold mt-0.5">{credits.toLocaleString()}</p>
-                            <p className="text-[12px] text-gray-400 mt-1">${amount} x {baseRate} x {tier.multiplier}x</p>
+                            <p className="text-[12px] text-gray-400 mt-1">${amount}/mo · {tier.name} tier</p>
                         </div>
 
                         <div className="space-y-3 text-[13px] mb-5">

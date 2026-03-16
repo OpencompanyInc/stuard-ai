@@ -868,7 +868,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         if (authUser) {
           const _au = authUser; // local const for TS narrowing (authUser is `let`)
           // Check integrations
-          const providers = ['github', 'google', 'outlook'];
+          const providers = ['github', 'google', 'outlook', 'facebook', 'instagram', 'threads', 'whatsapp'];
           try {
             const checks = await Promise.all(providers.map(p => getExternalAccount(_au.userId, p)));
             enabledIntegrations = providers.filter((_, i) => !!checks[i]);

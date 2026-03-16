@@ -9,7 +9,8 @@
       "Bash(cd:*)",
       "Bash(gcloud compute:*)",
       "Bash(gh api:*)",
-      "Bash(gcloud storage:*)"
+      "Bash(gcloud storage:*)",
+      "Bash(find:*)"
     ]
   }
 }

@@ -203,7 +203,7 @@ async function runHeadlessTask(
     };
 
     // 1. Prepare integrations and MCP tools
-    const providers = ['github', 'google', 'outlook'];
+    const providers = ['github', 'google', 'outlook', 'facebook', 'instagram', 'threads', 'whatsapp'];
     const checks = await Promise.all(providers.map(p => getExternalAccount(userId, p)));
     const enabledIntegrations = providers.filter((_, i) => !!checks[i]);
     

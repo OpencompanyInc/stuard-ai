@@ -12,6 +12,8 @@ import * as redditTools from './reddit-tools';
 import * as youtubeTools from './youtube-tools';
 import * as marketplaceTools from './marketplace-tools';
 import * as ttsTools from './tts-tools';
+import * as metaSocialTools from './meta-social-tools';
+import * as whatsappTools from './whatsapp-tools';
 import { generate_image } from './image-gen';
 import * as feedbackTools from './feedback-tools';
 import * as webhookTools from './webhook-tools';
@@ -463,6 +465,12 @@ Object.values(discordTools).forEach(t => registerTool(t, 'Discord'));
 Object.values(redditTools).forEach(t => registerTool(t, 'Reddit'));
 Object.values(youtubeTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'YouTube');
+});
+Object.values(metaSocialTools).forEach(t => {
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations', 'cloud', 'cloud');
+});
+Object.values(whatsappTools).forEach(t => {
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations', 'cloud', 'cloud');
 });
 Object.values(marketplaceTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'Marketplace');

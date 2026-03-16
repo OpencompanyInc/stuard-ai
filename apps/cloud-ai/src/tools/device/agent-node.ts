@@ -120,7 +120,7 @@ Examples:
       // Prepare integrations
       const enabledIntegrations: string[] = [];
       if (userId) {
-        const providers = ['github', 'google', 'outlook'];
+        const providers = ['github', 'google', 'outlook', 'facebook', 'instagram', 'threads', 'whatsapp'];
         const checks = await Promise.all(providers.map(p => getExternalAccount(userId, p)));
         providers.forEach((p, i) => { if (checks[i]) enabledIntegrations.push(p); });
       }

@@ -35,6 +35,9 @@ function getConnectUrl(slug: string, token: string): string | null {
     case 'discord': return `${base}/integrations/discord/connect?${tokenParam}`;
     case 'reddit': return `${base}/integrations/reddit/connect?${tokenParam}`;
     case 'outlook': return `${base}/integrations/outlook/connect?${tokenParam}`;
+    case 'facebook': return `${base}/integrations/facebook/connect?${tokenParam}`;
+    case 'instagram': return `${base}/integrations/instagram/connect?${tokenParam}`;
+    case 'threads': return `${base}/integrations/threads/connect?${tokenParam}`;
     default: return null;
   }
 }
@@ -51,6 +54,9 @@ function getStatusUrl(slug: string): string | null {
     case 'discord': return `${base}/integrations/discord/status`;
     case 'reddit': return `${base}/integrations/reddit/status`;
     case 'outlook': return `${base}/integrations/outlook/status`;
+    case 'facebook': return `${base}/integrations/facebook/status`;
+    case 'instagram': return `${base}/integrations/instagram/status`;
+    case 'threads': return `${base}/integrations/threads/status`;
     default: return null;
   }
 }
@@ -86,6 +92,10 @@ const INTEGRATION_ICONS: Record<string, { bg: string; fg: string; emoji: string 
   'discord': { bg: 'from-indigo-500/20 to-violet-500/20', fg: 'text-indigo-400', emoji: '💬' },
   'reddit': { bg: 'from-orange-500/20 to-red-500/20', fg: 'text-orange-400', emoji: '🔴' },
   'outlook': { bg: 'from-blue-500/20 to-sky-500/20', fg: 'text-blue-400', emoji: '📬' },
+  'facebook': { bg: 'from-blue-600/20 to-indigo-600/20', fg: 'text-blue-400', emoji: '📘' },
+  'instagram': { bg: 'from-pink-500/20 to-orange-500/20', fg: 'text-pink-400', emoji: '📸' },
+  'threads': { bg: 'from-neutral-500/20 to-zinc-600/20', fg: 'text-gray-300', emoji: '🧵' },
+  'whatsapp': { bg: 'from-emerald-500/20 to-green-600/20', fg: 'text-emerald-400', emoji: '💚' },
   'python': { bg: 'from-yellow-500/20 to-blue-500/20', fg: 'text-yellow-400', emoji: '🐍' },
   'ffmpeg': { bg: 'from-green-600/20 to-lime-500/20', fg: 'text-green-400', emoji: '🎬' },
   'browser': { bg: 'from-purple-500/20 to-fuchsia-500/20', fg: 'text-purple-400', emoji: '🌐' },

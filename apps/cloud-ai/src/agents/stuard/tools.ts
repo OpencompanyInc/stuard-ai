@@ -31,6 +31,7 @@ import { browser_use_status, browser_use_configure, browser_use_execute_script, 
 import { submitFeedback, reportBug, suggestFeature, listMyFeedback, getFeedbackDetails } from '../../tools/feedback-tools';
 import { telnyx_send_sms, telnyx_make_call, telnyx_phone_status } from '../../tools/telnyx-tools';
 import { whatsapp_send_message, whatsapp_send_media, whatsapp_send_reaction, whatsapp_mark_read, whatsapp_upload_media, whatsapp_status } from '../../tools/whatsapp-tools';
+import { facebook_get_me, facebook_list_pages, facebook_list_page_posts, facebook_create_page_post, instagram_get_me, instagram_list_media, instagram_publish_media, threads_get_me, threads_list_posts, threads_publish_post } from '../../tools/meta-social-tools';
 import { text_to_speech, list_tts_voices, get_tts_models, elevenlabs_list_agents, elevenlabs_get_signed_conversation_url, elevenlabs_get_webrtc_token, elevenlabs_list_conversations, elevenlabs_get_conversation, elevenlabs_twilio_outbound_call } from '../../tools/tts-tools';
 import { http_request } from '../../tools/http-tools';
 import { proactive_task_create, proactive_task_list, proactive_task_update, proactive_task_delete } from '../../tools/proactive-task-tools';
@@ -371,6 +372,17 @@ export const ALL_TOOLS = {
   whatsapp_mark_read,
   whatsapp_upload_media,
   whatsapp_status,
+  // Meta social tools
+  facebook_get_me,
+  facebook_list_pages,
+  facebook_list_page_posts,
+  facebook_create_page_post,
+  instagram_get_me,
+  instagram_list_media,
+  instagram_publish_media,
+  threads_get_me,
+  threads_list_posts,
+  threads_publish_post,
 } as const;
 
 const _INTERNAL_SPACE_TOOLS = {
@@ -614,6 +626,21 @@ export function getTools(
       if (name.startsWith('github_')) tools[name] = tool;
     }
   }
+  if (enabledIntegrations.includes('facebook')) {
+    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+      if (name.startsWith('facebook_')) tools[name] = tool;
+    }
+  }
+  if (enabledIntegrations.includes('instagram')) {
+    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+      if (name.startsWith('instagram_')) tools[name] = tool;
+    }
+  }
+  if (enabledIntegrations.includes('threads')) {
+    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+      if (name.startsWith('threads_')) tools[name] = tool;
+    }
+  }
   if (enabledIntegrations.includes('ollama')) {
     for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
       if (name.startsWith('ollama_')) tools[name] = tool;
@@ -703,6 +730,9 @@ export async function getToolsForQuery(
     google: ['google_', 'gmail_', 'calendar_', 'drive_', 'sheets_', 'docs_', 'tasks_'],
     outlook: ['outlook_'],
     github: ['github_'],
+    facebook: ['facebook_'],
+    instagram: ['instagram_'],
+    threads: ['threads_'],
     notion: ['notion_'],
     linear: ['linear_'],
     ollama: ['ollama_'],

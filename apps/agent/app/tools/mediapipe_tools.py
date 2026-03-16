@@ -62,7 +62,13 @@ def _get_model_path(model_key: str) -> str:
 
 
 def _ensure_venv_on_path() -> None:
-    """If the managed mediapipe venv exists, ensure its site-packages is on sys.path."""
+    """If the managed mediapipe venv exists, ensure its site-packages is on sys.path.
+
+    In PyInstaller-frozen builds, matplotlib is in the excludes list which creates
+    ghost module entries that clash with the real matplotlib from the venv.  We must
+    purge *all* potentially-conflicting modules and register DLL search directories
+    so that C-extension .pyd files can locate their dependencies.
+    """
     from . import system as _sys
     envs_root = _sys._envs_base_dir()
     env_dir = os.path.join(envs_root, _MP_ENV_ID)
@@ -74,12 +80,34 @@ def _ensure_venv_on_path() -> None:
         py_ver = f"python{sys.version_info.major}.{sys.version_info.minor}"
         sp = os.path.join(env_dir, "lib", py_ver, "site-packages")
     if os.path.isdir(sp) and sp not in sys.path:
+        # Force non-interactive matplotlib backend before any import
+        os.environ.setdefault("MPLBACKEND", "Agg")
+
         sys.path.insert(0, sp)
         importlib.invalidate_caches()
-        # Purge stale mediapipe modules so reimport finds the venv version
-        stale = [k for k in sys.modules if k == "mediapipe" or k.startswith("mediapipe.")]
+
+        # Purge stale/ghost modules that PyInstaller's excludes list may have
+        # partially registered.  Without this, importing matplotlib from the venv
+        # hits "cannot import _c_internal_utils from partially initialized module".
+        _PURGE_PREFIXES = ("mediapipe", "matplotlib", "cv2", "numpy")
+        stale = [
+            k for k in sys.modules
+            if any(k == pfx or k.startswith(pfx + ".") for pfx in _PURGE_PREFIXES)
+        ]
         for k in stale:
             del sys.modules[k]
+
+        # On Windows, Python 3.8+ restricts DLL search paths.  C-extension .pyd
+        # files in the venv need their directory (and sub-packages like
+        # matplotlib/.libs) registered so LoadLibrary can find companion DLLs.
+        if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
+            for dirpath, _dirnames, _filenames in os.walk(sp):
+                # Register any directory that contains .pyd or .dll files
+                if any(f.endswith((".pyd", ".dll")) for f in _filenames):
+                    try:
+                        os.add_dll_directory(dirpath)
+                    except OSError:
+                        pass
 
 
 # ---------------------------------------------------------------------------
@@ -142,10 +170,17 @@ async def _ensure_mediapipe(
     except ImportError:
         pass
 
-    # Purge stale mediapipe modules so reinstall picks up the correct version
-    stale = [k for k in sys.modules if k == "mediapipe" or k.startswith("mediapipe.")]
+    # Purge stale modules so reinstall picks up the correct version
+    _PURGE_PREFIXES = ("mediapipe", "matplotlib", "cv2", "numpy")
+    stale = [
+        k for k in sys.modules
+        if any(k == pfx or k.startswith(pfx + ".") for pfx in _PURGE_PREFIXES)
+    ]
     for k in stale:
         del sys.modules[k]
+
+    # Force non-interactive matplotlib backend in frozen/headless environments
+    os.environ.setdefault("MPLBACKEND", "Agg")
 
     from . import system as _sys
 

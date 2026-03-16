@@ -45,6 +45,10 @@ const INTEGRATION_PREFIXES: Record<string, string[]> = {
   google: ['google_', 'gmail_', 'calendar_', 'drive_', 'sheets_', 'docs_', 'tasks_'],
   outlook: ['outlook_'],
   github: ['github_'],
+  facebook: ['facebook_'],
+  instagram: ['instagram_'],
+  threads: ['threads_'],
+  whatsapp: ['whatsapp_'],
   discord: ['discord_'],
   reddit: ['reddit_'],
   notion: ['notion_'],  // MCP

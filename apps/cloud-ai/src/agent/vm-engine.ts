@@ -1979,9 +1979,9 @@ export class VMWorkflowEngine extends EventEmitter {
       const line = `[${new Date().toISOString()}] ${msg}`;
       logs.push(line);
       this.emit('log', { deployId, message: line });
-      // Also write to deploy log file
+      // Write to deploy.log so logs appear in the deploys tab UI
       try {
-        fs.appendFileSync(path.join(deployDir, 'engine.log'), line + '\n');
+        fs.appendFileSync(path.join(deployDir, 'deploy.log'), line + '\n');
       } catch { /* ignore */ }
     };
 
