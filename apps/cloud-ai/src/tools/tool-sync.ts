@@ -258,8 +258,8 @@ function zodToJSON(schema: any): any {
     if (schema instanceof z.ZodNullable) return zodToJSON(schema._def?.innerType) + "|null";
     if (schema instanceof z.ZodLiteral) return `literal(${(schema._def as any)?.value})`;
     if (schema instanceof z.ZodTuple) return "tuple";
-    if (schema instanceof z.ZodEffects) return zodToJSON((schema._def as any)?.schema);
-    if (schema instanceof z.ZodNativeEnum) {
+    if ((schema as any)?._def?.typeName === 'ZodEffects') return zodToJSON((schema._def as any)?.schema);
+    if ((schema as any)?._def?.typeName === 'ZodNativeEnum') {
       const vals = (schema._def as any)?.values;
       return vals ? `enum(${Object.values(vals).filter(v => typeof v === 'string').join('|')})` : "enum";
     }

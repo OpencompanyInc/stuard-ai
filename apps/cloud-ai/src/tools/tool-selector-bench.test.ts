@@ -226,7 +226,7 @@ async function embeddingSelectReal(
   const latencyMs = performance.now() - start;
   if (error) return { tools: [], latencyMs, scores: [] };
   const scores = (data || []).map((row: any) => ({ name: row.name as string, score: row.similarity as number }));
-  return { tools: scores.map(s => s.name), latencyMs, scores };
+  return { tools: scores.map((s: { name: string; score: number }) => s.name), latencyMs, scores };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -256,7 +256,7 @@ User query: "${query}"`;
   const result = await generateText({
     model: openrouter('meta-llama/llama-4-scout-17b-16e-instruct'),
     prompt,
-    maxTokens: 500,
+    maxOutputTokens: 500,
     temperature: 0,
   });
   const latencyMs = performance.now() - start;
