@@ -7,6 +7,7 @@ import {
   deleteUserFile,
   validateObjectName,
   uploadUserFileStream,
+  uploadUserFileBuffer,
   listUserFiles,
   createFolder,
   renameUserFile,
@@ -251,18 +252,16 @@ export async function handleCloudStorageRoutes(req: IncomingMessage, res: Server
   }
 
   // ── POST /v1/cloud-storage/upload ────────────────────────────────────────
-  // Proxy upload: client streams file body to cloud-ai, cloud-ai streams to GCS.
-  // Avoids client-side CORS issues with GCS signed URLs.
-  // Filename sent via X-Filename header.
+  // Two modes:
+  //   1. Raw stream: file body streamed directly, metadata in headers (X-Filename, X-File-Path)
+  //   2. JSON + base64: Content-Type: application/json with { filename, data (base64), folder?, contentType? }
+  //      This mode avoids Electron net.fetch issues with binary request bodies.
   if (method === 'POST' && path === '/v1/cloud-storage/upload') {
     const user = await authenticate(req, res);
     if (!user) return true;
     try {
-      const filename = String(req.headers['x-filename'] || '').trim();
-      if (!filename) {
-        json(res, 400, { ok: false, error: 'missing_filename', message: 'Set X-Filename header' });
-        return true;
-      }
+      const reqContentType = String(req.headers['content-type'] || '').toLowerCase();
+      const isJsonUpload = reqContentType.includes('application/json');
 
       // Check quota before uploading (non-fatal on error — allow upload if quota check fails)
       try {
@@ -287,34 +286,81 @@ export async function handleCloudStorageRoutes(req: IncomingMessage, res: Server
         return true;
       }
 
-      // Enforce upload size limit via Content-Length header
-      const declaredSize = parseInt(String(req.headers['content-length'] || '0'), 10);
-      if (declaredSize > MAX_UPLOAD_BYTES) {
-        json(res, 413, { ok: false, error: 'file_too_large', maxBytes: MAX_UPLOAD_BYTES });
-        return true;
+      if (isJsonUpload) {
+        // ── JSON + base64 mode (used by Electron desktop client) ──
+        const body = await readBody(req, MAX_UPLOAD_BYTES);
+        const filename = String(body.filename || '').trim();
+        const b64data = String(body.data || '').trim();
+        const folderPath = String(body.folder || '').trim();
+        const fileContentType = String(body.contentType || 'application/octet-stream');
+        const visibility = (body.visibility === 'public' ? 'public' : 'private') as 'public' | 'private';
+
+        if (!filename) {
+          json(res, 400, { ok: false, error: 'missing_filename' });
+          return true;
+        }
+        if (!b64data) {
+          json(res, 400, { ok: false, error: 'missing_data', message: 'Provide base64-encoded file data in "data" field' });
+          return true;
+        }
+
+        const buffer = Buffer.from(b64data, 'base64');
+        console.log(`[cloud-storage] upload (json): user=${user.userId} file=${filename} folder=${folderPath || '/'} size=${buffer.length} type=${fileContentType} vis=${visibility}`);
+        const result = await uploadUserFileBuffer(user.userId, filename, buffer, fileContentType, folderPath, visibility);
+        console.log(`[cloud-storage] upload complete: ${result.objectName} (${result.bytesWritten} bytes, url=${result.url ? 'yes' : 'none'})`);
+
+        // Update cold_storage_bytes so billing and UI stay accurate
+        try {
+          const totalBytes = await getUserStorageBytes(user.userId);
+          await upsertStorageUsage(user.userId, { cold_storage_bytes: totalBytes });
+        } catch (e: any) {
+          console.warn('[cloud-storage] failed to update cold_storage_bytes after upload:', e?.message);
+        }
+
+        json(res, 200, {
+          ok: true,
+          objectName: result.objectName,
+          bytesWritten: result.bytesWritten,
+          url: result.url,
+          visibility: result.visibility,
+        });
+      } else {
+        // ── Raw stream mode (original behavior) ──
+        const filename = String(req.headers['x-filename'] || '').trim();
+        if (!filename) {
+          json(res, 400, { ok: false, error: 'missing_filename', message: 'Set X-Filename header' });
+          return true;
+        }
+
+        // Enforce upload size limit via Content-Length header
+        const declaredSize = parseInt(String(req.headers['content-length'] || '0'), 10);
+        if (declaredSize > MAX_UPLOAD_BYTES) {
+          json(res, 413, { ok: false, error: 'file_too_large', maxBytes: MAX_UPLOAD_BYTES });
+          return true;
+        }
+
+        // Verify request body is still readable
+        if (req.destroyed || req.readableEnded) {
+          json(res, 400, { ok: false, error: 'request_body_unavailable', message: 'Request body was closed before upload could start.' });
+          return true;
+        }
+
+        const contentType = String(req.headers['content-type'] || 'application/octet-stream');
+        const folderPath = String(req.headers['x-file-path'] || '').trim();
+        console.log(`[cloud-storage] upload starting: user=${user.userId} file=${filename} folder=${folderPath || '/'} size=${req.headers['content-length'] || 'unknown'} type=${contentType}`);
+        const result = await uploadUserFileStream(user.userId, filename, req, contentType, MAX_UPLOAD_BYTES, folderPath);
+        console.log(`[cloud-storage] upload complete: ${result.objectName} (${result.bytesWritten} bytes)`);
+
+        // Update cold_storage_bytes so billing and UI stay accurate
+        try {
+          const totalBytes = await getUserStorageBytes(user.userId);
+          await upsertStorageUsage(user.userId, { cold_storage_bytes: totalBytes });
+        } catch (e: any) {
+          console.warn('[cloud-storage] failed to update cold_storage_bytes after upload:', e?.message);
+        }
+
+        json(res, 200, { ok: true, objectName: result.objectName, bytesWritten: result.bytesWritten });
       }
-
-      // Verify request body is still readable
-      if (req.destroyed || req.readableEnded) {
-        json(res, 400, { ok: false, error: 'request_body_unavailable', message: 'Request body was closed before upload could start.' });
-        return true;
-      }
-
-      const contentType = String(req.headers['content-type'] || 'application/octet-stream');
-      const folderPath = String(req.headers['x-file-path'] || '').trim();
-      console.log(`[cloud-storage] upload starting: user=${user.userId} file=${filename} folder=${folderPath || '/'} size=${req.headers['content-length'] || 'unknown'} type=${contentType}`);
-      const result = await uploadUserFileStream(user.userId, filename, req, contentType, MAX_UPLOAD_BYTES, folderPath);
-      console.log(`[cloud-storage] upload complete: ${result.objectName} (${result.bytesWritten} bytes)`);
-
-      // Update cold_storage_bytes so billing and UI stay accurate
-      try {
-        const totalBytes = await getUserStorageBytes(user.userId);
-        await upsertStorageUsage(user.userId, { cold_storage_bytes: totalBytes });
-      } catch (e: any) {
-        console.warn('[cloud-storage] failed to update cold_storage_bytes after upload:', e?.message);
-      }
-
-      json(res, 200, { ok: true, objectName: result.objectName, bytesWritten: result.bytesWritten });
     } catch (e: any) {
       console.error('[cloud-storage] upload error:', e?.stack || e?.message || e);
       const detail = e?.message || 'Unknown upload error';

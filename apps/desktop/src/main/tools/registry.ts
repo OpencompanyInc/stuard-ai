@@ -245,6 +245,31 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'reddit_create_post': { kind: 'cloud' },
   'reddit_comment': { kind: 'cloud' },
 
+  // Facebook / Instagram / Threads (Meta social tools)
+  'facebook_get_me': { kind: 'cloud' },
+  'facebook_list_pages': { kind: 'cloud' },
+  'facebook_list_page_posts': { kind: 'cloud' },
+  'facebook_create_page_post': { kind: 'cloud' },
+  'instagram_get_me': { kind: 'cloud' },
+  'instagram_list_media': { kind: 'cloud' },
+  'instagram_publish_media': { kind: 'cloud' },
+  'threads_get_me': { kind: 'cloud' },
+  'threads_list_posts': { kind: 'cloud' },
+  'threads_publish_post': { kind: 'cloud' },
+
+  // WhatsApp
+  'whatsapp_status': { kind: 'cloud' },
+  'whatsapp_send_message': { kind: 'cloud' },
+  'whatsapp_send_media': { kind: 'cloud' },
+  'whatsapp_send_reaction': { kind: 'cloud' },
+  'whatsapp_mark_read': { kind: 'cloud' },
+  'whatsapp_upload_media': { kind: 'cloud' },
+
+  // Telnyx (SMS / Voice)
+  'telnyx_send_sms': { kind: 'cloud' },
+  'telnyx_make_call': { kind: 'cloud' },
+  'telnyx_phone_status': { kind: 'cloud' },
+
   // Ollama (Local AI models)
   'ollama_status': { kind: 'electron' },
   'ollama_start': { kind: 'electron' },
@@ -283,6 +308,13 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
 
   // Browser status (extension-based)
   'browser_status': { kind: 'electron' },
+
+  // Cloud Storage (GCS upload/download with public/private visibility)
+  'cloud_storage_upload': { kind: 'cloud' },
+  'cloud_storage_get_url': { kind: 'cloud' },
+  'cloud_storage_list': { kind: 'cloud' },
+  'cloud_storage_delete': { kind: 'cloud' },
+  'cloud_storage_set_visibility': { kind: 'cloud' },
 
   // Embeddings (cloud-side, requires OpenAI API)
   'embed_text': { kind: 'cloud' },

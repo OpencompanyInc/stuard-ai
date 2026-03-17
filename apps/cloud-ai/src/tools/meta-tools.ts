@@ -18,6 +18,7 @@ import { generate_image } from './image-gen';
 import * as feedbackTools from './feedback-tools';
 import * as webhookTools from './webhook-tools';
 import * as httpTools from './http-tools';
+import * as cloudStorageTools from './cloud-storage-tools';
 import { waitTool } from './wait';
 import { analyzeMediaTool } from './analyze-media';
 import { aiInferenceTool } from './ai-inference';
@@ -486,6 +487,9 @@ Object.values(webhookTools).forEach(t => {
 });
 Object.values(httpTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations');
+});
+Object.values(cloudStorageTools).forEach(t => {
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations', 'cloud', 'cloud');
 });
 
 // 2. Meta Tools

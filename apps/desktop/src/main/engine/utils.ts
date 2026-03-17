@@ -35,6 +35,16 @@ export function getAtPath(obj: any, pathStr: string, defaultVal?: any) {
       .replace(/\[['"]([^'"]+)['"]\]/g, '.$1');  // Convert ['key'] to .key
     const parts = normalized.split('.').filter(Boolean);
 
+    // Helper: resolve an array accessor (first/last/count or numeric index)
+    const resolveArrayPart = (cur: any, part: string): any => {
+      if (Array.isArray(cur)) {
+        if (part === 'first') return cur[0];
+        if (part === 'last') return cur[cur.length - 1];
+        if (part === 'count' || part === 'length') return cur.length;
+      }
+      return cur[part];
+    };
+
     // Special handling for $vars.varName - lookup from variable store
     if (parts[0] === '$vars' && parts.length >= 2) {
       const varName = parts[1];
@@ -47,7 +57,7 @@ export function getAtPath(obj: any, pathStr: string, defaultVal?: any) {
         let cur: any = varValue;
         for (let i = 2; i < parts.length; i++) {
           if (cur == null) return defaultVal;
-          cur = cur[parts[i]];
+          cur = resolveArrayPart(cur, parts[i]);
         }
         return cur === undefined ? defaultVal : cur;
       }
@@ -93,7 +103,7 @@ export function getAtPath(obj: any, pathStr: string, defaultVal?: any) {
               } catch { }
             }
 
-            cur = cur[parts[j]];
+            cur = resolveArrayPart(cur, parts[j]);
           }
           return cur === undefined ? defaultVal : cur;
         }
@@ -113,7 +123,7 @@ export function getAtPath(obj: any, pathStr: string, defaultVal?: any) {
         } catch { }
       }
 
-      cur = cur[p];
+      cur = resolveArrayPart(cur, p);
     }
     return cur === undefined ? defaultVal : cur;
   } catch {

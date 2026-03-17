@@ -43,10 +43,11 @@ function isAudioMimeType(mimeType: string): boolean {
   return mimeType.startsWith('audio/');
 }
 
-// Check if mime type is a small file type that should be read directly as binary
-// Audio, images, and PDFs work better as inline base64 with Gemini
+// Check if mime type should be read directly as binary (base64).
+// All supported media types work as inline base64 with Gemini — avoids
+// the fragile GCS signed-URL upload path via upload_file_to_url.
 function shouldReadDirectly(mimeType: string): boolean {
-  return mimeType.startsWith('audio/') || mimeType.startsWith('image/') || mimeType === 'application/pdf';
+  return mimeType.startsWith('audio/') || mimeType.startsWith('image/') || mimeType.startsWith('video/') || mimeType === 'application/pdf';
 }
 
 export const analyzeMediaTool = createTool({

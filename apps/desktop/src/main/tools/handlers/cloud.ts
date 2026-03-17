@@ -27,6 +27,11 @@ export async function execCloudTool(tool: string, args: any, ctx: RouterContext)
     if (tool === 'generate_image') {
       return execGenerateImage(args, ctx);
     }
+
+    // Special handling for cloud_storage_upload - read local file, stream to cloud
+    if (tool === 'cloud_storage_upload') {
+      return execCloudStorageUpload(args, ctx);
+    }
     
     const url = `${ctx.cloudAiUrl}${endpoint}`;
 
@@ -532,6 +537,95 @@ async function execGenerateImage(args: any, ctx: RouterContext): Promise<any> {
   } catch (e: any) {
     ctx.logFn(`Image Gen error: ${e?.message}`);
     return { ok: false, error: String(e?.message || 'image_gen_failed') };
+  }
+}
+
+/**
+ * Special handler for cloud_storage_upload - reads local file, uploads via proxy endpoint,
+ * then optionally sets visibility to public.
+ */
+async function execCloudStorageUpload(args: any, ctx: RouterContext): Promise<any> {
+  try {
+    const filePath = String(args?.path || '').trim();
+    const folder = String(args?.folder || '').trim();
+    const visibility = String(args?.visibility || 'private').trim();
+    const filenameOverride = String(args?.filename || '').trim();
+
+    if (!filePath) {
+      return { ok: false, error: 'missing_path' };
+    }
+
+    ctx.logFn(`Cloud Storage: uploading ${path.basename(filePath)} (visibility=${visibility})`);
+
+    // Read the local file
+    let fileBuffer: Buffer;
+    try {
+      fileBuffer = fs.readFileSync(filePath);
+    } catch (e: any) {
+      ctx.logFn(`Cloud Storage: failed to read ${filePath}: ${e?.message}`);
+      return { ok: false, error: `read_file_failed: ${filePath}` };
+    }
+
+    const filename = filenameOverride || path.basename(filePath);
+    const ext = path.extname(filename).toLowerCase();
+    const mimeMap: Record<string, string> = {
+      '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+      '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp',
+      '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.avi': 'video/x-msvideo',
+      '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4',
+      '.pdf': 'application/pdf', '.json': 'application/json', '.csv': 'text/csv',
+      '.txt': 'text/plain', '.html': 'text/html', '.xml': 'text/xml', '.zip': 'application/zip',
+    };
+    const contentType = mimeMap[ext] || 'application/octet-stream';
+
+    // Upload via proxy endpoint using JSON+base64 to avoid Electron net.fetch
+    // binary body issues (net::ERR_INVALID_ARGUMENT with raw Uint8Array/Buffer)
+    const uploadUrl = `${ctx.cloudAiUrl}/v1/cloud-storage/upload`;
+    const uploadHeaders: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (ctx.accessToken) {
+      uploadHeaders['Authorization'] = `Bearer ${ctx.accessToken}`;
+    }
+
+    const uploadResp = await net.fetch(uploadUrl, {
+      method: 'POST',
+      headers: uploadHeaders,
+      body: JSON.stringify({
+        filename,
+        folder: folder || undefined,
+        contentType,
+        visibility,
+        data: fileBuffer.toString('base64'),
+      }),
+    });
+
+    if (!uploadResp.ok) {
+      const errText = await uploadResp.text().catch(() => '');
+      return { ok: false, error: `upload_failed_${uploadResp.status}: ${errText}` };
+    }
+
+    const uploadResult: any = await uploadResp.json();
+    if (!uploadResult?.ok) {
+      return { ok: false, error: uploadResult?.error || 'upload_failed' };
+    }
+
+    const objectName = String(uploadResult.objectName || '');
+    const url = String(uploadResult.url || '');
+
+    ctx.logFn(`Cloud Storage: uploaded ${objectName} (${Math.round(fileBuffer.length / 1024)}KB, ${visibility})`);
+
+    return {
+      ok: true,
+      objectName,
+      url,
+      visibility,
+      bytesWritten: fileBuffer.length,
+      contentType,
+    };
+  } catch (e: any) {
+    ctx.logFn(`Cloud Storage error: ${e?.message}`);
+    return { ok: false, error: String(e?.message || 'cloud_storage_upload_failed') };
   }
 }
 
