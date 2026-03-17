@@ -544,6 +544,7 @@ export const generate_image = createTool({
       format: z.string(),
       sizeBytes: z.number().optional(),
       revisedPrompt: z.string().optional(),
+      _b64: z.string().optional().describe('Base64-encoded image data (internal, used by desktop handler)'),
     })).optional(),
     model: z.string().optional(),
     provider: z.string().optional(),

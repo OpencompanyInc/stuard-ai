@@ -76,7 +76,7 @@ function isToolAllowed(name: string, allowedPrefixes: string[]): boolean {
 export async function rankToolsByEmbedding(
   queryEmbedding: number[],
   enabledIntegrations: string[] = [],
-  topN: number = 5,
+  topN: number = 7,
   threshold: number = 0.25
 ): Promise<RankedTool[]> {
   if (!queryEmbedding || queryEmbedding.length === 0) return [];
@@ -153,7 +153,7 @@ export async function rankToolsByEmbedding(
 export async function getRankedToolNames(
   queryEmbedding: number[],
   enabledIntegrations: string[] = [],
-  topN: number = 5,
+  topN: number = 7,
   threshold: number = 0.25
 ): Promise<string[]> {
   const ranked = await rankToolsByEmbedding(queryEmbedding, enabledIntegrations, topN, threshold);

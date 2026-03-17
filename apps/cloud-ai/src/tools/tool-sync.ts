@@ -177,6 +177,26 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   wait: ['delay', 'pause', 'sleep', 'wait seconds'],
   run_sequential: ['sequence', 'chain', 'one by one'],
   run_parallel: ['parallel', 'concurrent', 'simultaneously'],
+
+  // Telnyx Telephony
+  telnyx_send_sms: ['send sms', 'text message', 'send text', 'sms'],
+  telnyx_make_call: ['phone call', 'call phone', 'voice call', 'tts call'],
+  telnyx_send_mms: ['send picture', 'send image', 'mms', 'picture message', 'image message', 'send photo'],
+  telnyx_send_voice_note: ['voice note', 'audio message', 'voice message', 'send recording', 'voice memo'],
+  telnyx_voice_call: ['voice call', 'ai call', 'realtime call', 'phone conversation', 'voip call', 'live call'],
+  telnyx_list_voice_providers: ['voice providers', 'available providers', 'voice services'],
+  telnyx_list_active_calls: ['active calls', 'ongoing calls', 'current calls'],
+  telnyx_hangup_call: ['hangup', 'end call', 'disconnect call'],
+
+  // WhatsApp
+  whatsapp_send_message: ['whatsapp message', 'send whatsapp', 'wa message'],
+  whatsapp_send_media: ['whatsapp image', 'whatsapp photo', 'send media whatsapp', 'whatsapp file'],
+  whatsapp_send_reaction: ['react whatsapp', 'emoji reaction', 'whatsapp emoji'],
+  whatsapp_send_voice_note: ['whatsapp voice', 'whatsapp audio', 'voice note whatsapp', 'audio message whatsapp'],
+  whatsapp_transcribe_voice_note: ['transcribe voice', 'voice to text', 'speech to text whatsapp', 'transcribe audio'],
+  whatsapp_send_template: ['whatsapp template', 'template message', 'approved template'],
+  whatsapp_voice_call: ['whatsapp call', 'call whatsapp', 'voice call whatsapp', 'phone call whatsapp', 'ai call whatsapp'],
+  whatsapp_make_call: ['call whatsapp basic', 'tts call whatsapp', 'speak to whatsapp'],
 };
 
 /**
@@ -194,29 +214,43 @@ function getSemanticHints(toolName: string): string[] {
  * This is a best-effort conversion to give the AI context about arguments
  */
 function zodToJSON(schema: any): any {
-  if (!schema) return {};
-  if (schema instanceof z.ZodObject) {
-    const shape = schema.shape;
-    const result: any = {};
-    for (const key in shape) {
-      result[key] = zodToJSON(shape[key]);
+  try {
+    if (!schema) return {};
+    if (schema instanceof z.ZodObject) {
+      const shape = schema.shape;
+      const result: any = {};
+      for (const key in shape) {
+        result[key] = zodToJSON(shape[key]);
+      }
+      return result;
     }
-    return result;
+    if (schema instanceof z.ZodArray) {
+      return [zodToJSON(schema._def?.type ?? schema.element)];
+    }
+    if (schema instanceof z.ZodString) return "string";
+    if (schema instanceof z.ZodNumber) return "number";
+    if (schema instanceof z.ZodBoolean) return "boolean";
+    if (schema instanceof z.ZodEnum) {
+      const vals = (schema._def as any)?.values;
+      return vals ? `enum(${Array.isArray(vals) ? vals.join('|') : Object.values(vals).join('|')})` : "enum";
+    }
+    if (schema instanceof z.ZodUnion) return "union";
+    if (schema instanceof z.ZodOptional) return zodToJSON(schema._def?.innerType) + "?";
+    if (schema instanceof z.ZodDefault) return zodToJSON(schema._def?.innerType);
+    if (schema instanceof z.ZodAny) return "any";
+    if (schema instanceof z.ZodRecord) return "record";
+    if (schema instanceof z.ZodNullable) return zodToJSON(schema._def?.innerType) + "|null";
+    if (schema instanceof z.ZodLiteral) return `literal(${(schema._def as any)?.value})`;
+    if (schema instanceof z.ZodTuple) return "tuple";
+    if (schema instanceof z.ZodEffects) return zodToJSON((schema._def as any)?.schema);
+    if (schema instanceof z.ZodNativeEnum) {
+      const vals = (schema._def as any)?.values;
+      return vals ? `enum(${Object.values(vals).filter(v => typeof v === 'string').join('|')})` : "enum";
+    }
+    return "unknown";
+  } catch {
+    return "unknown";
   }
-  if (schema instanceof z.ZodArray) {
-    return [zodToJSON(schema.element)];
-  }
-  if (schema instanceof z.ZodString) return "string";
-  if (schema instanceof z.ZodNumber) return "number";
-  if (schema instanceof z.ZodBoolean) return "boolean";
-  if (schema instanceof z.ZodEnum) return `enum(${(schema._def as any).values.join('|')})`;
-  if (schema instanceof z.ZodUnion) return "union";
-  if (schema instanceof z.ZodOptional) return zodToJSON(schema._def.innerType) + "?";
-  if (schema instanceof z.ZodDefault) return zodToJSON(schema._def.innerType);
-  if (schema instanceof z.ZodAny) return "any";
-  if (schema instanceof z.ZodRecord) return "record";
-
-  return "unknown";
 }
 
 /**
@@ -338,6 +372,7 @@ export async function syncToolsToSupabase(options: {
     } catch (error: any) {
       const errorMsg = `Batch ${batchNum} error: ${error.message}`;
       console.error('[tool-sync]', errorMsg);
+      console.error('[tool-sync] Stack:', error.stack);
       result.errors.push(errorMsg);
     }
   }

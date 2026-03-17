@@ -423,6 +423,60 @@ export const elevenlabs_get_conversation = createTool({
   },
 });
 
+export const elevenlabs_telnyx_outbound_call = createTool({
+  id: 'elevenlabs_telnyx_outbound_call',
+  description: 'Start an outbound phone call through ElevenLabs Conversational AI using a Telnyx phone number configured in ElevenLabs. The AI agent handles the entire conversation in real-time.',
+  inputSchema: z.object({
+    agent_id: z.string().min(1).describe('ElevenLabs Conversational AI agent ID.'),
+    agent_phone_number_id: z.string().min(1).describe('ElevenLabs phone number ID (Telnyx number configured in ElevenLabs dashboard).'),
+    to_number: z.string().min(1).describe('Destination phone number in E.164 format (e.g. +12125550000).'),
+    conversation_initiation_client_data: z.record(z.string(), z.any()).optional().describe('Optional conversation context data sent to the agent.'),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    success: z.boolean().optional(),
+    message: z.string().optional(),
+    conversationId: z.string().optional(),
+    error: z.string().optional(),
+  }),
+  execute: async (inputData) => {
+    try {
+      const apiKey = process.env.ELEVENLABS_API_KEY || '';
+      if (!apiKey) throw new Error('ELEVENLABS_API_KEY not configured.');
+
+      const body: Record<string, any> = {
+        agent_id: inputData.agent_id,
+        agent_phone_number_id: inputData.agent_phone_number_id,
+        to_number: inputData.to_number,
+      };
+      if (inputData.conversation_initiation_client_data) {
+        body.conversation_initiation_client_data = inputData.conversation_initiation_client_data;
+      }
+
+      const res = await fetch('https://api.elevenlabs.io/v1/convai/telnyx/outbound-call', {
+        method: 'POST',
+        headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json().catch(() => ({})) as any;
+      if (!res.ok) {
+        const errMsg = json?.detail || json?.message || `ElevenLabs API error (${res.status})`;
+        return { ok: false, error: errMsg };
+      }
+
+      return {
+        ok: true,
+        success: json?.success ?? true,
+        message: json?.message,
+        conversationId: json?.conversation_id || json?.conversationId,
+      };
+    } catch (e: any) {
+      console.error('[tts-tools] elevenlabs_telnyx_outbound_call error:', e);
+      return { ok: false, error: errorMessage(e, 'Failed to start ElevenLabs Telnyx outbound call') };
+    }
+  },
+});
+
 export const elevenlabs_twilio_outbound_call = createTool({
   id: 'elevenlabs_twilio_outbound_call',
   description: 'Start an outbound phone call through ElevenLabs Conversational AI using its Twilio bridge. Useful when you want a live voice agent instead of one-shot TTS playback.',

@@ -148,6 +148,16 @@ export async function waMarkRead(messageId: string): Promise<any> {
   });
 }
 
+export async function waGetMediaUrl(mediaId: string): Promise<{ url: string; mimeType: string; sha256?: string; fileSize?: number }> {
+  assertConfigured();
+  const res = await fetch(`${WA_API}/${mediaId}`, {
+    headers: { 'Authorization': `Bearer ${WA_ACCESS_TOKEN}` },
+  });
+  if (!res.ok) throw new Error(`Failed to get media info (${res.status})`);
+  const data = await res.json() as any;
+  return { url: data.url, mimeType: data.mime_type, sha256: data.sha256, fileSize: data.file_size };
+}
+
 export async function waUploadMediaFromUrl(mediaUrl: string, mimeType: string): Promise<string> {
   assertConfigured();
   const fileRes = await fetch(mediaUrl);
@@ -287,10 +297,40 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
         const msgType: string = msg?.type || '';
         const msgId: string = msg?.id || '';
 
-        // Extract text body (preserve case for agent messages)
+        // Extract text body or build a description for media messages
         let text = '';
+        let mediaId: string | undefined;
+        let mediaMimeType: string | undefined;
+        let mediaCaption: string | undefined;
+
         if (msgType === 'text') {
           text = String(msg?.text?.body || '').trim();
+        } else if (msgType === 'image') {
+          mediaId = String(msg?.image?.id || '');
+          mediaMimeType = String(msg?.image?.mime_type || 'image/jpeg');
+          mediaCaption = msg?.image?.caption ? String(msg.image.caption) : undefined;
+          text = mediaCaption
+            ? `[Image received] ${mediaCaption} (mediaId: ${mediaId})`
+            : `[Image received] (mediaId: ${mediaId})`;
+        } else if (msgType === 'audio') {
+          mediaId = String(msg?.audio?.id || '');
+          mediaMimeType = String(msg?.audio?.mime_type || 'audio/ogg');
+          text = `[Voice note received] (mediaId: ${mediaId})`;
+        } else if (msgType === 'video') {
+          mediaId = String(msg?.video?.id || '');
+          mediaMimeType = String(msg?.video?.mime_type || 'video/mp4');
+          mediaCaption = msg?.video?.caption ? String(msg.video.caption) : undefined;
+          text = mediaCaption
+            ? `[Video received] ${mediaCaption} (mediaId: ${mediaId})`
+            : `[Video received] (mediaId: ${mediaId})`;
+        } else if (msgType === 'document') {
+          mediaId = String(msg?.document?.id || '');
+          mediaMimeType = String(msg?.document?.mime_type || 'application/octet-stream');
+          const docName = msg?.document?.filename ? String(msg.document.filename) : 'document';
+          text = `[Document received: ${docName}] (mediaId: ${mediaId})`;
+        } else if (msgType === 'sticker') {
+          mediaId = String(msg?.sticker?.id || '');
+          text = `[Sticker received] (mediaId: ${mediaId})`;
         }
 
         if (!from || !text) continue;
@@ -415,6 +455,9 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
               conversationId: smsState.conversation_id,
               metadata: {
                 waId: from,
+                msgType,
+                ...(mediaId ? { mediaId, mediaMimeType } : {}),
+                ...(mediaCaption ? { mediaCaption } : {}),
                 receivedAt: new Date().toISOString(),
               },
             });

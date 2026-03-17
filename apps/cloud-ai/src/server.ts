@@ -256,12 +256,20 @@ server.on('close', () => { try { clearInterval(pingTimer); } catch { } });
 
 import { handleSpeechConnection } from './routes/speech';
 import { handleTerminalConnection } from './routes/terminal-relay';
+import { telnyxBridgeWss } from './routes/integrations/telnyx-bridge';
+import { initVoiceProviders } from './voice';
+
+initVoiceProviders();
 
 server.on('upgrade', (req, socket, head) => {
   const url = req.url || '';
   if (url === '/ws' || url.startsWith('/ws?')) {
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req);
+    });
+  } else if (url.startsWith('/ws/telnyx-bridge')) {
+    telnyxBridgeWss.handleUpgrade(req, socket, head, (ws) => {
+      telnyxBridgeWss.emit('connection', ws, req);
     });
   } else if (url === '/vm/ws' || url.startsWith('/vm/ws?')) {
     (async () => {
@@ -1201,7 +1209,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             try {
               const queryEmbedding = await getOrCreateQueryEmbedding(prompt);
               if (queryEmbedding && queryEmbedding.length > 0) {
-                const topN = Number(process.env.SIS_RANKED_TOPN || '8');
+                const topN = Number(process.env.SIS_RANKED_TOPN || '7');
                 rankedToolNames = await getRankedToolNames(queryEmbedding, enabledIntegrations, topN);
                 if (process.env.SIS_DEBUG === '1') {
                   console.log(`[tool-rank] Ranked ${rankedToolNames.length} tools: ${rankedToolNames.join(', ')}`);

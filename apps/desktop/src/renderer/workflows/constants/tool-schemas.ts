@@ -264,7 +264,16 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   // Telnyx (SMS / Voice — verified number only)
   { id: 'telnyx_send_sms', category: 'integrations', kind: 'cloud', description: 'Send an SMS to the user\'s verified phone number', argsTemplate: { message: '' }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
   { id: 'telnyx_make_call', category: 'integrations', kind: 'cloud', description: 'Call the user\'s verified phone and speak a message via TTS', argsTemplate: { message: '', voice: 'female' }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', error: 'string' } },
+  { id: 'telnyx_make_elevenlabs_call', category: 'integrations', kind: 'cloud', description: 'Call a phone number and play a high-quality ElevenLabs TTS message', argsTemplate: { to: '', message: '', voice_id: '', model_id: 'eleven_turbo_v2_5' }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', error: 'string' } },
+  { id: 'telnyx_elevenlabs_agent_call', category: 'integrations', kind: 'cloud', description: 'Call a phone number and connect to an ElevenLabs Conversational AI agent in real-time', argsTemplate: { to: '', agent_id: '', initial_message: '', metadata: {} }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', error: 'string' } },
+  { id: 'telnyx_call_control', category: 'integrations', kind: 'cloud', description: 'Send a control action (hangup, hold, unhold, speak, playback_stop) to an active Telnyx call', argsTemplate: { call_control_id: '', action: 'hangup' }, outputSchema: { ok: 'boolean', error: 'string' } },
   { id: 'telnyx_phone_status', category: 'integrations', kind: 'cloud', description: 'Check if the user has a verified phone number', argsTemplate: {}, outputSchema: { ok: 'boolean', verified: 'boolean', phone: 'string', error: 'string' } },
+  { id: 'telnyx_send_mms', category: 'integrations', kind: 'cloud', description: 'Send an MMS with an image or media file to the user\'s verified phone', argsTemplate: { media_url: '', message: '' }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
+  { id: 'telnyx_send_voice_note', category: 'integrations', kind: 'cloud', description: 'Generate a voice note with ElevenLabs TTS and send as MMS audio', argsTemplate: { message: '', voice_id: '', model_id: 'eleven_turbo_v2_5' }, outputSchema: { ok: 'boolean', messageId: 'string', audioUrl: 'string', to: 'string', error: 'string' } },
+  { id: 'telnyx_voice_call', category: 'integrations', kind: 'cloud', description: 'Make a real-time AI voice call with a selected provider (ElevenLabs, OpenAI Realtime)', argsTemplate: { provider: 'auto', agent_id: '', voice_id: '', initial_message: '', system_prompt: '' }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', provider: 'string', error: 'string' } },
+  { id: 'telnyx_list_voice_providers', category: 'integrations', kind: 'cloud', description: 'List available voice providers and their configuration status', argsTemplate: {}, outputSchema: { ok: 'boolean', providers: 'any[]', defaultProvider: 'string' } },
+  { id: 'telnyx_list_active_calls', category: 'integrations', kind: 'cloud', description: 'List currently active voice calls with status and duration', argsTemplate: {}, outputSchema: { ok: 'boolean', calls: 'any[]' } },
+  { id: 'telnyx_hangup_call', category: 'integrations', kind: 'cloud', description: 'Hang up an active voice call', argsTemplate: { call_control_id: '' }, outputSchema: { ok: 'boolean', error: 'string' } },
   // WhatsApp
   { id: 'whatsapp_send_message', category: 'integrations', kind: 'cloud', description: 'Send a WhatsApp text message to the connected number', argsTemplate: { message: '', preview_url: false }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
   { id: 'whatsapp_send_media', category: 'integrations', kind: 'cloud', description: 'Send media to the connected WhatsApp number', argsTemplate: { type: 'image', url: '', caption: '', filename: '' }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
@@ -272,6 +281,15 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'whatsapp_mark_read', category: 'integrations', kind: 'cloud', description: 'Mark a WhatsApp message as read', argsTemplate: { message_id: '' }, outputSchema: { ok: 'boolean', error: 'string' } },
   { id: 'whatsapp_upload_media', category: 'integrations', kind: 'cloud', description: 'Upload media to WhatsApp servers and get a reusable media ID', argsTemplate: { url: '', mime_type: '' }, outputSchema: { ok: 'boolean', mediaId: 'string', error: 'string' } },
   { id: 'whatsapp_status', category: 'integrations', kind: 'cloud', description: 'Check whether WhatsApp is connected for the current user', argsTemplate: {}, outputSchema: { ok: 'boolean', connected: 'boolean', phone: 'string', error: 'string' } },
+  { id: 'whatsapp_get_media_url', category: 'integrations', kind: 'cloud', description: 'Get the temporary download URL and metadata for a received WhatsApp media message by its media_id', argsTemplate: { media_id: '' }, outputSchema: { ok: 'boolean', url: 'string', mimeType: 'string', fileSize: 'number', error: 'string' } },
+  { id: 'whatsapp_download_media', category: 'integrations', kind: 'cloud', description: 'Download a received WhatsApp media file (image, audio, video, document) to a local temp file', argsTemplate: { media_id: '', filename: '' }, outputSchema: { ok: 'boolean', filePath: 'string', mimeType: 'string', fileSize: 'number', error: 'string' } },
+  { id: 'whatsapp_send_voice_note', category: 'integrations', kind: 'cloud', description: 'Generate a voice note with ElevenLabs TTS and send via WhatsApp', argsTemplate: { message: '', voice_id: '', model_id: 'eleven_turbo_v2_5' }, outputSchema: { ok: 'boolean', messageId: 'string', audioUrl: 'string', to: 'string', error: 'string' } },
+  { id: 'whatsapp_transcribe_voice_note', category: 'integrations', kind: 'cloud', description: 'Download and transcribe a received WhatsApp voice note using Whisper', argsTemplate: { media_id: '', language: '' }, outputSchema: { ok: 'boolean', transcript: 'string', language: 'string', duration: 'number', error: 'string' } },
+  { id: 'whatsapp_send_template', category: 'integrations', kind: 'cloud', description: 'Send a pre-approved WhatsApp template message', argsTemplate: { template_name: '', language_code: 'en_US' }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
+  { id: 'whatsapp_voice_call', category: 'integrations', kind: 'cloud', description: 'Make a real-time AI voice call to the WhatsApp phone number with provider selection', argsTemplate: { provider: 'auto', agent_id: '', voice_id: '', initial_message: '', system_prompt: '' }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', provider: 'string', error: 'string' } },
+  { id: 'whatsapp_make_call', category: 'integrations', kind: 'cloud', description: 'Call the WhatsApp phone number and speak a message via basic TTS', argsTemplate: { message: '', voice: 'female' }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', error: 'string' } },
+  // ElevenLabs native Telnyx integration
+  { id: 'elevenlabs_telnyx_outbound_call', category: 'integrations', kind: 'cloud', description: 'Initiate an outbound phone call via the native ElevenLabs-Telnyx integration', argsTemplate: { agent_id: '', agent_phone_number_id: '', to_number: '' }, outputSchema: { ok: 'boolean', callSid: 'string', error: 'string' } },
   // Discord
   { id: 'discord_list_guilds', category: 'integrations', kind: 'cloud', description: 'List Discord servers the user is in', argsTemplate: {}, outputSchema: { guilds: 'any[]', count: 'number' } },
   { id: 'discord_list_channels', category: 'integrations', kind: 'cloud', description: 'List text channels in a Discord server', argsTemplate: { guild_id: '' }, outputSchema: { channels: 'any[]', count: 'number' } },
@@ -1339,6 +1357,227 @@ if (TOOL_SCHEMAS['whatsapp_upload_media']) {
 
 if (TOOL_SCHEMAS['whatsapp_status']) {
   TOOL_SCHEMAS['whatsapp_status'].description = 'Check whether the current user has a WhatsApp number connected and ready for workflow messages.';
+}
+
+// --- New voice / media tool overrides ---
+
+const VOICE_PROVIDER_OPTIONS = [
+  { value: 'auto', label: 'Auto (Best Available)', description: 'Automatically pick the best configured voice provider' },
+  { value: 'elevenlabs', label: 'ElevenLabs', description: 'ElevenLabs Conversational AI — natural, expressive voices' },
+  { value: 'openai-realtime', label: 'OpenAI Realtime', description: 'OpenAI Realtime API — GPT-4o with voice' },
+  { value: 'grok-realtime', label: 'Grok Voice (xAI)', description: 'xAI Grok Voice Agent — fast, with web & X search' },
+  { value: 'gemini-live', label: 'Gemini Live (Google)', description: 'Google Gemini Live — multimodal voice conversations' },
+];
+
+const ELEVENLABS_MODEL_OPTIONS = [
+  { value: 'eleven_turbo_v2_5', label: 'Turbo v2.5 (Fastest)' },
+  { value: 'eleven_multilingual_v2', label: 'Multilingual v2 (Best quality)' },
+  { value: 'eleven_turbo_v2', label: 'Turbo v2' },
+  { value: 'eleven_monolingual_v1', label: 'Monolingual v1 (English only)' },
+];
+
+if (TOOL_SCHEMAS['telnyx_send_mms']) {
+  TOOL_SCHEMAS['telnyx_send_mms'].args = {
+    media_url: {
+      type: 'string',
+      label: 'Media URL',
+      description: 'Public URL of the image or media file to send.',
+      required: true,
+      placeholder: 'https://cdn.example.com/image.jpg',
+    },
+    message: {
+      type: 'string',
+      label: 'Text Message',
+      description: 'Optional text to include with the MMS.',
+      placeholder: 'Check out this image!',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['telnyx_send_voice_note']) {
+  TOOL_SCHEMAS['telnyx_send_voice_note'].args = {
+    message: {
+      type: 'string',
+      label: 'Voice Message Text',
+      description: 'Text to convert to speech and send as an audio MMS.',
+      required: true,
+      placeholder: 'Hey, just wanted to let you know...',
+    },
+    voice_id: {
+      type: 'string',
+      label: 'ElevenLabs Voice ID',
+      description: 'Voice to use for speech synthesis. Use list_tts_voices to browse.',
+      placeholder: 'JBFqnCBsd6RMkjVDRZzb',
+      advanced: true,
+    },
+    model_id: {
+      type: 'select',
+      label: 'TTS Model',
+      description: 'ElevenLabs model for speech generation.',
+      options: ELEVENLABS_MODEL_OPTIONS,
+      default: 'eleven_turbo_v2_5',
+      advanced: true,
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['telnyx_voice_call']) {
+  TOOL_SCHEMAS['telnyx_voice_call'].args = {
+    provider: {
+      type: 'select',
+      label: 'Voice Provider',
+      description: 'Select the AI voice provider for the real-time call.',
+      options: VOICE_PROVIDER_OPTIONS,
+      default: 'auto',
+    },
+    agent_id: {
+      type: 'string',
+      label: 'Agent ID',
+      description: 'Agent ID (required for ElevenLabs, optional for OpenAI).',
+      placeholder: 'agent_abc123',
+      showWhen: { field: 'provider', values: ['elevenlabs', 'auto'] },
+    },
+    voice_id: {
+      type: 'string',
+      label: 'Voice',
+      description: 'Voice ID or name. For OpenAI: alloy, echo, fable, onyx, nova, shimmer.',
+      placeholder: 'alloy',
+    },
+    initial_message: {
+      type: 'string',
+      label: 'Initial Message',
+      description: 'First thing the AI says when the call connects.',
+      placeholder: 'Hello! I\'m calling about your appointment...',
+    },
+    system_prompt: {
+      type: 'string',
+      label: 'System Prompt',
+      description: 'System prompt for the AI conversation (OpenAI Realtime).',
+      placeholder: 'You are a helpful assistant calling to...',
+      showWhen: { field: 'provider', values: ['openai-realtime', 'grok-realtime', 'gemini-live'] },
+      advanced: true,
+    },
+    model: {
+      type: 'string',
+      label: 'Model',
+      description: 'Model override for the voice provider.',
+      advanced: true,
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['telnyx_hangup_call']) {
+  TOOL_SCHEMAS['telnyx_hangup_call'].args = {
+    call_control_id: {
+      type: 'string',
+      label: 'Call Control ID',
+      description: 'The call control ID of the active call to hang up.',
+      required: true,
+      placeholder: '{{voice_call_step.callControlId}}',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['whatsapp_send_voice_note']) {
+  TOOL_SCHEMAS['whatsapp_send_voice_note'].args = {
+    message: {
+      type: 'string',
+      label: 'Voice Message Text',
+      description: 'Text to convert to speech and send as a WhatsApp audio message.',
+      required: true,
+      placeholder: 'Hey, just wanted to share a quick update...',
+    },
+    voice_id: {
+      type: 'string',
+      label: 'ElevenLabs Voice ID',
+      description: 'Voice to use for speech synthesis.',
+      placeholder: 'JBFqnCBsd6RMkjVDRZzb',
+      advanced: true,
+    },
+    model_id: {
+      type: 'select',
+      label: 'TTS Model',
+      description: 'ElevenLabs model for speech generation.',
+      options: ELEVENLABS_MODEL_OPTIONS,
+      default: 'eleven_turbo_v2_5',
+      advanced: true,
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['whatsapp_transcribe_voice_note']) {
+  TOOL_SCHEMAS['whatsapp_transcribe_voice_note'].args = {
+    media_id: {
+      type: 'string',
+      label: 'Media ID',
+      description: 'WhatsApp media ID of the voice note to transcribe.',
+      required: true,
+      placeholder: '{{trigger.mediaId}}',
+    },
+    language: {
+      type: 'string',
+      label: 'Language Hint',
+      description: 'ISO 639-1 language code for better transcription accuracy.',
+      placeholder: 'en',
+      advanced: true,
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['whatsapp_send_template']) {
+  TOOL_SCHEMAS['whatsapp_send_template'].args = {
+    template_name: {
+      type: 'string',
+      label: 'Template Name',
+      description: 'Name of the pre-approved WhatsApp message template.',
+      required: true,
+      placeholder: 'hello_world',
+    },
+    language_code: {
+      type: 'string',
+      label: 'Language Code',
+      description: 'Template language code.',
+      default: 'en_US',
+      placeholder: 'en_US',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['whatsapp_voice_call']) {
+  TOOL_SCHEMAS['whatsapp_voice_call'].args = {
+    provider: {
+      type: 'select',
+      label: 'Voice Provider',
+      description: 'Select the AI voice provider for the real-time call.',
+      options: VOICE_PROVIDER_OPTIONS,
+      default: 'auto',
+    },
+    agent_id: {
+      type: 'string',
+      label: 'Agent ID',
+      description: 'Agent ID (required for ElevenLabs).',
+      placeholder: 'agent_abc123',
+      showWhen: { field: 'provider', values: ['elevenlabs', 'auto'] },
+    },
+    voice_id: {
+      type: 'string',
+      label: 'Voice',
+      description: 'Voice ID or name.',
+      placeholder: 'alloy',
+    },
+    initial_message: {
+      type: 'string',
+      label: 'Initial Message',
+      description: 'First thing the AI says when the call connects.',
+      placeholder: 'Hello! I am calling about...',
+    },
+    system_prompt: {
+      type: 'string',
+      label: 'System Prompt',
+      description: 'System prompt for the AI conversation.',
+      advanced: true,
+    },
+  };
 }
 
 // --- Cloud Storage tool args ---
@@ -2483,6 +2722,23 @@ const AGENT_AVAILABLE_TOOLS: ArgOption[] = [
   { value: 'whatsapp_mark_read', label: 'WhatsApp Read Receipt', description: 'Mark a WhatsApp message as read', group: 'Integrations' },
   { value: 'whatsapp_upload_media', label: 'WhatsApp Upload', description: 'Upload media to WhatsApp', group: 'Integrations' },
   { value: 'whatsapp_status', label: 'WhatsApp Status', description: 'Check WhatsApp connection status', group: 'Integrations' },
+  { value: 'whatsapp_get_media_url', label: 'WhatsApp Get Media URL', description: 'Get download URL for received WhatsApp media', group: 'Integrations' },
+  { value: 'whatsapp_download_media', label: 'WhatsApp Download Media', description: 'Download received WhatsApp media to local file', group: 'Integrations' },
+  { value: 'telnyx_make_elevenlabs_call', label: 'Telnyx ElevenLabs Call', description: 'Call a phone number with ElevenLabs TTS voice', group: 'Integrations' },
+  { value: 'telnyx_elevenlabs_agent_call', label: 'Telnyx AI Agent Call', description: 'Connect a phone call to ElevenLabs Conversational AI', group: 'Integrations' },
+  { value: 'telnyx_call_control', label: 'Telnyx Call Control', description: 'Control an active Telnyx call (hangup, hold, etc.)', group: 'Integrations' },
+  { value: 'telnyx_send_mms', label: 'Telnyx Send MMS', description: 'Send an MMS with image/media to verified phone', group: 'Integrations' },
+  { value: 'telnyx_send_voice_note', label: 'Telnyx Voice Note', description: 'Generate and send a voice note via MMS', group: 'Integrations' },
+  { value: 'telnyx_voice_call', label: 'Telnyx AI Voice Call', description: 'Make a real-time AI voice call with provider selection', group: 'Integrations' },
+  { value: 'telnyx_list_voice_providers', label: 'List Voice Providers', description: 'List available voice providers for calls', group: 'Integrations' },
+  { value: 'telnyx_list_active_calls', label: 'List Active Calls', description: 'List currently active voice calls', group: 'Integrations' },
+  { value: 'telnyx_hangup_call', label: 'Hangup Call', description: 'Hang up an active voice call', group: 'Integrations' },
+  { value: 'whatsapp_send_voice_note', label: 'WhatsApp Voice Note', description: 'Generate and send a voice note via WhatsApp', group: 'Integrations' },
+  { value: 'whatsapp_transcribe_voice_note', label: 'WhatsApp Transcribe Voice', description: 'Transcribe a received WhatsApp voice note', group: 'Integrations' },
+  { value: 'whatsapp_send_template', label: 'WhatsApp Template', description: 'Send a pre-approved WhatsApp template message', group: 'Integrations' },
+  { value: 'whatsapp_voice_call', label: 'WhatsApp AI Voice Call', description: 'Make a real-time AI voice call to WhatsApp number', group: 'Integrations' },
+  { value: 'whatsapp_make_call', label: 'WhatsApp TTS Call', description: 'Call WhatsApp number with basic TTS message', group: 'Integrations' },
+  { value: 'elevenlabs_telnyx_outbound_call', label: 'ElevenLabs Outbound Call', description: 'Initiate outbound call via ElevenLabs-Telnyx integration', group: 'Integrations' },
 
   // Cloud Storage
   { value: 'cloud_storage_upload', label: 'Upload File', description: 'Upload file to cloud storage (public/private)', group: 'Cloud Storage' },

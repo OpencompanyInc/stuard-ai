@@ -127,7 +127,7 @@ export async function searchToolsSemanticSupabase(
   } = {}
 ): Promise<ResolvedTool[]> {
   const {
-    topK = 5,
+    topK = 7,
     threshold = 0.25,
     category = null,
     kind = null,

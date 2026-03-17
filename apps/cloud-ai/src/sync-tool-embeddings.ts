@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { ensureToolEmbeddings } from './tools/meta-tools';
+import { syncToolsToSupabase } from './tools/tool-sync';
 import { getSupabaseService } from './supabase';
 
 async function main() {
@@ -9,9 +10,21 @@ async function main() {
     process.exit(2);
   }
 
-  console.log('[sync-tool-embeddings] Starting tool embeddings sync...');
+  const forceMode = process.argv.includes('--force');
+
+  console.log(`[sync-tool-embeddings] Starting tool embeddings sync (${forceMode ? 'FORCE re-embed all' : 'incremental'})...`);
   const t0 = Date.now();
-  await ensureToolEmbeddings();
+
+  if (forceMode) {
+    const result = await syncToolsToSupabase({ force: true });
+    console.log(`[sync-tool-embeddings] Force sync result: ${result.synced} synced, ${result.skipped} skipped, ${result.errors.length} errors`);
+    if (result.errors.length > 0) {
+      console.error('[sync-tool-embeddings] Errors:', result.errors);
+    }
+  } else {
+    await ensureToolEmbeddings();
+  }
+
   const dt = Date.now() - t0;
   console.log(`[sync-tool-embeddings] Done in ${dt}ms`);
 }

@@ -778,53 +778,88 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
       const eventType: string = body?.data?.event_type || '';
       const callControlId: string = body?.data?.payload?.call_control_id || '';
       const direction: string = body?.data?.payload?.direction || '';
+      const fromNumber: string = body?.data?.payload?.from || '';
+      const customHeaders: any[] = body?.data?.payload?.custom_headers || [];
 
-      // Inbound call: answer it, then speak a greeting
+      const getHeader = (name: string) => customHeaders.find((h: any) => h.name === name)?.value;
+
+      // Inbound call: answer it
       if (eventType === 'call.initiated' && direction === 'inbound' && callControlId) {
+        console.log('[telnyx] Incoming call', { from: fromNumber, callControlId });
         await fetch(`${TELNYX_API}/calls/${callControlId}/actions/answer`, {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${TELNYX_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({}),
         });
       }
 
-      // Call answered (outbound TTS) or after answering inbound
+      // Call answered — choose playback method based on custom headers
       if (eventType === 'call.answered' && callControlId) {
-        const customHeaders: any[] = body?.data?.payload?.custom_headers || [];
-        const ttsHeader = customHeaders.find((h: any) => h.name === 'X-Tts-Message');
-        const voiceHeader = customHeaders.find((h: any) => h.name === 'X-Tts-Voice');
-        const message = ttsHeader
-          ? Buffer.from(ttsHeader.value, 'base64').toString('utf8')
-          : direction === 'inbound'
-            ? 'Hello, this is Stuard AI. How can I help you? Please send me a text message and I will respond shortly.'
+        const elAudioUrlB64 = getHeader('X-El-Audio-Url');
+        const voiceBridgeB64 = getHeader('X-Voice-Bridge') || getHeader('X-El-Agent-Bridge');
+        const ttsMsgB64 = getHeader('X-Tts-Message');
+        const voiceVal = getHeader('X-Tts-Voice');
+
+        if (elAudioUrlB64) {
+          // Pre-generated audio: play via Telnyx media URL
+          const audioUrl = Buffer.from(elAudioUrlB64, 'base64').toString('utf8');
+          await fetch(`${TELNYX_API}/calls/${callControlId}/actions/playback_start`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ media_url: audioUrl, loop: 'once' }),
+          });
+
+        } else if (voiceBridgeB64) {
+          // Provider-agnostic voice bridge: start media streaming
+          const bridgeWsUrlB64 = getHeader('X-Bridge-Ws-Url');
+          const wsBaseUrl = bridgeWsUrlB64
+            ? Buffer.from(bridgeWsUrlB64, 'base64').toString('utf8')
+            : (process.env.CLOUD_PUBLIC_URL || '').replace(/^http/, 'ws');
+
+          const streamUrl = `${wsBaseUrl}/ws/telnyx-bridge?callControlId=${encodeURIComponent(callControlId)}&bridge=${encodeURIComponent(voiceBridgeB64)}`;
+          await fetch(`${TELNYX_API}/calls/${callControlId}/actions/streaming_start`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              stream_url: streamUrl,
+              stream_track: 'both_tracks',
+              enable_dialogflow: false,
+            }),
+          });
+
+        } else if (direction === 'inbound' && !ttsMsgB64) {
+          // Inbound call with no custom headers: auto-answer with AI voice
+          await startInboundAIVoiceCall(callControlId, fromNumber);
+
+        } else {
+          // Fallback: basic Telnyx TTS
+          const message = ttsMsgB64
+            ? Buffer.from(ttsMsgB64, 'base64').toString('utf8')
             : 'Hello from Stuard AI.';
-        const voice = voiceHeader?.value || 'female';
-        await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${TELNYX_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            payload: message,
-            voice: voice === 'male' ? 'male' : 'female',
-            language: 'en-US',
-          }),
-        });
+          const voice = voiceVal || 'female';
+          await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ payload: message, voice: voice === 'male' ? 'male' : 'female', language: 'en-US' }),
+          });
+        }
       }
 
-      // TTS finished: hang up
-      if (eventType === 'call.speak.ended' && callControlId) {
-        await fetch(`${TELNYX_API}/calls/${callControlId}/actions/hangup`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${TELNYX_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-        });
+      // TTS or playback finished → hang up (only for non-streaming calls)
+      if ((eventType === 'call.speak.ended' || eventType === 'call.playback.ended') && callControlId) {
+        const { getActiveCall } = await import('../../voice');
+        if (!getActiveCall(callControlId)) {
+          await fetch(`${TELNYX_API}/calls/${callControlId}/actions/hangup`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+          });
+        }
+      }
+
+      // Call hangup: clean up active call
+      if (eventType === 'call.hangup' && callControlId) {
+        const { removeActiveCall } = await import('../../voice');
+        removeActiveCall(callControlId);
       }
     } catch (e: any) {
       console.error('[telnyx] Call webhook error:', e?.message || e);
@@ -833,5 +868,142 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
     return true;
   }
 
+  // ── MMS webhook (Telnyx sends inbound MMS/media messages here) ────────────
+  if (req.method === 'POST' && pathname === '/webhooks/telnyx/mms') {
+    try {
+      const body = JSON.parse(await readBody(req));
+      const eventType: string = body?.data?.event_type || '';
+
+      if (eventType === 'message.received') {
+        const payload = body?.data?.payload || {};
+        const from: string = normalizePhone(payload?.from?.phone_number || '');
+        const mediaItems: any[] = payload?.media || [];
+        const text: string = payload?.text || '';
+
+        if (from && mediaItems.length > 0) {
+          const userId = await findUserIdByPhone(from);
+          if (userId) {
+            for (const media of mediaItems) {
+              const mediaUrl = media?.url || '';
+              const contentType = media?.content_type || 'image/jpeg';
+              const mediaType = contentType.startsWith('image/') ? 'image'
+                : contentType.startsWith('audio/') ? 'audio'
+                : contentType.startsWith('video/') ? 'video'
+                : 'document';
+
+              await enqueueSmsInboxItem({
+                userId,
+                provider: 'telnyx',
+                providerMessageId: payload?.id || null,
+                fromPhone: from,
+                replyToPhone: from,
+                messageText: text || `[${mediaType} received]`,
+                conversationId: null,
+                metadata: {
+                  mediaUrl,
+                  contentType,
+                  mediaType,
+                  receivedAt: new Date().toISOString(),
+                },
+              });
+            }
+            console.log('[telnyx] MMS received', { from, userId, mediaCount: mediaItems.length });
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error('[telnyx] MMS webhook error:', e?.message || e);
+    }
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
   return false;
+}
+
+/**
+ * Start an AI voice conversation for an inbound call.
+ * Looks up the caller, resolves their preferred voice provider,
+ * and starts a streaming bridge session.
+ */
+async function startInboundAIVoiceCall(callControlId: string, fromNumber: string): Promise<void> {
+  const { getDefaultProviderId } = await import('../../voice');
+
+  const userId = await findUserIdByPhone(normalizePhone(fromNumber));
+  const providerId = getDefaultProviderId();
+
+  if (!providerId) {
+    // No voice providers configured, fall back to TTS greeting
+    await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        payload: 'Hello, this is Stuard AI. I cannot take voice calls right now. Please send a text message instead.',
+        voice: 'female',
+        language: 'en-US',
+      }),
+    });
+    return;
+  }
+
+  // Build bridge config for the inbound call
+  const bridgeConfig: Record<string, any> = {
+    providerId,
+    initialMessage: 'Hello! This is Stuard AI. How can I help you today?',
+    direction: 'inbound',
+    callerNumber: fromNumber,
+    userId: userId || undefined,
+    metadata: {
+      source: 'inbound_call',
+      callerNumber: fromNumber,
+    },
+  };
+
+  // For ElevenLabs, we need an agent ID from env
+  if (providerId === 'elevenlabs') {
+    const agentId = process.env.ELEVENLABS_INBOUND_AGENT_ID || process.env.ELEVENLABS_DEFAULT_AGENT_ID || '';
+    if (!agentId) {
+      await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          payload: 'Hello, this is Stuard AI. Voice calls are not fully configured yet. Please send a text message.',
+          voice: 'female',
+          language: 'en-US',
+        }),
+      });
+      return;
+    }
+    bridgeConfig.agentId = agentId;
+  }
+
+  // For OpenAI Realtime, set a system prompt
+  if (providerId === 'openai-realtime') {
+    bridgeConfig.systemPrompt =
+      'You are Stuard, a helpful AI assistant answering a phone call. ' +
+      'Be concise, friendly, and helpful. The caller\'s number is ' + fromNumber + '. ' +
+      (userId ? 'They are a registered user.' : 'They are not a registered user.');
+    bridgeConfig.voiceId = process.env.OPENAI_REALTIME_VOICE || 'alloy';
+  }
+
+  const bridgeB64 = Buffer.from(JSON.stringify(bridgeConfig)).toString('base64');
+  const wsBaseUrl = (process.env.CLOUD_PUBLIC_URL || '').replace(/^http/, 'ws');
+  const streamUrl = `${wsBaseUrl}/ws/telnyx-bridge?callControlId=${encodeURIComponent(callControlId)}&bridge=${encodeURIComponent(bridgeB64)}`;
+
+  await fetch(`${TELNYX_API}/calls/${callControlId}/actions/streaming_start`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      stream_url: streamUrl,
+      stream_track: 'both_tracks',
+      enable_dialogflow: false,
+    }),
+  });
+
+  console.log('[telnyx] Started AI voice session for inbound call', {
+    callControlId,
+    fromNumber,
+    providerId,
+    userId,
+  });
 }
