@@ -42,6 +42,7 @@ import { getAgentForQuery } from './agents/stuard/index';
 
 import { startVMHealthMonitor } from './services/vm-health';
 import { startBillingCron } from './services/compute-billing';
+import { startReminderCron } from './services/cloud-reminders';
 import { registerConnection, getDesktopWs, getConnectionInfo } from './services/vm-bridge';
 import { verifyVMToken, mintVMToken } from './services/vm-tokens';
 import { handleDesktopRelayResult } from './routes/desktop-tool-relay';
@@ -446,6 +447,13 @@ server.listen(PORT, () => {
     startBillingCron();
   } catch (e) {
     console.warn('[cloud-ai] Billing cron failed to start:', e);
+  }
+
+  // Start cloud reminder cron (polls for due reminders and sends SMS/WhatsApp)
+  try {
+    startReminderCron();
+  } catch (e) {
+    console.warn('[cloud-ai] Reminder cron failed to start:', e);
   }
 });
 

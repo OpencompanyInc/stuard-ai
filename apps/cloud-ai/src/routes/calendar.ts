@@ -2,6 +2,7 @@
 import { type IncomingMessage, type ServerResponse } from 'http';
 import { verifyToken } from '../supabase';
 import { getExternalAccount, refreshGoogleTokenIfNeeded } from './integrations/google-shared';
+import { getCloudReminders } from '../tools/cloud-reminder-tools';
 
 function computeRange(view: string, refDate?: Date): { start: Date; end: Date } {
   const now = refDate ? new Date(refDate) : new Date();
@@ -238,6 +239,57 @@ export async function handleCalendarRoutes(req: IncomingMessage, res: ServerResp
 
       const body = JSON.stringify({ ok: true, event: data });
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(body);
+      return true;
+    } catch (e) {
+      console.error(e);
+      const body = JSON.stringify({ ok: false, error: 'server_error' });
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(body);
+      return true;
+    }
+  }
+
+  // GET /v1/reminders/cloud — cloud reminders for the dashboard
+  if (req.method === 'GET' && path === '/v1/reminders/cloud') {
+    try {
+      const auth = String(req.headers['authorization'] || '');
+      const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+      const authUser = token ? await verifyToken(token) : null;
+      if (!authUser) {
+        const body = JSON.stringify({ ok: false, error: 'unauthorized' });
+        res.writeHead(401, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(body);
+        return true;
+      }
+
+      const status = parsedUrl.searchParams.get('status') || 'pending';
+      const startParam = parsedUrl.searchParams.get('start') || undefined;
+      const endParam = parsedUrl.searchParams.get('end') || undefined;
+
+      const reminders = await getCloudReminders(authUser.userId, {
+        status,
+        start: startParam,
+        end: endParam,
+      });
+
+      const items = reminders.map((r: any) => ({
+        id: r.id,
+        message: r.title || r.message || 'Reminder',
+        whenIso: r.remind_at,
+        whenEpochMs: new Date(r.remind_at).getTime(),
+        deliveryMethod: r.delivery_method,
+        status: r.status,
+        source: 'cloud',
+      }));
+
+      const body = JSON.stringify({ ok: true, items });
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'Cache-Control': 'no-store',
+        'Access-Control-Allow-Origin': '*',
+      });
       res.end(body);
       return true;
     } catch (e) {

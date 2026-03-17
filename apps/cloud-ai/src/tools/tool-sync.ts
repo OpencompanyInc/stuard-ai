@@ -42,6 +42,23 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   outlook_list_messages: ['outlook inbox', 'outlook emails'],
   outlook_search_messages: ['search outlook', 'find outlook email'],
   outlook_send_mail: ['send outlook', 'outlook compose'],
+  outlook_get_message: ['read outlook email', 'outlook message detail'],
+  outlook_list_recent_brief: ['recent outlook', 'latest outlook emails'],
+  outlook_list_folders: ['outlook folders', 'mail folders'],
+  outlook_reply_message: ['reply outlook', 'respond email'],
+  outlook_forward_message: ['forward outlook', 'forward email'],
+  outlook_create_draft: ['outlook draft', 'draft email'],
+  outlook_mark_as_read: ['outlook read', 'mark read'],
+  outlook_mark_as_unread: ['outlook unread', 'mark unread'],
+  outlook_archive_message: ['outlook archive', 'archive email'],
+  outlook_move_message: ['outlook move', 'move email folder'],
+  outlook_delete_message: ['outlook delete', 'delete email'],
+  outlook_download_attachment: ['outlook attachment', 'download outlook file'],
+  outlook_retrieve_messages_with_attachments: ['outlook attachments', 'outlook download'],
+  outlook_calendar_list_events: ['outlook calendar', 'outlook events', 'outlook meetings'],
+  outlook_calendar_create_event: ['outlook new event', 'outlook meeting', 'create outlook event'],
+  outlook_calendar_update_event: ['outlook update event', 'change outlook meeting'],
+  outlook_calendar_delete_event: ['outlook cancel event', 'delete outlook meeting'],
 
   // GitHub
   github_get_me: ['github profile', 'github user'],
@@ -157,7 +174,7 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   calendar_delete_event: ['delete calendar event', 'remove event', 'cancel meeting', 'cancel event', 'delete meeting'],
   calendar_update_event: ['update calendar event', 'edit event', 'reschedule meeting', 'modify event', 'change event time', 'recurring event'],
   task_crud: ['tasks', 'todos', 'reminders'],
-  task_reminders: ['reminder', 'set reminder', 'recurring reminder', 'repeat reminder', 'notification', 'alert'],
+  task_reminders: ['reminder', 'set reminder', 'recurring reminder', 'repeat reminder', 'notification', 'alert', 'sms reminder', 'whatsapp reminder', 'cloud reminder', 'notify me', 'text me', 'send me a reminder'],
 
   // Window Management
   list_open_windows: ['windows', 'active apps', 'running programs'],
@@ -180,10 +197,9 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
 
   // Telnyx Telephony
   telnyx_send_sms: ['send sms', 'text message', 'send text', 'sms'],
-  telnyx_make_call: ['phone call', 'call phone', 'voice call', 'tts call'],
   telnyx_send_mms: ['send picture', 'send image', 'mms', 'picture message', 'image message', 'send photo'],
   telnyx_send_voice_note: ['voice note', 'audio message', 'voice message', 'send recording', 'voice memo'],
-  telnyx_voice_call: ['voice call', 'ai call', 'realtime call', 'phone conversation', 'voip call', 'live call'],
+  telnyx_voice_call: ['voice call', 'ai call', 'realtime call', 'phone conversation', 'voip call', 'live call', 'phone call', 'call phone', 'make call', 'tts call', 'elevenlabs call', 'openai call', 'grok call', 'gemini call'],
   telnyx_list_voice_providers: ['voice providers', 'available providers', 'voice services'],
   telnyx_list_active_calls: ['active calls', 'ongoing calls', 'current calls'],
   telnyx_hangup_call: ['hangup', 'end call', 'disconnect call'],

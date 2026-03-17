@@ -8,13 +8,21 @@ import { analyzeMediaTool } from '../tools/analyze-media';
 import { deployHeadlessAgent } from '../tools/deploy-headless-agent';
 import { getHeadlessAgentStatus } from '../tools/get-headless-agent-status';
 import { listHeadlessAgentTasks } from '../tools/list-headless-agent-tasks';
-import { outlook_get_me, outlook_list_messages, outlook_search_messages, outlook_send_mail } from '../tools/outlook-tools';
+import {
+  outlook_get_me, outlook_list_messages, outlook_search_messages, outlook_send_mail,
+  outlook_get_message, outlook_list_recent_brief, outlook_list_folders,
+  outlook_reply_message, outlook_forward_message, outlook_create_draft,
+  outlook_mark_as_read, outlook_mark_as_unread, outlook_archive_message,
+  outlook_move_message, outlook_delete_message,
+  outlook_download_attachment, outlook_retrieve_messages_with_attachments,
+  outlook_calendar_list_events, outlook_calendar_create_event,
+  outlook_calendar_update_event, outlook_calendar_delete_event,
+} from '../tools/outlook-tools';
 import { github_get_me, github_list_repos, github_list_issues, github_create_issue } from '../tools/github-tools';
 import { google_get_userinfo, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, calendar_list_events, calendar_create_event, calendar_delete_event, calendar_update_event, tasks_list, drive_list_files, sheets_read_range, sheets_create_spreadsheet, sheets_write_range, sheets_append_rows, sheets_clear_range, sheets_get_spreadsheet, sheets_add_sheet, sheets_format_cells, sheets_batch_update_values, sheets_delete_rows_columns, sheets_sort_range, sheets_auto_resize, docs_get_document, docs_create_document, docs_write_text } from '../tools/google-tools';
 import { facebook_get_me, facebook_list_pages, facebook_list_page_posts, facebook_create_page_post, instagram_get_me, instagram_list_media, instagram_publish_media, threads_get_me, threads_list_posts, threads_publish_post } from '../tools/meta-social-tools';
 import { whatsapp_send_message, whatsapp_send_media, whatsapp_send_reaction, whatsapp_mark_read, whatsapp_upload_media, whatsapp_status, whatsapp_get_media_url, whatsapp_download_media, whatsapp_send_voice_note, whatsapp_transcribe_voice_note, whatsapp_send_template, whatsapp_voice_call, whatsapp_make_call } from '../tools/whatsapp-tools';
-import { telnyx_send_sms, telnyx_make_call, telnyx_make_elevenlabs_call, telnyx_elevenlabs_agent_call, telnyx_call_control, telnyx_phone_status, telnyx_send_mms, telnyx_send_voice_note, telnyx_voice_call, telnyx_list_voice_providers, telnyx_list_active_calls, telnyx_hangup_call } from '../tools/telnyx-tools';
-import { elevenlabs_telnyx_outbound_call } from '../tools/tts-tools';
+import { telnyx_send_sms, telnyx_call_control, telnyx_phone_status, telnyx_send_mms, telnyx_send_voice_note, telnyx_voice_call, telnyx_list_voice_providers, telnyx_list_active_calls, telnyx_hangup_call } from '../tools/telnyx-tools';
 import { send_hotkey, list_directory, read_file, write_file, create_directory, move_file, canvas_list, canvas_read, canvas_write, canvas_create, canvas_delete, calendar_crud, task_crud, task_reminders, planner_list_items, capture_media, describe_media_capture_capabilities, run_command, run_system_command, search_local_workflows, import_workflow, run_automation, stop_automation, search_past_conversations, get_conversation_context, agent_decision, agent_extract, glob, grep, browser_use_status, browser_use_configure, browser_use_execute_script, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies, browser_use_hover, browser_use_select_option, browser_use_get_interactive_elements, browser_use_fill_form, browser_use_wait_for } from '../tools/device-tools';
 import { web_search } from '../tools/perplexity-tools';
 
@@ -104,6 +112,23 @@ export function getHeadlessAgent(
     outlook_list_messages,
     outlook_search_messages,
     outlook_send_mail,
+    outlook_get_message,
+    outlook_list_recent_brief,
+    outlook_list_folders,
+    outlook_reply_message,
+    outlook_forward_message,
+    outlook_create_draft,
+    outlook_mark_as_read,
+    outlook_mark_as_unread,
+    outlook_archive_message,
+    outlook_move_message,
+    outlook_delete_message,
+    outlook_download_attachment,
+    outlook_retrieve_messages_with_attachments,
+    outlook_calendar_list_events,
+    outlook_calendar_create_event,
+    outlook_calendar_update_event,
+    outlook_calendar_delete_event,
     google_get_userinfo,
     gmail_list_messages,
     gmail_get_message_brief,
@@ -160,9 +185,6 @@ export function getHeadlessAgent(
     whatsapp_voice_call,
     whatsapp_make_call,
     telnyx_send_sms,
-    telnyx_make_call,
-    telnyx_make_elevenlabs_call,
-    telnyx_elevenlabs_agent_call,
     telnyx_call_control,
     telnyx_phone_status,
     telnyx_send_mms,
@@ -171,7 +193,6 @@ export function getHeadlessAgent(
     telnyx_list_voice_providers,
     telnyx_list_active_calls,
     telnyx_hangup_call,
-    elevenlabs_telnyx_outbound_call,
 
     // Local Device Tools
     send_hotkey,
@@ -260,6 +281,23 @@ export function getHeadlessAgent(
     tools.outlook_list_messages = outlook_list_messages;
     tools.outlook_search_messages = outlook_search_messages;
     tools.outlook_send_mail = outlook_send_mail;
+    tools.outlook_get_message = outlook_get_message;
+    tools.outlook_list_recent_brief = outlook_list_recent_brief;
+    tools.outlook_list_folders = outlook_list_folders;
+    tools.outlook_reply_message = outlook_reply_message;
+    tools.outlook_forward_message = outlook_forward_message;
+    tools.outlook_create_draft = outlook_create_draft;
+    tools.outlook_mark_as_read = outlook_mark_as_read;
+    tools.outlook_mark_as_unread = outlook_mark_as_unread;
+    tools.outlook_archive_message = outlook_archive_message;
+    tools.outlook_move_message = outlook_move_message;
+    tools.outlook_delete_message = outlook_delete_message;
+    tools.outlook_download_attachment = outlook_download_attachment;
+    tools.outlook_retrieve_messages_with_attachments = outlook_retrieve_messages_with_attachments;
+    tools.outlook_calendar_list_events = outlook_calendar_list_events;
+    tools.outlook_calendar_create_event = outlook_calendar_create_event;
+    tools.outlook_calendar_update_event = outlook_calendar_update_event;
+    tools.outlook_calendar_delete_event = outlook_calendar_delete_event;
   }
 
   if (enabledIntegrations.includes('google')) {
@@ -336,9 +374,6 @@ export function getHeadlessAgent(
 
   if (enabledIntegrations.includes('telnyx')) {
     tools.telnyx_send_sms = telnyx_send_sms;
-    tools.telnyx_make_call = telnyx_make_call;
-    tools.telnyx_make_elevenlabs_call = telnyx_make_elevenlabs_call;
-    tools.telnyx_elevenlabs_agent_call = telnyx_elevenlabs_agent_call;
     tools.telnyx_call_control = telnyx_call_control;
     tools.telnyx_phone_status = telnyx_phone_status;
     tools.telnyx_send_mms = telnyx_send_mms;
@@ -347,7 +382,6 @@ export function getHeadlessAgent(
     tools.telnyx_list_voice_providers = telnyx_list_voice_providers;
     tools.telnyx_list_active_calls = telnyx_list_active_calls;
     tools.telnyx_hangup_call = telnyx_hangup_call;
-    tools.elevenlabs_telnyx_outbound_call = elevenlabs_telnyx_outbound_call;
   }
 
   // If specific tools are allowed, filter the final tools list

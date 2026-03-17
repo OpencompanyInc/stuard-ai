@@ -1,7 +1,16 @@
 import { waitTool } from '../../tools/wait';
 import { runSequentialTool, runParallelTool } from '../../tools/workflow-system';
 import { analyzeMediaTool } from '../../tools/analyze-media';
-import { outlook_get_me, outlook_list_messages, outlook_search_messages, outlook_send_mail } from '../../tools/outlook-tools';
+import {
+  outlook_get_me, outlook_list_messages, outlook_search_messages, outlook_send_mail,
+  outlook_get_message, outlook_list_recent_brief, outlook_list_folders,
+  outlook_reply_message, outlook_forward_message, outlook_create_draft,
+  outlook_mark_as_read, outlook_mark_as_unread, outlook_archive_message,
+  outlook_move_message, outlook_delete_message,
+  outlook_download_attachment, outlook_retrieve_messages_with_attachments,
+  outlook_calendar_list_events, outlook_calendar_create_event,
+  outlook_calendar_update_event, outlook_calendar_delete_event,
+} from '../../tools/outlook-tools';
 import {
   github_get_me, github_list_repos, github_list_issues, github_create_issue,
   github_list_issue_comments, github_create_issue_comment, github_update_issue,
@@ -29,10 +38,10 @@ import { ffmpeg_status, ffmpeg_setup, ffmpeg_run, ffmpeg_convert_media, ffmpeg_e
 import { ollama_status, ollama_chat, ollama_generate, ollama_vision, ollama_embeddings, ollama_models } from '../../tools/device-tools';
 import { browser_use_status, browser_use_configure, browser_use_execute_script, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies, browser_use_hover, browser_use_select_option, browser_use_get_interactive_elements, browser_use_fill_form, browser_use_wait_for } from '../../tools/device-tools';
 import { submitFeedback, reportBug, suggestFeature, listMyFeedback, getFeedbackDetails } from '../../tools/feedback-tools';
-import { telnyx_send_sms, telnyx_make_call, telnyx_make_elevenlabs_call, telnyx_elevenlabs_agent_call, telnyx_call_control, telnyx_phone_status, telnyx_send_mms, telnyx_send_voice_note, telnyx_voice_call, telnyx_list_voice_providers, telnyx_list_active_calls, telnyx_hangup_call } from '../../tools/telnyx-tools';
+import { telnyx_send_sms, telnyx_call_control, telnyx_phone_status, telnyx_send_mms, telnyx_send_voice_note, telnyx_voice_call, telnyx_list_voice_providers, telnyx_list_active_calls, telnyx_hangup_call } from '../../tools/telnyx-tools';
 import { whatsapp_send_message, whatsapp_send_media, whatsapp_send_reaction, whatsapp_mark_read, whatsapp_upload_media, whatsapp_status, whatsapp_get_media_url, whatsapp_download_media, whatsapp_send_voice_note, whatsapp_transcribe_voice_note, whatsapp_send_template, whatsapp_voice_call, whatsapp_make_call } from '../../tools/whatsapp-tools';
 import { facebook_get_me, facebook_list_pages, facebook_list_page_posts, facebook_create_page_post, instagram_get_me, instagram_list_media, instagram_publish_media, threads_get_me, threads_list_posts, threads_publish_post } from '../../tools/meta-social-tools';
-import { text_to_speech, list_tts_voices, get_tts_models, elevenlabs_list_agents, elevenlabs_get_signed_conversation_url, elevenlabs_get_webrtc_token, elevenlabs_list_conversations, elevenlabs_get_conversation, elevenlabs_telnyx_outbound_call, elevenlabs_twilio_outbound_call } from '../../tools/tts-tools';
+import { text_to_speech, list_tts_voices, get_tts_models, elevenlabs_list_agents, elevenlabs_get_signed_conversation_url, elevenlabs_get_webrtc_token, elevenlabs_list_conversations, elevenlabs_get_conversation } from '../../tools/tts-tools';
 import { cloud_storage_upload, cloud_storage_get_url, cloud_storage_list, cloud_storage_delete, cloud_storage_set_visibility } from '../../tools/cloud-storage-tools';
 import { http_request } from '../../tools/http-tools';
 import { proactive_task_create, proactive_task_list, proactive_task_update, proactive_task_delete } from '../../tools/proactive-task-tools';
@@ -71,6 +80,23 @@ export const ALL_TOOLS = {
   outlook_list_messages,
   outlook_search_messages,
   outlook_send_mail,
+  outlook_get_message,
+  outlook_list_recent_brief,
+  outlook_list_folders,
+  outlook_reply_message,
+  outlook_forward_message,
+  outlook_create_draft,
+  outlook_mark_as_read,
+  outlook_mark_as_unread,
+  outlook_archive_message,
+  outlook_move_message,
+  outlook_delete_message,
+  outlook_download_attachment,
+  outlook_retrieve_messages_with_attachments,
+  outlook_calendar_list_events,
+  outlook_calendar_create_event,
+  outlook_calendar_update_event,
+  outlook_calendar_delete_event,
   // Google Workspace
   google_get_userinfo,
   google_list_profiles,
@@ -367,13 +393,8 @@ export const ALL_TOOLS = {
   elevenlabs_get_webrtc_token,
   elevenlabs_list_conversations,
   elevenlabs_get_conversation,
-  elevenlabs_telnyx_outbound_call,
-  elevenlabs_twilio_outbound_call,
   // Telnyx (SMS / Voice calls — requires verified phone)
   telnyx_send_sms,
-  telnyx_make_call,
-  telnyx_make_elevenlabs_call,
-  telnyx_elevenlabs_agent_call,
   telnyx_call_control,
   telnyx_phone_status,
   telnyx_send_mms,

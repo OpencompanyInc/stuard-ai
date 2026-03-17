@@ -24,7 +24,7 @@ import type { ModelChoice } from '../router/model-router';
 import { getDefaultModelForCategory } from '../pricing';
 import { buildProactiveMessageContent, filterProactiveTools, generateWithToolRecovery } from './proactive-utils';
 import { verifyVMAuthFromRequest } from '../services/vm-tokens';
-import { telnyx_send_sms, telnyx_make_call } from '../tools/telnyx-tools';
+import { telnyx_send_sms, telnyx_voice_call } from '../tools/telnyx-tools';
 import { whatsapp_send_message } from '../tools/whatsapp-tools';
 import { stripMarkdownForSms } from './sms-utils';
 import { getBridgeSecrets } from '../tools/bridge';
@@ -144,9 +144,9 @@ async function deliverProactiveNotifications(
     } catch {}
   }
   if (requested.has('call')) {
-    results.call = await (telnyx_make_call as any).execute({
-      message: message.slice(0, 500),
-      voice: 'female',
+    results.call = await (telnyx_voice_call as any).execute({
+      provider: 'auto',
+      initial_message: message.slice(0, 500),
     }, {} as any);
   }
   return results;

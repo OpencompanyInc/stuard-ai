@@ -1,7 +1,8 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { calendar_list_events } from '../google-tools';
-import { execLocalTool, hasClientBridge, makeLocalTool } from './shared';
+import { execLocalTool, hasClientBridge, makeLocalTool, getBridgeSecrets } from './shared';
+import { syncReminderToCloud, getCloudReminders } from '../cloud-reminder-tools';
 
 export const calendar_crud = makeLocalTool(
   'calendar_crud',
@@ -23,9 +24,10 @@ const recurrenceSchema = z.object({
   count: z.number().int().min(1).optional().describe('Maximum number of times the reminder fires before stopping.'),
 }).describe('Recurrence rule. Omit entirely for a one-time reminder.');
 
-export const task_reminders = makeLocalTool(
+const _task_reminders_base = makeLocalTool(
   'task_reminders',
-  'Schedule, update, cancel/delete, list, and resume local (Stuard) reminders. Supports one-time and recurring reminders.',
+  'Schedule, update, cancel/delete, list, and resume reminders. Supports one-time and recurring reminders. ' +
+  'Set cloud_notify=true to also auto-send an SMS or WhatsApp message at the scheduled time (works even when desktop is offline).',
   z.object({
     action: z.enum(['schedule', 'update', 'cancel', 'delete', 'list', 'resume']).describe(
       'schedule: create a new reminder | update: modify an existing reminder | cancel/delete: remove a reminder | list: list all pending reminders | resume: restart pending reminders after agent restart'
@@ -36,8 +38,42 @@ export const task_reminders = makeLocalTool(
     taskId: z.string().optional().describe('Optional task ID to associate with this reminder.'),
     id: z.string().optional().describe('Reminder ID. Required for update, cancel, and delete.'),
     recurrence: recurrenceSchema.optional().describe('Make this reminder repeat. Omit for one-time. Pass null/undefined in update to remove recurrence.'),
+    cloud_notify: z.boolean().optional().describe('When true, also sends an SMS/WhatsApp at the scheduled time via the cloud. Requires a connected Telnyx or WhatsApp number.'),
+    cloud_notify_method: z.enum(['sms', 'whatsapp', 'both']).optional().describe('Delivery method for cloud notification. Default: "sms".'),
   }),
 );
+
+// Wrap task_reminders: on schedule with cloud_notify, sync to cloud
+export const task_reminders = createTool({
+  id: _task_reminders_base.id!,
+  description: _task_reminders_base.description!,
+  inputSchema: (_task_reminders_base as any).inputSchema,
+  outputSchema: z.any(),
+  execute: async (input, context) => {
+    const result = await (_task_reminders_base.execute as any)(input, context);
+
+    // Auto-sync to cloud when cloud_notify is set
+    const inp = input as any;
+    if (inp.action === 'schedule' && inp.cloud_notify && inp.message && (inp.when || inp.scheduledAt)) {
+      try {
+        const secrets = getBridgeSecrets();
+        const userId = secrets?.userId || (context as any)?.userId || (context as any)?.resourceId;
+        if (userId) {
+          await syncReminderToCloud(userId, {
+            when: inp.when || inp.scheduledAt,
+            message: inp.message,
+            recurrence: inp.recurrence,
+            cloud_notify_method: inp.cloud_notify_method,
+          });
+        }
+      } catch (e: any) {
+        console.error('[task_reminders] Cloud sync failed (non-blocking):', e?.message);
+      }
+    }
+
+    return result;
+  },
+});
 
 export const unified_task_assignments = makeLocalTool(
   'unified_task_assignments',
@@ -197,6 +233,37 @@ export const planner_list_items = createTool({
       }
     } catch {
       // Ignore reminder failures
+    }
+
+    // Cloud reminders (synced, with SMS/WhatsApp delivery)
+    try {
+      const secrets = getBridgeSecrets();
+      const userId = secrets?.userId || (context as any)?.userId || (context as any)?.resourceId;
+      if (userId) {
+        const cloudReminders = await getCloudReminders(userId, {
+          status: 'pending',
+          start: start.toISOString(),
+          end: end.toISOString(),
+        });
+        for (const cr of cloudReminders) {
+          let dt: Date | null = null;
+          try { dt = new Date(String(cr.remind_at)); } catch { dt = null; }
+          if (!inRange(dt)) continue;
+          items.push({
+            id: `cloud-reminder:${String(cr.id ?? '')}`,
+            title: String(cr.title || cr.message || 'Reminder'),
+            provider: 'cloud',
+            kind: 'reminder' as const,
+            start: dt?.toISOString(),
+            end: dt?.toISOString(),
+            allDay: false,
+            source: `cloud:${cr.delivery_method || 'sms'}`,
+            raw: cr,
+          });
+        }
+      }
+    } catch {
+      // Ignore cloud reminder failures
     }
 
     // Google Calendar events (primary)

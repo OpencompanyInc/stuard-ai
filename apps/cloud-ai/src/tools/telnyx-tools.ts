@@ -10,9 +10,7 @@ import { randomUUID } from 'crypto';
 import {
   getVoiceProvider,
   getDefaultProviderId,
-  getConfiguredProviders,
   listActiveCalls,
-  getActiveCall,
   removeActiveCall,
 } from '../voice';
 
@@ -117,188 +115,6 @@ export const telnyx_send_sms = createTool({
   },
 });
 
-// ── Make Call ────────────────────────────────────────────────────────────────
-
-export const telnyx_make_call = createTool({
-  id: 'telnyx_make_call',
-  description: 'Make a voice call to the user\'s verified phone number and speak a message using TTS.',
-  inputSchema: z.object({
-    message: z.string().describe('The message to speak when the call is answered (text-to-speech).'),
-    voice: z.enum(['female', 'male']).default('female').describe('TTS voice gender.'),
-  }),
-  outputSchema: z.object({
-    ok: z.boolean(),
-    callControlId: z.string().optional(),
-    to: z.string().optional(),
-    error: z.string().optional(),
-  }),
-  execute: async (input) => {
-    try {
-      const userId = await requireUserId();
-      const phone = await getVerifiedPhone(userId);
-
-      const callResult = await telnyxRequest('/calls', 'POST', {
-        connection_id: process.env.TELNYX_SIP_CONNECTION_ID || '',
-        to: phone,
-        from: TELNYX_FROM_NUMBER,
-        answering_machine_detection: 'detect',
-        webhook_url: `${process.env.CLOUD_PUBLIC_URL || ''}/integrations/telnyx/call-webhook`,
-        webhook_url_method: 'POST',
-        custom_headers: [
-          { name: 'X-Tts-Message', value: Buffer.from(input.message).toString('base64') },
-          { name: 'X-Tts-Voice', value: input.voice || 'female' },
-        ],
-      });
-
-      return {
-        ok: true,
-        callControlId: callResult?.data?.call_control_id || '',
-        to: phone,
-      };
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message || e) };
-    }
-  },
-});
-
-// ── Make Call with ElevenLabs Voice ─────────────────────────────────────────
-// Generates speech via ElevenLabs (ulaw_8000 for telephony), uploads to cloud
-// storage as a public URL, then initiates a Telnyx call that plays the audio.
-
-export const telnyx_make_elevenlabs_call = createTool({
-  id: 'telnyx_make_elevenlabs_call',
-  description: "Make a voice call to the user's verified phone number and speak a message using ElevenLabs high-quality TTS voice (much better than basic TTS).",
-  inputSchema: z.object({
-    message: z.string().describe('The message to speak when the call is answered (text-to-speech via ElevenLabs).'),
-    voice_id: z.string().default('JBFqnCBsd6RMkjVDRZzb').describe('ElevenLabs voice ID. Use list_tts_voices to browse available voices.'),
-    model_id: z.enum(['eleven_multilingual_v2', 'eleven_turbo_v2_5', 'eleven_turbo_v2', 'eleven_monolingual_v1'])
-      .default('eleven_turbo_v2_5').describe('ElevenLabs model. eleven_turbo_v2_5 is fastest for telephony.'),
-    stability: z.number().min(0).max(1).default(0.5).optional().describe('Voice stability (0-1).'),
-    similarity_boost: z.number().min(0).max(1).default(0.75).optional().describe('Voice similarity boost (0-1).'),
-  }),
-  outputSchema: z.object({
-    ok: z.boolean(),
-    callControlId: z.string().optional(),
-    to: z.string().optional(),
-    audioUrl: z.string().optional(),
-    error: z.string().optional(),
-  }),
-  execute: async (input) => {
-    try {
-      const userId = await requireUserId();
-      const phone = await getVerifiedPhone(userId);
-
-      // Generate ElevenLabs audio in ulaw_8000 format (standard telephony codec)
-      const el = new ElevenLabsClient();
-      const audioStream = await el.textToSpeech.convert(input.voice_id, {
-        text: String(input.message || '').slice(0, 3000),
-        modelId: input.model_id || 'eleven_turbo_v2_5',
-        outputFormat: 'ulaw_8000',
-        voiceSettings: {
-          stability: input.stability ?? 0.5,
-          similarityBoost: input.similarity_boost ?? 0.75,
-        },
-      } as any);
-
-      // Buffer the stream
-      const chunks: Uint8Array[] = [];
-      const reader = (audioStream as any).getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) chunks.push(value);
-      }
-      const totalLen = chunks.reduce((s, c) => s + c.length, 0);
-      const buf = Buffer.alloc(totalLen);
-      let off = 0;
-      for (const c of chunks) { buf.set(c, off); off += c.length; }
-
-      // Upload to public cloud storage so Telnyx can fetch the audio URL
-      const filename = `telnyx_el_call_${randomUUID().slice(0, 8)}.ulaw`;
-      const uploadResult = await uploadUserFileBuffer(userId, filename, buf, 'audio/basic', 'telnyx-calls', 'public');
-      const audioUrl = uploadResult.url;
-
-      // Make the Telnyx call — pass audio URL via custom header so the webhook plays it
-      const callResult = await telnyxRequest('/calls', 'POST', {
-        connection_id: process.env.TELNYX_SIP_CONNECTION_ID || '',
-        to: phone,
-        from: TELNYX_FROM_NUMBER,
-        webhook_url: `${process.env.CLOUD_PUBLIC_URL || ''}/integrations/telnyx/call-webhook`,
-        webhook_url_method: 'POST',
-        custom_headers: [
-          { name: 'X-El-Audio-Url', value: Buffer.from(audioUrl).toString('base64') },
-        ],
-      });
-
-      return {
-        ok: true,
-        callControlId: callResult?.data?.call_control_id || '',
-        to: phone,
-        audioUrl,
-      };
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message || e) };
-    }
-  },
-});
-
-// ── ElevenLabs Conversational AI Agent Call via Telnyx ──────────────────────
-// Initiates a Telnyx call that bridges to an ElevenLabs Conversational AI agent
-// via media streaming WebSocket. The agent handles real-time voice conversation.
-
-export const telnyx_elevenlabs_agent_call = createTool({
-  id: 'telnyx_elevenlabs_agent_call',
-  description: "Make a real-time AI voice call to the user's verified phone using an ElevenLabs Conversational AI agent. The agent speaks and listens in real-time — it's a live two-way conversation, not pre-recorded audio.",
-  inputSchema: z.object({
-    agent_id: z.string().min(1).describe('ElevenLabs Conversational AI agent ID. Use elevenlabs_list_agents to find one.'),
-    initial_message: z.string().optional().describe('Optional first thing the agent says when the call connects.'),
-    metadata: z.record(z.string(), z.any()).optional().describe('Optional key-value data passed to the ElevenLabs agent as conversation context.'),
-  }),
-  outputSchema: z.object({
-    ok: z.boolean(),
-    callControlId: z.string().optional(),
-    to: z.string().optional(),
-    agentId: z.string().optional(),
-    error: z.string().optional(),
-  }),
-  execute: async (input) => {
-    try {
-      const userId = await requireUserId();
-      const phone = await getVerifiedPhone(userId);
-
-      const publicUrl = process.env.CLOUD_PUBLIC_URL || '';
-      if (!publicUrl) throw new Error('CLOUD_PUBLIC_URL not configured — required for streaming bridge.');
-
-      // Encode agent config for the webhook to pick up
-      const bridgeConfig = Buffer.from(JSON.stringify({
-        agentId: input.agent_id,
-        initialMessage: input.initial_message || '',
-        metadata: input.metadata || {},
-      })).toString('base64');
-
-      const callResult = await telnyxRequest('/calls', 'POST', {
-        connection_id: process.env.TELNYX_SIP_CONNECTION_ID || '',
-        to: phone,
-        from: TELNYX_FROM_NUMBER,
-        webhook_url: `${publicUrl}/integrations/telnyx/call-webhook`,
-        webhook_url_method: 'POST',
-        custom_headers: [
-          { name: 'X-El-Agent-Bridge', value: bridgeConfig },
-          { name: 'X-Bridge-Ws-Url', value: Buffer.from(`${publicUrl.replace(/^http/, 'ws')}/ws/telnyx-bridge`).toString('base64') },
-        ],
-      });
-
-      return {
-        ok: true,
-        callControlId: callResult?.data?.call_control_id || '',
-        to: phone,
-        agentId: input.agent_id,
-      };
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message || e) };
-    }
-  },
-});
 
 // ── Call Control ─────────────────────────────────────────────────────────────
 
@@ -306,7 +122,7 @@ export const telnyx_call_control = createTool({
   id: 'telnyx_call_control',
   description: "Send a control action to an active Telnyx call (hang up, hold, transfer, speak more text, etc.).",
   inputSchema: z.object({
-    call_control_id: z.string().describe('The callControlId returned by telnyx_make_call or telnyx_make_elevenlabs_call.'),
+    call_control_id: z.string().describe('The callControlId returned by telnyx_voice_call.'),
     action: z.enum(['hangup', 'hold', 'unhold', 'speak', 'playback_stop']).describe('Action to send to the call.'),
     message: z.string().optional().describe('Text to speak (only used for action=speak).'),
     voice: z.enum(['female', 'male']).default('female').optional().describe('Voice gender (only used for action=speak).'),

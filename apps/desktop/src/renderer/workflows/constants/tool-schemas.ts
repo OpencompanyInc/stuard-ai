@@ -198,7 +198,6 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'elevenlabs_get_webrtc_token', category: 'vision', kind: 'cloud', description: 'Get an ElevenLabs WebRTC token for low-latency live voice conversations', argsTemplate: { agent_id: '', participant_name: '', branch_id: '' }, outputSchema: { ok: 'boolean', agentId: 'string', token: 'string', participantName: 'string', error: 'string' } },
   { id: 'elevenlabs_list_conversations', category: 'vision', kind: 'cloud', description: 'List ElevenLabs live conversation sessions for an agent', argsTemplate: { agent_id: '', search: '', branch_id: '', page_size: 20 }, outputSchema: { ok: 'boolean', conversations: 'any[]', nextCursor: 'string', hasMore: 'boolean', error: 'string' } },
   { id: 'elevenlabs_get_conversation', category: 'vision', kind: 'cloud', description: 'Get detailed metadata for an ElevenLabs conversation session', argsTemplate: { conversation_id: '' }, outputSchema: { ok: 'boolean', conversation: 'any', error: 'string' } },
-  { id: 'elevenlabs_twilio_outbound_call', category: 'vision', kind: 'cloud', description: 'Start a live outbound call through ElevenLabs conversational AI using its Twilio bridge', argsTemplate: { agent_id: '', agent_phone_number_id: '', to_number: '', conversation_initiation_client_data: {} }, outputSchema: { ok: 'boolean', success: 'boolean', message: 'string', conversationId: 'string', callSid: 'string', error: 'string' } },
 
   // --- DATA / AI ---
   { id: 'ai_inference', category: 'data', kind: 'cloud', description: 'Run AI inference on text. Returns plain text, structured JSON, or vector embeddings.', argsTemplate: { prompt: '', input: '', mode: 'json', schema: {}, model: 'openai/gpt-4.1-mini', temperature: 0.3 }, outputSchema: { ok: 'boolean', text: 'string', json: 'any', embedding: 'number[]', model: 'string' } },
@@ -263,9 +262,6 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'threads_publish_post', category: 'integrations', kind: 'cloud', description: 'Publish a text post to Threads', argsTemplate: { text: '', reply_control: 'everyone', profile: '' }, outputSchema: { ok: 'boolean', creation_id: 'string', id: 'string', text: 'string' } },
   // Telnyx (SMS / Voice — verified number only)
   { id: 'telnyx_send_sms', category: 'integrations', kind: 'cloud', description: 'Send an SMS to the user\'s verified phone number', argsTemplate: { message: '' }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
-  { id: 'telnyx_make_call', category: 'integrations', kind: 'cloud', description: 'Call the user\'s verified phone and speak a message via TTS', argsTemplate: { message: '', voice: 'female' }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', error: 'string' } },
-  { id: 'telnyx_make_elevenlabs_call', category: 'integrations', kind: 'cloud', description: 'Call a phone number and play a high-quality ElevenLabs TTS message', argsTemplate: { to: '', message: '', voice_id: '', model_id: 'eleven_turbo_v2_5' }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', error: 'string' } },
-  { id: 'telnyx_elevenlabs_agent_call', category: 'integrations', kind: 'cloud', description: 'Call a phone number and connect to an ElevenLabs Conversational AI agent in real-time', argsTemplate: { to: '', agent_id: '', initial_message: '', metadata: {} }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', error: 'string' } },
   { id: 'telnyx_call_control', category: 'integrations', kind: 'cloud', description: 'Send a control action (hangup, hold, unhold, speak, playback_stop) to an active Telnyx call', argsTemplate: { call_control_id: '', action: 'hangup' }, outputSchema: { ok: 'boolean', error: 'string' } },
   { id: 'telnyx_phone_status', category: 'integrations', kind: 'cloud', description: 'Check if the user has a verified phone number', argsTemplate: {}, outputSchema: { ok: 'boolean', verified: 'boolean', phone: 'string', error: 'string' } },
   { id: 'telnyx_send_mms', category: 'integrations', kind: 'cloud', description: 'Send an MMS with an image or media file to the user\'s verified phone', argsTemplate: { media_url: '', message: '' }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
@@ -288,8 +284,6 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'whatsapp_send_template', category: 'integrations', kind: 'cloud', description: 'Send a pre-approved WhatsApp template message', argsTemplate: { template_name: '', language_code: 'en_US' }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
   { id: 'whatsapp_voice_call', category: 'integrations', kind: 'cloud', description: 'Make a real-time AI voice call to the WhatsApp phone number with provider selection', argsTemplate: { provider: 'auto', agent_id: '', voice_id: '', initial_message: '', system_prompt: '' }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', provider: 'string', error: 'string' } },
   { id: 'whatsapp_make_call', category: 'integrations', kind: 'cloud', description: 'Call the WhatsApp phone number and speak a message via basic TTS', argsTemplate: { message: '', voice: 'female' }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', error: 'string' } },
-  // ElevenLabs native Telnyx integration
-  { id: 'elevenlabs_telnyx_outbound_call', category: 'integrations', kind: 'cloud', description: 'Initiate an outbound phone call via the native ElevenLabs-Telnyx integration', argsTemplate: { agent_id: '', agent_phone_number_id: '', to_number: '' }, outputSchema: { ok: 'boolean', callSid: 'string', error: 'string' } },
   // Discord
   { id: 'discord_list_guilds', category: 'integrations', kind: 'cloud', description: 'List Discord servers the user is in', argsTemplate: {}, outputSchema: { guilds: 'any[]', count: 'number' } },
   { id: 'discord_list_channels', category: 'integrations', kind: 'cloud', description: 'List text channels in a Discord server', argsTemplate: { guild_id: '' }, outputSchema: { channels: 'any[]', count: 'number' } },
@@ -2724,8 +2718,6 @@ const AGENT_AVAILABLE_TOOLS: ArgOption[] = [
   { value: 'whatsapp_status', label: 'WhatsApp Status', description: 'Check WhatsApp connection status', group: 'Integrations' },
   { value: 'whatsapp_get_media_url', label: 'WhatsApp Get Media URL', description: 'Get download URL for received WhatsApp media', group: 'Integrations' },
   { value: 'whatsapp_download_media', label: 'WhatsApp Download Media', description: 'Download received WhatsApp media to local file', group: 'Integrations' },
-  { value: 'telnyx_make_elevenlabs_call', label: 'Telnyx ElevenLabs Call', description: 'Call a phone number with ElevenLabs TTS voice', group: 'Integrations' },
-  { value: 'telnyx_elevenlabs_agent_call', label: 'Telnyx AI Agent Call', description: 'Connect a phone call to ElevenLabs Conversational AI', group: 'Integrations' },
   { value: 'telnyx_call_control', label: 'Telnyx Call Control', description: 'Control an active Telnyx call (hangup, hold, etc.)', group: 'Integrations' },
   { value: 'telnyx_send_mms', label: 'Telnyx Send MMS', description: 'Send an MMS with image/media to verified phone', group: 'Integrations' },
   { value: 'telnyx_send_voice_note', label: 'Telnyx Voice Note', description: 'Generate and send a voice note via MMS', group: 'Integrations' },
@@ -2738,7 +2730,6 @@ const AGENT_AVAILABLE_TOOLS: ArgOption[] = [
   { value: 'whatsapp_send_template', label: 'WhatsApp Template', description: 'Send a pre-approved WhatsApp template message', group: 'Integrations' },
   { value: 'whatsapp_voice_call', label: 'WhatsApp AI Voice Call', description: 'Make a real-time AI voice call to WhatsApp number', group: 'Integrations' },
   { value: 'whatsapp_make_call', label: 'WhatsApp TTS Call', description: 'Call WhatsApp number with basic TTS message', group: 'Integrations' },
-  { value: 'elevenlabs_telnyx_outbound_call', label: 'ElevenLabs Outbound Call', description: 'Initiate outbound call via ElevenLabs-Telnyx integration', group: 'Integrations' },
 
   // Cloud Storage
   { value: 'cloud_storage_upload', label: 'Upload File', description: 'Upload file to cloud storage (public/private)', group: 'Cloud Storage' },

@@ -44,7 +44,7 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-async function telnyxSendSms(to: string, text: string): Promise<void> {
+export async function telnyxSendSms(to: string, text: string): Promise<void> {
   if (!TELNYX_API_KEY || !TELNYX_FROM_NUMBER) throw new Error('Telnyx not configured');
   const body: any = { from: TELNYX_FROM_NUMBER, to, text };
   if (TELNYX_MESSAGING_PROFILE_ID) body.messaging_profile_id = TELNYX_MESSAGING_PROFILE_ID;
@@ -795,21 +795,11 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
 
       // Call answered — choose playback method based on custom headers
       if (eventType === 'call.answered' && callControlId) {
-        const elAudioUrlB64 = getHeader('X-El-Audio-Url');
-        const voiceBridgeB64 = getHeader('X-Voice-Bridge') || getHeader('X-El-Agent-Bridge');
+        const voiceBridgeB64 = getHeader('X-Voice-Bridge');
         const ttsMsgB64 = getHeader('X-Tts-Message');
         const voiceVal = getHeader('X-Tts-Voice');
 
-        if (elAudioUrlB64) {
-          // Pre-generated audio: play via Telnyx media URL
-          const audioUrl = Buffer.from(elAudioUrlB64, 'base64').toString('utf8');
-          await fetch(`${TELNYX_API}/calls/${callControlId}/actions/playback_start`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ media_url: audioUrl, loop: 'once' }),
-          });
-
-        } else if (voiceBridgeB64) {
+        if (voiceBridgeB64) {
           // Provider-agnostic voice bridge: start media streaming
           const bridgeWsUrlB64 = getHeader('X-Bridge-Ws-Url');
           const wsBaseUrl = bridgeWsUrlB64
@@ -832,7 +822,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
           await startInboundAIVoiceCall(callControlId, fromNumber);
 
         } else {
-          // Fallback: basic Telnyx TTS
+          // Fallback: basic Telnyx TTS (used by proactive-call endpoint)
           const message = ttsMsgB64
             ? Buffer.from(ttsMsgB64, 'base64').toString('utf8')
             : 'Hello from Stuard AI.';

@@ -146,7 +146,6 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'elevenlabs_get_webrtc_token': { kind: 'cloud' },
   'elevenlabs_list_conversations': { kind: 'cloud' },
   'elevenlabs_get_conversation': { kind: 'cloud' },
-  'elevenlabs_twilio_outbound_call': { kind: 'cloud' },
   'youtube_get_video': { kind: 'cloud' },
   'youtube_get_channel': { kind: 'cloud' },
   'youtube_get_playlist': { kind: 'cloud' },
@@ -267,7 +266,6 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
 
   // Telnyx (SMS / Voice)
   'telnyx_send_sms': { kind: 'cloud' },
-  'telnyx_make_call': { kind: 'cloud' },
   'telnyx_phone_status': { kind: 'cloud' },
 
   // Ollama (Local AI models)

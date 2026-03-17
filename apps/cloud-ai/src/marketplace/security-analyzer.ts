@@ -99,6 +99,8 @@ const HIGH_RISK_TOOLS = [
 const EXFILTRATION_TOOLS = [
   'gmail_send_message',
   'outlook_send_mail',
+  'outlook_reply_message',
+  'outlook_forward_message',
   'scrape_url',
   'web_search',
   'http_request',
@@ -694,7 +696,7 @@ export function quickSecurityCheck(spec: any): { blocked: boolean; reason?: stri
   
   // Determine data flow type
   let dataFlow: 'local' | 'external' | 'mixed' = 'local';
-  const hasExternalTools = /"(gmail_send_message|outlook_send_mail|http_request|api_call)"/.test(specStr);
+  const hasExternalTools = /"(gmail_send_message|outlook_send_mail|outlook_reply_message|outlook_forward_message|http_request|api_call)"/.test(specStr);
   const hasLocalTools = /"(click_at_coordinates|type_text|send_hotkey|wait|log)"/.test(specStr);
   
   if (hasExternalTools && hasLocalTools) {

@@ -214,6 +214,27 @@ export function usePlannerData(accessToken?: string | null): UsePlannerDataResul
     return null;
   };
 
+  const fetchCloudReminders = async (): Promise<PlannerReminder[]> => {
+    if (!accessToken) return [];
+    try {
+      const res = await fetch(`${CLOUD_AI_HTTP}/v1/reminders/cloud?status=pending`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (res.ok) {
+        const j = await res.json();
+        if (j?.ok && Array.isArray(j.items)) {
+          return j.items.map((r: any) => ({
+            id: `cloud:${r.id}`,
+            message: `${r.message || 'Reminder'}${r.deliveryMethod ? ` [${r.deliveryMethod}]` : ''}`,
+            whenIso: r.whenIso,
+            whenEpochMs: r.whenEpochMs,
+          }));
+        }
+      }
+    } catch {}
+    return [];
+  };
+
   const fetchCalendarEvents = async (): Promise<CalendarEvent[]> => {
     const allEvents: CalendarEvent[] = [];
 
@@ -296,6 +317,7 @@ export function usePlannerData(accessToken?: string | null): UsePlannerDataResul
     try {
       const eventsPromise = fetchCalendarEvents();
       const unifiedTasksPromise = fetchUnifiedTasks();
+      const cloudRemindersPromise = fetchCloudReminders();
 
       let ok = agentOnline;
       let baseUrl = agentHttp;
@@ -308,11 +330,12 @@ export function usePlannerData(accessToken?: string | null): UsePlannerDataResul
       if (baseUrl !== agentHttp) setAgentHttp(baseUrl);
       if (ok !== agentOnline) setAgentOnline(ok);
 
-      const [agentTasks, r, e, unifiedTasks] = await Promise.all([
+      const [agentTasks, r, e, unifiedTasks, cloudR] = await Promise.all([
         ok ? fetchTasks(baseUrl) : Promise.resolve(null),
         ok ? fetchReminders(baseUrl) : Promise.resolve(null),
         eventsPromise,
         unifiedTasksPromise,
+        cloudRemindersPromise,
       ]);
 
       // Merge agent tasks with unified tasks
@@ -323,7 +346,11 @@ export function usePlannerData(accessToken?: string | null): UsePlannerDataResul
       mergedTasks.push(...unifiedTasks);
       setTasks(mergedTasks);
 
-      if (r !== null) setReminders(r);
+      // Merge local + cloud reminders
+      const mergedReminders: PlannerReminder[] = [];
+      if (r !== null) mergedReminders.push(...r);
+      if (cloudR.length > 0) mergedReminders.push(...cloudR);
+      setReminders(mergedReminders);
       setEvents(e);
 
       if (ok && agentTasks === null && r === null) {
