@@ -917,13 +917,12 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
  * and starts a streaming bridge session.
  */
 async function startInboundAIVoiceCall(callControlId: string, fromNumber: string): Promise<void> {
-  const { getDefaultProviderId } = await import('../../voice');
+  const { getConfiguredProviders } = await import('../../voice');
 
   const userId = await findUserIdByPhone(normalizePhone(fromNumber));
-  const providerId = getDefaultProviderId();
+  const configuredProviders = getConfiguredProviders();
 
-  if (!providerId) {
-    // No voice providers configured, fall back to TTS greeting
+  if (configuredProviders.length === 0) {
     await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
@@ -935,6 +934,33 @@ async function startInboundAIVoiceCall(callControlId: string, fromNumber: string
     });
     return;
   }
+
+  // Pick the best provider for inbound calls:
+  // - ElevenLabs only if an agent ID is configured
+  // - OpenAI Realtime, Grok, Gemini work with just an API key
+  const preferredOrder = ['elevenlabs', 'openai-realtime', 'grok-realtime', 'gemini-live'];
+  let providerId = '';
+
+  for (const id of preferredOrder) {
+    const p = configuredProviders.find(cp => cp.id === id);
+    if (!p) continue;
+
+    if (id === 'elevenlabs') {
+      const agentId = process.env.ELEVENLABS_INBOUND_AGENT_ID || process.env.ELEVENLABS_DEFAULT_AGENT_ID || '';
+      if (!agentId) continue; // Skip ElevenLabs if no agent ID — try next provider
+    }
+
+    providerId = id;
+    break;
+  }
+
+  // Fallback to first configured provider if none matched preferred list
+  if (!providerId) providerId = configuredProviders[0].id;
+
+  console.log('[telnyx] Inbound call provider selection', {
+    callControlId, fromNumber, providerId,
+    configured: configuredProviders.map(p => p.id),
+  });
 
   // Build bridge config for the inbound call
   const bridgeConfig: Record<string, any> = {
@@ -949,31 +975,22 @@ async function startInboundAIVoiceCall(callControlId: string, fromNumber: string
     },
   };
 
-  // For ElevenLabs, we need an agent ID from env
   if (providerId === 'elevenlabs') {
-    const agentId = process.env.ELEVENLABS_INBOUND_AGENT_ID || process.env.ELEVENLABS_DEFAULT_AGENT_ID || '';
-    if (!agentId) {
-      await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          payload: 'Hello, this is Stuard AI. Voice calls are not fully configured yet. Please send a text message.',
-          voice: 'female',
-          language: 'en-US',
-        }),
-      });
-      return;
-    }
-    bridgeConfig.agentId = agentId;
+    bridgeConfig.agentId = process.env.ELEVENLABS_INBOUND_AGENT_ID || process.env.ELEVENLABS_DEFAULT_AGENT_ID;
   }
 
-  // For OpenAI Realtime, set a system prompt
-  if (providerId === 'openai-realtime') {
+  if (providerId === 'openai-realtime' || providerId === 'grok-realtime') {
     bridgeConfig.systemPrompt =
       'You are Stuard, a helpful AI assistant answering a phone call. ' +
       'Be concise, friendly, and helpful. The caller\'s number is ' + fromNumber + '. ' +
       (userId ? 'They are a registered user.' : 'They are not a registered user.');
     bridgeConfig.voiceId = process.env.OPENAI_REALTIME_VOICE || 'alloy';
+  }
+
+  if (providerId === 'gemini-live') {
+    bridgeConfig.systemPrompt =
+      'You are Stuard, a helpful AI assistant answering a phone call. ' +
+      'Be concise, friendly, and helpful.';
   }
 
   const bridgeB64 = Buffer.from(JSON.stringify(bridgeConfig)).toString('base64');
