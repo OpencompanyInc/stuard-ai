@@ -33,7 +33,7 @@ class OpenAIRealtimeSession implements VoiceSession {
   }
 
   async connect(): Promise<void> {
-    const apiKey = process.env.OPENAI_API_KEY || '';
+    const apiKey = (process.env.OPENAI_API_KEY || '').trim();
     if (!apiKey) throw new Error('OPENAI_API_KEY not set');
 
     const model = this.config.model || DEFAULT_MODEL;

@@ -107,7 +107,7 @@ class GeminiLiveSession implements VoiceSession {
     const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || '';
     if (!apiKey) throw new Error('GOOGLE_GENERATIVE_AI_API_KEY or GEMINI_API_KEY not set');
 
-    const model = this.config.model || 'gemini-2.0-flash-live-001';
+    const model = this.config.model || process.env.GEMINI_LIVE_MODEL || 'gemini-2.5-flash-native-audio-preview-12-2025';
     const wsUrl = `${GEMINI_LIVE_URL}?key=${encodeURIComponent(apiKey)}`;
 
     this.ws = new WebSocket(wsUrl);
@@ -119,7 +119,7 @@ class GeminiLiveSession implements VoiceSession {
         this._active = true;
         clearTimeout(timeout);
 
-        // Gemini requires a BidiGenerateContentSetup as the first message
+        // Gemini Live API setup message
         const setupMsg: Record<string, any> = {
           setup: {
             model: `models/${model}`,

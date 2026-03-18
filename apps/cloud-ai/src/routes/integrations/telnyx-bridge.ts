@@ -107,18 +107,10 @@ telnyxBridgeWss.on('connection', async (telnyxWs: WebSocket, req: IncomingMessag
     },
   };
 
-  let session: VoiceSession;
+  let session: VoiceSession | null = null;
   let streamId = '';
 
-  try {
-    session = await provider.createSession(sessionConfig);
-  } catch (err: any) {
-    console.error(`[telnyx-bridge] Failed to create ${providerId} session:`, err.message);
-    telnyxWs.close(1011, 'session_creation_failed');
-    return;
-  }
-
-  // Register the active call
+  // Register the active call placeholder
   const bridgeConfig: TelephonyBridgeConfig = {
     callControlId,
     streamId: '',
@@ -128,6 +120,56 @@ telnyxBridgeWss.on('connection', async (telnyxWs: WebSocket, req: IncomingMessag
     callerNumber: params.callerNumber,
     direction: params.direction || 'outbound',
   };
+
+  // ── Set up Telnyx WS handlers FIRST ──────────────────────────────────────
+  // Telnyx sends the 'start' event (with stream_id) immediately on connect.
+  // If we wait for createSession() before registering handlers, we miss it
+  // and streamId stays empty → all outbound audio is silently dropped.
+  telnyxWs.on('message', (rawData: Buffer | string) => {
+    try {
+      const msg = JSON.parse(rawData.toString());
+
+      if (msg.event === 'start') {
+        streamId = msg.start?.stream_id || msg.stream_id || '';
+        bridgeConfig.streamId = streamId;
+        console.log('[telnyx-bridge] Stream started', { streamId, callControlId, providerId });
+      }
+
+      if (msg.event === 'media' && msg.media?.track === 'inbound') {
+        const audioB64 = msg.media?.payload;
+        if (audioB64 && session?.isActive()) {
+          session.sendAudio(audioB64);
+        }
+      }
+
+      if (msg.event === 'stop') {
+        console.log('[telnyx-bridge] Telnyx stream stopped', { streamId });
+        if (session) session.close('stream_stopped');
+      }
+    } catch { /* ignore parse errors */ }
+  });
+
+  telnyxWs.on('close', () => {
+    console.log('[telnyx-bridge] Telnyx WS closed', { callControlId, providerId });
+    if (session) session.close('telnyx_closed');
+    removeActiveCall(callControlId);
+  });
+
+  telnyxWs.on('error', (err) => {
+    console.error('[telnyx-bridge] Telnyx WS error', err.message);
+    if (session) session.close('telnyx_error');
+    removeActiveCall(callControlId);
+  });
+
+  // ── Now create the provider session ──────────────────────────────────────
+  try {
+    session = await provider.createSession(sessionConfig);
+  } catch (err: any) {
+    console.error(`[telnyx-bridge] Failed to create ${providerId} session:`, err.message);
+    telnyxWs.close(1011, 'session_creation_failed');
+    return;
+  }
+
   registerActiveCall(callControlId, { callControlId, session, bridgeConfig, startedAt: Date.now() });
 
   // Forward voice provider audio → Telnyx caller
@@ -139,43 +181,6 @@ telnyxBridgeWss.on('connection', async (telnyxWs: WebSocket, req: IncomingMessag
         media: { payload: audioBase64 },
       }));
     }
-  });
-
-  // ── Telnyx → Voice Provider ──────────────────────────────────────────────
-  telnyxWs.on('message', (rawData: Buffer | string) => {
-    try {
-      const msg = JSON.parse(rawData.toString());
-
-      if (msg.event === 'start') {
-        streamId = msg.start?.stream_id || msg.stream_id || '';
-        bridgeConfig.streamId = streamId;
-        console.log('[telnyx-bridge] Stream started', { streamId, callControlId, providerId });
-      }
-
-      if (msg.event === 'media' && msg.media?.track === 'inbound' && session.isActive()) {
-        const audioB64 = msg.media?.payload;
-        if (audioB64) {
-          session.sendAudio(audioB64);
-        }
-      }
-
-      if (msg.event === 'stop') {
-        console.log('[telnyx-bridge] Telnyx stream stopped', { streamId });
-        session.close('stream_stopped');
-      }
-    } catch { /* ignore parse errors */ }
-  });
-
-  telnyxWs.on('close', () => {
-    console.log('[telnyx-bridge] Telnyx WS closed', { callControlId, providerId });
-    session.close('telnyx_closed');
-    removeActiveCall(callControlId);
-  });
-
-  telnyxWs.on('error', (err) => {
-    console.error('[telnyx-bridge] Telnyx WS error', err.message);
-    session.close('telnyx_error');
-    removeActiveCall(callControlId);
   });
 });
 
