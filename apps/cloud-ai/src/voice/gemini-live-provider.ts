@@ -86,6 +86,27 @@ function pcm16_24kToUlaw(pcmB64: string): string {
   return ulawBuf.toString('base64');
 }
 
+/** Downsample PCM16 24kHz to PCM16 16kHz (3:2 ratio with linear interpolation) */
+function pcm16_24kTo16k(pcmB64: string): string {
+  const pcmBuf = Buffer.from(pcmB64, 'base64');
+  const sampleCount = pcmBuf.length / 2;
+  const outputCount = Math.round(sampleCount * 2 / 3);
+  const outBuf = Buffer.alloc(outputCount * 2);
+
+  for (let i = 0; i < outputCount; i++) {
+    const srcIdx = i * 1.5;
+    const lo = Math.floor(srcIdx);
+    const hi = Math.min(lo + 1, sampleCount - 1);
+    const frac = srcIdx - lo;
+    const sLo = pcmBuf.readInt16LE(lo * 2);
+    const sHi = pcmBuf.readInt16LE(hi * 2);
+    const sample = Math.round(sLo * (1 - frac) + sHi * frac);
+    outBuf.writeInt16LE(sample, i * 2);
+  }
+
+  return outBuf.toString('base64');
+}
+
 class GeminiLiveSession implements VoiceSession {
   id: string;
   providerId = 'gemini-live';
@@ -94,6 +115,7 @@ class GeminiLiveSession implements VoiceSession {
   private _active = false;
   private config: VoiceSessionConfig;
   private needsTranscoding: boolean;
+  private needsDownsample: boolean;
 
   constructor(config: VoiceSessionConfig) {
     this.id = `gem_${randomUUID().slice(0, 12)}`;
@@ -101,6 +123,7 @@ class GeminiLiveSession implements VoiceSession {
     this.needsTranscoding = config.inputAudioFormat === 'ulaw_8000' ||
       config.inputAudioFormat === 'pcmu' ||
       config.inputAudioFormat === 'g711_ulaw';
+    this.needsDownsample = config.inputAudioFormat === 'pcm_24000';
   }
 
   async connect(): Promise<void> {
@@ -114,10 +137,10 @@ class GeminiLiveSession implements VoiceSession {
 
     return new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('Gemini Live connection timeout')), 15000);
+      let resolved = false;
 
       this.ws!.on('open', () => {
         this._active = true;
-        clearTimeout(timeout);
 
         // Gemini Live API setup message
         const setupMsg: Record<string, any> = {
@@ -143,30 +166,35 @@ class GeminiLiveSession implements VoiceSession {
         }
 
         this.ws!.send(JSON.stringify(setupMsg));
-
-        // If there's an initial message, send it as text after setup is acknowledged
-        if (this.config.initialMessage) {
-          setTimeout(() => {
-            if (this.ws?.readyState === WebSocket.OPEN) {
-              this.ws.send(JSON.stringify({
-                clientContent: {
-                  turns: [{
-                    role: 'user',
-                    parts: [{ text: `[Greet the caller]: ${this.config.initialMessage}` }],
-                  }],
-                  turnComplete: true,
-                },
-              }));
-            }
-          }, 500);
-        }
-
-        resolve();
       });
 
       this.ws!.on('message', (rawData: Buffer | string) => {
         try {
           const msg = JSON.parse(rawData.toString());
+
+          // Setup complete — now safe to send audio/text
+          if (msg.setupComplete) {
+            console.log('[gemini-live] Setup complete');
+            if (!resolved) {
+              resolved = true;
+              clearTimeout(timeout);
+
+              // Send initial message now that setup is confirmed
+              if (this.config.initialMessage && this.ws?.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({
+                  clientContent: {
+                    turns: [{
+                      role: 'user',
+                      parts: [{ text: `[Greet the caller]: ${this.config.initialMessage}` }],
+                    }],
+                    turnComplete: true,
+                  },
+                }));
+              }
+
+              resolve();
+            }
+          }
 
           // Gemini sends audio in serverContent.modelTurn.parts[].inlineData
           if (msg.serverContent?.modelTurn?.parts) {
@@ -190,11 +218,6 @@ class GeminiLiveSession implements VoiceSession {
             }
           }
 
-          // Setup complete
-          if (msg.setupComplete) {
-            console.log('[gemini-live] Setup complete');
-          }
-
           // Interruption
           if (msg.serverContent?.interrupted) {
             this.config.onInterruption?.();
@@ -210,7 +233,8 @@ class GeminiLiveSession implements VoiceSession {
       this.ws!.on('error', (err) => {
         console.error('[gemini-live] WS error:', err.message);
         this._active = false;
-        if (!this.ws?.OPEN) {
+        if (!resolved) {
+          resolved = true;
           clearTimeout(timeout);
           reject(err);
         }
@@ -222,9 +246,12 @@ class GeminiLiveSession implements VoiceSession {
     if (this.ws?.readyState === WebSocket.OPEN) {
       let pcmB64 = audioBase64;
 
-      // Transcode µ-law 8kHz → PCM16 16kHz if needed
       if (this.needsTranscoding) {
+        // µ-law 8kHz → PCM16 16kHz
         pcmB64 = ulawToPcm16_16k(audioBase64);
+      } else if (this.needsDownsample) {
+        // PCM16 24kHz → PCM16 16kHz (browser sends 24kHz, Gemini expects 16kHz)
+        pcmB64 = pcm16_24kTo16k(audioBase64);
       }
 
       this.ws.send(JSON.stringify({
@@ -277,7 +304,7 @@ class GeminiLiveSession implements VoiceSession {
 export const geminiLiveProvider: VoiceProvider = {
   id: 'gemini-live',
   name: 'Google Gemini Live',
-  supportedInputFormats: ['pcm_16000', 'ulaw_8000', 'pcmu', 'g711_ulaw'] as AudioFormat[],
+  supportedInputFormats: ['pcm_16000', 'pcm_24000', 'ulaw_8000', 'pcmu', 'g711_ulaw'] as AudioFormat[],
   supportedOutputFormats: ['pcm_24000', 'ulaw_8000', 'pcmu', 'g711_ulaw'] as AudioFormat[],
 
   async createSession(config: VoiceSessionConfig): Promise<VoiceSession> {
