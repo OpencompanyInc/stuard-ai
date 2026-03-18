@@ -785,14 +785,16 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
 
       const getHeader = (name: string) => customHeaders.find((h: any) => h.name === name)?.value;
 
+      console.log('[telnyx] Call event', { eventType, direction, callControlId, from: fromNumber });
+
       // Inbound call: answer + start AI voice streaming in one step
-      if (eventType === 'call.initiated' && direction === 'inbound' && callControlId) {
-        console.log('[telnyx] Incoming call', { from: fromNumber, callControlId });
+      if (eventType === 'call.initiated' && direction === 'incoming' && callControlId) {
+        console.log('[telnyx] Incoming call — answering with AI voice', { from: fromNumber, callControlId });
         await answerInboundWithStreaming(callControlId, fromNumber);
       }
 
       // Outbound call answered — choose playback method based on custom headers
-      if (eventType === 'call.answered' && callControlId && direction !== 'inbound') {
+      if (eventType === 'call.answered' && callControlId && direction !== 'incoming') {
         const voiceBridgeB64 = getHeader('X-Voice-Bridge');
         const ttsMsgB64 = getHeader('X-Tts-Message');
         const voiceVal = getHeader('X-Tts-Voice');
