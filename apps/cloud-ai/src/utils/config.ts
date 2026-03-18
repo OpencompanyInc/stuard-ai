@@ -143,7 +143,7 @@ export const CLOUD_ENGINE_BUCKET = clean(process.env.CLOUD_ENGINE_BUCKET || 'stu
 // Base URL for publicly-accessible storage objects.
 // Set to a custom domain (e.g. "https://media.stuard.ai") backed by Cloud CDN / LB,
 // or leave empty to default to "https://storage.googleapis.com/{bucket}".
-export const STORAGE_PUBLIC_BASE_URL = clean(process.env.STORAGE_PUBLIC_BASE_URL || '');
+export const STORAGE_PUBLIC_BASE_URL = clean(process.env.STORAGE_PUBLIC_BASE_URL || 'https://storage.stuard.ai');
 export const COMPUTE_BILLING_INTERVAL_MS = Number(clean(process.env.COMPUTE_BILLING_INTERVAL_MS || 3600000));
 
 // GCE VM configuration

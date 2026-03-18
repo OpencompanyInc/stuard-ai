@@ -285,9 +285,24 @@ export const instagram_publish_media = createTool({
       alt_text,
       thumb_offset,
     });
+    if (!container?.id) throw new Error('instagram_container_failed: Instagram did not return a media container ID.');
+
+    // Poll until the container is ready (Instagram processes media asynchronously)
+    const maxAttempts = 30;
+    for (let i = 0; i < maxAttempts; i++) {
+      const status = await fetchJson(
+        `${INSTAGRAM_API}/${container.id}?fields=status_code&access_token=${encodeURIComponent(token)}`
+      );
+      if (status.status_code === 'FINISHED') break;
+      if (status.status_code === 'ERROR') throw new Error('instagram_media_error: Instagram failed to process the media. Check the URL is publicly accessible.');
+      if (status.status_code === 'EXPIRED') throw new Error('instagram_media_expired: The media container expired before it could be published.');
+      if (i === maxAttempts - 1) throw new Error('instagram_media_timeout: Media processing timed out after 60s.');
+      await new Promise(r => setTimeout(r, 2000));
+    }
+
     const published = await postForm(`${INSTAGRAM_API}/${userId}/media_publish`, {
       access_token: token,
-      creation_id: String(container?.id || ''),
+      creation_id: String(container.id),
     });
     return {
       ok: true,
