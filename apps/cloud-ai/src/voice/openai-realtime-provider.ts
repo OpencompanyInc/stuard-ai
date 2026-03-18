@@ -56,15 +56,27 @@ class OpenAIRealtimeSession implements VoiceSession {
         const voice = this.config.voiceId || 'alloy';
         const validVoice = OPENAI_VOICES.includes(voice as any) ? voice : 'alloy';
 
-        // Configure the session for telephony G.711 µ-law
+        // Map our AudioFormat to OpenAI's format names
+        const toOaiFormat = (fmt?: string) => {
+          if (fmt === 'pcm_24000' || fmt === 'pcm_16000') return 'pcm16';
+          if (fmt === 'g711_alaw' || fmt === 'pcma') return 'g711_alaw';
+          return 'g711_ulaw'; // default for telephony
+        };
+
+        const inputFmt = toOaiFormat(this.config.inputAudioFormat);
+        const outputFmt = toOaiFormat(this.config.outputAudioFormat);
+
         const sessionConfig: Record<string, any> = {
           type: 'session.update',
           session: {
             modalities: ['text', 'audio'],
             voice: validVoice,
-            input_audio_format: 'g711_ulaw',
-            output_audio_format: 'g711_ulaw',
-            input_audio_transcription: { model: 'whisper-1' },
+            input_audio_format: inputFmt,
+            output_audio_format: outputFmt,
+            input_audio_transcription: {
+              model: 'whisper-1',
+              language: this.config.language || 'en',
+            },
             turn_detection: {
               type: 'server_vad',
               threshold: 0.5,

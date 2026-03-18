@@ -257,10 +257,13 @@ server.on('close', () => { try { clearInterval(pingTimer); } catch { } });
 
 import { handleSpeechConnection } from './routes/speech';
 import { handleTerminalConnection } from './routes/terminal-relay';
+import { handleVoiceConnection } from './routes/voice-bridge';
 import { telnyxBridgeWss } from './routes/integrations/telnyx-bridge';
+import { verifyTelnyxConfig } from './routes/integrations/telnyx';
 import { initVoiceProviders } from './voice';
 
 initVoiceProviders();
+verifyTelnyxConfig().catch(e => console.warn('[telnyx] Config verification failed:', e?.message));
 
 server.on('upgrade', (req, socket, head) => {
   const url = req.url || '';
@@ -309,6 +312,10 @@ server.on('upgrade', (req, socket, head) => {
   } else if (url === '/speech' || url.startsWith('/speech?')) {
     wss.handleUpgrade(req, socket, head, (ws) => {
       handleSpeechConnection(ws, req);
+    });
+  } else if (url === '/voice' || url.startsWith('/voice?')) {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      handleVoiceConnection(ws, req);
     });
   } else if (url === '/terminal' || url.startsWith('/terminal?')) {
     wss.handleUpgrade(req, socket, head, (ws) => {

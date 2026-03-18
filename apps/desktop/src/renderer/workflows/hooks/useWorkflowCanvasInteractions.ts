@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { DesignerModel } from "../types";
 import type { AlignmentGuide } from "../utils/alignment";
 import { calculateSnapPosition, snapToGrid } from "../utils/alignment";
@@ -32,6 +32,63 @@ export function useWorkflowCanvasInteractions({
   const [alignmentGuides, setAlignmentGuides] = useState<AlignmentGuide[]>([]);
   const isMarqueeRef = useRef(false);
   const justFinishedMarqueeRef = useRef(false);
+
+  // ── Panning state ──
+  const isPanningRef = useRef(false);
+  const justFinishedPanRef = useRef(false);
+  const panStartRef = useRef<{ x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
+  const spaceHeldRef = useRef(false);
+
+  // Track space key for space+drag panning
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "Space" && !e.repeat) {
+        const target = e.target as HTMLElement;
+        if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+        spaceHeldRef.current = true;
+        e.preventDefault();
+        if (canvasRef.current) canvasRef.current.style.cursor = "grab";
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") {
+        spaceHeldRef.current = false;
+        if (!isPanningRef.current && canvasRef.current) canvasRef.current.style.cursor = "";
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [canvasRef]);
+
+  // ── Start panning helper ──
+  const startPan = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      isPanningRef.current = true;
+      panStartRef.current = {
+        x: e.clientX,
+        y: e.clientY,
+        scrollLeft: canvasRef.current?.scrollLeft || 0,
+        scrollTop: canvasRef.current?.scrollTop || 0,
+      };
+      if (canvasRef.current) canvasRef.current.style.cursor = "grabbing";
+    },
+    [canvasRef]
+  );
+
+  const stopPan = useCallback(() => {
+    if (!isPanningRef.current) return;
+    isPanningRef.current = false;
+    justFinishedPanRef.current = true;
+    panStartRef.current = null;
+    if (canvasRef.current) {
+      canvasRef.current.style.cursor = spaceHeldRef.current ? "grab" : "";
+    }
+  }, [canvasRef]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -69,6 +126,8 @@ export function useWorkflowCanvasInteractions({
 
   const handleNodeMouseDown = useCallback(
     (id: string, e: React.MouseEvent) => {
+      // Only handle left clicks; skip if space is held (panning)
+      if (e.button !== 0 || spaceHeldRef.current) return;
       if (model?.locked) return;
       const allItems = [...(model?.triggers || []), ...(model?.nodes || [])];
       const item = allItems.find((n) => n.id === id);
@@ -130,6 +189,16 @@ export function useWorkflowCanvasInteractions({
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
+      // ── Panning ──
+      if (isPanningRef.current && panStartRef.current && canvasRef.current) {
+        const dx = e.clientX - panStartRef.current.x;
+        const dy = e.clientY - panStartRef.current.y;
+        canvasRef.current.scrollLeft = panStartRef.current.scrollLeft - dx;
+        canvasRef.current.scrollTop = panStartRef.current.scrollTop - dy;
+        return;
+      }
+
+      // ── Marquee selection ──
       if (isMarqueeRef.current && selectionBox) {
         const rect = canvasRef.current?.getBoundingClientRect();
         const canvasX = (e.clientX - (rect?.left || 0) + (canvasRef.current?.scrollLeft || 0)) / zoom;
@@ -157,6 +226,7 @@ export function useWorkflowCanvasInteractions({
         return;
       }
 
+      // ── Node dragging ──
       if (!dragging || !model) return;
       const rect = canvasRef.current?.getBoundingClientRect();
       const canvasX = (e.clientX - (rect?.left || 0) + (canvasRef.current?.scrollLeft || 0)) / zoom;
@@ -214,19 +284,41 @@ export function useWorkflowCanvasInteractions({
   const handleCanvasMouseDown = useCallback(
     (e: React.MouseEvent) => {
       const target = e.target as HTMLElement;
+
+      // Middle mouse button → start panning (from any canvas position)
+      if (e.button === 1) {
+        startPan(e);
+        return;
+      }
+
+      // Space + left click → start panning
+      if (e.button === 0 && spaceHeldRef.current) {
+        if (target.closest("[data-node-id]") || target.closest("circle") || target.closest("path")) return;
+        startPan(e);
+        return;
+      }
+
+      // Left click on node/wire → skip (handled by node/wire handlers)
       if (target.closest("[data-node-id]") || target.closest("circle") || target.closest("path")) return;
       if (e.button !== 0) return;
 
+      // Left click on empty canvas → marquee selection
       const rect = canvasRef.current?.getBoundingClientRect();
       const canvasX = (e.clientX - (rect?.left || 0) + (canvasRef.current?.scrollLeft || 0)) / zoom;
       const canvasY = (e.clientY - (rect?.top || 0) + (canvasRef.current?.scrollTop || 0)) / zoom;
       isMarqueeRef.current = true;
       setSelectionBox({ startX: canvasX, startY: canvasY, endX: canvasX, endY: canvasY });
     },
-    [canvasRef, zoom]
+    [canvasRef, startPan, zoom]
   );
 
   const handleCanvasMouseUp = useCallback(() => {
+    // Stop panning
+    if (isPanningRef.current) {
+      stopPan();
+      return;
+    }
+
     if (isMarqueeRef.current) {
       isMarqueeRef.current = false;
       justFinishedMarqueeRef.current = true;
@@ -236,15 +328,16 @@ export function useWorkflowCanvasInteractions({
     setDragging(null);
     setMultiDragOffsets(null);
     setAlignmentGuides([]);
-  }, []);
+  }, [stopPan]);
 
   const handleCanvasMouseLeave = useCallback(() => {
+    stopPan();
     setDragging(null);
     setMultiDragOffsets(null);
     setAlignmentGuides([]);
     isMarqueeRef.current = false;
     setSelectionBox(null);
-  }, []);
+  }, [stopPan]);
 
   const handleNodeSelect = useCallback((id: string, e?: React.MouseEvent) => {
     setSelectedWireIndex(null);
@@ -310,6 +403,12 @@ export function useWorkflowCanvasInteractions({
   }, [model]);
 
   const clearCanvasSelection = useCallback(() => {
+    // Skip clearing if a pan drag just finished — the click event
+    // fires right after mouseUp and would deselect everything
+    if (justFinishedPanRef.current) {
+      justFinishedPanRef.current = false;
+      return;
+    }
     // Skip clearing if a marquee drag just finished — the click event
     // fires right after mouseUp and would wipe out the selection
     if (justFinishedMarqueeRef.current) {

@@ -17,13 +17,16 @@ import {
 } from '../../supabase';
 import { authenticateHttpLegacy, sendJson, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
-import { TELNYX_API_KEY, TELNYX_FROM_NUMBER, TELNYX_MESSAGING_PROFILE_ID } from '../../utils/config';
+import { TELNYX_API_KEY, TELNYX_FROM_NUMBER, TELNYX_MESSAGING_PROFILE_ID, CLOUD_PUBLIC_URL } from '../../utils/config';
 import { stripMarkdownForSms, sendWelcomeSms, sendSmsRaw } from '../sms-utils';
 import { sendVMCommand } from '../../services/vm-command';
 import { messagingCreditCost } from '../../pricing';
 import { getOrCreateQueryEmbedding } from '../../utils/shared-embedding';
 
 const TELNYX_API = 'https://api.telnyx.com/v2';
+
+// Track inbound calls that are pending streaming setup (for streaming.failed fallback)
+const pendingInboundCalls = new Map<string, { fromNumber: string; answeredAt: number }>();
 
 // Pending verification maps (primary & secondary)
 const pendingVerifications = new Map<string, { code: string; phone: string; expiresAt: number }>();
@@ -787,14 +790,61 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
 
       console.log('[telnyx] Call event', { eventType, direction, callControlId, from: fromNumber });
 
-      // Inbound call: answer + start AI voice streaming in one step
+      // Inbound call: answer first, then start streaming on call.answered
       if (eventType === 'call.initiated' && direction === 'incoming' && callControlId) {
-        console.log('[telnyx] Incoming call — answering with AI voice', { from: fromNumber, callControlId });
-        await answerInboundWithStreaming(callControlId, fromNumber);
+        console.log('[telnyx] Incoming call — answering', { from: fromNumber, callControlId });
+        pendingInboundCalls.set(callControlId, { fromNumber, answeredAt: Date.now() });
+        // Answer immediately, then start streaming in the call.answered handler
+        const webhookUrl = CLOUD_PUBLIC_URL ? `${CLOUD_PUBLIC_URL}/integrations/telnyx/call-webhook` : undefined;
+        const answerBody: Record<string, any> = {};
+        if (webhookUrl) answerBody.webhook_url = webhookUrl;
+        const answerRes = await fetch(`${TELNYX_API}/calls/${callControlId}/actions/answer`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(answerBody),
+        });
+        const answerText = await answerRes.text();
+        console.log('[telnyx] Answer response', { status: answerRes.status, body: answerText.slice(0, 300), callControlId });
+      }
+
+      // Call answered — start streaming (works for both inbound and outbound)
+      if (eventType === 'call.answered' && callControlId) {
+        const inboundCall = pendingInboundCalls.get(callControlId);
+        if (inboundCall) {
+          // Inbound call answered — start AI voice streaming
+          console.log('[telnyx] Inbound call answered — starting AI voice stream', { from: inboundCall.fromNumber, callControlId });
+          await startInboundStreaming(callControlId, inboundCall.fromNumber);
+        }
+      }
+
+      // Streaming started — log for debugging
+      if (eventType === 'streaming.started' && callControlId) {
+        console.log('[telnyx] Streaming started', { callControlId });
+        // Clean up pending tracking since streaming is active
+        pendingInboundCalls.delete(callControlId);
+      }
+
+      // Streaming failed — fall back to TTS for inbound calls
+      if (eventType === 'streaming.failed' && callControlId) {
+        const inboundCall = pendingInboundCalls.get(callControlId);
+        console.error('[telnyx] Streaming failed', { callControlId, isInbound: !!inboundCall });
+        pendingInboundCalls.delete(callControlId);
+        if (inboundCall) {
+          // Fall back to basic TTS
+          await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              payload: 'Hello, this is Stuard AI. Voice streaming is temporarily unavailable. Please send a text message instead.',
+              voice: 'female',
+              language: 'en-US',
+            }),
+          });
+        }
       }
 
       // Outbound call answered — choose playback method based on custom headers
-      if (eventType === 'call.answered' && callControlId && direction !== 'incoming') {
+      if (eventType === 'call.answered' && callControlId && !pendingInboundCalls.has(callControlId) && direction !== 'incoming') {
         const voiceBridgeB64 = getHeader('X-Voice-Bridge');
         const ttsMsgB64 = getHeader('X-Tts-Message');
         const voiceVal = getHeader('X-Tts-Voice');
@@ -843,8 +893,9 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         }
       }
 
-      // Call hangup: clean up active call
+      // Call hangup: clean up active call and pending state
       if (eventType === 'call.hangup' && callControlId) {
+        pendingInboundCalls.delete(callControlId);
         const { removeActiveCall } = await import('../../voice');
         removeActiveCall(callControlId);
       }
@@ -909,29 +960,20 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
 }
 
 /**
- * Start an AI voice conversation for an inbound call.
- * Looks up the caller, resolves their preferred voice provider,
- * and starts a streaming bridge session.
+ * Start AI voice streaming for an already-answered inbound call.
+ * Called from the call.answered webhook handler.
+ * Uses streaming_start (separate from answer) for reliable bidirectional audio.
  */
-/**
- * Answer an inbound call and start AI voice streaming in a single step.
- * Passes stream_url directly in the answer command so there's no gap.
- */
-async function answerInboundWithStreaming(callControlId: string, fromNumber: string): Promise<void> {
+async function startInboundStreaming(callControlId: string, fromNumber: string): Promise<void> {
   const { getConfiguredProviders } = await import('../../voice');
 
   const userId = await findUserIdByPhone(normalizePhone(fromNumber));
   const configuredProviders = getConfiguredProviders();
 
   if (configuredProviders.length === 0) {
-    // No voice providers — answer with TTS fallback
-    console.log('[telnyx] No voice providers configured, answering with TTS');
-    await fetch(`${TELNYX_API}/calls/${callControlId}/actions/answer`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    // Speak after answering
+    // No voice providers — use TTS fallback
+    console.log('[telnyx] No voice providers configured, using TTS fallback');
+    pendingInboundCalls.delete(callControlId);
     await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
@@ -997,11 +1039,13 @@ async function answerInboundWithStreaming(callControlId: string, fromNumber: str
   }
 
   const bridgeB64 = Buffer.from(JSON.stringify(bridgeConfig)).toString('base64');
-  const wsBaseUrl = (process.env.CLOUD_PUBLIC_URL || '').replace(/^http/, 'ws');
+  const wsBaseUrl = (CLOUD_PUBLIC_URL || '').replace(/^http/, 'ws');
   const streamUrl = `${wsBaseUrl}/ws/telnyx-bridge?callControlId=${encodeURIComponent(callControlId)}&bridge=${encodeURIComponent(bridgeB64)}`;
 
-  // Answer + start streaming in one call
-  const answerRes = await fetch(`${TELNYX_API}/calls/${callControlId}/actions/answer`, {
+  console.log('[telnyx] Starting inbound streaming', { callControlId, streamUrl: streamUrl.slice(0, 120), providerId });
+
+  // Start bidirectional streaming on the answered call
+  const streamRes = await fetch(`${TELNYX_API}/calls/${callControlId}/actions/streaming_start`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -1009,14 +1053,102 @@ async function answerInboundWithStreaming(callControlId: string, fromNumber: str
       stream_track: 'both_tracks',
       stream_bidirectional_mode: 'rtp',
       stream_bidirectional_codec: 'PCMU',
-      send_silence_when_idle: false,
+      send_silence_when_idle: true,
     }),
   });
 
-  const answerBody = await answerRes.text();
-  console.log('[telnyx] Answer+stream response', {
-    status: answerRes.status,
-    body: answerBody.slice(0, 500),
+  const streamBody = await streamRes.text();
+  console.log('[telnyx] Streaming start response', {
+    status: streamRes.status,
+    body: streamBody.slice(0, 500),
     callControlId, fromNumber, providerId, userId,
   });
+
+  if (!streamRes.ok) {
+    console.error('[telnyx] Streaming start failed, falling back to TTS', { status: streamRes.status, callControlId });
+    pendingInboundCalls.delete(callControlId);
+    await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        payload: 'Hello, this is Stuard AI. Voice streaming is temporarily unavailable. Please try again later.',
+        voice: 'female',
+        language: 'en-US',
+      }),
+    });
+  }
+}
+
+/**
+ * Verify Telnyx Call Control Application configuration on startup.
+ * Ensures the webhook URL points to the correct Cloud Run URL.
+ */
+export async function verifyTelnyxConfig(): Promise<void> {
+  if (!TELNYX_API_KEY || !CLOUD_PUBLIC_URL) {
+    console.log('[telnyx] Skipping config verification (missing API key or CLOUD_PUBLIC_URL)');
+    return;
+  }
+
+  const expectedWebhookUrl = `${CLOUD_PUBLIC_URL}/integrations/telnyx/call-webhook`;
+
+  try {
+    // List call control applications
+    const res = await fetch(`${TELNYX_API}/call_control_applications`, {
+      headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) {
+      console.warn('[telnyx] Failed to list call control apps:', res.status);
+      return;
+    }
+    const data = await res.json() as any;
+    const apps = data?.data || [];
+
+    for (const app of apps) {
+      if (app.webhook_event_url !== expectedWebhookUrl) {
+        console.log('[telnyx] Updating Call Control App webhook URL', {
+          appId: app.id,
+          appName: app.application_name,
+          oldUrl: app.webhook_event_url,
+          newUrl: expectedWebhookUrl,
+        });
+        await fetch(`${TELNYX_API}/call_control_applications/${app.id}`, {
+          method: 'PATCH',
+          headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            webhook_event_url: expectedWebhookUrl,
+            webhook_event_failover_url: expectedWebhookUrl,
+          }),
+        });
+      } else {
+        console.log('[telnyx] Call Control App webhook URL OK', {
+          appId: app.id,
+          appName: app.application_name,
+          webhookUrl: app.webhook_event_url,
+        });
+      }
+    }
+
+    // Also verify phone number voice connection
+    const phoneRes = await fetch(`${TELNYX_API}/phone_numbers?filter[phone_number]=${encodeURIComponent(TELNYX_FROM_NUMBER)}`, {
+      headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+    });
+    if (phoneRes.ok) {
+      const phoneData = await phoneRes.json() as any;
+      const phone = phoneData?.data?.[0];
+      if (phone) {
+        console.log('[telnyx] Phone number config', {
+          number: phone.phone_number,
+          status: phone.status,
+          connectionId: phone.connection_id,
+          connectionName: phone.connection_name,
+          type: phone.phone_number_type,
+        });
+        if (!phone.connection_id) {
+          console.warn('[telnyx] ⚠ Phone number has no voice connection! Inbound calls will not work.');
+        }
+      }
+    }
+  } catch (e: any) {
+    console.warn('[telnyx] Config verification error:', e?.message);
+  }
 }

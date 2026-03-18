@@ -12,7 +12,8 @@
       "Bash(gcloud storage:*)",
       "Bash(find:*)",
       "Bash(gcloud run:*)",
-      "WebFetch(domain:developers.telnyx.com)"
+      "WebFetch(domain:developers.telnyx.com)",
+      "Bash(curl:*)"
     ]
   }
 }

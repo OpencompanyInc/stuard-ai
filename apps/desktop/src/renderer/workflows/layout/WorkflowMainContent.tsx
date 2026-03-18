@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useCallback, useRef, useState } from "react";
 import type { ReasoningLevel } from "../../hooks/usePreferences";
 import type { ValidationError } from "../builder/compiler";
 import { ChatHistory } from "../components/chat/ChatHistory";
@@ -10,6 +10,44 @@ import type { ExecutionState, OpenFileTab, RightPanel, WorkspaceInfo } from "./t
 import { WorkflowCanvasAndPanels } from "./WorkflowCanvasAndPanels";
 import { useModelRegistry } from "../../hooks/useModelRegistry";
 import { buildContextUsageMetrics } from "../../utils/contextUsage";
+
+// ── Draggable panel hook ──
+function useDraggablePanel() {
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const offsetRef = useRef({ x: 0, y: 0 });
+
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    // Don't start drag from buttons or inputs
+    if ((e.target as HTMLElement).closest("button, input, textarea, [contenteditable]")) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const origX = offsetRef.current.x;
+    const origY = offsetRef.current.y;
+
+    const onMove = (ev: MouseEvent) => {
+      const newOffset = {
+        x: origX + ev.clientX - startX,
+        y: origY + ev.clientY - startY,
+      };
+      offsetRef.current = newOffset;
+      setOffset(newOffset);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, []);
+
+  const reset = useCallback(() => {
+    offsetRef.current = { x: 0, y: 0 };
+    setOffset({ x: 0, y: 0 });
+  }, []);
+
+  return { offset, onDragStart, reset };
+}
 
 interface WorkflowMainContentProps {
   selectedId: string;
@@ -186,6 +224,9 @@ export function WorkflowMainContent({
     modelById,
   }), [chat.latestModelId, chat.latestUsage, modelById, workflowChatModelId]);
 
+  const chatDrag = useDraggablePanel();
+  const paletteDrag = useDraggablePanel();
+
   const canvasAndPanelsProps = {
     model: model!,
     selectedId,
@@ -266,10 +307,20 @@ export function WorkflowMainContent({
           {viewMode === "ai" && (
             <div
               className="absolute right-20 top-24 bottom-24 flex flex-col z-20 rounded-[20px] shadow-2xl pointer-events-auto border wf-panel"
-              style={{ width: aiLeftWidth, minWidth: 320, backdropFilter: 'var(--wf-glass-blur)' }}
+              style={{
+                width: aiLeftWidth,
+                minWidth: 320,
+                backdropFilter: 'var(--wf-glass-blur)',
+                transform: `translate(${chatDrag.offset.x}px, ${chatDrag.offset.y}px)`,
+              }}
             >
-              {/* Header */}
-              <div className="flex items-center justify-between px-4 py-3 border-b shrink-0 rounded-t-[20px] z-20 wf-border-subtle" style={{ background: 'var(--wf-bg-overlay)' }}>
+              {/* Header — drag handle */}
+              <div
+                className="flex items-center justify-between px-4 py-3 border-b shrink-0 rounded-t-[20px] z-20 wf-border-subtle cursor-grab active:cursor-grabbing select-none"
+                style={{ background: 'var(--wf-bg-overlay)' }}
+                onMouseDown={chatDrag.onDragStart}
+                onDoubleClick={chatDrag.reset}
+              >
                 <span className="font-semibold text-sm wf-fg">AI Assistant</span>
                 <div className="flex items-center gap-1">
                   <button onClick={chat.newSession} className="p-1.5 rounded-lg wf-fg-faint wf-hover-fg wf-hover-bg transition-colors" style={{ ['--tw-bg-opacity' as any]: 1 }} title="New Chat">
@@ -330,7 +381,21 @@ export function WorkflowMainContent({
 
           {/* Floating Tool Palette for Manual Mode */}
           {viewMode === "manual" && (
-            <div className="absolute left-6 top-32 bottom-24 w-64 rounded-xl shadow-2xl flex flex-col shrink-0 z-20 overflow-hidden pointer-events-auto border wf-panel" style={{ backdropFilter: 'var(--wf-glass-blur)' }}>
+            <div
+              className="absolute left-6 top-32 bottom-24 w-64 rounded-xl shadow-2xl flex flex-col shrink-0 z-20 overflow-hidden pointer-events-auto border wf-panel"
+              style={{
+                backdropFilter: 'var(--wf-glass-blur)',
+                transform: `translate(${paletteDrag.offset.x}px, ${paletteDrag.offset.y}px)`,
+              }}
+            >
+              {/* Drag handle strip */}
+              <div
+                className="flex items-center justify-center py-1 cursor-grab active:cursor-grabbing shrink-0 wf-bg-elevated border-b wf-border-subtle"
+                onMouseDown={paletteDrag.onDragStart}
+                onDoubleClick={paletteDrag.reset}
+              >
+                <div className="w-8 h-1 rounded-full opacity-20" style={{ background: 'var(--wf-fg)' }} />
+              </div>
               <ToolPalette
                 ref={toolPaletteRef}
                 onDragStart={(e, item) => {

@@ -1,8 +1,8 @@
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { clsx } from 'clsx';
 import TextareaAutosize from 'react-textarea-autosize';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { Image, File, X, Plus, Mic, Square, Upload } from 'lucide-react';
+import { Image, File, X, Plus, Mic, Square, Upload, Zap, Phone, PhoneOff } from 'lucide-react';
 import QueuePanel from '../QueuePanel';
 import { CheckpointManager } from '../CheckpointManager';
 import { ModelSelector } from '../ModelSelector';
@@ -11,6 +11,93 @@ import { FolderPermissionsPopover } from './FolderPermissionsPopover';
 import type { ReasoningLevel } from '../../hooks/usePreferences';
 import type { ContextUsageMetrics } from '../../utils/contextUsage';
 import { ContextUsageIndicator } from '../ContextUsageIndicator';
+import { supabase } from '../../lib/supabaseClient';
+
+// ── Realtime Voice Conversation Test Helpers ──
+
+const VOICE_WS_URL = (() => {
+  const httpUrl = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || '';
+  if (httpUrl) {
+    return httpUrl.replace(/^https?:\/\//, (m: string) => m.startsWith('https') ? 'wss://' : 'ws://') + '/voice';
+  }
+  return 'ws://127.0.0.1:8082/voice';
+})();
+
+type VoiceStatus = 'idle' | 'connecting' | 'ready' | 'listening' | 'error';
+
+interface VoiceProvider { id: string; name: string }
+
+interface TranscriptEntry { role: 'user' | 'assistant'; text: string; isFinal: boolean }
+
+/** Resample Float32 from sourceSR to targetSR */
+function resample(input: Float32Array, sourceSR: number, targetSR: number): Float32Array {
+  if (sourceSR === targetSR) return input;
+  const ratio = sourceSR / targetSR;
+  const len = Math.round(input.length / ratio);
+  const out = new Float32Array(len);
+  for (let i = 0; i < len; i++) {
+    const idx = i * ratio;
+    const lo = Math.floor(idx);
+    const hi = Math.min(lo + 1, input.length - 1);
+    const frac = idx - lo;
+    out[i] = input[lo] * (1 - frac) + input[hi] * frac;
+  }
+  return out;
+}
+
+/** Convert Float32 [-1,1] to Int16 PCM buffer */
+function float32ToInt16(input: Float32Array): ArrayBuffer {
+  const buf = new ArrayBuffer(input.length * 2);
+  const view = new DataView(buf);
+  for (let i = 0; i < input.length; i++) {
+    const s = Math.max(-1, Math.min(1, input[i]));
+    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return buf;
+}
+
+/**
+ * Queued PCM16 24kHz audio player.
+ * Schedules chunks sequentially so they don't overlap.
+ */
+class AudioChunkPlayer {
+  private ctx: AudioContext;
+  private nextTime = 0;
+  private gainNode: GainNode;
+
+  constructor(ctx: AudioContext) {
+    this.ctx = ctx;
+    this.gainNode = ctx.createGain();
+    this.gainNode.connect(ctx.destination);
+  }
+
+  play(pcm16: ArrayBuffer) {
+    const int16 = new Int16Array(pcm16);
+    if (int16.length === 0) return;
+    const float32 = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) {
+      float32[i] = int16[i] / (int16[i] < 0 ? 0x8000 : 0x7fff);
+    }
+    const buffer = this.ctx.createBuffer(1, float32.length, 24000);
+    buffer.copyToChannel(float32, 0);
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.gainNode);
+
+    const now = this.ctx.currentTime;
+    // Schedule after the last chunk, or now if we've fallen behind
+    const startAt = Math.max(now, this.nextTime);
+    source.start(startAt);
+    this.nextTime = startAt + buffer.duration;
+  }
+
+  /** Flush queued audio (on interruption) */
+  flush() {
+    this.nextTime = 0;
+  }
+}
+
+// ── Component ──
 
 interface ChatInputAreaProps {
   query: string;
@@ -76,6 +163,216 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounter = useRef(0);
 
+  // ── Realtime Voice Conversation Test State ──
+  const [rtOpen, setRtOpen] = useState(false);
+  const [rtLogs, setRtLogs] = useState<string[]>([]);
+  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>('idle');
+  const [providers, setProviders] = useState<VoiceProvider[]>([]);
+  const [selectedProvider, setSelectedProvider] = useState('');
+  const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const playerRef = useRef<AudioChunkPlayer | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const logPanelRef = useRef<HTMLDivElement | null>(null);
+
+  const rtLog = useCallback((msg: string) => {
+    const ts = new Date().toLocaleTimeString();
+    setRtLogs((prev) => [...prev.slice(-99), `[${ts}] ${msg}`]);
+  }, []);
+
+  // Auto-scroll logs
+  useEffect(() => {
+    if (logPanelRef.current) {
+      logPanelRef.current.scrollTop = logPanelRef.current.scrollHeight;
+    }
+  }, [rtLogs]);
+
+  const stopMic = useCallback(() => {
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current = null;
+    }
+    if (sourceRef.current) {
+      sourceRef.current.disconnect();
+      sourceRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+  }, []);
+
+  const disconnect = useCallback(() => {
+    stopMic();
+    if (wsRef.current) {
+      try { wsRef.current.close(); } catch {}
+      wsRef.current = null;
+    }
+    playerRef.current = null;
+    if (audioCtxRef.current) {
+      try { audioCtxRef.current.close(); } catch {}
+      audioCtxRef.current = null;
+    }
+    setVoiceStatus('idle');
+    rtLog('Disconnected.');
+  }, [stopMic, rtLog]);
+
+  const connect = useCallback(async () => {
+    if (wsRef.current) return;
+    setVoiceStatus('connecting');
+    setTranscripts([]);
+    rtLog(`Connecting to ${VOICE_WS_URL}...`);
+
+    const session = await supabase.auth.getSession();
+    const token = session?.data?.session?.access_token;
+    if (!token) {
+      rtLog('ERROR: No auth token. Sign in first.');
+      setVoiceStatus('error');
+      return;
+    }
+
+    const ws = new WebSocket(VOICE_WS_URL);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      rtLog('WebSocket connected, authenticating...');
+      ws.send(JSON.stringify({ type: 'auth', accessToken: token }));
+    };
+
+    ws.onmessage = (ev) => {
+      // Binary = audio from provider — queue for sequential playback
+      if (ev.data instanceof Blob) {
+        ev.data.arrayBuffer().then((buf) => {
+          if (playerRef.current) {
+            playerRef.current.play(buf);
+          }
+        });
+        return;
+      }
+
+      try {
+        const msg = JSON.parse(ev.data);
+
+        if (msg.type === 'providers') {
+          setProviders(msg.providers || []);
+          if (!selectedProvider && msg.default) setSelectedProvider(msg.default);
+          rtLog(`Providers: ${(msg.providers || []).map((p: any) => p.name).join(', ')}`);
+        }
+
+        if (msg.type === 'authenticated') {
+          rtLog('Authenticated. Sending config...');
+          ws.send(JSON.stringify({
+            type: 'config',
+            provider: selectedProvider || undefined,
+          }));
+        }
+
+        if (msg.type === 'ready') {
+          rtLog(`Session ready! Provider: ${msg.provider}, ID: ${msg.sessionId}`);
+          setVoiceStatus('ready');
+          // Auto-start mic
+          startMic();
+        }
+
+        if (msg.type === 'transcript') {
+          const entry: TranscriptEntry = { role: msg.role, text: msg.text, isFinal: msg.isFinal };
+          setTranscripts(prev => {
+            // Replace last non-final from same role, or append
+            if (!msg.isFinal && prev.length > 0) {
+              const last = prev[prev.length - 1];
+              if (last.role === msg.role && !last.isFinal) {
+                return [...prev.slice(0, -1), entry];
+              }
+            }
+            return [...prev, entry];
+          });
+          if (msg.isFinal) {
+            rtLog(`[${msg.role}] ${msg.text}`);
+          }
+        }
+
+        if (msg.type === 'interruption') {
+          rtLog('Interruption detected (you started speaking)');
+          playerRef.current?.flush();
+        }
+
+        if (msg.type === 'session_ended') {
+          rtLog(`Session ended: ${msg.reason}`);
+          disconnect();
+        }
+
+        if (msg.type === 'error') {
+          rtLog(`ERROR: ${msg.message}`);
+          setVoiceStatus('error');
+        }
+      } catch {}
+    };
+
+    ws.onerror = () => {
+      rtLog('WebSocket error');
+      setVoiceStatus('error');
+    };
+
+    ws.onclose = () => {
+      rtLog('WebSocket closed');
+      wsRef.current = null;
+      stopMic();
+      setVoiceStatus('idle');
+    };
+  }, [selectedProvider, rtLog, disconnect, stopMic]);
+
+  const startMic = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      streamRef.current = stream;
+
+      const audioCtx = new AudioContext({ sampleRate: 48000 });
+      if (audioCtx.state === 'suspended') await audioCtx.resume();
+      audioCtxRef.current = audioCtx;
+      playerRef.current = new AudioChunkPlayer(audioCtx);
+
+      const source = audioCtx.createMediaStreamSource(stream);
+      sourceRef.current = source;
+
+      // Use ScriptProcessorNode to capture audio chunks
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+
+      processor.onaudioprocess = (e) => {
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+        const input = e.inputBuffer.getChannelData(0);
+        // Resample from 48kHz to 24kHz for OpenAI Realtime
+        const resampled = resample(input, audioCtx.sampleRate, 24000);
+        const pcm16 = float32ToInt16(resampled);
+        wsRef.current.send(pcm16);
+      };
+
+      source.connect(processor);
+      processor.connect(audioCtx.destination);
+
+      setVoiceStatus('listening');
+      rtLog('Mic active - speak now!');
+    } catch (err: any) {
+      rtLog(`Mic error: ${err?.message || 'unknown'}`);
+      setVoiceStatus('error');
+    }
+  }, [rtLog]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (wsRef.current) try { wsRef.current.close(); } catch {}
+      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+      if (processorRef.current) processorRef.current.disconnect();
+      if (audioCtxRef.current) try { audioCtxRef.current.close(); } catch {}
+    };
+  }, []);
+
+  // ── Drag/Drop handlers ──
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     dragCounter.current++;
@@ -144,6 +441,84 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Realtime Voice Conversation Test Panel */}
+      {rtOpen && (
+        <div className="mx-2 mt-1 p-3 rounded-2xl bg-theme-hover/70 border border-theme/10 text-[12px] space-y-2">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <span className="font-bold text-theme-fg uppercase tracking-wider text-[11px]">Realtime Voice Test</span>
+            <div className="flex items-center gap-1.5">
+              <div className={clsx(
+                "w-2 h-2 rounded-full",
+                voiceStatus === 'listening' ? 'bg-emerald-500 animate-pulse' :
+                voiceStatus === 'ready' ? 'bg-emerald-500' :
+                voiceStatus === 'connecting' ? 'bg-amber-500 animate-pulse' :
+                voiceStatus === 'error' ? 'bg-red-500' : 'bg-theme-muted/40'
+              )} />
+              <span className="text-theme-muted font-semibold text-[10px]">{voiceStatus}</span>
+            </div>
+          </div>
+
+          {/* Provider selector + controls */}
+          <div className="flex items-center gap-1.5">
+            <select
+              value={selectedProvider}
+              onChange={(e) => setSelectedProvider(e.target.value)}
+              disabled={voiceStatus !== 'idle' && voiceStatus !== 'error'}
+              className="flex-1 bg-black/20 text-theme-fg text-[11px] font-semibold rounded-lg px-2 py-1.5 border border-theme/10 outline-none disabled:opacity-40"
+            >
+              {providers.length === 0 && <option value="">Connect to see providers...</option>}
+              {providers.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+
+            {voiceStatus === 'idle' || voiceStatus === 'error' ? (
+              <button onClick={connect} className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-bold hover:bg-emerald-700 transition-colors flex items-center gap-1">
+                <Phone className="w-3 h-3" />
+                Call
+              </button>
+            ) : (
+              <button onClick={disconnect} className="px-3 py-1.5 rounded-lg bg-red-500 text-white text-[11px] font-bold hover:bg-red-600 transition-colors flex items-center gap-1">
+                <PhoneOff className="w-3 h-3" />
+                End
+              </button>
+            )}
+            <button onClick={() => { setRtLogs([]); setTranscripts([]); }} className="px-2 py-1.5 rounded-lg bg-theme-active text-theme-fg text-[11px] font-bold hover:bg-theme-hover transition-colors">
+              Clear
+            </button>
+          </div>
+
+          {/* Live transcript */}
+          {transcripts.length > 0 && (
+            <div className="max-h-[100px] overflow-y-auto bg-black/10 rounded-lg p-2 space-y-1 custom-scrollbar">
+              {transcripts.filter(t => t.text.trim()).map((t, i) => (
+                <div key={i} className={clsx(
+                  "text-[11px] font-semibold",
+                  t.role === 'user' ? 'text-blue-400' : 'text-emerald-400',
+                  !t.isFinal && 'opacity-50'
+                )}>
+                  <span className="uppercase text-[9px] font-bold opacity-60 mr-1">{t.role}:</span>
+                  {t.text}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Log output */}
+          <div
+            ref={logPanelRef}
+            className="max-h-[80px] overflow-y-auto bg-black/20 rounded-lg p-2 font-mono text-[10px] text-theme-muted leading-4 custom-scrollbar"
+          >
+            {rtLogs.length === 0 ? (
+              <span className="opacity-50">Hit Call to start a realtime voice conversation.</span>
+            ) : (
+              rtLogs.map((log, i) => <div key={i}>{log}</div>)
+            )}
+          </div>
         </div>
       )}
 
@@ -280,6 +655,22 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
 
         <FolderPermissionsPopover />
 
+        <button
+          type="button"
+          onClick={() => setRtOpen((v) => !v)}
+          className={clsx(
+            "h-8 w-8 rounded-full flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0",
+            rtOpen
+              ? voiceStatus === 'listening'
+                ? "bg-emerald-500 text-white animate-pulse"
+                : "bg-amber-500 text-white"
+              : "text-theme-muted hover:text-theme-fg hover:bg-theme-card"
+          )}
+          title="Realtime Voice Test"
+        >
+          <Zap className="w-4 h-4" />
+        </button>
+
         {isStreaming ? (
           <button
             onClick={onStop}
@@ -303,5 +694,3 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     </div>
   );
 };
-
-

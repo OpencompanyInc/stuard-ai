@@ -128,7 +128,8 @@ export function WorkflowCanvas({
       {/* Scrollable canvas area */}
       <div
         ref={canvasRef}
-        className="absolute inset-0 overflow-auto scrollbar-minimal cursor-grab active:cursor-grabbing"
+        className="absolute inset-0 overflow-auto scrollbar-minimal"
+        style={{ cursor: 'default' }}
         onDragOver={onDragOver}
         onDrop={onDrop}
         onMouseMove={(e) => {
@@ -146,7 +147,9 @@ export function WorkflowCanvas({
         onWheel={onWheel}
         onContextMenu={onCanvasContextMenu}
         onMouseDown={(e) => {
-          if (e.button === 0 && onCanvasMouseDown) {
+          // Prevent browser auto-scroll on middle click
+          if (e.button === 1) e.preventDefault();
+          if ((e.button === 0 || e.button === 1) && onCanvasMouseDown) {
             onCanvasMouseDown(e);
           }
         }}
