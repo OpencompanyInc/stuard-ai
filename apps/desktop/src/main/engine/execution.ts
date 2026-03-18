@@ -56,9 +56,9 @@ export async function executeStep(
       if (toolName === 'run_sequential') {
         result = await execRunSequential(spec, step, mergedArgs, ctx, engineCtx);
       } else if (toolName === 'run_parallel') {
-        result = await execRunParallel(mergedArgs, ctx, engineCtx);
+        result = await execRunParallel(spec.id, mergedArgs, ctx, engineCtx);
       } else if (toolName === 'loop_executor') {
-        result = await execLoopExecutor(mergedArgs, ctx, engineCtx);
+        result = await execLoopExecutor(spec.id, mergedArgs, ctx, engineCtx);
       } else {
         result = { ok: false, error: `unknown_orchestration_tool: ${toolName}` };
       }
@@ -92,7 +92,7 @@ export async function executeStep(
       // Route to unified tool executor
       // Pass flowId so tools can track which workflow started them
       // (used by custom_ui for stop button, capture_media/streams for cleanup on stop)
-      const toolArgs = { ...mergedArgs, flowId: spec.id };
+      const toolArgs = { ...mergedArgs, flowId: spec.id, __workflowToolCall: true };
 
       // For custom_ui nodes, also pass the sibling steps so callNode can resolve
       // nodes without hitting disk. This enables the node-routing architecture

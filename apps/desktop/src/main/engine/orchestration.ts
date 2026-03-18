@@ -48,7 +48,7 @@ export async function execRunSequential(
   return { ok: allOk || continueOnError, results, firstError };
 }
 
-export async function execRunParallel(args: any, ctx: any, engineCtx: EngineContext): Promise<any> {
+export async function execRunParallel(flowId: string, args: any, ctx: any, engineCtx: EngineContext): Promise<any> {
   const stepsArr = Array.isArray(args?.steps) ? args.steps : [];
   const continueOnError = args?.continueOnError !== false;
 
@@ -58,7 +58,7 @@ export async function execRunParallel(args: any, ctx: any, engineCtx: EngineCont
     const toolName = String(s?.tool || '').trim();
     if (!toolName) return { tool: '', ok: true, result: undefined };
 
-    const subArgs = s?.args || {};
+    const subArgs = { ...(s?.args || {}), flowId, __workflowToolCall: true };
     let subResult: any;
 
     try {
@@ -100,7 +100,7 @@ export async function execRunParallel(args: any, ctx: any, engineCtx: EngineCont
   return indexed;
 }
 
-export async function execLoopExecutor(args: any, ctx: any, engineCtx: EngineContext): Promise<any> {
+export async function execLoopExecutor(flowId: string, args: any, ctx: any, engineCtx: EngineContext): Promise<any> {
   const mode = String(args?.mode || 'each');
   const items = Array.isArray(args?.items) ? args.items : [];
   const count = Number(args?.count || 0);
@@ -114,14 +114,14 @@ export async function execLoopExecutor(args: any, ctx: any, engineCtx: EngineCon
     for (let i = 0; i < items.length; i++) {
       ctx[itemVar] = items[i];
       ctx['index'] = i;
-      const interpolatedArgs = interpolateForTool(toolArgs, ctx, tool);
+      const interpolatedArgs = { ...interpolateForTool(toolArgs, ctx, tool), flowId, __workflowToolCall: true };
       const result = await execTool(tool, interpolatedArgs, engineCtx);
       results.push(result);
     }
   } else if (mode === 'times') {
     for (let i = 0; i < count; i++) {
       ctx['index'] = i;
-      const interpolatedArgs = interpolateForTool(toolArgs, ctx, tool);
+      const interpolatedArgs = { ...interpolateForTool(toolArgs, ctx, tool), flowId, __workflowToolCall: true };
       const result = await execTool(tool, interpolatedArgs, engineCtx);
       results.push(result);
     }

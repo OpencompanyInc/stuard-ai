@@ -302,6 +302,7 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'browser_use_select_option': { kind: 'electron' },
   'browser_use_get_interactive_elements': { kind: 'electron' },
   'browser_use_fill_form': { kind: 'electron' },
+  'browser_use_upload_file': { kind: 'electron' },
   'browser_use_wait_for': { kind: 'electron' },
 
   // Browser status (extension-based)

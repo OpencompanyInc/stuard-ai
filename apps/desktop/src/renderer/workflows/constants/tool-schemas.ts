@@ -363,6 +363,28 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
 
   // --- VISION (cloud) ---
   { id: 'cloud_ai_vision', category: 'vision', kind: 'cloud', description: 'Analyze an image with AI vision and return structured JSON', argsTemplate: { prompt: '', imagePath: '', schema: {} }, outputSchema: { ok: 'boolean', json: 'any', text: 'string' } },
+
+  // --- BROWSER USE (Playwright-powered browser automation) ---
+  { id: 'browser_use_status', category: 'system', kind: 'local', description: 'Check if browser-use is installed and the browser server is running', argsTemplate: {}, outputSchema: { ok: 'boolean', installed: 'boolean', running: 'boolean', serverAlive: 'boolean', mode: 'string', profile: 'string', profileDir: 'string', currentUrl: 'string', title: 'string', sessionId: 'string', hasPython: 'boolean', error: 'string' } },
+  { id: 'browser_use_configure', category: 'system', kind: 'local', description: 'Configure browser mode (headed, headless, or connect to existing browser via CDP)', argsTemplate: { mode: 'headed', cdp_url: '', profile: 'default' }, outputSchema: { ok: 'boolean', mode: 'string', profile: 'string', restarted: 'boolean', error: 'string' } },
+  { id: 'browser_use_navigate', category: 'system', kind: 'local', description: 'Navigate the browser to a URL and wait for the page to load', argsTemplate: { url: 'https://example.com', wait_until: 'domcontentloaded', timeout: 30000, wait_for_selector: '' }, outputSchema: { ok: 'boolean', url: 'string', title: 'string', error: 'string' } },
+  { id: 'browser_use_click', category: 'system', kind: 'local', description: 'Click an element on the page by CSS selector or visible text', argsTemplate: { selector: '', text: '', exact: false, timeout: 5000 }, outputSchema: { ok: 'boolean', clicked: 'string', method: 'string', error: 'string' } },
+  { id: 'browser_use_type', category: 'system', kind: 'local', description: 'Type text into an input field or the active element. Works with React, Vue, Angular.', argsTemplate: { selector: '', text: '', clear: true, timeout: 5000 }, outputSchema: { ok: 'boolean', typed: 'number', method: 'string', error: 'string' } },
+  { id: 'browser_use_press_key', category: 'system', kind: 'local', description: 'Press a keyboard key in the browser (Enter, Tab, Escape, ArrowDown, etc.)', argsTemplate: { key: 'Enter', selector: '' }, outputSchema: { ok: 'boolean', key: 'string', error: 'string' } },
+  { id: 'browser_use_screenshot', category: 'system', kind: 'local', description: 'Take a screenshot of the current browser page', argsTemplate: { full_page: false }, outputSchema: { ok: 'boolean', image_path: 'string', screenshot_path: 'string', format: 'string', url: 'string', width: 'number', height: 'number', error: 'string' } },
+  { id: 'browser_use_content', category: 'system', kind: 'local', description: 'Get the text or HTML content visible in the current viewport', argsTemplate: { mode: 'text', max_length: 15000, wait_for_selector: '', wait_timeout: 5000 }, outputSchema: { ok: 'boolean', url: 'string', title: 'string', content: 'string', mode: 'string', error: 'string' } },
+  { id: 'browser_use_scroll', category: 'system', kind: 'local', description: 'Scroll the page or a specific element in any direction', argsTemplate: { direction: 'down', amount: 500, selector: '' }, outputSchema: { ok: 'boolean', direction: 'string', amount: 'number', error: 'string' } },
+  { id: 'browser_use_tabs', category: 'system', kind: 'local', description: 'Manage browser tabs: list, open new, switch, or close tabs', argsTemplate: { action: 'list', index: 0, url: '' }, outputSchema: { ok: 'boolean', tabs: 'array', count: 'number', url: 'string', title: 'string', closed: 'number', remaining: 'number', error: 'string' } },
+  { id: 'browser_use_cookies', category: 'system', kind: 'local', description: 'Manage browser cookies: get, set, clear, export, or import cookies', argsTemplate: { action: 'get', cookies: [], urls: [], path: '' }, outputSchema: { ok: 'boolean', cookies: 'array', count: 'number', set: 'number', cleared: 'boolean', exported: 'number', imported: 'number', error: 'string' } },
+  { id: 'browser_use_execute_script', category: 'system', kind: 'local', description: 'Execute JavaScript in the browser page context. Best for DOM extraction or complex page logic.', argsTemplate: { script: 'return document.title;', args: {}, wait_for_selector: '', wait_timeout: 5000, timeout: 30000 }, outputSchema: { ok: 'boolean', result: 'any', url: 'string', title: 'string', elapsedMs: 'number', error: 'string' } },
+  { id: 'browser_use_hover', category: 'system', kind: 'local', description: 'Hover over an element to reveal tooltips, menus, or hover-triggered content', argsTemplate: { selector: '', text: '', timeout: 5000 }, outputSchema: { ok: 'boolean', hovered: 'string', method: 'string', error: 'string' } },
+  { id: 'browser_use_select_option', category: 'system', kind: 'local', description: 'Select an option from a dropdown, including native <select> and many custom combobox/listbox controls', argsTemplate: { selector: '', value: '', label: '', index: 0, timeout: 5000 }, outputSchema: { ok: 'boolean', selected: 'any', text: 'string', method: 'string', error: 'string' } },
+  { id: 'browser_use_get_interactive_elements', category: 'system', kind: 'local', description: 'Get all interactive elements on the page, including dropdowns and file inputs. Returns selectors, control types, labels, values, and form associations.', argsTemplate: { wait_for_selector: '', wait_timeout: 3000 }, outputSchema: { ok: 'boolean', url: 'string', title: 'string', elements: 'array', forms: 'array', elementCount: 'number', formCount: 'number', error: 'string' } },
+  { id: 'browser_use_fill_form', category: 'system', kind: 'local', description: 'Fill multiple form fields at once and optionally submit. Supports text fields, dropdowns, toggles, and file paths when type is "file".', argsTemplate: { fields: {}, submit: false, form_selector: '' }, outputSchema: { ok: 'boolean', filled: 'number', total: 'number', submitted: 'boolean', errors: 'array', error: 'string' } },
+  { id: 'browser_use_upload_file', category: 'system', kind: 'local', description: 'Upload a local file from disk into a browser file input', argsTemplate: { selector: '', filePath: '', timeout: 5000 }, outputSchema: { ok: 'boolean', uploaded: 'boolean', filePath: 'string', fileName: 'string', selector: 'string', method: 'string', error: 'string' } },
+  { id: 'browser_use_wait_for', category: 'system', kind: 'local', description: 'Wait for an element, text, or URL change before proceeding. Essential for SPAs and dynamic pages.', argsTemplate: { selector: '', text: '', url_pattern: '', state: 'visible', timeout: 10000 }, outputSchema: { ok: 'boolean', matched: 'boolean', url: 'string', type: 'string', error: 'string' } },
+  { id: 'browser_use_sync_chrome', category: 'system', kind: 'local', description: 'Sync cookies and profile data from your Chrome browser into the browser-use session', argsTemplate: { action: 'sync', browser_name: 'Chrome', profile_name: 'Default', force_clone: false, restart_browser: false }, outputSchema: { ok: 'boolean', synced: 'number', failed: 'number', total: 'number', browser: 'string', profile: 'string', message: 'string', error: 'string' } },
+  { id: 'browser_use_list_chrome_profiles', category: 'system', kind: 'local', description: 'List available Chrome/Edge/Brave browser profiles for cookie sync', argsTemplate: {}, outputSchema: { ok: 'boolean', browsers: 'array', error: 'string' } },
 ];
 
 const TRIGGER_DEFINITIONS = [
@@ -3231,6 +3253,644 @@ if (TOOL_SCHEMAS['ollama_models']) {
       showWhen: { field: 'action', value: 'copy' },
     },
   };
+}
+
+// ============================================================================
+// BROWSER USE — Schema overrides for better UX
+// ============================================================================
+
+const BROWSER_USE_MODE_OPTIONS: ArgOption[] = [
+  { value: 'headed', label: 'Headed (Visible)', description: 'Browser window is visible on screen' },
+  { value: 'headless', label: 'Headless (Hidden)', description: 'No visible browser window — runs in background' },
+  { value: 'connect', label: 'Connect (CDP)', description: 'Attach to an existing browser via Chrome DevTools Protocol' },
+];
+
+const BROWSER_USE_WAIT_UNTIL_OPTIONS: ArgOption[] = [
+  { value: 'domcontentloaded', label: 'DOM Content Loaded', description: 'Wait until the HTML is parsed (fastest)' },
+  { value: 'load', label: 'Full Load', description: 'Wait for all resources (images, scripts) to load' },
+  { value: 'networkidle', label: 'Network Idle', description: 'Wait until no network requests for 500ms (slowest but most reliable)' },
+  { value: 'commit', label: 'Commit', description: 'Wait for first server response only' },
+];
+
+const BROWSER_USE_SCROLL_DIRECTION_OPTIONS: ArgOption[] = [
+  { value: 'down', label: 'Down' },
+  { value: 'up', label: 'Up' },
+  { value: 'left', label: 'Left' },
+  { value: 'right', label: 'Right' },
+];
+
+const BROWSER_USE_TAB_ACTION_OPTIONS: ArgOption[] = [
+  { value: 'list', label: 'List Tabs', description: 'Get all open tabs' },
+  { value: 'new', label: 'New Tab', description: 'Open a new browser tab' },
+  { value: 'switch', label: 'Switch Tab', description: 'Switch to a tab by index' },
+  { value: 'close', label: 'Close Tab', description: 'Close a tab by index' },
+];
+
+const BROWSER_USE_COOKIE_ACTION_OPTIONS: ArgOption[] = [
+  { value: 'get', label: 'Get Cookies', description: 'Get all cookies (optionally filtered by URL)' },
+  { value: 'set', label: 'Set Cookies', description: 'Add or overwrite cookies' },
+  { value: 'clear', label: 'Clear All', description: 'Delete all cookies' },
+  { value: 'export', label: 'Export to File', description: 'Save cookies as JSON file' },
+  { value: 'import', label: 'Import from File', description: 'Load cookies from a JSON file' },
+];
+
+const BROWSER_USE_CONTENT_MODE_OPTIONS: ArgOption[] = [
+  { value: 'text', label: 'Text', description: 'Readable text content (default)' },
+  { value: 'html', label: 'HTML', description: 'Raw HTML source code' },
+];
+
+const BROWSER_USE_WAIT_STATE_OPTIONS: ArgOption[] = [
+  { value: 'visible', label: 'Visible', description: 'Wait until element appears on screen' },
+  { value: 'hidden', label: 'Hidden', description: 'Wait until element becomes hidden' },
+  { value: 'detached', label: 'Detached', description: 'Wait until element is removed from DOM' },
+];
+
+const BROWSER_USE_KEY_OPTIONS: ArgOption[] = [
+  { value: 'Enter', label: 'Enter' },
+  { value: 'Tab', label: 'Tab' },
+  { value: 'Escape', label: 'Escape' },
+  { value: 'Backspace', label: 'Backspace' },
+  { value: 'Delete', label: 'Delete' },
+  { value: 'ArrowUp', label: 'Arrow Up' },
+  { value: 'ArrowDown', label: 'Arrow Down' },
+  { value: 'ArrowLeft', label: 'Arrow Left' },
+  { value: 'ArrowRight', label: 'Arrow Right' },
+  { value: 'Space', label: 'Space' },
+  { value: 'Home', label: 'Home' },
+  { value: 'End', label: 'End' },
+  { value: 'PageUp', label: 'Page Up' },
+  { value: 'PageDown', label: 'Page Down' },
+  { value: 'Control+a', label: 'Select All (Ctrl+A)' },
+  { value: 'Control+c', label: 'Copy (Ctrl+C)' },
+  { value: 'Control+v', label: 'Paste (Ctrl+V)' },
+];
+
+const BROWSER_USE_SYNC_ACTION_OPTIONS: ArgOption[] = [
+  { value: 'sync', label: 'Sync Cookies', description: 'Copy cookies from Chrome into the browser session' },
+  { value: 'list_profiles', label: 'List Profiles', description: 'Discover available Chrome profiles' },
+  { value: 'list_domains', label: 'List Domains', description: 'Show cookie domains in a Chrome profile' },
+];
+
+// browser_use_configure
+if (TOOL_SCHEMAS['browser_use_configure']) {
+  TOOL_SCHEMAS['browser_use_configure'].label = 'Configure Browser';
+  TOOL_SCHEMAS['browser_use_configure'].args = {
+    mode: {
+      type: 'select',
+      label: 'Browser Mode',
+      description: 'How the browser runs. Headed shows a visible window; headless runs invisibly; connect attaches to an existing browser.',
+      options: BROWSER_USE_MODE_OPTIONS,
+      default: 'headed',
+      required: true,
+    },
+    cdp_url: {
+      type: 'string',
+      label: 'CDP URL',
+      description: 'Chrome DevTools Protocol URL to connect to (only for "connect" mode)',
+      placeholder: 'http://localhost:9222',
+      showWhen: { field: 'mode', value: 'connect' },
+    },
+    profile: {
+      type: 'string',
+      label: 'Profile Name',
+      description: 'Named profile for persistent cookies and sessions across runs',
+      default: 'default',
+      placeholder: 'default',
+      advanced: true,
+    },
+  };
+}
+
+// browser_use_navigate
+if (TOOL_SCHEMAS['browser_use_navigate']) {
+  TOOL_SCHEMAS['browser_use_navigate'].label = 'Navigate to URL';
+  TOOL_SCHEMAS['browser_use_navigate'].args = {
+    url: {
+      type: 'string',
+      label: 'URL',
+      description: 'The web address to navigate to',
+      required: true,
+      placeholder: 'https://example.com',
+    },
+    wait_until: {
+      type: 'select',
+      label: 'Wait Until',
+      description: 'When to consider navigation complete',
+      options: BROWSER_USE_WAIT_UNTIL_OPTIONS,
+      default: 'domcontentloaded',
+    },
+    wait_for_selector: {
+      type: 'string',
+      label: 'Wait for Selector',
+      description: 'CSS selector to wait for after navigation (useful for SPAs)',
+      placeholder: '#main-content, .loaded',
+      advanced: true,
+    },
+    timeout: {
+      type: 'number',
+      label: 'Timeout (ms)',
+      description: 'Maximum time to wait for navigation',
+      default: 30000,
+      advanced: true,
+    },
+  };
+}
+
+// browser_use_click
+if (TOOL_SCHEMAS['browser_use_click']) {
+  TOOL_SCHEMAS['browser_use_click'].label = 'Click Element';
+  TOOL_SCHEMAS['browser_use_click'].args = {
+    selector: {
+      type: 'string',
+      label: 'CSS Selector',
+      description: 'CSS selector of the element to click (e.g. #submit-btn, .nav-link)',
+      placeholder: '#submit-btn',
+    },
+    text: {
+      type: 'string',
+      label: 'Visible Text',
+      description: 'Click an element by its visible text (alternative to CSS selector)',
+      placeholder: 'Sign In',
+    },
+    exact: {
+      type: 'boolean',
+      label: 'Exact Match',
+      description: 'Require the text to match exactly (not just contain)',
+      default: false,
+      advanced: true,
+    },
+    timeout: {
+      type: 'number',
+      label: 'Timeout (ms)',
+      description: 'How long to wait for the element',
+      default: 5000,
+      advanced: true,
+    },
+  };
+}
+
+// browser_use_type
+if (TOOL_SCHEMAS['browser_use_type']) {
+  TOOL_SCHEMAS['browser_use_type'].label = 'Type Text';
+  TOOL_SCHEMAS['browser_use_type'].args = {
+    text: {
+      type: 'string',
+      label: 'Text to Type',
+      description: 'The text to type into the field',
+      required: true,
+      placeholder: 'Enter your text here...',
+    },
+    selector: {
+      type: 'string',
+      label: 'CSS Selector',
+      description: 'CSS selector of the input field. If empty, types into the currently focused element.',
+      placeholder: '#email, input[name="username"]',
+    },
+    clear: {
+      type: 'boolean',
+      label: 'Clear First',
+      description: 'Clear existing content before typing',
+      default: true,
+    },
+    timeout: {
+      type: 'number',
+      label: 'Timeout (ms)',
+      default: 5000,
+      advanced: true,
+    },
+  };
+}
+
+// browser_use_press_key
+if (TOOL_SCHEMAS['browser_use_press_key']) {
+  TOOL_SCHEMAS['browser_use_press_key'].label = 'Press Key';
+  TOOL_SCHEMAS['browser_use_press_key'].args = {
+    key: {
+      type: 'select',
+      label: 'Key',
+      description: 'Keyboard key to press',
+      options: BROWSER_USE_KEY_OPTIONS,
+      allowFreeform: true,
+      required: true,
+      default: 'Enter',
+      placeholder: 'Enter, Tab, Escape...',
+    },
+    selector: {
+      type: 'string',
+      label: 'Focus Selector',
+      description: 'CSS selector to focus before pressing the key (optional)',
+      placeholder: '#search-input',
+      advanced: true,
+    },
+  };
+}
+
+// browser_use_screenshot
+if (TOOL_SCHEMAS['browser_use_screenshot']) {
+  TOOL_SCHEMAS['browser_use_screenshot'].label = 'Take Screenshot';
+  TOOL_SCHEMAS['browser_use_screenshot'].args = {
+    full_page: {
+      type: 'boolean',
+      label: 'Full Page',
+      description: 'Capture the entire scrollable page instead of just the visible viewport',
+      default: false,
+    },
+  };
+}
+
+// browser_use_content
+if (TOOL_SCHEMAS['browser_use_content']) {
+  TOOL_SCHEMAS['browser_use_content'].label = 'Get Page Content';
+  TOOL_SCHEMAS['browser_use_content'].args = {
+    mode: {
+      type: 'select',
+      label: 'Content Mode',
+      description: 'What format to return the viewport content in',
+      options: BROWSER_USE_CONTENT_MODE_OPTIONS,
+      default: 'text',
+    },
+    max_length: {
+      type: 'number',
+      label: 'Max Length',
+      description: 'Maximum number of characters to return',
+      default: 15000,
+      advanced: true,
+    },
+    wait_for_selector: {
+      type: 'string',
+      label: 'Wait for Selector',
+      description: 'Wait for this CSS selector before extracting content',
+      placeholder: '.article-body',
+      advanced: true,
+    },
+    wait_timeout: {
+      type: 'number',
+      label: 'Wait Timeout (ms)',
+      default: 5000,
+      advanced: true,
+    },
+  };
+}
+
+// browser_use_scroll
+if (TOOL_SCHEMAS['browser_use_scroll']) {
+  TOOL_SCHEMAS['browser_use_scroll'].label = 'Scroll Page';
+  TOOL_SCHEMAS['browser_use_scroll'].args = {
+    direction: {
+      type: 'select',
+      label: 'Direction',
+      description: 'Which direction to scroll',
+      options: BROWSER_USE_SCROLL_DIRECTION_OPTIONS,
+      default: 'down',
+    },
+    amount: {
+      type: 'number',
+      label: 'Amount (px)',
+      description: 'How many pixels to scroll',
+      default: 500,
+    },
+    selector: {
+      type: 'string',
+      label: 'Container Selector',
+      description: 'CSS selector of a scrollable container (scrolls the page if empty)',
+      placeholder: '.scroll-container',
+      advanced: true,
+    },
+  };
+}
+
+// browser_use_tabs
+if (TOOL_SCHEMAS['browser_use_tabs']) {
+  TOOL_SCHEMAS['browser_use_tabs'].label = 'Manage Tabs';
+  TOOL_SCHEMAS['browser_use_tabs'].args = {
+    action: {
+      type: 'select',
+      label: 'Action',
+      description: 'What to do with tabs',
+      options: BROWSER_USE_TAB_ACTION_OPTIONS,
+      default: 'list',
+      required: true,
+    },
+    url: {
+      type: 'string',
+      label: 'URL',
+      description: 'URL to open in the new tab',
+      placeholder: 'https://example.com',
+      showWhen: { field: 'action', value: 'new' },
+    },
+    index: {
+      type: 'number',
+      label: 'Tab Index',
+      description: 'Which tab to switch to or close (0-based)',
+      default: 0,
+      showWhen: { field: 'action', values: ['switch', 'close'] },
+    },
+  };
+}
+
+// browser_use_cookies
+if (TOOL_SCHEMAS['browser_use_cookies']) {
+  TOOL_SCHEMAS['browser_use_cookies'].label = 'Manage Cookies';
+  TOOL_SCHEMAS['browser_use_cookies'].args = {
+    action: {
+      type: 'select',
+      label: 'Action',
+      description: 'What to do with cookies',
+      options: BROWSER_USE_COOKIE_ACTION_OPTIONS,
+      default: 'get',
+      required: true,
+    },
+    urls: {
+      type: 'array',
+      label: 'Filter by URLs',
+      description: 'Only return cookies for these URLs',
+      itemType: 'string',
+      placeholder: 'https://example.com',
+      showWhen: { field: 'action', value: 'get' },
+    },
+    cookies: {
+      type: 'json',
+      label: 'Cookies',
+      description: 'Array of cookie objects to set: [{name, value, domain, path}]',
+      showWhen: { field: 'action', value: 'set' },
+    },
+    path: {
+      type: 'path',
+      label: 'File Path',
+      description: 'Path for the cookies JSON file',
+      placeholder: 'C:/cookies.json',
+      showWhen: { field: 'action', values: ['export', 'import'] },
+    },
+  };
+}
+
+// browser_use_execute_script
+if (TOOL_SCHEMAS['browser_use_execute_script']) {
+  TOOL_SCHEMAS['browser_use_execute_script'].label = 'Execute JS Script';
+  TOOL_SCHEMAS['browser_use_execute_script'].args = {
+    script: {
+      type: 'code',
+      label: 'JavaScript Code',
+      description: 'Code to run in the browser page context. Runs inside an async function — use return to send data back. An `args` object is in scope.',
+      required: true,
+      language: 'javascript',
+      placeholder: 'return document.title;',
+    },
+    args: {
+      type: 'json',
+      label: 'Script Arguments',
+      description: 'Named arguments exposed to the script as the `args` object',
+      advanced: true,
+    },
+    wait_for_selector: {
+      type: 'string',
+      label: 'Wait for Selector',
+      description: 'Wait for this CSS selector before running the script',
+      placeholder: '#app.loaded',
+      advanced: true,
+    },
+    timeout: {
+      type: 'number',
+      label: 'Timeout (ms)',
+      description: 'Maximum script execution time',
+      default: 30000,
+      advanced: true,
+    },
+  };
+}
+
+// browser_use_hover
+if (TOOL_SCHEMAS['browser_use_hover']) {
+  TOOL_SCHEMAS['browser_use_hover'].label = 'Hover Element';
+  TOOL_SCHEMAS['browser_use_hover'].args = {
+    selector: {
+      type: 'string',
+      label: 'CSS Selector',
+      description: 'CSS selector of the element to hover over',
+      placeholder: '.dropdown-trigger',
+    },
+    text: {
+      type: 'string',
+      label: 'Visible Text',
+      description: 'Hover over an element by its visible text',
+      placeholder: 'Account Menu',
+    },
+    timeout: {
+      type: 'number',
+      label: 'Timeout (ms)',
+      default: 5000,
+      advanced: true,
+    },
+  };
+}
+
+// browser_use_select_option
+if (TOOL_SCHEMAS['browser_use_select_option']) {
+  TOOL_SCHEMAS['browser_use_select_option'].label = 'Select Dropdown Option';
+  TOOL_SCHEMAS['browser_use_select_option'].args = {
+    selector: {
+      type: 'string',
+      label: 'Select Selector',
+      description: 'CSS selector of the dropdown control, combobox, or native <select> element',
+      required: true,
+      placeholder: '#country-select, select[name="country"]',
+    },
+    label: {
+      type: 'string',
+      label: 'Option Text',
+      description: 'Select by the visible text of the option (case-insensitive partial match)',
+      placeholder: 'United States',
+    },
+    value: {
+      type: 'string',
+      label: 'Option Value',
+      description: 'Select by the option\'s value attribute',
+      placeholder: 'us',
+    },
+    index: {
+      type: 'number',
+      label: 'Option Index',
+      description: 'Select by position (0-based)',
+    },
+    timeout: {
+      type: 'number',
+      label: 'Timeout (ms)',
+      default: 5000,
+      advanced: true,
+    },
+  };
+}
+
+// browser_use_get_interactive_elements
+if (TOOL_SCHEMAS['browser_use_get_interactive_elements']) {
+  TOOL_SCHEMAS['browser_use_get_interactive_elements'].label = 'Get Interactive Elements';
+  TOOL_SCHEMAS['browser_use_get_interactive_elements'].args = {
+    wait_for_selector: {
+      type: 'string',
+      label: 'Wait for Selector',
+      description: 'Wait for this CSS selector before scanning the page',
+      placeholder: 'form, .loaded',
+      advanced: true,
+    },
+    wait_timeout: {
+      type: 'number',
+      label: 'Wait Timeout (ms)',
+      default: 3000,
+      advanced: true,
+    },
+  };
+}
+
+// browser_use_fill_form
+if (TOOL_SCHEMAS['browser_use_fill_form']) {
+  TOOL_SCHEMAS['browser_use_fill_form'].label = 'Fill Form';
+  TOOL_SCHEMAS['browser_use_fill_form'].args = {
+    fields: {
+      type: 'json',
+      label: 'Fields',
+      description: 'Map CSS selectors to values: {"#email": "user@example.com"} or array of {selector, value, type}. Use type "file" with a local path to upload files.',
+      required: true,
+    },
+    submit: {
+      type: 'boolean',
+      label: 'Submit After Fill',
+      description: 'Automatically submit the form after filling all fields',
+      default: false,
+    },
+    form_selector: {
+      type: 'string',
+      label: 'Form Selector',
+      description: 'CSS selector of the form element (helps find the submit button)',
+      placeholder: '#login-form',
+      advanced: true,
+    },
+  };
+}
+
+// browser_use_upload_file
+if (TOOL_SCHEMAS['browser_use_upload_file']) {
+  TOOL_SCHEMAS['browser_use_upload_file'].label = 'Upload Local File';
+  TOOL_SCHEMAS['browser_use_upload_file'].args = {
+    selector: {
+      type: 'string',
+      label: 'Target Selector',
+      description: 'Optional CSS selector of the file input or upload control associated with it',
+      placeholder: 'input[type="file"], label[for="resume"]',
+    },
+    filePath: {
+      type: 'string',
+      label: 'Local File Path',
+      description: 'Path to the file on disk to upload',
+      required: true,
+      placeholder: 'C:/Users/name/Documents/resume.pdf',
+    },
+    timeout: {
+      type: 'number',
+      label: 'Timeout (ms)',
+      default: 5000,
+      advanced: true,
+    },
+  };
+}
+
+// browser_use_wait_for
+if (TOOL_SCHEMAS['browser_use_wait_for']) {
+  TOOL_SCHEMAS['browser_use_wait_for'].label = 'Wait For';
+  TOOL_SCHEMAS['browser_use_wait_for'].args = {
+    selector: {
+      type: 'string',
+      label: 'CSS Selector',
+      description: 'Wait for this element to appear/disappear',
+      placeholder: '.results-loaded, #spinner',
+    },
+    text: {
+      type: 'string',
+      label: 'Text Content',
+      description: 'Wait for this text to appear on the page',
+      placeholder: 'Results found',
+    },
+    url_pattern: {
+      type: 'string',
+      label: 'URL Contains',
+      description: 'Wait for the URL to contain this substring (e.g. "/dashboard", "?success=true")',
+      placeholder: '/dashboard',
+    },
+    state: {
+      type: 'select',
+      label: 'Element State',
+      description: 'What state to wait for',
+      options: BROWSER_USE_WAIT_STATE_OPTIONS,
+      default: 'visible',
+    },
+    timeout: {
+      type: 'number',
+      label: 'Timeout (ms)',
+      description: 'Maximum time to wait before giving up',
+      default: 10000,
+    },
+  };
+}
+
+// browser_use_sync_chrome
+if (TOOL_SCHEMAS['browser_use_sync_chrome']) {
+  TOOL_SCHEMAS['browser_use_sync_chrome'].label = 'Sync Chrome Cookies';
+  TOOL_SCHEMAS['browser_use_sync_chrome'].args = {
+    action: {
+      type: 'select',
+      label: 'Action',
+      description: 'What to do',
+      options: BROWSER_USE_SYNC_ACTION_OPTIONS,
+      default: 'sync',
+    },
+    browser_name: {
+      type: 'select',
+      label: 'Browser',
+      description: 'Which browser to sync from',
+      options: [
+        { value: 'Chrome', label: 'Google Chrome' },
+        { value: 'Edge', label: 'Microsoft Edge' },
+        { value: 'Brave', label: 'Brave' },
+        { value: 'Chromium', label: 'Chromium' },
+      ],
+      default: 'Chrome',
+      allowFreeform: true,
+      showWhen: { field: 'action', value: 'sync' },
+    },
+    profile_name: {
+      type: 'string',
+      label: 'Profile Name',
+      description: 'Chrome profile to sync from (e.g. "Default", "Profile 1")',
+      default: 'Default',
+      placeholder: 'Default',
+      showWhen: { field: 'action', values: ['sync', 'list_domains'] },
+    },
+    force_clone: {
+      type: 'boolean',
+      label: 'Force Clone',
+      description: 'Re-clone the Chrome profile even if one already exists',
+      default: false,
+      advanced: true,
+      showWhen: { field: 'action', value: 'sync' },
+    },
+    restart_browser: {
+      type: 'boolean',
+      label: 'Restart Browser',
+      description: 'Restart the browser session after syncing',
+      default: false,
+      advanced: true,
+      showWhen: { field: 'action', value: 'sync' },
+    },
+  };
+}
+
+// browser_use_status
+if (TOOL_SCHEMAS['browser_use_status']) {
+  TOOL_SCHEMAS['browser_use_status'].label = 'Browser Status';
+}
+
+// browser_use_list_chrome_profiles
+if (TOOL_SCHEMAS['browser_use_list_chrome_profiles']) {
+  TOOL_SCHEMAS['browser_use_list_chrome_profiles'].label = 'List Chrome Profiles';
 }
 
 export { TOOL_SCHEMAS };

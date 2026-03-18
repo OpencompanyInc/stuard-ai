@@ -103,7 +103,14 @@ telnyxBridgeWss.on('connection', async (telnyxWs: WebSocket, req: IncomingMessag
       if (telnyxWs.readyState === WebSocket.OPEN) telnyxWs.close(1000, 'session_ended');
     },
     onInterruption: () => {
-      // Provider signaled interruption - could clear Telnyx audio buffer
+      // Flush Telnyx's buffered audio so the caller immediately stops hearing
+      // the old response when they start talking
+      if (telnyxWs.readyState === WebSocket.OPEN && streamId) {
+        telnyxWs.send(JSON.stringify({
+          event: 'clear',
+          stream_id: streamId,
+        }));
+      }
     },
   };
 

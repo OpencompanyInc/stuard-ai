@@ -24,6 +24,7 @@ class GrokRealtimeSession implements VoiceSession {
   private ws: WebSocket | null = null;
   private audioCallbacks: Array<(audioBase64: string) => void> = [];
   private _active = false;
+  private _responding = false;
   private config: VoiceSessionConfig;
 
   constructor(config: VoiceSessionConfig) {
@@ -59,8 +60,8 @@ class GrokRealtimeSession implements VoiceSession {
             instructions: this.config.systemPrompt || 'You are Stuard, a helpful AI assistant.',
             turn_detection: {
               type: 'server_vad',
-              threshold: 0.5,
-              silence_duration_ms: 500,
+              threshold: 0.3,
+              silence_duration_ms: 300,
             },
             audio: {
               input: { format: { type: 'audio/pcmu' } },
@@ -94,9 +95,14 @@ class GrokRealtimeSession implements VoiceSession {
           const msg = JSON.parse(rawData.toString());
 
           if (msg.type === 'response.audio.delta' && msg.delta) {
+            this._responding = true;
             for (const cb of this.audioCallbacks) {
               cb(msg.delta);
             }
+          }
+
+          if (msg.type === 'response.done' || msg.type === 'response.cancelled') {
+            this._responding = false;
           }
 
           if (msg.type === 'response.audio_transcript.done') {
@@ -108,6 +114,10 @@ class GrokRealtimeSession implements VoiceSession {
           }
 
           if (msg.type === 'input_audio_buffer.speech_started') {
+            if (this._responding) {
+              this._responding = false;
+              this.ws?.send(JSON.stringify({ type: 'response.cancel' }));
+            }
             this.config.onInterruption?.();
           }
 

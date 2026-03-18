@@ -1,3 +1,5 @@
+from typing import Any
+
 from aiohttp import web
 
 from browser_server import state
@@ -6,6 +8,52 @@ from browser_server.lifecycle import (
     _ensure_browser, _get_page_url, _get_page_title, _get_playwright_page,
     _find_elements, _evaluate, _goto, _wait_for_selector,
 )
+
+
+async def _try_click_locator(locator: Any, page: Any, timeout: int, method: str) -> tuple[bool, str]:
+    target = getattr(locator, "first", locator)
+    try:
+        if hasattr(target, "wait_for"):
+            try:
+                await target.wait_for(state="visible", timeout=min(timeout, 2000))
+            except Exception:
+                pass
+        if hasattr(target, "scroll_into_view_if_needed"):
+            try:
+                await target.scroll_into_view_if_needed(timeout=min(timeout, 2000))
+            except Exception:
+                pass
+        if hasattr(target, "focus"):
+            try:
+                await target.focus()
+            except Exception:
+                pass
+        if hasattr(target, "click"):
+            try:
+                await target.click(timeout=timeout)
+                return True, method
+            except Exception:
+                pass
+            try:
+                await target.click(timeout=min(timeout, 3000), force=True)
+                return True, f"{method}_force"
+            except Exception:
+                pass
+        if hasattr(target, "dispatch_event"):
+            try:
+                await target.dispatch_event("click")
+                return True, f"{method}_dispatch"
+            except Exception:
+                pass
+        mouse = getattr(page, "mouse", None)
+        if mouse is not None and hasattr(target, "bounding_box"):
+            box = await target.bounding_box()
+            if box and box.get("width", 0) > 0 and box.get("height", 0) > 0:
+                await mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+                return True, f"{method}_mouse"
+    except Exception:
+        pass
+    return False, ""
 
 
 async def handle_navigate(req: web.Request) -> web.Response:
@@ -51,48 +99,53 @@ async def handle_click(req: web.Request) -> web.Response:
         try:
             pw = _get_playwright_page()
 
-            # Strategy 1: Playwright native click by selector
+            # Strategy 1: Playwright locator click by selector with retries/fallbacks
             if selector and pw:
                 try:
-                    await pw.click(selector, timeout=timeout)
-                    return _ok({"clicked": selector, "method": "playwright_selector"})
+                    ok_clicked, method = await _try_click_locator(pw.locator(selector), pw, timeout, "playwright_selector")
+                    if ok_clicked:
+                        return _ok({"clicked": selector, "method": method})
                 except Exception:
                     pass
 
-            # Strategy 2: Playwright text locator
+            # Strategy 2: Prefer accessible roles for button-like targets
             if text and pw:
-                try:
-                    locator = pw.get_by_text(text, exact=exact)
-                    await locator.first.click(timeout=timeout)
-                    return _ok({"clicked": text, "method": "playwright_text"})
-                except Exception:
-                    pass
-
-            # Strategy 3: Playwright role locator
-            if text and pw:
-                for role in ["button", "link", "menuitem", "tab", "option", "checkbox", "radio"]:
+                for role in ["button", "link", "menuitem", "tab", "option", "checkbox", "radio", "combobox"]:
                     try:
                         locator = pw.get_by_role(role, name=text, exact=exact)
-                        await locator.first.click(timeout=min(timeout, 2000))
-                        return _ok({"clicked": text, "method": f"playwright_role_{role}"})
+                        ok_clicked, method = await _try_click_locator(locator, pw, min(timeout, 3000), f"playwright_role_{role}")
+                        if ok_clicked:
+                            return _ok({"clicked": text, "method": method})
                     except Exception:
                         continue
 
-            # Strategy 4: Playwright label locator
+            # Strategy 3: Playwright label locator
             if text and pw:
                 try:
                     locator = pw.get_by_label(text, exact=exact)
-                    await locator.first.click(timeout=min(timeout, 2000))
-                    return _ok({"clicked": text, "method": "playwright_label"})
+                    ok_clicked, method = await _try_click_locator(locator, pw, min(timeout, 3000), "playwright_label")
+                    if ok_clicked:
+                        return _ok({"clicked": text, "method": method})
                 except Exception:
                     pass
 
-            # Strategy 5: Playwright placeholder locator
+            # Strategy 4: Playwright placeholder locator
             if text and pw:
                 try:
                     locator = pw.get_by_placeholder(text, exact=exact)
-                    await locator.first.click(timeout=min(timeout, 2000))
-                    return _ok({"clicked": text, "method": "playwright_placeholder"})
+                    ok_clicked, method = await _try_click_locator(locator, pw, min(timeout, 3000), "playwright_placeholder")
+                    if ok_clicked:
+                        return _ok({"clicked": text, "method": method})
+                except Exception:
+                    pass
+
+            # Strategy 5: Playwright text locator after button-like locators
+            if text and pw:
+                try:
+                    locator = pw.get_by_text(text, exact=exact)
+                    ok_clicked, method = await _try_click_locator(locator, pw, timeout, "playwright_text")
+                    if ok_clicked:
+                        return _ok({"clicked": text, "method": method})
                 except Exception:
                     pass
 

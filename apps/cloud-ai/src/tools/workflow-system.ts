@@ -283,6 +283,11 @@ function normalizeToolName(name: string): string {
   }
 }
 
+function markWorkflowToolArgs(args: any): any {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return args;
+  return { ...(args as Record<string, any>), __workflowToolCall: true };
+}
+
 async function runOne(step: z.infer<typeof StepSchema>, writer?: WritableStreamDefaultWriter<any>, eventTool = 'run_sequential') {
   const { tool, args, kind, timeoutMs } = step;
   const toolName = normalizeToolName(tool);
@@ -296,7 +301,12 @@ async function runOne(step: z.infer<typeof StepSchema>, writer?: WritableStreamD
       // Do NOT pass the outer ToolStream writer to nested cloud tool to avoid stream lock
       result = await (t as any).execute?.({ context: args });
     } else {
-      result = await execLocalTool(toolName, args, writer as any, typeof timeoutMs === 'number' ? timeoutMs : undefined);
+      result = await execLocalTool(
+        toolName,
+        markWorkflowToolArgs(args),
+        writer as any,
+        typeof timeoutMs === 'number' ? timeoutMs : undefined,
+      );
     }
     const safe = sanitizeResult(result);
     try { await safeToolWrite(writer as any, { type: 'tool_event', tool: eventTool, status: 'step_completed', step: { tool }, result: safe } as any); } catch { }
@@ -367,7 +377,12 @@ export const runParallelTool = createTool({
             // Avoid passing parent ToolStream writer to nested cloud tool to prevent lock
             result = await (t as any).execute?.({ context: step.args });
           } else {
-            result = await execLocalTool(toolName, step.args, writer as any, typeof step.timeoutMs === 'number' ? step.timeoutMs : undefined);
+            result = await execLocalTool(
+              toolName,
+              markWorkflowToolArgs(step.args),
+              writer as any,
+              typeof step.timeoutMs === 'number' ? step.timeoutMs : undefined,
+            );
           }
           const safe = sanitizeResult(result);
           results[myIdx] = { tool: step.tool, ok: (result && typeof result.ok === 'boolean') ? !!result.ok : true, result: safe };
@@ -820,7 +835,7 @@ export const testWorkflowStepTool = createTool({
           const t = cloudTools.get(toolName);
           result = await (t as any).execute?.({ context: c?.args });
         } else {
-          result = await execLocalTool(toolName, c?.args, writer as any, 30000);
+          result = await execLocalTool(toolName, markWorkflowToolArgs(c?.args), writer as any, 30000);
         }
 
         const duration = Date.now() - startTime;

@@ -14,7 +14,8 @@
       "Bash(gcloud run:*)",
       "WebFetch(domain:developers.telnyx.com)",
       "Bash(curl:*)",
-      "WebFetch(domain:ai.google.dev)"
+      "WebFetch(domain:ai.google.dev)",
+      "Bash(gcloud resource-manager:*)"
     ]
   }
 }

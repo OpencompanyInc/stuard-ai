@@ -322,7 +322,7 @@ export function WorkspaceFileEditor({ flowId, filePath, fileName }: WorkspaceFil
           onChange={setContent}
           language={language}
           minHeight={0}
-          className="flex-1"
+          className="h-full"
         />
       </div>
     </div>

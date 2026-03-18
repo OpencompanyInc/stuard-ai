@@ -269,6 +269,7 @@ export {
   browser_use_select_option,
   browser_use_get_interactive_elements,
   browser_use_fill_form,
+  browser_use_upload_file,
   browser_use_wait_for,
 } from './device/browser-use';
 

@@ -17,16 +17,28 @@ from typing import Any, Dict, Optional
 
 from .folder_limiter import FolderLimiter
 
+WORKFLOW_TOOL_CALL_FLAG = "__workflowToolCall"
 
-def _check_folder_read(path: str) -> None:
+
+def _should_bypass_folder_permissions(args: Optional[Dict[str, Any]] = None) -> bool:
+    if not isinstance(args, dict):
+        return False
+    return bool(args.get(WORKFLOW_TOOL_CALL_FLAG))
+
+
+def _check_folder_read(path: str, args: Optional[Dict[str, Any]] = None) -> None:
     """Raise ValueError if the folder limiter denies read access to *path*."""
+    if _should_bypass_folder_permissions(args):
+        return
     limiter = FolderLimiter.get()
     if not limiter.check_read(path):
         raise ValueError(limiter.describe_denial(path, "read"))
 
 
-def _check_folder_write(path: str) -> None:
+def _check_folder_write(path: str, args: Optional[Dict[str, Any]] = None) -> None:
     """Raise ValueError if the folder limiter denies write access to *path*."""
+    if _should_bypass_folder_permissions(args):
+        return
     limiter = FolderLimiter.get()
     if not limiter.check_write(path):
         raise ValueError(limiter.describe_denial(path, "write"))
@@ -265,7 +277,7 @@ async def list_directory(args: Dict[str, Any]) -> Dict[str, Any]:
     p = os.path.expanduser(p)
     if not _is_safe_path(p):
         raise ValueError(f"Access denied to system path: {p}")
-    _check_folder_read(p)
+    _check_folder_read(p, args)
     names = []
     try:
         for name in os.listdir(p):
@@ -295,7 +307,7 @@ async def read_file(args: Dict[str, Any]) -> Dict[str, Any]:
     p = os.path.expanduser(p)
     if not _is_safe_path(p):
         raise ValueError(f"Access denied to system path: {p}")
-    _check_folder_read(p)
+    _check_folder_read(p, args)
     
     # Get optional line range (1-indexed)
     line_start = args.get("line_start") or args.get("lineStart")
@@ -378,7 +390,7 @@ async def glob_paths(args: Dict[str, Any]) -> Dict[str, Any]:
         root = os.path.expanduser(root)
         if not _is_safe_path(root):
             return {"ok": False, "error": f"Access denied to system path: {root}"}
-        _check_folder_read(root)
+        _check_folder_read(root, args)
         pattern_path = os.path.join(root, pattern) if not os.path.isabs(pattern) else pattern
     else:
         pattern_path = pattern
@@ -422,7 +434,7 @@ async def grep(args: Dict[str, Any]) -> Dict[str, Any]:
     p = os.path.expanduser(p)
     if not _is_safe_path(p):
         return {"ok": False, "error": f"Access denied to system path: {p}"}
-    _check_folder_read(p)
+    _check_folder_read(p, args)
 
     regex = args.get("regex")
     if regex is None:
@@ -522,7 +534,7 @@ async def write_file(args: Dict[str, Any]) -> Dict[str, Any]:
     p = os.path.expanduser(p)
     if not _is_safe_path(p):
         raise ValueError(f"Access denied to system path: {p}")
-    _check_folder_write(p)
+    _check_folder_write(p, args)
     d = os.path.dirname(p)
     
     # Checkpoint
@@ -548,7 +560,7 @@ async def write_file_base64(args: Dict[str, Any]) -> Dict[str, Any]:
     p = os.path.expanduser(p)
     if not _is_safe_path(p):
         raise ValueError(f"Access denied to system path: {p}")
-    _check_folder_write(p)
+    _check_folder_write(p, args)
         
     d = os.path.dirname(p)
     if d and not os.path.exists(d):
@@ -576,7 +588,7 @@ async def create_directory(args: Dict[str, Any]) -> Dict[str, Any]:
     p = os.path.expanduser(p)
     if not _is_safe_path(p):
         raise ValueError(f"Access denied to system path: {p}")
-    _check_folder_write(p)
+    _check_folder_write(p, args)
 
     # Checkpoint
     if not os.path.exists(p):
@@ -598,8 +610,8 @@ async def move_file(args: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError(f"Access denied to system path: {src}")
     if not _is_safe_path(dest):
         raise ValueError(f"Access denied to system path: {dest}")
-    _check_folder_read(src)
-    _check_folder_write(dest)
+    _check_folder_read(src, args)
+    _check_folder_write(dest, args)
     
     # Checkpoint
     CheckpointManager.record_change(src, "modify") # Will become deleted at src
@@ -624,8 +636,8 @@ async def copy_file(args: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError(f"Access denied to system path: {src}")
     if not _is_safe_path(dest):
         raise ValueError(f"Access denied to system path: {dest}")
-    _check_folder_read(src)
-    _check_folder_write(dest)
+    _check_folder_read(src, args)
+    _check_folder_write(dest, args)
     
     # Checkpoint
     op_dest = "create" if not os.path.exists(dest) else "modify"
@@ -645,7 +657,7 @@ async def delete_file(args: Dict[str, Any]) -> Dict[str, Any]:
     
     if not _is_safe_path(p):
         raise ValueError(f"Access denied to system path: {p}")
-    _check_folder_write(p)
+    _check_folder_write(p, args)
     
     if os.path.exists(p):
         CheckpointManager.record_change(p, "modify") # Will be deleted
@@ -743,7 +755,7 @@ async def read_file_binary(args: Dict[str, Any]) -> Dict[str, Any]:
     p = os.path.normpath(p)
     if not _is_safe_path(p):
         raise ValueError(f"Access denied to system path: {p}")
-    _check_folder_read(p)
+    _check_folder_read(p, args)
     if not os.path.isfile(p):
         raise ValueError(f"path not found: {p}")
     size = os.path.getsize(p)
@@ -777,7 +789,7 @@ async def file_read(args: Dict[str, Any]) -> Dict[str, Any]:
     p = os.path.expanduser(p)
     if not _is_safe_path(p):
         return {"ok": False, "error": f"Access denied to system path: {p}"}
-    _check_folder_read(p)
+    _check_folder_read(p, args)
 
     if not os.path.exists(p):
         return {"ok": False, "error": f"File not found: {p}"}
@@ -895,7 +907,7 @@ async def file_edit(args: Dict[str, Any]) -> Dict[str, Any]:
     p = os.path.expanduser(p)
     if not _is_safe_path(p):
         return {"ok": False, "error": f"Access denied to system path: {p}"}
-    _check_folder_write(p)
+    _check_folder_write(p, args)
 
     mode = str(args.get("mode") or "replace").lower()
     valid_modes = ("replace", "insert_before", "insert_after", "delete", "regex")

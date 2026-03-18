@@ -926,11 +926,20 @@ export async function execBrowserUseGetInteractiveElements(args: any, _ctx: Rout
 
 export async function execBrowserUseFillForm(args: any, _ctx: RouterContext): Promise<any> {
   return withServer('FillForm', args, async (sessionId) => {
+    const normalizedFields = Array.isArray(args?.fields)
+      ? args.fields.map((field: any) => {
+          if (field && typeof field === 'object' && String(field.type || '').toLowerCase() === 'file' && typeof field.value === 'string') {
+            return { ...field, value: path.resolve(field.value) };
+          }
+          return field;
+        })
+      : args?.fields;
+
     const resp = await browserUseFetch('/fill_form', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        fields: args?.fields,
+        fields: normalizedFields,
         submit: args?.submit,
         form_selector: args?.form_selector,
       }),
@@ -939,6 +948,34 @@ export async function execBrowserUseFillForm(args: any, _ctx: RouterContext): Pr
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
       return { ok: false, error: `Fill form failed: ${resp.status} ${errText}` };
+    }
+    return await resp.json();
+  });
+}
+
+export async function execBrowserUseUploadFile(args: any, _ctx: RouterContext): Promise<any> {
+  const filePath = String(args?.filePath ?? args?.file_path ?? args?.path ?? '').trim();
+  if (!filePath) return { ok: false, error: 'filePath is required' };
+
+  const resolvedPath = path.resolve(filePath);
+  if (!fs.existsSync(resolvedPath)) {
+    return { ok: false, error: `File not found: ${resolvedPath}` };
+  }
+
+  return withServer('UploadFile', args, async (sessionId) => {
+    const resp = await browserUseFetch('/upload_file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        selector: args?.selector,
+        file_path: resolvedPath,
+        timeout: args?.timeout,
+      }),
+      timeoutMs: Math.max(10000, Number(args?.timeout || 5000) + 5000),
+    }, sessionId);
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, error: `Upload file failed: ${resp.status} ${errText}` };
     }
     return await resp.json();
   });

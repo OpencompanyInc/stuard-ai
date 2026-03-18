@@ -135,10 +135,19 @@ export function RichCodeEditor({
   }, [searchTerm, value, useRegex, matchCase]);
 
   const scrollToMatch = (index: number) => {
-    if (textareaRef.current) {
-      textareaRef.current.setSelectionRange(index, index + searchTerm.length);
-      textareaRef.current.blur();
-      textareaRef.current.focus();
+    if (!textareaRef.current) return;
+    const activeEl = document.activeElement;
+    // Set selection and briefly focus to trigger scroll-to-selection
+    textareaRef.current.setSelectionRange(index, index + searchTerm.length);
+    textareaRef.current.blur();
+    textareaRef.current.focus();
+    // Sync gutter and backdrop to new scroll position
+    const scrollTop = textareaRef.current.scrollTop;
+    if (backdropRef.current) backdropRef.current.scrollTop = scrollTop;
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollTop;
+    // Restore focus to previous element (e.g. search input) so user can keep typing
+    if (activeEl && activeEl instanceof HTMLElement && activeEl !== textareaRef.current) {
+      activeEl.focus();
     }
   };
 
@@ -244,7 +253,7 @@ export function RichCodeEditor({
   }, [language]);
 
   return (
-    <div className={`flex flex-col overflow-hidden transition-all ${isExpanded ? 'fixed inset-3 z-50 rounded-lg shadow-2xl' : ''} ${className}`} style={{ background: VSCODE.bg }}>
+    <div className={`flex flex-col overflow-hidden transition-all ${isExpanded ? 'fixed inset-3 z-50 rounded-lg shadow-2xl' : ''} ${className}`} style={{ background: VSCODE.bg, minHeight: isExpanded ? '80vh' : `${minHeight + 22}px` }}>
       {/* VS Code-style Search Widget (floating, top-right like VS Code) */}
       {showSearch && (
         <div
@@ -334,7 +343,7 @@ export function RichCodeEditor({
         </div>
 
         {/* Code Area */}
-        <div className="flex-1 relative overflow-auto" style={{ background: VSCODE.bg }}>
+        <div className="flex-1 relative overflow-hidden" style={{ background: VSCODE.bg }}>
           {/* Syntax Highlighting Backdrop */}
           <div ref={backdropRef} className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
             <pre

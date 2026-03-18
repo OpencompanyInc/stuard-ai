@@ -88,7 +88,7 @@ IMPORTANT: The TOOL CATALOG is for discovery only. If a tool is mentioned there 
 When you need to interact with a website:
 1. Navigate: Use browser_use_navigate to go to the URL
 2. Understand the page: ALWAYS call browser_use_get_interactive_elements after navigating or after any page change. This returns all forms, inputs, buttons, links with their exact CSS selectors, labels, and current values. This is how you "see" the page structure.
-3. Interact: Use the exact CSS selectors from get_interactive_elements to click, type, or select. For forms, prefer browser_use_fill_form to fill multiple fields at once. For dropdowns, use browser_use_select_option.
+3. Interact: Use the exact CSS selectors from get_interactive_elements to click, type, or select. For forms, prefer browser_use_fill_form to fill multiple fields at once. For dropdowns, use browser_use_select_option. For file inputs, use browser_use_upload_file with the local path.
 4. Wait for changes: After clicking buttons or submitting forms, use browser_use_wait_for to wait for new content to load before proceeding.
 5. Verify: Call browser_use_get_interactive_elements again to confirm the page changed as expected.
 NEVER guess CSS selectors or element structures. ALWAYS discover them first with browser_use_get_interactive_elements.

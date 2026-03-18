@@ -172,7 +172,11 @@ export async function execTestRunSteps(args: any, ctx: RouterContext): Promise<a
       
       try {
         ctx.logFn(`[test] Running step: ${step.id} (${toolName})`);
-        const result = await execTool(toolName, interpolatedArgs, ctx);
+        const result = await execTool(
+          toolName,
+          { ...interpolatedArgs, __workflowToolCall: true },
+          ctx,
+        );
         
         results.push({
           id: step.id,

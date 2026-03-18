@@ -1423,6 +1423,27 @@ export function getWorkflowAgent(modelIdOverride?: string): Agent {
     }
   });
 
+  const markWorkflowFileArgs = (args: any) =>
+    args && typeof args === 'object' && !Array.isArray(args)
+      ? { ...args, __workflowToolCall: true }
+      : args;
+
+  const createLoggedWorkflowFileTool = (tool: any, name: string) => ({
+    ...tool,
+    execute: async (args: any, runCtx?: any) => {
+      const markedArgs = markWorkflowFileArgs(args);
+      console.log(`[workflow-agent] Tool call: ${name}`, JSON.stringify(markedArgs, null, 2));
+      try {
+        const result = await tool.execute(markedArgs, runCtx);
+        console.log(`[workflow-agent] Tool result: ${name}`, JSON.stringify(result, null, 2));
+        return result;
+      } catch (error) {
+        console.error(`[workflow-agent] Tool error: ${name}`, error);
+        throw error;
+      }
+    }
+  });
+
   // 10 CORE TOOLS
   const tools = {
     // 1. Search tools (sis search)
@@ -1440,11 +1461,11 @@ export function getWorkflowAgent(modelIdOverride?: string): Agent {
     // 7. Web search
     web_search: createLoggedTool(web_search, 'web_search'),
     // 8. Create/write files in the workspace or on disk
-    write_file: createLoggedTool(write_file, 'write_file'),
+    write_file: createLoggedWorkflowFileTool(write_file, 'write_file'),
     // 9. Create directories
-    create_directory: createLoggedTool(create_directory, 'create_directory'),
+    create_directory: createLoggedWorkflowFileTool(create_directory, 'create_directory'),
     // 10. Edit non-stuard files (string-based find/replace)
-    file_edit: createLoggedTool(file_edit, 'file_edit'),
+    file_edit: createLoggedWorkflowFileTool(file_edit, 'file_edit'),
   };
 
   // Determine if we should use thinking mode

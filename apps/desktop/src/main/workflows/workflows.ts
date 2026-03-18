@@ -1985,7 +1985,11 @@ export async function workflows_runStep(id: string, options: { step: { id: strin
     };
 
     try {
-      const result = await execTool(step.tool, step.args || {}, ctx);
+      const result = await execTool(
+        step.tool,
+        { ...(step.args || {}), flowId: safe, __workflowToolCall: true },
+        ctx,
+      );
       console.log('[Workflows] Step result:', result);
       emitStepExecution(safe, step.id, 'completed', { result });
       logFlow(safe, `Step completed: ${step.id}`);

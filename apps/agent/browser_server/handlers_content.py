@@ -80,10 +80,120 @@ async def handle_content(req: web.Request) -> web.Response:
             title = await _get_page_title()
 
             if mode == "html":
-                if hasattr(state._page, "content"):
-                    content = await state._page.content()
-                else:
-                    content = await _evaluate("() => document.documentElement.outerHTML")
+                content = await _evaluate(
+                    """() => {
+                      const vpW = window.innerWidth || document.documentElement.clientWidth;
+                      const vpH = window.innerHeight || document.documentElement.clientHeight;
+
+                      const NOISE = 'script, style, noscript, [hidden], [aria-hidden="true"], '
+                        + 'nav, header, footer, .nav, .navbar, .header, .footer, .sidebar, '
+                        + '.cookie-banner, .cookie-consent, .cookie-notice, [class*="cookie"], '
+                        + '.ad, .ads, .advertisement, [class*="advert"], '
+                        + '.popup, .modal-backdrop, .overlay, '
+                        + '[role="navigation"], [role="banner"], [role="contentinfo"]';
+
+                      const KEPT_ATTRS = new Set([
+                        'action', 'alt', 'aria-current', 'aria-label', 'checked', 'datetime',
+                        'disabled', 'for', 'href', 'method', 'name', 'placeholder', 'role',
+                        'selected', 'src', 'title', 'type', 'value'
+                      ]);
+                      const VOID_LIKE = new Set([
+                        'audio', 'button', 'canvas', 'iframe', 'img', 'input', 'option',
+                        'path', 'picture', 'source', 'svg', 'textarea', 'video'
+                      ]);
+
+                      function inViewport(el) {
+                        const r = el.getBoundingClientRect();
+                        if (r.width === 0 && r.height === 0) return false;
+                        if (r.bottom < 0 || r.top > vpH) return false;
+                        if (r.right < 0 || r.left > vpW) return false;
+                        return true;
+                      }
+
+                      function shouldDrop(el) {
+                        if (!(el instanceof Element)) return false;
+                        if (el.matches(NOISE)) return true;
+                        const s = window.getComputedStyle(el);
+                        if (s.display === 'none' || s.visibility === 'hidden' || Number(s.opacity || '1') === 0) return true;
+                        return !inViewport(el);
+                      }
+
+                      function sanitizeAttributes(original, cloned) {
+                        if (!(original instanceof Element) || !(cloned instanceof Element)) return;
+                        const isSvg = original.namespaceURI === 'http://www.w3.org/2000/svg';
+                        if (isSvg) return;
+                        for (const attr of Array.from(cloned.attributes)) {
+                          if (!KEPT_ATTRS.has(attr.name.toLowerCase())) {
+                            cloned.removeAttribute(attr.name);
+                          }
+                        }
+                      }
+
+                      const root =
+                        document.querySelector('article') ||
+                        document.querySelector('main') ||
+                        document.querySelector('[role="main"]') ||
+                        document.querySelector('#content') ||
+                        document.querySelector('.content') ||
+                        document.body ||
+                        document.documentElement;
+                      if (!root) return '';
+
+                      const clone = root.cloneNode(true);
+
+                      function prune(source, target) {
+                        const sourceChildren = Array.from(source.childNodes);
+                        for (let i = sourceChildren.length - 1; i >= 0; i -= 1) {
+                          const sourceChild = sourceChildren[i];
+                          const targetChild = target.childNodes[i];
+                          if (!targetChild) continue;
+
+                          if (sourceChild.nodeType === Node.ELEMENT_NODE) {
+                            const sourceEl = sourceChild;
+                            if (shouldDrop(sourceEl)) {
+                              target.removeChild(targetChild);
+                              continue;
+                            }
+                            if (!(targetChild instanceof Element)) {
+                              target.removeChild(targetChild);
+                              continue;
+                            }
+                            sanitizeAttributes(sourceEl, targetChild);
+                            prune(sourceEl, targetChild);
+
+                            const isSvg = sourceEl.namespaceURI === 'http://www.w3.org/2000/svg';
+                            const hasElementChildren = targetChild.children.length > 0;
+                            const hasMeaningfulText = !!(targetChild.textContent || '').replace(/\\u00a0/g, ' ').trim();
+                            const tag = sourceEl.tagName.toLowerCase();
+                            if (!isSvg && !hasElementChildren && !hasMeaningfulText && !VOID_LIKE.has(tag)) {
+                              target.removeChild(targetChild);
+                            }
+                          } else if (sourceChild.nodeType === Node.TEXT_NODE) {
+                            const rawText = (sourceChild.textContent || '').replace(/\\u00a0/g, ' ');
+                            if (!rawText.trim()) {
+                              target.removeChild(targetChild);
+                            } else {
+                              targetChild.textContent = rawText;
+                            }
+                          } else {
+                            target.removeChild(targetChild);
+                          }
+                        }
+                      }
+
+                      sanitizeAttributes(root, clone);
+                      prune(root, clone);
+
+                      const html = root === document.body || root === document.documentElement
+                        ? clone.innerHTML
+                        : clone.outerHTML;
+
+                      return html
+                        .replace(/>\\s+</g, '><')
+                        .replace(/\\n{3,}/g, '\\n\\n')
+                        .trim();
+                    }"""
+                )
             else:
                 viewport_only_js = "true" if viewport_only else "false"
                 content = await _evaluate(

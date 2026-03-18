@@ -23,7 +23,7 @@ import { google_get_userinfo, gmail_list_messages, gmail_get_message_brief, gmai
 import { facebook_get_me, facebook_list_pages, facebook_list_page_posts, facebook_create_page_post, instagram_get_me, instagram_list_media, instagram_publish_media, threads_get_me, threads_list_posts, threads_publish_post } from '../tools/meta-social-tools';
 import { whatsapp_send_message, whatsapp_send_media, whatsapp_send_reaction, whatsapp_mark_read, whatsapp_upload_media, whatsapp_status, whatsapp_get_media_url, whatsapp_download_media, whatsapp_send_voice_note, whatsapp_transcribe_voice_note, whatsapp_send_template, whatsapp_voice_call, whatsapp_make_call } from '../tools/whatsapp-tools';
 import { telnyx_send_sms, telnyx_call_control, telnyx_phone_status, telnyx_send_mms, telnyx_send_voice_note, telnyx_voice_call, telnyx_list_voice_providers, telnyx_list_active_calls, telnyx_hangup_call } from '../tools/telnyx-tools';
-import { send_hotkey, list_directory, read_file, write_file, create_directory, move_file, canvas_list, canvas_read, canvas_write, canvas_create, canvas_delete, calendar_crud, task_crud, task_reminders, planner_list_items, capture_media, describe_media_capture_capabilities, run_command, run_system_command, search_local_workflows, import_workflow, run_automation, stop_automation, search_past_conversations, get_conversation_context, agent_decision, agent_extract, glob, grep, browser_use_status, browser_use_configure, browser_use_execute_script, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies, browser_use_hover, browser_use_select_option, browser_use_get_interactive_elements, browser_use_fill_form, browser_use_wait_for } from '../tools/device-tools';
+import { send_hotkey, list_directory, read_file, write_file, create_directory, move_file, canvas_list, canvas_read, canvas_write, canvas_create, canvas_delete, calendar_crud, task_crud, task_reminders, planner_list_items, capture_media, describe_media_capture_capabilities, run_command, run_system_command, search_local_workflows, import_workflow, run_automation, stop_automation, search_past_conversations, get_conversation_context, agent_decision, agent_extract, glob, grep, browser_use_status, browser_use_configure, browser_use_execute_script, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies, browser_use_hover, browser_use_select_option, browser_use_get_interactive_elements, browser_use_fill_form, browser_use_upload_file, browser_use_wait_for } from '../tools/device-tools';
 import { web_search } from '../tools/perplexity-tools';
 
 const HEADLESS_SYSTEM_INSTRUCTIONS = `You are the Headless Execution Agent for StuardAI.
@@ -47,7 +47,7 @@ BROWSER AUTOMATION:
 When browsing websites, filling forms, or interacting with web pages:
 1. Navigate to the URL with browser_use_navigate.
 2. ALWAYS call browser_use_get_interactive_elements to discover all forms, inputs, buttons, links with their exact CSS selectors. This is how you understand the page structure.
-3. Use the exact selectors from get_interactive_elements to interact. For forms, prefer browser_use_fill_form. For dropdowns, use browser_use_select_option.
+3. Use the exact selectors from get_interactive_elements to interact. For forms, prefer browser_use_fill_form. For dropdowns, use browser_use_select_option. For file inputs, use browser_use_upload_file with a local file path.
 4. After actions that change the page (clicks, form submissions), use browser_use_wait_for then browser_use_get_interactive_elements again to see what changed.
 5. NEVER guess CSS selectors. Always discover them first.
 
@@ -223,6 +223,7 @@ export function getHeadlessAgent(
     browser_use_select_option,
     browser_use_get_interactive_elements,
     browser_use_fill_form,
+    browser_use_upload_file,
     browser_use_wait_for,
     // Memory
     search_past_conversations,
@@ -256,7 +257,7 @@ export function getHeadlessAgent(
     'browser_use_status', 'browser_use_configure', 'browser_use_execute_script', 'browser_use_navigate', 'browser_use_click',
     'browser_use_type', 'browser_use_press_key', 'browser_use_screenshot', 'browser_use_content', 'browser_use_scroll',
     'browser_use_tabs', 'browser_use_cookies', 'browser_use_hover', 'browser_use_select_option',
-    'browser_use_get_interactive_elements', 'browser_use_fill_form', 'browser_use_wait_for',
+    'browser_use_get_interactive_elements', 'browser_use_fill_form', 'browser_use_upload_file', 'browser_use_wait_for',
     'calendar_crud', 'task_crud', 'task_reminders', 'planner_list_items',
     'list_directory', 'read_file', 'write_file', 'create_directory', 'move_file',
     'search_local_workflows',

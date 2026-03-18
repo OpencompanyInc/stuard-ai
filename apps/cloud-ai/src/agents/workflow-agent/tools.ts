@@ -47,7 +47,14 @@ export const executeStep = createTool({
     wfLog('execute_step', { tool });
 
     try {
-      const result = await execLocalTool(tool, args, writer as any, timeoutMs);
+      const result = await execLocalTool(
+        tool,
+        args && typeof args === 'object' && !Array.isArray(args)
+          ? { ...args, __workflowToolCall: true }
+          : args,
+        writer as any,
+        timeoutMs,
+      );
       const duration = Date.now() - startTime;
 
       wfLog('execute_step_done', { tool, ok: result?.ok, duration });

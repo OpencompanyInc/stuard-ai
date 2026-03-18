@@ -1542,14 +1542,19 @@ async function executeStep(
       if (toolName === 'run_sequential') {
         result = await execRunSequential(spec, step, mergedArgs, ctx, engineCtx, deployDir);
       } else if (toolName === 'run_parallel') {
-        result = await execRunParallel(mergedArgs, ctx, engineCtx, deployDir);
+        result = await execRunParallel(spec.id, mergedArgs, ctx, engineCtx, deployDir);
       } else {
         result = { ok: false, error: `unknown_orchestration: ${toolName}` };
       }
     } else if (toolName === 'noop' || !toolName) {
       result = { ok: true };
     } else {
-      result = await execTool(toolName, { ...mergedArgs, flowId: spec.id }, engineCtx, deployDir);
+      result = await execTool(
+        toolName,
+        { ...mergedArgs, flowId: spec.id, __workflowToolCall: true },
+        engineCtx,
+        deployDir,
+      );
     }
 
     ctx[step.id] = result;
@@ -1691,6 +1696,7 @@ async function execRunSequential(
 }
 
 async function execRunParallel(
+  flowId: string,
   args: any,
   ctx: any,
   engineCtx: EngineContext,
@@ -1703,7 +1709,12 @@ async function execRunParallel(
     const toolName = String(s?.tool || '').trim();
     if (!toolName) return { tool: '', ok: true, result: undefined };
     try {
-      const subResult = await execTool(toolName, s?.args || {}, engineCtx, deployDir);
+      const subResult = await execTool(
+        toolName,
+        { ...(s?.args || {}), flowId, __workflowToolCall: true },
+        engineCtx,
+        deployDir,
+      );
       return { tool: toolName, ok: subResult?.ok ?? true, result: subResult };
     } catch (e: any) {
       return { tool: toolName, ok: false, result: { ok: false, error: String(e?.message) } };

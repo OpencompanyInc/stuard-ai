@@ -205,6 +205,38 @@ export const MATH_ITEMS: PaletteItem[] = [
   { k: 'local.tool', t: 'math_range', label: 'Range', args: { start: 1, stop: 10 } },
 ];
 
+// Browser Use (Playwright-powered browser automation)
+export const BROWSER_USE_ITEMS: PaletteItem[] = [
+  { k: 'local.tool', t: 'browser_use_status', label: 'Browser Status', args: {} },
+  { k: 'local.tool', t: 'browser_use_navigate', label: 'Navigate to URL', args: { url: 'https://example.com', wait_until: 'domcontentloaded' } },
+  { k: 'local.tool', t: 'browser_use_click', label: 'Click Element', args: { selector: '', text: '' } },
+  { k: 'local.tool', t: 'browser_use_type', label: 'Type Text', args: { selector: '', text: '', clear: true } },
+  { k: 'local.tool', t: 'browser_use_press_key', label: 'Press Key', args: { key: 'Enter', selector: '' } },
+  { k: 'local.tool', t: 'browser_use_screenshot', label: 'Screenshot', args: { full_page: false } },
+  { k: 'local.tool', t: 'browser_use_content', label: 'Get Page Content', args: { mode: 'text', max_length: 15000 } },
+  { k: 'local.tool', t: 'browser_use_scroll', label: 'Scroll', args: { direction: 'down', amount: 500 } },
+  { k: 'local.tool', t: 'browser_use_get_interactive_elements', label: 'Get Interactive Elements', args: {} },
+  { k: 'local.tool', t: 'browser_use_fill_form', label: 'Fill Form', args: { fields: {}, submit: false } },
+  { k: 'local.tool', t: 'browser_use_upload_file', label: 'Upload Local File', args: { selector: '', filePath: '' } },
+  { k: 'local.tool', t: 'browser_use_hover', label: 'Hover Element', args: { selector: '', text: '' } },
+  { k: 'local.tool', t: 'browser_use_select_option', label: 'Select Dropdown Option', args: { selector: '', label: '' } },
+  { k: 'local.tool', t: 'browser_use_wait_for', label: 'Wait For Element', args: { selector: '', timeout: 10000 } },
+  { k: 'local.tool', t: 'browser_use_wait_for', label: 'Wait For URL', args: { url_pattern: '', timeout: 10000 } },
+  { k: 'local.tool', t: 'browser_use_tabs', label: 'List Tabs', args: { action: 'list' } },
+  { k: 'local.tool', t: 'browser_use_tabs', label: 'New Tab', args: { action: 'new', url: '' } },
+  { k: 'local.tool', t: 'browser_use_tabs', label: 'Switch Tab', args: { action: 'switch', index: 0 } },
+  { k: 'local.tool', t: 'browser_use_tabs', label: 'Close Tab', args: { action: 'close', index: 0 } },
+  { k: 'local.tool', t: 'browser_use_cookies', label: 'Get Cookies', args: { action: 'get' } },
+  { k: 'local.tool', t: 'browser_use_cookies', label: 'Set Cookies', args: { action: 'set', cookies: [] } },
+  { k: 'local.tool', t: 'browser_use_cookies', label: 'Clear Cookies', args: { action: 'clear' } },
+  { k: 'local.tool', t: 'browser_use_cookies', label: 'Export Cookies', args: { action: 'export', path: '' } },
+  { k: 'local.tool', t: 'browser_use_cookies', label: 'Import Cookies', args: { action: 'import', path: '' } },
+  { k: 'local.tool', t: 'browser_use_execute_script', label: 'Execute JS Script', args: { script: 'return document.title;' } },
+  { k: 'local.tool', t: 'browser_use_configure', label: 'Configure Browser', args: { mode: 'headed' } },
+  { k: 'local.tool', t: 'browser_use_sync_chrome', label: 'Sync Chrome Cookies', args: { action: 'sync' } },
+  { k: 'local.tool', t: 'browser_use_list_chrome_profiles', label: 'List Chrome Profiles', args: {} },
+];
+
 // Streaming — Debug / inspection only (streaming is via `stream: true` toggle on AI/HTTP/Script tools)
 export const STREAM_ITEMS: PaletteItem[] = [
   { k: 'local.tool', t: 'stream_list', label: 'List Active Streams', args: {} },

@@ -17,7 +17,7 @@ import {
   execCanvasDelete,
 } from './handlers/canvas';
 import { execOllamaStatus, execOllamaStart, execOllamaChat, execOllamaGenerate, execOllamaVision, execOllamaEmbeddings, execOllamaModels } from './handlers/ollama';
-import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseExecuteScript, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, execBrowserUseSyncChrome, execBrowserUseListChromeProfiles, execBrowserUseHover, execBrowserUseSelectOption, execBrowserUseGetInteractiveElements, execBrowserUseFillForm, execBrowserUseWaitFor, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse } from './handlers/browser-use';
+import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseExecuteScript, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, execBrowserUseSyncChrome, execBrowserUseListChromeProfiles, execBrowserUseHover, execBrowserUseSelectOption, execBrowserUseGetInteractiveElements, execBrowserUseFillForm, execBrowserUseUploadFile, execBrowserUseWaitFor, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse } from './handlers/browser-use';
 import {
   execBrowserGetContent,
   execBrowserClickElement,
@@ -177,6 +177,7 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'browser_use_select_option') return execBrowserUseSelectOption(args, ctx);
       if (toolName === 'browser_use_get_interactive_elements') return execBrowserUseGetInteractiveElements(args, ctx);
       if (toolName === 'browser_use_fill_form') return execBrowserUseFillForm(args, ctx);
+      if (toolName === 'browser_use_upload_file') return execBrowserUseUploadFile(args, ctx);
       if (toolName === 'browser_use_wait_for') return execBrowserUseWaitFor(args, ctx);
       if (toolName === 'proactive_task_list') return execProactiveTaskList(args, ctx);
       if (toolName === 'proactive_task_update') return execProactiveTaskUpdate(args, ctx);

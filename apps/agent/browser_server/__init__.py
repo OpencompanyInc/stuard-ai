@@ -40,6 +40,7 @@ from browser_server.handlers_advanced import (
     handle_select_option,
     handle_get_interactive_elements,
     handle_fill_form,
+    handle_upload_file,
     handle_wait_for,
     handle_close,
 )
@@ -76,6 +77,7 @@ def create_app() -> web.Application:
     app.router.add_post("/select_option", handle_select_option)
     app.router.add_post("/get_interactive_elements", handle_get_interactive_elements)
     app.router.add_post("/fill_form", handle_fill_form)
+    app.router.add_post("/upload_file", handle_upload_file)
     app.router.add_post("/wait_for", handle_wait_for)
     app.router.add_post("/close", handle_close)
     return app

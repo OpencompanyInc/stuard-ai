@@ -1,6 +1,6 @@
 import { Storage } from '@google-cloud/storage';
 import { Readable, Transform } from 'stream';
-import { CLOUD_ENGINE_BUCKET, GCP_KEY_FILE } from '../utils/config';
+import { CLOUD_ENGINE_BUCKET, GCP_KEY_FILE, STORAGE_PUBLIC_BASE_URL } from '../utils/config';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -8,8 +8,12 @@ import { CLOUD_ENGINE_BUCKET, GCP_KEY_FILE } from '../utils/config';
 
 const UPLOAD_URL_TTL_MS = 15 * 60 * 1000;    // 15 minutes
 const DOWNLOAD_URL_TTL_MS = 60 * 60 * 1000;  // 1 hour
+const MAX_SIGNED_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (v4 max)
 const MAX_FILENAME_LENGTH = 255;
 const VALID_OBJECT_NAME_RE = /^[a-zA-Z0-9_\-./() @+,!#%&=~]+$/;
+
+/** Public bucket name — derived from the private bucket name + "-public" suffix. */
+const PUBLIC_BUCKET = `${CLOUD_ENGINE_BUCKET}-public`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Filename Sanitization
@@ -46,7 +50,7 @@ function assertUserPrefix(userId: string, objectName: string): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cold Storage Functions
+// Storage Instances
 // ─────────────────────────────────────────────────────────────────────────────
 
 let _storage: Storage | null = null;
@@ -60,9 +64,33 @@ function getStorage(): Storage {
   return _storage;
 }
 
+/** Private bucket — default for all files. */
 function getBucket() {
   return getStorage().bucket(CLOUD_ENGINE_BUCKET);
 }
+
+/** Public bucket — allUsers have objectViewer. Files here are permanently public. */
+function getPublicBucket() {
+  return getStorage().bucket(PUBLIC_BUCKET);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// URL Builders
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the permanent public URL for an object in the public bucket.
+ * Uses STORAGE_PUBLIC_BASE_URL (custom domain / CDN) if set,
+ * otherwise falls back to the default GCS public URL.
+ */
+export function getPublicUrl(objectName: string): string {
+  const base = STORAGE_PUBLIC_BASE_URL || `https://storage.googleapis.com/${PUBLIC_BUCKET}`;
+  return `${base.replace(/\/+$/, '')}/${objectName}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Upload Functions
+// ─────────────────────────────────────────────────────────────────────────────
 
 /** Generate a signed upload URL for a user file. */
 export async function generateUserUploadUrl(
@@ -160,6 +188,68 @@ export async function uploadUserFileStream(
 }
 
 /**
+ * Upload raw buffer data to a user's GCS path.
+ *
+ * Visibility modes:
+ *  - "private" → uploaded to the private bucket, returns a 1-hour signed URL
+ *  - "public"  → uploaded to the public bucket, returns a permanent URL (never expires)
+ *  - "ttl"     → uploaded to the private bucket, returns a signed URL with custom ttlMs
+ */
+export async function uploadUserFileBuffer(
+  userId: string,
+  filename: string,
+  data: Buffer,
+  contentType = 'application/octet-stream',
+  folderPath = '',
+  visibility: 'private' | 'public' | 'ttl' = 'private',
+  ttlMs?: number,
+): Promise<{ objectName: string; bytesWritten: number; url: string; visibility: 'private' | 'public' | 'ttl' }> {
+  const safe = sanitizeFilename(filename);
+  const prefix = folderPath
+    ? folderPath.split('/').map(s => sanitizeFilename(s)).filter(Boolean).join('/')
+    : '';
+  const objectName = prefix ? `${userId}/${prefix}/${safe}` : `${userId}/${safe}`;
+
+  let url: string;
+
+  if (visibility === 'public') {
+    // Upload directly to the public bucket — permanently accessible
+    const file = getPublicBucket().file(objectName);
+    await file.save(data, {
+      contentType,
+      resumable: data.length > 5 * 1024 * 1024,
+      metadata: { contentType },
+    });
+    url = getPublicUrl(objectName);
+  } else {
+    // Upload to private bucket
+    const file = getBucket().file(objectName);
+    await file.save(data, {
+      contentType,
+      resumable: data.length > 5 * 1024 * 1024,
+      metadata: { contentType },
+    });
+
+    // Generate signed URL with appropriate TTL
+    const expires = visibility === 'ttl' && ttlMs
+      ? Date.now() + Math.min(ttlMs, MAX_SIGNED_URL_TTL_MS)
+      : Date.now() + DOWNLOAD_URL_TTL_MS;
+    const [signedUrl] = await file.getSignedUrl({
+      version: 'v4',
+      action: 'read',
+      expires,
+    });
+    url = signedUrl;
+  }
+
+  return { objectName, bytesWritten: data.length, url, visibility };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// File Operations
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
  * List user files in their storage prefix.
  */
 export async function listUserFiles(
@@ -247,81 +337,73 @@ export async function getUserStorageBytes(userId: string): Promise<number> {
 export async function deleteUserFile(userId: string, objectName: string): Promise<void> {
   assertUserPrefix(userId, objectName);
   await getBucket().file(objectName).delete({ ignoreNotFound: true });
+  // Also delete from public bucket if it exists there
+  await getPublicBucket().file(objectName).delete({ ignoreNotFound: true }).catch(() => {});
 }
 
-/** Make a user file publicly accessible. Returns the public URL. */
+// ─────────────────────────────────────────────────────────────────────────────
+// Public / Private Visibility
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Make a user file publicly accessible.
+ * Copies the file from the private bucket to the public bucket.
+ * Returns a permanent public URL that never expires.
+ */
 export async function makeFilePublic(
   userId: string,
   objectName: string,
 ): Promise<{ publicUrl: string }> {
   assertUserPrefix(userId, objectName);
-  const file = getBucket().file(objectName);
-  await file.makePublic();
-  const bucketName = CLOUD_ENGINE_BUCKET;
-  const publicUrl = `https://storage.googleapis.com/${bucketName}/${objectName}`;
-  return { publicUrl };
+  const srcFile = getBucket().file(objectName);
+  const destFile = getPublicBucket().file(objectName);
+  await srcFile.copy(destFile);
+  return { publicUrl: getPublicUrl(objectName) };
 }
 
-/** Make a user file private (remove public access). */
+/**
+ * Make a user file private (remove public access).
+ * Deletes the copy from the public bucket. The private copy remains.
+ */
 export async function makeFilePrivate(
   userId: string,
   objectName: string,
 ): Promise<void> {
   assertUserPrefix(userId, objectName);
-  const file = getBucket().file(objectName);
-  await file.makePrivate();
-}
-
-/** Get the public URL for a file (does not check if it's actually public). */
-export function getPublicUrl(objectName: string): string {
-  return `https://storage.googleapis.com/${CLOUD_ENGINE_BUCKET}/${objectName}`;
+  await getPublicBucket().file(objectName).delete({ ignoreNotFound: true });
 }
 
 /**
- * Upload raw buffer data to a user's GCS path.
- * Returns the object name and optionally a public or signed URL based on visibility.
+ * Generate a temporary public URL for a private file (TTL-based sharing).
+ * Returns a signed URL valid for the specified duration (max 7 days).
  */
-export async function uploadUserFileBuffer(
+export async function generateTtlUrl(
   userId: string,
-  filename: string,
-  data: Buffer,
-  contentType = 'application/octet-stream',
-  folderPath = '',
-  visibility: 'private' | 'public' = 'private',
-): Promise<{ objectName: string; bytesWritten: number; url: string; visibility: 'private' | 'public' }> {
-  const safe = sanitizeFilename(filename);
-  const prefix = folderPath
-    ? folderPath.split('/').map(s => sanitizeFilename(s)).filter(Boolean).join('/')
-    : '';
-  const objectName = prefix ? `${userId}/${prefix}/${safe}` : `${userId}/${safe}`;
-
+  objectName: string,
+  ttlMs: number,
+): Promise<{ url: string; expiresAt: number }> {
+  assertUserPrefix(userId, objectName);
   const file = getBucket().file(objectName);
-  await file.save(data, {
-    contentType,
-    resumable: data.length > 5 * 1024 * 1024,
-    metadata: { contentType },
+  const clampedTtl = Math.min(ttlMs, MAX_SIGNED_URL_TTL_MS);
+  const expiresAt = Date.now() + clampedTtl;
+  const [url] = await file.getSignedUrl({
+    version: 'v4',
+    action: 'read',
+    expires: expiresAt,
   });
-
-  let url: string;
-  if (visibility === 'public') {
-    await file.makePublic();
-    url = `https://storage.googleapis.com/${CLOUD_ENGINE_BUCKET}/${objectName}`;
-  } else {
-    const [signedUrl] = await file.getSignedUrl({
-      version: 'v4',
-      action: 'read',
-      expires: Date.now() + DOWNLOAD_URL_TTL_MS,
-    });
-    url = signedUrl;
-  }
-
-  return { objectName, bytesWritten: data.length, url, visibility };
+  return { url, expiresAt };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// User Data / Backups / Agent Data
+// ─────────────────────────────────────────────────────────────────────────────
 
 /** Delete all data for a user (all objects in their prefix). */
 export async function deleteAllUserData(userId: string): Promise<void> {
   const prefix = `${userId}/`;
   await getBucket().deleteFiles({ prefix, force: true });
+  // Also clean up public bucket
+  await getPublicBucket().deleteFiles({ prefix, force: true }).catch(() => {});
 }
 
 /** Get the standard backup object name for a user. */

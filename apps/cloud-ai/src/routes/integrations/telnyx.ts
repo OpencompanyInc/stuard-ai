@@ -807,35 +807,106 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         const from: string = normalizePhone(payload?.from?.phone_number || '');
         const mediaItems: any[] = payload?.media || [];
         const text: string = payload?.text || '';
+        const providerMessageId = String(payload?.id || '').trim() || null;
 
         if (from && mediaItems.length > 0) {
           const userId = await findUserIdByPhone(from);
           if (userId) {
+            const smsState = await getSmsUserState(userId);
+            const target = smsState.agent_target;
+            const engine = await getCloudEngine(userId);
+            const vmRunning = !!(engine && engine.status === 'running');
+
+            let effectiveTarget: 'vm' | 'desktop' = 'desktop';
+            if (target === 'vm') {
+              effectiveTarget = vmRunning ? 'vm' : 'desktop';
+            } else if (target === 'auto') {
+              effectiveTarget = vmRunning ? 'vm' : 'desktop';
+            }
+
+            // Build a description of all media for routing/display
+            const mediaDescriptions: string[] = [];
             for (const media of mediaItems) {
-              const mediaUrl = media?.url || '';
               const contentType = media?.content_type || 'image/jpeg';
               const mediaType = contentType.startsWith('image/') ? 'image'
                 : contentType.startsWith('audio/') ? 'audio'
                 : contentType.startsWith('video/') ? 'video'
                 : 'document';
-
-              await enqueueSmsInboxItem({
-                userId,
-                provider: 'telnyx',
-                providerMessageId: payload?.id || null,
-                fromPhone: from,
-                replyToPhone: from,
-                messageText: text || `[${mediaType} received]`,
-                conversationId: null,
-                metadata: {
-                  mediaUrl,
-                  contentType,
-                  mediaType,
-                  receivedAt: new Date().toISOString(),
-                },
-              });
+              mediaDescriptions.push(`[${mediaType} received]`);
             }
-            console.log('[telnyx] MMS received', { from, userId, mediaCount: mediaItems.length });
+            const messageText = text || mediaDescriptions.join(' ');
+
+            let handled = false;
+
+            if (effectiveTarget === 'vm') {
+              try {
+                const vmResult = await sendVMCommand(userId, 'agent_chat', {
+                  message: messageText,
+                  conversationId: smsState.conversation_id || undefined,
+                  model: smsState.preferred_model || 'fast',
+                  context: {
+                    source: 'mms',
+                    fromPhone: from,
+                    media: mediaItems.map((m: any) => ({
+                      url: m?.url || '',
+                      contentType: m?.content_type || 'image/jpeg',
+                    })),
+                  },
+                }, 60_000);
+
+                if (vmResult.ok && vmResult.result?.text) {
+                  const replyText = stripMarkdownForSms(String(vmResult.result.text)).slice(0, 1500);
+                  await sendSmsRaw(from, replyText).catch((e: any) => {
+                    console.error('[telnyx] Failed to send VM agent MMS reply:', e?.message);
+                  });
+                  await deductTelnyxCredit(userId);
+                  handled = true;
+
+                  const vmConvId = vmResult.result?.conversationId || null;
+                  if (vmConvId && vmConvId !== smsState.conversation_id) {
+                    await upsertSmsUserState({ userId, conversationId: vmConvId });
+                  }
+                }
+              } catch {
+                // VM call failed — fall through to desktop
+              }
+            }
+
+            if (!handled) {
+              if (target === 'vm' && !vmRunning) {
+                await sendSmsRaw(from,
+                  'Your Cloud VM is not running. Start it from the desktop app, or text /auto to enable automatic routing.'
+                ).catch(() => {});
+                await deductTelnyxCredit(userId);
+              } else {
+                for (const media of mediaItems) {
+                  const mediaUrl = media?.url || '';
+                  const contentType = media?.content_type || 'image/jpeg';
+                  const mediaType = contentType.startsWith('image/') ? 'image'
+                    : contentType.startsWith('audio/') ? 'audio'
+                    : contentType.startsWith('video/') ? 'video'
+                    : 'document';
+
+                  await enqueueSmsInboxItem({
+                    userId,
+                    provider: 'telnyx',
+                    providerMessageId,
+                    fromPhone: from,
+                    replyToPhone: from,
+                    messageText: text || `[${mediaType} received]`,
+                    conversationId: smsState.conversation_id,
+                    metadata: {
+                      mediaUrl,
+                      contentType,
+                      mediaType,
+                      receivedAt: new Date().toISOString(),
+                    },
+                  });
+                }
+              }
+            }
+
+            console.log('[telnyx] MMS received', { from, userId, mediaCount: mediaItems.length, effectiveTarget, handled });
           }
         }
       }

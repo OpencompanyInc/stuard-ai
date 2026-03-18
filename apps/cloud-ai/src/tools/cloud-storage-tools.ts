@@ -4,6 +4,7 @@ import { getBridgeSecrets, execLocalTool, safeToolWrite } from './bridge';
 import {
   uploadUserFileBuffer,
   generateUserDownloadUrl,
+  generateTtlUrl,
   listUserFiles,
   deleteUserFile,
   makeFilePublic,
@@ -39,16 +40,17 @@ function inferMimeType(filename: string): string {
 export const cloud_storage_upload = createTool({
   id: 'cloud_storage_upload',
   description:
-    'Upload a local file to cloud storage. Choose "public" visibility to get a permanent public URL (useful for Instagram, sharing), or "private" for a time-limited signed URL.',
+    'Upload a local file to cloud storage. Choose "public" for a permanent URL (useful for Instagram, sharing), "private" for a 1-hour signed URL, or "ttl" for a custom-duration signed URL.',
   inputSchema: z.object({
     path: z.string().min(1).describe('Local file path to upload (e.g. C:\\Users\\me\\photo.jpg)'),
     folder: z.string().optional().describe('Optional subfolder in cloud storage (e.g. "instagram", "exports")'),
-    visibility: z.enum(['public', 'private']).default('private').describe('"public" = permanent URL anyone can access. "private" = signed URL valid for 1 hour.'),
+    visibility: z.enum(['public', 'private', 'ttl']).default('private').describe('"public" = permanent URL anyone can access. "private" = signed URL valid for 1 hour. "ttl" = signed URL valid for custom duration.'),
+    ttl_hours: z.number().optional().describe('Hours until the URL expires (only used with visibility="ttl", max 168 hours / 7 days).'),
     filename: z.string().optional().describe('Override the filename in storage. Defaults to the original filename.'),
   }),
   execute: async (inputData: any, { writer }: any) => {
-    const { path, folder, visibility, filename } = inputData as {
-      path: string; folder?: string; visibility: 'public' | 'private'; filename?: string;
+    const { path, folder, visibility, ttl_hours, filename } = inputData as {
+      path: string; folder?: string; visibility: 'public' | 'private' | 'ttl'; ttl_hours?: number; filename?: string;
     };
     const userId = requireUserId();
 
@@ -79,8 +81,9 @@ export const cloud_storage_upload = createTool({
       filename: targetFilename, size: buffer.length, visibility,
     });
 
+    const ttlMs = visibility === 'ttl' && ttl_hours ? ttl_hours * 60 * 60 * 1000 : undefined;
     const result = await uploadUserFileBuffer(
-      userId, targetFilename, buffer, contentType, folder || '', visibility,
+      userId, targetFilename, buffer, contentType, folder || '', visibility, ttlMs,
     );
 
     await safeToolWrite(writer as any, {
@@ -105,13 +108,14 @@ export const cloud_storage_upload = createTool({
 export const cloud_storage_get_url = createTool({
   id: 'cloud_storage_get_url',
   description:
-    'Get a download URL for a file already in cloud storage. Returns a signed (private) or public URL.',
+    'Get a download URL for a file already in cloud storage. Returns a signed (private/ttl) or permanent public URL.',
   inputSchema: z.object({
     objectName: z.string().min(1).describe('The object name / path in cloud storage'),
-    visibility: z.enum(['public', 'private']).default('private').describe('"public" = make file public and return permanent URL. "private" = return a signed URL valid for 1 hour.'),
+    visibility: z.enum(['public', 'private', 'ttl']).default('private').describe('"public" = copy to public bucket, return permanent URL. "private" = signed URL valid for 1 hour. "ttl" = signed URL with custom duration.'),
+    ttl_hours: z.number().optional().describe('Hours until URL expires (only for visibility="ttl", max 168 / 7 days).'),
   }),
   execute: async (inputData: any) => {
-    const { objectName, visibility } = inputData as { objectName: string; visibility: 'public' | 'private' };
+    const { objectName, visibility, ttl_hours } = inputData as { objectName: string; visibility: 'public' | 'private' | 'ttl'; ttl_hours?: number };
     const userId = requireUserId();
 
     const fullName = objectName.startsWith(`${userId}/`) ? objectName : `${userId}/${objectName}`;
@@ -119,6 +123,9 @@ export const cloud_storage_get_url = createTool({
     if (visibility === 'public') {
       await makeFilePublic(userId, fullName);
       return { ok: true, url: getPublicUrl(fullName), visibility: 'public' as const, objectName: fullName };
+    } else if (visibility === 'ttl' && ttl_hours) {
+      const { url, expiresAt } = await generateTtlUrl(userId, fullName, ttl_hours * 60 * 60 * 1000);
+      return { ok: true, url, visibility: 'ttl' as const, objectName: fullName, expiresAt: new Date(expiresAt).toISOString() };
     } else {
       const { downloadUrl } = await generateUserDownloadUrl(userId, fullName);
       return { ok: true, url: downloadUrl, visibility: 'private' as const, objectName: fullName };

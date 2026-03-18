@@ -299,7 +299,7 @@ export const browser_use_hover = makeLocalTool(
 
 export const browser_use_select_option = makeLocalTool(
   'browser_use_select_option',
-  'Select an option from a <select> dropdown element. Use the CSS selector of the <select> element and specify which option to pick by value, label text, or index.',
+  'Select an option from a dropdown control. Works with native <select> elements and many custom combobox/listbox dropdowns. Use the CSS selector of the dropdown trigger/control and specify the option by value, label text, or index.',
   z.object({
     selector: z.string().describe('CSS selector of the <select> element'),
     value: z.string().optional().describe('Option value attribute to select'),
@@ -322,7 +322,7 @@ export const browser_use_select_option = makeLocalTool(
 
 export const browser_use_get_interactive_elements = makeLocalTool(
   'browser_use_get_interactive_elements',
-  'Get all interactive elements on the current page — inputs, buttons, links, selects, checkboxes, etc. Returns their CSS selectors, labels, current values, placeholder text, and form associations. ALWAYS call this before filling forms or clicking buttons so you know exactly what elements are available and what selectors to use.',
+  'Get all interactive elements on the current page — inputs, buttons, links, dropdowns, file inputs, checkboxes, etc. Returns their CSS selectors, labels, control types, current values, visible dropdown options when available, and form associations. ALWAYS call this before filling forms or clicking buttons so you know exactly what elements are available and what selectors to use.',
   z.object({
     wait_for_selector: z.string().optional().describe('Optional CSS selector to wait for before scanning the page'),
     wait_timeout: z.number().optional().describe('Wait timeout in ms (default: 3000)'),
@@ -336,6 +336,7 @@ export const browser_use_get_interactive_elements = makeLocalTool(
       tag: z.string(),
       selector: z.string(),
       type: z.string().optional(),
+      controlType: z.string().optional(),
       role: z.string().optional(),
       name: z.string().optional(),
       id: z.string().optional(),
@@ -345,10 +346,16 @@ export const browser_use_get_interactive_elements = makeLocalTool(
       placeholder: z.string().optional(),
       value: z.string().optional(),
       selectedText: z.string().optional(),
+      expanded: z.boolean().optional(),
+      popupRole: z.string().optional(),
+      optionCount: z.number().optional(),
       checked: z.boolean().optional(),
       disabled: z.boolean().optional(),
       required: z.boolean().optional(),
       readonly: z.boolean().optional(),
+      accept: z.string().optional(),
+      multiple: z.boolean().optional(),
+      hidden: z.boolean().optional(),
       options: z.array(z.object({
         value: z.string(),
         text: z.string(),
@@ -374,7 +381,7 @@ export const browser_use_get_interactive_elements = makeLocalTool(
 
 export const browser_use_fill_form = makeLocalTool(
   'browser_use_fill_form',
-  'Fill multiple form fields at once and optionally submit the form. More reliable than calling browser_use_type for each field individually. Pass fields as an object mapping CSS selectors to values, or as an array of {selector, value} pairs.',
+  'Fill multiple form fields at once and optionally submit the form. More reliable than calling browser_use_type for each field individually. Supports text fields, dropdowns, checkboxes/radios, and file inputs when array items include type "file" and a local path as the value.',
   z.object({
     fields: z.union([
       z.record(z.string(), z.string()),
@@ -382,7 +389,7 @@ export const browser_use_fill_form = makeLocalTool(
         selector: z.string().optional(),
         name: z.string().optional(),
         value: z.string(),
-        type: z.string().optional().describe('"text" (default), "select", "checkbox", or "radio"'),
+        type: z.string().optional().describe('"text" (default), "select", "checkbox", "radio", or "file"'),
       })),
     ]).describe('Fields to fill: object { "css-selector": "value" } or array of { selector, value, type? }'),
     submit: z.boolean().optional().describe('Submit the form after filling (default: false)'),
@@ -397,6 +404,33 @@ export const browser_use_fill_form = makeLocalTool(
     error: z.string().optional(),
   }),
   30000,
+  { noFallback: true },
+);
+
+// ─── browser_use_upload_file ────────────────────────────────────────────────
+
+export const browser_use_upload_file = makeLocalTool(
+  'browser_use_upload_file',
+  'Upload a local file from disk into a browser file input. Pass a local file path and optionally a selector for the file input or its associated upload control.',
+  z.object({
+    selector: z.string().optional().describe('Optional CSS selector of the file input, upload button, label, or container associated with the file input'),
+    filePath: z.string().describe('Absolute or workspace-relative path to the local file on disk'),
+    timeout: z.number().optional().describe('Timeout in ms (default: 5000)'),
+  }),
+  z.object({
+    ok: z.boolean(),
+    uploaded: z.boolean().optional(),
+    filePath: z.string().optional(),
+    fileName: z.string().optional(),
+    selector: z.string().optional(),
+    accept: z.string().optional(),
+    multiple: z.boolean().optional(),
+    hidden: z.boolean().optional(),
+    label: z.string().optional(),
+    method: z.string().optional(),
+    error: z.string().optional(),
+  }),
+  15000,
   { noFallback: true },
 );
 
