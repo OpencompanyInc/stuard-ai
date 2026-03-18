@@ -80,12 +80,20 @@ function getPublicBucket() {
 
 /**
  * Build the permanent public URL for an object in the public bucket.
- * Uses STORAGE_PUBLIC_BASE_URL (custom domain / CDN) if set,
- * otherwise falls back to the default GCS public URL.
+ * Routes through storage.stuard.ai (Cloudflare Worker → GCS).
  */
 export function getPublicUrl(objectName: string): string {
-  const base = STORAGE_PUBLIC_BASE_URL || `https://storage.googleapis.com/${PUBLIC_BUCKET}`;
-  return `${base.replace(/\/+$/, '')}/${objectName}`;
+  const base = STORAGE_PUBLIC_BASE_URL || 'https://storage.googleapis.com';
+  return `${base.replace(/\/+$/, '')}/${PUBLIC_BUCKET}/${objectName}`;
+}
+
+/**
+ * Rewrite a GCS signed URL to route through storage.stuard.ai.
+ * The Cloudflare Worker proxies to storage.googleapis.com, so the signature stays valid.
+ */
+function rewriteSignedUrl(signedUrl: string): string {
+  if (!STORAGE_PUBLIC_BASE_URL) return signedUrl;
+  return signedUrl.replace('https://storage.googleapis.com', STORAGE_PUBLIC_BASE_URL.replace(/\/+$/, ''));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -109,7 +117,7 @@ export async function generateUserUploadUrl(
     contentType: 'application/octet-stream',
   });
 
-  return { uploadUrl, objectName };
+  return { uploadUrl: rewriteSignedUrl(uploadUrl), objectName };
 }
 
 /**
@@ -239,7 +247,7 @@ export async function uploadUserFileBuffer(
       action: 'read',
       expires,
     });
-    url = signedUrl;
+    url = rewriteSignedUrl(signedUrl);
   }
 
   return { objectName, bytesWritten: data.length, url, visibility };
@@ -319,7 +327,7 @@ export async function generateUserDownloadUrl(
     expires,
   });
 
-  return { downloadUrl };
+  return { downloadUrl: rewriteSignedUrl(downloadUrl) };
 }
 
 /** Get total bytes stored for a user in their prefix. */
@@ -391,7 +399,7 @@ export async function generateTtlUrl(
     action: 'read',
     expires: expiresAt,
   });
-  return { url, expiresAt };
+  return { url: rewriteSignedUrl(url), expiresAt };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -445,7 +453,7 @@ export async function generateAgentDataUploadUrl(userId: string): Promise<{ uplo
     expires: Date.now() + UPLOAD_URL_TTL_MS,
     contentType: 'application/gzip',
   });
-  return { uploadUrl, objectName };
+  return { uploadUrl: rewriteSignedUrl(uploadUrl), objectName };
 }
 
 /**
@@ -462,7 +470,7 @@ export async function generateAgentDataDownloadUrl(userId: string): Promise<{ do
     action: 'read',
     expires: Date.now() + DOWNLOAD_URL_TTL_MS,
   });
-  return { downloadUrl, objectName };
+  return { downloadUrl: rewriteSignedUrl(downloadUrl), objectName };
 }
 
 /**
@@ -484,7 +492,7 @@ export async function generateVMAssetUrls(): Promise<{
     const [bundleExists] = await bundleFile.exists();
     if (bundleExists) {
       const [url] = await bundleFile.getSignedUrl({ version: 'v4', action: 'read', expires: ttl });
-      agentBundleUrl = url;
+      agentBundleUrl = rewriteSignedUrl(url);
     }
   } catch {}
 
@@ -493,7 +501,7 @@ export async function generateVMAssetUrls(): Promise<{
     const [pyExists] = await pyFile.exists();
     if (pyExists) {
       const [url] = await pyFile.getSignedUrl({ version: 'v4', action: 'read', expires: ttl });
-      pythonAgentUrl = url;
+      pythonAgentUrl = rewriteSignedUrl(url);
     }
   } catch {}
 

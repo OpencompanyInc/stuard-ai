@@ -266,7 +266,14 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
 
   // Telnyx (SMS / Voice)
   'telnyx_send_sms': { kind: 'cloud' },
+  'telnyx_send_mms': { kind: 'cloud' },
+  'telnyx_send_voice_note': { kind: 'cloud' },
+  'telnyx_call_control': { kind: 'cloud' },
   'telnyx_phone_status': { kind: 'cloud' },
+  'telnyx_voice_call': { kind: 'cloud' },
+  'telnyx_list_voice_providers': { kind: 'cloud' },
+  'telnyx_list_active_calls': { kind: 'cloud' },
+  'telnyx_hangup_call': { kind: 'cloud' },
 
   // Ollama (Local AI models)
   'ollama_status': { kind: 'electron' },
