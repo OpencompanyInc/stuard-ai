@@ -98,6 +98,7 @@ declare global {
       workflowsWriteWorkspaceFile: (id: string, filePath: string, content: string) => Promise<{ ok: boolean; error?: string }>;
       workflowsDeleteWorkspaceFile: (id: string, filePath: string) => Promise<{ ok: boolean; error?: string }>;
       workflowsCreateWorkspaceSubdir: (id: string, subpath: string) => Promise<{ ok: boolean; error?: string }>;
+      workflowsGetAgentToolOptions: () => Promise<{ ok: boolean; tools?: Array<{ value: string; label: string; description: string; group: string }>; error?: string }>;
       onWorkflowsLog: (cb: (data: any) => void) => void | (() => void);
       onWorkflowsStep: (cb: (data: any) => void) => void | (() => void);
       onWorkflowsExecution: (cb: (data: any) => void) => void | (() => void);

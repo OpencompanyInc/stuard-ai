@@ -54,7 +54,7 @@ const PROVIDERS: ProviderConfig[] = [
     clientSecret: FACEBOOK_APP_SECRET,
     redirectPath: FACEBOOK_REDIRECT_PATH,
     authorizeUrl: 'https://www.facebook.com/v22.0/dialog/oauth',
-    requestedScopes: () => process.env.FACEBOOK_SCOPES || 'public_profile,email,pages_show_list,pages_read_engagement,pages_manage_posts',
+    requestedScopes: () => process.env.FACEBOOK_SCOPES || 'public_profile,email,pages_show_list,pages_read_engagement,pages_manage_posts,pages_manage_engagement,pages_messaging,pages_manage_metadata',
     exchangeCode: async (code, redirectUri) => {
       const tokenUrl = new URL('https://graph.facebook.com/v22.0/oauth/access_token');
       tokenUrl.searchParams.set('client_id', FACEBOOK_APP_ID);
@@ -111,7 +111,7 @@ const PROVIDERS: ProviderConfig[] = [
     redirectPath: INSTAGRAM_REDIRECT_PATH,
     // New Instagram API with Instagram Login (replaces deprecated Basic Display API)
     authorizeUrl: 'https://www.instagram.com/oauth/authorize/',
-    requestedScopes: () => process.env.INSTAGRAM_SCOPES || 'instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments',
+    requestedScopes: () => process.env.INSTAGRAM_SCOPES || 'instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_messages',
     exchangeCode: async (code, redirectUri) => {
       const res = await fetch('https://api.instagram.com/oauth/access_token', {
         method: 'POST',

@@ -134,6 +134,24 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
   const [integrationProfileOptions, setIntegrationProfileOptions] = useState<ArgOption[]>([]);
   const [integrationProfilesLoading, setIntegrationProfilesLoading] = useState(false);
 
+  // Dynamic agent tools for agent_node multiselect
+  const isAgentToolsPicker = toolName === 'agent_node' && argKey === 'tools';
+  const [dynamicAgentTools, setDynamicAgentTools] = useState<ArgOption[] | null>(null);
+
+  useEffect(() => {
+    if (!isAgentToolsPicker) return;
+    let cancelled = false;
+    const api = (window as any).desktopAPI;
+    if (!api?.workflowsGetAgentToolOptions) return;
+    api.workflowsGetAgentToolOptions().then((result: any) => {
+      if (cancelled) return;
+      if (result?.ok && Array.isArray(result.tools)) {
+        setDynamicAgentTools(result.tools);
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [isAgentToolsPicker]);
+
   useEffect(() => {
     if (!shouldUseIntegrationProfileDropdown || !profileProvider) return;
 
@@ -360,15 +378,25 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
           />
         ) : null;
 
-      case 'multiselect':
-        return options ? (
+      case 'multiselect': {
+        const resolvedOptions = isAgentToolsPicker && dynamicAgentTools
+          ? dynamicAgentTools
+          : (options && options.length > 0 ? options : undefined);
+        return resolvedOptions ? (
           <MultiSelectInput
             value={Array.isArray(value) ? value : (value ? [value] : [])}
             onChange={onChange}
-            options={options}
-            placeholder={placeholder}
+            options={resolvedOptions}
+            placeholder={isAgentToolsPicker && !dynamicAgentTools ? 'Loading tools...' : placeholder}
           />
-        ) : null;
+        ) : (
+          isAgentToolsPicker ? (
+            <div className="px-4 py-3 text-sm wf-fg-faint wf-bg-overlay rounded-xl border wf-border-subtle">
+              Loading available tools...
+            </div>
+          ) : null
+        );
+      }
 
       case 'hotkey':
         return <HotkeyEditor value={Array.isArray(value) ? value : []} onChange={onChange} />;

@@ -979,9 +979,84 @@ async function processCallWebhook(rawBody: string): Promise<void> {
       break;
     }
 
-    // ── Call answered — streaming was requested in the answer command ────
+    // ── Call answered — start streaming for outbound calls ──────────────
     case 'call.answered': {
       console.log('[telnyx] Call answered', { callControlId: callControlId.slice(0, 24), direction });
+
+      // For outbound calls, streaming wasn't started in the answer command
+      // (since WE placed the call). We need to start it now.
+      if (direction === 'outgoing') {
+        const customHeaders: Array<{ name: string; value: string }> = eventPayload?.custom_headers || [];
+        const bridgeHeader = customHeaders.find(h => h.name === 'X-Voice-Bridge');
+        const wsUrlHeader = customHeaders.find(h => h.name === 'X-Bridge-Ws-Url');
+        const ttsHeader = customHeaders.find(h => h.name === 'X-Tts-Message');
+
+        if (bridgeHeader?.value && wsUrlHeader?.value) {
+          // AI voice call — start bidirectional streaming to the bridge WS
+          const wsBaseUrl = Buffer.from(wsUrlHeader.value, 'base64').toString('utf8');
+          const streamUrl = `${wsBaseUrl}?callControlId=${encodeURIComponent(callControlId)}&bridge=${encodeURIComponent(bridgeHeader.value)}`;
+
+          console.log('[telnyx] Starting streaming for outbound call', {
+            callControlId: callControlId.slice(0, 24),
+            streamUrl: streamUrl.slice(0, 120),
+          });
+
+          const streamRes = await fetch(`${TELNYX_API}/calls/${callControlId}/actions/streaming_start`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              stream_url: streamUrl,
+              stream_track: 'both_tracks',
+              stream_bidirectional_mode: 'rtp',
+              stream_bidirectional_codec: 'PCMU',
+              send_silence_when_idle: true,
+            }),
+          });
+
+          if (!streamRes.ok) {
+            const errBody = await streamRes.text().catch(() => '');
+            console.error('[telnyx] Failed to start outbound streaming', {
+              status: streamRes.status, body: errBody.slice(0, 300), callControlId,
+            });
+            // Fallback: speak a message and hang up
+            await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                payload: 'Hello, this is Stuard AI. Voice streaming could not be started. Please try again later.',
+                voice: 'female',
+                language: 'en-US',
+              }),
+            }).catch(() => {});
+          }
+        } else if (ttsHeader?.value) {
+          // Proactive TTS-only call — speak the message
+          const ttsMessage = Buffer.from(ttsHeader.value, 'base64').toString('utf8');
+          const ttsVoice = customHeaders.find(h => h.name === 'X-Tts-Voice')?.value || 'female';
+
+          console.log('[telnyx] Speaking TTS for outbound proactive call', {
+            callControlId: callControlId.slice(0, 24),
+            messageLen: ttsMessage.length,
+          });
+
+          await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              payload: ttsMessage,
+              voice: ttsVoice,
+              language: 'en-US',
+            }),
+          }).catch((e: any) => {
+            console.error('[telnyx] TTS speak failed for proactive call:', e?.message);
+          });
+        } else {
+          console.warn('[telnyx] Outbound call answered but no bridge or TTS config found in custom_headers', {
+            callControlId: callControlId.slice(0, 24),
+            headerNames: customHeaders.map(h => h.name),
+          });
+        }
+      }
       break;
     }
 
@@ -1053,20 +1128,39 @@ async function answerWithStreaming(callControlId: string, fromNumber: string): P
   const userId = await findUserIdByPhone(normalizePhone(fromNumber));
   const configuredProviders = getConfiguredProviders();
 
-  if (configuredProviders.length === 0) {
-    console.log('[telnyx] No voice providers configured, answering with TTS fallback');
+  // Only allow calls from verified/connected users
+  if (!userId) {
+    console.log('[telnyx] Rejecting inbound call from unregistered number', { fromNumber });
     pendingInboundCalls.delete(callControlId);
 
-    // Answer the call first, then speak
     await fetch(`${TELNYX_API}/calls/${callControlId}/actions/answer`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     });
-
-    // Wait briefly for the call to be fully answered before speaking
     await new Promise(r => setTimeout(r, 500));
+    await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        payload: 'Sorry, this number is not registered with Stuard AI. Please sign up and verify your phone number to use voice calls.',
+        voice: 'female',
+        language: 'en-US',
+      }),
+    });
+    return;
+  }
 
+  if (configuredProviders.length === 0) {
+    console.log('[telnyx] No voice providers configured, answering with TTS fallback');
+    pendingInboundCalls.delete(callControlId);
+
+    await fetch(`${TELNYX_API}/calls/${callControlId}/actions/answer`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    await new Promise(r => setTimeout(r, 500));
     await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
@@ -1099,17 +1193,18 @@ async function answerWithStreaming(callControlId: string, fromNumber: string): P
   if (!providerId) providerId = configuredProviders[0].id;
 
   console.log('[telnyx] Inbound call provider selection', {
-    callControlId, fromNumber, providerId,
+    callControlId, fromNumber, providerId, userId,
     configured: configuredProviders.map(p => p.id),
   });
 
-  // Build bridge config for the voice provider
+  // Build bridge config — system prompt and tools are loaded by the bridge
+  // via buildVoiceContext() using the userId, so we don't hardcode prompts here.
   const bridgeConfig: Record<string, any> = {
     providerId,
     initialMessage: 'Hello! This is Stuard AI. How can I help you today?',
     direction: 'inbound',
     callerNumber: fromNumber,
-    userId: userId || undefined,
+    userId,
     metadata: { source: 'inbound_call', callerNumber: fromNumber },
   };
 
@@ -1118,17 +1213,7 @@ async function answerWithStreaming(callControlId: string, fromNumber: string): P
   }
 
   if (providerId === 'openai-realtime' || providerId === 'grok-realtime') {
-    bridgeConfig.systemPrompt =
-      'You are Stuard, a helpful AI assistant answering a phone call. ' +
-      'Be concise, friendly, and helpful. The caller\'s number is ' + fromNumber + '. ' +
-      (userId ? 'They are a registered user.' : 'They are not a registered user.');
     bridgeConfig.voiceId = process.env.OPENAI_REALTIME_VOICE || 'alloy';
-  }
-
-  if (providerId === 'gemini-live') {
-    bridgeConfig.systemPrompt =
-      'You are Stuard, a helpful AI assistant answering a phone call. ' +
-      'Be concise, friendly, and helpful.';
   }
 
   const bridgeB64 = Buffer.from(JSON.stringify(bridgeConfig)).toString('base64');

@@ -59,6 +59,18 @@ async function postForm(url: string, form: Record<string, string | number | bool
   });
 }
 
+async function postJson(url: string, payload: Record<string, any>) {
+  return fetchJson(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+async function deleteResource(url: string) {
+  return fetchJson(url, { method: 'DELETE' });
+}
+
 function pickExternalUserId(acc: any): string {
   return String(
     acc?.meta?.external_user_id ||
@@ -309,6 +321,330 @@ export const instagram_publish_media = createTool({
       creation_id: container?.id || null,
       id: published?.id || null,
       media_type,
+    };
+  },
+});
+
+// ── Instagram Comments ──
+
+export const instagram_list_comments = createTool({
+  id: 'instagram_list_comments',
+  description: 'List comments on an Instagram media post. Use instagram_list_media first to get media IDs.',
+  inputSchema: z.object({
+    media_id: z.string().describe('The Instagram media ID to list comments for.'),
+    limit: z.number().int().min(1).max(100).default(25),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { media_id, limit, profile } = inputData as any;
+    const { token } = await getInstagramProfile(profile);
+    const data = await fetchJson(
+      `${INSTAGRAM_API}/${encodeURIComponent(media_id)}/comments?fields=id,text,username,timestamp,like_count,replies{id,text,username,timestamp}&limit=${encodeURIComponent(String(limit || 25))}&access_token=${encodeURIComponent(token)}`
+    );
+    const comments = Array.isArray(data?.data) ? data.data : [];
+    return { comments, count: comments.length, paging: data?.paging || null };
+  },
+});
+
+export const instagram_reply_comment = createTool({
+  id: 'instagram_reply_comment',
+  description: 'Reply to a comment on an Instagram media post. Requires instagram_business_manage_comments scope.',
+  inputSchema: z.object({
+    comment_id: z.string().describe('The comment ID to reply to.'),
+    message: z.string().min(1).describe('The reply text.'),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { comment_id, message, profile } = inputData as any;
+    const { token } = await getInstagramProfile(profile);
+    const result = await postForm(
+      `${INSTAGRAM_API}/${encodeURIComponent(comment_id)}/replies`,
+      { message, access_token: token }
+    );
+    return { ok: true, id: result?.id || null };
+  },
+});
+
+export const instagram_delete_comment = createTool({
+  id: 'instagram_delete_comment',
+  description: 'Delete a comment on an Instagram media post. Can only delete comments on your own media.',
+  inputSchema: z.object({
+    comment_id: z.string().describe('The comment ID to delete.'),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { comment_id, profile } = inputData as any;
+    const { token } = await getInstagramProfile(profile);
+    await deleteResource(
+      `${INSTAGRAM_API}/${encodeURIComponent(comment_id)}?access_token=${encodeURIComponent(token)}`
+    );
+    return { ok: true, deleted: comment_id };
+  },
+});
+
+// ── Instagram DMs (requires instagram_business_manage_messages scope) ──
+
+export const instagram_list_conversations = createTool({
+  id: 'instagram_list_conversations',
+  description: 'List Instagram DM conversations. Requires instagram_business_manage_messages scope. User must reconnect Instagram if this scope was not granted.',
+  inputSchema: z.object({
+    limit: z.number().int().min(1).max(50).default(20),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { limit, profile } = inputData as any;
+    const { token, userId } = await getInstagramProfile(profile);
+    if (!userId) throw new Error('instagram_user_missing: Could not resolve the Instagram account ID.');
+    const data = await fetchJson(
+      `${INSTAGRAM_API}/${userId}/conversations?platform=instagram&fields=id,updated_time,participants,messages{id,message,from,created_time}&limit=${encodeURIComponent(String(limit || 20))}&access_token=${encodeURIComponent(token)}`
+    );
+    const conversations = Array.isArray(data?.data) ? data.data : [];
+    return { conversations, count: conversations.length, paging: data?.paging || null };
+  },
+});
+
+export const instagram_get_conversation_messages = createTool({
+  id: 'instagram_get_conversation_messages',
+  description: 'Get messages from a specific Instagram DM conversation. Use instagram_list_conversations first to get conversation IDs.',
+  inputSchema: z.object({
+    conversation_id: z.string().describe('The conversation ID.'),
+    limit: z.number().int().min(1).max(100).default(20),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { conversation_id, limit, profile } = inputData as any;
+    const { token } = await getInstagramProfile(profile);
+    const data = await fetchJson(
+      `${INSTAGRAM_API}/${encodeURIComponent(conversation_id)}?fields=messages{id,message,from,created_time,attachments}&limit=${encodeURIComponent(String(limit || 20))}&access_token=${encodeURIComponent(token)}`
+    );
+    const messages = data?.messages?.data || [];
+    return { messages, count: messages.length, conversation_id };
+  },
+});
+
+export const instagram_send_dm = createTool({
+  id: 'instagram_send_dm',
+  description: 'Send a DM to an Instagram user. Can only message users who have messaged your business first (within 24h window). Requires instagram_business_manage_messages scope.',
+  inputSchema: z.object({
+    recipient_id: z.string().describe('Instagram-scoped ID (IGSID) of the recipient. Get this from conversation participants.'),
+    text: z.string().min(1).describe('The message text to send.'),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { recipient_id, text, profile } = inputData as any;
+    const { token, userId } = await getInstagramProfile(profile);
+    if (!userId) throw new Error('instagram_user_missing: Could not resolve the Instagram account ID.');
+    const result = await postJson(
+      `${INSTAGRAM_API}/${userId}/messages?access_token=${encodeURIComponent(token)}`,
+      { recipient: { id: recipient_id }, message: { text } }
+    );
+    return { ok: true, message_id: result?.message_id || result?.id || null };
+  },
+});
+
+// ── Facebook Comments ──
+
+export const facebook_list_post_comments = createTool({
+  id: 'facebook_list_post_comments',
+  description: 'List comments on a Facebook Page post. Use facebook_list_page_posts first to get post IDs.',
+  inputSchema: z.object({
+    post_id: z.string().describe('The Facebook post ID (format: pageId_postId).'),
+    page_id: z.string().optional().describe('Facebook Page ID. Required if the account manages multiple Pages.'),
+    limit: z.number().int().min(1).max(100).default(25),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { post_id, page_id, limit, profile } = inputData as any;
+    const { token } = await getFacebookProfile(profile);
+    const { page } = await resolveFacebookPage(token, page_id);
+    const pageToken = String(page.access_token || '');
+    const data = await fetchJson(
+      `${FACEBOOK_API}/${encodeURIComponent(post_id)}/comments?fields=id,message,from,created_time,like_count,comment_count&limit=${encodeURIComponent(String(limit || 25))}&access_token=${encodeURIComponent(pageToken)}`
+    );
+    const comments = Array.isArray(data?.data) ? data.data : [];
+    return { comments, count: comments.length, paging: data?.paging || null };
+  },
+});
+
+export const facebook_reply_comment = createTool({
+  id: 'facebook_reply_comment',
+  description: 'Reply to a comment on a Facebook Page post. Requires pages_manage_engagement scope.',
+  inputSchema: z.object({
+    comment_id: z.string().describe('The comment ID to reply to.'),
+    message: z.string().min(1).describe('The reply text.'),
+    page_id: z.string().optional().describe('Facebook Page ID. Required if the account manages multiple Pages.'),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { comment_id, message, page_id, profile } = inputData as any;
+    const { token } = await getFacebookProfile(profile);
+    const { page } = await resolveFacebookPage(token, page_id);
+    const pageToken = String(page.access_token || '');
+    const result = await postForm(
+      `${FACEBOOK_API}/${encodeURIComponent(comment_id)}/comments`,
+      { message, access_token: pageToken }
+    );
+    return { ok: true, id: result?.id || null };
+  },
+});
+
+export const facebook_delete_post = createTool({
+  id: 'facebook_delete_post',
+  description: 'Delete a post from a Facebook Page. Requires pages_manage_posts scope.',
+  inputSchema: z.object({
+    post_id: z.string().describe('The Facebook post ID to delete (format: pageId_postId).'),
+    page_id: z.string().optional().describe('Facebook Page ID. Required if the account manages multiple Pages.'),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { post_id, page_id, profile } = inputData as any;
+    const { token } = await getFacebookProfile(profile);
+    const { page } = await resolveFacebookPage(token, page_id);
+    const pageToken = String(page.access_token || '');
+    await deleteResource(
+      `${FACEBOOK_API}/${encodeURIComponent(post_id)}?access_token=${encodeURIComponent(pageToken)}`
+    );
+    return { ok: true, deleted: post_id };
+  },
+});
+
+// ── Facebook Messenger (requires pages_messaging scope) ──
+
+export const facebook_list_conversations = createTool({
+  id: 'facebook_list_conversations',
+  description: 'List Messenger conversations for a Facebook Page. Requires pages_messaging scope. User must reconnect Facebook if this scope was not granted.',
+  inputSchema: z.object({
+    page_id: z.string().optional().describe('Facebook Page ID. Required if the account manages multiple Pages.'),
+    limit: z.number().int().min(1).max(50).default(20),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { page_id, limit, profile } = inputData as any;
+    const { token } = await getFacebookProfile(profile);
+    const { page } = await resolveFacebookPage(token, page_id);
+    const pageToken = String(page.access_token || '');
+    const data = await fetchJson(
+      `${FACEBOOK_API}/${page.id}/conversations?fields=id,updated_time,participants,snippet,message_count&limit=${encodeURIComponent(String(limit || 20))}&access_token=${encodeURIComponent(pageToken)}`
+    );
+    const conversations = Array.isArray(data?.data) ? data.data : [];
+    return { page: { id: page.id, name: page.name }, conversations, count: conversations.length, paging: data?.paging || null };
+  },
+});
+
+export const facebook_get_conversation_messages = createTool({
+  id: 'facebook_get_conversation_messages',
+  description: 'Get messages from a Facebook Messenger conversation. Use facebook_list_conversations first to get conversation IDs.',
+  inputSchema: z.object({
+    conversation_id: z.string().describe('The conversation ID.'),
+    page_id: z.string().optional().describe('Facebook Page ID. Required if the account manages multiple Pages.'),
+    limit: z.number().int().min(1).max(100).default(20),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { conversation_id, page_id, limit, profile } = inputData as any;
+    const { token } = await getFacebookProfile(profile);
+    const { page } = await resolveFacebookPage(token, page_id);
+    const pageToken = String(page.access_token || '');
+    const data = await fetchJson(
+      `${FACEBOOK_API}/${encodeURIComponent(conversation_id)}/messages?fields=id,message,from,to,created_time,attachments&limit=${encodeURIComponent(String(limit || 20))}&access_token=${encodeURIComponent(pageToken)}`
+    );
+    const messages = Array.isArray(data?.data) ? data.data : [];
+    return { messages, count: messages.length, conversation_id };
+  },
+});
+
+export const facebook_send_message = createTool({
+  id: 'facebook_send_message',
+  description: 'Send a message via Facebook Messenger from a Page. Can only message users who have messaged the Page first (within 24h window). Requires pages_messaging scope.',
+  inputSchema: z.object({
+    recipient_id: z.string().describe('Page-scoped ID (PSID) of the recipient. Get this from conversation participants.'),
+    text: z.string().min(1).describe('The message text to send.'),
+    page_id: z.string().optional().describe('Facebook Page ID. Required if the account manages multiple Pages.'),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { recipient_id, text, page_id, profile } = inputData as any;
+    const { token } = await getFacebookProfile(profile);
+    const { page } = await resolveFacebookPage(token, page_id);
+    const pageToken = String(page.access_token || '');
+    const result = await postJson(
+      `${FACEBOOK_API}/me/messages?access_token=${encodeURIComponent(pageToken)}`,
+      {
+        recipient: { id: recipient_id },
+        messaging_type: 'RESPONSE',
+        message: { text },
+      }
+    );
+    return { ok: true, message_id: result?.message_id || null, recipient_id };
+  },
+});
+
+// ── Threads Replies & Details ──
+
+export const threads_get_post = createTool({
+  id: 'threads_get_post',
+  description: 'Get details of a single Threads post by ID.',
+  inputSchema: z.object({
+    thread_id: z.string().describe('The Threads post ID.'),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { thread_id, profile } = inputData as any;
+    const { token } = await getThreadsProfile(profile);
+    const post = await fetchJson(
+      `${THREADS_API}/${encodeURIComponent(thread_id)}?fields=id,media_type,text,permalink,timestamp,shortcode,username,is_reply,reply_audience&access_token=${encodeURIComponent(token)}`
+    );
+    return { post };
+  },
+});
+
+export const threads_list_replies = createTool({
+  id: 'threads_list_replies',
+  description: 'List replies to a Threads post. Requires threads_manage_replies scope.',
+  inputSchema: z.object({
+    thread_id: z.string().describe('The Threads post ID to get replies for.'),
+    limit: z.number().int().min(1).max(100).default(25),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { thread_id, limit, profile } = inputData as any;
+    const { token } = await getThreadsProfile(profile);
+    const data = await fetchJson(
+      `${THREADS_API}/${encodeURIComponent(thread_id)}/replies?fields=id,text,username,timestamp,media_type,permalink&limit=${encodeURIComponent(String(limit || 25))}&access_token=${encodeURIComponent(token)}`
+    );
+    const replies = Array.isArray(data?.data) ? data.data : [];
+    return { replies, count: replies.length, paging: data?.paging || null };
+  },
+});
+
+export const threads_reply_to_post = createTool({
+  id: 'threads_reply_to_post',
+  description: 'Reply to a specific Threads post. Creates a new text post as a reply. Requires threads_content_publish and threads_manage_replies scopes.',
+  inputSchema: z.object({
+    thread_id: z.string().describe('The Threads post ID to reply to.'),
+    text: z.string().min(1).max(500).describe('The reply text.'),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { thread_id, text, profile } = inputData as any;
+    const { token, userId } = await getThreadsProfile(profile);
+    if (!userId) throw new Error('threads_user_missing: Could not resolve the Threads account ID.');
+    const creation = await postForm(`${THREADS_API}/${userId}/threads`, {
+      media_type: 'TEXT',
+      text,
+      reply_to_id: thread_id,
+      access_token: token,
+    });
+    const published = await postForm(`${THREADS_API}/${userId}/threads_publish`, {
+      creation_id: String(creation?.id || ''),
+      access_token: token,
+    });
+    return {
+      ok: true,
+      creation_id: creation?.id || null,
+      id: published?.id || null,
+      reply_to: thread_id,
+      text,
     };
   },
 });

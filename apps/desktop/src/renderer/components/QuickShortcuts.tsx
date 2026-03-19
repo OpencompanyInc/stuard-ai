@@ -21,12 +21,13 @@ import {
   Sparkles,
   ListTodo,
   Keyboard,
+  Brain,
 } from 'lucide-react';
 
 export interface Bookmark {
   id: string;
   name: string;
-  type: 'url' | 'app' | 'file' | 'folder' | 'workflow' | 'space' | 'canvas' | 'dashboard' | 'tasks' | 'terminal' | 'overlay';
+  type: 'url' | 'app' | 'file' | 'folder' | 'workflow' | 'space' | 'canvas' | 'dashboard' | 'tasks' | 'terminal' | 'overlay' | 'semantic-search';
   target: string;
   icon?: string;
   color?: string;
@@ -45,6 +46,7 @@ const BOOKMARK_TYPES = [
   { type: 'overlay', label: 'Overlay', icon: Sparkles, color: 'text-violet-500', bg: 'bg-violet-500/10', description: 'Open the Stuard overlay' },
   { type: 'dashboard', label: 'Dashboard', icon: Settings2, color: 'text-indigo-500', bg: 'bg-indigo-500/10', description: 'Open Dashboard tab' },
   { type: 'tasks', label: 'Tasks', icon: ListTodo, color: 'text-emerald-500', bg: 'bg-emerald-500/10', description: 'Open tasks (To-Do or Agent)' },
+  { type: 'semantic-search', label: 'Semantic Search', icon: Brain, color: 'text-purple-500', bg: 'bg-purple-500/10', description: 'Search files by meaning using AI embeddings' },
 ] as const;
 
 // Quick presets for common shortcuts
@@ -59,13 +61,14 @@ const QUICK_PRESETS = [
   { name: 'Planner', type: 'dashboard' as const, target: 'planner', icon: Settings2 },
   { name: 'Memories', type: 'dashboard' as const, target: 'memories', icon: Settings2 },
   { name: 'Tasks', type: 'tasks' as const, target: 'todo', icon: ListTodo },
+  { name: 'Semantic Search', type: 'semantic-search' as const, target: 'semantic-search', icon: Brain },
 ];
 
 export const getTypeConfig = (type: string) => {
   return BOOKMARK_TYPES.find(t => t.type === type) || BOOKMARK_TYPES[0];
 };
 
-const TYPES_WITH_DEFAULT_TARGET = new Set<Bookmark['type']>(['space', 'canvas', 'tasks', 'terminal', 'overlay']);
+const TYPES_WITH_DEFAULT_TARGET = new Set<Bookmark['type']>(['space', 'canvas', 'tasks', 'terminal', 'overlay', 'semantic-search']);
 
 const getDefaultBookmarkTarget = (type?: Bookmark['type'] | null): string => {
   switch (type) {
@@ -79,6 +82,8 @@ const getDefaultBookmarkTarget = (type?: Bookmark['type'] | null): string => {
       return 'terminal';
     case 'overlay':
       return 'overlay';
+    case 'semantic-search':
+      return 'semantic-search';
     default:
       return '';
   }
@@ -975,6 +980,27 @@ export function BookmarkEditor({
                       <p className="text-[10px] text-theme-muted">Bring the main Stuard overlay to the front</p>
                     </div>
                     {newBookmark.target === 'overlay' && <Check className="w-4 h-4 text-primary" />}
+                  </button>
+                </>
+              )}
+
+              {/* Semantic Search selector */}
+              {selectedType === 'semantic-search' && (
+                <>
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-theme-muted mb-2">Semantic File Search</div>
+                  <button
+                    onClick={() => setNewBookmark({ ...newBookmark, target: 'semantic-search', name: newBookmark.name || 'Semantic Search' })}
+                    className={clsx(
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left",
+                      newBookmark.target === 'semantic-search' ? "bg-primary/15 ring-1 ring-primary/40" : "bg-theme-hover/40 hover:bg-theme-hover"
+                    )}
+                  >
+                    <Brain className={clsx("w-4 h-4", newBookmark.target === 'semantic-search' ? "text-primary" : "text-purple-500")} />
+                    <div className="flex-1">
+                      <span className="text-[13px] font-medium text-theme-fg">Search Files by Meaning</span>
+                      <p className="text-[10px] text-theme-muted">Use AI embeddings to find files by content, not just keywords</p>
+                    </div>
+                    {newBookmark.target === 'semantic-search' && <Check className="w-4 h-4 text-primary" />}
                   </button>
                 </>
               )}

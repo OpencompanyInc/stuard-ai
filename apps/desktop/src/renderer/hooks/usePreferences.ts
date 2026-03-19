@@ -1,6 +1,21 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const LS_PREFIX = "stuard.pref.";
+
+/** Debounced batch writer that flushes all pending pref changes to the main process. */
+const _pendingPrefWrites: Record<string, any> = {};
+let _prefFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function queuePrefSync(key: string, value: any) {
+  _pendingPrefWrites[key] = value;
+  if (_prefFlushTimer) clearTimeout(_prefFlushTimer);
+  _prefFlushTimer = setTimeout(() => {
+    _prefFlushTimer = null;
+    const batch = { ..._pendingPrefWrites };
+    for (const k of Object.keys(_pendingPrefWrites)) delete _pendingPrefWrites[k];
+    try { (window as any).desktopAPI?.prefsSetMany?.(batch); } catch { }
+  }, 300);
+}
 
 export type ChatMode = 'auto' | string;
 
@@ -297,10 +312,37 @@ function getLS<T>(key: string, fallback: T): T {
   }
 }
 
+/** Map from localStorage key → main-process settings key */
+const LS_TO_SETTINGS_KEY: Record<string, string> = {
+  tone: 'tone',
+  tone_custom: 'toneCustom',
+  persona: 'persona',
+  onboarding_complete: 'onboardingComplete',
+  tour_complete: 'tourComplete',
+  theme_mode: 'themeMode',
+  theme_dark: 'themeDarkShade',
+  theme_light: 'themeLightShade',
+  theme_text: 'themeText',
+  translucent_mode: 'translucentMode',
+  wakeword_enabled: 'wakewordEnabled',
+  terminal_enabled: 'terminalEnabled',
+  browser_enabled: 'browserEnabled',
+  screen_capture_invisible: 'screenCaptureInvisible',
+  chat_mode: 'chatMode',
+  chat_models: 'chatModels',
+  timezone: 'timezone',
+  timezone_override: 'timezoneOverride',
+};
+
 function setLS<T>(key: string, value: T) {
   try {
     localStorage.setItem(LS_PREFIX + key, JSON.stringify(value));
   } catch { }
+  // Also persist to main process settings file
+  const settingsKey = LS_TO_SETTINGS_KEY[key];
+  if (settingsKey) {
+    queuePrefSync(settingsKey, value);
+  }
 }
 
 export type TonePreset = "concise" | "friendly" | "formal" | "technical" | "custom";
@@ -336,6 +378,64 @@ export function usePreferences() {
   const detectedTz = useMemo(() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return 'UTC'; } }, []);
   const [timezone, setTimezoneState] = useState<string>(() => getLS<string>('timezone', '') || detectedTz);
   const [timezoneOverride, setTimezoneOverrideState] = useState<boolean>(() => getLS<boolean>('timezone_override', false));
+
+  // ── Hydrate from main-process settings file on mount (restores after restart) ──
+  const hydratedRef = useRef(false);
+  useEffect(() => {
+    if (hydratedRef.current) return;
+    hydratedRef.current = true;
+    (async () => {
+      try {
+        const res = await (window as any).desktopAPI?.prefsGetAll?.();
+        if (!res?.ok || !res.prefs) return;
+        const p = res.prefs;
+        // Only hydrate if localStorage is empty for that key (first launch / cleared)
+        // OR always hydrate from the persistent file to ensure consistency
+        const apply = <T,>(lsKey: string, settingsVal: T | undefined, setter: (v: T) => void) => {
+          if (settingsVal !== undefined) {
+            // Persistent file wins – write to localStorage so they stay in sync
+            try { localStorage.setItem(LS_PREFIX + lsKey, JSON.stringify(settingsVal)); } catch { }
+            setter(settingsVal as T);
+          }
+        };
+        apply('tone', p.tone, setToneState);
+        apply('tone_custom', p.toneCustom, setCustomToneState);
+        apply('persona', p.persona, setPersonaState);
+        apply('onboarding_complete', p.onboardingComplete, setOnboardingCompleteState);
+        apply('tour_complete', p.tourComplete, setTourCompleteState);
+        if (p.themeMode !== undefined) {
+          const mode = normalizeThemeMode(p.themeMode);
+          try { localStorage.setItem(LS_PREFIX + 'theme_mode', JSON.stringify(mode)); } catch { }
+          setThemeModeState(mode);
+        }
+        apply('theme_dark', p.themeDarkShade, setThemeDarkShadeState);
+        apply('theme_light', p.themeLightShade, setThemeLightShadeState);
+        apply('theme_text', p.themeText, setThemeTextState);
+        apply('translucent_mode', p.translucentMode, setTranslucentModeState);
+        apply('wakeword_enabled', p.wakewordEnabled, setWakewordEnabledState);
+        apply('terminal_enabled', p.terminalEnabled, setTerminalEnabledState);
+        apply('browser_enabled', p.browserEnabled, setBrowserEnabledState);
+        apply('screen_capture_invisible', p.screenCaptureInvisible, setScreenCaptureInvisibleState);
+        if (p.chatModels !== undefined) {
+          try { localStorage.setItem(LS_PREFIX + 'chat_models', JSON.stringify(p.chatModels)); } catch { }
+          setChatModelsState(p.chatModels);
+        }
+        if (p.chatMode !== undefined) {
+          const mode = normalizeChatMode(p.chatMode, p.chatModels ?? getLS<ChatModelsConfig>('chat_models', DEFAULT_CHAT_MODELS));
+          try { localStorage.setItem(LS_PREFIX + 'chat_mode', JSON.stringify(mode)); } catch { }
+          setChatModeState(mode);
+        }
+        if (p.timezoneOverride !== undefined) {
+          try { localStorage.setItem(LS_PREFIX + 'timezone_override', JSON.stringify(p.timezoneOverride)); } catch { }
+          setTimezoneOverrideState(p.timezoneOverride);
+        }
+        if (p.timezone !== undefined && p.timezone) {
+          try { localStorage.setItem(LS_PREFIX + 'timezone', JSON.stringify(p.timezone)); } catch { }
+          setTimezoneState(p.timezone);
+        }
+      } catch { /* ignore – first launch or no desktopAPI */ }
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { setLS("tone", tone); }, [tone]);
   useEffect(() => { setLS("tone_custom", customTone); }, [customTone]);

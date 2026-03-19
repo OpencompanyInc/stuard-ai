@@ -15,10 +15,14 @@ export type {
   VoiceProvider,
   VoiceSession,
   VoiceSessionConfig,
+  VoiceToolDefinition,
   AudioFormat,
   TelephonyBridgeConfig,
   ActiveCall,
 } from './types';
+
+export { buildVoiceContext, getVoiceTools } from './voice-context';
+export type { VoiceContext } from './voice-context';
 
 export {
   registerVoiceProvider,

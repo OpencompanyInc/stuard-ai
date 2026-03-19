@@ -145,6 +145,8 @@ import {
   setTimezone,
   loadSettings,
   saveSettings,
+  getRendererPrefs,
+  setRendererPrefs,
 } from "../settings";
 import {
   skills_list,
@@ -1203,6 +1205,35 @@ export function setupIpc() {
     }
   });
 
+  // ── Renderer preferences (persist across restarts) ──
+  ipcMain.handle("prefs:getAll", () => {
+    try {
+      return { ok: true, prefs: getRendererPrefs() };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || "failed") };
+    }
+  });
+
+  ipcMain.handle("prefs:set", (_e, key: string, value: any) => {
+    try {
+      setRendererPrefs({ [key]: value });
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || "failed") };
+    }
+  });
+
+  ipcMain.handle("prefs:setMany", (_e, prefs: Record<string, any>) => {
+    try {
+      if (prefs && typeof prefs === "object") {
+        setRendererPrefs(prefs);
+      }
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || "failed") };
+    }
+  });
+
   ipcMain.handle("browserUse:getChromeSyncSettings", () => {
     try {
       const settings = loadSettings();
@@ -1458,6 +1489,113 @@ export function setupIpc() {
   ipcMain.handle("workflows:listWorkspaceFunctions", (_e, id: string) =>
     workflows_listWorkspaceFunctions(id),
   );
+
+  // Dynamic agent tool options — built from the desktop TOOL_REGISTRY
+  ipcMain.handle("workflows:getAgentToolOptions", () => {
+    try {
+      // Tools to exclude from the agent tool picker (internal/orchestration/UI-only)
+      const EXCLUDED = new Set([
+        'end', 'return_value', 'log', 'stop_workflow', 'test_run_steps',
+        'run_sequential', 'run_parallel', 'loop_executor',
+        'custom_ui', 'update_custom_ui', 'close_custom_ui',
+        'send_notification', 'send_ui_event', 'run_ui_script',
+        'list_custom_ui_windows', 'invoke_workflow', 'call_workflow',
+        'call_function', 'call_workspace_function', 'list_workspace_functions',
+        'ask_confirmation', 'show_choices', 'pick_date', 'request_files',
+        'show_table', 'show_info', 'show_details', 'show_files',
+        'show_command', 'show_json', 'show_link', 'show_colors',
+        'show_progress', 'show_info_card', 'show_feedback_form',
+        'sidebar_canvas_list', 'sidebar_canvas_read', 'sidebar_canvas_write',
+        'sidebar_canvas_create', 'sidebar_canvas_delete',
+        'ai_inference', 'analyze_image', 'analyze_current_screen',
+        'find_text', 'find_text_on_screen', 'find_and_click_text',
+        'google_cloud_ocr', 'browser_status',
+      ]);
+
+      // Prefix → group mapping
+      const PREFIX_GROUPS: [string, string][] = [
+        ['gmail_', 'Google'],
+        ['google_', 'Google'],
+        ['calendar_', 'Google'],
+        ['drive_', 'Google'],
+        ['docs_', 'Google'],
+        ['sheets_', 'Google'],
+        ['tasks_', 'Google'],
+        ['outlook_', 'Outlook'],
+        ['github_', 'GitHub'],
+        ['discord_', 'Discord'],
+        ['reddit_', 'Reddit'],
+        ['facebook_', 'Meta Social'],
+        ['instagram_', 'Meta Social'],
+        ['threads_', 'Meta Social'],
+        ['whatsapp_', 'WhatsApp'],
+        ['telnyx_', 'Telnyx'],
+        ['browser_use_', 'Browser Automation'],
+        ['browser_', 'Browser Control'],
+        ['terminal_', 'Terminal'],
+        ['canvas_', 'Canvas'],
+        ['ollama_', 'Ollama (Local AI)'],
+        ['cloud_storage_', 'Cloud Storage'],
+        ['workspace_', 'Workspace'],
+        ['proactive_', 'Proactive'],
+        ['embed_', 'Embeddings'],
+        ['vector_', 'Embeddings'],
+        ['elevenlabs_', 'ElevenLabs'],
+        ['youtube_', 'YouTube'],
+        ['mediapipe_', 'MediaPipe'],
+      ];
+
+      // Kind → fallback group
+      const KIND_GROUPS: Record<string, string> = {
+        electron: 'Desktop',
+        cloud: 'Cloud AI',
+        orchestration: 'Orchestration',
+        local: 'System',
+      };
+
+      function snakeToLabel(name: string): string {
+        // Remove common prefixes for cleaner labels
+        for (const [prefix] of PREFIX_GROUPS) {
+          if (name.startsWith(prefix)) {
+            name = name.slice(prefix.length);
+            break;
+          }
+        }
+        return name
+          .split('_')
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(' ');
+      }
+
+      function getGroup(name: string, kind: string): string {
+        for (const [prefix, group] of PREFIX_GROUPS) {
+          if (name.startsWith(prefix)) return group;
+        }
+        // Fallback: group by kind
+        return KIND_GROUPS[kind] || 'Other';
+      }
+
+      const options: Array<{ value: string; label: string; description: string; group: string }> = [];
+
+      for (const [name, entry] of Object.entries(TOOL_REGISTRY)) {
+        if (EXCLUDED.has(name)) continue;
+        const group = getGroup(name, entry.kind);
+        options.push({
+          value: name,
+          label: snakeToLabel(name),
+          description: `${group} tool`,
+          group,
+        });
+      }
+
+      // Sort by group then label
+      options.sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label));
+
+      return { ok: true, tools: options };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed'), tools: [] };
+    }
+  });
 
   // Skills
   loadSkills();
@@ -2013,6 +2151,15 @@ export function setupIpc() {
           setOverlayMode("window");
           showWindow();
           break;
+        case "semantic-search":
+          setOverlayMode("window");
+          showWindow();
+          for (const w of BrowserWindow.getAllWindows()) {
+            try {
+              w.webContents.send("overlay:semantic-search");
+            } catch {}
+          }
+          break;
       }
     } catch (e) {
       logger.warn("Failed to execute bookmark via keybind:", e);
@@ -2254,6 +2401,17 @@ export function setupIpc() {
         case "overlay":
           setOverlayMode("window");
           showWindow();
+          return { ok: true };
+
+        case "semantic-search":
+          // Open overlay in window mode and trigger semantic search UI
+          setOverlayMode("window");
+          showWindow();
+          for (const w of BrowserWindow.getAllWindows()) {
+            try {
+              w.webContents.send("overlay:semantic-search");
+            } catch {}
+          }
           return { ok: true };
 
         default:

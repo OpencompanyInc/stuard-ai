@@ -164,7 +164,7 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute z-50 w-full mt-2 bg-white/[0.04] border border-white/[0.04] rounded-xl shadow-2xl shadow-black/50 max-h-80 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+        <div className="absolute z-50 w-full mt-2 wf-bg-elevated border wf-border-subtle rounded-xl shadow-2xl shadow-black/20 max-h-80 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
           {/* Search + bulk actions */}
           <div className="p-2.5 border-b wf-border-subtle wf-bg-overlay space-y-2">
             <div className="relative">
@@ -183,7 +183,7 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
                 <button
                   type="button"
                   onClick={selectAll}
-                  className="px-3 py-1.5 text-xs font-medium text-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/200/20 rounded-lg transition-colors"
+                  className="px-3 py-1.5 text-xs font-medium text-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/20 rounded-lg transition-colors"
                 >
                   Select All
                 </button>
@@ -201,7 +201,7 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
           {/* Options grouped by category */}
           <div className="overflow-y-auto max-h-56 p-1">
             {totalFiltered === 0 && (
-              <div className="px-3 py-8 text-sm text-white/40 text-center">No matching tools</div>
+              <div className="px-3 py-8 text-sm wf-fg-faint text-center">No matching tools</div>
             )}
             {Array.from(filteredGroups.entries()).map(([groupName, groupOpts]) => {
               const allGroupSelected = groupOpts.every(o => selected.has(String(o.value)));
@@ -212,7 +212,7 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
                   <button
                     type="button"
                     onClick={() => selectGroup(groupName)}
-                    className="w-full px-3 py-1.5 text-left text-[11px] font-bold uppercase tracking-wider wf-fg-faint hover:text-indigo-400 hover:bg-indigo-500/200/10 flex items-center gap-2 transition-colors sticky top-0 wf-bg-elevated backdrop-blur-xl"
+                    className="w-full px-3 py-1.5 text-left text-[11px] font-bold uppercase tracking-wider wf-fg-faint hover:text-indigo-400 hover:bg-indigo-500/10 flex items-center gap-2 transition-colors sticky top-0 wf-bg-elevated backdrop-blur-xl"
                   >
                     <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
                       allGroupSelected ? 'bg-indigo-600 border-indigo-600' : someGroupSelected ? 'bg-indigo-500/20 border-indigo-500/40' : 'wf-border-subtle'

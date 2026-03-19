@@ -70,6 +70,16 @@ class GrokRealtimeSession implements VoiceSession {
           },
         };
 
+        // Add function calling tools if provided
+        if (this.config.tools && this.config.tools.length > 0) {
+          sessionConfig.session.tools = this.config.tools.map(t => ({
+            type: 'function',
+            name: t.name,
+            description: t.description,
+            parameters: t.parameters,
+          }));
+        }
+
         this.ws!.send(JSON.stringify(sessionConfig));
 
         if (this.config.initialMessage) {
@@ -111,6 +121,16 @@ class GrokRealtimeSession implements VoiceSession {
 
           if (msg.type === 'conversation.item.input_audio_transcription.completed') {
             this.config.onTranscript?.('user', msg.transcript || '', true);
+          }
+
+          // Function call completed — forward to bridge for execution
+          if (msg.type === 'response.function_call_arguments.done') {
+            this._responding = false;
+            const callId = msg.call_id || '';
+            const fnName = msg.name || '';
+            const fnArgs = msg.arguments || '{}';
+            console.log('[grok-realtime] Function call:', { callId, fnName });
+            this.config.onFunctionCall?.(callId, fnName, fnArgs);
           }
 
           if (msg.type === 'input_audio_buffer.speech_started') {
@@ -168,6 +188,23 @@ class GrokRealtimeSession implements VoiceSession {
           type: 'message',
           role: 'user',
           content: [{ type: 'input_text', text }],
+        },
+      }));
+      this.ws.send(JSON.stringify({
+        type: 'response.create',
+        response: { modalities: ['text', 'audio'] },
+      }));
+    }
+  }
+
+  sendFunctionResult(callId: string, result: string): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        type: 'conversation.item.create',
+        item: {
+          type: 'function_call_output',
+          call_id: callId,
+          output: result,
         },
       }));
       this.ws.send(JSON.stringify({

@@ -10,6 +10,14 @@ import type { WebSocket } from 'ws';
 
 export type AudioFormat = 'pcmu' | 'pcma' | 'ulaw_8000' | 'g711_ulaw' | 'g711_alaw' | 'pcm_16000' | 'pcm_24000';
 
+/** Tool/function definition for voice providers that support function calling */
+export interface VoiceToolDefinition {
+  type: 'function';
+  name: string;
+  description: string;
+  parameters: Record<string, any>; // JSON Schema
+}
+
 export interface VoiceSessionConfig {
   providerId: string;
   agentId?: string;
@@ -21,12 +29,16 @@ export interface VoiceSessionConfig {
   metadata?: Record<string, any>;
   inputAudioFormat?: AudioFormat;
   outputAudioFormat?: AudioFormat;
+  /** Tools the voice AI can call during the conversation */
+  tools?: VoiceToolDefinition[];
   /** Callback to capture transcript events */
   onTranscript?: (role: 'user' | 'assistant', text: string, isFinal: boolean) => void;
   /** Callback when the session ends */
   onSessionEnd?: (reason: string) => void;
   /** Callback for interruption events */
   onInterruption?: () => void;
+  /** Callback when the voice AI wants to call a function/tool */
+  onFunctionCall?: (callId: string, name: string, args: string) => void;
 }
 
 export interface VoiceSession {
@@ -38,6 +50,8 @@ export interface VoiceSession {
   onAudio(callback: (audioBase64: string) => void): void;
   /** Send a text message to inject into the conversation */
   sendText?(text: string): void;
+  /** Send a function call result back to the voice AI */
+  sendFunctionResult?(callId: string, result: string): void;
   /** Interrupt the current agent speech */
   interrupt?(): void;
   /** Close the session */

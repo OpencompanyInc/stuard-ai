@@ -29,6 +29,11 @@ import {
   ChevronRight,
   File,
   AppWindow,
+  Bookmark,
+  Settings2,
+  FileType,
+  ToggleLeft,
+  ToggleRight,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { supabase } from "../lib/supabaseClient";
@@ -152,6 +157,14 @@ const KIND_COLORS: Record<string, string> = {
   other: "text-theme-muted",
 };
 
+const EXTENSION_GROUPS: { label: string; kind: string; extensions: string[] }[] = [
+  { label: "Documents", kind: "document", extensions: [".pdf", ".docx", ".doc", ".txt", ".rtf", ".odt", ".pptx", ".xlsx", ".csv", ".md", ".epub"] },
+  { label: "Code", kind: "code", extensions: [".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs", ".java", ".cpp", ".c", ".h", ".rb", ".php", ".swift", ".kt", ".json", ".yaml", ".yml", ".toml", ".xml", ".html", ".css", ".scss", ".sql", ".sh", ".bat", ".ps1"] },
+  { label: "Images", kind: "image", extensions: [".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".ico", ".tiff"] },
+  { label: "Video", kind: "video", extensions: [".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv"] },
+  { label: "Audio", kind: "audio", extensions: [".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma"] },
+];
+
 export const FileIndexSettings: React.FC = () => {
   const [roots, setRoots] = useState<IndexedRoot[]>([]);
   const [stats, setStats] = useState<IndexStats | null>(null);
@@ -179,6 +192,10 @@ export const FileIndexSettings: React.FC = () => {
   const [semanticKindFilter, setSemanticKindFilter] = useState<string | null>(null);
   const [loadingSemanticFiles, setLoadingSemanticFiles] = useState(false);
   const [selectedKinds, setSelectedKinds] = useState<Set<string>>(new Set(["document", "code", "image"]));
+
+  // Folder config panel
+  const [expandedFolderId, setExpandedFolderId] = useState<string | null>(null);
+  const [addedToShortcuts, setAddedToShortcuts] = useState(false);
 
   const api = (window as any).desktopAPI;
 
@@ -373,6 +390,39 @@ export const FileIndexSettings: React.FC = () => {
     });
   };
 
+  // Persist selected kinds to main-process settings
+  useEffect(() => {
+    try {
+      (window as any).desktopAPI?.prefsSet?.('semanticIndexKinds', Array.from(selectedKinds));
+    } catch { }
+  }, [selectedKinds]);
+
+  // Load persisted kinds on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await (window as any).desktopAPI?.prefsGetAll?.();
+        if (res?.ok && Array.isArray(res.prefs?.semanticIndexKinds)) {
+          setSelectedKinds(new Set(res.prefs.semanticIndexKinds));
+        }
+      } catch { }
+    })();
+  }, []);
+
+  const handleAddToShortcuts = async () => {
+    try {
+      const bookmark = {
+        id: `bm_semantic_${Date.now()}`,
+        name: 'Semantic Search',
+        type: 'semantic-search',
+        target: 'semantic-search',
+      };
+      await api?.bookmarksAdd?.(bookmark);
+      setAddedToShortcuts(true);
+      setTimeout(() => setAddedToShortcuts(false), 3000);
+    } catch { }
+  };
+
   const filteredSemanticFiles = semanticFiles.filter((f) => {
     if (semanticFilter === "pending" && f.status !== "pending" && f.status !== "stale") return false;
     if (semanticFilter === "indexed" && f.status !== "indexed") return false;
@@ -540,43 +590,102 @@ export const FileIndexSettings: React.FC = () => {
           </div>
         ) : (
           <div className="space-y-1.5">
-            {roots.map((root) => (
-              <div
-                key={root.id}
-                className="flex items-center gap-3 p-2.5 bg-theme-hover rounded-lg border border-theme group"
-              >
-                <FolderOpen className="w-4 h-4 text-primary flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-theme-fg truncate text-[13px]">{root.path}</div>
-                  <div className="flex items-center gap-2 text-[10px] text-theme-muted">
-                    <span>{formatTime(root.last_scan_at)}</span>
-                    <span className="text-theme/50">•</span>
-                    <span className="capitalize">{root.schedule}</span>
+            {roots.map((root) => {
+              const isExpanded = expandedFolderId === root.id;
+              const folderName = root.path.split(/[/\\]/).filter(Boolean).pop() || root.path;
+              return (
+                <div key={root.id} className="rounded-xl border border-theme overflow-hidden">
+                  <div
+                    className="flex items-center gap-3 p-2.5 bg-theme-hover group cursor-pointer"
+                    onClick={() => setExpandedFolderId(isExpanded ? null : root.id)}
+                  >
+                    <FolderOpen className="w-4 h-4 text-primary flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-bold text-theme-fg truncate text-[13px]">{folderName}</div>
+                      <div className="text-[10px] text-theme-muted truncate">{root.path}</div>
+                      <div className="flex items-center gap-2 text-[10px] text-theme-muted mt-0.5">
+                        <Clock className="w-3 h-3" />
+                        <span>{formatTime(root.last_scan_at)}</span>
+                        <span className="text-theme/50">•</span>
+                        <span className="px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[9px] font-bold uppercase">{root.schedule}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleScan(root.id); }}
+                        disabled={scanning === root.id}
+                        className="p-1.5 rounded-md hover:bg-theme-active text-theme-muted hover:text-theme-fg transition-colors"
+                        title="Rescan"
+                      >
+                        {scanning === root.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleRemoveRoot(root.id); }}
+                        className="p-1.5 rounded-md hover:bg-red-500/10 text-theme-muted hover:text-red-500 transition-colors"
+                        title="Remove"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                      <ChevronRight className={clsx("w-3.5 h-3.5 text-theme-muted transition-transform", isExpanded && "rotate-90")} />
+                    </div>
                   </div>
+
+                  {/* Expanded folder config */}
+                  {isExpanded && (
+                    <div className="px-3 py-3 bg-theme-card border-t border-theme space-y-3">
+                      {/* Schedule selector */}
+                      <div>
+                        <div className="text-[10px] font-bold text-theme-muted uppercase tracking-widest mb-1.5">Scan Schedule</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {(["off", "hourly", "daily", "weekly"] as const).map((sched) => (
+                            <button
+                              key={sched}
+                              onClick={async () => {
+                                try {
+                                  await api?.fileIndexRemoveRoot?.(root.id);
+                                  await api?.fileIndexAddRoot?.(root.path, sched);
+                                  await loadData();
+                                } catch { }
+                              }}
+                              className={clsx(
+                                "px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all capitalize",
+                                root.schedule === sched
+                                  ? "bg-primary/10 border-primary/30 text-primary"
+                                  : "bg-theme-hover border-theme text-theme-muted hover:text-theme-fg"
+                              )}
+                            >
+                              {sched}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* File types info */}
+                      <div>
+                        <div className="text-[10px] font-bold text-theme-muted uppercase tracking-widest mb-1.5">Indexed File Types</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {EXTENSION_GROUPS.map((group) => (
+                            <div
+                              key={group.kind}
+                              className="flex items-center gap-1 px-2 py-1 rounded-lg bg-theme-hover border border-theme text-[10px]"
+                            >
+                              <KindIcon kind={group.kind} className={clsx("w-3 h-3", KIND_COLORS[group.kind])} />
+                              <span className="font-medium text-theme-fg">{group.label}</span>
+                              <span className="text-theme-muted">({group.extensions.length})</span>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-[9px] text-theme-muted mt-1.5">All file types within this folder are scanned. Use the Semantic Indexing section below to choose which types get AI embeddings.</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button
-                    onClick={() => handleScan(root.id)}
-                    disabled={scanning === root.id}
-                    className="p-1.5 rounded-md hover:bg-theme-active text-theme-muted hover:text-theme-fg transition-colors"
-                    title="Rescan"
-                  >
-                    {scanning === root.id ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <RefreshCw className="w-3.5 h-3.5" />
-                    )}
-                  </button>
-                  <button
-                    onClick={() => handleRemoveRoot(root.id)}
-                    className="p-1.5 rounded-md hover:bg-red-500/10 text-theme-muted hover:text-red-500 transition-colors"
-                    title="Remove"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -587,102 +696,195 @@ export const FileIndexSettings: React.FC = () => {
           <div className="flex items-center gap-2">
             <Brain className="w-4 h-4 text-purple-500" />
             <span className="text-sm font-bold text-theme-fg">Semantic Indexing</span>
+            <span className="text-[10px] text-theme-muted font-medium">AI-powered file search</span>
           </div>
-          <button
-            onClick={() => setShowSemanticManager(!showSemanticManager)}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all"
-          >
-            <Filter className="w-3.5 h-3.5" />
-            Manage
-            <ChevronRight className={clsx("w-3.5 h-3.5 transition-transform", showSemanticManager && "rotate-90")} />
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Add to Quick Shortcuts */}
+            <button
+              onClick={handleAddToShortcuts}
+              disabled={addedToShortcuts}
+              className={clsx(
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all",
+                addedToShortcuts
+                  ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
+                  : "bg-amber-500/10 text-amber-600 border border-amber-500/20 hover:bg-amber-500/20"
+              )}
+            >
+              {addedToShortcuts ? (
+                <>
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  Added!
+                </>
+              ) : (
+                <>
+                  <Bookmark className="w-3.5 h-3.5" />
+                  Add to Shortcuts
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => setShowSemanticManager(!showSemanticManager)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all"
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+              Configure
+              <ChevronRight className={clsx("w-3.5 h-3.5 transition-transform", showSemanticManager && "rotate-90")} />
+            </button>
+          </div>
         </div>
 
         {/* Semantic Manager Panel */}
         {showSemanticManager && (
-          <div className="mb-4 p-4 bg-theme-hover rounded-xl border border-theme">
-            <div className="text-xs text-theme-muted mb-3">
-              Choose which file types to semantically index. AI will analyze content and create searchable embeddings.
+          <div className="mb-4 rounded-xl border border-purple-500/20 overflow-hidden">
+            {/* Header */}
+            <div className="p-4 bg-purple-500/5 border-b border-purple-500/20">
+              <div className="flex items-center gap-2 mb-1">
+                <Sparkles className="w-4 h-4 text-purple-500" />
+                <span className="text-sm font-bold text-theme-fg">Embedding Configuration</span>
+              </div>
+              <p className="text-[11px] text-theme-muted">
+                Select which file types get AI embeddings for semantic search. Embedded files can be found by meaning, not just keywords.
+              </p>
             </div>
 
-            {/* Kind Selection */}
-            <div className="flex flex-wrap gap-2 mb-3">
-              {KIND_OPTIONS.map((opt) => {
-                const pending = pendingByKind[opt.kind] || 0;
-                const indexed = indexedByKind[opt.kind] || 0;
-                const isSelected = selectedKinds.has(opt.kind);
-                const colorClass = KIND_COLORS[opt.kind] || "text-theme-muted";
+            <div className="p-4 bg-theme-hover space-y-4">
+              {/* Kind Selection - Card style */}
+              <div>
+                <div className="text-[10px] font-bold text-theme-muted uppercase tracking-widest mb-2">File Types to Embed</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {KIND_OPTIONS.map((opt) => {
+                    const pending = pendingByKind[opt.kind] || 0;
+                    const indexed = indexedByKind[opt.kind] || 0;
+                    const isSelected = selectedKinds.has(opt.kind);
+                    const colorClass = KIND_COLORS[opt.kind] || "text-theme-muted";
 
-                return (
-                  <button
-                    key={opt.kind}
-                    onClick={() => toggleKind(opt.kind)}
-                    className={clsx(
-                      "flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-bold transition-all",
-                      isSelected
-                        ? "bg-primary/10 border-primary/30 text-primary"
-                        : "bg-theme-card border-theme text-theme-muted hover:border-primary/20"
-                    )}
-                  >
-                    <KindIcon kind={opt.kind} className={clsx("w-3.5 h-3.5", colorClass)} />
-                    <span>{opt.label}</span>
-                    {(pending > 0 || indexed > 0) && (
-                      <span className="text-[10px] opacity-70">
-                        ({indexed}✓, {pending}⏳)
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* File List Preview */}
-            <div className="border-t border-theme pt-3 mt-3">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <select
-                    value={semanticFilter}
-                    onChange={(e) => setSemanticFilter(e.target.value as any)}
-                    className="px-2 py-1 rounded border border-theme bg-theme-card text-xs font-medium text-theme-fg"
-                  >
-                    <option value="pending">Pending ({stats?.pending_files || 0})</option>
-                    <option value="indexed">Indexed ({stats?.indexed_files || 0})</option>
-                    <option value="all">All Files</option>
-                  </select>
+                    return (
+                      <button
+                        key={opt.kind}
+                        onClick={() => toggleKind(opt.kind)}
+                        className={clsx(
+                          "flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all text-left",
+                          isSelected
+                            ? "bg-primary/10 border-primary/30 shadow-sm"
+                            : "bg-theme-card border-theme hover:border-primary/20"
+                        )}
+                      >
+                        <div className={clsx(
+                          "w-8 h-8 rounded-lg flex items-center justify-center",
+                          isSelected ? "bg-primary/20" : "bg-theme-hover"
+                        )}>
+                          <KindIcon kind={opt.kind} className={clsx("w-4 h-4", isSelected ? "text-primary" : colorClass)} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className={clsx("text-xs font-bold", isSelected ? "text-primary" : "text-theme-fg")}>{opt.label}</span>
+                            {isSelected ? (
+                              <ToggleRight className="w-4 h-4 text-primary" />
+                            ) : (
+                              <ToggleLeft className="w-4 h-4 text-theme-muted" />
+                            )}
+                          </div>
+                          <div className="text-[10px] text-theme-muted">{opt.desc}</div>
+                          {(pending > 0 || indexed > 0) && (
+                            <div className="flex items-center gap-2 mt-0.5">
+                              {indexed > 0 && <span className="text-[9px] text-emerald-500 font-bold">{indexed} indexed</span>}
+                              {pending > 0 && <span className="text-[9px] text-amber-500 font-bold">{pending} pending</span>}
+                            </div>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
-                {loadingSemanticFiles && <Loader2 className="w-3.5 h-3.5 animate-spin text-theme-muted" />}
               </div>
 
-              <div className="max-h-48 overflow-y-auto space-y-1 scrollbar-hidden">
-                {filteredSemanticFiles.slice(0, 50).map((f) => (
-                  <div
-                    key={f.id}
-                    className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-theme-card/50 text-xs"
-                  >
-                    <KindIcon kind={f.kind} className={clsx("w-3.5 h-3.5 flex-shrink-0", KIND_COLORS[f.kind])} />
-                    <span className="truncate flex-1 text-theme-fg">{f.filename}</span>
-                    <span
-                      className={clsx(
-                        "px-1.5 py-0.5 rounded text-[9px] font-bold",
-                        f.status === "indexed"
-                          ? "bg-emerald-500/10 text-emerald-500"
-                          : f.status === "error"
-                          ? "bg-red-500/10 text-red-500"
-                          : "bg-amber-500/10 text-amber-500"
-                      )}
+              {/* Extension detail */}
+              <div>
+                <div className="text-[10px] font-bold text-theme-muted uppercase tracking-widest mb-1.5">Supported Extensions</div>
+                <div className="flex flex-wrap gap-1">
+                  {EXTENSION_GROUPS
+                    .filter((g) => selectedKinds.has(g.kind))
+                    .flatMap((g) => g.extensions)
+                    .map((ext) => (
+                      <span key={ext} className="px-1.5 py-0.5 rounded bg-theme-card border border-theme text-[9px] font-mono text-theme-muted">
+                        {ext}
+                      </span>
+                    ))}
+                </div>
+              </div>
+
+              {/* File List Preview */}
+              <div className="border-t border-theme pt-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={semanticFilter}
+                      onChange={(e) => setSemanticFilter(e.target.value as any)}
+                      className="px-2 py-1 rounded-lg border border-theme bg-theme-card text-xs font-medium text-theme-fg"
                     >
-                      {f.status === "indexed" ? "✓" : f.status === "error" ? "!" : "⏳"}
+                      <option value="pending">Pending ({stats?.pending_files || 0})</option>
+                      <option value="indexed">Indexed ({stats?.indexed_files || 0})</option>
+                      <option value="all">All Files</option>
+                    </select>
+                    {/* Kind sub-filter */}
+                    <select
+                      value={semanticKindFilter || ""}
+                      onChange={(e) => setSemanticKindFilter(e.target.value || null)}
+                      className="px-2 py-1 rounded-lg border border-theme bg-theme-card text-xs font-medium text-theme-fg"
+                    >
+                      <option value="">All Types</option>
+                      {KIND_OPTIONS.map((opt) => (
+                        <option key={opt.kind} value={opt.kind}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {loadingSemanticFiles && <Loader2 className="w-3.5 h-3.5 animate-spin text-theme-muted" />}
+                    <span className="text-[10px] text-theme-muted font-medium">
+                      {filteredSemanticFiles.length} files
                     </span>
                   </div>
-                ))}
-                {filteredSemanticFiles.length === 0 && (
-                  <div className="text-center py-4 text-xs text-theme-muted">No files match the filter</div>
-                )}
-                {filteredSemanticFiles.length > 50 && (
-                  <div className="text-center py-2 text-xs text-theme-muted">
-                    +{filteredSemanticFiles.length - 50} more files
-                  </div>
-                )}
+                </div>
+
+                <div className="max-h-56 overflow-y-auto space-y-1 scrollbar-hidden rounded-lg">
+                  {filteredSemanticFiles.slice(0, 50).map((f) => (
+                    <div
+                      key={f.id}
+                      className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-theme-card/50 text-xs hover:bg-theme-card transition-colors group"
+                    >
+                      <KindIcon kind={f.kind} className={clsx("w-3.5 h-3.5 flex-shrink-0", KIND_COLORS[f.kind])} />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-theme-fg font-medium truncate">{f.filename}</div>
+                        {f.summary && (
+                          <div className="text-[10px] text-theme-muted truncate">{f.summary}</div>
+                        )}
+                      </div>
+                      <span
+                        className={clsx(
+                          "px-1.5 py-0.5 rounded text-[9px] font-bold shrink-0",
+                          f.status === "indexed"
+                            ? "bg-emerald-500/10 text-emerald-500"
+                            : f.status === "error"
+                            ? "bg-red-500/10 text-red-500"
+                            : "bg-amber-500/10 text-amber-500"
+                        )}
+                      >
+                        {f.status === "indexed" ? "Embedded" : f.status === "error" ? "Error" : "Pending"}
+                      </span>
+                    </div>
+                  ))}
+                  {filteredSemanticFiles.length === 0 && (
+                    <div className="text-center py-6 text-xs text-theme-muted">
+                      <FileType className="w-6 h-6 mx-auto mb-1.5 opacity-30" />
+                      No files match the current filter
+                    </div>
+                  )}
+                  {filteredSemanticFiles.length > 50 && (
+                    <div className="text-center py-2 text-xs text-theme-muted font-medium">
+                      +{filteredSemanticFiles.length - 50} more files
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>

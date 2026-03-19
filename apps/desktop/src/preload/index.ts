@@ -213,6 +213,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   workflowsReadWorkspaceStuard: (id: string, subPath: string) => ipcRenderer.invoke('workflows:readWorkspaceStuard', id, subPath),
   workflowsSaveWorkspaceStuard: (id: string, subPath: string, content: string) => ipcRenderer.invoke('workflows:saveWorkspaceStuard', id, subPath, content),
   workflowsListWorkspaceFunctions: (id: string) => ipcRenderer.invoke('workflows:listWorkspaceFunctions', id),
+  workflowsGetAgentToolOptions: () => ipcRenderer.invoke('workflows:getAgentToolOptions'),
   // Skills
   skillsList: () => ipcRenderer.invoke('skills:list'),
   skillsGet: (id: string) => ipcRenderer.invoke('skills:get', id),
@@ -280,10 +281,19 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   getTimezone: () => ipcRenderer.invoke('prefs:getTimezone'),
   setTimezone: (tz: string | null) => ipcRenderer.invoke('prefs:setTimezone', tz),
   themeApply: (prefs: any) => ipcRenderer.invoke('prefs:applyTheme', prefs),
+  // Persistent renderer preferences (survive restarts)
+  prefsGetAll: () => ipcRenderer.invoke('prefs:getAll'),
+  prefsSet: (key: string, value: any) => ipcRenderer.invoke('prefs:set', key, value),
+  prefsSetMany: (prefs: Record<string, any>) => ipcRenderer.invoke('prefs:setMany', prefs),
   onThemeUpdated: (cb: (data: any) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('prefs:themeUpdated', handler);
     return () => { try { ipcRenderer.off('prefs:themeUpdated', handler); } catch { } };
+  },
+  onSemanticSearchRequested: (cb: () => void) => {
+    const handler = () => cb();
+    ipcRenderer.on('overlay:semantic-search', handler);
+    return () => { try { ipcRenderer.off('overlay:semantic-search', handler); } catch { } };
   },
   updatesGetState: () => ipcRenderer.invoke('updates:getState'),
   updatesCheck: () => ipcRenderer.invoke('updates:check'),

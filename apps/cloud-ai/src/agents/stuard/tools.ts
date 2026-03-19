@@ -40,7 +40,7 @@ import { browser_use_status, browser_use_configure, browser_use_execute_script, 
 import { submitFeedback, reportBug, suggestFeature, listMyFeedback, getFeedbackDetails } from '../../tools/feedback-tools';
 import { telnyx_send_sms, telnyx_call_control, telnyx_phone_status, telnyx_send_mms, telnyx_send_voice_note, telnyx_voice_call, telnyx_list_voice_providers, telnyx_list_active_calls, telnyx_hangup_call } from '../../tools/telnyx-tools';
 import { whatsapp_send_message, whatsapp_send_media, whatsapp_send_reaction, whatsapp_mark_read, whatsapp_upload_media, whatsapp_status, whatsapp_get_media_url, whatsapp_download_media, whatsapp_send_voice_note, whatsapp_transcribe_voice_note, whatsapp_send_template, whatsapp_voice_call, whatsapp_make_call } from '../../tools/whatsapp-tools';
-import { facebook_get_me, facebook_list_pages, facebook_list_page_posts, facebook_create_page_post, instagram_get_me, instagram_list_media, instagram_publish_media, threads_get_me, threads_list_posts, threads_publish_post } from '../../tools/meta-social-tools';
+import { facebook_get_me, facebook_list_pages, facebook_list_page_posts, facebook_create_page_post, facebook_list_post_comments, facebook_reply_comment, facebook_delete_post, facebook_list_conversations, facebook_get_conversation_messages, facebook_send_message, instagram_get_me, instagram_list_media, instagram_publish_media, instagram_list_comments, instagram_reply_comment, instagram_delete_comment, instagram_list_conversations, instagram_get_conversation_messages, instagram_send_dm, threads_get_me, threads_list_posts, threads_publish_post, threads_get_post, threads_list_replies, threads_reply_to_post } from '../../tools/meta-social-tools';
 import { text_to_speech, list_tts_voices, get_tts_models, elevenlabs_list_agents, elevenlabs_get_signed_conversation_url, elevenlabs_get_webrtc_token, elevenlabs_list_conversations, elevenlabs_get_conversation } from '../../tools/tts-tools';
 import { cloud_storage_upload, cloud_storage_get_url, cloud_storage_list, cloud_storage_delete, cloud_storage_set_visibility } from '../../tools/cloud-storage-tools';
 import { http_request } from '../../tools/http-tools';
@@ -418,17 +418,34 @@ export const ALL_TOOLS = {
   whatsapp_send_template,
   whatsapp_voice_call,
   whatsapp_make_call,
-  // Meta social tools
+  // Meta social tools — Facebook
   facebook_get_me,
   facebook_list_pages,
   facebook_list_page_posts,
   facebook_create_page_post,
+  facebook_list_post_comments,
+  facebook_reply_comment,
+  facebook_delete_post,
+  facebook_list_conversations,
+  facebook_get_conversation_messages,
+  facebook_send_message,
+  // Meta social tools — Instagram
   instagram_get_me,
   instagram_list_media,
   instagram_publish_media,
+  instagram_list_comments,
+  instagram_reply_comment,
+  instagram_delete_comment,
+  instagram_list_conversations,
+  instagram_get_conversation_messages,
+  instagram_send_dm,
+  // Meta social tools — Threads
   threads_get_me,
   threads_list_posts,
   threads_publish_post,
+  threads_get_post,
+  threads_list_replies,
+  threads_reply_to_post,
 } as const;
 
 const _INTERNAL_SPACE_TOOLS = {
