@@ -28,6 +28,7 @@ export interface UnifiedPlannerViewProps {
 
 const HOUR_HEIGHT = 92;
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
+const DOT_COLORS = ['#f97316', '#a855f7', '#06b6d4', '#f43f5e', '#22c55e', '#eab308', '#6366f1', '#ec4899'];
 
 const formatLocalDateKey = (d: Date): string => {
   const y = d.getFullYear();
@@ -168,6 +169,13 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
   };
 
   const getBlockMeta = (block: any) => {
+    if (block?.source === 'reminder') {
+      return {
+        label: 'Reminder',
+        dotClass: 'bg-amber-500',
+        chipClass: 'bg-amber-500/12 text-amber-400 border border-amber-500/20',
+      };
+    }
     if (block?.source === 'task' || block?.source === 'unified-tasks') {
       return {
         label: 'Task',
@@ -207,22 +215,43 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
     }
   };
 
-  // Convert tasks with due dates to calendar blocks
+  // Convert tasks with due dates to calendar blocks, plus reminder blocks
   const taskBlocks = useMemo(() => {
-    return tasks
-      .filter(t => t.dueDate && t.status !== 'completed' && t.showInCalendar !== false)
-      .map(t => ({
-        id: `task_${t.id}`,
-        title: t.title,
-        start: t.dueDate,
-        end: t.dueDate,
-        allDay: t.allDay !== false,
-        source: 'task',
-        priority: t.priority,
-        taskId: t.id,
-        subTodosTotal: t.subTodos?.length || t.subTodosTotal || 0,
-        subTodosCompleted: t.subTodos?.filter((s: any) => s.completed).length || t.subTodosCompleted || 0,
-      }));
+    const blocks: any[] = [];
+    for (const t of tasks) {
+      if (t.status === 'completed' || t.showInCalendar === false) continue;
+      // Task block (if it has a dueDate)
+      if (t.dueDate) {
+        blocks.push({
+          id: `task_${t.id}`,
+          title: t.title,
+          start: t.dueDate,
+          end: t.dueDate,
+          allDay: t.allDay !== false,
+          source: 'task',
+          priority: t.priority,
+          taskId: t.id,
+          subTodosTotal: t.subTodos?.length || t.subTodosTotal || 0,
+          subTodosCompleted: t.subTodos?.filter((s: any) => s.completed).length || t.subTodosCompleted || 0,
+        });
+      }
+      // Reminder blocks from agentAssignments
+      const reminders = (t.agentAssignments || []).filter((a: any) => a.status === 'pending' && a.scheduledAt);
+      for (const r of reminders) {
+        blocks.push({
+          id: `reminder_${t.id}_${r.id}`,
+          title: r.message || `Reminder: ${t.title}`,
+          start: r.scheduledAt,
+          end: r.scheduledAt,
+          allDay: false,
+          source: 'reminder',
+          priority: t.priority,
+          taskId: t.id,
+          reminderOf: t.title,
+        });
+      }
+    }
+    return blocks;
   }, [tasks]);
 
   // Merge calendar blocks with task blocks
@@ -766,11 +795,13 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
                         "absolute rounded-[18px] border p-4 text-left overflow-hidden cursor-pointer transition-all hover:z-20 cursor-move shadow-[0_14px_34px_rgba(0,0,0,0.18)] group/block",
                         isSelected
                           ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg border-orange-400 z-20 shadow-[0_18px_40px_rgba(0,0,0,0.22)]"
-                          : b.source === 'task'
-                            ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg border-emerald-500 hover:border-emerald-400 z-10"
-                            : b.source === 'local'
-                              ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg border-violet-500 hover:border-violet-400 z-10"
-                              : "bg-[color:var(--dashboard-panel-solid)] text-theme-fg border-orange-400 hover:border-orange-300 z-10"
+                          : b.source === 'reminder'
+                            ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg border-amber-500 hover:border-amber-400 z-10"
+                            : b.source === 'task'
+                              ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg border-emerald-500 hover:border-emerald-400 z-10"
+                              : b.source === 'local'
+                                ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg border-violet-500 hover:border-violet-400 z-10"
+                                : "bg-[color:var(--dashboard-panel-solid)] text-theme-fg border-orange-400 hover:border-orange-300 z-10"
                       )}
                       style={{
                         top: entry.top + 8,
@@ -845,13 +876,20 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
                           )}
                         >
                           {day.blocks.length > 0 && (
-                            <div className="absolute top-2 right-2 flex max-w-[34px] flex-wrap items-center justify-end gap-1">
-                              {day.blocks.slice(0, 6).map((b: any, idx: number) => {
-                                const meta = getBlockMeta(b);
-                                return <span key={`${b.id}-${idx}`} className={clsx("w-2 h-2 rounded-full", meta.dotClass)} />;
-                              })}
-                              {day.blocks.length > 6 && (
-                                <span className="text-[9px] leading-none font-semibold text-theme-muted">+{day.blocks.length - 6}</span>
+                            <div className="absolute top-[6px] right-[6px] flex items-center">
+                              <div className="flex items-center -space-x-[5px]">
+                                {day.blocks.slice(0, 3).map((b: any, idx: number) => {
+                                  return (
+                                    <span
+                                      key={`${b.id}-${idx}`}
+                                      className="w-[10px] h-[10px] rounded-full ring-[1.5px] ring-[color:var(--dashboard-bg,var(--theme-bg))]"
+                                      style={{ zIndex: 3 - idx, backgroundColor: DOT_COLORS[idx % DOT_COLORS.length] }}
+                                    />
+                                  );
+                                })}
+                              </div>
+                              {day.blocks.length > 3 && (
+                                <span className="text-[8px] leading-none font-bold text-theme-muted ml-1">+{day.blocks.length - 3}</span>
                               )}
                             </div>
                           )}

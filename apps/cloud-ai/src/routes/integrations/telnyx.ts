@@ -28,6 +28,9 @@ const TELNYX_API = 'https://api.telnyx.com/v2';
 // Track inbound calls that are pending streaming setup (for streaming.failed fallback)
 const pendingInboundCalls = new Map<string, { fromNumber: string; answeredAt: number }>();
 
+// Track call direction from call.initiated (Telnyx may not include direction in later events)
+const callDirectionCache = new Map<string, string>();
+
 // Pending verification maps (primary & secondary)
 const pendingVerifications = new Map<string, { code: string; phone: string; expiresAt: number }>();
 const pendingSecondaryVerifications = new Map<string, { code: string; phone: string; expiresAt: number }>();
@@ -961,8 +964,11 @@ async function processCallWebhook(rawBody: string): Promise<void> {
   switch (eventType) {
     // ── Incoming call — answer with streaming in one step ────────────────
     case 'call.initiated': {
+      // Cache direction for later events (Telnyx may omit it in call.answered)
+      if (direction) callDirectionCache.set(callControlId, direction);
+
       if (direction !== 'incoming') {
-        console.log('[telnyx] Ignoring non-incoming call.initiated', { direction });
+        console.log('[telnyx] Outbound call.initiated tracked', { direction, callControlId: callControlId.slice(0, 24) });
         return;
       }
 
@@ -981,12 +987,27 @@ async function processCallWebhook(rawBody: string): Promise<void> {
 
     // ── Call answered — start streaming for outbound calls ──────────────
     case 'call.answered': {
-      console.log('[telnyx] Call answered', { callControlId: callControlId.slice(0, 24), direction });
+      // Telnyx often omits direction in call.answered — use cached value from call.initiated
+      const effectiveDirection = direction || callDirectionCache.get(callControlId) || '';
+      callDirectionCache.delete(callControlId);
+      const customHeaders: Array<{ name: string; value: string }> = eventPayload?.custom_headers || [];
+
+      console.log('[telnyx] Call answered', {
+        callControlId: callControlId.slice(0, 24),
+        direction: effectiveDirection,
+        rawDirection: direction,
+        hasCustomHeaders: customHeaders.length > 0,
+      });
 
       // For outbound calls, streaming wasn't started in the answer command
       // (since WE placed the call). We need to start it now.
-      if (direction === 'outgoing') {
-        const customHeaders: Array<{ name: string; value: string }> = eventPayload?.custom_headers || [];
+      // Check direction AND custom headers as fallback (X-Voice-Bridge = AI call,
+      // X-Tts-Message = proactive TTS call). Telnyx often omits direction in this event.
+      const isOutbound = effectiveDirection === 'outgoing' ||
+        (!effectiveDirection && customHeaders.some(h =>
+          h.name === 'X-Voice-Bridge' || h.name === 'X-Tts-Message'));
+
+      if (isOutbound) {
         const bridgeHeader = customHeaders.find(h => h.name === 'X-Voice-Bridge');
         const wsUrlHeader = customHeaders.find(h => h.name === 'X-Bridge-Ws-Url');
         const ttsHeader = customHeaders.find(h => h.name === 'X-Tts-Message');
@@ -1093,6 +1114,7 @@ async function processCallWebhook(rawBody: string): Promise<void> {
         hangupCause: eventPayload?.hangup_cause || 'unknown',
       });
       pendingInboundCalls.delete(callControlId);
+      callDirectionCache.delete(callControlId);
       break;
     }
 

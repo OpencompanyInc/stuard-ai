@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import "./styles.css";
 import "./scrollbar.css";
@@ -333,7 +333,14 @@ function DashboardApp() {
   const [stuardsLoading, setStuardsLoading] = useState(false);
   // Calendar (Google-backed, Stuard blocks)
   const [calendarView, setCalendarView] = useState<'today' | 'month'>('month');
-  const [calendarRefDate, setCalendarRefDate] = useState<Date>(new Date());
+  const [calendarRefDate, setCalendarRefDateRaw] = useState<Date>(() => new Date());
+  const calendarRefMonthKey = `${calendarRefDate.getFullYear()}-${calendarRefDate.getMonth()}`;
+  const setCalendarRefDate = useCallback((d: Date) => {
+    setCalendarRefDateRaw(prev => {
+      if (prev.getFullYear() === d.getFullYear() && prev.getMonth() === d.getMonth()) return prev;
+      return d;
+    });
+  }, []);
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [calendarBlocks, setCalendarBlocks] = useState<any[]>([]);
@@ -726,7 +733,7 @@ function DashboardApp() {
 
       setCalendarLoading(false);
     })();
-  }, [tab, calendarView, session?.access_token, calendarReloadToken, calendarRefDate]);
+  }, [tab, calendarView, session?.access_token, calendarReloadToken, calendarRefMonthKey]);
 
   const parseLocalDay = (iso: string) => {
     if (typeof iso === 'string' && iso.length === 10 && iso.includes('-')) {
@@ -929,32 +936,58 @@ function DashboardApp() {
     
     // Unified Tasks
     for (const t of unifiedTasks) {
-      if (!t || !t.dueDate || t.status === 'completed' || t.status === 'cancelled') continue;
+      if (!t || t.status === 'completed' || t.status === 'cancelled') continue;
       if (t.showInCalendar === false) continue;
 
-      let dt: Date | null = null;
-      try {
-        dt = new Date(t.dueDate);
-        if (Number.isNaN(dt.getTime())) dt = null;
-      } catch { dt = null; }
+      // Task block (if it has a dueDate)
+      if (t.dueDate) {
+        let dt: Date | null = null;
+        try {
+          dt = new Date(t.dueDate);
+          if (Number.isNaN(dt.getTime())) dt = null;
+        } catch { dt = null; }
 
-      if (!dt || !inRange(dt)) continue;
-      
-      const iso = dt.toISOString();
-      const isAllDay = t.allDay || iso.includes('T00:00:00.000Z'); // Heuristic if allDay prop missing
-      
-      blocks.push({
-        id: `task:${String(t.id)}`,
-        source: 'unified-tasks',
-        type: 'task',
-        title: String(t.title || '(task)'),
-        description: t.description,
-        start: iso,
-        end: isAllDay ? iso : new Date(dt.getTime() + 30 * 60000).toISOString(), // 30 min duration for timed tasks
-        allDay: isAllDay,
-        priority: t.priority,
-        original: t,
-      });
+        if (dt && inRange(dt)) {
+          const iso = dt.toISOString();
+          const isAllDay = t.allDay || iso.includes('T00:00:00.000Z');
+          blocks.push({
+            id: `task:${String(t.id)}`,
+            source: 'unified-tasks',
+            type: 'task',
+            title: String(t.title || '(task)'),
+            description: t.description,
+            start: iso,
+            end: isAllDay ? iso : new Date(dt.getTime() + 30 * 60000).toISOString(),
+            allDay: isAllDay,
+            priority: t.priority,
+            original: t,
+          });
+        }
+      }
+
+      // Reminder blocks from agentAssignments
+      const reminders = (t.agentAssignments || []).filter((a: any) => a.status === 'pending' && a.scheduledAt);
+      for (const r of reminders) {
+        let rdt: Date | null = null;
+        try {
+          rdt = new Date(r.scheduledAt);
+          if (Number.isNaN(rdt.getTime())) rdt = null;
+        } catch { rdt = null; }
+        if (!rdt || !inRange(rdt)) continue;
+        const riso = rdt.toISOString();
+        blocks.push({
+          id: `reminder:${String(t.id)}:${String(r.id)}`,
+          source: 'reminder',
+          type: 'reminder',
+          title: r.message || `Reminder: ${String(t.title || '')}`,
+          description: `Task: ${t.title}`,
+          start: riso,
+          end: new Date(rdt.getTime() + 15 * 60000).toISOString(),
+          allDay: false,
+          priority: t.priority,
+          original: t,
+        });
+      }
     }
 
     return blocks.sort((a, b) => {

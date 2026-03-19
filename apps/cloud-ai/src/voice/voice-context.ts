@@ -22,6 +22,8 @@ import {
   getBioLens,
   type Fact,
 } from '../knowledge/retrieval';
+import { getDesktopWs } from '../services/vm-bridge';
+import { withClientBridge } from '../tools/bridge';
 
 // ── Voice Tool Definitions ──────────────────────────────────────────────────
 // These are the tools the voice AI can call during a live call.
@@ -220,6 +222,36 @@ export interface VoiceContext {
 }
 
 /**
+ * Load knowledge facts through the desktop bridge (if connected).
+ * Knowledge graph lives in local SQLite on the user's machine — the desktop
+ * client must be online for these to be available. Degrades gracefully.
+ */
+async function loadKnowledgeFacts(userId: string): Promise<{
+  identity: Fact[];
+  directives: Fact[];
+  bio: Fact[];
+}> {
+  const empty = { identity: [] as Fact[], directives: [] as Fact[], bio: [] as Fact[] };
+  const desktopWs = getDesktopWs(userId);
+  if (!desktopWs) return empty;
+
+  try {
+    const result = await withClientBridge(desktopWs, async () => {
+      const [identity, directives, bio] = await Promise.all([
+        getIdentityLens().catch(() => [] as Fact[]),
+        getDirectiveLens().catch(() => [] as Fact[]),
+        getBioLens(10).catch(() => [] as Fact[]),
+      ]);
+      return { identity, directives, bio };
+    }) as { identity: Fact[]; directives: Fact[]; bio: Fact[] };
+    return result;
+  } catch (e: any) {
+    console.warn('[voice-context] Failed to load knowledge facts:', e?.message);
+    return empty;
+  }
+}
+
+/**
  * Build voice context for a user making/receiving a call.
  * Loads user profile and recent conversation context from Supabase.
  * Designed to be fast — no embedding search, just direct DB queries.
@@ -233,13 +265,12 @@ export async function buildVoiceContext(opts: {
   const { userId, direction, callerNumber, customPrompt } = opts;
 
   // Load recent context + knowledge graph in parallel (all fast, no embeddings)
-  const [recentMessages, userName, identityFacts, directiveFacts, bioFacts] = await Promise.all([
+  const [recentMessages, userName, knowledge] = await Promise.all([
     loadRecentContext(userId).catch(() => ''),
     loadUserName(userId).catch(() => undefined),
-    getIdentityLens().catch(() => [] as Fact[]),
-    getDirectiveLens().catch(() => [] as Fact[]),
-    getBioLens(10).catch(() => [] as Fact[]),
+    loadKnowledgeFacts(userId),
   ]);
+  const { identity: identityFacts, directives: directiveFacts, bio: bioFacts } = knowledge;
 
   // Extract real name from identity facts if available (overrides email-derived name)
   const knownName = identityFacts.find(f => f.attribute_key === 'name' && f.text && !isPlaceholder(f.text))?.text;

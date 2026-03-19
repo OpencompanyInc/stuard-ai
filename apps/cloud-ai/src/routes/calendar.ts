@@ -2,7 +2,7 @@
 import { type IncomingMessage, type ServerResponse } from 'http';
 import { verifyToken } from '../supabase';
 import { getExternalAccount, refreshGoogleTokenIfNeeded } from './integrations/google-shared';
-import { getCloudReminders } from '../tools/cloud-reminder-tools';
+import { getCloudReminders, syncReminderToCloud } from '../tools/cloud-reminder-tools';
 
 function computeRange(view: string, refDate?: Date): { start: Date; end: Date } {
   const now = refDate ? new Date(refDate) : new Date();
@@ -239,6 +239,55 @@ export async function handleCalendarRoutes(req: IncomingMessage, res: ServerResp
 
       const body = JSON.stringify({ ok: true, event: data });
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(body);
+      return true;
+    } catch (e) {
+      console.error(e);
+      const body = JSON.stringify({ ok: false, error: 'server_error' });
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(body);
+      return true;
+    }
+  }
+
+  // POST /v1/reminders/cloud — sync a reminder to cloud for SMS/WhatsApp delivery
+  if (req.method === 'POST' && path === '/v1/reminders/cloud') {
+    try {
+      const auth = String(req.headers['authorization'] || '');
+      const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+      const authUser = token ? await verifyToken(token) : null;
+      if (!authUser) {
+        const body = JSON.stringify({ ok: false, error: 'unauthorized' });
+        res.writeHead(401, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(body);
+        return true;
+      }
+
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const payload = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+
+      const { message, scheduledAt, deliveryMethod, recurrence } = payload || {};
+      if (!scheduledAt) {
+        const body = JSON.stringify({ ok: false, error: 'scheduledAt is required' });
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(body);
+        return true;
+      }
+
+      await syncReminderToCloud(authUser.userId, {
+        when: scheduledAt,
+        message: message || 'Reminder',
+        recurrence: recurrence || null,
+        cloud_notify_method: deliveryMethod || 'sms',
+      });
+
+      const body = JSON.stringify({ ok: true });
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'Access-Control-Allow-Origin': '*',
+      });
       res.end(body);
       return true;
     } catch (e) {

@@ -14,9 +14,36 @@ import {
   Bell,
   Clock,
   ListChecks,
-  Pencil
+  Pencil,
+  Cloud,
+  MessageSquare,
 } from 'lucide-react';
 import type { UnifiedTask, TaskPriority, AgentAssignment } from '../types/tasks';
+import { supabase } from '../lib/supabaseClient';
+
+async function syncReminderToCloudSMS(opts: { message: string; scheduledAt: string; deliveryMethod?: string }) {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const remindAt = new Date(opts.scheduledAt);
+    if (isNaN(remindAt.getTime())) return;
+
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+    const { error } = await supabase.from('cloud_reminders').insert({
+      user_id: user.id,
+      title: opts.message || 'Reminder',
+      message: opts.message || null,
+      remind_at: remindAt.toISOString(),
+      timezone: tz,
+      delivery_method: opts.deliveryMethod || 'sms',
+    });
+    if (error) console.error('Failed to sync reminder to cloud:', error.message);
+  } catch (e) {
+    console.error('Failed to sync reminder to cloud:', e);
+  }
+}
 
 export type TaskSubTab = 'todo' | 'reminders';
 
@@ -343,6 +370,19 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
                     </div>
                     <button
                       onClick={async () => {
+                        await syncReminderToCloudSMS({
+                          message: reminder.message || reminder.taskTitle || 'Reminder',
+                          scheduledAt: reminder.scheduledAt,
+                        });
+                        try { (window as any).desktopAPI?.notify?.('Synced', 'Reminder synced to cloud SMS.'); } catch { }
+                      }}
+                      className="p-1.5 text-theme-muted hover:text-sky-400 hover:bg-sky-400/10 rounded-lg transition-colors"
+                      title="Sync to cloud SMS"
+                    >
+                      <Cloud className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={async () => {
                         const defaultDateTime = reminder.scheduledAt ? String(reminder.scheduledAt).slice(0, 16) : '';
                         const dateTime = prompt('Edit reminder date/time (YYYY-MM-DDTHH:mm):', defaultDateTime);
                         if (dateTime === null) return;
@@ -582,6 +622,7 @@ const TaskCard: React.FC<TaskCardProps> = ({
   const [reminderDate, setReminderDate] = useState('');
   const [reminderTime, setReminderTime] = useState('09:00');
   const [reminderMessage, setReminderMessage] = useState('');
+  const [cloudNotify, setCloudNotify] = useState(false);
 
   const handleAddSubtodo = async () => {
     if (!newSubtodo.trim()) return;
@@ -640,17 +681,23 @@ const TaskCard: React.FC<TaskCardProps> = ({
     if (!reminderDate) return;
     try {
       const scheduledAt = `${reminderDate}T${reminderTime}:00`;
+      const message = reminderMessage || `Reminder: ${task.title}`;
       const res = await (window as any).desktopAPI?.unifiedTasksAddReminder?.(task.id, {
         type: 'reminder',
         scheduledAt,
-        message: reminderMessage || `Reminder: ${task.title}`,
+        message,
       });
       if (res?.ok) {
+        // Sync to cloud SMS if enabled
+        if (cloudNotify) {
+          syncReminderToCloudSMS({ message, scheduledAt, deliveryMethod: 'sms' });
+        }
         onRefreshTasks();
         setShowAddReminder(false);
         setReminderDate('');
         setReminderTime('09:00');
         setReminderMessage('');
+        setCloudNotify(false);
       }
     } catch (e) { console.error(e); }
   };
@@ -775,31 +822,46 @@ const TaskCard: React.FC<TaskCardProps> = ({
               </div>
               
               {showAddReminder && (
-                <div className="flex items-center gap-2 p-2 bg-theme-hover/50 rounded-lg animate-in fade-in duration-200">
-                  <input
-                    type="date"
-                    value={reminderDate}
-                    onChange={(e) => setReminderDate(e.target.value)}
-                    className="bg-theme-card border border-theme/10 rounded-lg text-[10px] px-2 py-1 outline-none"
-                  />
-                  <input
-                    type="time"
-                    value={reminderTime}
-                    onChange={(e) => setReminderTime(e.target.value)}
-                    className="bg-theme-card border border-theme/10 rounded-lg text-[10px] px-2 py-1 outline-none"
-                  />
+                <div className="space-y-2 p-2 bg-theme-hover/50 rounded-lg animate-in fade-in duration-200">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date"
+                      value={reminderDate}
+                      onChange={(e) => setReminderDate(e.target.value)}
+                      className="bg-theme-card border border-theme/10 rounded-lg text-[10px] px-2 py-1 outline-none"
+                    />
+                    <input
+                      type="time"
+                      value={reminderTime}
+                      onChange={(e) => setReminderTime(e.target.value)}
+                      className="bg-theme-card border border-theme/10 rounded-lg text-[10px] px-2 py-1 outline-none"
+                    />
+                    <button
+                      onClick={handleAddReminder}
+                      disabled={!reminderDate}
+                      className="p-1 bg-amber-500 text-white rounded-lg hover:opacity-90 disabled:opacity-50"
+                    >
+                      <Check className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => setShowAddReminder(false)}
+                      className="p-1 text-theme-muted hover:text-theme-fg"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
                   <button
-                    onClick={handleAddReminder}
-                    disabled={!reminderDate}
-                    className="p-1 bg-amber-500 text-white rounded-lg hover:opacity-90 disabled:opacity-50"
+                    onClick={() => setCloudNotify(!cloudNotify)}
+                    className={clsx(
+                      "flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-medium transition-all border",
+                      cloudNotify
+                        ? "bg-sky-500/10 text-sky-400 border-sky-500/20"
+                        : "bg-theme-card text-theme-muted border-theme/10 hover:border-theme/20"
+                    )}
                   >
-                    <Check className="w-3 h-3" />
-                  </button>
-                  <button
-                    onClick={() => setShowAddReminder(false)}
-                    className="p-1 text-theme-muted hover:text-theme-fg"
-                  >
-                    <X className="w-3 h-3" />
+                    <MessageSquare className="w-3 h-3" />
+                    Notify via SMS
+                    {cloudNotify && <Check className="w-2.5 h-2.5" />}
                   </button>
                 </div>
               )}
@@ -812,6 +874,19 @@ const TaskCard: React.FC<TaskCardProps> = ({
                     {' at '}
                     {new Date(reminder.scheduledAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
                   </span>
+                  <button
+                    onClick={async () => {
+                      await syncReminderToCloudSMS({
+                        message: reminder.message || `Reminder: ${task.title}`,
+                        scheduledAt: reminder.scheduledAt,
+                      });
+                      try { (window as any).desktopAPI?.notify?.('Synced', 'Reminder synced to cloud SMS.'); } catch { }
+                    }}
+                    className="p-0.5 text-theme-muted hover:text-sky-400"
+                    title="Sync to cloud SMS"
+                  >
+                    <Cloud className="w-3 h-3" />
+                  </button>
                   <button
                     onClick={() => handleEditReminder(reminder)}
                     className="p-0.5 text-theme-muted hover:text-theme-fg"
