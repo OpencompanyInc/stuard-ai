@@ -7,14 +7,155 @@ from aiohttp import web
 from browser_server import state
 from browser_server.utils import _safe_json, _ok, _err, _clamp_int
 from browser_server.lifecycle import (
-    _ensure_browser, _get_page_url, _get_page_title, _get_playwright_page,
+    _ensure_browser, _get_page_url, _get_page_title,
     _find_elements, _evaluate, _wait_for_selector, _smart_wait_for_element,
     _close_browser,
 )
 
 
+async def _cdp_click_element_by_selector(selector: str) -> bool:
+    """Click an element by CSS selector using CDP mouse events.
+
+    Uses JS to find the element and get its bounding rect, then dispatches
+    real CDP Input.dispatchMouseEvent at the element's center coordinates.
+    Falls back to JS el.click() if coordinate-based click fails.
+    """
+    coords = await _evaluate(
+        """(sel) => {
+          const el = document.querySelector(sel);
+          if (!el) return null;
+          el.scrollIntoView({ block: 'center', inline: 'center' });
+          const r = el.getBoundingClientRect();
+          if (r.width === 0 && r.height === 0) return null;
+          return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        }""",
+        selector,
+    )
+    if isinstance(coords, dict) and "x" in coords and "y" in coords:
+        x, y = float(coords["x"]), float(coords["y"])
+        # Use the browser-use page's mouse if available (CDP mouse events)
+        page = state._page
+        # Try CDP client directly (works with browser-use pages)
+        if page and hasattr(page, "_client") and hasattr(page, "_ensure_session"):
+            try:
+                sid = await page._ensure_session()
+                client = page._client
+                await client.send.Input.dispatchMouseEvent(
+                    {"type": "mouseMoved", "x": int(x), "y": int(y)}, session_id=sid)
+                await asyncio.sleep(0.02)
+                await client.send.Input.dispatchMouseEvent(
+                    {"type": "mousePressed", "x": int(x), "y": int(y), "button": "left", "clickCount": 1},
+                    session_id=sid)
+                await asyncio.sleep(0.05)
+                await client.send.Input.dispatchMouseEvent(
+                    {"type": "mouseReleased", "x": int(x), "y": int(y), "button": "left", "clickCount": 1},
+                    session_id=sid)
+                await asyncio.sleep(0.05)
+                return True
+            except Exception:
+                pass
+    # Last resort: JS click
+    result = await _evaluate(
+        """(sel) => {
+          const el = document.querySelector(sel);
+          if (el) { el.click(); return true; }
+          return false;
+        }""",
+        selector,
+    )
+    return result is True or result == "true"
+
+
+async def _cdp_type_text(text: str) -> bool:
+    """Type text character-by-character using CDP Input.dispatchKeyEvent.
+
+    Works with whatever element currently has focus.
+    """
+    page = state._page
+    if page is None:
+        return False
+
+    # Use CDP client directly if available (browser-use Page)
+    if hasattr(page, "_client") and hasattr(page, "_ensure_session"):
+        try:
+            sid = await page._ensure_session()
+            client = page._client
+            for char in text:
+                if char == "\n":
+                    await client.send.Input.dispatchKeyEvent(
+                        {"type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13},
+                        session_id=sid)
+                    await asyncio.sleep(0.001)
+                    await client.send.Input.dispatchKeyEvent(
+                        {"type": "char", "text": "\r", "key": "Enter"}, session_id=sid)
+                    await client.send.Input.dispatchKeyEvent(
+                        {"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13},
+                        session_id=sid)
+                else:
+                    await client.send.Input.dispatchKeyEvent(
+                        {"type": "keyDown", "key": char, "code": f"Key{char.upper()}" if char.isalpha() else char},
+                        session_id=sid)
+                    await asyncio.sleep(0.001)
+                    await client.send.Input.dispatchKeyEvent(
+                        {"type": "char", "text": char, "key": char}, session_id=sid)
+                    await client.send.Input.dispatchKeyEvent(
+                        {"type": "keyUp", "key": char, "code": f"Key{char.upper()}" if char.isalpha() else char},
+                        session_id=sid)
+                await asyncio.sleep(0.03)
+            return True
+        except Exception:
+            pass
+
+    # Fallback: use page.press if available (browser-use Page has this)
+    if hasattr(page, "press"):
+        try:
+            for char in text:
+                await page.press(char)
+                await asyncio.sleep(0.03)
+            return True
+        except Exception:
+            pass
+
+    return False
+
+
+async def _cdp_clear_and_type(selector: str, text: str) -> bool:
+    """Click an input, clear it, and type new text character-by-character."""
+    # Click to focus
+    await _cdp_click_element_by_selector(selector)
+    await asyncio.sleep(0.1)
+
+    # Select all + delete to clear
+    page = state._page
+    if page and hasattr(page, "press"):
+        try:
+            await page.press("Control+a")
+            await asyncio.sleep(0.02)
+            await page.press("Backspace")
+            await asyncio.sleep(0.05)
+        except Exception:
+            # Fallback: JS clear
+            await _evaluate(
+                """(sel) => {
+                  const el = document.querySelector(sel);
+                  if (el && 'value' in el) { el.value = ''; el.dispatchEvent(new Event('input', {bubbles:true})); }
+                }""",
+                selector,
+            )
+    else:
+        await _evaluate(
+            """(sel) => {
+              const el = document.querySelector(sel);
+              if (el && 'value' in el) { el.value = ''; el.dispatchEvent(new Event('input', {bubbles:true})); }
+            }""",
+            selector,
+        )
+
+    # Type character-by-character (triggers framework filtering)
+    return await _cdp_type_text(text)
+
+
 async def _searchable_combobox_select(
-    pw: Any,
     selector: str,
     search_text: str,
     value: Any = None,
@@ -25,42 +166,20 @@ async def _searchable_combobox_select(
     """Handle searchable combobox/autocomplete dropdowns.
 
     Strategy:
-    1. Click the input to focus & possibly open the dropdown
+    1. Click the input to focus and possibly open the dropdown
     2. Clear existing text and type the search term character-by-character
        (many frameworks filter on each keystroke)
     3. Wait for option nodes to appear
-    4. Find the best matching option and click it
+    4. Find the best matching option and click it via CDP mouse events
     """
-    locator = pw.locator(selector).first
+    MARKER_ATTR = "data-stuard-select-target"
 
-    # 1. Click to focus and possibly open dropdown
-    try:
-        await locator.click(timeout=3000)
-    except Exception:
-        pass
-    await asyncio.sleep(0.15)
+    # 1. Click to focus and open dropdown, then clear and type
+    typed = await _cdp_clear_and_type(selector, search_text)
+    if not typed:
+        return {"status": "error", "detail": "Failed to type search text"}
 
-    # 2. Clear existing text and type the search term
-    try:
-        await locator.fill("", timeout=2000)
-    except Exception:
-        try:
-            await pw.keyboard.press("Control+a")
-            await pw.keyboard.press("Backspace")
-        except Exception:
-            pass
-    await asyncio.sleep(0.1)
-
-    # Type character-by-character so frameworks can filter live
-    try:
-        await locator.press_sequentially(search_text, delay=50)
-    except Exception:
-        try:
-            await pw.keyboard.type(search_text, delay=50)
-        except Exception:
-            return {"status": "error", "detail": "Failed to type search text"}
-
-    # 3. Wait for options to appear
+    # 2. Wait for options to appear and find match
     desired_value = str(value) if value is not None else None
     desired_label = str(label).strip().lower() if label is not None else search_text.strip().lower()
     desired_index = int(index) if index is not None else None
@@ -71,9 +190,10 @@ async def _searchable_combobox_select(
     while asyncio.get_event_loop().time() < deadline:
         await asyncio.sleep(0.3)
 
-        # Scan for visible option nodes
+        # Scan for visible option nodes, mark the match, and get its coordinates
         scan_result = await _evaluate(
-            """(sel, desiredVal, desiredLbl, desiredIdx) => {
+            """(sel, desiredVal, desiredLbl, desiredIdx, markerAttr) => {
+              document.querySelectorAll('[' + markerAttr + ']').forEach(el => el.removeAttribute(markerAttr));
               const control = document.querySelector(sel);
               if (!control) return { found: false, options: [] };
 
@@ -83,59 +203,26 @@ async def _searchable_combobox_select(
                 const s = window.getComputedStyle(el);
                 return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
               }
-
               function textOf(el) {
-                return [
-                  el?.innerText,
-                  el?.textContent,
-                  el?.getAttribute?.('aria-label'),
-                  el?.getAttribute?.('title'),
-                  el?.getAttribute?.('data-value'),
-                  el?.getAttribute?.('value'),
-                ].filter(Boolean).map(p => String(p).trim()).find(Boolean) || '';
+                return [el?.innerText, el?.textContent, el?.getAttribute?.('aria-label'), el?.getAttribute?.('title'), el?.getAttribute?.('data-value'), el?.getAttribute?.('value')].filter(Boolean).map(p => String(p).trim()).find(Boolean) || '';
               }
-
               function valueOf(el) {
                 if (!el) return '';
                 if ('value' in el && el.value) return String(el.value);
-                return String(
-                  el.getAttribute('data-value')
-                  || el.getAttribute('value')
-                  || el.getAttribute('aria-valuetext')
-                  || ''
-                ).trim();
+                return String(el.getAttribute('data-value') || el.getAttribute('value') || el.getAttribute('aria-valuetext') || '').trim();
               }
 
-              // Find popup container
               const controlsId = control.getAttribute('aria-controls') || control.getAttribute('aria-owns') || '';
               let popup = controlsId ? document.getElementById(controlsId) : null;
+              if (!popup) { popup = control.closest('[role="combobox"], [data-headlessui-state], [data-radix-popper-content-wrapper]'); if (popup === control) popup = null; }
+              if (!popup) popup = control.parentElement?.querySelector?.('[role="listbox"], [role="menu"], [data-radix-popper-content-wrapper], [data-headlessui-state]');
               if (!popup) {
-                popup = control.closest('[role="combobox"], [data-headlessui-state], [data-radix-popper-content-wrapper]');
-                if (popup === control) popup = null;
-              }
-              if (!popup) {
-                popup = control.parentElement?.querySelector?.('[role="listbox"], [role="menu"], [data-radix-popper-content-wrapper], [data-headlessui-state]');
-              }
-              // Also look for detached popups (portaled to body)
-              if (!popup) {
-                const candidates = document.querySelectorAll('[role="listbox"], [role="menu"], [role="tree"], [data-radix-popper-content-wrapper], [data-headlessui-state]');
-                for (const c of candidates) {
-                  if (isVisible(c)) { popup = c; break; }
-                }
+                const candidates = document.querySelectorAll('[role="listbox"], [role="menu"], [role="tree"], [data-radix-popper-content-wrapper], [data-headlessui-state], [class*="menu-list"], [class*="listbox"], [class*="select-menu"], [id*="listbox"], [id*="react-select"]');
+                for (const c of candidates) { if (isVisible(c)) { popup = c; break; } }
               }
 
               const scopes = popup ? [popup] : [document];
-              const optSel = [
-                '[role="option"]',
-                '[role="menuitemradio"]',
-                '[role="menuitemcheckbox"]',
-                '[role="listbox"] [data-value]',
-                '[role="menu"] [data-value]',
-                '[aria-selected]',
-                'option',
-                'li',
-              ].join(', ');
-
+              const optSel = '[role="option"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="listbox"] [data-value], [role="menu"] [data-value], [aria-selected], option, li';
               const seen = new Set();
               const options = [];
               for (const scope of scopes) {
@@ -145,39 +232,47 @@ async def _searchable_combobox_select(
                   const text = textOf(candidate);
                   const val = valueOf(candidate);
                   if (!isVisible(candidate) || (!text && !val)) continue;
-                  options.push({ text, value: val || text });
+                  options.push({ text, value: val || text, el: candidate });
                 }
                 if (options.length > 0) break;
               }
 
-              // Try to find match
               let matchIdx = -1;
               if (desiredVal !== null) {
                 matchIdx = options.findIndex(o => o.value === desiredVal || o.text === desiredVal);
               }
               if (matchIdx < 0 && desiredLbl) {
-                // Exact match first
                 matchIdx = options.findIndex(o => o.text.toLowerCase() === desiredLbl);
-                // Then partial match
-                if (matchIdx < 0) {
-                  matchIdx = options.findIndex(o => o.text.toLowerCase().includes(desiredLbl) || o.value.toLowerCase().includes(desiredLbl));
-                }
+                if (matchIdx < 0) matchIdx = options.findIndex(o => o.text.toLowerCase().includes(desiredLbl) || o.value.toLowerCase().includes(desiredLbl));
               }
               if (matchIdx < 0 && desiredIdx !== null && desiredIdx >= 0 && desiredIdx < options.length) {
                 matchIdx = desiredIdx;
               }
 
+              if (matchIdx < 0) {
+                return { found: false, options: options.map(o => ({ text: o.text, value: o.value })).slice(0, 30), optionCount: options.length };
+              }
+
+              const match = options[matchIdx].el;
+              match.setAttribute(markerAttr, 'true');
+              match.scrollIntoView({ block: 'center', inline: 'center' });
+              const r = match.getBoundingClientRect();
               return {
-                found: matchIdx >= 0,
+                found: true,
                 matchIdx,
-                options: options.slice(0, 30),
+                text: textOf(match),
+                selected: valueOf(match) || textOf(match),
+                clickX: r.left + r.width / 2,
+                clickY: r.top + r.height / 2,
+                options: options.map(o => ({ text: o.text, value: o.value })).slice(0, 30),
                 optionCount: options.length,
               };
             }""",
             selector,
-            str(value) if value is not None else None,
+            desired_value,
             desired_label,
             desired_index,
+            MARKER_ATTR,
         )
 
         if not isinstance(scan_result, dict):
@@ -186,95 +281,23 @@ async def _searchable_combobox_select(
         last_options = scan_result.get("options", [])
 
         if scan_result.get("found"):
-            match_idx = scan_result["matchIdx"]
-            # Click the matched option via JS
-            click_result = await _evaluate(
-                """(sel, matchIdx) => {
-                  const control = document.querySelector(sel);
-                  if (!control) return { status: 'error', detail: 'Control not found' };
+            # Click the matched option — try CDP coordinates first, then marker selector, then JS
+            clicked = await _cdp_click_element_by_selector(f"[{MARKER_ATTR}]")
+            if not clicked:
+                await _evaluate(f"""() => {{ const el = document.querySelector('[{MARKER_ATTR}]'); if (el) el.click(); }}""")
 
-                  function isVisible(el) {
-                    if (!el) return false;
-                    const r = el.getBoundingClientRect();
-                    const s = window.getComputedStyle(el);
-                    return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
-                  }
+            # Clean up marker
+            await _evaluate(f"""() => {{ document.querySelectorAll('[{MARKER_ATTR}]').forEach(el => el.removeAttribute('{MARKER_ATTR}')); }}""")
+            return {
+                "status": "ok",
+                "selected": scan_result.get("selected", ""),
+                "text": scan_result.get("text", ""),
+                "method": "searchable_combobox",
+            }
 
-                  function textOf(el) {
-                    return [el?.innerText, el?.textContent, el?.getAttribute?.('aria-label'), el?.getAttribute?.('title'), el?.getAttribute?.('data-value'), el?.getAttribute?.('value')].filter(Boolean).map(p => String(p).trim()).find(Boolean) || '';
-                  }
-
-                  function valueOf(el) {
-                    if (!el) return '';
-                    if ('value' in el && el.value) return String(el.value);
-                    return String(el.getAttribute('data-value') || el.getAttribute('value') || el.getAttribute('aria-valuetext') || '').trim();
-                  }
-
-                  const controlsId = control.getAttribute('aria-controls') || control.getAttribute('aria-owns') || '';
-                  let popup = controlsId ? document.getElementById(controlsId) : null;
-                  if (!popup) popup = control.closest('[role="combobox"], [data-headlessui-state], [data-radix-popper-content-wrapper]');
-                  if (popup === control) popup = null;
-                  if (!popup) popup = control.parentElement?.querySelector?.('[role="listbox"], [role="menu"], [data-radix-popper-content-wrapper], [data-headlessui-state]');
-                  if (!popup) {
-                    const candidates = document.querySelectorAll('[role="listbox"], [role="menu"], [role="tree"], [data-radix-popper-content-wrapper], [data-headlessui-state]');
-                    for (const c of candidates) { if (isVisible(c)) { popup = c; break; } }
-                  }
-
-                  const scopes = popup ? [popup] : [document];
-                  const optSel = '[role="option"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="listbox"] [data-value], [role="menu"] [data-value], [aria-selected], option, li';
-                  const seen = new Set();
-                  const visibleOptions = [];
-                  for (const scope of scopes) {
-                    for (const candidate of Array.from(scope.querySelectorAll(optSel))) {
-                      if (seen.has(candidate) || candidate === control) continue;
-                      seen.add(candidate);
-                      if (!isVisible(candidate)) continue;
-                      const text = textOf(candidate);
-                      const val = valueOf(candidate);
-                      if (!text && !val) continue;
-                      visibleOptions.push(candidate);
-                    }
-                    if (visibleOptions.length > 0) break;
-                  }
-
-                  if (matchIdx < 0 || matchIdx >= visibleOptions.length) {
-                    return { status: 'error', detail: 'Match index out of range' };
-                  }
-
-                  const match = visibleOptions[matchIdx];
-                  const matchedText = textOf(match);
-                  const matchedValue = valueOf(match) || matchedText;
-
-                  match.scrollIntoView({ block: 'center', inline: 'center' });
-                  const r = match.getBoundingClientRect();
-                  const opts = { bubbles: true, cancelable: true, clientX: r.left + r.width/2, clientY: r.top + r.height/2, view: window };
-                  try { match.dispatchEvent(new PointerEvent('pointerdown', opts)); } catch {}
-                  try { match.dispatchEvent(new MouseEvent('mousedown', opts)); } catch {}
-                  try { match.dispatchEvent(new PointerEvent('pointerup', opts)); } catch {}
-                  try { match.dispatchEvent(new MouseEvent('mouseup', opts)); } catch {}
-                  try { match.dispatchEvent(new MouseEvent('click', opts)); } catch {}
-                  if (typeof match.focus === 'function') try { match.focus(); } catch {}
-                  if (typeof match.click === 'function') try { match.click(); } catch {}
-
-                  return { status: 'ok', selected: matchedValue, text: matchedText };
-                }""",
-                selector,
-                match_idx,
-            )
-            if isinstance(click_result, dict) and click_result.get("status") == "ok":
-                return {
-                    "status": "ok",
-                    "selected": click_result.get("selected", ""),
-                    "text": click_result.get("text", ""),
-                    "method": "searchable_combobox",
-                }
-
-        # If options appeared but no match, keep waiting (more may load)
         if scan_result.get("optionCount", 0) > 0:
-            # Options exist but no match yet — give a bit more time
             continue
 
-    # Timeout — return what we found
     return {
         "status": "no_match",
         "detail": f"No matching option found for search '{search_text}' in searchable dropdown",
@@ -284,273 +307,216 @@ async def _searchable_combobox_select(
 
 
 async def _select_dropdown(selector: str, value: Any = None, label: Any = None, index: Any = None, timeout: int = 5000, search: str | None = None) -> dict[str, Any]:
-    pw = _get_playwright_page()
-    if pw:
-        try:
-            locator = pw.locator(selector).first
-            tag = await locator.evaluate("(el) => (el.tagName || '').toLowerCase()")
-            if tag == "select":
-                if value is not None:
-                    selected = await locator.select_option(value=str(value), timeout=timeout)
-                elif label is not None:
-                    selected = await locator.select_option(label=str(label), timeout=timeout)
-                elif index is not None:
-                    selected = await locator.select_option(index=int(index), timeout=timeout)
-                else:
-                    selected = []
-                selected_text = await locator.evaluate(
-                    """(el) => {
-                      const opt = el.options && el.options[el.selectedIndex];
-                      return opt ? (opt.text || '').trim() : '';
-                    }"""
-                )
-                selected_value = selected[0] if selected else await locator.evaluate("(el) => el.value || ''")
-                return {"status": "ok", "selected": selected_value, "text": selected_text, "method": "playwright_select"}
-        except Exception:
-            pass
+    """Select an option from a dropdown (native <select>, custom dropdown, or searchable combobox).
 
-    # ── Searchable combobox / autocomplete path ──────────────────────────
-    # If the element is an input (or role="combobox" on an input), we need
-    # to type into it to trigger the search/filter, then pick from results.
-    if pw:
-        search_text = search or (str(label) if label is not None else None) or (str(value) if value is not None else None)
-        if search_text:
-            try:
-                el_info = await pw.locator(selector).first.evaluate(
-                    """(el) => ({
-                      tag: (el.tagName || '').toLowerCase(),
-                      role: el.getAttribute('role') || '',
-                      haspopup: el.getAttribute('aria-haspopup') || '',
-                      type: (el.getAttribute('type') || '').toLowerCase(),
-                    })"""
-                )
+    Works with CDP (browser-use) and Playwright pages alike.
+    """
+    # Check if it's a searchable combobox — route to specialized handler
+    search_text = search or (str(label) if label is not None else None) or (str(value) if value is not None else None)
+    if search_text:
+        try:
+            el_info = await _evaluate(
+                """(sel) => {
+                  const el = document.querySelector(sel);
+                  if (!el) return null;
+                  return {
+                    tag: (el.tagName || '').toLowerCase(),
+                    role: el.getAttribute('role') || '',
+                    haspopup: el.getAttribute('aria-haspopup') || '',
+                    type: (el.getAttribute('type') || '').toLowerCase(),
+                  };
+                }""",
+                selector,
+            )
+            if isinstance(el_info, dict):
                 is_searchable = (
                     el_info.get("tag") == "input" and el_info.get("type") not in ("checkbox", "radio", "file", "hidden")
                 ) or el_info.get("role") == "combobox" or el_info.get("role") == "searchbox"
 
                 if is_searchable:
-                    result = await _searchable_combobox_select(pw, selector, search_text, value, label, index, timeout)
+                    result = await _searchable_combobox_select(selector, search_text, value, label, index, timeout)
                     if result.get("status") == "ok":
                         return result
-                    # Fall through to generic JS handler if searchable path failed
-            except Exception:
-                pass
+        except Exception:
+            pass
 
-    result = await _evaluate(
-        """(sel, val, lbl, idx, timeoutMs) => {
-          return new Promise((resolve) => {
-            const control = document.querySelector(sel);
-            if (!control) {
-              resolve({ status: 'not_found', detail: `Selector not found: ${sel}` });
-              return;
-            }
+    # -- Generic dropdown path --
+    MARKER_ATTR = "data-stuard-select-target"
 
-            const desiredValue = val === null || val === undefined ? null : String(val);
-            const desiredLabel = lbl === null || lbl === undefined ? '' : String(lbl).trim().toLowerCase();
-            const desiredIndex = idx === null || idx === undefined || Number.isNaN(Number(idx)) ? null : Number(idx);
+    # Step 1: Open the dropdown via CDP click
+    await _cdp_click_element_by_selector(selector)
+    await asyncio.sleep(0.2)
 
-            function isVisible(el) {
-              if (!el) return false;
-              const r = el.getBoundingClientRect();
-              const s = window.getComputedStyle(el);
-              return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
-            }
+    # Step 2: Poll for the matching option via JS — mark it and get its coordinates
+    deadline = asyncio.get_event_loop().time() + (timeout / 1000.0)
+    last_scan: dict[str, Any] = {}
 
-            function textOf(el) {
-              return [
-                el?.innerText,
-                el?.textContent,
-                el?.getAttribute?.('aria-label'),
-                el?.getAttribute?.('title'),
-                el?.getAttribute?.('data-value'),
-                el?.getAttribute?.('value'),
-              ].filter(Boolean).map((part) => String(part).trim()).find(Boolean) || '';
-            }
+    while asyncio.get_event_loop().time() < deadline:
+        scan = await _evaluate(
+            """(sel, val, lbl, idx, markerAttr) => {
+              document.querySelectorAll('[' + markerAttr + ']').forEach(el => el.removeAttribute(markerAttr));
+              const control = document.querySelector(sel);
+              if (!control) return { status: 'not_found', detail: 'Selector not found: ' + sel };
 
-            function valueOf(el) {
-              if (!el) return '';
-              if ('value' in el && el.value) return String(el.value);
-              return String(
-                el.getAttribute('data-value')
-                || el.getAttribute('value')
-                || el.getAttribute('aria-valuetext')
-                || ''
-              ).trim();
-            }
+              const desiredValue = val == null ? null : String(val);
+              const desiredLabel = lbl == null ? '' : String(lbl).trim().toLowerCase();
+              const desiredIndex = idx == null || Number.isNaN(Number(idx)) ? null : Number(idx);
 
-            function clickLike(el) {
-              if (!el) return;
-              el.scrollIntoView({ block: 'center', inline: 'center' });
-              const r = el.getBoundingClientRect();
-              const opts = {
-                bubbles: true,
-                cancelable: true,
-                clientX: r.left + r.width / 2,
-                clientY: r.top + r.height / 2,
-                view: window,
-              };
-              try { el.dispatchEvent(new PointerEvent('pointerdown', opts)); } catch {}
-              try { el.dispatchEvent(new MouseEvent('mousedown', opts)); } catch {}
-              try { el.dispatchEvent(new PointerEvent('pointerup', opts)); } catch {}
-              try { el.dispatchEvent(new MouseEvent('mouseup', opts)); } catch {}
-              try { el.dispatchEvent(new MouseEvent('click', opts)); } catch {}
-              if (typeof el.focus === 'function') {
-                try { el.focus(); } catch {}
+              function isVisible(el) {
+                if (!el) return false;
+                const r = el.getBoundingClientRect();
+                const s = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
               }
-              if (typeof el.click === 'function') {
-                try { el.click(); } catch {}
+              function textOf(el) {
+                return [el?.innerText, el?.textContent, el?.getAttribute?.('aria-label'), el?.getAttribute?.('title'), el?.getAttribute?.('data-value'), el?.getAttribute?.('value')]
+                  .filter(Boolean).map(p => String(p).trim()).find(Boolean) || '';
               }
-            }
-
-            function popupFor(el) {
-              const controlsId = el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '';
-              if (controlsId) {
-                const popup = document.getElementById(controlsId);
-                if (popup) return popup;
+              function valueOf(el) {
+                if (!el) return '';
+                if ('value' in el && el.value) return String(el.value);
+                return String(el.getAttribute('data-value') || el.getAttribute('value') || el.getAttribute('aria-valuetext') || '').trim();
               }
-              const within = el.closest('[role="combobox"], [role="listbox"], [data-headlessui-state], [data-radix-popper-content-wrapper]');
-              if (within && within !== el) return within;
-              const siblingPopup = el.parentElement?.querySelector?.('[role="listbox"], [role="menu"], [data-radix-popper-content-wrapper], [data-headlessui-state]');
-              if (siblingPopup) return siblingPopup;
-              return null;
-            }
 
-            function optionNodes(root) {
-              const scopes = [];
-              if (root) scopes.push(root);
-              scopes.push(document);
+              // Handle native <select>
+              if ((control.tagName || '').toLowerCase() === 'select') {
+                let matchedIdx = -1;
+                for (let i = 0; i < control.options.length; i++) {
+                  const opt = control.options[i];
+                  if (desiredValue !== null && opt.value === desiredValue) { matchedIdx = i; break; }
+                  if (desiredLabel && (opt.text || '').trim().toLowerCase().includes(desiredLabel)) { matchedIdx = i; break; }
+                  if (desiredIndex !== null && i === desiredIndex) { matchedIdx = i; break; }
+                }
+                if (matchedIdx < 0) return { status: 'no_match', detail: 'No matching <select> option' };
+                control.selectedIndex = matchedIdx;
+                control.dispatchEvent(new Event('input', { bubbles: true }));
+                control.dispatchEvent(new Event('change', { bubbles: true }));
+                const so = control.options[matchedIdx];
+                return { status: 'ok', selected: control.value || '', text: so ? (so.text || '').trim() : '', method: 'js_select' };
+              }
+
+              function findPopup(el) {
+                const cid = el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '';
+                if (cid) { const p = document.getElementById(cid); if (p) return p; }
+                const within = el.closest('[role="combobox"], [role="listbox"], [data-headlessui-state], [data-radix-popper-content-wrapper]');
+                if (within && within !== el) return within;
+                const sib = el.parentElement?.querySelector?.('[role="listbox"], [role="menu"], [data-radix-popper-content-wrapper], [data-headlessui-state]');
+                if (sib) return sib;
+                const portaled = document.querySelectorAll('[role="listbox"], [role="menu"], [role="tree"], [data-radix-popper-content-wrapper], [data-headlessui-state], [class*="menu-list"], [class*="listbox"], [class*="dropdown-menu"], [class*="select-menu"], [class*="options"], [id*="listbox"], [id*="react-select"]');
+                for (const c of portaled) { if (isVisible(c)) return c; }
+                return null;
+              }
+
+              const popup = findPopup(control);
+              const scopes = popup ? [popup] : [document];
+              const optSel = '[role="option"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="listbox"] [data-value], [role="menu"] [data-value], [aria-selected], option';
               const seen = new Set();
-              const nodes = [];
-              const selector = [
-                '[role="option"]',
-                '[role="menuitemradio"]',
-                '[role="menuitemcheckbox"]',
-                '[role="listbox"] [data-value]',
-                '[role="menu"] [data-value]',
-                '[aria-selected="true"]',
-                '[aria-selected="false"]',
-                'option',
-                'li',
-                'button',
-              ].join(', ');
+              let options = [];
               for (const scope of scopes) {
-                for (const candidate of Array.from(scope.querySelectorAll(selector))) {
-                  if (seen.has(candidate)) continue;
-                  seen.add(candidate);
-                  if (candidate === control) continue;
-                  const text = textOf(candidate);
-                  const valueText = valueOf(candidate);
-                  if (!isVisible(candidate) || (!text && !valueText)) continue;
-                  nodes.push(candidate);
+                for (const c of Array.from(scope.querySelectorAll(optSel))) {
+                  if (seen.has(c) || c === control) continue;
+                  seen.add(c);
+                  if (!isVisible(c)) continue;
+                  const t = textOf(c); const v = valueOf(c);
+                  if (!t && !v) continue;
+                  options.push(c);
                 }
-                if (nodes.length > 0) break;
+                if (options.length > 0) break;
               }
-              return nodes;
-            }
+              if (options.length === 0 && popup) {
+                for (const li of Array.from(popup.querySelectorAll('li'))) {
+                  if (!isVisible(li)) continue;
+                  if (textOf(li)) options.push(li);
+                }
+              }
 
-            function matchOption(options) {
+              if (options.length === 0) {
+                return { status: 'waiting', detail: 'No visible options yet', optionCount: 0, options: [] };
+              }
+
+              let match = null;
               if (desiredValue !== null) {
-                const exactValue = options.find((opt) => valueOf(opt) === desiredValue || textOf(opt) === desiredValue);
-                if (exactValue) return exactValue;
+                match = options.find(o => valueOf(o) === desiredValue || textOf(o) === desiredValue);
               }
-              if (desiredLabel) {
-                const byLabel = options.find((opt) => {
-                  const text = textOf(opt).toLowerCase();
-                  const valueText = valueOf(opt).toLowerCase();
-                  return text.includes(desiredLabel) || valueText === desiredLabel;
-                });
-                if (byLabel) return byLabel;
+              if (!match && desiredLabel) {
+                match = options.find(o => textOf(o).toLowerCase() === desiredLabel);
+                if (!match) match = options.find(o => textOf(o).toLowerCase().includes(desiredLabel) || valueOf(o).toLowerCase().includes(desiredLabel));
               }
-              if (desiredIndex !== null && desiredIndex >= 0 && desiredIndex < options.length) {
-                return options[desiredIndex];
+              if (!match && desiredIndex !== null && desiredIndex >= 0 && desiredIndex < options.length) {
+                match = options[desiredIndex];
               }
-              return null;
-            }
 
-            if ((control.tagName || '').toLowerCase() === 'select') {
-              let matched = false;
-              for (let i = 0; i < control.options.length; i++) {
-                const opt = control.options[i];
-                if (desiredValue !== null && opt.value === desiredValue) {
-                  control.selectedIndex = i;
-                  matched = true;
-                  break;
-                }
-                if (desiredLabel && (opt.text || '').trim().toLowerCase().includes(desiredLabel)) {
-                  control.selectedIndex = i;
-                  matched = true;
-                  break;
-                }
-                if (desiredIndex !== null && i === desiredIndex) {
-                  control.selectedIndex = i;
-                  matched = true;
-                  break;
-                }
-              }
-              if (!matched) {
-                resolve({ status: 'no_match', detail: 'No matching option found' });
-                return;
-              }
-              control.dispatchEvent(new Event('input', { bubbles: true }));
-              control.dispatchEvent(new Event('change', { bubbles: true }));
-              const selectedOption = control.options[control.selectedIndex];
-              resolve({
-                status: 'ok',
-                selected: control.value || '',
-                text: selectedOption ? (selectedOption.text || '').trim() : '',
-                method: 'js_select',
-              });
-              return;
-            }
-
-            const deadline = Date.now() + timeoutMs;
-            function attempt(alreadyOpened) {
-              const popup = popupFor(control);
-              const options = optionNodes(popup);
-              const match = matchOption(options);
-              if (match) {
-                const matchedText = textOf(match);
-                const matchedValue = valueOf(match) || matchedText;
-                clickLike(match);
-                resolve({
-                  status: 'ok',
-                  selected: matchedValue,
-                  text: matchedText,
-                  method: 'js_custom_dropdown',
-                });
-                return;
-              }
-              if (!alreadyOpened) {
-                clickLike(control);
-              }
-              if (Date.now() >= deadline) {
-                resolve({
+              if (!match) {
+                return {
                   status: 'no_match',
-                  detail: 'No matching visible dropdown option found',
-                  options: options.slice(0, 20).map((opt) => ({ text: textOf(opt), value: valueOf(opt) })),
-                });
-                return;
+                  detail: 'Options visible but no match found',
+                  optionCount: options.length,
+                  options: options.slice(0, 20).map(o => ({ text: textOf(o), value: valueOf(o) })),
+                };
               }
-              setTimeout(() => attempt(true), 150);
+
+              match.setAttribute(markerAttr, 'true');
+              match.scrollIntoView({ block: 'center', inline: 'center' });
+              const r = match.getBoundingClientRect();
+              return {
+                status: 'matched',
+                text: textOf(match),
+                selected: valueOf(match) || textOf(match),
+                optionCount: options.length,
+                clickX: r.left + r.width / 2,
+                clickY: r.top + r.height / 2,
+              };
+            }""",
+            selector,
+            value,
+            label,
+            index,
+            MARKER_ATTR,
+        )
+
+        if not isinstance(scan, dict):
+            await asyncio.sleep(0.2)
+            continue
+
+        last_scan = scan
+        status = scan.get("status", "")
+
+        if status == "ok":
+            return scan
+
+        if status == "matched":
+            # Click the matched option — try CDP coordinates first, then JS
+            clicked = await _cdp_click_element_by_selector(f"[{MARKER_ATTR}]")
+            if not clicked:
+                await _evaluate(f"""() => {{ const el = document.querySelector('[{MARKER_ATTR}]'); if (el) el.click(); }}""")
+
+            await _evaluate(f"""() => {{ document.querySelectorAll('[{MARKER_ATTR}]').forEach(el => el.removeAttribute('{MARKER_ATTR}')); }}""")
+            return {
+                "status": "ok",
+                "selected": scan.get("selected", ""),
+                "text": scan.get("text", ""),
+                "method": "cdp_custom_dropdown",
             }
 
-            attempt(false);
-          });
-        }""",
-        selector,
-        value,
-        label,
-        index,
-        timeout,
-    )
-    return result if isinstance(result, dict) else {"status": "error", "detail": str(result)}
+        if status == "not_found":
+            return scan
+        if status == "no_match":
+            return scan
+
+        await asyncio.sleep(0.25)
+
+    return last_scan if last_scan else {"status": "no_match", "detail": "Timed out waiting for dropdown options"}
 
 
 async def _upload_local_file(selector: str, file_path: str, timeout: int = 5000) -> dict[str, Any]:
-    pw = _get_playwright_page()
-    if not pw:
-        raise RuntimeError("Playwright page is required for file uploads")
+    """Upload a file to a file input using CDP DOM.setFileInputFiles.
 
+    Works with both browser-use (CDP) and Playwright pages.
+    Strategy:
+    1. Find the <input type="file"> element (via selector, or by searching nearby)
+    2. Use CDP DOM.setFileInputFiles to set the file directly (no file dialog needed)
+    3. Dispatch change event so frameworks detect the upload
+    """
     raw_path = str(file_path or "").strip()
     if not raw_path:
         raise ValueError("file_path is required")
@@ -561,53 +527,44 @@ async def _upload_local_file(selector: str, file_path: str, timeout: int = 5000)
     if not resolved_path.exists() or not resolved_path.is_file():
         raise FileNotFoundError(f"Local file not found: {resolved_path}")
 
-    marker = f"stuard-upload-{int(asyncio.get_event_loop().time() * 1000)}"
-    resolved_target = await _evaluate(
-        """(sel, marker) => {
-          document.querySelectorAll('[data-stuard-upload-target]').forEach((el) => {
-            el.removeAttribute('data-stuard-upload-target');
-          });
+    # Use forward slashes for CDP (works cross-platform)
+    file_path_str = str(resolved_path).replace("\\", "/")
 
+    # Find the file input element and get its backendNodeId
+    find_result = await _evaluate(
+        """(sel) => {
+          function isFileInput(el) {
+            return !!el && el.tagName === 'INPUT' && String(el.type || '').toLowerCase() === 'file';
+          }
           function isVisible(el) {
             if (!el) return false;
             const r = el.getBoundingClientRect();
             const s = window.getComputedStyle(el);
             return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
           }
-
-          function isFileInput(el) {
-            return !!el && el.tagName === 'INPUT' && String(el.type || '').toLowerCase() === 'file';
-          }
-
           function labelFor(el) {
             if (!el) return '';
             if (el.id) {
-              const forLabel = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+              const forLabel = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
               if (forLabel) return (forLabel.innerText || forLabel.textContent || '').trim();
             }
             const parentLabel = el.closest('label');
             if (parentLabel) return (parentLabel.innerText || parentLabel.textContent || '').trim();
             return String(el.getAttribute('aria-label') || '').trim();
           }
-
           function findInput(target) {
             if (!target) return null;
             if (isFileInput(target)) return target;
             if (target.tagName === 'LABEL') {
               const forId = target.getAttribute('for') || '';
-              if (forId) {
-                const direct = document.getElementById(forId);
-                if (isFileInput(direct)) return direct;
-              }
+              if (forId) { const direct = document.getElementById(forId); if (isFileInput(direct)) return direct; }
             }
             const nested = target.querySelector?.('input[type="file"]');
             if (isFileInput(nested)) return nested;
             const labelAncestor = target.closest?.('label');
-            const ancestorNested = labelAncestor?.querySelector?.('input[type="file"]');
-            if (isFileInput(ancestorNested)) return ancestorNested;
+            if (isFileInput(labelAncestor?.querySelector?.('input[type="file"]'))) return labelAncestor.querySelector('input[type="file"]');
             const form = target.closest?.('form');
-            const formInput = form?.querySelector?.('input[type="file"]');
-            if (isFileInput(formInput)) return formInput;
+            if (isFileInput(form?.querySelector?.('input[type="file"]'))) return form.querySelector('input[type="file"]');
             const sibling = target.parentElement?.querySelector?.('input[type="file"]');
             if (isFileInput(sibling)) return sibling;
             return null;
@@ -617,16 +574,16 @@ async def _upload_local_file(selector: str, file_path: str, timeout: int = 5000)
           let input = findInput(directTarget);
           if (!input) {
             const allInputs = Array.from(document.querySelectorAll('input[type="file"]'));
-            input = allInputs.find((candidate) => isVisible(candidate)) || allInputs[0] || null;
+            input = allInputs.find(c => isVisible(c)) || allInputs[0] || null;
           }
-          if (!input) {
-            return { status: 'not_found', detail: 'No file input found on the page' };
-          }
+          if (!input) return { status: 'not_found', detail: 'No file input found on the page' };
 
+          // Mark it with a unique attribute so we can find it via CDP
+          const marker = 'stuard-upload-' + Date.now();
           input.setAttribute('data-stuard-upload-target', marker);
           return {
             status: 'ok',
-            selector: `input[type="file"][data-stuard-upload-target="${marker}"]`,
+            marker: marker,
             label: labelFor(input),
             accept: input.accept || '',
             multiple: !!input.multiple,
@@ -634,28 +591,111 @@ async def _upload_local_file(selector: str, file_path: str, timeout: int = 5000)
           };
         }""",
         selector or "",
-        marker,
     )
-    if not isinstance(resolved_target, dict) or resolved_target.get("status") != "ok":
-        detail = resolved_target.get("detail", "File input not found") if isinstance(resolved_target, dict) else str(resolved_target)
+
+    if not isinstance(find_result, dict) or find_result.get("status") != "ok":
+        detail = find_result.get("detail", "File input not found") if isinstance(find_result, dict) else str(find_result)
         raise RuntimeError(detail)
 
-    locator = pw.locator(str(resolved_target.get("selector"))).first
-    try:
-        await locator.set_input_files(str(resolved_path), timeout=timeout)
-    except TypeError:
-        await locator.set_input_files(str(resolved_path))
+    marker = find_result.get("marker", "")
+    file_input_sel = f'input[type="file"][data-stuard-upload-target="{marker}"]'
+
+    # Try CDP DOM.setFileInputFiles (works with browser-use CDP pages)
+    page = state._page
+    upload_success = False
+
+    if page and hasattr(page, "_client") and hasattr(page, "_ensure_session"):
+        try:
+            sid = await page._ensure_session()
+            client = page._client
+
+            # Get the backendNodeId of the file input via CDP
+            # First, get the document root
+            doc_result = await client.send.DOM.getDocument(
+                {"depth": 0}, session_id=sid)
+            root_id = doc_result["root"]["nodeId"]
+
+            # Find the file input by selector
+            query_result = await client.send.DOM.querySelector(
+                {"nodeId": root_id, "selector": file_input_sel}, session_id=sid)
+            file_node_id = query_result.get("nodeId", 0)
+
+            if file_node_id:
+                # Get backendNodeId
+                desc_result = await client.send.DOM.describeNode(
+                    {"nodeId": file_node_id}, session_id=sid)
+                backend_node_id = desc_result["node"]["backendNodeId"]
+
+                # Set the files using CDP
+                await client.send.DOM.setFileInputFiles(
+                    {"files": [file_path_str], "backendNodeId": backend_node_id},
+                    session_id=sid,
+                )
+                upload_success = True
+        except Exception as cdp_err:
+            print(f"[browser-use-server] CDP file upload failed: {cdp_err}", flush=True)
+
+    # Fallback: use browser-use Element API if available
+    if not upload_success and page and hasattr(page, "get_elements_by_css_selector"):
+        try:
+            elements = await page.get_elements_by_css_selector(file_input_sel)
+            if elements:
+                el = elements[0]
+                # Try to set files via JS (limited but may work for some sites)
+                await el.evaluate(
+                    """(filePath) => {
+                      const dt = new DataTransfer();
+                      // We can't create real File objects from paths in JS, but we trigger the change event
+                      this.dispatchEvent(new Event('change', { bubbles: true }));
+                    }""",
+                    file_path_str,
+                )
+        except Exception:
+            pass
+
+    # Fallback: try Playwright-style set_input_files if the page supports it
+    if not upload_success and page and hasattr(page, "locator"):
+        try:
+            locator = page.locator(file_input_sel).first
+            await locator.set_input_files(str(resolved_path), timeout=timeout)
+            upload_success = True
+        except Exception:
+            pass
+
+    if not upload_success:
+        raise RuntimeError("File upload failed: could not set files via CDP or Playwright")
+
+    # Dispatch change event to notify frameworks
+    await _evaluate(
+        """(sel) => {
+          const el = document.querySelector(sel);
+          if (el) {
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        }""",
+        file_input_sel,
+    )
+
+    # Clean up marker
+    await _evaluate(
+        """(sel) => {
+          const el = document.querySelector(sel);
+          if (el) el.removeAttribute('data-stuard-upload-target');
+        }""",
+        file_input_sel,
+    )
 
     return {
         "uploaded": True,
         "filePath": str(resolved_path),
         "fileName": resolved_path.name,
-        "selector": str(resolved_target.get("selector") or selector or ""),
-        "accept": str(resolved_target.get("accept") or ""),
-        "multiple": bool(resolved_target.get("multiple", False)),
-        "hidden": bool(resolved_target.get("hidden", False)),
-        "label": str(resolved_target.get("label") or ""),
-        "method": "playwright_set_input_files",
+        "selector": selector or file_input_sel,
+        "accept": str(find_result.get("accept") or ""),
+        "multiple": bool(find_result.get("multiple", False)),
+        "hidden": bool(find_result.get("hidden", False)),
+        "label": str(find_result.get("label") or ""),
+        "method": "cdp_set_file_input_files",
     }
 
 
@@ -673,23 +713,6 @@ async def handle_hover(req: web.Request) -> web.Response:
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
-            pw = _get_playwright_page()
-
-            if selector and pw:
-                try:
-                    await pw.hover(selector, timeout=timeout)
-                    return _ok({"hovered": selector, "method": "playwright_selector"})
-                except Exception:
-                    pass
-
-            if text and pw:
-                try:
-                    locator = pw.get_by_text(text)
-                    await locator.first.hover(timeout=timeout)
-                    return _ok({"hovered": text, "method": "playwright_text"})
-                except Exception:
-                    pass
-
             target = selector or text
             result = await _evaluate(
                 """(sel, needle) => {
@@ -864,7 +887,14 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
                       const popup = document.getElementById(controlsId);
                       if (popup) return popup;
                     }
-                    return el.parentElement?.querySelector?.('[role="listbox"], [role="menu"], [data-radix-popper-content-wrapper], [data-headlessui-state]') || null;
+                    const within = el.closest('[role="combobox"], [role="listbox"], [data-headlessui-state], [data-radix-popper-content-wrapper]');
+                    if (within && within !== el) return within;
+                    const sib = el.parentElement?.querySelector?.('[role="listbox"], [role="menu"], [data-radix-popper-content-wrapper], [data-headlessui-state]');
+                    if (sib) return sib;
+                    // Check portaled popups at document level
+                    const portaled = document.querySelectorAll('[role="listbox"], [role="menu"], [data-radix-popper-content-wrapper], [data-headlessui-state], [id*="listbox"], [id*="react-select"]');
+                    for (const c of portaled) { if (isVisible(c)) return c; }
+                    return null;
                   }
 
                   function getDropdownMeta(el) {
@@ -1053,7 +1083,6 @@ async def handle_fill_form(req: web.Request) -> web.Response:
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
-            pw = _get_playwright_page()
             filled = 0
             errors = []
 
@@ -1089,41 +1118,65 @@ async def handle_fill_form(req: web.Request) -> web.Response:
                         filled += 1
                     elif field_type in ("checkbox", "radio", "toggle", "switch"):
                         should_check = val.lower() in ("true", "1", "yes", "on")
-                        if pw:
-                            # Try Playwright's is_checked first (works for native checkboxes/radios)
-                            try:
-                                checked = await pw.is_checked(sel)
-                            except Exception:
-                                # Fallback for ARIA switches/toggles that don't have native checked state
-                                checked = await pw.locator(sel).first.evaluate(
-                                    "(el) => el.getAttribute('aria-checked') === 'true' || el.classList.contains('checked') || el.classList.contains('active') || el.dataset.state === 'checked'"
-                                )
-                            if checked != should_check:
-                                await pw.click(sel, timeout=5000)
-                        filled += 1
-                    elif pw:
-                        await pw.fill(sel, val, timeout=5000)
+                        # Get current checked state via JS
+                        checked = await _evaluate(
+                            """(sel) => {
+                              const el = document.querySelector(sel);
+                              if (!el) return false;
+                              if (el.type === 'checkbox' || el.type === 'radio') return !!el.checked;
+                              return el.getAttribute('aria-checked') === 'true'
+                                || el.classList.contains('checked')
+                                || el.classList.contains('active')
+                                || (el.dataset && el.dataset.state === 'checked');
+                            }""",
+                            sel,
+                        )
+                        if bool(checked) != should_check:
+                            await _cdp_click_element_by_selector(sel)
                         filled += 1
                     else:
+                        # Text input — use browser-use Element.fill() or CDP type
                         els = await _find_elements(sel)
                         if els:
                             await els[0].fill(val, clear=True)
                             filled += 1
                         else:
-                            errors.append(f"Field not found: {sel}")
+                            # Fallback: JS fill + events
+                            fill_ok = await _evaluate(
+                                """(sel, val) => {
+                                  const el = document.querySelector(sel);
+                                  if (!el) return false;
+                                  if ('value' in el) {
+                                    el.focus();
+                                    el.value = val;
+                                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                                    return true;
+                                  }
+                                  if (el.getAttribute('contenteditable') === 'true') {
+                                    el.focus();
+                                    el.textContent = val;
+                                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                                    return true;
+                                  }
+                                  return false;
+                                }""",
+                                sel, val,
+                            )
+                            if fill_ok:
+                                filled += 1
+                            else:
+                                errors.append(f"Field not found: {sel}")
                 except Exception as e:
                     errors.append(f"{sel}: {str(e)[:100]}")
 
             submitted = False
             if submit and filled > 0:
                 try:
-                    if form_selector and pw:
-                        submit_btn = pw.locator(f"{form_selector} [type='submit'], {form_selector} button")
-                        await submit_btn.first.click(timeout=5000)
-                        submitted = True
-                    elif pw:
-                        submit_btn = pw.locator("[type='submit'], button[type='submit']")
-                        await submit_btn.first.click(timeout=5000)
+                    # Try clicking submit button via CDP
+                    submit_sel = f"{form_selector} [type='submit'], {form_selector} button" if form_selector else "[type='submit'], button[type='submit']"
+                    submit_clicked = await _cdp_click_element_by_selector(submit_sel)
+                    if submit_clicked:
                         submitted = True
                     else:
                         await _evaluate(
@@ -1182,8 +1235,6 @@ async def handle_wait_for(req: web.Request) -> web.Response:
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
-            pw = _get_playwright_page()
-
             if url_pattern:
                 timeout_s = float(timeout) / 1000.0
                 deadline = asyncio.get_event_loop().time() + timeout_s
@@ -1193,18 +1244,6 @@ async def handle_wait_for(req: web.Request) -> web.Response:
                         return _ok({"matched": True, "url": current, "type": "url_pattern"})
                     await asyncio.sleep(0.2)
                 return _err(f"Timed out waiting for URL matching '{url_pattern}'")
-
-            if selector and pw:
-                try:
-                    if wait_state == "hidden":
-                        await pw.wait_for_selector(selector, state="hidden", timeout=timeout)
-                    elif wait_state == "detached":
-                        await pw.wait_for_selector(selector, state="detached", timeout=timeout)
-                    else:
-                        await pw.wait_for_selector(selector, state="visible", timeout=timeout)
-                    return _ok({"matched": True, "selector": selector, "type": "selector"})
-                except Exception as e:
-                    return _err(f"Timed out waiting for selector '{selector}': {e}")
 
             if selector or text:
                 found = await _smart_wait_for_element(selector=selector, text=text, timeout=timeout)

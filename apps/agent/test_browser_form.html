@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Browser-Use Test — Job Application Form</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
+  .container { max-width: 720px; margin: 40px auto; background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.08); padding: 40px; }
+  h1 { font-size: 24px; margin-bottom: 8px; }
+  .subtitle { color: #666; margin-bottom: 32px; }
+  .form-group { margin-bottom: 24px; }
+  label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 14px; }
+  label .req { color: #e53935; }
+  input[type="text"], input[type="email"], input[type="tel"], textarea {
+    width: 100%; padding: 10px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; transition: border-color .2s;
+  }
+  input:focus, textarea:focus { outline: none; border-color: #1a73e8; box-shadow: 0 0 0 2px rgba(26,115,232,.15); }
+  textarea { resize: vertical; min-height: 80px; }
+
+  /* ── Native <select> ─────────────────────────────── */
+  select.native-select {
+    width: 100%; padding: 10px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; background: #fff; appearance: auto;
+  }
+
+  /* ── Custom searchable combobox (React-Select style) ── */
+  .combobox-wrapper { position: relative; }
+  .combobox-control {
+    display: flex; align-items: center; min-height: 42px; padding: 2px 8px; border: 1px solid #ccc;
+    border-radius: 6px; cursor: pointer; background: #fff; transition: border-color .2s;
+  }
+  .combobox-control:focus-within, .combobox-control.open { border-color: #1a73e8; box-shadow: 0 0 0 2px rgba(26,115,232,.15); }
+  .combobox-value { flex: 1; display: flex; align-items: center; gap: 4px; min-width: 0; }
+  .combobox-value .placeholder { color: #999; font-size: 14px; }
+  .combobox-value .selected-text { font-size: 14px; }
+  .combobox-input {
+    border: none; outline: none; font-size: 14px; background: transparent; width: 100%; min-width: 60px;
+  }
+  .combobox-arrow { padding: 0 4px; color: #999; font-size: 18px; user-select: none; }
+  .combobox-menu {
+    display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 9999;
+    background: #fff; border: 1px solid #ddd; border-radius: 6px; margin-top: 4px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.12); max-height: 240px; overflow-y: auto;
+  }
+  .combobox-menu.visible { display: block; }
+  .combobox-option {
+    padding: 10px 12px; cursor: pointer; font-size: 14px; transition: background .1s;
+  }
+  .combobox-option:hover, .combobox-option.focused { background: #e8f0fe; }
+  .combobox-option[aria-selected="true"] { background: #1a73e8; color: #fff; }
+  .combobox-option.hidden { display: none; }
+
+  /* ── Toggle / Switch ──────────────────────────────── */
+  .toggle-group { display: flex; align-items: center; gap: 12px; }
+  .switch {
+    position: relative; width: 48px; height: 26px; background: #ccc; border-radius: 13px;
+    cursor: pointer; transition: background .2s; flex-shrink: 0;
+  }
+  .switch[aria-checked="true"] { background: #1a73e8; }
+  .switch .knob {
+    position: absolute; top: 3px; left: 3px; width: 20px; height: 20px;
+    background: #fff; border-radius: 50%; transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.2);
+  }
+  .switch[aria-checked="true"] .knob { transform: translateX(22px); }
+  .switch-label { font-size: 14px; }
+
+  /* ── Checkbox group ───────────────────────────────── */
+  .checkbox-group label { font-weight: 400; display: flex; align-items: center; gap: 8px; margin-bottom: 8px; cursor: pointer; }
+  .checkbox-group input[type="checkbox"] { width: 18px; height: 18px; accent-color: #1a73e8; }
+
+  /* ── File upload widget (custom — no visible <input type="file">) ── */
+  .upload-zone {
+    border: 2px dashed #ccc; border-radius: 8px; padding: 32px; text-align: center;
+    cursor: pointer; transition: border-color .2s, background .2s; position: relative;
+  }
+  .upload-zone:hover, .upload-zone.dragover { border-color: #1a73e8; background: #f0f6ff; }
+  .upload-zone .icon { font-size: 36px; color: #999; margin-bottom: 8px; }
+  .upload-zone .text { font-size: 14px; color: #666; }
+  .upload-zone .text strong { color: #1a73e8; }
+  .upload-zone .accept { font-size: 12px; color: #999; margin-top: 4px; }
+  .upload-zone input[type="file"] { display: none; }
+  .upload-result { margin-top: 8px; font-size: 13px; color: #1a73e8; display: none; }
+  .upload-result.show { display: block; }
+
+  /* ── Buttons ──────────────────────────────────────── */
+  .btn-submit {
+    display: inline-block; padding: 12px 32px; background: #1a73e8; color: #fff; border: none;
+    border-radius: 6px; font-size: 16px; font-weight: 600; cursor: pointer; transition: background .2s;
+  }
+  .btn-submit:hover { background: #1557b0; }
+  .form-actions { margin-top: 32px; text-align: right; }
+
+  /* ── Status panel (shows what was submitted) ──────── */
+  #status-panel {
+    display: none; margin-top: 24px; padding: 20px; background: #e8f5e9; border-radius: 8px;
+    font-size: 13px; white-space: pre-wrap; word-break: break-all;
+  }
+  #status-panel.show { display: block; }
+  hr { border: none; border-top: 1px solid #eee; margin: 28px 0; }
+  .section-title { font-size: 18px; font-weight: 600; margin-bottom: 16px; color: #1a73e8; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Software Engineer Intern — Application</h1>
+  <p class="subtitle">SharkNinja · Needham, MA (Test Form for Browser-Use)</p>
+
+  <form id="application-form" action="#" method="POST" novalidate>
+
+    <!-- ============================================================ -->
+    <div class="section-title">Personal Information</div>
+    <!-- ============================================================ -->
+
+    <div class="form-group">
+      <label for="first_name">First Name <span class="req">*</span></label>
+      <input type="text" id="first_name" name="first_name" placeholder="Enter first name" required>
+    </div>
+
+    <div class="form-group">
+      <label for="last_name">Last Name <span class="req">*</span></label>
+      <input type="text" id="last_name" name="last_name" placeholder="Enter last name" required>
+    </div>
+
+    <div class="form-group">
+      <label for="email">Email <span class="req">*</span></label>
+      <input type="email" id="email" name="email" placeholder="you@example.com" required>
+    </div>
+
+    <div class="form-group">
+      <label for="phone">Phone</label>
+      <input type="tel" id="phone" name="phone" placeholder="+1 (555) 123-4567">
+    </div>
+
+    <div class="form-group">
+      <label for="linkedin">LinkedIn Profile</label>
+      <input type="text" id="linkedin" name="linkedin" placeholder="https://linkedin.com/in/...">
+    </div>
+
+    <hr>
+
+    <!-- ============================================================ -->
+    <div class="section-title">Resume &amp; Cover Letter</div>
+    <!-- ============================================================ -->
+
+    <!-- Custom file upload widget (like Greenhouse) — hidden <input type="file"> -->
+    <div class="form-group">
+      <label>Resume / CV <span class="req">*</span></label>
+      <div class="upload-zone" id="resume-upload-zone" tabindex="0" role="button" aria-label="Upload resume">
+        <div class="icon">📄</div>
+        <div class="text"><strong>Click to upload</strong> or drag &amp; drop</div>
+        <div class="accept">PDF, DOC, DOCX, TXT, RTF (max 5 MB)</div>
+        <input type="file" id="resume-file" name="resume" accept=".pdf,.doc,.docx,.txt,.rtf">
+      </div>
+      <div class="upload-result" id="resume-result"></div>
+    </div>
+
+    <div class="form-group">
+      <label>Cover Letter</label>
+      <div class="upload-zone" id="cover-upload-zone" tabindex="0" role="button" aria-label="Upload cover letter">
+        <div class="icon">📝</div>
+        <div class="text"><strong>Click to upload</strong> or drag &amp; drop</div>
+        <div class="accept">PDF, DOC, DOCX, TXT, RTF (max 5 MB)</div>
+        <input type="file" id="cover-file" name="cover_letter" accept=".pdf,.doc,.docx,.txt,.rtf">
+      </div>
+      <div class="upload-result" id="cover-result"></div>
+    </div>
+
+    <hr>
+
+    <!-- ============================================================ -->
+    <div class="section-title">Eligibility</div>
+    <!-- ============================================================ -->
+
+    <!-- Native <select> dropdown -->
+    <div class="form-group">
+      <label for="work-auth">Are you legally authorized to work in the United States? <span class="req">*</span></label>
+      <select class="native-select" id="work-auth" name="work_authorization" required>
+        <option value="">-- Select --</option>
+        <option value="yes">Yes</option>
+        <option value="no">No</option>
+      </select>
+    </div>
+
+    <!-- Native <select> dropdown -->
+    <div class="form-group">
+      <label for="visa">Will you now or in the future require visa sponsorship? <span class="req">*</span></label>
+      <select class="native-select" id="visa" name="visa_sponsorship" required>
+        <option value="">-- Select --</option>
+        <option value="yes">Yes</option>
+        <option value="no">No</option>
+      </select>
+    </div>
+
+    <hr>
+
+    <!-- ============================================================ -->
+    <div class="section-title">Education</div>
+    <!-- ============================================================ -->
+
+    <!-- SEARCHABLE combobox (React-Select style) — portaled menu -->
+    <div class="form-group">
+      <label id="college-label">College / University <span class="req">*</span></label>
+      <div class="combobox-wrapper" data-combobox="college">
+        <div class="combobox-control" role="combobox" aria-expanded="false" aria-haspopup="listbox"
+             aria-labelledby="college-label" aria-controls="college-listbox" tabindex="0">
+          <div class="combobox-value">
+            <input class="combobox-input" type="text" placeholder="Search for your school..."
+                   aria-autocomplete="list" aria-controls="college-listbox" autocomplete="off">
+          </div>
+          <div class="combobox-arrow">▾</div>
+        </div>
+        <!-- Portaled to body via JS — simulates React Select portal behavior -->
+      </div>
+      <input type="hidden" id="college-value" name="college" value="">
+    </div>
+
+    <!-- Searchable combobox for Degree -->
+    <div class="form-group">
+      <label id="degree-label">Degree <span class="req">*</span></label>
+      <div class="combobox-wrapper" data-combobox="degree">
+        <div class="combobox-control" role="combobox" aria-expanded="false" aria-haspopup="listbox"
+             aria-labelledby="degree-label" aria-controls="degree-listbox" tabindex="0">
+          <div class="combobox-value">
+            <input class="combobox-input" type="text" placeholder="Select degree..."
+                   aria-autocomplete="list" aria-controls="degree-listbox" autocomplete="off">
+          </div>
+          <div class="combobox-arrow">▾</div>
+        </div>
+      </div>
+      <input type="hidden" id="degree-value" name="degree" value="">
+    </div>
+
+    <!-- Searchable combobox for Graduation Year -->
+    <div class="form-group">
+      <label id="grad-year-label">Expected Graduation Year</label>
+      <div class="combobox-wrapper" data-combobox="grad_year">
+        <div class="combobox-control" role="combobox" aria-expanded="false" aria-haspopup="listbox"
+             aria-labelledby="grad-year-label" aria-controls="grad_year-listbox" tabindex="0">
+          <div class="combobox-value">
+            <input class="combobox-input" type="text" placeholder="Select year..."
+                   aria-autocomplete="list" aria-controls="grad_year-listbox" autocomplete="off">
+          </div>
+          <div class="combobox-arrow">▾</div>
+        </div>
+      </div>
+      <input type="hidden" id="grad_year-value" name="grad_year" value="">
+    </div>
+
+    <hr>
+
+    <!-- ============================================================ -->
+    <div class="section-title">Experience &amp; Availability</div>
+    <!-- ============================================================ -->
+
+    <!-- Searchable combobox for prior internship -->
+    <div class="form-group">
+      <label id="internship-label">Have you completed at least one prior internship? <span class="req">*</span></label>
+      <div class="combobox-wrapper" data-combobox="internship">
+        <div class="combobox-control" role="combobox" aria-expanded="false" aria-haspopup="listbox"
+             aria-labelledby="internship-label" aria-controls="internship-listbox" tabindex="0">
+          <div class="combobox-value">
+            <input class="combobox-input" type="text" placeholder="Select..."
+                   aria-autocomplete="list" aria-controls="internship-listbox" autocomplete="off">
+          </div>
+          <div class="combobox-arrow">▾</div>
+        </div>
+      </div>
+      <input type="hidden" id="internship-value" name="prior_internship" value="">
+    </div>
+
+    <!-- Searchable combobox for how heard -->
+    <div class="form-group">
+      <label id="source-label">How did you hear about this role?</label>
+      <div class="combobox-wrapper" data-combobox="source">
+        <div class="combobox-control" role="combobox" aria-expanded="false" aria-haspopup="listbox"
+             aria-labelledby="source-label" aria-controls="source-listbox" tabindex="0">
+          <div class="combobox-value">
+            <input class="combobox-input" type="text" placeholder="Select..."
+                   aria-autocomplete="list" aria-controls="source-listbox" autocomplete="off">
+          </div>
+          <div class="combobox-arrow">▾</div>
+        </div>
+      </div>
+      <input type="hidden" id="source-value" name="referral_source" value="">
+    </div>
+
+    <hr>
+
+    <!-- ============================================================ -->
+    <div class="section-title">Preferences</div>
+    <!-- ============================================================ -->
+
+    <!-- Toggle switch (ARIA role="switch") -->
+    <div class="form-group">
+      <div class="toggle-group">
+        <div class="switch" role="switch" aria-checked="false" aria-label="Willing to relocate" id="relocate-toggle" tabindex="0">
+          <div class="knob"></div>
+        </div>
+        <span class="switch-label">I am willing to relocate if necessary</span>
+      </div>
+    </div>
+
+    <!-- Toggle switch -->
+    <div class="form-group">
+      <div class="toggle-group">
+        <div class="switch" role="switch" aria-checked="false" aria-label="Work onsite" id="onsite-toggle" tabindex="0">
+          <div class="knob"></div>
+        </div>
+        <span class="switch-label">I can work onsite 5 days per week</span>
+      </div>
+    </div>
+
+    <!-- Checkbox group -->
+    <div class="form-group">
+      <label>Which programming languages are you proficient in?</label>
+      <div class="checkbox-group">
+        <label><input type="checkbox" name="languages" value="python"> Python</label>
+        <label><input type="checkbox" name="languages" value="javascript"> JavaScript / TypeScript</label>
+        <label><input type="checkbox" name="languages" value="java"> Java</label>
+        <label><input type="checkbox" name="languages" value="cpp"> C / C++</label>
+        <label><input type="checkbox" name="languages" value="go"> Go</label>
+        <label><input type="checkbox" name="languages" value="rust"> Rust</label>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="additional">Additional Information</label>
+      <textarea id="additional" name="additional_info" placeholder="Anything else you'd like us to know?"></textarea>
+    </div>
+
+    <hr>
+
+    <div class="form-actions">
+      <button type="submit" class="btn-submit">Submit Application</button>
+    </div>
+  </form>
+
+  <div id="status-panel"></div>
+</div>
+
+<!-- ================================================================ -->
+<!-- Portaled listbox containers (rendered outside the form, at body   -->
+<!-- level, exactly like React Select / Radix / Headless UI portals)   -->
+<!-- ================================================================ -->
+<div id="combobox-portal" style="position:absolute;top:0;left:0;width:100%;pointer-events:none;z-index:99999;"></div>
+
+<script>
+// ── Combobox option data ──────────────────────────────────────────
+const OPTIONS = {
+  college: [
+    "Massachusetts Institute of Technology", "Stanford University", "Harvard University",
+    "Carnegie Mellon University", "University of California, Berkeley", "Georgia Institute of Technology",
+    "University of Michigan", "Cornell University", "University of Illinois Urbana-Champaign",
+    "Princeton University", "Columbia University", "University of Washington",
+    "California Institute of Technology", "University of Texas at Austin", "Purdue University",
+    "University of Pennsylvania", "Duke University", "University of Southern California",
+    "New York University", "Northeastern University", "Boston University",
+    "Rice University", "Brown University", "Yale University",
+    "University of Wisconsin-Madison", "Ohio State University", "University of Maryland",
+    "Virginia Tech", "University of California, Los Angeles", "University of California, San Diego",
+    "Other",
+  ],
+  degree: [
+    "Bachelor of Science (BS)", "Bachelor of Arts (BA)", "Master of Science (MS)",
+    "Master of Engineering (MEng)", "Master of Business Administration (MBA)",
+    "Doctor of Philosophy (PhD)", "Associate Degree", "Other",
+  ],
+  grad_year: ["2024", "2025", "2026", "2027", "2028", "2029"],
+  internship: ["Yes", "No"],
+  source: [
+    "LinkedIn", "Handshake", "Indeed", "Glassdoor", "Company Website",
+    "Career Fair", "Employee Referral", "University Job Board", "Other",
+  ],
+};
+
+// ── Portal container for menus ────────────────────────────────────
+const portal = document.getElementById('combobox-portal');
+
+// ── Combobox state ────────────────────────────────────────────────
+const comboboxes = {};
+
+document.querySelectorAll('[data-combobox]').forEach(wrapper => {
+  const name = wrapper.dataset.combobox;
+  const control = wrapper.querySelector('.combobox-control');
+  const input = wrapper.querySelector('.combobox-input');
+  const hiddenInput = document.getElementById(name + '-value');
+  const options = OPTIONS[name] || [];
+
+  // Create the portaled menu (outside the form, at body level)
+  const menu = document.createElement('div');
+  menu.className = 'combobox-menu';
+  menu.id = name + '-listbox';
+  menu.setAttribute('role', 'listbox');
+  menu.style.pointerEvents = 'auto';
+  portal.appendChild(menu);
+
+  // Populate options
+  options.forEach((opt, i) => {
+    const el = document.createElement('div');
+    el.className = 'combobox-option';
+    el.setAttribute('role', 'option');
+    el.setAttribute('aria-selected', 'false');
+    el.setAttribute('data-value', opt);
+    el.textContent = opt;
+    el.dataset.index = i;
+    menu.appendChild(el);
+  });
+
+  const state = { open: false, selected: null, focusedIndex: -1 };
+  comboboxes[name] = { control, input, menu, hiddenInput, options, state };
+
+  function positionMenu() {
+    const rect = control.getBoundingClientRect();
+    menu.style.position = 'fixed';
+    menu.style.top = (rect.bottom + 4) + 'px';
+    menu.style.left = rect.left + 'px';
+    menu.style.width = rect.width + 'px';
+  }
+
+  function openMenu() {
+    state.open = true;
+    control.classList.add('open');
+    control.setAttribute('aria-expanded', 'true');
+    menu.classList.add('visible');
+    positionMenu();
+    filterOptions('');
+  }
+
+  function closeMenu() {
+    state.open = false;
+    control.classList.remove('open');
+    control.setAttribute('aria-expanded', 'false');
+    menu.classList.remove('visible');
+  }
+
+  function selectOption(value) {
+    state.selected = value;
+    hiddenInput.value = value;
+    input.value = '';
+
+    // Show selected text
+    const valueDiv = control.querySelector('.combobox-value');
+    let selectedSpan = valueDiv.querySelector('.selected-text');
+    if (!selectedSpan) {
+      selectedSpan = document.createElement('span');
+      selectedSpan.className = 'selected-text';
+      valueDiv.insertBefore(selectedSpan, input);
+    }
+    selectedSpan.textContent = value;
+    input.style.width = '2px';
+    input.placeholder = '';
+
+    // Update aria-selected
+    menu.querySelectorAll('.combobox-option').forEach(el => {
+      el.setAttribute('aria-selected', el.dataset.value === value ? 'true' : 'false');
+    });
+
+    closeMenu();
+    control.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function filterOptions(query) {
+    const q = query.trim().toLowerCase();
+    menu.querySelectorAll('.combobox-option').forEach(el => {
+      const text = el.textContent.toLowerCase();
+      const match = !q || text.includes(q);
+      el.classList.toggle('hidden', !match);
+      el.style.display = match ? '' : 'none';
+    });
+  }
+
+  // Click on control → open/close
+  control.addEventListener('click', (e) => {
+    if (e.target.closest('.combobox-input')) return; // input gets its own handler
+    if (state.open) closeMenu(); else openMenu();
+  });
+
+  // Focus input → open
+  input.addEventListener('focus', () => {
+    if (!state.open) openMenu();
+  });
+
+  // Typing → filter
+  input.addEventListener('input', () => {
+    if (!state.open) openMenu();
+    filterOptions(input.value);
+  });
+
+  // Click an option
+  menu.addEventListener('click', (e) => {
+    const optEl = e.target.closest('.combobox-option');
+    if (optEl && !optEl.classList.contains('hidden')) {
+      selectOption(optEl.dataset.value);
+    }
+  });
+
+  // Keyboard navigation
+  input.addEventListener('keydown', (e) => {
+    const visible = Array.from(menu.querySelectorAll('.combobox-option:not(.hidden)'));
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!state.open) openMenu();
+      state.focusedIndex = Math.min(state.focusedIndex + 1, visible.length - 1);
+      visible.forEach((el, i) => el.classList.toggle('focused', i === state.focusedIndex));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      state.focusedIndex = Math.max(state.focusedIndex - 1, 0);
+      visible.forEach((el, i) => el.classList.toggle('focused', i === state.focusedIndex));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (state.focusedIndex >= 0 && state.focusedIndex < visible.length) {
+        selectOption(visible[state.focusedIndex].dataset.value);
+      }
+    } else if (e.key === 'Escape') {
+      closeMenu();
+    }
+  });
+
+  // Close when clicking outside
+  document.addEventListener('click', (e) => {
+    if (state.open && !control.contains(e.target) && !menu.contains(e.target)) {
+      closeMenu();
+    }
+  });
+});
+
+// ── Toggle switches ───────────────────────────────────────────────
+document.querySelectorAll('.switch[role="switch"]').forEach(sw => {
+  function toggle() {
+    const current = sw.getAttribute('aria-checked') === 'true';
+    sw.setAttribute('aria-checked', String(!current));
+  }
+  sw.addEventListener('click', toggle);
+  sw.addEventListener('keydown', (e) => {
+    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(); }
+  });
+});
+
+// ── File upload zones ─────────────────────────────────────────────
+document.querySelectorAll('.upload-zone').forEach(zone => {
+  const fileInput = zone.querySelector('input[type="file"]');
+  const resultDiv = zone.nextElementSibling;
+
+  zone.addEventListener('click', (e) => {
+    if (e.target !== fileInput) fileInput.click();
+  });
+  zone.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+  });
+  zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault(); zone.classList.remove('dragover');
+    if (e.dataTransfer.files.length) {
+      fileInput.files = e.dataTransfer.files;
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length > 0) {
+      const f = fileInput.files[0];
+      resultDiv.textContent = `✓ ${f.name} (${(f.size / 1024).toFixed(1)} KB)`;
+      resultDiv.classList.add('show');
+      zone.querySelector('.text').innerHTML = `<strong>${f.name}</strong> — click to replace`;
+    }
+  });
+});
+
+// ── Form submission ───────────────────────────────────────────────
+document.getElementById('application-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const data = {};
+  for (const [key, val] of fd.entries()) {
+    if (data[key]) {
+      if (!Array.isArray(data[key])) data[key] = [data[key]];
+      data[key].push(val);
+    } else {
+      data[key] = val instanceof File ? `[File: ${val.name}]` : val;
+    }
+  }
+  // Add toggle states
+  data.relocate = document.getElementById('relocate-toggle').getAttribute('aria-checked');
+  data.onsite = document.getElementById('onsite-toggle').getAttribute('aria-checked');
+
+  const panel = document.getElementById('status-panel');
+  panel.textContent = '✅ Form submitted successfully!\n\n' + JSON.stringify(data, null, 2);
+  panel.classList.add('show');
+  window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+});
+</script>
+</body>
+</html>

@@ -68,7 +68,24 @@ async def _evaluate(js_arrow_fn: str, *args: Any) -> Any:
     if state._page is None:
         return ""
     if hasattr(state._page, "evaluate"):
-        return await state._page.evaluate(js_arrow_fn, *args)
+        result = await state._page.evaluate(js_arrow_fn, *args)
+        # browser-use CDP pages stringify everything:
+        #   dict/list -> json.dumps(value), bool -> "True"/"False"
+        # Parse them back to native Python types so callers work uniformly.
+        if isinstance(result, str):
+            if result == "":
+                return ""
+            if result == "True":
+                return True
+            if result == "False":
+                return False
+            if result[0] in ('{', '['):
+                import json
+                try:
+                    return json.loads(result)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+        return result
     if args:
         raise RuntimeError("This page implementation does not support evaluate args")
     return str(await state._page.evaluate(js_arrow_fn))
@@ -178,19 +195,72 @@ async def _find_elements(selector: str) -> list[Any]:
     return [_PlaywrightElement(state._page, selector)]
 
 
+def _is_playwright_page(obj: Any) -> bool:
+    """Check if an object is a Playwright Page (has locator + fill + get_by_text)."""
+    return obj is not None and hasattr(obj, "locator") and hasattr(obj, "fill") and hasattr(obj, "get_by_text")
+
+
 def _get_playwright_page() -> Any:
+    """Try to find the underlying Playwright Page object.
+
+    Works for:
+    - Direct Playwright pages (Strategy 0/1)
+    - browser-use library pages (Strategy 2) — searches inner attributes
+    """
     if state._page is None:
         return None
-    if hasattr(state._page, "locator") and hasattr(state._page, "fill") and hasattr(state._page, "get_by_text"):
+
+    # Direct match: state._page IS a Playwright page
+    if _is_playwright_page(state._page):
         return state._page
+
+    # Search common inner attributes (browser-use wraps Playwright)
     for attr in ("_page", "page", "_playwright_page", "playwright_page"):
         inner = getattr(state._page, attr, None)
-        if inner and hasattr(inner, "locator") and hasattr(inner, "fill"):
+        if _is_playwright_page(inner):
             return inner
+
+    # Deep search: check all attributes of state._page for a Playwright page
+    for attr_name in dir(state._page):
+        if attr_name.startswith("__"):
+            continue
+        try:
+            val = getattr(state._page, attr_name, None)
+            if _is_playwright_page(val):
+                return val
+        except Exception:
+            continue
+
+    # Try the context
     if state._context and hasattr(state._context, "pages"):
         pages = state._context.pages if not callable(state._context.pages) else []
         if pages:
-            return pages[0]
+            for p in pages:
+                if _is_playwright_page(p):
+                    return p
+
+    # Try to get from the browser object
+    if state._browser is not None:
+        # browser-use: Browser -> browser_context -> pages
+        for battr in ("browser_context", "context", "_context", "browser"):
+            ctx = getattr(state._browser, battr, None)
+            if ctx is None:
+                continue
+            if hasattr(ctx, "pages"):
+                pages = ctx.pages if not callable(ctx.pages) else []
+                for p in pages:
+                    if _is_playwright_page(p):
+                        return p
+            # Deeper: ctx might be a Playwright Browser with contexts
+            if hasattr(ctx, "contexts"):
+                try:
+                    for bc in ctx.contexts:
+                        for p in bc.pages:
+                            if _is_playwright_page(p):
+                                return p
+                except Exception:
+                    pass
+
     return None
 
 
