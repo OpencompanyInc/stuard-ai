@@ -366,6 +366,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
           textareaRef={textareaRef}
           selectedModelId={selectedModelId}
           onChatModeChange={onChatModeChange}
+          activeTabId={activeTabId}
         />
       </div>
     </>

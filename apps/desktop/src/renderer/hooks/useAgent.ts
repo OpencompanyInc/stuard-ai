@@ -631,6 +631,12 @@ export function useAgent(options?: string | UseAgentOptions) {
   const closeTab = useCallback((id: string) => {
     // Clean up request tracking for the closed tab
     runningTabsRef.current.delete(id);
+    // Clean up session-scoped folder permissions for this tab
+    const agentHttp = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
+    fetch(`${agentHttp}/v1/folder-permissions/clear-session`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: id }),
+    }).catch(() => {});
     // Remove any requestId -> tabId mappings pointing to this tab
     for (const [reqId, tabId] of requestIdToTabRef.current.entries()) {
       if (tabId === id) {

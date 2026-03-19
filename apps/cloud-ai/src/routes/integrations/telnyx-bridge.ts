@@ -85,6 +85,53 @@ telnyxBridgeWss.on('connection', async (telnyxWs: WebSocket, req: IncomingMessag
     userId: params.userId ? params.userId.slice(0, 8) + '…' : 'none',
   });
 
+  // ── Declare session state and register WS handlers IMMEDIATELY ─────────
+  // Telnyx sends the 'start' event (with stream_id) as soon as it connects.
+  // We MUST register handlers before any async work (buildVoiceContext,
+  // createSession) — otherwise the start event is missed, streamId stays
+  // empty, and all outbound audio is silently dropped.
+  let session: VoiceSession | null = null;
+  let streamId = '';
+
+  telnyxWs.on('message', (rawData: Buffer | string) => {
+    try {
+      const msg = JSON.parse(rawData.toString());
+
+      if (msg.event === 'connected') {
+        console.log('[telnyx-bridge] Telnyx WS connected event', { callControlId });
+      }
+
+      if (msg.event === 'start') {
+        streamId = msg.start?.stream_id || msg.stream_id || '';
+        console.log('[telnyx-bridge] Stream started', { streamId, callControlId, providerId });
+      }
+
+      if (msg.event === 'media' && msg.media?.track === 'inbound') {
+        const audioB64 = msg.media?.payload;
+        if (audioB64 && session?.isActive()) {
+          session.sendAudio(audioB64);
+        }
+      }
+
+      if (msg.event === 'stop') {
+        console.log('[telnyx-bridge] Telnyx stream stopped', { streamId });
+        if (session) session.close('stream_stopped');
+      }
+    } catch { /* ignore parse errors */ }
+  });
+
+  telnyxWs.on('close', () => {
+    console.log('[telnyx-bridge] Telnyx WS closed', { callControlId, providerId });
+    if (session) session.close('telnyx_closed');
+    removeActiveCall(callControlId);
+  });
+
+  telnyxWs.on('error', (err) => {
+    console.error('[telnyx-bridge] Telnyx WS error', err.message);
+    if (session) session.close('telnyx_error');
+    removeActiveCall(callControlId);
+  });
+
   // ── Load voice context (user memory, tools, system prompt) ──────────────
   // This runs in parallel with Telnyx stream setup for minimal latency.
   let voiceContext: Awaited<ReturnType<typeof buildVoiceContext>> | null = null;
@@ -155,59 +202,16 @@ telnyxBridgeWss.on('connection', async (telnyxWs: WebSocket, req: IncomingMessag
     },
   };
 
-  let session: VoiceSession | null = null;
-  let streamId = '';
-
   // Register the active call placeholder
   const bridgeConfig: TelephonyBridgeConfig = {
     callControlId,
-    streamId: '',
+    streamId,
     providerId,
     sessionConfig,
     userId: params.userId,
     callerNumber: params.callerNumber,
     direction: params.direction || 'outbound',
   };
-
-  // ── Set up Telnyx WS handlers FIRST ──────────────────────────────────────
-  // Telnyx sends the 'start' event (with stream_id) immediately on connect.
-  // If we wait for createSession() before registering handlers, we miss it
-  // and streamId stays empty → all outbound audio is silently dropped.
-  telnyxWs.on('message', (rawData: Buffer | string) => {
-    try {
-      const msg = JSON.parse(rawData.toString());
-
-      if (msg.event === 'start') {
-        streamId = msg.start?.stream_id || msg.stream_id || '';
-        bridgeConfig.streamId = streamId;
-        console.log('[telnyx-bridge] Stream started', { streamId, callControlId, providerId });
-      }
-
-      if (msg.event === 'media' && msg.media?.track === 'inbound') {
-        const audioB64 = msg.media?.payload;
-        if (audioB64 && session?.isActive()) {
-          session.sendAudio(audioB64);
-        }
-      }
-
-      if (msg.event === 'stop') {
-        console.log('[telnyx-bridge] Telnyx stream stopped', { streamId });
-        if (session) session.close('stream_stopped');
-      }
-    } catch { /* ignore parse errors */ }
-  });
-
-  telnyxWs.on('close', () => {
-    console.log('[telnyx-bridge] Telnyx WS closed', { callControlId, providerId });
-    if (session) session.close('telnyx_closed');
-    removeActiveCall(callControlId);
-  });
-
-  telnyxWs.on('error', (err) => {
-    console.error('[telnyx-bridge] Telnyx WS error', err.message);
-    if (session) session.close('telnyx_error');
-    removeActiveCall(callControlId);
-  });
 
   // ── Now create the provider session ──────────────────────────────────────
   try {

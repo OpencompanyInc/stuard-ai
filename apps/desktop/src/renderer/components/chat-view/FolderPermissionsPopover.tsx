@@ -7,7 +7,12 @@ const FOLDER_PERMISSIONS_BASE = `${AGENT_HTTP}/v1/folder-permissions`;
 
 interface FolderRule { id: string; path: string; permission: "read" | "write" | "both"; }
 
-export const FolderPermissionsPopover: React.FC = () => {
+interface FolderPermissionsPopoverProps {
+  /** Current tab / session ID — rules are scoped to this session. */
+  sessionId?: string;
+}
+
+export const FolderPermissionsPopover: React.FC<FolderPermissionsPopoverProps> = ({ sessionId = "default" }) => {
   const [open, setOpen] = useState(false);
   const [rules, setRules] = useState<FolderRule[]>([]);
   const [loading, setLoading] = useState(false);
@@ -19,11 +24,11 @@ export const FolderPermissionsPopover: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(FOLDER_PERMISSIONS_BASE);
+      const res = await fetch(`${FOLDER_PERMISSIONS_BASE}?session_id=${encodeURIComponent(sessionId)}`);
       const data = await res.json();
       if (data.ok) { setRules(data.rules || []); }
     } catch { } finally { setLoading(false); }
-  }, []);
+  }, [sessionId]);
 
   useEffect(() => { if (open) load(); }, [open, load]);
 
@@ -45,7 +50,7 @@ export const FolderPermissionsPopover: React.FC = () => {
         if (!folderPath) return;
         await fetch(`${FOLDER_PERMISSIONS_BASE}/add`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: folderPath, permission: selectedPerm }),
+          body: JSON.stringify({ path: folderPath, permission: selectedPerm, session_id: sessionId }),
         });
         await load();
       }
@@ -56,7 +61,7 @@ export const FolderPermissionsPopover: React.FC = () => {
     try {
       await fetch(`${FOLDER_PERMISSIONS_BASE}/remove`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify({ id, session_id: sessionId }),
       });
       await load();
     } catch { }
@@ -66,7 +71,7 @@ export const FolderPermissionsPopover: React.FC = () => {
     try {
       await fetch(`${FOLDER_PERMISSIONS_BASE}/add`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: rule.path, permission: perm }),
+        body: JSON.stringify({ path: rule.path, permission: perm, session_id: sessionId }),
       });
       await load();
     } catch { }
@@ -97,6 +102,7 @@ export const FolderPermissionsPopover: React.FC = () => {
           <div className="px-4 py-3 border-b border-theme flex items-center gap-2">
             <FolderLock className="w-4 h-4 text-primary" />
             <span className="text-[13px] font-bold text-theme-fg">Folder Permissions</span>
+            <span className="text-[10px] text-theme-muted ml-auto">This tab only</span>
           </div>
 
           <div className="p-3">
@@ -182,7 +188,7 @@ export const FolderPermissionsPopover: React.FC = () => {
               {rules.length > 0 && (
                 <div className="mt-2 flex items-start gap-1.5 text-[10px] text-theme-muted/70">
                   <AlertTriangle className="w-3 h-3 text-amber-500/70 mt-px flex-shrink-0" />
-                  <span>Only listed folders (and subfolders) are accessible to the agent.</span>
+                  <span>Only listed folders (and subfolders) are accessible to the agent in this tab.</span>
                 </div>
               )}
           </div>

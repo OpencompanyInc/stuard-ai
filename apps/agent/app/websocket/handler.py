@@ -5,6 +5,7 @@ from typing import Dict, Any
 
 from ..logging_config import get_logger
 from ..connections import manager
+from ..tools.folder_limiter import FolderLimiter
 from .session import WebSocketSession
 from .chat import handle_chat
 from .tools import handle_tool_exec
@@ -171,6 +172,10 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 except Exception:
                     pass
             session.pending_client_tool_results.clear()
+            # Clean up folder-limiter sessions to prevent memory leaks
+            for sid in session.folder_session_ids:
+                FolderLimiter.clear_session(sid)
+            session.folder_session_ids.clear()
         except Exception:
             pass
         await manager.disconnect(ws)

@@ -16,6 +16,12 @@ import {
   getConversationMessages,
   getSupabaseService,
 } from '../supabase';
+import {
+  getIdentityLens,
+  getDirectiveLens,
+  getBioLens,
+  type Fact,
+} from '../knowledge/retrieval';
 
 // ── Voice Tool Definitions ──────────────────────────────────────────────────
 // These are the tools the voice AI can call during a live call.
@@ -124,8 +130,12 @@ function buildVoiceSystemPrompt(opts: {
   callerNumber?: string;
   recentContext?: string;
   customPrompt?: string;
+  identityFacts?: Fact[];
+  directiveFacts?: Fact[];
+  bioFacts?: Fact[];
 }): string {
-  const { userName, direction, callerNumber, recentContext, customPrompt } = opts;
+  const { userName, direction, callerNumber, recentContext, customPrompt,
+    identityFacts, directiveFacts, bioFacts } = opts;
 
   const userRef = userName ? `The user's name is ${userName}.` : '';
   const directionCtx = direction === 'inbound'
@@ -136,6 +146,37 @@ function buildVoiceSystemPrompt(opts: {
     `You are Stuard, a proactive and warm AI assistant on a live phone call.`,
     directionCtx,
     userRef,
+  ];
+
+  // Inject user identity from knowledge graph (name, occupation, timezone, etc.)
+  if (identityFacts && identityFacts.length > 0) {
+    const validFacts = identityFacts.filter(f => f.text && !isPlaceholder(f.text));
+    if (validFacts.length > 0) {
+      parts.push('', 'What you know about the user:');
+      for (const f of validFacts) {
+        const key = f.attribute_key || 'info';
+        parts.push(`- ${formatKey(key)}: ${f.text}`);
+      }
+    }
+  }
+
+  // Inject bio facts (preferences, habits, relationships)
+  if (bioFacts && bioFacts.length > 0) {
+    parts.push('', 'About the user:');
+    for (const f of bioFacts) {
+      parts.push(`- ${f.text}`);
+    }
+  }
+
+  // Inject system instructions/directives
+  if (directiveFacts && directiveFacts.length > 0) {
+    parts.push('', 'User-configured instructions:');
+    for (const f of directiveFacts) {
+      parts.push(`- ${f.text}`);
+    }
+  }
+
+  parts.push(
     '',
     'Voice call guidelines:',
     '- Be concise and conversational — this is a phone call, not a text chat.',
@@ -145,7 +186,7 @@ function buildVoiceSystemPrompt(opts: {
     '- You can search the web with web_search and search past conversations with memory_search.',
     '- If the user wants you to send them something (a link, info, confirmation), use send_sms to text it to them.',
     '- When calling tools, briefly tell the user what you\'re doing (e.g. "Let me look that up for you").',
-  ];
+  );
 
   if (customPrompt) {
     parts.push('', 'Additional instructions:', customPrompt);
@@ -156,6 +197,17 @@ function buildVoiceSystemPrompt(opts: {
   }
 
   return parts.filter(p => p !== undefined).join('\n');
+}
+
+function formatKey(key: string): string {
+  return key.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
+function isPlaceholder(value: string): boolean {
+  const v = value.trim().toLowerCase();
+  return !v || v === 'unknown' || v === 'n/a' || v === 'not provided' ||
+    v === 'not set' || v === 'tbd' || v === 'pending' ||
+    v === "[user's response needed]" || v === '[user response needed]';
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -180,25 +232,35 @@ export async function buildVoiceContext(opts: {
 }): Promise<VoiceContext> {
   const { userId, direction, callerNumber, customPrompt } = opts;
 
-  // Load recent context (fast, direct DB query — no embedding search)
-  const [recentMessages, userName] = await Promise.all([
+  // Load recent context + knowledge graph in parallel (all fast, no embeddings)
+  const [recentMessages, userName, identityFacts, directiveFacts, bioFacts] = await Promise.all([
     loadRecentContext(userId).catch(() => ''),
     loadUserName(userId).catch(() => undefined),
+    getIdentityLens().catch(() => [] as Fact[]),
+    getDirectiveLens().catch(() => [] as Fact[]),
+    getBioLens(10).catch(() => [] as Fact[]),
   ]);
 
+  // Extract real name from identity facts if available (overrides email-derived name)
+  const knownName = identityFacts.find(f => f.attribute_key === 'name' && f.text && !isPlaceholder(f.text))?.text;
+  const effectiveName = knownName || userName;
+
   const systemPrompt = buildVoiceSystemPrompt({
-    userName,
+    userName: effectiveName,
     direction,
     callerNumber,
     recentContext: recentMessages || undefined,
     customPrompt,
+    identityFacts,
+    directiveFacts,
+    bioFacts,
   });
 
   return {
     systemPrompt,
     tools: VOICE_TOOLS,
     userId,
-    userName,
+    userName: effectiveName,
   };
 }
 

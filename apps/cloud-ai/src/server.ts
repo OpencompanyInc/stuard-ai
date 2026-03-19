@@ -1791,6 +1791,10 @@ ${skillLines}`;
             } catch { }
           },
           onFinish: async ({ text, steps, finishReason, usage, response }: any) => {
+            // Re-establish bridge context — the AI SDK invokes onFinish
+            // from a different async context, so the AsyncLocalStorage
+            // store set by withClientBridge is no longer available.
+            return withClientBridge(ws, async () => {
             if (didSendFinal) {
               try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
               return;
@@ -1977,6 +1981,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               console.error('[cloud-ai] Local memory storage import failed:', memoryErr);
             }
 
+            }); // end withClientBridge re-wrap for onFinish
           },
         };
 

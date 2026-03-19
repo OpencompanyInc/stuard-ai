@@ -128,6 +128,8 @@ interface ChatInputAreaProps {
   reasoningLevel?: ReasoningLevel;
   onReasoningLevelChange?: (level: ReasoningLevel) => void;
   fileNavRef?: React.RefObject<FileNavRef>;
+  /** Current tab ID — passed to FolderPermissionsPopover for session scoping. */
+  activeTabId?: string;
 }
 
 export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
@@ -159,6 +161,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   reasoningLevel,
   onReasoningLevelChange,
   fileNavRef,
+  activeTabId,
 }) => {
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounter = useRef(0);
@@ -653,7 +656,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
           align="end"
         />
 
-        <FolderPermissionsPopover />
+        <FolderPermissionsPopover sessionId={activeTabId} />
 
         <button
           type="button"

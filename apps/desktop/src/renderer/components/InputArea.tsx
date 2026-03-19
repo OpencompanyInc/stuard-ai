@@ -92,6 +92,8 @@ interface InputAreaProps {
   setShowMiniOutput?: React.Dispatch<React.SetStateAction<boolean>>;
   onSubmitToolOutput?: (id: string, result: any) => void;
   onGenUIResponse?: (component: string, result: any) => void;
+  /** Current tab ID for session-scoped folder permissions. */
+  activeTabId?: string;
 }
 
 // Helper component for attachments & context
@@ -178,7 +180,7 @@ const FOLDER_PERMISSIONS_BASE_FP = `${AGENT_HTTP_FP}/v1/folder-permissions`;
 
 interface FolderRule { id: string; path: string; permission: "read" | "write" | "both"; }
 
-const FolderPermissionsButton: React.FC = () => {
+const FolderPermissionsButton: React.FC<{ sessionId?: string }> = ({ sessionId = "default" }) => {
   const [open, setOpen] = useState(false);
   const [rules, setRules] = useState<FolderRule[]>([]);
   const [loading, setLoading] = useState(false);
@@ -190,11 +192,11 @@ const FolderPermissionsButton: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(FOLDER_PERMISSIONS_BASE_FP);
+      const res = await fetch(`${FOLDER_PERMISSIONS_BASE_FP}?session_id=${encodeURIComponent(sessionId)}`);
       const data = await res.json();
       if (data.ok) { setRules(data.rules || []); }
     } catch { } finally { setLoading(false); }
-  }, []);
+  }, [sessionId]);
 
   useEffect(() => { if (open) load(); }, [open, load]);
 
@@ -217,7 +219,7 @@ const FolderPermissionsButton: React.FC = () => {
         if (!folderPath) return;
         await fetch(`${FOLDER_PERMISSIONS_BASE_FP}/add`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: folderPath, permission: selectedPerm }),
+          body: JSON.stringify({ path: folderPath, permission: selectedPerm, session_id: sessionId }),
         });
         await load();
       }
@@ -228,7 +230,7 @@ const FolderPermissionsButton: React.FC = () => {
     try {
       await fetch(`${FOLDER_PERMISSIONS_BASE_FP}/remove`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify({ id, session_id: sessionId }),
       });
       await load();
     } catch { }
@@ -238,7 +240,7 @@ const FolderPermissionsButton: React.FC = () => {
     try {
       await fetch(`${FOLDER_PERMISSIONS_BASE_FP}/add`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: rule.path, permission: perm }),
+        body: JSON.stringify({ path: rule.path, permission: perm, session_id: sessionId }),
       });
       await load();
     } catch { }
@@ -270,6 +272,7 @@ const FolderPermissionsButton: React.FC = () => {
           <div className="px-4 py-3 border-b border-theme flex items-center gap-2">
             <FolderLock className="w-4 h-4 text-primary" />
             <span className="text-[13px] font-bold text-theme-fg">Folder Permissions</span>
+            <span className="text-[10px] text-theme-muted ml-auto">This tab only</span>
           </div>
 
           <div className="p-3">
@@ -355,7 +358,7 @@ const FolderPermissionsButton: React.FC = () => {
               {rules.length > 0 && (
                 <div className="mt-2 flex items-start gap-1.5 text-[10px] text-theme-muted/70">
                   <AlertTriangle className="w-3 h-3 text-amber-500/70 mt-px flex-shrink-0" />
-                  <span>Only listed folders (and subfolders) are accessible to the agent.</span>
+                  <span>Only listed folders (and subfolders) are accessible to the agent in this tab.</span>
                 </div>
               )}
           </div>
@@ -464,6 +467,7 @@ const InputArea = forwardRef(function InputArea(
     setShowMiniOutput,
     onSubmitToolOutput,
     onGenUIResponse,
+    activeTabId,
   }: InputAreaProps,
   ref: React.ForwardedRef<HTMLTextAreaElement>
 ) {
@@ -2326,7 +2330,7 @@ const InputArea = forwardRef(function InputArea(
           {/* Right Actions Group */}
           <div className="flex items-center gap-1 bg-theme-hover/50 border border-theme/10 rounded-lg p-0.5 h-8">
             {/* Folder Permissions */}
-            <FolderPermissionsButton />
+            <FolderPermissionsButton sessionId={activeTabId} />
             <div className="w-px h-4 bg-theme/20 mx-0.5" />
             {/* Mic Button */}
             {onMicClick && (

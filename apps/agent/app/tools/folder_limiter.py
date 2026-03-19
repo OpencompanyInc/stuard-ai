@@ -1,10 +1,13 @@
 """
 Folder Limiter — controls which directories the Stuard agent may read/write.
 
-Rules are persisted to ~/.stuard/folder-permissions.json.
-When **no rules** are configured the limiter is transparent (everything allowed).
-Once at least one rule exists, only paths that fall under an allowed folder
-(with the matching permission) are permitted.
+Rules are **session-scoped** and held in memory only (no disk persistence).
+Each tab / session gets its own independent set of rules. When the session
+ends the rules are automatically discarded.
+
+When **no rules** are configured for a session the limiter is transparent
+(everything allowed). Once at least one rule exists, only paths that fall
+under an allowed folder (with the matching permission) are permitted.
 
 Permission levels:
   "read"  — list / read / grep / glob only
@@ -13,9 +16,8 @@ Permission levels:
 """
 from __future__ import annotations
 
-import json
+import contextvars
 import os
-import sys
 import uuid
 import logging
 from typing import Any, Dict, List, Literal, Optional
@@ -24,46 +26,49 @@ logger = logging.getLogger("agent")
 
 Permission = Literal["read", "write", "both"]
 
-_CONFIG_DIR = os.path.expanduser("~/.stuard")
-_CONFIG_FILE = os.path.join(_CONFIG_DIR, "folder-permissions.json")
+# ── Session context ──────────────────────────────────────────────────────
+# Set by the WebSocket handler before dispatching a tool call so that
+# fs._check_folder_read / _check_folder_write can locate the correct
+# session's limiter without every tool handler needing an explicit arg.
+current_session_id: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "folder_limiter_session_id", default="default"
+)
+
+# ── Per-session storage ──────────────────────────────────────────────────
+_SESSIONS: Dict[str, "FolderLimiter"] = {}
 
 
 class FolderLimiter:
-    _instance: Optional["FolderLimiter"] = None
+    """Per-session folder permission manager."""
 
     def __init__(self) -> None:
         self._rules: List[Dict[str, Any]] = []
         self._enabled: bool = True
-        self._load()
 
-    # ── singleton ──────────────────────────────────────────────────────
+    # ── session registry ─────────────────────────────────────────────────
     @classmethod
-    def get(cls) -> "FolderLimiter":
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
+    def get(cls, session_id: Optional[str] = None) -> "FolderLimiter":
+        """Return the limiter for *session_id* (creates one if needed).
 
-    # ── persistence ────────────────────────────────────────────────────
-    def _load(self) -> None:
-        if not os.path.exists(_CONFIG_FILE):
-            return
-        try:
-            with open(_CONFIG_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            self._rules = data.get("rules", [])
-            self._enabled = data.get("enabled", True)
-        except Exception as e:
-            logger.warning(f"folder_limiter: failed to load config: {e}")
+        When *session_id* is ``None`` the value is read from the
+        ``current_session_id`` context-var (set by the WebSocket layer).
+        """
+        sid = session_id or current_session_id.get("default")
+        if sid not in _SESSIONS:
+            _SESSIONS[sid] = cls()
+        return _SESSIONS[sid]
 
-    def _save(self) -> None:
-        os.makedirs(_CONFIG_DIR, exist_ok=True)
-        try:
-            with open(_CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump({"enabled": self._enabled, "rules": self._rules}, f, indent=2)
-        except Exception as e:
-            logger.warning(f"folder_limiter: failed to save config: {e}")
+    @classmethod
+    def clear_session(cls, session_id: str) -> None:
+        """Remove all rules for a session (called when a tab closes)."""
+        _SESSIONS.pop(session_id, None)
 
-    # ── public API ─────────────────────────────────────────────────────
+    @classmethod
+    def list_sessions(cls) -> List[str]:
+        """Return all session IDs that have rules."""
+        return list(_SESSIONS.keys())
+
+    # ── public API ───────────────────────────────────────────────────────
     @property
     def enabled(self) -> bool:
         return self._enabled
@@ -71,7 +76,6 @@ class FolderLimiter:
     @enabled.setter
     def enabled(self, value: bool) -> None:
         self._enabled = value
-        self._save()
 
     @property
     def rules(self) -> List[Dict[str, Any]]:
@@ -90,7 +94,6 @@ class FolderLimiter:
         for r in self._rules:
             if os.path.normcase(r["path"]) == os.path.normcase(path):
                 r["permission"] = permission
-                self._save()
                 return r
 
         rule: Dict[str, Any] = {
@@ -99,34 +102,26 @@ class FolderLimiter:
             "permission": permission,
         }
         self._rules.append(rule)
-        self._save()
         return rule
 
     def remove_rule(self, rule_id: str) -> bool:
         """Remove a rule by its id. Returns True if removed."""
         before = len(self._rules)
         self._rules = [r for r in self._rules if r.get("id") != rule_id]
-        if len(self._rules) < before:
-            self._save()
-            return True
-        return False
+        return len(self._rules) < before
 
     def remove_rule_by_path(self, path: str) -> bool:
         """Remove a rule by its folder path. Returns True if removed."""
         path = os.path.normcase(os.path.abspath(os.path.expanduser(path)))
         before = len(self._rules)
         self._rules = [r for r in self._rules if os.path.normcase(r["path"]) != path]
-        if len(self._rules) < before:
-            self._save()
-            return True
-        return False
+        return len(self._rules) < before
 
     def clear_rules(self) -> None:
         """Remove all rules (disabling folder limiting)."""
         self._rules = []
-        self._save()
 
-    # ── permission checks ──────────────────────────────────────────────
+    # ── permission checks ────────────────────────────────────────────────
     def _normalize(self, path: str) -> str:
         return os.path.normcase(os.path.abspath(os.path.expanduser(path)))
 
@@ -173,7 +168,18 @@ class FolderLimiter:
         )
 
 
-# ── Tool handlers (registered in dispatch.py) ─────────────────────────
+# ── Helper to resolve session_id from tool args ─────────────────────────
+
+def _resolve_session_id(args: Dict[str, Any]) -> str:
+    """Extract session_id from args or fall back to the context var."""
+    return str(
+        args.get("session_id")
+        or args.get("sessionId")
+        or current_session_id.get("default")
+    )
+
+
+# ── Tool handlers (registered in dispatch.py) ───────────────────────────
 
 async def folder_permission_add(args: Dict[str, Any]) -> Dict[str, Any]:
     """Add a folder to the allowed list with a permission level."""
@@ -183,16 +189,18 @@ async def folder_permission_add(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": "missing path"}
     if permission not in ("read", "write", "both"):
         return {"ok": False, "error": f"Invalid permission '{permission}'. Must be read, write, or both."}
-    limiter = FolderLimiter.get()
+    sid = _resolve_session_id(args)
+    limiter = FolderLimiter.get(sid)
     rule = limiter.add_rule(path, permission)  # type: ignore[arg-type]
-    return {"ok": True, "rule": rule, "total_rules": len(limiter.rules)}
+    return {"ok": True, "rule": rule, "total_rules": len(limiter.rules), "session_id": sid}
 
 
 async def folder_permission_remove(args: Dict[str, Any]) -> Dict[str, Any]:
     """Remove a folder rule by id or path."""
     rule_id = str(args.get("id") or "").strip()
     path = str(args.get("path") or "").strip()
-    limiter = FolderLimiter.get()
+    sid = _resolve_session_id(args)
+    limiter = FolderLimiter.get(sid)
     removed = False
     if rule_id:
         removed = limiter.remove_rule(rule_id)
@@ -204,23 +212,26 @@ async def folder_permission_remove(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def folder_permission_list(args: Dict[str, Any]) -> Dict[str, Any]:
-    """List all folder permission rules."""
-    limiter = FolderLimiter.get()
+    """List all folder permission rules for the current session."""
+    sid = _resolve_session_id(args)
+    limiter = FolderLimiter.get(sid)
     return {
         "ok": True,
         "enabled": limiter.enabled,
         "rules": limiter.rules,
         "total": len(limiter.rules),
-        "note": "When no rules exist, all folders are accessible. Add rules to restrict access."
+        "session_id": sid,
+        "note": "When no rules exist, all folders are accessible. Add rules to restrict access. Rules are session-scoped."
     }
 
 
 async def folder_permission_set_enabled(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Enable or disable the folder limiter."""
+    """Enable or disable the folder limiter for the current session."""
     enabled = args.get("enabled")
     if enabled is None:
         return {"ok": False, "error": "missing 'enabled' (true/false)"}
-    limiter = FolderLimiter.get()
+    sid = _resolve_session_id(args)
+    limiter = FolderLimiter.get(sid)
     limiter.enabled = bool(enabled)
     return {"ok": True, "enabled": limiter.enabled}
 
@@ -231,6 +242,7 @@ async def folder_permission_check(args: Dict[str, Any]) -> Dict[str, Any]:
     operation = str(args.get("operation") or "read").strip().lower()
     if not path:
         return {"ok": False, "error": "missing path"}
-    limiter = FolderLimiter.get()
+    sid = _resolve_session_id(args)
+    limiter = FolderLimiter.get(sid)
     allowed = limiter.check(path, operation)
     return {"ok": True, "path": path, "operation": operation, "allowed": allowed}

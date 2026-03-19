@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 import websockets
 from ..logging_config import get_logger
 from .session import WebSocketSession
+from ..tools.folder_limiter import current_session_id as _folder_session_ctx
 
 # ── VM mode: use slim dispatch that excludes desktop-only modules ────────────
 if os.environ.get("STUARD_AGENT_MODE") == "vm":
@@ -155,6 +156,11 @@ async def handle_cloud_tool_request(
                     return
             session.pending_approvals.pop(req_id, None)
 
+        # Set the folder-limiter session context from args (injected by the frontend)
+        _session_id = str(args.get("session_id") or args.get("sessionId") or "default")
+        _folder_session_ctx.set(_session_id)
+        session.folder_session_ids.add(_session_id)
+
         # If this tool must run on the Desktop (Electron), forward to the connected client.
         run_on_client = (tool in CLIENT_TOOLS) or any(tool.startswith(p) for p in CLIENT_PREFIXES)
         if run_on_client:
@@ -234,6 +240,11 @@ async def handle_tool_exec(msg: Dict[str, Any], session: WebSocketSession) -> No
     result: Dict[str, Any] = {"ok": False, "error": "tool_exec_never_completed"}
     try:
         await emit("started", {"args": args, "startedAtMsMono": int(asyncio.get_event_loop().time() * 1000)})
+
+        # Set the folder-limiter session context from args
+        _session_id = str(args.get("session_id") or args.get("sessionId") or "default")
+        _folder_session_ctx.set(_session_id)
+        session.folder_session_ids.add(_session_id)
 
         try:
             if tool.startswith("stream_"):

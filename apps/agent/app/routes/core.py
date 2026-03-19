@@ -552,15 +552,15 @@ async def http_memory_space_items_list(space_id: str, type: str | None = None, l
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
-# ── Folder Permissions ─────────────────────────────────────────────────
+# ── Folder Permissions (session-scoped) ────────────────────────────────
 
 from ..tools import folder_limiter as _fl
 
 
 @router.get("/folder-permissions")
-async def http_folder_permissions_list() -> JSONResponse:
+async def http_folder_permissions_list(session_id: str = "default") -> JSONResponse:
     try:
-        res = await _fl.folder_permission_list({})
+        res = await _fl.folder_permission_list({"session_id": session_id})
         return JSONResponse(res)
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
@@ -598,5 +598,18 @@ async def http_folder_permissions_check(payload: Dict[str, Any]) -> JSONResponse
     try:
         res = await _fl.folder_permission_check(payload)
         return JSONResponse(res)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@router.post("/folder-permissions/clear-session")
+async def http_folder_permissions_clear_session(payload: Dict[str, Any]) -> JSONResponse:
+    """Clear all folder permission rules for a session (called when a tab closes)."""
+    try:
+        sid = str(payload.get("session_id") or "").strip()
+        if not sid:
+            return JSONResponse({"ok": False, "error": "missing session_id"}, status_code=400)
+        _fl.FolderLimiter.clear_session(sid)
+        return JSONResponse({"ok": True, "cleared": sid})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)

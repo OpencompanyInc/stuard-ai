@@ -1,21 +1,19 @@
 from __future__ import annotations
 
 import base64
-import mimetypes
-import os
-import mimetypes
-import os
 import fnmatch
 import glob
+import json
+import mimetypes
+import os
 import shutil
 import subprocess
 import sys
-import json
 import time
 import uuid
 from typing import Any, Dict, Optional
 
-from .folder_limiter import FolderLimiter
+from .folder_limiter import FolderLimiter, current_session_id
 
 WORKFLOW_TOOL_CALL_FLAG = "__workflowToolCall"
 
@@ -26,11 +24,20 @@ def _should_bypass_folder_permissions(args: Optional[Dict[str, Any]] = None) -> 
     return bool(args.get(WORKFLOW_TOOL_CALL_FLAG))
 
 
+def _resolve_session(args: Optional[Dict[str, Any]] = None) -> str:
+    """Get the session ID from args or the context var."""
+    if isinstance(args, dict):
+        sid = args.get("session_id") or args.get("sessionId")
+        if sid:
+            return str(sid)
+    return current_session_id.get("default")
+
+
 def _check_folder_read(path: str, args: Optional[Dict[str, Any]] = None) -> None:
     """Raise ValueError if the folder limiter denies read access to *path*."""
     if _should_bypass_folder_permissions(args):
         return
-    limiter = FolderLimiter.get()
+    limiter = FolderLimiter.get(_resolve_session(args))
     if not limiter.check_read(path):
         raise ValueError(limiter.describe_denial(path, "read"))
 
@@ -39,7 +46,7 @@ def _check_folder_write(path: str, args: Optional[Dict[str, Any]] = None) -> Non
     """Raise ValueError if the folder limiter denies write access to *path*."""
     if _should_bypass_folder_permissions(args):
         return
-    limiter = FolderLimiter.get()
+    limiter = FolderLimiter.get(_resolve_session(args))
     if not limiter.check_write(path):
         raise ValueError(limiter.describe_denial(path, "write"))
 
@@ -70,11 +77,15 @@ def _is_safe_path(path: str) -> bool:
 MAX_READ_FILE_BINARY_BYTES = int(os.getenv("READ_FILE_BINARY_MAX_BYTES", "524288000"))  # 500MB default
 MAX_READ_FILE_LINES = int(os.getenv("READ_FILE_MAX_LINES", "500"))
 MAX_AGENTIC_FILE_LINES = 650  # Stricter limit for agentic file tools
-MAX_AGENTIC_FILE_LINES = 650  # Stricter limit for agentic file tools
 MAX_GLOB_RESULTS = int(os.getenv("GLOB_MAX_RESULTS", "20000"))
 MAX_GREP_RESULTS = int(os.getenv("GREP_MAX_RESULTS", "2000"))
 MAX_GREP_FILE_BYTES = int(os.getenv("GREP_MAX_FILE_BYTES", "5242880"))  # 5MB
-CHECKPOINT_DIR = os.path.expanduser("~/.stuard/checkpoints")
+CHECKPOINT_DIR = os.environ.get(
+    "STUARD_CHECKPOINT_DIR",
+    os.path.join(os.environ.get("TMPDIR", "/tmp"), "stuard-checkpoints")
+    if os.environ.get("STUARD_AGENT_MODE") == "vm"
+    else os.path.expanduser("~/.stuard/checkpoints"),
+)
 
 class CheckpointManager:
     _active_id: str | None = None

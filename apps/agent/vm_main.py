@@ -36,6 +36,7 @@ from websockets.server import serve, WebSocketServerProtocol
 from app.websocket.chat import handle_chat
 from app.websocket.tools import handle_tool_exec
 from app.websocket.session import WebSocketSession
+from app.tools.folder_limiter import FolderLimiter
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -154,6 +155,11 @@ async def handle_connection(ws: WebSocketServerProtocol) -> None:
         logger.info("ws_disconnected remote=%s", remote)
     except Exception:
         logger.exception("ws_handler_error remote=%s", remote)
+    finally:
+        # Clean up folder-limiter sessions to prevent memory leaks
+        for sid in session.folder_session_ids:
+            FolderLimiter.clear_session(sid)
+        session.folder_session_ids.clear()
 
 
 # ── Server Lifecycle ──────────────────────────────────────────────────────────

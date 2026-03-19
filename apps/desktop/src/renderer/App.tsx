@@ -2434,6 +2434,7 @@ export default function App() {
                 setShowMiniOutput={setShowMiniOutput}
                 onSubmitToolOutput={submitToolOutput}
                 onGenUIResponse={handleGenUIResponse}
+                activeTabId={activeTabId}
               />
             </div>
           )}
