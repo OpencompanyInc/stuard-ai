@@ -443,6 +443,67 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         sendJson(res, 400, { ok: false, error: 'No verified phone number.' });
         return true;
       }
+
+      const proactiveMessage = String(body.message || 'Hey! This is Stuard AI with a quick check-in.');
+      const publicUrl = CLOUD_PUBLIC_URL || '';
+
+      let customHeaders: Array<{ name: string; value: string }>;
+      let usedProvider = 'tts-fallback';
+
+      // Generate natural-sounding audio via ElevenLabs TTS
+      const elevenLabsKey = (process.env.ELEVENLABS_API_KEY || '').trim();
+      if (elevenLabsKey) {
+        try {
+          const { ElevenLabsClient } = await import('@elevenlabs/elevenlabs-js');
+          const { uploadUserFileBuffer } = await import('../../services/cold-storage');
+          const { randomUUID } = await import('crypto');
+
+          const el = new ElevenLabsClient();
+          const voiceId = process.env.ELEVENLABS_VOICE_ID || 'JBFqnCBsd6RMkjVDRZzb';
+          const audioStream = await el.textToSpeech.convert(voiceId, {
+            text: proactiveMessage.slice(0, 3000),
+            modelId: 'eleven_turbo_v2_5',
+            outputFormat: 'ulaw_8000',
+          } as any);
+
+          // Collect stream into buffer
+          const chunks: Uint8Array[] = [];
+          const reader = (audioStream as any).getReader();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) chunks.push(value);
+          }
+          const totalLen = chunks.reduce((s, c) => s + c.length, 0);
+          const buf = Buffer.alloc(totalLen);
+          let off = 0;
+          for (const c of chunks) { buf.set(c, off); off += c.length; }
+
+          const filename = `proactive_call_${randomUUID().slice(0, 8)}.wav`;
+          const uploadResult = await uploadUserFileBuffer(auth.userId, filename, buf, 'audio/wav', 'voice-notes', 'public');
+
+          customHeaders = [
+            { name: 'X-Audio-Url', value: Buffer.from(uploadResult.url).toString('base64') },
+          ];
+          usedProvider = 'elevenlabs';
+          console.log('[telnyx] Proactive call audio generated via ElevenLabs', {
+            userId: auth.userId, audioUrl: uploadResult.url.slice(0, 80),
+          });
+        } catch (e: any) {
+          console.warn('[telnyx] ElevenLabs TTS failed, falling back to Telnyx TTS:', e?.message);
+          customHeaders = [
+            { name: 'X-Tts-Message', value: Buffer.from(proactiveMessage).toString('base64') },
+            { name: 'X-Tts-Voice', value: 'female' },
+          ];
+        }
+      } else {
+        // Fallback: Telnyx built-in TTS
+        customHeaders = [
+          { name: 'X-Tts-Message', value: Buffer.from(proactiveMessage).toString('base64') },
+          { name: 'X-Tts-Voice', value: 'female' },
+        ];
+      }
+
       const callResult = await (await fetch(`${TELNYX_API}/calls`, {
         method: 'POST',
         headers: {
@@ -454,15 +515,12 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
           to: meta.phone,
           from: TELNYX_FROM_NUMBER,
           answering_machine_detection: 'detect',
-          webhook_url: `${process.env.CLOUD_PUBLIC_URL || ''}/integrations/telnyx/call-webhook`,
+          webhook_url: `${publicUrl}/integrations/telnyx/call-webhook`,
           webhook_url_method: 'POST',
-          custom_headers: [
-            { name: 'X-Tts-Message', value: Buffer.from(String(body.message || 'Stuard check-in')).toString('base64') },
-            { name: 'X-Tts-Voice', value: 'female' },
-          ],
+          custom_headers: customHeaders,
         }),
       })).json() as any;
-      sendJson(res, 200, { ok: true, callControlId: callResult?.data?.call_control_id });
+      sendJson(res, 200, { ok: true, callControlId: callResult?.data?.call_control_id, provider: usedProvider });
     } catch (e: any) {
       sendJson(res, 500, { ok: false, error: String(e?.message || e) });
     }
@@ -1001,18 +1059,34 @@ async function processCallWebhook(rawBody: string): Promise<void> {
 
       // For outbound calls, streaming wasn't started in the answer command
       // (since WE placed the call). We need to start it now.
-      // Check direction AND custom headers as fallback (X-Voice-Bridge = AI call,
-      // X-Tts-Message = proactive TTS call). Telnyx often omits direction in this event.
+      // Check direction AND custom headers as fallback. Telnyx often omits direction.
       const isOutbound = effectiveDirection === 'outgoing' ||
         (!effectiveDirection && customHeaders.some(h =>
-          h.name === 'X-Voice-Bridge' || h.name === 'X-Tts-Message'));
+          h.name === 'X-Voice-Bridge' || h.name === 'X-Tts-Message' || h.name === 'X-Audio-Url'));
 
       if (isOutbound) {
         const bridgeHeader = customHeaders.find(h => h.name === 'X-Voice-Bridge');
         const wsUrlHeader = customHeaders.find(h => h.name === 'X-Bridge-Ws-Url');
+        const audioUrlHeader = customHeaders.find(h => h.name === 'X-Audio-Url');
         const ttsHeader = customHeaders.find(h => h.name === 'X-Tts-Message');
 
-        if (bridgeHeader?.value && wsUrlHeader?.value) {
+        if (audioUrlHeader?.value) {
+          // ElevenLabs pre-generated audio — play via Telnyx playback
+          const audioUrl = Buffer.from(audioUrlHeader.value, 'base64').toString('utf8');
+
+          console.log('[telnyx] Playing ElevenLabs audio for proactive call', {
+            callControlId: callControlId.slice(0, 24),
+            audioUrl: audioUrl.slice(0, 80),
+          });
+
+          await fetch(`${TELNYX_API}/calls/${callControlId}/actions/playback_start`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ audio_url: audioUrl }),
+          }).catch((e: any) => {
+            console.error('[telnyx] Playback failed for proactive call:', e?.message);
+          });
+        } else if (bridgeHeader?.value && wsUrlHeader?.value) {
           // AI voice call — start bidirectional streaming to the bridge WS
           const wsBaseUrl = Buffer.from(wsUrlHeader.value, 'base64').toString('utf8');
           const streamUrl = `${wsBaseUrl}?callControlId=${encodeURIComponent(callControlId)}&bridge=${encodeURIComponent(bridgeHeader.value)}`;
@@ -1121,6 +1195,16 @@ async function processCallWebhook(rawBody: string): Promise<void> {
     // ── Speak completed (after TTS fallback) ────────────────────────────
     case 'call.speak.ended': {
       console.log('[telnyx] TTS speak ended, hanging up', { callControlId: callControlId.slice(0, 24) });
+      await fetch(`${TELNYX_API}/calls/${callControlId}/actions/hangup`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+      }).catch(() => {});
+      break;
+    }
+
+    // ── Playback completed (after ElevenLabs audio playback) ─────────
+    case 'call.playback.ended': {
+      console.log('[telnyx] Audio playback ended, hanging up', { callControlId: callControlId.slice(0, 24) });
       await fetch(`${TELNYX_API}/calls/${callControlId}/actions/hangup`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
