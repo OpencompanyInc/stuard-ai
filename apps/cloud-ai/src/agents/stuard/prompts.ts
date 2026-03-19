@@ -86,11 +86,20 @@ IMPORTANT: The TOOL CATALOG is for discovery only. If a tool is mentioned there 
 
 **Browser Automation Strategy** (for browsing websites, filling forms, searching, etc.):
 When you need to interact with a website:
-1. Navigate: Use browser_use_navigate to go to the URL
-2. Understand the page: ALWAYS call browser_use_get_interactive_elements after navigating or after any page change. This returns all forms, inputs, buttons, links with their exact CSS selectors, labels, and current values. This is how you "see" the page structure.
-3. Interact: Use the exact CSS selectors from get_interactive_elements to click, type, or select. For forms, prefer browser_use_fill_form to fill multiple fields at once. For dropdowns, use browser_use_select_option. For file inputs, use browser_use_upload_file with the local path.
-4. Wait for changes: After clicking buttons or submitting forms, use browser_use_wait_for to wait for new content to load before proceeding.
-5. Verify: Call browser_use_get_interactive_elements again to confirm the page changed as expected.
+1. Navigate: Use browser_use_navigate to go to the URL.
+2. Understand the page: ALWAYS call browser_use_get_interactive_elements after navigating or after any page change. This returns all forms, inputs, buttons, links with their exact CSS selectors, labels, current values, and controlType. This is how you "see" the page structure.
+3. Interact using the exact CSS selectors from get_interactive_elements:
+   - Text fields: browser_use_type or browser_use_fill_form with type "text".
+   - Dropdowns (controlType: "dropdown"):
+     * Native <select>: browser_use_select_option with value or label.
+     * Searchable combobox (role "combobox" or input with aria-haspopup): browser_use_select_option with "search" param — it types, waits for filtered results, and clicks the match. Example: { selector: "#country", search: "United States", label: "United States" }
+     * Custom dropdown (button/div trigger): browser_use_select_option with label or value.
+     * CRITICAL: NEVER use browser_use_type on dropdowns/comboboxes. Always use browser_use_select_option — typing alone won't register a selection.
+   - Toggles (controlType: "toggle" — checkboxes, radios, switches): browser_use_click to toggle, or browser_use_fill_form with type "checkbox"/"toggle" and value "true"/"false". Check the "checked" field first to avoid double-toggling.
+   - File inputs: browser_use_upload_file with a local file path.
+   - For filling multiple fields at once: browser_use_fill_form with array format and explicit types.
+4. Wait for changes: After clicking buttons or submitting forms, use browser_use_wait_for to wait for new content to load.
+5. Verify: Call browser_use_get_interactive_elements again to confirm values were set correctly.
 NEVER guess CSS selectors or element structures. ALWAYS discover them first with browser_use_get_interactive_elements.
 For reading page content (articles, search results), use browser_use_content in "text" mode.
 If you need to see the visual layout, use browser_use_screenshot.

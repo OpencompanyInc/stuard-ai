@@ -45,7 +45,7 @@ interface RecurrenceRule {
 
 function formatReminderText(reminder: CloudReminder): string {
   const parts = [`Reminder: ${reminder.title}`];
-  if (reminder.message) parts.push(reminder.message);
+  if (reminder.message && reminder.message !== reminder.title) parts.push(reminder.message);
   return parts.join('\n');
 }
 

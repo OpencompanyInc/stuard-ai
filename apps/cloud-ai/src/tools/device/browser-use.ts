@@ -299,12 +299,13 @@ export const browser_use_hover = makeLocalTool(
 
 export const browser_use_select_option = makeLocalTool(
   'browser_use_select_option',
-  'Select an option from a dropdown control. Works with native <select> elements and many custom combobox/listbox dropdowns. Use the CSS selector of the dropdown trigger/control and specify the option by value, label text, or index.',
+  'Select an option from a dropdown or searchable combobox. Works with native <select> elements, custom listbox/combobox dropdowns, and searchable autocomplete inputs (React Select, MUI Autocomplete, Headless UI, etc.). For searchable dropdowns, provide the "search" parameter — it will type the text, wait for filtered options to appear, and click the matching one. For native selects, use value, label, or index.',
   z.object({
-    selector: z.string().describe('CSS selector of the <select> element'),
+    selector: z.string().describe('CSS selector of the dropdown control (select, input, button, or combobox element)'),
     value: z.string().optional().describe('Option value attribute to select'),
     label: z.string().optional().describe('Option visible text to select (case-insensitive partial match)'),
     index: z.number().optional().describe('Option index to select (0-based)'),
+    search: z.string().optional().describe('Text to type into a searchable/autocomplete dropdown to filter options before selecting. Use this for combobox inputs where options only appear after typing.'),
     timeout: z.number().optional().describe('Timeout in ms (default: 5000)'),
   }),
   z.object({
@@ -381,7 +382,7 @@ export const browser_use_get_interactive_elements = makeLocalTool(
 
 export const browser_use_fill_form = makeLocalTool(
   'browser_use_fill_form',
-  'Fill multiple form fields at once and optionally submit the form. More reliable than calling browser_use_type for each field individually. Supports text fields, dropdowns, checkboxes/radios, and file inputs when array items include type "file" and a local path as the value.',
+  'Fill multiple form fields at once and optionally submit the form. More reliable than calling browser_use_type for each field individually. Supports text fields, dropdowns (including searchable comboboxes), checkboxes, radios, toggle switches, and file inputs.',
   z.object({
     fields: z.union([
       z.record(z.string(), z.string()),
@@ -389,7 +390,7 @@ export const browser_use_fill_form = makeLocalTool(
         selector: z.string().optional(),
         name: z.string().optional(),
         value: z.string(),
-        type: z.string().optional().describe('"text" (default), "select", "checkbox", "radio", or "file"'),
+        type: z.string().optional().describe('"text" (default), "select", "checkbox", "radio", "toggle", "switch", or "file". For toggles/switches/checkboxes, value should be "true"/"false".'),
       })),
     ]).describe('Fields to fill: object { "css-selector": "value" } or array of { selector, value, type? }'),
     submit: z.boolean().optional().describe('Submit the form after filling (default: false)'),

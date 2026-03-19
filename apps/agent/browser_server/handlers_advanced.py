@@ -13,7 +13,277 @@ from browser_server.lifecycle import (
 )
 
 
-async def _select_dropdown(selector: str, value: Any = None, label: Any = None, index: Any = None, timeout: int = 5000) -> dict[str, Any]:
+async def _searchable_combobox_select(
+    pw: Any,
+    selector: str,
+    search_text: str,
+    value: Any = None,
+    label: Any = None,
+    index: Any = None,
+    timeout: int = 5000,
+) -> dict[str, Any]:
+    """Handle searchable combobox/autocomplete dropdowns.
+
+    Strategy:
+    1. Click the input to focus & possibly open the dropdown
+    2. Clear existing text and type the search term character-by-character
+       (many frameworks filter on each keystroke)
+    3. Wait for option nodes to appear
+    4. Find the best matching option and click it
+    """
+    locator = pw.locator(selector).first
+
+    # 1. Click to focus and possibly open dropdown
+    try:
+        await locator.click(timeout=3000)
+    except Exception:
+        pass
+    await asyncio.sleep(0.15)
+
+    # 2. Clear existing text and type the search term
+    try:
+        await locator.fill("", timeout=2000)
+    except Exception:
+        try:
+            await pw.keyboard.press("Control+a")
+            await pw.keyboard.press("Backspace")
+        except Exception:
+            pass
+    await asyncio.sleep(0.1)
+
+    # Type character-by-character so frameworks can filter live
+    try:
+        await locator.press_sequentially(search_text, delay=50)
+    except Exception:
+        try:
+            await pw.keyboard.type(search_text, delay=50)
+        except Exception:
+            return {"status": "error", "detail": "Failed to type search text"}
+
+    # 3. Wait for options to appear
+    desired_value = str(value) if value is not None else None
+    desired_label = str(label).strip().lower() if label is not None else search_text.strip().lower()
+    desired_index = int(index) if index is not None else None
+
+    deadline = asyncio.get_event_loop().time() + (timeout / 1000.0)
+    last_options: list[dict] = []
+
+    while asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(0.3)
+
+        # Scan for visible option nodes
+        scan_result = await _evaluate(
+            """(sel, desiredVal, desiredLbl, desiredIdx) => {
+              const control = document.querySelector(sel);
+              if (!control) return { found: false, options: [] };
+
+              function isVisible(el) {
+                if (!el) return false;
+                const r = el.getBoundingClientRect();
+                const s = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
+              }
+
+              function textOf(el) {
+                return [
+                  el?.innerText,
+                  el?.textContent,
+                  el?.getAttribute?.('aria-label'),
+                  el?.getAttribute?.('title'),
+                  el?.getAttribute?.('data-value'),
+                  el?.getAttribute?.('value'),
+                ].filter(Boolean).map(p => String(p).trim()).find(Boolean) || '';
+              }
+
+              function valueOf(el) {
+                if (!el) return '';
+                if ('value' in el && el.value) return String(el.value);
+                return String(
+                  el.getAttribute('data-value')
+                  || el.getAttribute('value')
+                  || el.getAttribute('aria-valuetext')
+                  || ''
+                ).trim();
+              }
+
+              // Find popup container
+              const controlsId = control.getAttribute('aria-controls') || control.getAttribute('aria-owns') || '';
+              let popup = controlsId ? document.getElementById(controlsId) : null;
+              if (!popup) {
+                popup = control.closest('[role="combobox"], [data-headlessui-state], [data-radix-popper-content-wrapper]');
+                if (popup === control) popup = null;
+              }
+              if (!popup) {
+                popup = control.parentElement?.querySelector?.('[role="listbox"], [role="menu"], [data-radix-popper-content-wrapper], [data-headlessui-state]');
+              }
+              // Also look for detached popups (portaled to body)
+              if (!popup) {
+                const candidates = document.querySelectorAll('[role="listbox"], [role="menu"], [role="tree"], [data-radix-popper-content-wrapper], [data-headlessui-state]');
+                for (const c of candidates) {
+                  if (isVisible(c)) { popup = c; break; }
+                }
+              }
+
+              const scopes = popup ? [popup] : [document];
+              const optSel = [
+                '[role="option"]',
+                '[role="menuitemradio"]',
+                '[role="menuitemcheckbox"]',
+                '[role="listbox"] [data-value]',
+                '[role="menu"] [data-value]',
+                '[aria-selected]',
+                'option',
+                'li',
+              ].join(', ');
+
+              const seen = new Set();
+              const options = [];
+              for (const scope of scopes) {
+                for (const candidate of Array.from(scope.querySelectorAll(optSel))) {
+                  if (seen.has(candidate) || candidate === control) continue;
+                  seen.add(candidate);
+                  const text = textOf(candidate);
+                  const val = valueOf(candidate);
+                  if (!isVisible(candidate) || (!text && !val)) continue;
+                  options.push({ text, value: val || text });
+                }
+                if (options.length > 0) break;
+              }
+
+              // Try to find match
+              let matchIdx = -1;
+              if (desiredVal !== null) {
+                matchIdx = options.findIndex(o => o.value === desiredVal || o.text === desiredVal);
+              }
+              if (matchIdx < 0 && desiredLbl) {
+                // Exact match first
+                matchIdx = options.findIndex(o => o.text.toLowerCase() === desiredLbl);
+                // Then partial match
+                if (matchIdx < 0) {
+                  matchIdx = options.findIndex(o => o.text.toLowerCase().includes(desiredLbl) || o.value.toLowerCase().includes(desiredLbl));
+                }
+              }
+              if (matchIdx < 0 && desiredIdx !== null && desiredIdx >= 0 && desiredIdx < options.length) {
+                matchIdx = desiredIdx;
+              }
+
+              return {
+                found: matchIdx >= 0,
+                matchIdx,
+                options: options.slice(0, 30),
+                optionCount: options.length,
+              };
+            }""",
+            selector,
+            str(value) if value is not None else None,
+            desired_label,
+            desired_index,
+        )
+
+        if not isinstance(scan_result, dict):
+            continue
+
+        last_options = scan_result.get("options", [])
+
+        if scan_result.get("found"):
+            match_idx = scan_result["matchIdx"]
+            # Click the matched option via JS
+            click_result = await _evaluate(
+                """(sel, matchIdx) => {
+                  const control = document.querySelector(sel);
+                  if (!control) return { status: 'error', detail: 'Control not found' };
+
+                  function isVisible(el) {
+                    if (!el) return false;
+                    const r = el.getBoundingClientRect();
+                    const s = window.getComputedStyle(el);
+                    return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
+                  }
+
+                  function textOf(el) {
+                    return [el?.innerText, el?.textContent, el?.getAttribute?.('aria-label'), el?.getAttribute?.('title'), el?.getAttribute?.('data-value'), el?.getAttribute?.('value')].filter(Boolean).map(p => String(p).trim()).find(Boolean) || '';
+                  }
+
+                  function valueOf(el) {
+                    if (!el) return '';
+                    if ('value' in el && el.value) return String(el.value);
+                    return String(el.getAttribute('data-value') || el.getAttribute('value') || el.getAttribute('aria-valuetext') || '').trim();
+                  }
+
+                  const controlsId = control.getAttribute('aria-controls') || control.getAttribute('aria-owns') || '';
+                  let popup = controlsId ? document.getElementById(controlsId) : null;
+                  if (!popup) popup = control.closest('[role="combobox"], [data-headlessui-state], [data-radix-popper-content-wrapper]');
+                  if (popup === control) popup = null;
+                  if (!popup) popup = control.parentElement?.querySelector?.('[role="listbox"], [role="menu"], [data-radix-popper-content-wrapper], [data-headlessui-state]');
+                  if (!popup) {
+                    const candidates = document.querySelectorAll('[role="listbox"], [role="menu"], [role="tree"], [data-radix-popper-content-wrapper], [data-headlessui-state]');
+                    for (const c of candidates) { if (isVisible(c)) { popup = c; break; } }
+                  }
+
+                  const scopes = popup ? [popup] : [document];
+                  const optSel = '[role="option"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="listbox"] [data-value], [role="menu"] [data-value], [aria-selected], option, li';
+                  const seen = new Set();
+                  const visibleOptions = [];
+                  for (const scope of scopes) {
+                    for (const candidate of Array.from(scope.querySelectorAll(optSel))) {
+                      if (seen.has(candidate) || candidate === control) continue;
+                      seen.add(candidate);
+                      if (!isVisible(candidate)) continue;
+                      const text = textOf(candidate);
+                      const val = valueOf(candidate);
+                      if (!text && !val) continue;
+                      visibleOptions.push(candidate);
+                    }
+                    if (visibleOptions.length > 0) break;
+                  }
+
+                  if (matchIdx < 0 || matchIdx >= visibleOptions.length) {
+                    return { status: 'error', detail: 'Match index out of range' };
+                  }
+
+                  const match = visibleOptions[matchIdx];
+                  const matchedText = textOf(match);
+                  const matchedValue = valueOf(match) || matchedText;
+
+                  match.scrollIntoView({ block: 'center', inline: 'center' });
+                  const r = match.getBoundingClientRect();
+                  const opts = { bubbles: true, cancelable: true, clientX: r.left + r.width/2, clientY: r.top + r.height/2, view: window };
+                  try { match.dispatchEvent(new PointerEvent('pointerdown', opts)); } catch {}
+                  try { match.dispatchEvent(new MouseEvent('mousedown', opts)); } catch {}
+                  try { match.dispatchEvent(new PointerEvent('pointerup', opts)); } catch {}
+                  try { match.dispatchEvent(new MouseEvent('mouseup', opts)); } catch {}
+                  try { match.dispatchEvent(new MouseEvent('click', opts)); } catch {}
+                  if (typeof match.focus === 'function') try { match.focus(); } catch {}
+                  if (typeof match.click === 'function') try { match.click(); } catch {}
+
+                  return { status: 'ok', selected: matchedValue, text: matchedText };
+                }""",
+                selector,
+                match_idx,
+            )
+            if isinstance(click_result, dict) and click_result.get("status") == "ok":
+                return {
+                    "status": "ok",
+                    "selected": click_result.get("selected", ""),
+                    "text": click_result.get("text", ""),
+                    "method": "searchable_combobox",
+                }
+
+        # If options appeared but no match, keep waiting (more may load)
+        if scan_result.get("optionCount", 0) > 0:
+            # Options exist but no match yet — give a bit more time
+            continue
+
+    # Timeout — return what we found
+    return {
+        "status": "no_match",
+        "detail": f"No matching option found for search '{search_text}' in searchable dropdown",
+        "options": last_options[:20],
+        "method": "searchable_combobox",
+    }
+
+
+async def _select_dropdown(selector: str, value: Any = None, label: Any = None, index: Any = None, timeout: int = 5000, search: str | None = None) -> dict[str, Any]:
     pw = _get_playwright_page()
     if pw:
         try:
@@ -38,6 +308,33 @@ async def _select_dropdown(selector: str, value: Any = None, label: Any = None, 
                 return {"status": "ok", "selected": selected_value, "text": selected_text, "method": "playwright_select"}
         except Exception:
             pass
+
+    # ── Searchable combobox / autocomplete path ──────────────────────────
+    # If the element is an input (or role="combobox" on an input), we need
+    # to type into it to trigger the search/filter, then pick from results.
+    if pw:
+        search_text = search or (str(label) if label is not None else None) or (str(value) if value is not None else None)
+        if search_text:
+            try:
+                el_info = await pw.locator(selector).first.evaluate(
+                    """(el) => ({
+                      tag: (el.tagName || '').toLowerCase(),
+                      role: el.getAttribute('role') || '',
+                      haspopup: el.getAttribute('aria-haspopup') || '',
+                      type: (el.getAttribute('type') || '').toLowerCase(),
+                    })"""
+                )
+                is_searchable = (
+                    el_info.get("tag") == "input" and el_info.get("type") not in ("checkbox", "radio", "file", "hidden")
+                ) or el_info.get("role") == "combobox" or el_info.get("role") == "searchbox"
+
+                if is_searchable:
+                    result = await _searchable_combobox_select(pw, selector, search_text, value, label, index, timeout)
+                    if result.get("status") == "ok":
+                        return result
+                    # Fall through to generic JS handler if searchable path failed
+            except Exception:
+                pass
 
     result = await _evaluate(
         """(sel, val, lbl, idx, timeoutMs) => {
@@ -437,19 +734,24 @@ async def handle_select_option(req: web.Request) -> web.Response:
     value = body.get("value")
     label = body.get("label")
     index = body.get("index")
+    search = body.get("search")
+    if isinstance(search, str):
+        search = search.strip() or None
+    else:
+        search = None
     timeout = _clamp_int(body.get("timeout", 5000), 5000, 500, 30000)
 
     if not selector:
         return _err("selector is required for select_option")
-    if value is None and label is None and index is None:
-        return _err("One of value, label, or index is required")
+    if value is None and label is None and index is None and search is None:
+        return _err("One of value, label, index, or search is required")
 
     async with state._lock:
         ok, err = await _ensure_browser()
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
-            result = await _select_dropdown(selector, value=value, label=label, index=index, timeout=timeout)
+            result = await _select_dropdown(selector, value=value, label=label, index=index, timeout=timeout, search=search)
             if isinstance(result, dict) and result.get("status") == "ok":
                 return _ok({
                     "selected": result.get("selected"),
@@ -777,7 +1079,7 @@ async def handle_fill_form(req: web.Request) -> web.Response:
 
                 try:
                     if field_type == "select":
-                        select_result = await _select_dropdown(sel, value=raw_val, label=val, timeout=5000)
+                        select_result = await _select_dropdown(sel, value=raw_val, label=val, timeout=5000, search=val)
                         if not isinstance(select_result, dict) or select_result.get("status") != "ok":
                             detail = select_result.get("detail", "Select failed") if isinstance(select_result, dict) else str(select_result)
                             raise RuntimeError(detail)
@@ -785,10 +1087,17 @@ async def handle_fill_form(req: web.Request) -> web.Response:
                     elif field_type == "file":
                         await _upload_local_file(sel, val, timeout=5000)
                         filled += 1
-                    elif field_type in ("checkbox", "radio"):
+                    elif field_type in ("checkbox", "radio", "toggle", "switch"):
+                        should_check = val.lower() in ("true", "1", "yes", "on")
                         if pw:
-                            checked = await pw.is_checked(sel)
-                            should_check = val.lower() in ("true", "1", "yes", "on")
+                            # Try Playwright's is_checked first (works for native checkboxes/radios)
+                            try:
+                                checked = await pw.is_checked(sel)
+                            except Exception:
+                                # Fallback for ARIA switches/toggles that don't have native checked state
+                                checked = await pw.locator(sel).first.evaluate(
+                                    "(el) => el.getAttribute('aria-checked') === 'true' || el.classList.contains('checked') || el.classList.contains('active') || el.dataset.state === 'checked'"
+                                )
                             if checked != should_check:
                                 await pw.click(sel, timeout=5000)
                         filled += 1

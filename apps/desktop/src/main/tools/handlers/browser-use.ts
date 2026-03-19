@@ -894,6 +894,7 @@ export async function execBrowserUseSelectOption(args: any, _ctx: RouterContext)
         value: args?.value,
         label: args?.label,
         index: args?.index,
+        search: args?.search,
         timeout: args?.timeout,
       }),
     }, sessionId);
