@@ -31,6 +31,10 @@ const pendingInboundCalls = new Map<string, { fromNumber: string; answeredAt: nu
 // Track call direction from call.initiated (Telnyx may not include direction in later events)
 const callDirectionCache = new Map<string, string>();
 
+// Cache proactive call audio URLs keyed by callControlId
+// (Telnyx custom_headers are unreliable — values may be truncated or not echoed in webhooks)
+const proactiveCallCache = new Map<string, { audioUrl?: string; ttsMessage?: string; createdAt: number }>();
+
 // Pending verification maps (primary & secondary)
 const pendingVerifications = new Map<string, { code: string; phone: string; expiresAt: number }>();
 const pendingSecondaryVerifications = new Map<string, { code: string; phone: string; expiresAt: number }>();
@@ -447,8 +451,8 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
       const proactiveMessage = String(body.message || 'Hey! This is Stuard AI with a quick check-in.');
       const publicUrl = CLOUD_PUBLIC_URL || '';
 
-      let customHeaders: Array<{ name: string; value: string }>;
       let usedProvider = 'tts-fallback';
+      let proactiveAudioUrl: string | null = null;
 
       // Generate natural-sounding audio via ElevenLabs TTS
       const elevenLabsKey = (process.env.ELEVENLABS_API_KEY || '').trim();
@@ -488,27 +492,23 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
           const filename = `proactive_call_${randomUUID().slice(0, 8)}.mp3`;
           const uploadResult = await uploadUserFileBuffer(auth.userId, filename, buf, 'audio/mpeg', 'voice-notes', 'public');
 
-          customHeaders = [
-            { name: 'X-Audio-Url', value: Buffer.from(uploadResult.url).toString('base64') },
-          ];
           usedProvider = 'elevenlabs';
+          // Store in cache — will be looked up in call.answered webhook
+          proactiveAudioUrl = uploadResult.url;
           console.log('[telnyx] Proactive call audio generated via ElevenLabs', {
-            userId: auth.userId, audioUrl: uploadResult.url.slice(0, 80),
+            userId: auth.userId, audioUrl: uploadResult.url.slice(0, 80), bufLen: buf.length,
           });
         } catch (e: any) {
-          console.warn('[telnyx] ElevenLabs TTS failed, falling back to Telnyx TTS:', e?.message);
-          customHeaders = [
-            { name: 'X-Tts-Message', value: Buffer.from(proactiveMessage).toString('base64') },
-            { name: 'X-Tts-Voice', value: 'female' },
-          ];
+          console.warn('[telnyx] ElevenLabs TTS failed, falling back to Telnyx TTS:', e?.message, e?.stack?.slice(0, 200));
         }
       } else {
-        // Fallback: Telnyx built-in TTS
-        customHeaders = [
-          { name: 'X-Tts-Message', value: Buffer.from(proactiveMessage).toString('base64') },
-          { name: 'X-Tts-Voice', value: 'female' },
-        ];
+        console.warn('[telnyx] ELEVENLABS_API_KEY not set, using Telnyx TTS fallback');
       }
+
+      // Always include a flag header so call.answered can detect this is a proactive call
+      const customHeaders: Array<{ name: string; value: string }> = [
+        { name: 'X-Proactive-Call', value: 'true' },
+      ];
 
       const callResult = await (await fetch(`${TELNYX_API}/calls`, {
         method: 'POST',
@@ -526,7 +526,23 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
           custom_headers: customHeaders,
         }),
       })).json() as any;
-      sendJson(res, 200, { ok: true, callControlId: callResult?.data?.call_control_id, provider: usedProvider });
+
+      const callCtrlId = callResult?.data?.call_control_id || '';
+
+      // Cache the audio URL (or fallback TTS message) keyed by callControlId
+      // The call.answered webhook handler will look this up
+      if (callCtrlId) {
+        proactiveCallCache.set(callCtrlId, {
+          audioUrl: proactiveAudioUrl || undefined,
+          ttsMessage: proactiveAudioUrl ? undefined : proactiveMessage,
+          createdAt: Date.now(),
+        });
+        console.log('[telnyx] Cached proactive call data', {
+          callControlId: callCtrlId.slice(0, 24), hasAudioUrl: !!proactiveAudioUrl, provider: usedProvider,
+        });
+      }
+
+      sendJson(res, 200, { ok: true, callControlId: callCtrlId, provider: usedProvider });
     } catch (e: any) {
       sendJson(res, 500, { ok: false, error: String(e?.message || e) });
     }
@@ -1067,30 +1083,70 @@ async function processCallWebhook(rawBody: string): Promise<void> {
       // (since WE placed the call). We need to start it now.
       // Check direction AND custom headers as fallback. Telnyx often omits direction.
       const isOutbound = effectiveDirection === 'outgoing' ||
+        proactiveCallCache.has(callControlId) ||
         (!effectiveDirection && customHeaders.some(h =>
-          h.name === 'X-Voice-Bridge' || h.name === 'X-Tts-Message' || h.name === 'X-Audio-Url'));
+          h.name === 'X-Voice-Bridge' || h.name === 'X-Tts-Message' || h.name === 'X-Audio-Url' || h.name === 'X-Proactive-Call'));
 
       if (isOutbound) {
+        // Check in-memory cache first (reliable) before falling back to custom_headers
+        const cachedProactive = proactiveCallCache.get(callControlId);
         const bridgeHeader = customHeaders.find(h => h.name === 'X-Voice-Bridge');
         const wsUrlHeader = customHeaders.find(h => h.name === 'X-Bridge-Ws-Url');
-        const audioUrlHeader = customHeaders.find(h => h.name === 'X-Audio-Url');
         const ttsHeader = customHeaders.find(h => h.name === 'X-Tts-Message');
 
-        if (audioUrlHeader?.value) {
+        if (cachedProactive?.audioUrl) {
           // ElevenLabs pre-generated audio — play via Telnyx playback
-          const audioUrl = Buffer.from(audioUrlHeader.value, 'base64').toString('utf8');
+          proactiveCallCache.delete(callControlId);
 
-          console.log('[telnyx] Playing ElevenLabs audio for proactive call', {
+          console.log('[telnyx] Playing ElevenLabs audio for proactive call (from cache)', {
             callControlId: callControlId.slice(0, 24),
-            audioUrl: audioUrl.slice(0, 80),
+            audioUrl: cachedProactive.audioUrl.slice(0, 80),
           });
 
-          await fetch(`${TELNYX_API}/calls/${callControlId}/actions/playback_start`, {
+          const playRes = await fetch(`${TELNYX_API}/calls/${callControlId}/actions/playback_start`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ audio_url: audioUrl }),
+            body: JSON.stringify({ audio_url: cachedProactive.audioUrl }),
           }).catch((e: any) => {
-            console.error('[telnyx] Playback failed for proactive call:', e?.message);
+            console.error('[telnyx] Playback start fetch failed:', e?.message);
+            return null;
+          });
+
+          if (playRes && !playRes.ok) {
+            const errBody = await playRes.text().catch(() => '');
+            console.error('[telnyx] Playback start API error, falling back to TTS speak', {
+              status: playRes.status, body: errBody.slice(0, 300),
+            });
+            // Fallback: use Telnyx speak if playback_start fails
+            await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                payload: cachedProactive.ttsMessage || 'Hey! This is Stuard AI with a quick check-in.',
+                voice: 'female',
+                language: 'en-US',
+              }),
+            }).catch(() => {});
+          }
+        } else if (cachedProactive?.ttsMessage) {
+          // Proactive call with no ElevenLabs audio — use Telnyx TTS
+          proactiveCallCache.delete(callControlId);
+
+          console.log('[telnyx] Speaking TTS for proactive call (from cache)', {
+            callControlId: callControlId.slice(0, 24),
+            messageLen: cachedProactive.ttsMessage.length,
+          });
+
+          await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              payload: cachedProactive.ttsMessage,
+              voice: 'female',
+              language: 'en-US',
+            }),
+          }).catch((e: any) => {
+            console.error('[telnyx] TTS speak failed for proactive call:', e?.message);
           });
         } else if (bridgeHeader?.value && wsUrlHeader?.value) {
           // AI voice call — start bidirectional streaming to the bridge WS
@@ -1131,11 +1187,11 @@ async function processCallWebhook(rawBody: string): Promise<void> {
             }).catch(() => {});
           }
         } else if (ttsHeader?.value) {
-          // Proactive TTS-only call — speak the message
+          // Legacy: TTS from custom_headers (fallback for non-cached calls)
           const ttsMessage = Buffer.from(ttsHeader.value, 'base64').toString('utf8');
           const ttsVoice = customHeaders.find(h => h.name === 'X-Tts-Voice')?.value || 'female';
 
-          console.log('[telnyx] Speaking TTS for outbound proactive call', {
+          console.log('[telnyx] Speaking TTS for outbound call (from custom_headers)', {
             callControlId: callControlId.slice(0, 24),
             messageLen: ttsMessage.length,
           });
@@ -1195,6 +1251,7 @@ async function processCallWebhook(rawBody: string): Promise<void> {
       });
       pendingInboundCalls.delete(callControlId);
       callDirectionCache.delete(callControlId);
+      proactiveCallCache.delete(callControlId);
       break;
     }
 
