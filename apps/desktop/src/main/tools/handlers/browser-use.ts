@@ -906,6 +906,24 @@ export async function execBrowserUseSelectOption(args: any, _ctx: RouterContext)
   });
 }
 
+export async function execBrowserUseGetDropdownOptions(args: any, _ctx: RouterContext): Promise<any> {
+  return withServer('GetDropdownOptions', args, async (sessionId) => {
+    const resp = await browserUseFetch('/get_dropdown_options', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        selector: args?.selector,
+        timeout: args?.timeout,
+      }),
+    }, sessionId);
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, error: `Get dropdown options failed: ${resp.status} ${errText}` };
+    }
+    return await resp.json();
+  });
+}
+
 export async function execBrowserUseGetInteractiveElements(args: any, _ctx: RouterContext): Promise<any> {
   return withServer('GetInteractiveElements', args, async (sessionId) => {
     const resp = await browserUseFetch('/get_interactive_elements', {

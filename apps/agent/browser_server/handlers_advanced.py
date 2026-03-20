@@ -292,6 +292,7 @@ async def _searchable_combobox_select(
                 "status": "ok",
                 "selected": scan_result.get("selected", ""),
                 "text": scan_result.get("text", ""),
+                "options": scan_result.get("options", last_options[:30]),
                 "method": "searchable_combobox",
             }
 
@@ -301,178 +302,225 @@ async def _searchable_combobox_select(
     return {
         "status": "no_match",
         "detail": f"No matching option found for search '{search_text}' in searchable dropdown",
-        "options": last_options[:20],
+        "options": last_options[:30],
         "method": "searchable_combobox",
+    }
+
+
+async def _scan_dropdown_options(selector: str, value: Any, label: Any, index: Any, marker_attr: str) -> dict[str, Any]:
+    """Scan the page for dropdown options and try to find a match.
+
+    Returns a dict with status: 'ok' (native select), 'matched', 'no_match', 'waiting', or 'not_found'.
+    """
+    return await _evaluate(
+        """(sel, val, lbl, idx, markerAttr) => {
+          document.querySelectorAll('[' + markerAttr + ']').forEach(el => el.removeAttribute(markerAttr));
+          const control = document.querySelector(sel);
+          if (!control) return { status: 'not_found', detail: 'Selector not found: ' + sel };
+
+          const desiredValue = val == null ? null : String(val);
+          const desiredLabel = lbl == null ? '' : String(lbl).trim().toLowerCase();
+          const desiredIndex = idx == null || Number.isNaN(Number(idx)) ? null : Number(idx);
+
+          function isVisible(el) {
+            if (!el) return false;
+            const r = el.getBoundingClientRect();
+            const s = window.getComputedStyle(el);
+            return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
+          }
+          function textOf(el) {
+            return [el?.innerText, el?.textContent, el?.getAttribute?.('aria-label'), el?.getAttribute?.('title'), el?.getAttribute?.('data-value'), el?.getAttribute?.('value')]
+              .filter(Boolean).map(p => String(p).trim()).find(Boolean) || '';
+          }
+          function valueOf(el) {
+            if (!el) return '';
+            if ('value' in el && el.value) return String(el.value);
+            return String(el.getAttribute('data-value') || el.getAttribute('value') || el.getAttribute('aria-valuetext') || '').trim();
+          }
+
+          // Handle native <select>
+          if ((control.tagName || '').toLowerCase() === 'select') {
+            let matchedIdx = -1;
+            for (let i = 0; i < control.options.length; i++) {
+              const opt = control.options[i];
+              if (desiredValue !== null && opt.value === desiredValue) { matchedIdx = i; break; }
+              if (desiredLabel && (opt.text || '').trim().toLowerCase().includes(desiredLabel)) { matchedIdx = i; break; }
+              if (desiredIndex !== null && i === desiredIndex) { matchedIdx = i; break; }
+            }
+            if (matchedIdx < 0) {
+              return {
+                status: 'no_match',
+                detail: 'No matching <select> option',
+                optionCount: control.options.length,
+                options: Array.from(control.options).slice(0, 30).map(o => ({ text: (o.text || '').trim(), value: o.value || '' })),
+              };
+            }
+            control.selectedIndex = matchedIdx;
+            control.dispatchEvent(new Event('input', { bubbles: true }));
+            control.dispatchEvent(new Event('change', { bubbles: true }));
+            const so = control.options[matchedIdx];
+            return { status: 'ok', selected: control.value || '', text: so ? (so.text || '').trim() : '', method: 'js_select' };
+          }
+
+          function findPopup(el) {
+            const cid = el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '';
+            if (cid) { const p = document.getElementById(cid); if (p) return p; }
+            const within = el.closest('[role="combobox"], [role="listbox"], [data-headlessui-state], [data-radix-popper-content-wrapper]');
+            if (within && within !== el) return within;
+            const sib = el.parentElement?.querySelector?.('[role="listbox"], [role="menu"], [data-radix-popper-content-wrapper], [data-headlessui-state]');
+            if (sib) return sib;
+            const portaled = document.querySelectorAll('[role="listbox"], [role="menu"], [role="tree"], [data-radix-popper-content-wrapper], [data-headlessui-state], [class*="menu-list"], [class*="listbox"], [class*="dropdown-menu"], [class*="select-menu"], [class*="options"], [id*="listbox"], [id*="react-select"]');
+            for (const c of portaled) { if (isVisible(c)) return c; }
+            return null;
+          }
+
+          const popup = findPopup(control);
+          const scopes = popup ? [popup] : [document];
+          const optSel = '[role="option"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="listbox"] [data-value], [role="menu"] [data-value], [aria-selected], option';
+          const seen = new Set();
+          let options = [];
+          for (const scope of scopes) {
+            for (const c of Array.from(scope.querySelectorAll(optSel))) {
+              if (seen.has(c) || c === control) continue;
+              seen.add(c);
+              if (!isVisible(c)) continue;
+              const t = textOf(c); const v = valueOf(c);
+              if (!t && !v) continue;
+              options.push(c);
+            }
+            if (options.length > 0) break;
+          }
+          if (options.length === 0 && popup) {
+            for (const li of Array.from(popup.querySelectorAll('li'))) {
+              if (!isVisible(li)) continue;
+              if (textOf(li)) options.push(li);
+            }
+          }
+
+          if (options.length === 0) {
+            return { status: 'waiting', detail: 'No visible options yet', optionCount: 0, options: [] };
+          }
+
+          let match = null;
+          if (desiredValue !== null) {
+            match = options.find(o => valueOf(o) === desiredValue || textOf(o) === desiredValue);
+          }
+          if (!match && desiredLabel) {
+            match = options.find(o => textOf(o).toLowerCase() === desiredLabel);
+            if (!match) match = options.find(o => textOf(o).toLowerCase().includes(desiredLabel) || valueOf(o).toLowerCase().includes(desiredLabel));
+          }
+          if (!match && desiredIndex !== null && desiredIndex >= 0 && desiredIndex < options.length) {
+            match = options[desiredIndex];
+          }
+
+          if (!match) {
+            return {
+              status: 'no_match',
+              detail: 'Options visible but no match found',
+              optionCount: options.length,
+              options: options.slice(0, 30).map(o => ({ text: textOf(o), value: valueOf(o) })),
+            };
+          }
+
+          match.setAttribute(markerAttr, 'true');
+          match.scrollIntoView({ block: 'center', inline: 'center' });
+          const r = match.getBoundingClientRect();
+          return {
+            status: 'matched',
+            text: textOf(match),
+            selected: valueOf(match) || textOf(match),
+            optionCount: options.length,
+            options: options.slice(0, 30).map(o => ({ text: textOf(o), value: valueOf(o) })),
+            clickX: r.left + r.width / 2,
+            clickY: r.top + r.height / 2,
+          };
+        }""",
+        selector,
+        value,
+        label,
+        index,
+        marker_attr,
+    )
+
+
+async def _click_marked_option(marker_attr: str, scan: dict[str, Any]) -> dict[str, Any]:
+    """Click the option marked by marker_attr and return success result."""
+    clicked = await _cdp_click_element_by_selector(f"[{marker_attr}]")
+    if not clicked:
+        await _evaluate(f"""() => {{ const el = document.querySelector('[{marker_attr}]'); if (el) el.click(); }}""")
+
+    await _evaluate(f"""() => {{ document.querySelectorAll('[{marker_attr}]').forEach(el => el.removeAttribute('{marker_attr}')); }}""")
+    return {
+        "status": "ok",
+        "selected": scan.get("selected", ""),
+        "text": scan.get("text", ""),
+        "options": scan.get("options", []),
+        "method": scan.get("method", "cdp_custom_dropdown"),
     }
 
 
 async def _select_dropdown(selector: str, value: Any = None, label: Any = None, index: Any = None, timeout: int = 5000, search: str | None = None) -> dict[str, Any]:
     """Select an option from a dropdown (native <select>, custom dropdown, or searchable combobox).
 
+    Strategy: click to open -> read options -> try to match -> if no match and
+    element is searchable, type to filter -> read filtered options -> select.
     Works with CDP (browser-use) and Playwright pages alike.
     """
-    # Check if it's a searchable combobox — route to specialized handler
-    search_text = search or (str(label) if label is not None else None) or (str(value) if value is not None else None)
-    if search_text:
-        try:
-            el_info = await _evaluate(
-                """(sel) => {
-                  const el = document.querySelector(sel);
-                  if (!el) return null;
-                  return {
-                    tag: (el.tagName || '').toLowerCase(),
-                    role: el.getAttribute('role') || '',
-                    haspopup: el.getAttribute('aria-haspopup') || '',
-                    type: (el.getAttribute('type') || '').toLowerCase(),
-                  };
-                }""",
-                selector,
-            )
-            if isinstance(el_info, dict):
-                is_searchable = (
-                    el_info.get("tag") == "input" and el_info.get("type") not in ("checkbox", "radio", "file", "hidden")
-                ) or el_info.get("role") == "combobox" or el_info.get("role") == "searchbox"
-
-                if is_searchable:
-                    result = await _searchable_combobox_select(selector, search_text, value, label, index, timeout)
-                    if result.get("status") == "ok":
-                        return result
-        except Exception:
-            pass
-
-    # -- Generic dropdown path --
     MARKER_ATTR = "data-stuard-select-target"
 
-    # Step 1: Open the dropdown via CDP click
-    await _cdp_click_element_by_selector(selector)
-    await asyncio.sleep(0.2)
+    # Probe the element type
+    el_info = None
+    try:
+        el_info = await _evaluate(
+            """(sel) => {
+              const el = document.querySelector(sel);
+              if (!el) return null;
+              return {
+                tag: (el.tagName || '').toLowerCase(),
+                role: el.getAttribute('role') || '',
+                haspopup: el.getAttribute('aria-haspopup') || '',
+                type: (el.getAttribute('type') || '').toLowerCase(),
+              };
+            }""",
+            selector,
+        )
+    except Exception:
+        pass
 
-    # Step 2: Poll for the matching option via JS — mark it and get its coordinates
+    is_native_select = isinstance(el_info, dict) and el_info.get("tag") == "select"
+    is_searchable = isinstance(el_info, dict) and (
+        (el_info.get("tag") == "input" and el_info.get("type") not in ("checkbox", "radio", "file", "hidden"))
+        or el_info.get("role") == "combobox"
+        or el_info.get("role") == "searchbox"
+    )
+
+    # If explicit search param is given and element is searchable, go directly to combobox handler
+    if search and is_searchable:
+        result = await _searchable_combobox_select(selector, search, value, label, index, timeout)
+        if result.get("status") == "ok":
+            return result
+
+    # ── Phase 1: Click to open and read options ──
+    # For native <select>, we can handle without clicking to open a popup
+    if is_native_select:
+        scan = await _scan_dropdown_options(selector, value, label, index, MARKER_ATTR)
+        if isinstance(scan, dict):
+            if scan.get("status") == "ok":
+                return scan
+            # Native select no_match — return with available options
+            return scan
+        return {"status": "no_match", "detail": "Failed to scan native select"}
+
+    # For custom dropdowns: click to open, then read options
+    await _cdp_click_element_by_selector(selector)
+    await asyncio.sleep(0.3)
+
+    # Poll for options to appear
     deadline = asyncio.get_event_loop().time() + (timeout / 1000.0)
     last_scan: dict[str, Any] = {}
 
     while asyncio.get_event_loop().time() < deadline:
-        scan = await _evaluate(
-            """(sel, val, lbl, idx, markerAttr) => {
-              document.querySelectorAll('[' + markerAttr + ']').forEach(el => el.removeAttribute(markerAttr));
-              const control = document.querySelector(sel);
-              if (!control) return { status: 'not_found', detail: 'Selector not found: ' + sel };
-
-              const desiredValue = val == null ? null : String(val);
-              const desiredLabel = lbl == null ? '' : String(lbl).trim().toLowerCase();
-              const desiredIndex = idx == null || Number.isNaN(Number(idx)) ? null : Number(idx);
-
-              function isVisible(el) {
-                if (!el) return false;
-                const r = el.getBoundingClientRect();
-                const s = window.getComputedStyle(el);
-                return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
-              }
-              function textOf(el) {
-                return [el?.innerText, el?.textContent, el?.getAttribute?.('aria-label'), el?.getAttribute?.('title'), el?.getAttribute?.('data-value'), el?.getAttribute?.('value')]
-                  .filter(Boolean).map(p => String(p).trim()).find(Boolean) || '';
-              }
-              function valueOf(el) {
-                if (!el) return '';
-                if ('value' in el && el.value) return String(el.value);
-                return String(el.getAttribute('data-value') || el.getAttribute('value') || el.getAttribute('aria-valuetext') || '').trim();
-              }
-
-              // Handle native <select>
-              if ((control.tagName || '').toLowerCase() === 'select') {
-                let matchedIdx = -1;
-                for (let i = 0; i < control.options.length; i++) {
-                  const opt = control.options[i];
-                  if (desiredValue !== null && opt.value === desiredValue) { matchedIdx = i; break; }
-                  if (desiredLabel && (opt.text || '').trim().toLowerCase().includes(desiredLabel)) { matchedIdx = i; break; }
-                  if (desiredIndex !== null && i === desiredIndex) { matchedIdx = i; break; }
-                }
-                if (matchedIdx < 0) return { status: 'no_match', detail: 'No matching <select> option' };
-                control.selectedIndex = matchedIdx;
-                control.dispatchEvent(new Event('input', { bubbles: true }));
-                control.dispatchEvent(new Event('change', { bubbles: true }));
-                const so = control.options[matchedIdx];
-                return { status: 'ok', selected: control.value || '', text: so ? (so.text || '').trim() : '', method: 'js_select' };
-              }
-
-              function findPopup(el) {
-                const cid = el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '';
-                if (cid) { const p = document.getElementById(cid); if (p) return p; }
-                const within = el.closest('[role="combobox"], [role="listbox"], [data-headlessui-state], [data-radix-popper-content-wrapper]');
-                if (within && within !== el) return within;
-                const sib = el.parentElement?.querySelector?.('[role="listbox"], [role="menu"], [data-radix-popper-content-wrapper], [data-headlessui-state]');
-                if (sib) return sib;
-                const portaled = document.querySelectorAll('[role="listbox"], [role="menu"], [role="tree"], [data-radix-popper-content-wrapper], [data-headlessui-state], [class*="menu-list"], [class*="listbox"], [class*="dropdown-menu"], [class*="select-menu"], [class*="options"], [id*="listbox"], [id*="react-select"]');
-                for (const c of portaled) { if (isVisible(c)) return c; }
-                return null;
-              }
-
-              const popup = findPopup(control);
-              const scopes = popup ? [popup] : [document];
-              const optSel = '[role="option"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="listbox"] [data-value], [role="menu"] [data-value], [aria-selected], option';
-              const seen = new Set();
-              let options = [];
-              for (const scope of scopes) {
-                for (const c of Array.from(scope.querySelectorAll(optSel))) {
-                  if (seen.has(c) || c === control) continue;
-                  seen.add(c);
-                  if (!isVisible(c)) continue;
-                  const t = textOf(c); const v = valueOf(c);
-                  if (!t && !v) continue;
-                  options.push(c);
-                }
-                if (options.length > 0) break;
-              }
-              if (options.length === 0 && popup) {
-                for (const li of Array.from(popup.querySelectorAll('li'))) {
-                  if (!isVisible(li)) continue;
-                  if (textOf(li)) options.push(li);
-                }
-              }
-
-              if (options.length === 0) {
-                return { status: 'waiting', detail: 'No visible options yet', optionCount: 0, options: [] };
-              }
-
-              let match = null;
-              if (desiredValue !== null) {
-                match = options.find(o => valueOf(o) === desiredValue || textOf(o) === desiredValue);
-              }
-              if (!match && desiredLabel) {
-                match = options.find(o => textOf(o).toLowerCase() === desiredLabel);
-                if (!match) match = options.find(o => textOf(o).toLowerCase().includes(desiredLabel) || valueOf(o).toLowerCase().includes(desiredLabel));
-              }
-              if (!match && desiredIndex !== null && desiredIndex >= 0 && desiredIndex < options.length) {
-                match = options[desiredIndex];
-              }
-
-              if (!match) {
-                return {
-                  status: 'no_match',
-                  detail: 'Options visible but no match found',
-                  optionCount: options.length,
-                  options: options.slice(0, 20).map(o => ({ text: textOf(o), value: valueOf(o) })),
-                };
-              }
-
-              match.setAttribute(markerAttr, 'true');
-              match.scrollIntoView({ block: 'center', inline: 'center' });
-              const r = match.getBoundingClientRect();
-              return {
-                status: 'matched',
-                text: textOf(match),
-                selected: valueOf(match) || textOf(match),
-                optionCount: options.length,
-                clickX: r.left + r.width / 2,
-                clickY: r.top + r.height / 2,
-              };
-            }""",
-            selector,
-            value,
-            label,
-            index,
-            MARKER_ATTR,
-        )
+        scan = await _scan_dropdown_options(selector, value, label, index, MARKER_ATTR)
 
         if not isinstance(scan, dict):
             await asyncio.sleep(0.2)
@@ -485,24 +533,32 @@ async def _select_dropdown(selector: str, value: Any = None, label: Any = None, 
             return scan
 
         if status == "matched":
-            # Click the matched option — try CDP coordinates first, then JS
-            clicked = await _cdp_click_element_by_selector(f"[{MARKER_ATTR}]")
-            if not clicked:
-                await _evaluate(f"""() => {{ const el = document.querySelector('[{MARKER_ATTR}]'); if (el) el.click(); }}""")
-
-            await _evaluate(f"""() => {{ document.querySelectorAll('[{MARKER_ATTR}]').forEach(el => el.removeAttribute('{MARKER_ATTR}')); }}""")
-            return {
-                "status": "ok",
-                "selected": scan.get("selected", ""),
-                "text": scan.get("text", ""),
-                "method": "cdp_custom_dropdown",
-            }
+            return await _click_marked_option(MARKER_ATTR, scan)
 
         if status == "not_found":
             return scan
+
         if status == "no_match":
+            # Options are visible but no match found.
+            # If element is searchable, try typing to filter before giving up.
+            if is_searchable:
+                filter_text = search or (str(label) if label is not None else None) or (str(value) if value is not None else None)
+                if filter_text:
+                    # Close the current dropdown first (Escape), then use the combobox handler
+                    page = state._page
+                    if page and hasattr(page, "press"):
+                        try:
+                            await page.press("Escape")
+                            await asyncio.sleep(0.1)
+                        except Exception:
+                            pass
+                    result = await _searchable_combobox_select(selector, filter_text, value, label, index, timeout)
+                    if result.get("status") == "ok":
+                        return result
+            # Return no_match with the available options so the caller can see what's there
             return scan
 
+        # status == "waiting" — no options visible yet, keep polling
         await asyncio.sleep(0.25)
 
     return last_scan if last_scan else {"status": "no_match", "detail": "Timed out waiting for dropdown options"}
@@ -780,11 +836,145 @@ async def handle_select_option(req: web.Request) -> web.Response:
                     "selected": result.get("selected"),
                     "text": result.get("text"),
                     "method": result.get("method", "dropdown"),
+                    "options": result.get("options"),
                 })
             detail = result.get("detail", "Unknown error") if isinstance(result, dict) else str(result)
-            return _err(f"Select option failed: {detail}")
+            options = result.get("options", []) if isinstance(result, dict) else []
+            error_msg = f"Select option failed: {detail}"
+            if options:
+                option_list = ", ".join(f'"{o.get("text", o.get("value", ""))}"' for o in options[:15])
+                error_msg += f". Available options: [{option_list}]"
+            return _err(error_msg)
         except Exception as e:
             return _err(f"Select option failed: {e}")
+
+
+async def handle_get_dropdown_options(req: web.Request) -> web.Response:
+    """Read the available options from a dropdown WITHOUT selecting anything."""
+    body = await _safe_json(req)
+    selector = str(body.get("selector", "")).strip()
+    timeout = _clamp_int(body.get("timeout", 5000), 5000, 500, 30000)
+
+    if not selector:
+        return _err("selector is required for get_dropdown_options")
+
+    async with state._lock:
+        ok, err = await _ensure_browser()
+        if not ok:
+            return _err(err or "Browser init failed", status=500)
+        try:
+            MARKER = "data-stuard-dd-scan"
+
+            # Probe element type
+            el_info = await _evaluate(
+                """(sel) => {
+                  const el = document.querySelector(sel);
+                  if (!el) return null;
+                  return { tag: (el.tagName || '').toLowerCase() };
+                }""",
+                selector,
+            )
+            if not isinstance(el_info, dict):
+                return _err(f"Element not found: {selector}")
+
+            is_native_select = el_info.get("tag") == "select"
+
+            # For native <select>, just read options directly — no clicking needed
+            if is_native_select:
+                result = await _evaluate(
+                    """(sel) => {
+                      const el = document.querySelector(sel);
+                      if (!el) return { options: [], selectedIndex: -1 };
+                      return {
+                        options: Array.from(el.options).map((o, i) => ({
+                          index: i, text: (o.text || '').trim(), value: o.value || '',
+                          selected: o.selected,
+                        })),
+                        selectedIndex: el.selectedIndex,
+                        selectedText: el.options[el.selectedIndex] ? (el.options[el.selectedIndex].text || '').trim() : '',
+                      };
+                    }""",
+                    selector,
+                )
+                opts = result.get("options", []) if isinstance(result, dict) else []
+                return _ok({
+                    "type": "native_select",
+                    "options": opts,
+                    "optionCount": len(opts),
+                    "selectedIndex": result.get("selectedIndex", -1) if isinstance(result, dict) else -1,
+                    "selectedText": result.get("selectedText", "") if isinstance(result, dict) else "",
+                })
+
+            # For custom dropdowns: click to open, read options, then close
+            # First try: focus the element, then CDP click
+            await _evaluate(
+                """(sel) => {
+                  const el = document.querySelector(sel);
+                  if (el) { el.focus(); }
+                }""",
+                selector,
+            )
+            await asyncio.sleep(0.05)
+            await _cdp_click_element_by_selector(selector)
+            await asyncio.sleep(0.4)
+
+            # Poll for options to appear
+            deadline = asyncio.get_event_loop().time() + (timeout / 1000.0)
+            options: list[dict] = []
+            attempts = 0
+            while asyncio.get_event_loop().time() < deadline:
+                scan = await _scan_dropdown_options(selector, None, None, None, MARKER)
+                if isinstance(scan, dict):
+                    status = scan.get("status", "")
+                    if status in ("no_match", "matched"):
+                        # no_match with value=None means "options found, nothing to match" — perfect
+                        options = scan.get("options", [])
+                        break
+                    if status == "not_found":
+                        break
+                attempts += 1
+                # After a few failed polls, try clicking again (some dropdowns need a second click)
+                if attempts == 3:
+                    await _cdp_click_element_by_selector(selector)
+                    await asyncio.sleep(0.3)
+                # Also try dispatching keyboard open (ArrowDown / Space — common triggers)
+                if attempts == 5:
+                    page = state._page
+                    if page and hasattr(page, "press"):
+                        try:
+                            await page.press("ArrowDown")
+                        except Exception:
+                            pass
+                    await asyncio.sleep(0.3)
+                await asyncio.sleep(0.25)
+
+            # Clean up marker
+            await _evaluate(f"""() => {{ document.querySelectorAll('[{MARKER}]').forEach(el => el.removeAttribute('{MARKER}')); }}""")
+
+            # Close the dropdown (Escape + click elsewhere)
+            page = state._page
+            if page and hasattr(page, "press"):
+                try:
+                    await page.press("Escape")
+                except Exception:
+                    pass
+            # Also click body to close any lingering popups
+            await _evaluate("""() => { document.body.click(); }""")
+
+            if not options:
+                return _err(
+                    f"Could not read dropdown options — the dropdown may not have opened. "
+                    f"Try using browser_use_click on the selector first, then call get_dropdown_options again, "
+                    f"or use browser_use_get_interactive_elements to check the element's controlType."
+                )
+
+            return _ok({
+                "type": "custom_dropdown",
+                "options": options,
+                "optionCount": len(options),
+            })
+        except Exception as e:
+            return _err(f"Get dropdown options failed: {e}")
 
 
 async def handle_get_interactive_elements(req: web.Request) -> web.Response:

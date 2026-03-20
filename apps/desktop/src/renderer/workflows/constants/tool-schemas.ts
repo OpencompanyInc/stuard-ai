@@ -379,6 +379,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'browser_use_execute_script', category: 'system', kind: 'local', description: 'Execute JavaScript in the browser page context. Best for DOM extraction or complex page logic.', argsTemplate: { script: 'return document.title;', args: {}, wait_for_selector: '', wait_timeout: 5000, timeout: 30000 }, outputSchema: { ok: 'boolean', result: 'any', url: 'string', title: 'string', elapsedMs: 'number', error: 'string' } },
   { id: 'browser_use_hover', category: 'system', kind: 'local', description: 'Hover over an element to reveal tooltips, menus, or hover-triggered content', argsTemplate: { selector: '', text: '', timeout: 5000 }, outputSchema: { ok: 'boolean', hovered: 'string', method: 'string', error: 'string' } },
   { id: 'browser_use_select_option', category: 'system', kind: 'local', description: 'Select an option from a dropdown, including native <select> and many custom combobox/listbox controls', argsTemplate: { selector: '', value: '', label: '', index: 0, timeout: 5000 }, outputSchema: { ok: 'boolean', selected: 'any', text: 'string', method: 'string', error: 'string' } },
+  { id: 'browser_use_get_dropdown_options', category: 'system', kind: 'local', description: 'Read all available options from a dropdown or select element without selecting anything. Use before select_option to see what choices exist.', argsTemplate: { selector: '', timeout: 5000 }, outputSchema: { ok: 'boolean', type: 'string', options: 'array', optionCount: 'number', selectedIndex: 'number', selectedText: 'string', error: 'string' } },
   { id: 'browser_use_get_interactive_elements', category: 'system', kind: 'local', description: 'Get all interactive elements on the page, including dropdowns and file inputs. Returns selectors, control types, labels, values, and form associations.', argsTemplate: { wait_for_selector: '', wait_timeout: 3000 }, outputSchema: { ok: 'boolean', url: 'string', title: 'string', elements: 'array', forms: 'array', elementCount: 'number', formCount: 'number', error: 'string' } },
   { id: 'browser_use_fill_form', category: 'system', kind: 'local', description: 'Fill multiple form fields at once and optionally submit. Supports text fields, dropdowns, toggles, and file paths when type is "file".', argsTemplate: { fields: {}, submit: false, form_selector: '' }, outputSchema: { ok: 'boolean', filled: 'number', total: 'number', submitted: 'boolean', errors: 'array', error: 'string' } },
   { id: 'browser_use_upload_file', category: 'system', kind: 'local', description: 'Upload a local file from disk into a browser file input', argsTemplate: { selector: '', filePath: '', timeout: 5000 }, outputSchema: { ok: 'boolean', uploaded: 'boolean', filePath: 'string', fileName: 'string', selector: 'string', method: 'string', error: 'string' } },
@@ -2641,11 +2642,48 @@ if (TOOL_SCHEMAS['embed_and_store']) {
 // AI AGENT NODES — Full smart-arg schemas
 // ============================================================================
 
-const AGENT_MODEL_TIER_OPTIONS: ArgOption[] = [
-  { value: 'fast', label: 'Fast', description: 'Quick & cheap — Gemini Flash' },
-  { value: 'balanced', label: 'Balanced', description: 'Good quality — default' },
-  { value: 'smart', label: 'Smart', description: 'Best reasoning — slower, more expensive' },
-];
+// Dynamically generate model options from models.json — single source of truth.
+// When models.json is updated, these options update automatically at build time.
+import modelsData from '../../../../../cloud-ai/src/models.json';
+
+interface ModelEntry {
+  id: string;
+  name: string;
+  category: string;
+  contextWindow?: number;
+  pricing: { in: number; out: number; cached?: number };
+}
+
+function formatCtx(ctx?: number): string {
+  if (!ctx) return '';
+  if (ctx >= 1000000) return `${(ctx / 1000000).toFixed(ctx % 1000000 === 0 ? 0 : 1)}M ctx`;
+  return `${Math.round(ctx / 1000)}K ctx`;
+}
+
+function buildModelOptions(models: ModelEntry[]): ArgOption[] {
+  const categoryLabel: Record<string, string> = {
+    smart: 'Smart',
+    balanced: 'Balanced',
+    fast: 'Fast',
+    research: 'Research',
+  };
+  const categoryOrder = ['smart', 'balanced', 'fast', 'research'];
+
+  const sorted = [...models].sort((a, b) => {
+    const ai = categoryOrder.indexOf(a.category);
+    const bi = categoryOrder.indexOf(b.category);
+    if (ai !== bi) return ai - bi;
+    return a.name.localeCompare(b.name);
+  });
+
+  return sorted.map(m => ({
+    value: m.id,
+    label: m.name,
+    description: `${categoryLabel[m.category] || m.category} · $${m.pricing.in}/$${m.pricing.out} per 1M tokens · ${formatCtx(m.contextWindow)}`,
+  }));
+}
+
+const AGENT_MODEL_OPTIONS: ArgOption[] = buildModelOptions(modelsData as ModelEntry[]);
 
 const AGENT_OUTPUT_MODE_OPTIONS: ArgOption[] = [
   { value: 'text', label: 'Text', description: 'Free-form text response' },
@@ -2687,10 +2725,10 @@ TOOL_SCHEMAS['agent_node'] = {
     },
     model: {
       type: 'select',
-      label: 'Model Tier',
+      label: 'Model',
       description: 'Which AI model to use',
-      options: AGENT_MODEL_TIER_OPTIONS,
-      default: 'balanced',
+      options: AGENT_MODEL_OPTIONS,
+      default: 'google/gemini-3.1-pro-preview',
     },
     outputMode: {
       type: 'select',
@@ -3610,6 +3648,26 @@ if (TOOL_SCHEMAS['browser_use_select_option']) {
       type: 'number',
       label: 'Option Index',
       description: 'Select by position (0-based)',
+    },
+    timeout: {
+      type: 'number',
+      label: 'Timeout (ms)',
+      default: 5000,
+      advanced: true,
+    },
+  };
+}
+
+// browser_use_get_dropdown_options
+if (TOOL_SCHEMAS['browser_use_get_dropdown_options']) {
+  TOOL_SCHEMAS['browser_use_get_dropdown_options'].label = 'Read Dropdown Options';
+  TOOL_SCHEMAS['browser_use_get_dropdown_options'].args = {
+    selector: {
+      type: 'string',
+      label: 'Dropdown Selector',
+      description: 'CSS selector of the dropdown control (select, input, button, or combobox element)',
+      required: true,
+      placeholder: '#country-select, select[name="country"]',
     },
     timeout: {
       type: 'number',

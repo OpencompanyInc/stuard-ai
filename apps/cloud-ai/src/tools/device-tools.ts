@@ -267,6 +267,7 @@ export {
   browser_use_cookies,
   browser_use_hover,
   browser_use_select_option,
+  browser_use_get_dropdown_options,
   browser_use_get_interactive_elements,
   browser_use_fill_form,
   browser_use_upload_file,

@@ -91,9 +91,12 @@ When you need to interact with a website:
 3. Interact using the exact CSS selectors from get_interactive_elements:
    - Text fields: browser_use_type or browser_use_fill_form with type "text".
    - Dropdowns (controlType: "dropdown"):
-     * Native <select>: browser_use_select_option with value or label.
+     * FIRST call browser_use_get_dropdown_options({ selector }) to read all available options WITHOUT selecting. This shows you exactly what choices exist.
+     * Then call browser_use_select_option with the exact text/value from the options list.
+     * Native <select>: get_dropdown_options reads options directly. Then select_option with value or label.
      * Searchable combobox (role "combobox" or input with aria-haspopup): browser_use_select_option with "search" param — it types, waits for filtered results, and clicks the match. Example: { selector: "#country", search: "United States", label: "United States" }
-     * Custom dropdown (button/div trigger): browser_use_select_option with label or value.
+     * Custom dropdown (button/div trigger): get_dropdown_options clicks to open, reads options, closes. Then select_option with the exact label or value.
+     * If select_option fails, it returns the available options in the error. Use those exact option texts to retry.
      * CRITICAL: NEVER use browser_use_type on dropdowns/comboboxes. Always use browser_use_select_option — typing alone won't register a selection.
    - Toggles (controlType: "toggle" — checkboxes, radios, switches): browser_use_click to toggle, or browser_use_fill_form with type "checkbox"/"toggle" and value "true"/"false". Check the "checked" field first to avoid double-toggling.
    - File inputs: browser_use_upload_file with a local file path.

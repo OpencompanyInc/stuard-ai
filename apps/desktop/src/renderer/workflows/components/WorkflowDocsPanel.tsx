@@ -668,7 +668,7 @@ const DOCS: DocSection[] = [
         content: [
           { type: "heading", value: "agent_node — Full AI Agent" },
           { type: "text", value: "Runs a full AI agent that can call other tools. Use for complex, multi-step AI tasks." },
-          { type: "code", language: "json", value: `{\n  "tool": "agent_node",\n  "args": {\n    "prompt": "Analyze the screenshot and describe what you see",\n    "model": "balanced",    // balanced | fast | quality\n    "outputMode": "text",   // text | json\n    "maxSteps": 10\n  }\n}` },
+          { type: "code", language: "json", value: `{\n  "tool": "agent_node",\n  "args": {\n    "prompt": "Analyze the screenshot and describe what you see",\n    "model": "google/gemini-3.1-pro-preview",    // any model ID from models.json\n    "outputMode": "text",   // text | json\n    "maxSteps": 10\n  }\n}` },
           { type: "heading", value: "ai_inference — Simple LLM Call" },
           { type: "text", value: "A single LLM call without tool access. Use for summarization, extraction, classification, or embeddings." },
           { type: "code", language: "json", value: `{\n  "tool": "ai_inference",\n  "args": {\n    "prompt": "Extract the key points from this text",\n    "input": "{{read_file.content}}",\n    "mode": "text"    // text | json | embedding\n  }\n}` },

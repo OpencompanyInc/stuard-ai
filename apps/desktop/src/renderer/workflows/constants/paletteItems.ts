@@ -148,7 +148,7 @@ export const LOCAL_TOOL_ITEMS: PaletteItem[] = [
 
 export const CLOUD_TOOL_ITEMS: PaletteItem[] = [
   // AI Agent node
-  { k: 'cloud.tool', t: 'agent_node', label: 'AI Agent', args: { prompt: '', model: 'balanced', outputMode: 'text', maxSteps: 10 } },
+  { k: 'cloud.tool', t: 'agent_node', label: 'AI Agent', args: { prompt: '', model: 'google/gemini-3.1-pro-preview', outputMode: 'text', maxSteps: 10 } },
 
   { k: 'cloud.tool', t: 'run_sequential', label: 'Run Sequential', args: { steps: [] } },
   { k: 'cloud.tool', t: 'run_parallel', label: 'Run Parallel', args: { steps: [] } },

@@ -41,7 +41,7 @@ Examples:
     prompt: z.string().describe('The instruction/task for the agent. Be specific. You can reference previous step outputs using {{step_id.field}} template syntax.'),
     context: z.string().optional().describe('Additional context to provide to the agent (e.g. data from previous steps, file contents, etc.)'),
     systemPrompt: z.string().optional().describe('Custom system prompt to shape agent behavior/persona. If omitted, uses a default task-focused prompt.'),
-    model: z.enum(['fast', 'balanced', 'smart']).default('balanced').describe('Model tier: fast = quick & cheap, balanced = good quality, smart = best reasoning'),
+    model: z.string().default('balanced').describe('Model ID (e.g. "google/gemini-3.1-pro-preview") or legacy tier name ("fast", "balanced", "smart")'),
     outputMode: z.enum(['text', 'json']).default('text').describe('Output format: "text" for free-form text, "json" for structured JSON output'),
     outputSchema: z.record(z.string(), z.any()).optional().describe('For json outputMode: define expected output shape. Keys = field names, values = types ("string", "number", "boolean", "string[]"). Example: {"category": "string", "confidence": "number", "tags": "string[]"}'),
     tools: z.array(z.string()).optional().describe('Restrict which tools the agent can use. If omitted, agent gets core tools. Use [] for no tools (pure reasoning).'),

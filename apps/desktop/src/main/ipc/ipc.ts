@@ -1510,6 +1510,18 @@ export function setupIpc() {
         'ai_inference', 'analyze_image', 'analyze_current_screen',
         'find_text', 'find_text_on_screen', 'find_and_click_text',
         'google_cloud_ocr', 'browser_status',
+        // Legacy browser extension tools — superseded by browser_use_* (Playwright)
+        'browser_get_content', 'browser_click_element', 'browser_type_text',
+        'browser_find_text', 'browser_get_element_position', 'browser_find_clickable',
+        'browser_hover', 'browser_select_option', 'browser_press_key',
+        'browser_get_form_fields', 'browser_fill_form', 'browser_wait_for_element',
+        'browser_scroll_to', 'browser_get_page_info', 'browser_execute_script',
+        'browser_upload_file', 'browser_set_toggle',
+        // Browser Use internal management tools (not useful for agent steps)
+        'browser_use_setup', 'browser_use_install', 'browser_use_start',
+        'browser_use_stop', 'browser_use_uninstall', 'browser_use_task',
+        // Aliases / duplicates
+        'gmail_send', // alias of gmail_send_message
       ]);
 
       // Prefix → group mapping
@@ -1530,8 +1542,7 @@ export function setupIpc() {
         ['threads_', 'Meta Social'],
         ['whatsapp_', 'WhatsApp'],
         ['telnyx_', 'Telnyx'],
-        ['browser_use_', 'Browser Automation'],
-        ['browser_', 'Browser Control'],
+        ['browser_use_', 'Browser'],
         ['terminal_', 'Terminal'],
         ['canvas_', 'Canvas'],
         ['ollama_', 'Ollama (Local AI)'],
@@ -1553,7 +1564,15 @@ export function setupIpc() {
         local: 'System',
       };
 
+      // Custom label overrides to disambiguate tools with identical stripped names
+      const LABEL_OVERRIDES: Record<string, string> = {
+        'facebook_get_me': 'Facebook Profile',
+        'instagram_get_me': 'Instagram Profile',
+        'threads_get_me': 'Threads Profile',
+      };
+
       function snakeToLabel(name: string): string {
+        if (LABEL_OVERRIDES[name]) return LABEL_OVERRIDES[name];
         // Remove common prefixes for cleaner labels
         for (const [prefix] of PREFIX_GROUPS) {
           if (name.startsWith(prefix)) {
@@ -1591,7 +1610,16 @@ export function setupIpc() {
       // Sort by group then label
       options.sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label));
 
-      return { ok: true, tools: options };
+      // Deduplicate: if two tools share the same group+label, keep only the first
+      const seen = new Set<string>();
+      const deduped = options.filter((o) => {
+        const key = `${o.group}|${o.label}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      return { ok: true, tools: deduped };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || 'failed'), tools: [] };
     }

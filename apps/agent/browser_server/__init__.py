@@ -38,6 +38,7 @@ from browser_server.handlers_tabs import (
 from browser_server.handlers_advanced import (
     handle_hover,
     handle_select_option,
+    handle_get_dropdown_options,
     handle_get_interactive_elements,
     handle_fill_form,
     handle_upload_file,
@@ -75,6 +76,7 @@ def create_app() -> web.Application:
     app.router.add_post("/setup-debug-port", handle_setup_debug_port)
     app.router.add_post("/hover", handle_hover)
     app.router.add_post("/select_option", handle_select_option)
+    app.router.add_post("/get_dropdown_options", handle_get_dropdown_options)
     app.router.add_post("/get_interactive_elements", handle_get_interactive_elements)
     app.router.add_post("/fill_form", handle_fill_form)
     app.router.add_post("/upload_file", handle_upload_file)

@@ -23,7 +23,7 @@ import { google_get_userinfo, gmail_list_messages, gmail_get_message_brief, gmai
 import { facebook_get_me, facebook_list_pages, facebook_list_page_posts, facebook_create_page_post, facebook_list_post_comments, facebook_reply_comment, facebook_delete_post, facebook_list_conversations, facebook_get_conversation_messages, facebook_send_message, instagram_get_me, instagram_list_media, instagram_publish_media, instagram_list_comments, instagram_reply_comment, instagram_delete_comment, instagram_list_conversations, instagram_get_conversation_messages, instagram_send_dm, threads_get_me, threads_list_posts, threads_publish_post, threads_get_post, threads_list_replies, threads_reply_to_post } from '../tools/meta-social-tools';
 import { whatsapp_send_message, whatsapp_send_media, whatsapp_send_reaction, whatsapp_mark_read, whatsapp_upload_media, whatsapp_status, whatsapp_get_media_url, whatsapp_download_media, whatsapp_send_voice_note, whatsapp_transcribe_voice_note, whatsapp_send_template, whatsapp_voice_call, whatsapp_make_call } from '../tools/whatsapp-tools';
 import { telnyx_send_sms, telnyx_call_control, telnyx_phone_status, telnyx_send_mms, telnyx_send_voice_note, telnyx_voice_call, telnyx_list_voice_providers, telnyx_list_active_calls, telnyx_hangup_call } from '../tools/telnyx-tools';
-import { send_hotkey, list_directory, read_file, write_file, create_directory, move_file, canvas_list, canvas_read, canvas_write, canvas_create, canvas_delete, calendar_crud, task_crud, task_reminders, planner_list_items, capture_media, describe_media_capture_capabilities, run_command, run_system_command, search_local_workflows, import_workflow, run_automation, stop_automation, search_past_conversations, get_conversation_context, agent_decision, agent_extract, glob, grep, browser_use_status, browser_use_configure, browser_use_execute_script, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies, browser_use_hover, browser_use_select_option, browser_use_get_interactive_elements, browser_use_fill_form, browser_use_upload_file, browser_use_wait_for } from '../tools/device-tools';
+import { send_hotkey, list_directory, read_file, write_file, create_directory, move_file, canvas_list, canvas_read, canvas_write, canvas_create, canvas_delete, calendar_crud, task_crud, task_reminders, planner_list_items, capture_media, describe_media_capture_capabilities, run_command, run_system_command, search_local_workflows, import_workflow, run_automation, stop_automation, search_past_conversations, get_conversation_context, agent_decision, agent_extract, glob, grep, browser_use_status, browser_use_configure, browser_use_execute_script, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies, browser_use_hover, browser_use_select_option, browser_use_get_dropdown_options, browser_use_get_interactive_elements, browser_use_fill_form, browser_use_upload_file, browser_use_wait_for } from '../tools/device-tools';
 import { web_search } from '../tools/perplexity-tools';
 
 const HEADLESS_SYSTEM_INSTRUCTIONS = `You are the Headless Execution Agent for StuardAI.
@@ -51,9 +51,12 @@ When browsing websites, filling forms, or interacting with web pages:
 4. After actions that change the page (clicks, form submissions), use browser_use_wait_for then browser_use_get_interactive_elements again to see what changed.
 
 HANDLING DROPDOWNS — read controlType from get_interactive_elements output:
-- Native <select> (tag: "select", controlType: "dropdown"): Use browser_use_select_option with value or label. The options array in get_interactive_elements shows all available choices.
+- When you encounter a dropdown, FIRST call browser_use_get_dropdown_options({ selector }) to read all available options WITHOUT selecting anything. This lets you see exactly what choices exist before making a selection.
+- Then call browser_use_select_option with the exact text/value from the options list.
+- Native <select> (tag: "select", controlType: "dropdown"): browser_use_get_dropdown_options reads options directly. Then use browser_use_select_option with value or label.
 - Searchable combobox / autocomplete (controlType: "dropdown" with role "combobox", or an input with aria-haspopup): Use browser_use_select_option with the "search" parameter. This types the search text, waits for filtered results, and clicks the match. Example: browser_use_select_option({ selector: "#country-input", search: "United States", label: "United States" })
-- Custom dropdown (button/div with controlType: "dropdown"): Use browser_use_select_option with label or value.
+- Custom dropdown (button/div with controlType: "dropdown"): browser_use_get_dropdown_options clicks to open, reads options, then closes. Then use browser_use_select_option with the exact label or value.
+- If select_option fails, the error response includes the list of available options. Use one of those exact option texts to retry with the correct label.
 - CRITICAL: NEVER use browser_use_type to fill a dropdown or combobox. The model must ALWAYS use browser_use_select_option for any element with controlType "dropdown". If you type into a combobox input, the dropdown will not register a selection — the form framework expects an option to be clicked from the popup list.
 
 HANDLING TOGGLES (checkboxes, radio buttons, switches):
@@ -95,7 +98,7 @@ const VM_EXCLUDED_TOOLS = new Set([
 ]);
 
 export function getHeadlessAgent(
-  modelOrOpts: ModelChoice | HeadlessAgentOptions = 'fast',
+  modelOrOpts: string | ModelChoice | HeadlessAgentOptions = 'fast',
   enabledIntegrations: string[] = [],
   mcpTools: Record<string, any> = {},
   allowedTools?: string[],
@@ -103,7 +106,7 @@ export function getHeadlessAgent(
 ): Agent {
   // Support both old positional API and new options object
   let vmMode = false;
-  let model: ModelChoice = 'fast';
+  let model: string = 'fast';
   if (typeof modelOrOpts === 'object' && modelOrOpts !== null) {
     model = modelOrOpts.model || 'fast';
     enabledIntegrations = modelOrOpts.enabledIntegrations || [];
@@ -253,6 +256,7 @@ export function getHeadlessAgent(
     browser_use_cookies,
     browser_use_hover,
     browser_use_select_option,
+    browser_use_get_dropdown_options,
     browser_use_get_interactive_elements,
     browser_use_fill_form,
     browser_use_upload_file,
@@ -289,7 +293,7 @@ export function getHeadlessAgent(
     'browser_use_status', 'browser_use_configure', 'browser_use_execute_script', 'browser_use_navigate', 'browser_use_click',
     'browser_use_type', 'browser_use_press_key', 'browser_use_screenshot', 'browser_use_content', 'browser_use_scroll',
     'browser_use_tabs', 'browser_use_cookies', 'browser_use_hover', 'browser_use_select_option',
-    'browser_use_get_interactive_elements', 'browser_use_fill_form', 'browser_use_upload_file', 'browser_use_wait_for',
+    'browser_use_get_dropdown_options', 'browser_use_get_interactive_elements', 'browser_use_fill_form', 'browser_use_upload_file', 'browser_use_wait_for',
     'calendar_crud', 'task_crud', 'task_reminders', 'planner_list_items',
     'list_directory', 'read_file', 'write_file', 'create_directory', 'move_file',
     'search_local_workflows',
@@ -449,19 +453,22 @@ export function getHeadlessAgent(
     Object.assign(tools, filteredTools);
   }
 
-  // Model selection based on tier
+  // Model selection — supports direct model IDs (e.g. "google/gemini-3.1-pro-preview")
+  // and legacy tier names ("fast", "balanced", "smart")
   let selectedModel: any;
-  const defaultId = getDefaultModelForCategory(model as any);
-  selectedModel = buildProviderModel(defaultId);
-
+  const isDirectModelId = model.includes('/');
+  if (isDirectModelId) {
+    selectedModel = buildProviderModel(model);
+  }
   if (!selectedModel) {
-    if (model === 'fast') {
-      selectedModel = buildProviderModel('xai/grok-4-1-fast');
-    } else if (model === 'balanced') {
-      selectedModel = buildProviderModel('xai/grok-4-1-fast');
-    } else {
-      selectedModel = buildProviderModel('google/gemini-2.5-pro');
-    }
+    // Resolve tier name to default model, or fallback for unknown values
+    const tier = isDirectModelId ? 'balanced' : model;
+    const defaultId = getDefaultModelForCategory(tier as any);
+    selectedModel = buildProviderModel(defaultId);
+  }
+  if (!selectedModel) {
+    // Ultimate fallback
+    selectedModel = buildProviderModel('google/gemini-2.5-pro');
   }
 
   let systemContent = HEADLESS_SYSTEM_INSTRUCTIONS;

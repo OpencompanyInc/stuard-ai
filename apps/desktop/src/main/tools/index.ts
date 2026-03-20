@@ -17,7 +17,7 @@ import {
   execCanvasDelete,
 } from './handlers/canvas';
 import { execOllamaStatus, execOllamaStart, execOllamaChat, execOllamaGenerate, execOllamaVision, execOllamaEmbeddings, execOllamaModels } from './handlers/ollama';
-import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseExecuteScript, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, execBrowserUseSyncChrome, execBrowserUseListChromeProfiles, execBrowserUseHover, execBrowserUseSelectOption, execBrowserUseGetInteractiveElements, execBrowserUseFillForm, execBrowserUseUploadFile, execBrowserUseWaitFor, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse } from './handlers/browser-use';
+import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseExecuteScript, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, execBrowserUseSyncChrome, execBrowserUseListChromeProfiles, execBrowserUseHover, execBrowserUseSelectOption, execBrowserUseGetDropdownOptions, execBrowserUseGetInteractiveElements, execBrowserUseFillForm, execBrowserUseUploadFile, execBrowserUseWaitFor, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse } from './handlers/browser-use';
 import {
   execBrowserGetContent,
   execBrowserClickElement,
@@ -175,6 +175,7 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'browser_use_list_chrome_profiles') return execBrowserUseListChromeProfiles(args, ctx);
       if (toolName === 'browser_use_hover') return execBrowserUseHover(args, ctx);
       if (toolName === 'browser_use_select_option') return execBrowserUseSelectOption(args, ctx);
+      if (toolName === 'browser_use_get_dropdown_options') return execBrowserUseGetDropdownOptions(args, ctx);
       if (toolName === 'browser_use_get_interactive_elements') return execBrowserUseGetInteractiveElements(args, ctx);
       if (toolName === 'browser_use_fill_form') return execBrowserUseFillForm(args, ctx);
       if (toolName === 'browser_use_upload_file') return execBrowserUseUploadFile(args, ctx);

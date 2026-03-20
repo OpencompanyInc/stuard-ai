@@ -307,6 +307,7 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'browser_use_list_chrome_profiles': { kind: 'electron' },
   'browser_use_hover': { kind: 'electron' },
   'browser_use_select_option': { kind: 'electron' },
+  'browser_use_get_dropdown_options': { kind: 'electron' },
   'browser_use_get_interactive_elements': { kind: 'electron' },
   'browser_use_fill_form': { kind: 'electron' },
   'browser_use_upload_file': { kind: 'electron' },

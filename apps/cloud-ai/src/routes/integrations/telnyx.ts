@@ -458,29 +458,35 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
           const { uploadUserFileBuffer } = await import('../../services/cold-storage');
           const { randomUUID } = await import('crypto');
 
-          const el = new ElevenLabsClient();
+          const el = new ElevenLabsClient({ apiKey: elevenLabsKey });
           const voiceId = process.env.ELEVENLABS_VOICE_ID || 'JBFqnCBsd6RMkjVDRZzb';
           const audioStream = await el.textToSpeech.convert(voiceId, {
             text: proactiveMessage.slice(0, 3000),
             modelId: 'eleven_turbo_v2_5',
-            outputFormat: 'ulaw_8000',
+            outputFormat: 'mp3_44100_128',
           } as any);
 
-          // Collect stream into buffer
+          // Collect stream into buffer — handle both Web ReadableStream and async iterables
           const chunks: Uint8Array[] = [];
-          const reader = (audioStream as any).getReader();
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (value) chunks.push(value);
+          if (typeof (audioStream as any).getReader === 'function') {
+            const reader = (audioStream as any).getReader();
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              if (value) chunks.push(value);
+            }
+          } else {
+            for await (const chunk of audioStream as any) {
+              chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+            }
           }
           const totalLen = chunks.reduce((s, c) => s + c.length, 0);
           const buf = Buffer.alloc(totalLen);
           let off = 0;
           for (const c of chunks) { buf.set(c, off); off += c.length; }
 
-          const filename = `proactive_call_${randomUUID().slice(0, 8)}.wav`;
-          const uploadResult = await uploadUserFileBuffer(auth.userId, filename, buf, 'audio/wav', 'voice-notes', 'public');
+          const filename = `proactive_call_${randomUUID().slice(0, 8)}.mp3`;
+          const uploadResult = await uploadUserFileBuffer(auth.userId, filename, buf, 'audio/mpeg', 'voice-notes', 'public');
 
           customHeaders = [
             { name: 'X-Audio-Url', value: Buffer.from(uploadResult.url).toString('base64') },
