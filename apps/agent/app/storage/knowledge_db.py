@@ -99,6 +99,10 @@ class Fact:
     created_at: str
     validity: bool = True
     source: str = 'ai_extracted'  # 'ai_extracted' | 'user_manual'
+    confidence: float = 1.0  # 0.0-1.0 certainty score
+    source_conversation_id: Optional[str] = None  # conversation that produced this fact
+    last_confirmed_at: Optional[str] = None  # when last confirmed by user/corroboration
+    supersedes_id: Optional[str] = None  # previous fact this replaces (temporal chain)
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -213,6 +217,18 @@ def init() -> None:
             )
         """)
 
+        # Migrations: add new columns to facts table if missing
+        for col_sql in [
+            "ALTER TABLE facts ADD COLUMN confidence REAL DEFAULT 1.0",
+            "ALTER TABLE facts ADD COLUMN source_conversation_id TEXT",
+            "ALTER TABLE facts ADD COLUMN last_confirmed_at TEXT",
+            "ALTER TABLE facts ADD COLUMN supersedes_id TEXT",
+        ]:
+            try:
+                cur.execute(col_sql)
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
         # Indexes for efficient retrieval
         cur.execute("CREATE INDEX IF NOT EXISTS idx_facts_entity ON facts(entity_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_facts_category ON facts(category)")
@@ -221,6 +237,8 @@ def init() -> None:
         cur.execute("CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_memories(status)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_facts_source_conv ON facts(source_conversation_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_facts_confidence ON facts(confidence)")
 
         conn.commit()
 
@@ -440,24 +458,46 @@ def create_fact(
     entity_id: Optional[str] = None,
     attribute_key: Optional[str] = None,
     vector: Optional[List[float]] = None,
-    source: str = 'ai_extracted'
+    source: str = 'ai_extracted',
+    confidence: float = 1.0,
+    source_conversation_id: Optional[str] = None,
+    supersedes_id: Optional[str] = None,
 ) -> Fact:
     """Create a new fact."""
     fid = str(uuid.uuid4())
     now = _now_iso()
-    
+    confidence = max(0.0, min(1.0, float(confidence)))
+
     with get_conn() as conn:
         conn.execute(
-            """INSERT INTO facts (id, entity_id, category, subtype, attribute_key, text, vector, created_at, validity, source)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
-            (fid, entity_id, category, subtype, attribute_key, text, _serialize_vector(vector), now, source)
+            """INSERT INTO facts (id, entity_id, category, subtype, attribute_key, text, vector, created_at, validity, source, confidence, source_conversation_id, supersedes_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)""",
+            (fid, entity_id, category, subtype, attribute_key, text, _serialize_vector(vector), now, source, confidence, source_conversation_id, supersedes_id)
         )
         conn.commit()
-    
+
     return Fact(
         id=fid, entity_id=entity_id, category=category, subtype=subtype,
         attribute_key=attribute_key, text=text, vector=vector,
-        created_at=now, validity=True, source=source
+        created_at=now, validity=True, source=source,
+        confidence=confidence, source_conversation_id=source_conversation_id,
+        supersedes_id=supersedes_id,
+    )
+
+
+def _row_to_fact(row) -> Fact:
+    """Convert a SQLite Row to a Fact dataclass, safely handling new columns."""
+    keys = row.keys() if hasattr(row, 'keys') else []
+    return Fact(
+        id=row['id'], entity_id=row['entity_id'], category=row['category'],
+        subtype=row['subtype'], attribute_key=row['attribute_key'],
+        text=row['text'], vector=_deserialize_vector(row['vector']),
+        created_at=row['created_at'], validity=bool(row['validity']),
+        source=row['source'] or 'ai_extracted',
+        confidence=float(row['confidence']) if 'confidence' in keys and row['confidence'] is not None else 1.0,
+        source_conversation_id=row['source_conversation_id'] if 'source_conversation_id' in keys else None,
+        last_confirmed_at=row['last_confirmed_at'] if 'last_confirmed_at' in keys else None,
+        supersedes_id=row['supersedes_id'] if 'supersedes_id' in keys else None,
     )
 
 
@@ -467,46 +507,48 @@ def get_fact(fact_id: str) -> Optional[Fact]:
         row = conn.execute("SELECT * FROM facts WHERE id = ?", (fact_id,)).fetchone()
         if not row:
             return None
-        return Fact(
-            id=row['id'], entity_id=row['entity_id'], category=row['category'],
-            subtype=row['subtype'], attribute_key=row['attribute_key'],
-            text=row['text'], vector=_deserialize_vector(row['vector']),
-            created_at=row['created_at'], validity=bool(row['validity']),
-            source=row['source'] or 'ai_extracted'
-        )
+        return _row_to_fact(row)
 
 
 def upsert_core_fact(
     attribute_key: str,
     text: str,
     vector: Optional[List[float]] = None,
-    source: str = 'ai_extracted'
+    source: str = 'ai_extracted',
+    confidence: float = 1.0,
+    source_conversation_id: Optional[str] = None,
 ) -> Fact:
     """Upsert a core profile fact (overwrite behavior)."""
     with get_conn() as conn:
         # Check if exists
         row = conn.execute(
-            """SELECT id FROM facts 
+            """SELECT id FROM facts
                WHERE category = 'personal' AND subtype = 'core' AND attribute_key = ?""",
             (attribute_key,)
         ).fetchone()
-        
+
         now = _now_iso()
-        
+        confidence = max(0.0, min(1.0, float(confidence)))
+
         if row:
-            # Update existing
+            old_id = row['id']
+            # Update existing — record supersession
             conn.execute(
-                """UPDATE facts SET text = ?, vector = ?, created_at = ?, validity = 1, source = ?
+                """UPDATE facts SET text = ?, vector = ?, created_at = ?, validity = 1,
+                   source = ?, confidence = ?, source_conversation_id = ?,
+                   last_confirmed_at = ?
                    WHERE id = ?""",
-                (text, _serialize_vector(vector), now, source, row['id'])
+                (text, _serialize_vector(vector), now, source, confidence,
+                 source_conversation_id, now, old_id)
             )
             conn.commit()
-            return get_fact(row['id'])  # type: ignore
+            return get_fact(old_id)  # type: ignore
         else:
             # Insert new
             return create_fact(
                 category='personal', subtype='core', text=text,
-                attribute_key=attribute_key, vector=vector, source=source
+                attribute_key=attribute_key, vector=vector, source=source,
+                confidence=confidence, source_conversation_id=source_conversation_id,
             )
 
 
@@ -557,12 +599,15 @@ def append_fact(
     text: str,
     entity_id: Optional[str] = None,
     vector: Optional[List[float]] = None,
-    source: str = 'ai_extracted'
+    source: str = 'ai_extracted',
+    confidence: float = 1.0,
+    source_conversation_id: Optional[str] = None,
 ) -> Fact:
     """Append a new fact (no deduplication)."""
     return create_fact(
         category=category, subtype=subtype, text=text,
-        entity_id=entity_id, vector=vector, source=source
+        entity_id=entity_id, vector=vector, source=source,
+        confidence=confidence, source_conversation_id=source_conversation_id,
     )
 
 
@@ -597,16 +642,7 @@ def get_identity_lens() -> List[Fact]:
                ORDER BY attribute_key"""
         ).fetchall()
     
-    return [
-        Fact(
-            id=r['id'], entity_id=r['entity_id'], category=r['category'],
-            subtype=r['subtype'], attribute_key=r['attribute_key'],
-            text=r['text'], vector=_deserialize_vector(r['vector']),
-            created_at=r['created_at'], validity=bool(r['validity']),
-            source=r['source'] or 'ai_extracted'
-        )
-        for r in rows
-    ]
+    return [_row_to_fact(r) for r in rows]
 
 
 def get_directive_lens() -> List[Fact]:
@@ -618,16 +654,7 @@ def get_directive_lens() -> List[Fact]:
                ORDER BY created_at DESC"""
         ).fetchall()
     
-    return [
-        Fact(
-            id=r['id'], entity_id=r['entity_id'], category=r['category'],
-            subtype=r['subtype'], attribute_key=r['attribute_key'],
-            text=r['text'], vector=_deserialize_vector(r['vector']),
-            created_at=r['created_at'], validity=bool(r['validity']),
-            source=r['source'] or 'ai_extracted'
-        )
-        for r in rows
-    ]
+    return [_row_to_fact(r) for r in rows]
 
 
 def get_entity_context(entity_id: str, limit: int = 15) -> Tuple[Optional[Entity], List[Fact]]:
@@ -652,17 +679,8 @@ def get_entity_context(entity_id: str, limit: int = 15) -> Tuple[Optional[Entity
             (entity_id, limit)
         ).fetchall()
     
-    facts = [
-        Fact(
-            id=r['id'], entity_id=r['entity_id'], category=r['category'],
-            subtype=r['subtype'], attribute_key=r['attribute_key'],
-            text=r['text'], vector=_deserialize_vector(r['vector']),
-            created_at=r['created_at'], validity=bool(r['validity']),
-            source=r['source'] or 'ai_extracted'
-        )
-        for r in rows
-    ]
-    
+    facts = [_row_to_fact(r) for r in rows]
+
     return entity, facts
 
 
@@ -676,16 +694,7 @@ def get_bio_facts(limit: int = 20) -> List[Fact]:
             (limit,)
         ).fetchall()
     
-    return [
-        Fact(
-            id=r['id'], entity_id=r['entity_id'], category=r['category'],
-            subtype=r['subtype'], attribute_key=r['attribute_key'],
-            text=r['text'], vector=_deserialize_vector(r['vector']),
-            created_at=r['created_at'], validity=bool(r['validity']),
-            source=r['source'] or 'ai_extracted'
-        )
-        for r in rows
-    ]
+    return [_row_to_fact(r) for r in rows]
 
 
 def search_facts_by_vector(
@@ -693,25 +702,30 @@ def search_facts_by_vector(
     limit: int = 10,
     category: Optional[FactCategory] = None,
     entity_id: Optional[str] = None,
-    threshold: float = 0.65
+    threshold: float = 0.65,
+    include_vectors: bool = False,
 ) -> List[Tuple[Fact, float]]:
-    """Layer 4: Global vector search across facts."""
+    """Layer 4: Global vector search across facts.
+
+    If include_vectors is True, the returned Fact objects will retain their
+    embedding vectors (useful for MMR reranking on the caller side).
+    """
     query_np = np.array(query_vector, dtype=np.float32)
-    
+
     with get_conn() as conn:
         conditions = ["validity = 1", "vector IS NOT NULL", "length(vector) > 0"]
         params: List[Any] = []
-        
+
         if category:
             conditions.append("category = ?")
             params.append(category)
         if entity_id:
             conditions.append("entity_id = ?")
             params.append(entity_id)
-        
+
         where = " AND ".join(conditions)
         rows = conn.execute(f"SELECT * FROM facts WHERE {where}", tuple(params)).fetchall()
-    
+
     results = []
     for row in rows:
         vec = _deserialize_vector(row['vector'])
@@ -720,17 +734,14 @@ def search_facts_by_vector(
             dot = np.dot(query_np, vec_np)
             norm = np.linalg.norm(query_np) * np.linalg.norm(vec_np)
             score = float(dot / norm) if norm > 0 else 0.0
-            
+
             if score >= threshold:
-                fact = Fact(
-                    id=row['id'], entity_id=row['entity_id'], category=row['category'],
-                    subtype=row['subtype'], attribute_key=row['attribute_key'],
-                    text=row['text'], vector=vec,
-                    created_at=row['created_at'], validity=bool(row['validity']),
-                    source=row['source'] or 'ai_extracted'
-                )
+                fact = _row_to_fact(row)
+                # Keep or strip vectors based on caller need
+                if include_vectors:
+                    fact.vector = vec
                 results.append((fact, score))
-    
+
     results.sort(key=lambda x: x[1], reverse=True)
     return results[:limit]
 
@@ -753,16 +764,7 @@ def get_procedural_facts(entity_id: Optional[str] = None, limit: int = 20) -> Li
                 (limit,)
             ).fetchall()
     
-    return [
-        Fact(
-            id=r['id'], entity_id=r['entity_id'], category=r['category'],
-            subtype=r['subtype'], attribute_key=r['attribute_key'],
-            text=r['text'], vector=_deserialize_vector(r['vector']),
-            created_at=r['created_at'], validity=bool(r['validity']),
-            source=r['source'] or 'ai_extracted'
-        )
-        for r in rows
-    ]
+    return [_row_to_fact(r) for r in rows]
 
 
 def get_event_history(limit: int = 50) -> List[Fact]:
@@ -775,16 +777,7 @@ def get_event_history(limit: int = 50) -> List[Fact]:
             (limit,)
         ).fetchall()
     
-    return [
-        Fact(
-            id=r['id'], entity_id=r['entity_id'], category=r['category'],
-            subtype=r['subtype'], attribute_key=r['attribute_key'],
-            text=r['text'], vector=_deserialize_vector(r['vector']),
-            created_at=r['created_at'], validity=bool(r['validity']),
-            source=r['source'] or 'ai_extracted'
-        )
-        for r in rows
-    ]
+    return [_row_to_fact(r) for r in rows]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1008,6 +1001,90 @@ def get_stats() -> Dict[str, Any]:
         "facts_by_category": category_counts,
         "entities_by_type": entity_type_counts,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CROSS-REFERENCING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def get_facts_for_conversation(conversation_id: str, limit: int = 50) -> List[Fact]:
+    """Return all facts that were extracted from a given conversation."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT * FROM facts
+               WHERE source_conversation_id = ? AND validity = 1
+               ORDER BY created_at DESC LIMIT ?""",
+            (conversation_id, limit)
+        ).fetchall()
+    return [_row_to_fact(r) for r in rows]
+
+
+def get_conversations_for_entity(entity_id: str) -> List[str]:
+    """Return unique conversation IDs that produced facts for a given entity."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT DISTINCT source_conversation_id FROM facts
+               WHERE entity_id = ? AND source_conversation_id IS NOT NULL AND validity = 1""",
+            (entity_id,)
+        ).fetchall()
+    return [r['source_conversation_id'] for r in rows]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FACT DEDUPLICATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def deduplicate_facts(similarity_threshold: float = 0.92) -> int:
+    """Find and invalidate near-duplicate facts within the same entity/category.
+
+    Returns the number of facts invalidated.
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM facts WHERE validity = 1 AND vector IS NOT NULL AND length(vector) > 0"
+        ).fetchall()
+
+    # Group by (entity_id, category)
+    groups: Dict[Tuple[Optional[str], str], List] = {}
+    for row in rows:
+        key = (row['entity_id'], row['category'])
+        groups.setdefault(key, []).append(row)
+
+    invalidated = 0
+    ids_to_invalidate: List[str] = []
+
+    for _key, group_rows in groups.items():
+        if len(group_rows) < 2:
+            continue
+        vecs = []
+        for r in group_rows:
+            v = _deserialize_vector(r['vector'])
+            vecs.append(np.array(v, dtype=np.float32) if v else None)
+
+        seen_invalid: set = set()
+        for i in range(len(group_rows)):
+            if vecs[i] is None or group_rows[i]['id'] in seen_invalid:
+                continue
+            for j in range(i + 1, len(group_rows)):
+                if vecs[j] is None or group_rows[j]['id'] in seen_invalid:
+                    continue
+                dot = float(np.dot(vecs[i], vecs[j]))
+                norm = float(np.linalg.norm(vecs[i]) * np.linalg.norm(vecs[j]))
+                sim = dot / norm if norm > 0 else 0.0
+                if sim >= similarity_threshold:
+                    # Keep the newer one (by created_at), invalidate the older
+                    older = group_rows[i] if group_rows[i]['created_at'] <= group_rows[j]['created_at'] else group_rows[j]
+                    ids_to_invalidate.append(older['id'])
+                    seen_invalid.add(older['id'])
+                    invalidated += 1
+
+    if ids_to_invalidate:
+        with get_conn() as conn:
+            for fid in ids_to_invalidate:
+                conn.execute("UPDATE facts SET validity = 0 WHERE id = ?", (fid,))
+            conn.commit()
+
+    return invalidated
 
 
 # Initialize on import

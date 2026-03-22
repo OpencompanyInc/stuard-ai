@@ -1,4 +1,4 @@
-"""Pure utility functions shared across the browser-use server modules."""
+"""Pure utility functions shared across the browser server modules."""
 
 import json
 from pathlib import Path

@@ -1,4 +1,4 @@
-"""Shared mutable state and constants for the browser-use server."""
+"""Shared mutable state and constants for the browser server."""
 
 import asyncio
 import os
@@ -33,28 +33,32 @@ except ImportError:
 # Mutable globals
 # ---------------------------------------------------------------------------
 
-_browser = None          # browser_use.Browser instance (None when using Playwright directly)
-_context = None          # Playwright BrowserContext (persistent in Strategy 1)
+_context = None          # Playwright BrowserContext
 _page = None             # Active Playwright Page
-_playwright = None       # Playwright instance (only set when using Strategy 1)
+_playwright = None       # Playwright instance
+_browser = None          # Playwright Browser (used in CDP connect mode)
+_cdp_session = None      # Reusable Playwright CDPSession (lazily created)
+_connected_contexts: list[dict] = []  # Info about all CDP-connected profiles/contexts
 _config: dict[str, Any] = {
-    "mode": os.environ.get("BROWSER_USE_MODE", "headed"),  # headed | headless | connect
+    "mode": os.environ.get("STUARD_BROWSER_MODE", os.environ.get("BROWSER_USE_MODE", "headless")),  # headed | headless | connect
     "cdp_url": None,     # only used when mode == "connect"
     "profile": "default",
     "profile_dir": None, # resolved at startup
+    "connect_profile": None,  # which Chrome profile to attach to in connect mode (index or name)
 }
 _lock = asyncio.Lock()
+_viewport_cache: dict[str, int] = {"w": 1280, "h": 900}  # cached viewport size for mirror
 _DEBUG_PORT_SETUP_DONE = False  # Only attempt setup once per server lifetime
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-PORT = int(os.environ.get("BROWSER_USE_PORT", "18082"))
-HOST = os.environ.get("BROWSER_USE_HOST", "127.0.0.1")
+PORT = int(os.environ.get("STUARD_BROWSER_PORT", os.environ.get("BROWSER_USE_PORT", "18082")))
+HOST = os.environ.get("STUARD_BROWSER_HOST", os.environ.get("BROWSER_USE_HOST", "127.0.0.1"))
 AUTH_HEADER = "x-stuard-browser-token"
-AUTH_TOKEN = os.environ.get("BROWSER_USE_AUTH_TOKEN", "").strip()
-PROFILE_ROOT = Path(os.environ.get("BROWSER_USE_PROFILE_DIR", str(Path.home() / ".stuard" / "browser-profiles")))
+AUTH_TOKEN = os.environ.get("STUARD_BROWSER_AUTH_TOKEN", os.environ.get("BROWSER_USE_AUTH_TOKEN", "")).strip()
+PROFILE_ROOT = Path(os.environ.get("STUARD_BROWSER_PROFILE_DIR", os.environ.get("BROWSER_USE_PROFILE_DIR", str(Path.home() / ".stuard" / "browser-profiles"))))
 SYNC_META_FILE = ".stuard_sync_meta.json"
 
 PROFILE_COPY_SKIP_NAMES = {

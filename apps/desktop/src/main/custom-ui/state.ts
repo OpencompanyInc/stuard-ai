@@ -12,6 +12,8 @@ export type CustomUiWindowData = {
   flowSpec?: { steps?: Array<{ id: string; tool?: string; args?: any; [k: string]: any }> };
   /** The engine step ID of this custom_ui node — used as wireFromId for callNode animations */
   stepId?: string;
+  /** Access token from the engine context — passed to callNode so cloud tools can authenticate */
+  accessToken?: string;
 };
 
 export const customUiWindows = new Map<string, BrowserWindow>();

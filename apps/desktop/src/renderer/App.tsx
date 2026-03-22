@@ -1076,12 +1076,87 @@ export default function App() {
   // --- Sidebar & Tabs State ---
   const [internalSidebarOpen, setInternalSidebarOpen] = useState(false);
   const [activeSidebarTab, setActiveSidebarTab] = useState<
-    "spaces" | "canvas" | "terminal"
+    "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo"
   >("spaces");
 
   useEffect(() => {
     if (chatMenuOpen) fetchConversations();
   }, [chatMenuOpen]);
+
+  // Auto-open sidebar when agent uses browser (headed mode)
+  useEffect(() => {
+    const unsub = window.desktopAPI?.onBrowserActivity?.(() => {
+      if (overlayModeRef.current === "sidebar" || overlayModeRef.current === "window") {
+        setInternalSidebarOpen((prev) => {
+          if (!prev) {
+            try { (window.desktopAPI as any).toggleInternalSidebar?.(true); } catch {}
+          }
+          return true;
+        });
+        setActiveSidebarTab("browser");
+      }
+    });
+    return () => { try { typeof unsub === 'function' && unsub(); } catch {} };
+  }, []);
+
+  // Auto-open sidebar when agent tasks are running
+  const agentTaskAutoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (overlayModeRef.current !== "sidebar" && overlayModeRef.current !== "window") return;
+
+    const agentHttp = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
+    let cancelled = false;
+
+    const checkAgentTasks = async () => {
+      try {
+        const res = await fetch(`${agentHttp}/v1/subagents/list?limit=5`);
+        const data = await res.json();
+        if (cancelled) return;
+        if (data.ok && Array.isArray(data.tasks)) {
+          const hasRunning = data.tasks.some((t: any) => t.status === "running");
+          if (hasRunning && !agentTaskAutoOpenedRef.current) {
+            agentTaskAutoOpenedRef.current = true;
+            // Open sidebar if closed, and switch to tasks tab
+            setInternalSidebarOpen((wasOpen) => {
+              if (!wasOpen) {
+                try { (window.desktopAPI as any).toggleInternalSidebar?.(true); } catch {}
+                // Only set tab to tasks when freshly opening the sidebar
+                setActiveSidebarTab("tasks");
+              }
+              // If already open, the SidebarTabsPanel handles tab switching internally
+              return true;
+            });
+          }
+          if (!hasRunning) {
+            agentTaskAutoOpenedRef.current = false;
+          }
+        }
+      } catch {
+        // agent not available
+      }
+    };
+
+    checkAgentTasks();
+    const interval = setInterval(checkAgentTasks, 4000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  // Auto-open sidebar when agent creates todo items
+  useEffect(() => {
+    const handler = () => {
+      if (overlayModeRef.current === "sidebar" || overlayModeRef.current === "window") {
+        setInternalSidebarOpen((prev) => {
+          if (!prev) {
+            try { (window.desktopAPI as any).toggleInternalSidebar?.(true); } catch {}
+          }
+          return true;
+        });
+        setActiveSidebarTab("todo");
+      }
+    };
+    window.addEventListener('agent-todo-update', handler);
+    return () => window.removeEventListener('agent-todo-update', handler);
+  }, []);
 
   // --- Handlers (memoized to prevent unnecessary re-renders) ---
 
@@ -1603,7 +1678,7 @@ export default function App() {
     setInternalSidebarOpen(false);
   }, [overlayMode]);
   const handleSwitchSidebarTab = useCallback(
-    (tab: "spaces" | "canvas" | "terminal") => setActiveSidebarTab(tab),
+    (tab: "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo") => setActiveSidebarTab(tab),
     [],
   );
 

@@ -33,6 +33,7 @@ const CATEGORY_LOCATION: Record<string, ToolLocation> = {
   Integrations: 'cloud',
   Feedback: 'cloud',
   Memory: 'cloud',
+  Spaces: 'cloud',
   Knowledge: 'cloud',
   Productivity: 'cloud',
   Embeddings: 'cloud',

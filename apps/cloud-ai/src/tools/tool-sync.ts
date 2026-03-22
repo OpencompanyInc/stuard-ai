@@ -144,12 +144,25 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   // Memory/Context
   search_past_conversations: ['history', 'previous chats', 'memory search'],
   get_conversation_context: ['conversation history', 'chat context'],
+  browse_topic_collections: ['topics', 'collections', 'what have we discussed', 'conversation topics', 'history topics', 'topic list'],
+  get_collection_detail: ['topic detail', 'collection segments', 'topic conversations', 'drill into topic'],
+  synthesize_collection: ['summarize topic', 'what do you know about', 'everything about', 'topic summary', 'collection overview'],
   list_user_spaces: ['spaces', 'folders', 'collections'],
   get_space_contents: ['space items', 'folder contents'],
   ensure_space_path: ['create folder path', 'ensure folder', 'make folders', 'space path', 'nested folders'],
   list_space_path: ['list folder path', 'browse space', 'folder listing', 'space path list'],
   add_to_space_path: ['add to folder', 'save under path', 'add note to folder', 'space subfolder'],
   get_space_tree: ['space tree', 'folder tree', 'space folders', 'list folders'],
+  create_space: ['create space', 'new space', 'make space', 'add space'],
+  find_or_create_space: ['find space', 'get or create space', 'space lookup'],
+  add_to_space: ['add item to space', 'save to space', 'space add'],
+  add_source_to_space: ['add source', 'save link', 'add reference', 'bookmark'],
+  add_note_to_space: ['add note', 'save note', 'write note', 'space note'],
+  add_code_snippet_to_space: ['save code', 'code snippet', 'save snippet'],
+  link_conversation_to_space: ['link conversation', 'associate space', 'connect conversation'],
+  update_space_item: ['edit space item', 'update note', 'modify item'],
+  delete_space_item: ['remove item', 'delete note', 'remove from space'],
+  get_memory_stats: ['memory stats', 'memory count', 'how many spaces'],
 
   // Workflows
   search_local_workflows: ['workflows', 'automations', 'stuards'],
@@ -157,7 +170,7 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   invoke_workflow: ['call workflow', 'trigger workflow'],
 
   // Headless Agents
-  deploy_headless_agent: ['background task', 'spawn agent', 'async task'],
+  deploy_headless_agent: ['background task', 'spawn agent', 'async task', 'sub-agent', 'parallel agents'],
   get_headless_agent_status: ['task status', 'agent status', 'background status'],
   list_headless_agent_tasks: ['list tasks', 'background tasks'],
   stop_headless_agent: ['cancel task', 'stop agent', 'abort task'],

@@ -51,121 +51,254 @@ function sanitizeForLog(value: any, depth = 0): any {
   if (t === 'object') {
     const obj: any = {};
     for (const [k, v] of Object.entries(value)) {
-      // common large fields
-      if (k === 'data' || k === 'content' || k === 'stdout' || k === 'stderr' || k === 'text') {
-        obj[k] = sanitizeForLog(v, depth + 1);
-      } else {
-        obj[k] = sanitizeForLog(v, depth + 1);
-      }
+      obj[k] = sanitizeForLog(v, depth + 1);
     }
     return obj;
   }
   return String(value);
 }
 
+// ─── Schema for a single sub-agent task ───────────────────────────────────────
+
+const SubAgentTaskSchema = z.object({
+  objective: z.string().describe('The goal or objective for this sub-agent'),
+  mode: z.enum(['generic', 'specialized']).optional().default('generic').describe('generic = normal agent. specialized = restricted tools + custom system prompt.'),
+  tools_allowed: z.array(z.string()).optional().describe('Optional list of tools the sub-agent can use. Omit for default core tools.'),
+  custom_system_prompt: z.string().optional().describe('Optional custom system instructions for this sub-agent'),
+});
+
+// ─── The tool ─────────────────────────────────────────────────────────────────
+
 export const deployHeadlessAgent = createTool({
   id: 'deploy_headless_agent',
-  description: 'Deploys an autonomous sub-agent to run a task in the background locally. Returns a taskId to track progress. Multiple sub-agents can run in parallel.',
+  description: `Deploy one or more autonomous sub-agents in parallel.
+
+Pass a single task or an array of tasks — all tasks run concurrently.
+
+execution_mode controls how the tool returns:
+- "wait" (default): Blocks until ALL sub-agents finish and returns every result. Use this when you need the results before continuing.
+- "background": Returns immediately with all taskIds. Use get_headless_agent_status to check on them later.
+
+Examples:
+  Single task (wait):   { "tasks": [{ "objective": "summarize X" }] }
+  Parallel (wait):      { "tasks": [{ "objective": "research A" }, { "objective": "research B" }] }
+  Parallel (background): { "tasks": [...], "execution_mode": "background" }`,
   inputSchema: z.object({
-    objective: z.string().describe('The goal or objective for the sub-agent'),
-    mode: z.enum(['generic', 'specialized']).optional().default('generic').describe('Sub-agent mode. generic = normal headless agent. specialized = restricted tools + custom system prompt.'),
-    tools_allowed: z.array(z.string()).optional().describe('Optional list of specific tools the sub-agent is allowed to use. If omitted, it uses the default core tools.'),
-    // Backwards compatibility (deprecated)
-    tool: z.string().optional().describe('DEPRECATED: single tool name. Prefer tools_allowed.'),
-    custom_system_prompt: z.string().optional().describe('Optional custom system instructions for the sub-agent'),
-    model: z.enum(['fast', 'balanced', 'smart']).default('fast').describe('Model tier to use'),
+    tasks: z.array(SubAgentTaskSchema).min(1).describe('Array of sub-agent tasks to deploy in parallel'),
+    execution_mode: z.enum(['wait', 'background']).default('wait').describe('wait = block until all done. background = return taskIds immediately.'),
+    model: z.enum(['fast', 'balanced', 'smart']).default('fast').describe('Model tier for all sub-agents'),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
-    taskId: z.string().optional(),
+    results: z.array(z.object({
+      taskId: z.string(),
+      ok: z.boolean(),
+      status: z.string(),
+      objective: z.string().optional(),
+      result: z.any().optional(),
+      error: z.string().optional(),
+    })).optional(),
     error: z.string().optional(),
   }),
   execute: async (inputData, context) => {
-    const { objective, mode, tools_allowed, tool, custom_system_prompt, model  } = inputData as any;
+    const { tasks, execution_mode, model } = inputData as any;
     const secrets = getBridgeSecrets();
     const bridgeWs = getBridgeWs();
     const userId = secrets?.userId;
     const conversationId = secrets?.conversationId;
+    const isWaitMode = execution_mode === 'wait' || !execution_mode;
 
     if (!userId) {
       return { ok: false, error: 'User not authenticated' };
     }
 
-    const taskId = randomUUID();
+    if (!Array.isArray(tasks) || tasks.length === 0) {
+      return { ok: false, error: 'tasks array is required and must not be empty' };
+    }
 
     try {
-      const normalizedToolsAllowed =
-        Array.isArray(tools_allowed) && tools_allowed.length > 0
-          ? tools_allowed.map((t: any) => String(t || '').trim()).filter(Boolean)
-          : (typeof tool === 'string' && tool.trim() ? [tool.trim()] : undefined);
+      // Launch all tasks in parallel
+      const launches = await Promise.all(
+        tasks.map((task: any) => launchOneTask(task, userId, conversationId, model, secrets, bridgeWs))
+      );
 
-      const normalizedMode = (mode === 'specialized' || mode === 'generic') ? mode : 'generic';
-      if (normalizedMode === 'specialized') {
-        const hasAllowed = Array.isArray(normalizedToolsAllowed) && normalizedToolsAllowed.length > 0;
-        const hasPrompt = typeof custom_system_prompt === 'string' && custom_system_prompt.trim().length > 0;
-        if (!hasAllowed && !hasPrompt) {
+      // Background mode → return taskIds immediately
+      if (!isWaitMode) {
+        return {
+          ok: true,
+          results: launches.map((l) => ({
+            taskId: l.taskId,
+            ok: true,
+            status: 'running',
+            objective: l.objective,
+          })),
+        };
+      }
+
+      // Wait mode → await all completion promises
+      const settled = await Promise.allSettled(launches.map((l) => l.completionPromise));
+
+      const results = settled.map((outcome, i) => {
+        const { taskId, objective } = launches[i];
+        if (outcome.status === 'fulfilled') {
+          const r = outcome.value;
           return {
-            ok: false,
-            error: 'specialized mode requires tools_allowed and/or custom_system_prompt',
+            taskId,
+            ok: r.status === 'completed',
+            status: r.status,
+            objective,
+            result: { text: r.text, finishReason: r.finishReason },
+            error: r.error,
           };
         }
-      }
-
-      // 1. Register sub-agent locally (not in Supabase)
-      const spawnResult = await execLocalTool('subagent_spawn', {
-        objective,
-        parent_id: conversationId,
-        model,
-        tools_allowed: normalizedToolsAllowed,
-        custom_system_prompt,
+        return {
+          taskId,
+          ok: false,
+          status: 'failed',
+          objective,
+          error: outcome.reason?.message || 'unknown error',
+        };
       });
 
-      if (!spawnResult?.ok) {
-        throw new Error(spawnResult?.error || 'Failed to spawn sub-agent locally');
-      }
-
-      const localTaskId = spawnResult.task_id || taskId;
-      const subagentSecrets = {
-        ...(secrets || {}),
-        subagentTaskId: localTaskId,
-        browserUseSessionId: getBrowserUseSessionId(localTaskId),
-      };
-
-      // 2. Start the agent execution in the background (fire and forget)
-      // We don't await this so the tool returns immediately
-      const run = () =>
-        runHeadlessTask(localTaskId, userId, objective, normalizedToolsAllowed, custom_system_prompt, model, normalizedMode).catch((err) => {
-          writeLog('subagent_background_error', { taskId: localTaskId, error: err?.message || String(err) });
-          // Update local status to failed
-          execLocalTool('subagent_update', { task_id: localTaskId, status: 'failed', result: { error: err?.message } }).catch(() => {});
-        });
-
-      // CRITICAL: Preserve the active client bridge context so the sub-agent can
-      // use local tools (list_directory, read_file, etc.) via in-band WS tool execution.
-      if (bridgeWs && bridgeWs.readyState === (bridgeWs as any).OPEN) {
-        withClientBridge(bridgeWs as any, run, subagentSecrets);
-      } else {
-        run();
-      }
-
-      return {
-        ok: true,
-        taskId: localTaskId,
-      };
+      const allOk = results.every((r) => r.ok);
+      return { ok: allOk, results };
 
     } catch (error: any) {
       writeLog('deploy_subagent_error', { error: error.message });
-      return {
-        ok: false,
-        error: error.message || 'Failed to deploy sub-agent',
-      };
+      return { ok: false, error: error.message || 'Failed to deploy sub-agents' };
     }
   },
 });
 
-/**
- * Sub-agent execution logic - runs locally, updates local storage
- */
+// ─── Per-task launch helper ───────────────────────────────────────────────────
+
+interface SubagentResult {
+  taskId: string;
+  status: 'completed' | 'failed' | 'cancelled';
+  text?: string;
+  finishReason?: string;
+  error?: string;
+}
+
+interface LaunchedTask {
+  taskId: string;
+  objective: string;
+  completionPromise: Promise<SubagentResult>;
+}
+
+async function launchOneTask(
+  task: any,
+  userId: string,
+  conversationId: string | undefined,
+  model: string,
+  secrets: any,
+  bridgeWs: any
+): Promise<LaunchedTask> {
+  const objective = String(task.objective || '');
+  const taskMode = task.mode === 'specialized' ? 'specialized' : 'generic';
+  const toolsAllowed = Array.isArray(task.tools_allowed) && task.tools_allowed.length > 0
+    ? task.tools_allowed.map((t: any) => String(t || '').trim()).filter(Boolean)
+    : undefined;
+  const customSystemPrompt = task.custom_system_prompt;
+
+  if (taskMode === 'specialized') {
+    const hasAllowed = Array.isArray(toolsAllowed) && toolsAllowed.length > 0;
+    const hasPrompt = typeof customSystemPrompt === 'string' && customSystemPrompt.trim().length > 0;
+    if (!hasAllowed && !hasPrompt) {
+      const fakeId = randomUUID();
+      return {
+        taskId: fakeId,
+        objective,
+        completionPromise: Promise.resolve({
+          taskId: fakeId,
+          status: 'failed' as const,
+          error: 'specialized mode requires tools_allowed and/or custom_system_prompt',
+        }),
+      };
+    }
+  }
+
+  // Register sub-agent locally
+  const spawnResult = await execLocalTool('subagent_spawn', {
+    objective,
+    parent_id: conversationId,
+    model,
+    tools_allowed: toolsAllowed,
+    custom_system_prompt: customSystemPrompt,
+  });
+
+  if (!spawnResult?.ok) {
+    const fakeId = randomUUID();
+    return {
+      taskId: fakeId,
+      objective,
+      completionPromise: Promise.resolve({
+        taskId: fakeId,
+        status: 'failed' as const,
+        error: spawnResult?.error || 'Failed to spawn sub-agent locally',
+      }),
+    };
+  }
+
+  const localTaskId = spawnResult.task_id || randomUUID();
+  const subagentSecrets = {
+    ...(secrets || {}),
+    subagentTaskId: localTaskId,
+    browserUseSessionId: getBrowserUseSessionId(localTaskId),
+  };
+
+  // Create a completion promise
+  let resolveCompletion!: (result: SubagentResult) => void;
+  const completionPromise = new Promise<SubagentResult>((resolve) => {
+    resolveCompletion = resolve;
+  });
+
+  // Start the agent execution
+  const run = () =>
+    runHeadlessTask(localTaskId, userId, objective, toolsAllowed, customSystemPrompt, model, taskMode)
+      .then(() => {
+        // Fetch the final result from local registry
+        return execLocalTool('subagent_status', { task_id: localTaskId })
+          .then((statusResult) => {
+            const t = statusResult?.task;
+            resolveCompletion({
+              taskId: localTaskId,
+              status: t?.status || 'completed',
+              text: t?.result?.text,
+              finishReason: t?.result?.finishReason,
+              error: t?.result?.error,
+            });
+          })
+          .catch(() => {
+            resolveCompletion({ taskId: localTaskId, status: 'completed', text: '' });
+          });
+      })
+      .catch((err) => {
+        writeLog('subagent_background_error', { taskId: localTaskId, error: err?.message || String(err) });
+        execLocalTool('subagent_update', {
+          task_id: localTaskId,
+          status: 'failed',
+          result: { error: err?.message },
+        }).catch(() => {});
+        resolveCompletion({
+          taskId: localTaskId,
+          status: 'failed',
+          error: err?.message || String(err),
+        });
+      });
+
+  // Preserve client bridge context for local tool access
+  if (bridgeWs && bridgeWs.readyState === (bridgeWs as any).OPEN) {
+    withClientBridge(bridgeWs as any, run, subagentSecrets);
+  } else {
+    run();
+  }
+
+  return { taskId: localTaskId, objective, completionPromise };
+}
+
+// ─── Sub-agent execution logic ────────────────────────────────────────────────
+
 async function runHeadlessTask(
   taskId: string,
   userId: string,
@@ -175,14 +308,12 @@ async function runHeadlessTask(
   model: any = 'fast',
   mode: 'generic' | 'specialized' = 'generic'
 ) {
-  // Create abort controller for this task
   const abortController = new AbortController();
   runningTasks.set(taskId, abortController);
 
-  // Move aggregatedText outside try block so it can be accessed in catch for abort handling
   let aggregatedText = '';
   let lastReasoningFlush = 0;
-  const REASONING_FLUSH_MS = 1500; // Flush accumulated reasoning text every 1.5s
+  const REASONING_FLUSH_MS = 1500;
 
   try {
     let finished = false;
@@ -195,7 +326,6 @@ async function runHeadlessTask(
       lastFlush = now;
       flushChain = flushChain
         .then(async () => {
-          // Update local sub-agent with log entry
           await execLocalTool('subagent_update', { task_id: taskId, log: logEntry }).catch(() => {});
         })
         .catch(() => {});
@@ -206,7 +336,7 @@ async function runHeadlessTask(
     const providers = ['github', 'google', 'outlook', 'facebook', 'instagram', 'threads', 'whatsapp'];
     const checks = await Promise.all(providers.map(p => getExternalAccount(userId, p)));
     const enabledIntegrations = providers.filter((_, i) => !!checks[i]);
-    
+
     let mcpTools: Record<string, any> = {};
     try {
       const { getConnectedMCPIntegrations, getMCPToolsForIntegrations } = await import('../mcp');
@@ -223,7 +353,6 @@ async function runHeadlessTask(
       ? (Array.isArray(toolsAllowed) && toolsAllowed.length > 0 ? toolsAllowed : ['wait', 'run_sequential', 'run_parallel'])
       : toolsAllowed;
 
-    // Detect if running without a desktop bridge (e.g. VM-only context)
     const bridgeWsNow = getBridgeWs();
     const hasDesktopBridge = bridgeWsNow && bridgeWsNow.readyState === (bridgeWsNow as any).OPEN;
 
@@ -238,74 +367,63 @@ async function runHeadlessTask(
 
     // Prepare provider options
     const providerOptions: any = {};
-    // Enable thinking for Google Gemini 3 models to support tool calling with thought signatures.
-    // Gemini 3 models require thought parts to be preserved and passed back with function responses.
     const { getDefaultModelForCategory } = await import('../pricing');
     const concreteModelId = getDefaultModelForCategory(model);
     if (concreteModelId?.includes('google/gemini-3')) {
       providerOptions.google = {
-        thinkingConfig: {
-          includeThoughts: true,
-        },
+        thinkingConfig: { includeThoughts: true },
       };
     }
 
-    // 3. Run the agent and stream results to update logs locally
+    // 3. Run the agent and stream results
     const stream: any = await agent.stream([{ role: 'user', content: objective }], {
-        providerOptions,
-        abortSignal: abortController.signal,
-        onFinish: async ({ text, finishReason }) => {
-            finished = true;
-            runningTasks.delete(taskId); // Clean up on finish
-            const finalText = String(text || '').trim() || String(aggregatedText || '').trim();
-            // Update local sub-agent status to completed
-            await execLocalTool('subagent_update', {
-              task_id: taskId,
-              status: 'completed',
-              result: { text: finalText, finishReason }
-            }).catch(() => {});
-        }
+      providerOptions,
+      abortSignal: abortController.signal,
+      onFinish: async ({ text, finishReason }) => {
+        finished = true;
+        runningTasks.delete(taskId);
+        const finalText = String(text || '').trim() || String(aggregatedText || '').trim();
+        await execLocalTool('subagent_update', {
+          task_id: taskId,
+          status: 'completed',
+          result: { text: finalText, finishReason }
+        }).catch(() => {});
+      }
     });
 
     const fullStream = (stream as any)?.fullStream || stream;
 
     for await (const chunk of fullStream as any) {
       const evType = (chunk as any)?.type;
-      
+
       if (evType === 'tool-call') {
         const payload = (chunk as any).payload;
-        const logEntry = {
+        await flushLogs({
           type: 'tool_call',
           tool: payload.toolName,
           args: sanitizeForLog(payload.args),
           timestamp: Date.now(),
-        };
-        await flushLogs(logEntry);
+        });
       } else if (evType === 'tool-result') {
         const payload = (chunk as any).payload;
-        const logEntry = {
+        await flushLogs({
           type: 'tool_result',
           tool: payload.toolName,
           result: sanitizeForLog(payload.result),
           timestamp: Date.now(),
-        };
-        await flushLogs(logEntry);
+        });
       } else if (evType === 'tool_event') {
-        // execLocalTool emits tool_event chunks that are very useful for live status
-        const logEntry = sanitizeForLog({ type: 'tool_event', ...(chunk as any), timestamp: Date.now() });
-        await flushLogs(logEntry);
+        await flushLogs(sanitizeForLog({ type: 'tool_event', ...(chunk as any), timestamp: Date.now() }));
       } else if (evType === 'text-delta') {
         const t = (chunk as any)?.payload?.text || (chunk as any)?.text || '';
         if (typeof t === 'string' && t) {
           aggregatedText += t;
-          // Periodically flush reasoning text so the UI can show chain-of-thought live
           const now = Date.now();
           if (now - lastReasoningFlush >= REASONING_FLUSH_MS) {
             lastReasoningFlush = now;
-            const reasoningSnapshot = aggregatedText.slice(-800); // last 800 chars
             await flushLogs({
               type: 'reasoning',
-              text: reasoningSnapshot,
+              text: aggregatedText.slice(-800),
               total_length: aggregatedText.length,
               timestamp: now,
             }, true);
@@ -314,7 +432,7 @@ async function runHeadlessTask(
       }
     }
 
-    // Final reasoning flush — send the complete text as a log entry
+    // Final reasoning flush
     if (aggregatedText.trim()) {
       await flushLogs({
         type: 'reasoning_complete',
@@ -324,7 +442,7 @@ async function runHeadlessTask(
       }, true);
     }
 
-    // If for some reason onFinish didn't fire, mark as completed with what we have
+    // Safety net: if onFinish didn't fire, mark as completed
     if (!finished) {
       runningTasks.delete(taskId);
       const finalText = String(aggregatedText || '').trim();
@@ -336,10 +454,8 @@ async function runHeadlessTask(
     }
 
   } catch (error: any) {
-    // Clean up abort controller
     runningTasks.delete(taskId);
 
-    // Handle abort specifically
     if (error?.name === 'AbortError' || abortController.signal.aborted) {
       console.log(`[HeadlessAgent] Task ${taskId} was stopped by user`);
       const partialText = aggregatedText ? aggregatedText.trim() : '';
@@ -359,4 +475,3 @@ async function runHeadlessTask(
     }).catch(() => {});
   }
 }
-

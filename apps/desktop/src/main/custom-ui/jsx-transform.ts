@@ -21,7 +21,7 @@ export function detectComponentSyntax(code: string): 'jsx' | 'plain' {
     .replace(/\/\/.*/g, '')                // line comments
     .replace(/"(?:[^"\\]|\\.)*"/g, '""')   // double-quoted strings
     .replace(/'(?:[^'\\]|\\.)*'/g, "''")   // single-quoted strings
-    .replace(/`(?:[^`\\]|\\.)*`/g, '``');  // template literals (simplified)
+    .replace(/`(?:[^`\\$]|\\.|\$(?!\{)|\$\{[^}]*\})*`/g, '``'); // template literals with ${...} expressions
 
   // Check for JSX patterns: <Component, <div, return (<div, etc.
   const jsxPatterns = [
@@ -95,12 +95,17 @@ export function prepareComponentCode(code: string): { code: string; syntax: 'jsx
       .replace(/&amp;/g, '&');
   }
 
-  // Step 1: Sanitize double-escaped strings from LLM JSON output
+  // Step 1: Sanitize double-escaped strings from LLM JSON output.
+  // Only trigger when the code has NO real newlines — meaning all line breaks
+  // are still escaped as literal \n, which indicates double JSON encoding.
+  // If the code already has real newlines, any \n sequences inside it are
+  // legitimate JS escape sequences (e.g., 'Hello\nWorld') and must be preserved.
+  const hasRealNewlines = processed.includes('\n');
   const hasLiteralBackslashN = processed.includes('\\n');
   const hasLiteralBackslashQuote = processed.includes('\\"');
   const hasLiteralBackslashBackslash = processed.includes('\\\\');
 
-  if (hasLiteralBackslashN || hasLiteralBackslashQuote) {
+  if (!hasRealNewlines && (hasLiteralBackslashN || hasLiteralBackslashQuote)) {
     if (hasLiteralBackslashBackslash) {
       processed = processed.replace(/\\\\/g, '\x00BACKSLASH\x00');
     }
@@ -130,25 +135,31 @@ export function prepareComponentCode(code: string): { code: string; syntax: 'jsx
 
   // Step 3: Convert HTML-style style="..." to JSX style={{...}}
   // AI models often write style="color: red; font-size: 14px" instead of style={{color: 'red', fontSize: '14px'}}
-  processed = processed.replace(
-    /style="([^"]+)"/g,
-    (_, cssString: string) => {
-      const props = cssString.split(';')
-        .map(s => s.trim())
-        .filter(Boolean)
-        .map(rule => {
-          const colonIdx = rule.indexOf(':');
-          if (colonIdx < 0) return null;
-          const prop = rule.substring(0, colonIdx).trim();
-          const value = rule.substring(colonIdx + 1).trim();
-          // Convert kebab-case to camelCase
-          const camelProp = prop.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-          return `${camelProp}: '${value.replace(/'/g, "\\'")}'`;
-        })
-        .filter(Boolean);
-      return props.length > 0 ? `style={{${props.join(', ')}}}` : '';
-    }
-  );
+  // Only apply on lines that look like JSX (contain < tag patterns) to avoid corrupting
+  // style="..." patterns inside JS string literals or template literals.
+  processed = processed.split('\n').map(line => {
+    // Only convert style="..." on lines that contain JSX-like angle brackets
+    if (!/<[a-zA-Z]/.test(line)) return line;
+    return line.replace(
+      /style="([^"]+)"/g,
+      (_, cssString: string) => {
+        const props = cssString.split(';')
+          .map(s => s.trim())
+          .filter(Boolean)
+          .map(rule => {
+            const colonIdx = rule.indexOf(':');
+            if (colonIdx < 0) return null;
+            const prop = rule.substring(0, colonIdx).trim();
+            const value = rule.substring(colonIdx + 1).trim();
+            // Convert kebab-case to camelCase
+            const camelProp = prop.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+            return `${camelProp}: '${value.replace(/'/g, "\\'")}'`;
+          })
+          .filter(Boolean);
+        return props.length > 0 ? `style={{${props.join(', ')}}}` : '';
+      }
+    );
+  }).join('\n');
 
   // Step 4: Detect syntax
   const syntax = detectComponentSyntax(processed);

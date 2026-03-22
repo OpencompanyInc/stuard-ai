@@ -272,6 +272,8 @@ export {
   browser_use_fill_form,
   browser_use_upload_file,
   browser_use_wait_for,
+  browser_use_connected_profiles,
+  browser_use_switch_profile,
 } from './device/browser-use';
 
 // Canvas Document Tools (AI can read/write user's canvas notes)
@@ -347,6 +349,9 @@ export {
 export {
   search_past_conversations,
   get_conversation_context,
+  browse_topic_collections,
+  get_collection_detail,
+  synthesize_collection,
   list_user_spaces,
   get_space_contents,
   add_to_space,

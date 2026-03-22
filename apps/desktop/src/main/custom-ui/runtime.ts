@@ -237,7 +237,10 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
   // Frameless windows are always transparent at the Electron level — components own the background.
   // On Windows, transparent + framed windows don't render correctly, so framed windows stay opaque.
   const transparent = frameless;
-  const isAlwaysOnTop = windowCfg.alwaysOnTop !== false;
+  // Frameless windows default to normal app-window behavior (not always-on-top,
+  // shown in taskbar, minimizable). Framed windows keep the old overlay default.
+  const defaultAlwaysOnTop = !frameless;
+  const isAlwaysOnTop = windowCfg.alwaysOnTop ?? defaultAlwaysOnTop;
   const shouldSkipTaskbar = windowCfg.skipTaskbar === true || (isAlwaysOnTop && windowCfg.skipTaskbar !== false);
 
   // Get preload path
@@ -263,8 +266,8 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     backgroundColor: '#00000000',
     resizable: windowCfg.resizable !== false,
     movable: windowCfg.movable !== false,
-    minimizable: false,
-    maximizable: false,
+    minimizable: frameless ? (windowCfg.minimizable !== false) : false,
+    maximizable: frameless ? (windowCfg.maximizable === true) : false,
     fullscreenable: false,
     skipTaskbar: shouldSkipTaskbar,
     alwaysOnTop: isAlwaysOnTop,
@@ -296,8 +299,17 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
   // Store flow spec steps for callNode resolution (node-routing architecture)
   const flowSpec = args?.__flowSteps ? { steps: args.__flowSteps } : undefined;
   const stepId = args?.__stepId || undefined;
-  windowData.set(id, { data: safeData, flowId, keepOpen, pages, currentPage: startPage, flowSpec, stepId });
+  const accessToken = ctx.accessToken || args?.__accessToken || undefined;
+  windowData.set(id, { data: safeData, flowId, keepOpen, pages, currentPage: startPage, flowSpec, stepId, accessToken });
   ctx.logFn(`custom_ui: Stored window "${id}" in map (total: ${customUiWindows.size})${flowSpec ? ` with ${flowSpec.steps?.length || 0} sibling nodes` : ''}`);
+
+  // Push data keys as workflow variables so useVar hooks get fresh values
+  // (prevents stale reads from the global variable store on subsequent runs)
+  if (safeData && typeof safeData === 'object') {
+    for (const [key, value] of Object.entries(safeData)) {
+      setVariable(key, value as VariableValue);
+    }
+  }
 
   // Generate enhanced HTML
   const htmlContent = generateEnhancedCustomUiHtml({

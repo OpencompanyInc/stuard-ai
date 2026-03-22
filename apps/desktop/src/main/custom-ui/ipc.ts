@@ -173,12 +173,14 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
       let winFlowId: string | undefined;
       let winFlowSpec: any;
       let callerStepId: string | undefined;
+      let winAccessToken: string | undefined;
       for (const [id, w] of customUiWindows) {
         if (w === win) {
           const wd = windowData.get(id);
           winFlowId = wd?.flowId;
           winFlowSpec = wd?.flowSpec;
           callerStepId = wd?.stepId || id; // Engine step ID or window ID as fallback
+          winAccessToken = wd?.accessToken;
           break;
         }
       }
@@ -240,6 +242,10 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
       }
 
       const ctx = getRouterContext();
+      // Propagate access token from engine context so cloud tools can authenticate
+      if (winAccessToken && !ctx.accessToken) {
+        ctx.accessToken = winAccessToken;
+      }
       ctx.logFn(`[custom_ui] callNode: ${nodeId} → ${toolName}`);
 
       // Build args: start with the node's declared args, then merge caller data

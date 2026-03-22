@@ -23,13 +23,72 @@ let dashboardWin: BrowserWindow | null = null;
 let notificationWin: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let sidebarExpanded = false;
+type SidebarTabId = "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo";
+type SidebarPresentationMode = "full" | "popup";
+let sidebarPresentation: SidebarPresentationMode = "full";
 
 // Standalone sidebar window dimensions
 const SIDEBAR_EXPANDED_WIDTH = 900;
 const SIDEBAR_EXPANDED_HEIGHT = 700;
+const SIDEBAR_POPUP_WIDTH = 460;
+const SIDEBAR_POPUP_HEIGHT = 560;
 
 // Internal sidebar (rendered inside overlay window)
 const INTERNAL_SIDEBAR_WIDTH = 320;
+
+function getSidebarBounds(mode: SidebarPresentationMode) {
+  const display = screen.getPrimaryDisplay();
+  const workArea = display.workArea;
+  const width = Math.min(
+    mode === "popup" ? SIDEBAR_POPUP_WIDTH : SIDEBAR_EXPANDED_WIDTH,
+    workArea.width - 60,
+  );
+  const height = Math.min(
+    mode === "popup" ? SIDEBAR_POPUP_HEIGHT : SIDEBAR_EXPANDED_HEIGHT,
+    workArea.height - 60,
+  );
+
+  if (mode === "popup") {
+    return {
+      x: Math.round(workArea.x + workArea.width - width - 24),
+      y: Math.round(workArea.y + workArea.height - height - 24),
+      width,
+      height,
+    };
+  }
+
+  return {
+    x: Math.round(workArea.x + (workArea.width - width) / 2),
+    y: Math.round(workArea.y + (workArea.height - height) / 2),
+    width,
+    height,
+  };
+}
+
+function applySidebarPresentation(mode: SidebarPresentationMode) {
+  sidebarPresentation = mode;
+  if (!sidebarWin || sidebarWin.isDestroyed()) {
+    return { ok: false, error: "sidebar_not_open", mode };
+  }
+
+  const bounds = getSidebarBounds(mode);
+  try {
+    sidebarWin.setAlwaysOnTop(mode === "popup", mode === "popup" ? "floating" : "normal");
+  } catch {}
+  try {
+    sidebarWin.setMinimumSize(mode === "popup" ? 360 : 380, mode === "popup" ? 420 : 400);
+  } catch {}
+  try {
+    sidebarWin.setBounds(bounds, true);
+  } catch {}
+  try {
+    sidebarWin.show();
+    sidebarWin.focus();
+    sidebarWin.moveTop();
+  } catch {}
+
+  return { ok: true, mode };
+}
 
 // Keep a stable record of the intended content size to prevent drift from DPI rounding
 let baseContentWidth = 520;
@@ -516,6 +575,7 @@ export function createWindow() {
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
+      webviewTag: true,
       sandbox: false,
       devTools: true, // Enable devTools for debugging
     },
@@ -729,6 +789,7 @@ export function openOnboardingWindow() {
       preload: getPreloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
+      webviewTag: true,
       sandbox: false,
       devTools: true,
     },
@@ -969,12 +1030,17 @@ export function openWorkflowsWindow(options?: { marketplaceSlug?: string }) {
   workflowsWin = d;
 }
 
-// Standalone Sidebar Window (Spaces, Canvas, Terminal) - always opens as standalone window
+// Standalone Sidebar Window (Spaces, Notes, Terminal, Agent Tasks, Browser) - always opens as standalone window
 export function openSidebarWindow(options?: {
-  tab?: "spaces" | "canvas" | "terminal";
+  tab?: SidebarTabId;
   expanded?: boolean;
+  presentation?: SidebarPresentationMode;
 }) {
   // Always open as standalone expanded window (ignore expanded flag, always expanded)
+
+  if (options?.presentation) {
+    sidebarPresentation = options.presentation;
+  }
 
   if (sidebarWin && !sidebarWin.isDestroyed()) {
     sidebarWin.show();
@@ -983,21 +1049,12 @@ export function openSidebarWindow(options?: {
     if (options?.tab) {
       sidebarWin.webContents.send("sidebar:navigate", { tab: options.tab });
     }
+    applySidebarPresentation(sidebarPresentation);
     return;
   }
 
   // Always open as standalone centered window
-  const display = screen.getPrimaryDisplay();
-  const workArea = display.workArea;
-
-  const width = Math.min(SIDEBAR_EXPANDED_WIDTH, workArea.width - 100);
-  const height = Math.min(SIDEBAR_EXPANDED_HEIGHT, workArea.height - 100);
-  const initialBounds = {
-    x: Math.round(workArea.x + (workArea.width - width) / 2),
-    y: Math.round(workArea.y + (workArea.height - height) / 2),
-    width,
-    height,
-  };
+  const initialBounds = getSidebarBounds(sidebarPresentation);
   sidebarExpanded = true; // Always expanded
 
   sidebarWin = new BrowserWindow({
@@ -1024,6 +1081,7 @@ export function openSidebarWindow(options?: {
       preload: getPreloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
+      webviewTag: true,
       sandbox: false,
       devTools: true,
     },
@@ -1068,9 +1126,11 @@ export function openSidebarWindow(options?: {
   sidebarWin.on("closed", () => {
     sidebarWin = null;
     sidebarExpanded = false;
+    sidebarPresentation = "full";
   });
 
   // Standalone window - no auto-hide behavior
+  applySidebarPresentation(sidebarPresentation);
 }
 
 export function closeSidebarWindow() {
@@ -1080,7 +1140,7 @@ export function closeSidebarWindow() {
 }
 
 export function toggleSidebarWindow(options?: {
-  tab?: "spaces" | "canvas" | "terminal";
+  tab?: SidebarTabId;
   expanded?: boolean;
 }) {
   if (!sidebarWin || sidebarWin.isDestroyed()) {
@@ -1115,6 +1175,18 @@ export function toggleSidebarExpanded() {
   // Sidebar is now always expanded/standalone - this is a no-op
   // Kept for API compatibility
   return { expanded: true };
+}
+
+export function setSidebarPresentation(mode: SidebarPresentationMode, tab?: SidebarTabId) {
+  if (!sidebarWin || sidebarWin.isDestroyed()) {
+    openSidebarWindow({ tab, expanded: true });
+  }
+  if (tab && sidebarWin && !sidebarWin.isDestroyed()) {
+    try {
+      sidebarWin.webContents.send("sidebar:navigate", { tab });
+    } catch {}
+  }
+  return applySidebarPresentation(mode);
 }
 
 // Legacy Spaces Window functions - now redirect to sidebar

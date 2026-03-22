@@ -330,7 +330,7 @@ export function WorkflowLauncherV2({
       <aside className="w-[300px] shrink-0 border-r wf-border p-6 flex flex-col gap-5 drag">
         <div className={`rounded-[20px] border p-6 h-[120px] relative overflow-hidden no-drag ${d ? "border-slate-800 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"}`}>
           <div className={`absolute right-[-10px] top-1/2 -translate-y-1/2 h-40 w-40 rounded-full blur-[35px] ${d ? "bg-blue-500/40" : "bg-blue-500/20"}`} />
-          <div className="relative z-10 text-[18px] font-bold tracking-tight">Workflow Studio</div>
+          <div className="relative z-10 text-[18px] font-bold tracking-tight">Stuard Studio</div>
           <div className={`relative z-10 mt-1 text-[13px] ${d ? "text-slate-300" : "text-slate-500"}`}>All your workflows in one place</div>
         </div>
 

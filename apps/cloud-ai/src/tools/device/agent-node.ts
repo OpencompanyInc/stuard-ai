@@ -1,8 +1,8 @@
 /**
  * agent_node — Synchronous AI Agent workflow node
  *
- * Unlike deploy_headless_agent (fire-and-forget background task),
- * this tool runs an AI agent inline within a workflow step, waits for
+ * Unlike deploy_headless_agent (which can run in wait or background mode),
+ * this tool runs a lightweight AI agent inline within a workflow step, waits for
  * completion, and returns the result directly to the next node.
  *
  * Perfect for:
@@ -20,6 +20,7 @@ import { getBridgeSecrets, getBridgeWs, hasClientBridge, withClientBridge, safeT
 import { writeLog } from '../../utils/logger';
 import { getDefaultModelForCategory } from '../../pricing';
 import { buildKnowledgeContext, buildQuickContext } from '../../knowledge/retrieval';
+import { buildCollectionContext } from '../../memory/conversations';
 
 const AGENT_NODE_TIMEOUT_MS = 5 * 60 * 1000; // 5 min default
 
@@ -208,6 +209,26 @@ Examples:
             });
             if (knowledgeCtx && knowledgeCtx.text.trim()) {
               memoryContext = knowledgeCtx.text.trim();
+
+              // Inject relevant collection context alongside knowledge
+              try {
+                const { embed: embedFn } = await import('ai');
+                const { google: googleProvider } = await import('../../utils/models');
+                const { embedding: qVec } = await embedFn({
+                  model: googleProvider.textEmbeddingModel('gemini-embedding-2-preview'),
+                  value: prompt,
+                });
+                if (qVec && qVec.length > 0) {
+                  const collectionCtx = await buildCollectionContext(qVec, { maxTopics: 3 });
+                  if (collectionCtx.trim()) {
+                    memoryContext += '\n\n' + collectionCtx.trim();
+                    writeLog('agent_node_collection_injected', { length: collectionCtx.length });
+                  }
+                }
+              } catch (collErr: any) {
+                writeLog('agent_node_collection_error', { error: collErr?.message });
+              }
+
               writeLog('agent_node_memory_injected', {
                 length: memoryContext.length,
                 hasIdentity: knowledgeCtx.lenses.identity.length > 0,

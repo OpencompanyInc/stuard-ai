@@ -35,6 +35,9 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   const openPricing = () => {
     try { (window as any).desktopAPI?.openExternal?.('https://stuard.ai/pricing'); } catch { window.open('https://stuard.ai/pricing', '_blank'); }
   };
+  const openWorkflows = () => {
+    try { (window as any).desktopAPI?.openWorkflows?.(); } catch { }
+  };
 
   return (
     <div className="space-y-6 pb-6" data-onboarding="overview-panel">
@@ -142,13 +145,13 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
           <div className="absolute bottom-0 left-1/2 h-36 w-36 rounded-full bg-primary/25 blur-3xl -translate-x-1/2 translate-y-8 pointer-events-none opacity-90"></div>
           
           <div className="relative z-10 text-center pt-3 space-y-3">
-            <div className="text-[34px] font-semibold leading-none text-theme-fg">Workflow Studio</div>
+            <div className="text-[34px] font-semibold leading-none text-theme-fg">Stuard Studio</div>
             <p className="text-sm text-theme-muted font-medium">All your workflows in one place</p>
           </div>
 
           <div className="mt-5 relative z-10">
             <button 
-              onClick={() => onNavigate('automations')}
+              onClick={openWorkflows}
               className="dashboard-card-muted w-full flex items-center justify-center gap-2 text-[14px] font-medium text-theme-fg py-3 px-4 rounded-2xl transition-all duration-300 group/action"
             >
               <Wand2 className="w-4 h-4 text-theme-muted group-hover/action:text-theme-fg transition-colors" />

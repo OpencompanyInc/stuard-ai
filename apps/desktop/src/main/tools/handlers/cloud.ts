@@ -79,7 +79,10 @@ export async function execCloudTool(tool: string, args: any, ctx: RouterContext)
             validationErrors: (nested as any).validationErrors,
           };
         }
-        return nested;
+        // Preserve ok: true when unwrapping — tools like web_search return
+        // { results: [...] } without an ok field, and the workflow engine
+        // treats missing ok as failure.
+        return { ok: true, ...nested };
       }
 
       return { ok: true, ...result };

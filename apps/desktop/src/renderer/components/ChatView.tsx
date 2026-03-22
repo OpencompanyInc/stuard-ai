@@ -136,10 +136,10 @@ interface ChatViewProps {
 
   // Internal Sidebar
   internalSidebarOpen?: boolean;
-  activeSidebarTab?: "spaces" | "canvas" | "terminal";
+  activeSidebarTab?: "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo";
   onToggleInternalSidebar?: () => void;
   onCloseInternalSidebar?: () => void;
-  onSwitchSidebarTab?: (tab: "spaces" | "canvas" | "terminal") => void;
+  onSwitchSidebarTab?: (tab: "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo") => void;
 }
 
 const ChatViewInner: React.FC<ChatViewProps> = ({
@@ -486,6 +486,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                   onDeleteConversation={onDeleteConversation}
                   viewMode={viewMode}
                   onViewModeChange={setViewMode}
+                  onSwitchSidebarTab={onSwitchSidebarTab}
                 />
               </div>
 
@@ -692,6 +693,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                   onDeleteConversation={onDeleteConversation}
                   viewMode={viewMode}
                   onViewModeChange={setViewMode}
+                  onSwitchSidebarTab={onSwitchSidebarTab}
                 />
               </div>
 

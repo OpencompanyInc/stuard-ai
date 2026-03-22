@@ -1,5 +1,5 @@
 import type { CustomUiHtmlOptions } from './types';
-import { getReactRuntime } from './assets/react-runtime';
+import { getReactRuntime, getKatexCss } from './assets/react-runtime';
 import { EXTRA_CSS } from './assets/utility-css';
 import { prepareComponentCode } from './jsx-transform';
 
@@ -134,14 +134,20 @@ function buildThemeCss(options: {
   const radiusStyle = borderRadius > 0 ? `border-radius: ${borderRadius}px;` : '';
   const overflowStyle = overflow ? `overflow: ${overflow};` : (borderRadius > 0 ? 'overflow: hidden;' : '');
 
-  // Default to transparent — components own their backgrounds.
-  // Only apply an explicit background when one is configured.
-  const explicitBg = !transparentBg && backgroundType === 'color' && backgroundColor && backgroundColor !== 'transparent'
-    ? backgroundColor
-    : 'transparent';
-  const htmlBg = 'transparent';
-  const bodyBg = 'transparent';
-  const containerBg = explicitBg;
+  // Determine backgrounds:
+  // - transparentBg → everything transparent, components own their bg
+  // - backgroundType 'color' with explicit color → use that color
+  // - backgroundType 'gradient'/'image'/'translucent' → containers must be transparent
+  //   so the background layer (.stuard-background or translucent CSS) shows through
+  const containerBg =
+    transparentBg ? 'transparent'
+    : backgroundType === 'color' && backgroundColor && backgroundColor !== 'transparent'
+      ? backgroundColor
+    : backgroundType === 'color'
+      ? 'white'              // plain color mode with no color set → white fallback
+      : 'transparent';       // gradient/image/translucent → let the bg layer show
+  const htmlBg = transparentBg || backgroundType !== 'color' ? 'transparent' : 'white';
+  const bodyBg = htmlBg;
 
   return `
     html { background: ${htmlBg}; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; height: 100%; }
@@ -218,12 +224,216 @@ function buildThemeCss(options: {
     body.dark .btn-ghost:hover, .dark .btn-ghost:hover { background: rgba(255,255,255,0.05); color: #f8fafc; }
     body.dark .glass, .dark .glass { background: rgba(15,23,42,0.7)!important; border-color: rgba(255,255,255,0.08); }
 
-    /* Font family utilities */
+    /* ========== Font Family Utilities ========== */
+
+    /* --- Sans-serif --- */
     .font-inter { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
     .font-outfit { font-family: 'Outfit', system-ui, -apple-system, sans-serif; }
-    .font-grotesk { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; }
+    .font-grotesk, .font-space-grotesk { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; }
+    .font-poppins { font-family: 'Poppins', system-ui, -apple-system, sans-serif; }
+    .font-roboto { font-family: 'Roboto', system-ui, -apple-system, sans-serif; }
+    .font-open-sans { font-family: 'Open Sans', system-ui, -apple-system, sans-serif; }
+    .font-lato { font-family: 'Lato', system-ui, -apple-system, sans-serif; }
+    .font-montserrat { font-family: 'Montserrat', system-ui, -apple-system, sans-serif; }
+    .font-raleway { font-family: 'Raleway', system-ui, -apple-system, sans-serif; }
+    .font-dm-sans, .font-dm { font-family: 'DM Sans', system-ui, -apple-system, sans-serif; }
+    .font-jakarta, .font-plus-jakarta { font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif; }
+    .font-manrope { font-family: 'Manrope', system-ui, -apple-system, sans-serif; }
+    .font-sora { font-family: 'Sora', system-ui, -apple-system, sans-serif; }
+    .font-archivo { font-family: 'Archivo', system-ui, -apple-system, sans-serif; }
+    .font-nunito { font-family: 'Nunito', system-ui, -apple-system, sans-serif; }
+    .font-quicksand { font-family: 'Quicksand', system-ui, -apple-system, sans-serif; }
+    .font-comfortaa { font-family: 'Comfortaa', system-ui, -apple-system, sans-serif; }
+    .font-ibm, .font-ibm-plex { font-family: 'IBM Plex Sans', system-ui, -apple-system, sans-serif; }
+
+    /* --- Serif --- */
+    .font-playfair { font-family: 'Playfair Display', Georgia, 'Times New Roman', serif; }
+    .font-merriweather { font-family: 'Merriweather', Georgia, serif; }
+    .font-lora { font-family: 'Lora', Georgia, serif; }
+    .font-source-serif { font-family: 'Source Serif 4', Georgia, serif; }
+    .font-dm-serif { font-family: 'DM Serif Display', Georgia, serif; }
+
+    /* --- Display / Condensed --- */
+    .font-bebas, .font-bebas-neue { font-family: 'Bebas Neue', Impact, sans-serif; }
+    .font-oswald { font-family: 'Oswald', Impact, sans-serif; }
+
+    /* --- Handwriting / Script --- */
+    .font-caveat { font-family: 'Caveat', cursive; }
+    .font-dancing, .font-dancing-script { font-family: 'Dancing Script', cursive; }
+    .font-pacifico { font-family: 'Pacifico', cursive; }
+    .font-marker, .font-permanent-marker { font-family: 'Permanent Marker', cursive; }
+    .font-satisfy { font-family: 'Satisfy', cursive; }
+
+    /* --- Monospace --- */
     .font-mono, .font-code { font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace; }
+    .font-jetbrains { font-family: 'JetBrains Mono', monospace; }
+    .font-fira-code { font-family: 'Fira Code', monospace; }
+    .font-source-code { font-family: 'Source Code Pro', monospace; }
+    .font-space-mono { font-family: 'Space Mono', monospace; }
+    .font-ibm-mono { font-family: 'IBM Plex Mono', monospace; }
     code, pre { font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace; }
+
+    /* --- Generic stacks (no Google Fonts needed) --- */
+    .font-system { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .font-serif-stack { font-family: Georgia, Cambria, 'Times New Roman', Times, serif; }
+    .font-mono-stack { font-family: 'Cascadia Code', 'Fira Code', Menlo, Monaco, Consolas, monospace; }
+
+    /* ========== Font Size Utilities ========== */
+    .text-2xs { font-size: 0.625rem; line-height: 0.875rem; }   /* 10px */
+    .text-xs  { font-size: 0.75rem; line-height: 1rem; }        /* 12px */
+    .text-sm  { font-size: 0.875rem; line-height: 1.25rem; }    /* 14px */
+    .text-base { font-size: 1rem; line-height: 1.5rem; }        /* 16px */
+    .text-lg  { font-size: 1.125rem; line-height: 1.75rem; }    /* 18px */
+    .text-xl  { font-size: 1.25rem; line-height: 1.75rem; }     /* 20px */
+    .text-2xl { font-size: 1.5rem; line-height: 2rem; }         /* 24px */
+    .text-3xl { font-size: 1.875rem; line-height: 2.25rem; }    /* 30px */
+    .text-4xl { font-size: 2.25rem; line-height: 2.5rem; }      /* 36px */
+    .text-5xl { font-size: 3rem; line-height: 1; }              /* 48px */
+    .text-6xl { font-size: 3.75rem; line-height: 1; }           /* 60px */
+    .text-7xl { font-size: 4.5rem; line-height: 1; }            /* 72px */
+    .text-8xl { font-size: 6rem; line-height: 1; }              /* 96px */
+    .text-9xl { font-size: 8rem; line-height: 1; }              /* 128px */
+
+    /* ========== Font Weight Utilities ========== */
+    .font-thin       { font-weight: 100; }
+    .font-extralight { font-weight: 200; }
+    .font-light      { font-weight: 300; }
+    .font-normal     { font-weight: 400; }
+    .font-medium     { font-weight: 500; }
+    .font-semibold   { font-weight: 600; }
+    .font-bold       { font-weight: 700; }
+    .font-extrabold  { font-weight: 800; }
+    .font-black      { font-weight: 900; }
+
+    /* ========== Font Style ========== */
+    .italic     { font-style: italic; }
+    .not-italic { font-style: normal; }
+
+    /* ========== Letter Spacing (Tracking) ========== */
+    .tracking-tighter { letter-spacing: -0.05em; }
+    .tracking-tight   { letter-spacing: -0.025em; }
+    .tracking-normal  { letter-spacing: 0em; }
+    .tracking-wide    { letter-spacing: 0.025em; }
+    .tracking-wider   { letter-spacing: 0.05em; }
+    .tracking-widest  { letter-spacing: 0.1em; }
+
+    /* ========== Line Height (Leading) ========== */
+    .leading-none    { line-height: 1; }
+    .leading-tight   { line-height: 1.25; }
+    .leading-snug    { line-height: 1.375; }
+    .leading-normal  { line-height: 1.5; }
+    .leading-relaxed { line-height: 1.625; }
+    .leading-loose   { line-height: 2; }
+    .leading-3  { line-height: 0.75rem; }
+    .leading-4  { line-height: 1rem; }
+    .leading-5  { line-height: 1.25rem; }
+    .leading-6  { line-height: 1.5rem; }
+    .leading-7  { line-height: 1.75rem; }
+    .leading-8  { line-height: 2rem; }
+    .leading-9  { line-height: 2.25rem; }
+    .leading-10 { line-height: 2.5rem; }
+
+    /* ========== Text Transform ========== */
+    .uppercase   { text-transform: uppercase; }
+    .lowercase   { text-transform: lowercase; }
+    .capitalize  { text-transform: capitalize; }
+    .normal-case { text-transform: none; }
+
+    /* ========== Text Decoration ========== */
+    .underline      { text-decoration-line: underline; }
+    .overline       { text-decoration-line: overline; }
+    .line-through   { text-decoration-line: line-through; }
+    .no-underline   { text-decoration-line: none; }
+    .decoration-solid  { text-decoration-style: solid; }
+    .decoration-double { text-decoration-style: double; }
+    .decoration-dotted { text-decoration-style: dotted; }
+    .decoration-dashed { text-decoration-style: dashed; }
+    .decoration-wavy   { text-decoration-style: wavy; }
+    .decoration-1   { text-decoration-thickness: 1px; }
+    .decoration-2   { text-decoration-thickness: 2px; }
+    .decoration-4   { text-decoration-thickness: 4px; }
+    .underline-offset-1 { text-underline-offset: 1px; }
+    .underline-offset-2 { text-underline-offset: 2px; }
+    .underline-offset-4 { text-underline-offset: 4px; }
+    .underline-offset-8 { text-underline-offset: 8px; }
+
+    /* ========== Text Alignment ========== */
+    .text-left    { text-align: left; }
+    .text-center  { text-align: center; }
+    .text-right   { text-align: right; }
+    .text-justify { text-align: justify; }
+
+    /* ========== Word Spacing ========== */
+    .word-spacing-tight  { word-spacing: -0.05em; }
+    .word-spacing-normal { word-spacing: normal; }
+    .word-spacing-wide   { word-spacing: 0.1em; }
+    .word-spacing-wider  { word-spacing: 0.25em; }
+
+    /* ========== Numeric / OpenType features ========== */
+    .tabular-nums   { font-variant-numeric: tabular-nums; }
+    .proportional-nums { font-variant-numeric: proportional-nums; }
+    .oldstyle-nums  { font-variant-numeric: oldstyle-nums; }
+    .lining-nums    { font-variant-numeric: lining-nums; }
+    .small-caps     { font-variant: small-caps; }
+    .all-small-caps { font-variant-caps: all-small-caps; }
+    .ordinal        { font-variant-numeric: ordinal; }
+    .slashed-zero   { font-variant-numeric: slashed-zero; }
+    .diagonal-fractions { font-variant-numeric: diagonal-fractions; }
+
+    /* ========== Typography presets (composites) ========== */
+    .heading-display {
+      font-family: 'Outfit', 'Inter', system-ui, sans-serif;
+      font-weight: 700; letter-spacing: -0.025em; line-height: 1.1;
+    }
+    .heading-serif {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-weight: 700; letter-spacing: -0.01em; line-height: 1.2;
+    }
+    .heading-editorial {
+      font-family: 'DM Serif Display', Georgia, serif;
+      font-weight: 400; letter-spacing: 0; line-height: 1.15;
+    }
+    .heading-condensed {
+      font-family: 'Bebas Neue', 'Oswald', Impact, sans-serif;
+      font-weight: 400; letter-spacing: 0.05em; line-height: 1; text-transform: uppercase;
+    }
+    .body-readable {
+      font-family: 'Merriweather', Georgia, serif;
+      font-weight: 400; font-size: 1rem; line-height: 1.8; letter-spacing: 0.01em;
+    }
+    .body-clean {
+      font-family: 'Inter', system-ui, sans-serif;
+      font-weight: 400; font-size: 0.9375rem; line-height: 1.6;
+    }
+    .body-friendly {
+      font-family: 'Nunito', 'Quicksand', system-ui, sans-serif;
+      font-weight: 400; font-size: 1rem; line-height: 1.65;
+    }
+    .label-ui {
+      font-family: 'Inter', system-ui, sans-serif;
+      font-weight: 500; font-size: 0.8125rem; line-height: 1; letter-spacing: 0.01em;
+    }
+    .caption {
+      font-size: 0.75rem; line-height: 1rem; color: #64748b; font-weight: 400;
+    }
+    .overline {
+      font-size: 0.6875rem; line-height: 1rem; font-weight: 600;
+      letter-spacing: 0.1em; text-transform: uppercase; color: #94a3b8;
+    }
+    .code-block {
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 0.8125rem; line-height: 1.7; letter-spacing: 0;
+      tab-size: 2; font-variant-ligatures: contextual;
+    }
+
+    /* ========== Responsive text (using clamp) ========== */
+    .text-fluid-sm { font-size: clamp(0.75rem, 0.7rem + 0.25vw, 0.875rem); }
+    .text-fluid-base { font-size: clamp(0.875rem, 0.8rem + 0.4vw, 1rem); }
+    .text-fluid-lg { font-size: clamp(1rem, 0.9rem + 0.5vw, 1.25rem); }
+    .text-fluid-xl { font-size: clamp(1.25rem, 1rem + 1vw, 1.75rem); }
+    .text-fluid-2xl { font-size: clamp(1.5rem, 1.2rem + 1.5vw, 2.5rem); }
+    .text-fluid-3xl { font-size: clamp(1.875rem, 1.4rem + 2.4vw, 3.5rem); }
+    .text-fluid-hero { font-size: clamp(2.5rem, 1.5rem + 4vw, 5rem); line-height: 1.05; }
   `;
 }
 
@@ -289,11 +499,12 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
   if (component) {
     rawCode = component;
   } else if (rawHtml) {
-    // Wrap raw HTML in a React component
     const escapedHtml = JSON.stringify(rawHtml);
     rawCode = `function App() {
       const [formData, setFormData] = React.useState({ ...initialData });
-      return React.createElement('div', { dangerouslySetInnerHTML: { __html: ${escapedHtml} } });
+      return React.createElement('div', {
+        dangerouslySetInnerHTML: { __html: ${escapedHtml} }
+      });
     }`;
   } else {
     rawCode = `function App() {
@@ -321,11 +532,11 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
     id, flowId, data, processedComponent,
   });
 
-  // Google Fonts for premium typography
+  // Google Fonts for premium typography — wide selection for diverse UI styles
   const googleFontsLink = `
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">`;
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700;800;900&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Outfit:wght@100;200;300;400;500;600;700;800;900&family=Space+Grotesk:wght@300;400;500;600;700&family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,600&family=Roboto:ital,wght@0,100;0,300;0,400;0,500;0,700;0,900;1,400&family=Open+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Lato:ital,wght@0,100;0,300;0,400;0,700;0,900;1,400&family=Montserrat:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,600&family=Raleway:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,700&family=Merriweather:ital,wght@0,300;0,400;0,700;0,900;1,400&family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400;1,700&family=Source+Serif+4:ital,wght@0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400&family=DM+Sans:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400&family=DM+Serif+Display:ital@0;1&family=Plus+Jakarta+Sans:ital,wght@0,200;0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Manrope:wght@200;300;400;500;600;700;800&family=Sora:wght@100;200;300;400;500;600;700;800&family=Archivo:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400&family=Bebas+Neue&family=Oswald:wght@200;300;400;500;600;700&family=Caveat:wght@400;500;600;700&family=Dancing+Script:wght@400;500;600;700&family=Pacifico&family=Permanent+Marker&family=Satisfy&family=Fira+Code:wght@300;400;500;600;700&family=Source+Code+Pro:ital,wght@0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400&family=Space+Mono:ital,wght@0,400;0,700;1,400&family=IBM+Plex+Sans:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Nunito:ital,wght@0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400&family=Quicksand:wght@300;400;500;600;700&family=Comfortaa:wght@300;400;500;600;700&display=swap" rel="stylesheet">`;
 
   return `<!DOCTYPE html>
 <html style="background:transparent!important">
@@ -335,6 +546,7 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
   <title>${escapeHtml(title)}</title>
   ${googleFontsLink}
   <style>${getTailwindPrebuiltCss()}</style>
+  <style>${getKatexCss()}</style>
   <style>${EXTRA_CSS}</style>
   <style>${themeCss}\n${css || ''}\n${animationKeyframes}</style>
   <script>${reactRuntime}<\/script>
@@ -689,6 +901,84 @@ function buildRuntimeScript(options: {
           className: 'inline-flex items-center px-2 py-0.5 text-xs font-mono font-medium rounded border bg-white/5 border-white/10 text-white/60 ' + (props.className || ''),
           style: props.style
         }, props.children);
+      }
+
+      // Markdown — renders markdown strings as real React elements using react-markdown
+      // Usage: <Markdown>{markdownString}</Markdown>
+      //   or:  <Markdown content={markdownString} />
+      //   or:  <Markdown src={markdownString} dark />
+      // Props: content/src/children (string), className, style, dark (bool), compact (bool)
+      // Supports: GFM tables/strikethrough, LaTeX/KaTeX math ($inline$ and $$block$$)
+      function Markdown(props) {
+        var source = props.content || props.src || (typeof props.children === 'string' ? props.children : '') || '';
+        var darkClass = props.dark ? ' markdown-dark' : '';
+        var compactClass = props.compact ? ' markdown-compact' : '';
+
+        // Use the real react-markdown component if loaded
+        if (typeof window.ReactMarkdown === 'function') {
+          var remarkPlugins = [];
+          var rehypePlugins = [];
+          if (typeof window.remarkGfm === 'function') {
+            remarkPlugins.push(window.remarkGfm);
+          }
+          if (typeof window.remarkMath === 'function') {
+            remarkPlugins.push(window.remarkMath);
+          }
+          if (typeof window.rehypeKatex === 'function') {
+            rehypePlugins.push(window.rehypeKatex);
+          }
+          return React.createElement('div', {
+            className: 'markdown-body' + darkClass + compactClass + ' ' + (props.className || ''),
+            style: props.style
+          },
+            React.createElement(window.ReactMarkdown, {
+              remarkPlugins: remarkPlugins,
+              rehypePlugins: rehypePlugins,
+              children: source
+            })
+          );
+        }
+
+        // Fallback: plain text with newlines
+        return React.createElement('div', {
+          className: 'markdown-body' + darkClass + compactClass + ' ' + (props.className || ''),
+          style: props.style
+        },
+          React.createElement('pre', {
+            style: { whiteSpace: 'pre-wrap', fontFamily: 'inherit' }
+          }, source)
+        );
+      }
+
+      // CodeBlock — code display with optional copy button
+      function CodeBlock(props) {
+        var code = props.code || props.children || '';
+        var language = props.language || props.lang || '';
+        var copyable = props.copyable !== false;
+        var copiedState = React.useState(false);
+        var copied = copiedState[0], setCopied = copiedState[1];
+        function handleCopy() {
+          if (typeof navigator !== 'undefined' && navigator.clipboard) {
+            navigator.clipboard.writeText(code).then(function() {
+              setCopied(true);
+              setTimeout(function() { setCopied(false); }, 2000);
+            });
+          }
+        }
+        return React.createElement('div', {
+          className: 'relative group rounded-lg overflow-hidden ' + (props.className || ''),
+          style: props.style
+        },
+          copyable && React.createElement('button', {
+            onClick: handleCopy,
+            className: 'absolute top-2 right-2 px-2 py-1 text-xs rounded bg-white/10 text-white/60 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/20'
+          }, copied ? 'Copied!' : 'Copy'),
+          React.createElement('pre', {
+            className: 'p-4 overflow-x-auto text-sm leading-relaxed bg-slate-900 text-slate-200 ' + (language ? 'language-' + language : '')
+          },
+            React.createElement('code', { className: language ? 'language-' + language : '' }, code)
+          )
+        );
       }
 
       // === Variable Subscription ===

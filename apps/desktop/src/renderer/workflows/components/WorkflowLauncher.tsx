@@ -174,7 +174,7 @@ export function WorkflowLauncher({
         {/* Header Card — always dark */}
         <div className="p-6 rounded-[20px] bg-slate-900 text-white no-drag shadow-lg relative overflow-hidden h-[120px] flex flex-col justify-center border border-slate-800 shrink-0">
           <div className="absolute right-[-10px] top-1/2 -translate-y-1/2 w-40 h-40 bg-blue-500/40 rounded-full blur-[35px]"></div>
-          <h2 className="text-[18px] font-bold tracking-tight relative z-10">Workflow Studio</h2>
+          <h2 className="text-[18px] font-bold tracking-tight relative z-10">Stuard Studio</h2>
           <p className="text-[13px] text-slate-300 mt-1 relative z-10">All your workflows in one place</p>
         </div>
 

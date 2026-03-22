@@ -13,24 +13,31 @@ import { writeLog } from '../utils/logger';
 // SCHEMAS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Confidence field — shared across most action types
+const confidenceField = z.number().min(0).max(1).default(1.0)
+  .describe('How confident you are this is correct (0-1). Use < 0.7 if the user hedged, was vague, or joking.');
+
 export const ActionSchema = z.discriminatedUnion('action', [
   // UPDATE_PROFILE: Overwrite core profile facts
   z.object({
     action: z.literal('UPDATE_PROFILE'),
     key: z.string().describe('The profile attribute key (e.g., "name", "os", "timezone")'),
     value: z.string().describe('The new value for this attribute'),
+    confidence: confidenceField,
   }),
 
   // ADD_BIO: Append personal bio fact
   z.object({
     action: z.literal('ADD_BIO'),
     value: z.string().describe('The bio fact to add (e.g., "Has a dog named Max")'),
+    confidence: confidenceField,
   }),
 
   // ADD_INSTRUCTION: Add system instruction
   z.object({
     action: z.literal('ADD_INSTRUCTION'),
     value: z.string().describe('The instruction to remember (e.g., "Always reply in JSON")'),
+    confidence: confidenceField,
   }),
 
   // ADD_FACT: Add fact linked to an entity
@@ -39,6 +46,7 @@ export const ActionSchema = z.discriminatedUnion('action', [
     entity_name: z.string().describe('Name of the project/person/tool this fact relates to'),
     entity_type: z.enum(['project', 'person', 'company', 'tool', 'topic']).optional(),
     value: z.string().describe('The fact to add'),
+    confidence: confidenceField,
   }),
 
   // ADD_PROCEDURAL: Add procedural snippet (command, path, credential)
@@ -47,6 +55,7 @@ export const ActionSchema = z.discriminatedUnion('action', [
     key: z.enum(['command', 'path', 'credential', 'api_key', 'endpoint']),
     value: z.string().describe('The procedural value'),
     entity_name: z.string().optional().describe('Related entity name, if any'),
+    confidence: confidenceField,
   }),
 
   // LOG_EVENT: Log an event to history
@@ -54,6 +63,7 @@ export const ActionSchema = z.discriminatedUnion('action', [
     action: z.literal('LOG_EVENT'),
     value: z.string().describe('The event to log'),
     entity_name: z.string().optional(),
+    confidence: confidenceField,
   }),
 
   // CREATE_ENTITY: Create a new entity anchor
@@ -62,6 +72,7 @@ export const ActionSchema = z.discriminatedUnion('action', [
     name: z.string().describe('Name of the new entity'),
     type: z.enum(['project', 'person', 'company', 'tool', 'topic']),
     summary: z.string().optional().describe('Initial summary'),
+    confidence: confidenceField,
   }),
 
   // ADD_PENDING: Store uncertain information for later confirmation
@@ -144,6 +155,11 @@ Your job is to analyze conversation turns and extract structured knowledge to re
 7. **Fill missing profile fields** - If existing profile has empty/placeholder values (like "[User's response needed]"), extract info to fill them
 8. **Add profile keys as needed** - Keys like "school", "university", "major", "company" are valid UPDATE_PROFILE keys
 9. **Use ADD_PENDING for uncertainty** - If you're not 100% sure the user wants this remembered permanently, use ADD_PENDING
+10. **Set confidence accurately** - Every action has a confidence score (0.0-1.0):
+    - 1.0: User stated it clearly and directly ("My name is Alex", "I use VS Code")
+    - 0.8-0.9: Strong inference but not explicitly stated
+    - 0.5-0.7: User hedged or it's ambiguous ("I think...", "probably...")
+    - Below 0.5: Use ADD_PENDING instead
 
 ## WHEN TO USE ADD_PENDING (uncertain information)
 

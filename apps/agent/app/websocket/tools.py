@@ -5,6 +5,7 @@ import os
 from typing import Any, Dict, Optional
 import websockets
 from ..logging_config import get_logger
+from ..permissions import is_auto_approved as _is_auto_approved
 from .session import WebSocketSession
 from ..tools.folder_limiter import current_session_id as _folder_session_ctx
 
@@ -120,8 +121,8 @@ async def handle_cloud_tool_request(
 
         await emit("started", {"args": args, "startedAtMsMono": int(asyncio.get_event_loop().time() * 1000)})
 
-        # Approval gate for sensitive tools
-        if tool in SENSITIVE_TOOLS or tool in SENSITIVE_CLIENT_TOOLS:
+        # Approval gate for sensitive tools (skip if auto-approved by VM permissions)
+        if (tool in SENSITIVE_TOOLS or tool in SENSITIVE_CLIENT_TOOLS) and not _is_auto_approved(tool):
             try:
                 safe_args = {k: v for k, v in (args or {}).items() if k in ("command", "path", "content")}
             except Exception:

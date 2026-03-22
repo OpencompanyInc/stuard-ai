@@ -4,6 +4,8 @@ import { getAgent as getStuardAgent } from '../../agents/stuard-agent';
 import { getWorkflowAgent, WORKFLOW_SYSTEM_PROMPT } from '../../agents/workflow-agent';
 import { getSkillAgent, SKILL_SYSTEM_PROMPT, clearSessionSkill, setSessionSkill } from '../../agents/skill-agent';
 import { withClientBridge } from '../../tools/bridge';
+import { getToolRegistry } from '../../tools/tool-registry';
+import { initToolRegistry } from '../../tools/meta-tools';
 import { routeModel, ModelChoice } from '../../router/model-router';
 import { writeLog } from '../../utils/logger';
 import { normalizeUsage } from '../../utils/usage';
@@ -84,6 +86,15 @@ function detectToolError(error: any): { toolName: string; type: 'no_such_tool' |
 function extractToolName(message: string): string | undefined {
   const match = message.match(/[Tt]ool\s+['"`](\w+)['"`]/);
   return match?.[1];
+}
+
+function isCatalogTool(toolName: string): boolean {
+  try {
+    initToolRegistry();
+    return getToolRegistry().has(toolName);
+  } catch {
+    return false;
+  }
 }
 
 type AgentType = 'stuard' | 'workflow' | 'skill';
@@ -527,8 +538,16 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
           if (toolError && attempt < MAX_TOOL_ERROR_RETRIES) {
             attempt++;
             const toolCallId = `tc-error-${Date.now()}`;
-            const isHallucination = toolError.type === 'no_such_tool' || toolError.type === 'tool_not_found';
-            const label = isHallucination ? 'hallucinated' : toolError.type === 'invalid_args' ? 'invalid args' : 'execution failed';
+            const isMissingTool = toolError.type === 'no_such_tool' || toolError.type === 'tool_not_found';
+            const isMetaAccessibleTool = isMissingTool && isCatalogTool(toolError.toolName);
+            const isHallucination = isMissingTool && !isMetaAccessibleTool;
+            const label = isMetaAccessibleTool
+              ? 'meta-only'
+              : isHallucination
+                ? 'hallucinated'
+                : toolError.type === 'invalid_args'
+                  ? 'invalid args'
+                  : 'execution failed';
 
             console.warn(`[AgentRunner] Tool error (${label}): "${toolError.toolName}" (${toolError.type}), retrying (${attempt}/${MAX_TOOL_ERROR_RETRIES})`);
 
@@ -562,6 +581,8 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
                 toolCallId,
                 error: isHallucination
                   ? `Tool "${toolError.toolName}" does not exist. Use search_tools to find available tools, or execute_tool to run tools by name. (attempt ${attempt}/${MAX_TOOL_ERROR_RETRIES})`
+                  : isMetaAccessibleTool
+                    ? `Tool "${toolError.toolName}" exists in the catalog but is not loaded natively in this turn. Use get_tool_schema({ tool_name: "${toolError.toolName}" }) and then execute_tool({ tool_name: "${toolError.toolName}", args: {...} }). (attempt ${attempt}/${MAX_TOOL_ERROR_RETRIES})`
                   : `Tool "${toolError.toolName}" failed: ${toolError.message}. Check args with get_tool_schema first. (attempt ${attempt}/${MAX_TOOL_ERROR_RETRIES})`,
               }
             });
@@ -572,6 +593,12 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
                 `The tool "${toolError.toolName}" does not exist and cannot be called directly. ` +
                 `Use search_tools to find available tools, or use execute_tool({ tool_name: "...", args: {...} }) to run tools by name. ` +
                 `Do NOT invent tool names — only use tools you can verify exist.`
+              );
+            } else if (isMetaAccessibleTool) {
+              toolErrorHistory.push(
+                `The tool "${toolError.toolName}" is real, but it is not loaded as a native direct-call tool in this turn. ` +
+                `Do not call "${toolError.toolName}" directly. Instead call get_tool_schema({ tool_name: "${toolError.toolName}" }) first, ` +
+                `then call execute_tool({ tool_name: "${toolError.toolName}", args: {...} }).`
               );
             } else if (toolError.type === 'invalid_args') {
               toolErrorHistory.push(
@@ -638,7 +665,9 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         const toolError = detectToolError(error);
         if (toolError) {
           const toolCallId = `tc-error-final-${Date.now()}`;
-          const isHallucination = toolError.type === 'no_such_tool' || toolError.type === 'tool_not_found';
+          const isMissingTool = toolError.type === 'no_such_tool' || toolError.type === 'tool_not_found';
+          const isMetaAccessibleTool = isMissingTool && isCatalogTool(toolError.toolName);
+          const isHallucination = isMissingTool && !isMetaAccessibleTool;
           console.error(`[AgentRunner] Tool error (retries exhausted): "${toolError.toolName}" (${toolError.type})`);
 
           try {
@@ -667,19 +696,25 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
             data: {
               tool: toolError.toolName,
               status: 'error',
-              toolCallId,
-              error: isHallucination
-                ? `Tool "${toolError.toolName}" does not exist. All retry attempts exhausted.`
-                : `Tool "${toolError.toolName}" failed after ${MAX_TOOL_ERROR_RETRIES} attempts: ${toolError.message}`,
+                toolCallId,
+                error: isHallucination
+                  ? `Tool "${toolError.toolName}" does not exist. All retry attempts exhausted.`
+                  : isMetaAccessibleTool
+                    ? `Tool "${toolError.toolName}" exists but was called directly instead of through get_tool_schema/execute_tool. All retry attempts exhausted.`
+                  : `Tool "${toolError.toolName}" failed after ${MAX_TOOL_ERROR_RETRIES} attempts: ${toolError.message}`,
             }
           });
 
           const errorText = fullText
             ? fullText + (isHallucination
               ? `\n\nI apologize, but I attempted to use a tool called "${toolError.toolName}" that doesn't exist. Please try rephrasing your request.`
+              : isMetaAccessibleTool
+                ? `\n\nI attempted to call "${toolError.toolName}" directly even though it should have been invoked through the meta-tool path.`
               : `\n\nThe tool "${toolError.toolName}" encountered an error: ${toolError.message}. Please try a different approach.`)
             : (isHallucination
               ? `I attempted to use a tool called "${toolError.toolName}" that doesn't exist. Please try rephrasing your request, and I'll use only the tools available to me.`
+              : isMetaAccessibleTool
+                ? `I attempted to call "${toolError.toolName}" directly even though it should have gone through get_tool_schema and execute_tool.`
               : `The tool "${toolError.toolName}" failed: ${toolError.message}. Let me try a different approach.`);
           send(ws, { type: 'final', model: chosenModelId || model, result: { text: errorText, response: errorText, modelId: chosenModelId || model } });
           resultText = errorText;
@@ -914,4 +949,3 @@ function handleStreamChunk(ws: WebSocket, chunk: any): string {
   }
   return '';
 }
-

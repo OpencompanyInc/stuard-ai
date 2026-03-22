@@ -6,7 +6,7 @@ from typing import Any
 from aiohttp import web
 
 from browser_server import state
-from browser_server.utils import _safe_json, _ok, _err, _clamp_int, _jsonable_cookie
+from browser_server.utils import _safe_json, _ok, _err, _clamp_int
 from browser_server.profile import (
     _current_profile_dir, _read_sync_meta, _write_sync_meta,
     _managed_profile_dir_name, _clone_profile_into_managed_root,
@@ -28,69 +28,6 @@ async def handle_tabs(req: web.Request) -> web.Response:
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
-            if state._browser and hasattr(state._browser, "get_pages") and hasattr(state._browser, "new_page"):
-                pages = await state._browser.get_pages()
-                active_idx = 0
-                for i, p in enumerate(pages):
-                    if p is state._page:
-                        active_idx = i
-                        break
-
-                if action == "list":
-                    tabs: list[dict[str, Any]] = []
-                    for i, p in enumerate(pages):
-                        url = ""
-                        title = ""
-                        try:
-                            if hasattr(p, "get_url"):
-                                url = await p.get_url()
-                            else:
-                                url = getattr(p, "url", "") or ""
-                        except Exception:
-                            pass
-                        try:
-                            if hasattr(p, "get_title"):
-                                title = await p.get_title()
-                            elif hasattr(p, "title"):
-                                title = await p.title()
-                        except Exception:
-                            pass
-                        tabs.append({
-                            "index": i,
-                            "url": url,
-                            "title": title,
-                            "active": i == active_idx,
-                        })
-                    return _ok({"tabs": tabs, "count": len(tabs)})
-
-                elif action == "new":
-                    url = body.get("url")
-                    state._page = await state._browser.new_page(url) if url else await state._browser.new_page()
-                    return _ok({"url": await _get_page_url(), "title": await _get_page_title()})
-
-                elif action == "switch":
-                    index = body.get("index", 0)
-                    if 0 <= index < len(pages):
-                        state._page = pages[index]
-                        return _ok({"url": await _get_page_url(), "title": await _get_page_title()})
-                    return _err(f"Tab index {index} out of range (0-{len(pages) - 1})")
-
-                elif action == "close":
-                    index = body.get("index")
-                    if index is not None and 0 <= index < len(pages):
-                        target = pages[index]
-                        if hasattr(state._browser, "close_page"):
-                            await state._browser.close_page(target)
-                        pages = await state._browser.get_pages()
-                        if pages:
-                            state._page = pages[-1]
-                        else:
-                            state._page = await state._browser.new_page()
-                        return _ok({"closed": index, "remaining": len(pages)})
-                    return _err("index is required for close action")
-
-                return _err(f"Unknown tabs action: {action}")
-
             if action == "list":
                 pages = state._context.pages if state._context else []
                 tabs = []
@@ -144,66 +81,6 @@ async def handle_cookies(req: web.Request) -> web.Response:
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
-            if state._browser and hasattr(state._browser, "cookies"):
-                if action == "get":
-                    raw_cookies = await state._browser.cookies()
-                    cookies = [_jsonable_cookie(c) for c in raw_cookies]
-                    urls = body.get("urls")
-                    if urls:
-                        try:
-                            from urllib.parse import urlparse
-                            hosts = {urlparse(u).hostname or "" for u in urls}
-                            cookies = [
-                                c for c in cookies
-                                if any(
-                                    h and (h == str(c.get("domain", "")).lstrip(".") or h.endswith(str(c.get("domain", "")).lstrip(".")))
-                                    for h in hosts
-                                )
-                            ]
-                        except Exception:
-                            pass
-                    return _ok({"cookies": cookies, "count": len(cookies)})
-
-                elif action == "set":
-                    cookies = body.get("cookies", [])
-                    if not cookies:
-                        return _err("cookies array is required for set action")
-                    if hasattr(state._browser, "_cdp_set_cookies"):
-                        await state._browser._cdp_set_cookies(cookies)
-                    else:
-                        return _err("Cookie set not supported by this browser-use version")
-                    return _ok({"set": len(cookies)})
-
-                elif action == "clear":
-                    if hasattr(state._browser, "clear_cookies"):
-                        await state._browser.clear_cookies()
-                    elif hasattr(state._browser, "_cdp_clear_cookies"):
-                        await state._browser._cdp_clear_cookies()
-                    return _ok({"cleared": True})
-
-                elif action == "export":
-                    raw_cookies = await state._browser.cookies()
-                    cookies = [_jsonable_cookie(c) for c in raw_cookies]
-                    export_path = body.get("path")
-                    if export_path:
-                        Path(export_path).parent.mkdir(parents=True, exist_ok=True)
-                        Path(export_path).write_text(json.dumps(cookies, indent=2))
-                        return _ok({"exported": len(cookies), "path": export_path})
-                    return _ok({"cookies": cookies, "count": len(cookies)})
-
-                elif action == "import":
-                    import_path = body.get("path")
-                    if not import_path or not Path(import_path).exists():
-                        return _err("Valid path is required for import action")
-                    cookies = json.loads(Path(import_path).read_text())
-                    if hasattr(state._browser, "_cdp_set_cookies"):
-                        await state._browser._cdp_set_cookies(cookies)
-                    else:
-                        return _err("Cookie import not supported by this browser-use version")
-                    return _ok({"imported": len(cookies)})
-
-                return _err(f"Unknown cookies action: {action}")
-
             if action == "get":
                 urls = body.get("urls")
                 cookies = await state._context.cookies(urls) if urls else await state._context.cookies()

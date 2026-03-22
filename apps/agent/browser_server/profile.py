@@ -366,41 +366,6 @@ def _find_local_browser_executable(browser_name: str) -> str | None:
     return None
 
 
-def _auto_setup_debug_port_if_needed(user_data_dir: str) -> None:
-    if state._DEBUG_PORT_SETUP_DONE:
-        return
-    state._DEBUG_PORT_SETUP_DONE = True
-
-    if _detect_chrome_debug_port(user_data_dir):
-        return
-
-    marker = Path(user_data_dir) / ".stuard_debug_port_configured"
-    if marker.exists():
-        print(f"[browser-use-server] Chrome debug port was configured previously. "
-              f"Restart Chrome to activate it (close fully, including system tray).",
-              flush=True)
-        return
-
-    try:
-        from app.browser_cookies import enable_chrome_debug_port
-    except ImportError:
-        from browser_cookies import enable_chrome_debug_port  # type: ignore[no-redef]
-
-    result = enable_chrome_debug_port(9222)
-    if result.get("success"):
-        try:
-            marker.write_text("9222")
-        except Exception:
-            pass
-        print(f"[browser-use-server] Auto-configured Chrome debug port for future sessions. "
-              f"Restart Chrome to activate (close fully, then reopen).",
-              flush=True)
-    else:
-        print(f"[browser-use-server] Chrome is running without a debug port. "
-              f"For full auth support, close Chrome or add --remote-debugging-port=9222 "
-              f"to your Chrome shortcut.", flush=True)
-
-
 def _detect_chrome_debug_port(user_data_dir: str) -> int | None:
     dt_file = Path(user_data_dir) / "DevToolsActivePort"
     if not dt_file.exists():
@@ -503,7 +468,7 @@ def _resolve_real_browser_profile(sync_meta: dict[str, Any]) -> dict[str, Any] |
             running_browsers.add(c["browser"])
 
     running_str = ", ".join(sorted(running_browsers)) if running_browsers else "Unknown"
-    print(f"[browser-use-server] All browser profiles are locked. "
+    print(f"[browser-server] All browser profiles are locked. "
           f"Running browsers: {running_str}. "
           f"Close one of them to allow Playwright to use its profile, "
           f"or the managed profile will be used as fallback.",

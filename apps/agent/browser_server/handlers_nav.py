@@ -149,13 +149,13 @@ async def handle_click(req: web.Request) -> web.Response:
                 except Exception:
                     pass
 
-            # Strategy 6: browser-use native click by selector
+            # Strategy 6: Playwright element click by selector
             if selector:
                 try:
                     els = await _find_elements(selector)
                     if els:
                         await els[0].click()
-                        return _ok({"clicked": selector, "method": "browser_use_selector"})
+                        return _ok({"clicked": selector, "method": "playwright_selector"})
                 except Exception:
                     pass
 
@@ -301,13 +301,13 @@ async def handle_type(req: web.Request) -> web.Response:
                 except Exception:
                     pass
 
-            # Strategy 3: browser-use native fill by selector
+            # Strategy 3: Playwright element fill by selector
             if selector:
                 try:
                     els = await _find_elements(selector)
                     if els:
                         await els[0].fill(text, clear=clear)
-                        return _ok({"typed": len(text), "method": "browser_use_fill"})
+                        return _ok({"typed": len(text), "method": "playwright_fill"})
                 except Exception:
                     pass
 

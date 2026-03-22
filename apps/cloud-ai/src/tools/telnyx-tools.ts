@@ -160,6 +160,7 @@ export const telnyx_phone_status = createTool({
     ok: z.boolean(),
     verified: z.boolean(),
     phone: z.string().optional(),
+    phones: z.array(z.string()).optional(),
     error: z.string().optional(),
   }),
   execute: async () => {
@@ -168,10 +169,17 @@ export const telnyx_phone_status = createTool({
       const acc = await getExternalAccount(userId, 'telnyx');
       if (!acc) return { ok: true, verified: false };
       const meta = acc.meta || {};
+      const phones: string[] = [];
+      if (meta.verified && meta.phone) phones.push(meta.phone);
+      if (meta.verified2 && meta.phone2) phones.push(meta.phone2);
+      if (meta.verified3 && meta.phone3) phones.push(meta.phone3);
+      if (meta.verified4 && meta.phone4) phones.push(meta.phone4);
+      if (meta.verified5 && meta.phone5) phones.push(meta.phone5);
       return {
         ok: true,
-        verified: !!meta.verified,
-        phone: meta.verified ? meta.phone : undefined,
+        verified: phones.length > 0,
+        phone: phones[0],
+        phones,
       };
     } catch (e: any) {
       return { ok: false, verified: false, error: String(e?.message || e) };

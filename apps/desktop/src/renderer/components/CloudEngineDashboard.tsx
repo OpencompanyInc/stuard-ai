@@ -5,14 +5,16 @@ import {
   RefreshCw, Loader2, HardDrive, WifiOff, Globe, Clock, Cpu,
   Download, Upload, Sparkles, Zap, Shield, ChevronDown, ChevronUp,
   CreditCard, Camera, RotateCcw, Plus, X, Rocket, Play, Square,
-  ScrollText, AlertCircle, CheckCircle2, Circle
+  ScrollText, AlertCircle, CheckCircle2, Circle, MessageCircle
 } from 'lucide-react';
 import { useCloudEngine } from '../hooks/useCloudEngine';
 import { CloudTerminalPanel } from './CloudTerminalPanel';
 import { CloudFileBrowser } from './CloudFileBrowser';
 import { CloudResourceMonitor } from './CloudResourceMonitor';
+import { CloudVmChat } from './CloudVmChat';
+import { CloudVmPermissions } from './CloudVmPermissions';
 
-type DashTab = 'overview' | 'terminal' | 'files' | 'monitoring' | 'billing' | 'snapshots' | 'deploys';
+type DashTab = 'overview' | 'terminal' | 'files' | 'monitoring' | 'billing' | 'snapshots' | 'deploys' | 'chat' | 'permissions';
 
 const CREDITS_PER_USD = 33;
 const STORAGE_USD_PER_GB_MONTH = 0.10;
@@ -449,6 +451,8 @@ export function CloudEngineDashboard() {
     { id: 'billing', label: 'Billing', icon: CreditCard },
     { id: 'snapshots', label: 'Snapshots', icon: Camera },
     { id: 'deploys', label: 'Deploys', icon: Rocket },
+    { id: 'chat', label: 'Chat', icon: MessageCircle },
+    { id: 'permissions', label: 'Permissions', icon: Shield },
   ];
 
   // ─── Engine Dashboard ──────────────────────────────────────────────
@@ -630,6 +634,14 @@ export function CloudEngineDashboard() {
           getDeployLogs={getDeployLogs}
           refreshDeployments={fetchDeployments}
         />
+      )}
+
+      {tab === 'chat' && (
+        <CloudVmChat engine={engine} className="h-[calc(100vh-280px)]" />
+      )}
+
+      {tab === 'permissions' && (
+        <CloudVmPermissions engine={engine} />
       )}
     </div>
   );

@@ -1,4 +1,4 @@
-"""Chrome cookie sync — read cookies from real Chrome and inject into session.
+"""Chrome cookie sync — read cookies from real Chrome and inject into Playwright session.
 
 Pure functions only (no handler). The sync-chrome handler lives in handlers_tabs.py
 to avoid circular imports with lifecycle.py.
@@ -125,15 +125,6 @@ async def _inject_cookies_into_session(cookies: list[dict[str, Any]]) -> dict[st
     normalized = _normalize_cookies_for_playwright(cookies)
     if not normalized:
         return {"injected": 0, "failed": 0}
-
-    if state._browser and hasattr(state._browser, "_cdp_set_cookies"):
-        try:
-            await state._browser._cdp_set_cookies(normalized)
-            injected = len(normalized)
-        except Exception as e:
-            print(f"[browser-use-server] CDP cookie set failed: {e}", flush=True)
-            failed = len(normalized)
-        return {"injected": injected, "failed": failed}
 
     if state._context:
         batch_size = 50

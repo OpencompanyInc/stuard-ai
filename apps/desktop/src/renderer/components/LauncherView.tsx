@@ -110,9 +110,9 @@ interface LauncherViewProps {
   onAddTab?: () => void;
 
   // Internal Sidebar
-  activeSidebarTab?: "spaces" | "canvas" | "terminal";
+  activeSidebarTab?: "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo";
   onCloseInternalSidebar?: () => void;
-  onSwitchSidebarTab?: (tab: "spaces" | "canvas" | "terminal") => void;
+  onSwitchSidebarTab?: (tab: "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo") => void;
 }
 
 // Helper to get icon for next up item
@@ -891,6 +891,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
               onDeleteConversation={onDeleteConversation}
               viewMode={viewMode}
               onViewModeChange={setViewMode}
+              onSwitchSidebarTab={onSwitchSidebarTab}
             />
           </div>
 

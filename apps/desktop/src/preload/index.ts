@@ -1,6 +1,8 @@
 
 import { contextBridge, ipcRenderer } from "electron";
 
+ type SidebarTabId = 'spaces' | 'canvas' | 'terminal' | 'tasks' | 'browser' | 'todo';
+
 const __cloudBase = process.env.CLOUD_AI_HTTP || process.env.CLOUD_PUBLIC_URL || "";
 try { contextBridge.exposeInMainWorld('__CLOUD_AI_HTTP__', __cloudBase); } catch { }
 
@@ -51,13 +53,14 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   openSpaces: () => ipcRenderer.invoke('spaces:open'),
   closeSpaces: () => ipcRenderer.invoke('spaces:close'),
   toggleSpaces: () => ipcRenderer.invoke('spaces:toggle'),
-  // Sidebar window (unified Spaces, Canvas, Terminal)
-  openSidebar: (options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:open', options),
+  // Sidebar window (unified Spaces, Notes, Terminal, Agent Tasks, Browser)
+  openSidebar: (options?: { tab?: SidebarTabId; expanded?: boolean }) => ipcRenderer.invoke('sidebar:open', options),
   closeSidebar: () => ipcRenderer.invoke('sidebar:close'),
-  toggleSidebar: (options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:toggle', options),
+  toggleSidebar: (options?: { tab?: SidebarTabId; expanded?: boolean }) => ipcRenderer.invoke('sidebar:toggle', options),
   toggleSidebarExpanded: () => ipcRenderer.invoke('sidebar:toggleExpanded'),
   isSidebarExpanded: () => ipcRenderer.invoke('sidebar:isExpanded'),
-  onSidebarNavigate: (cb: (data: { tab: 'spaces' | 'canvas' | 'terminal' }) => void) => {
+  sidebarSetPresentation: (mode: 'full' | 'popup', tab?: SidebarTabId) => ipcRenderer.invoke('sidebar:setPresentation', { mode, tab }),
+  onSidebarNavigate: (cb: (data: { tab: SidebarTabId }) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('sidebar:navigate', handler);
     return () => { try { ipcRenderer.off('sidebar:navigate', handler); } catch { } };
@@ -340,6 +343,23 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('browser-extension:chat', handler);
     return () => { try { ipcRenderer.off('browser-extension:chat', handler); } catch { } };
   },
+  // Browser activity (auto-open sidebar when agent uses browser)
+  onBrowserActivity: (cb: (data: { action: string; sessionId: string; timestamp: number }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('browser:activity', handler);
+    return () => { try { ipcRenderer.off('browser:activity', handler); } catch { } };
+  },
+  // Browser mirror (sidebar live view)
+  browserMirrorScreenshot: (sessionId?: string, quality?: number) =>
+    ipcRenderer.invoke('browserMirror:screenshot', sessionId, quality),
+  browserMirrorClickAt: (sessionId: string, x: number, y: number, type?: string) =>
+    ipcRenderer.invoke('browserMirror:clickAt', sessionId, x, y, type),
+  browserMirrorType: (sessionId: string, text: string) =>
+    ipcRenderer.invoke('browserMirror:type', sessionId, text),
+  browserMirrorPressKey: (sessionId: string, key: string) =>
+    ipcRenderer.invoke('browserMirror:pressKey', sessionId, key),
+  browserMirrorScroll: (sessionId: string, direction: string, amount?: number) =>
+    ipcRenderer.invoke('browserMirror:scroll', sessionId, direction, amount),
   // Tools
   execTool: (tool: string, args: any) => ipcRenderer.invoke('tools:exec', tool, args),
   execLocalTool: (tool: string, args: any) => ipcRenderer.invoke('tools:exec', tool, args),

@@ -31,6 +31,15 @@ const CORE_TOOLS = new Set([
   'memory_retrieval',
   'search_past_conversations',
   'get_conversation_context',
+  'browse_topic_collections',
+  'get_collection_detail',
+  'synthesize_collection',
+  // Spaces — always available for knowledge management
+  'list_user_spaces',
+  'get_space_contents',
+  'add_to_space',
+  'create_space',
+  'find_or_create_space',
   'ensure_space_path',
   'list_space_path',
   'add_to_space_path',
@@ -54,6 +63,8 @@ const INTEGRATION_PREFIXES: Record<string, string[]> = {
   notion: ['notion_'],  // MCP
   linear: ['linear_'],  // MCP
   stripe: ['stripe_'],  // MCP
+  'browser-use': ['browser_use_'],
+  browser_use: ['browser_use_'],  // alias
 };
 
 /**

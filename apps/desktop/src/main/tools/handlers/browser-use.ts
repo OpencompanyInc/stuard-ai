@@ -1,4 +1,4 @@
-import { app } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import { ChildProcess, spawn, execFile } from 'child_process';
 import path from 'path';
 import fs from 'fs';
@@ -25,6 +25,7 @@ type BrowserUseRuntime = {
 
 const browserUseRuntimes = new Map<string, BrowserUseRuntime>();
 const browserUseRuntimePromises = new Map<string, Promise<BrowserUseRuntime>>();
+let lastActiveBrowserUseSessionId = 'default';
 
 const CHROME_SYNC_MIN_INTERVAL_MS = 15000;
 
@@ -37,6 +38,13 @@ function normalizeBrowserUseSessionId(value: any): string {
 
 function getBrowserUseSessionId(args: any): string {
   return normalizeBrowserUseSessionId(args?.session_id || args?._browserUseSessionId || 'default');
+}
+
+function getStatusSessionId(args: any): string {
+  if (args?.follow_last_active) {
+    return normalizeBrowserUseSessionId(lastActiveBrowserUseSessionId || args?.session_id || args?._browserUseSessionId || 'default');
+  }
+  return getBrowserUseSessionId(args);
 }
 
 function getBrowserUseHost(runtime: BrowserUseRuntime): string {
@@ -135,12 +143,20 @@ async function checkPythonAvailable(): Promise<boolean> {
 }
 
 async function checkBrowserUseInstalled(): Promise<boolean> {
-  const { ok } = await runCmd(getPythonCmd(), ['-c', 'import browser_use; print("ok")'], 15000);
+  const { ok } = await runCmd(getPythonCmd(), ['-c', 'import playwright; print("ok")'], 15000);
   return ok;
 }
 
 async function checkPlaywrightChromium(): Promise<boolean> {
-  const { ok } = await runCmd(getPythonCmd(), ['-c', 'from playwright.sync_api import sync_playwright; print("ok")'], 15000);
+  // Verify the Chromium binary actually exists, not just that the pip package imports
+  const { ok } = await runCmd(getPythonCmd(), ['-c',
+    'from playwright.sync_api import sync_playwright\n' +
+    'p = sync_playwright().start()\n' +
+    'exe = p.chromium.executable_path\n' +
+    'p.stop()\n' +
+    'import os; assert os.path.exists(exe), f"Missing: {exe}"\n' +
+    'print("ok")',
+  ], 20000);
   return ok;
 }
 
@@ -155,27 +171,42 @@ export async function installBrowserUse(): Promise<{ ok: boolean; error?: string
     return { ok: false, error: 'Python is not installed. Please install Python 3.11+ from python.org first.', step: 'python' };
   }
 
-  // Run browser-use and playwright checks in parallel for faster startup
-  const [hasBrowserUse, hasPlaywright] = await Promise.all([
-    checkBrowserUseInstalled(),
-    checkPlaywrightChromium(),
-  ]);
+  // Check if pip packages are installed
+  const hasPipPackages = await checkBrowserUseInstalled();
 
-  if (!hasBrowserUse) {
-    const pip = await runCmd(getPythonCmd(), ['-m', 'pip', 'install', 'browser-use', 'aiohttp', 'cryptography'], 300000);
+  if (!hasPipPackages) {
+    const pip = await runCmd(getPythonCmd(), ['-m', 'pip', 'install', 'playwright', 'aiohttp', 'cryptography'], 300000);
     if (!pip.ok) {
-      return { ok: false, error: `Failed to install browser-use: ${pip.stderr.slice(0, 300)}`, step: 'pip' };
+      return { ok: false, error: `Failed to install dependencies: ${pip.stderr.slice(0, 300)}`, step: 'pip' };
     }
   }
 
-  if (!hasPlaywright) {
-    const pipPw = await runCmd(getPythonCmd(), ['-m', 'pip', 'install', 'playwright'], 300000);
-    if (!pipPw.ok) {
-      return { ok: false, error: `Failed to install playwright: ${pipPw.stderr.slice(0, 300)}`, step: 'playwright-pip' };
-    }
-    const pw = await runCmd(getPythonCmd(), ['-m', 'playwright', 'install', 'chromium'], 300000);
+  // Always verify Chromium binary exists (pip package can be installed without the browser)
+  const hasChromium = await checkPlaywrightChromium();
+  if (!hasChromium) {
+    let pw = await runCmd(getPythonCmd(), ['-m', 'playwright', 'install', 'chromium'], 300000);
     if (!pw.ok) {
-      return { ok: false, error: `Failed to install Chromium browser: ${pw.stderr.slice(0, 300)}`, step: 'playwright' };
+      // If the playwright driver is corrupted (missing cli.js), force reinstall the pip package
+      const combinedErr = (pw.stderr + pw.stdout).toLowerCase();
+      if (combinedErr.includes('cannot find module') || combinedErr.includes('cli.js') || combinedErr.includes('err_module')) {
+        console.warn('[browser-use] Playwright driver corrupted, force-reinstalling...');
+        await runCmd(getPythonCmd(), ['-m', 'pip', 'uninstall', '-y', 'playwright'], 30000);
+        const reinstall = await runCmd(getPythonCmd(), ['-m', 'pip', 'install', '--force-reinstall', 'playwright'], 300000);
+        if (!reinstall.ok) {
+          return { ok: false, error: `Failed to reinstall playwright: ${reinstall.stderr.slice(0, 300)}`, step: 'playwright-reinstall' };
+        }
+        pw = await runCmd(getPythonCmd(), ['-m', 'playwright', 'install', 'chromium'], 300000);
+        if (!pw.ok) {
+          return { ok: false, error: `Failed to install Chromium after reinstall: ${pw.stderr.slice(0, 300)}`, step: 'playwright' };
+        }
+      } else {
+        return { ok: false, error: `Failed to install Chromium browser: ${pw.stderr.slice(0, 300)}`, step: 'playwright' };
+      }
+    }
+    // Verify it actually worked
+    const verify = await checkPlaywrightChromium();
+    if (!verify) {
+      return { ok: false, error: 'Chromium browser binary not found after install. Try running: python -m playwright install chromium', step: 'playwright-verify' };
     }
   }
 
@@ -184,13 +215,15 @@ export async function installBrowserUse(): Promise<{ ok: boolean; error?: string
 }
 
 export async function uninstallBrowserUse(): Promise<{ ok: boolean; error?: string }> {
+  // Clear cached install check so next setup actually verifies
+  _installCheckResult = null;
+
   await stopAllBrowserUseServers();
 
   const hasPython = await checkPythonAvailable();
   if (!hasPython) return { ok: true };
 
-  const pip1 = await runCmd(getPythonCmd(), ['-m', 'pip', 'uninstall', '-y', 'browser-use'], 60000);
-  const pip2 = await runCmd(getPythonCmd(), ['-m', 'pip', 'uninstall', '-y', 'playwright'], 60000);
+  const pip1 = await runCmd(getPythonCmd(), ['-m', 'pip', 'uninstall', '-y', 'playwright'], 60000);
 
   const profileDir = getProfileRootDir();
   try {
@@ -199,7 +232,7 @@ export async function uninstallBrowserUse(): Promise<{ ok: boolean; error?: stri
     }
   } catch {}
 
-  if (!pip1.ok && !pip2.ok) {
+  if (!pip1.ok) {
     return { ok: false, error: 'Failed to uninstall packages.' };
   }
 
@@ -208,14 +241,14 @@ export async function uninstallBrowserUse(): Promise<{ ok: boolean; error?: stri
 
 function getServerScript(): string {
   // Dev mode: app.getAppPath() is apps/desktop, so ../agent/ reaches apps/agent/
-  const devPath = path.join(app.getAppPath(), '..', 'agent', 'browser_use_server.py');
+  const devPath = path.join(app.getAppPath(), '..', 'agent', 'browser_server_main.py');
   if (fs.existsSync(devPath)) return devPath;
 
   // Packaged mode: extraResources copies scripts into resources/agent/
-  const resourcesPath = path.join(process.resourcesPath, 'agent', 'browser_use_server.py');
+  const resourcesPath = path.join(process.resourcesPath, 'agent', 'browser_server_main.py');
   if (fs.existsSync(resourcesPath)) return resourcesPath;
 
-  const altPath = path.resolve(__dirname, '..', '..', '..', '..', 'agent', 'browser_use_server.py');
+  const altPath = path.resolve(__dirname, '..', '..', '..', '..', 'agent', 'browser_server_main.py');
   if (fs.existsSync(altPath)) return altPath;
 
   // Return the resources path for better error messages in packaged mode
@@ -304,6 +337,12 @@ export async function startBrowserUseServer(sessionId = 'default', { skipChromeS
         BROWSER_USE_PORT: String(runtime.port),
         BROWSER_USE_PROFILE_DIR: profileDir,
         BROWSER_USE_AUTH_TOKEN,
+        STUARD_BROWSER_PORT: String(runtime.port),
+        STUARD_BROWSER_PROFILE_DIR: profileDir,
+        STUARD_BROWSER_AUTH_TOKEN: BROWSER_USE_AUTH_TOKEN,
+        // Default to CDP connect mode so we attach to the user's real Chrome
+        // instead of launching Playwright's own Chromium (which looks like guest mode).
+        STUARD_BROWSER_MODE: process.env.STUARD_BROWSER_MODE || 'connect',
       },
       cwd: path.dirname(script),
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -311,7 +350,7 @@ export async function startBrowserUseServer(sessionId = 'default', { skipChromeS
     });
 
     runtime.process.on('exit', (code) => {
-      console.warn(`[browser-use-server:${runtime.sessionId}] exited with code ${code}`);
+      console.warn(`[browser-server:${runtime.sessionId}] exited with code ${code}`);
       runtime.process = null;
       runtime.ready = false;
       runtime.setupPromise = null;
@@ -320,13 +359,13 @@ export async function startBrowserUseServer(sessionId = 'default', { skipChromeS
 
     runtime.process.stdout?.on('data', (data: Buffer) => {
       const msg = data.toString();
-      console.log(`[browser-use-server:${runtime.sessionId}]`, msg.trim());
+      console.log(`[browser-server:${runtime.sessionId}]`, msg.trim());
       if (msg.includes('Starting on') || msg.includes('Running on')) runtime.ready = true;
     });
 
     runtime.process.stderr?.on('data', (data: Buffer) => {
       const msg = data.toString().trim();
-      console.warn(`[browser-use-server:${runtime.sessionId}]`, msg);
+      console.warn(`[browser-server:${runtime.sessionId}]`, msg);
       earlyStderr += msg + '\n';
     });
 
@@ -348,14 +387,14 @@ export async function startBrowserUseServer(sessionId = 'default', { skipChromeS
     const errMsg = earlyStderr.trim().slice(0, 400) || 'Server did not respond within 15 seconds';
     return { ok: false, error: errMsg };
   } catch (err: any) {
-    return { ok: false, error: err.message || 'Failed to start browser-use server' };
+    return { ok: false, error: err.message || 'Failed to start browser server' };
   }
 }
 
 export async function stopBrowserUseServer(sessionId = 'default'): Promise<{ ok: boolean }> {
   const runtime = await getRuntime(sessionId);
   if (runtime.process && !runtime.process.killed) {
-    runtime.process.kill();
+    try { runtime.process.kill(); } catch {}
     runtime.process = null;
   }
   runtime.ready = false;
@@ -369,7 +408,7 @@ export async function stopBrowserUseServer(sessionId = 'default'): Promise<{ ok:
 async function stopAllBrowserUseServers(): Promise<void> {
   await Promise.all(Array.from(browserUseRuntimes.values()).map(async (runtime) => {
     if (runtime.process && !runtime.process.killed) {
-      runtime.process.kill();
+      try { runtime.process.kill(); } catch {}
     }
     runtime.process = null;
     runtime.ready = false;
@@ -435,6 +474,18 @@ async function ensureReady(sessionId = 'default'): Promise<{ ok: boolean; error?
   return runtime.setupPromise;
 }
 
+/** Broadcast browser activity to all renderer windows so sidebar can auto-open */
+function emitBrowserActivity(action: string, sessionId: string) {
+  lastActiveBrowserUseSessionId = normalizeBrowserUseSessionId(sessionId);
+  try {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send('browser:activity', { action, sessionId, timestamp: Date.now() });
+      }
+    }
+  } catch {}
+}
+
 async function withServer<T>(
   label: string,
   args: any,
@@ -444,6 +495,7 @@ async function withServer<T>(
   const ready = await ensureReady(sessionId);
   if (!ready.ok) return { ok: false, error: `Browser not available: ${ready.error || 'setup failed'}` };
   try {
+    emitBrowserActivity(label, sessionId);
     return await fn(sessionId);
   } catch (err: any) {
     return { ok: false, error: err.message || `${label} failed` };
@@ -451,7 +503,7 @@ async function withServer<T>(
 }
 
 /**
- * Pre-warm the browser-use server in the background on app startup.
+ * Pre-warm the browser server in the background on app startup.
  * This starts the Python server process so the first browser tool call is fast.
  * Non-blocking — fire and forget. If it fails, the normal lazy setup will handle it.
  */
@@ -463,7 +515,7 @@ export async function prewarmBrowserUseServer(): Promise<void> {
     if (_installCheckResult?.ok) {
       const runtime = await getRuntime('default');
       if (!runtime.process || runtime.process.killed) {
-        console.log('[browser-use] Pre-warming server...');
+        console.log('[browser-server] Pre-warming server...');
         startBrowserUseServer('default', { skipChromeSync: true }).catch(() => {});
       }
     } else {
@@ -484,7 +536,7 @@ export async function prewarmBrowserUseServer(): Promise<void> {
 }
 
 export async function execBrowserUseStatus(args: any, _ctx: RouterContext): Promise<any> {
-  const sessionId = getBrowserUseSessionId(args);
+  const sessionId = getStatusSessionId(args);
   const serverAlive = await isBrowserUseAlive(sessionId);
   const settings = loadSettings();
   if (serverAlive) {
@@ -497,6 +549,7 @@ export async function execBrowserUseStatus(args: any, _ctx: RouterContext): Prom
           ...data,
           serverAlive: true,
           sessionId,
+          lastActiveSessionId: lastActiveBrowserUseSessionId,
           chromeSyncSettings: {
             chromeSyncEnabled: settings.chromeSyncEnabled !== false,
             chromeSyncBrowserName: settings.chromeSyncBrowserName || 'Chrome',
@@ -522,6 +575,7 @@ export async function execBrowserUseStatus(args: any, _ctx: RouterContext): Prom
     profile: 'default',
     profileDir: String(getProfileDir(sessionId)),
     sessionId,
+    lastActiveSessionId: lastActiveBrowserUseSessionId,
     chromeSyncSettings: {
       chromeSyncEnabled: settings.chromeSyncEnabled !== false,
       chromeSyncBrowserName: settings.chromeSyncBrowserName || 'Chrome',
@@ -541,6 +595,7 @@ export async function execBrowserUseConfigure(args: any, _ctx: RouterContext): P
         mode: args?.mode,
         cdp_url: args?.cdp_url,
         profile: args?.profile,
+        connect_profile: args?.connect_profile,
       }),
     }, sessionId);
     if (!resp.ok) {
@@ -551,11 +606,37 @@ export async function execBrowserUseConfigure(args: any, _ctx: RouterContext): P
   });
 }
 
+export async function execBrowserUseConnectedProfiles(_args: any, _ctx: RouterContext): Promise<any> {
+  return withServer('Connected Profiles', _args, async (sessionId) => {
+    const resp = await browserUseFetch('/connected-profiles', { timeoutMs: 5000 }, sessionId);
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, error: `Failed: ${resp.status} ${errText}` };
+    }
+    return await resp.json();
+  });
+}
+
+export async function execBrowserUseSwitchProfile(args: any, _ctx: RouterContext): Promise<any> {
+  return withServer('Switch Profile', args, async (sessionId) => {
+    const resp = await browserUseFetch('/switch-profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile: args?.profile }),
+    }, sessionId);
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, error: `Switch failed: ${resp.status} ${errText}` };
+    }
+    return await resp.json();
+  });
+}
+
 export async function execBrowserUseTask(args: any, ctx: RouterContext): Promise<any> {
-  ctx.logFn?.('[browser_use_task] Disabled; use browser_use_execute_script or a browser-use subagent instead');
+  ctx.logFn?.('[browser_use_task] Disabled; use browser_use_execute_script instead');
   return {
     ok: false,
-    error: 'browser_use_task is disabled. Use browser_use_execute_script for complex page logic or launch a browser-use subagent for autonomous multi-step browsing.',
+    error: 'browser_use_task is disabled. Use browser_use_execute_script for complex page logic.',
   };
 }
 
@@ -593,16 +674,19 @@ export async function execBrowserUseNavigate(args: any, _ctx: RouterContext): Pr
   const url = args?.url;
   if (!url) return { ok: false, error: 'url is required' };
 
+  const navTimeout = Math.max(10000, Number(args?.timeout || 60000));
+
   return withServer('Navigation', args, async (sessionId) => {
     const resp = await browserUseFetch('/navigate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         url,
-        wait_until: args?.wait_until,
-        timeout: args?.timeout,
+        wait_until: args?.wait_until || 'domcontentloaded',
+        timeout: navTimeout,
         wait_for_selector: args?.wait_for_selector,
       }),
+      timeoutMs: navTimeout + 10000,
     }, sessionId);
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
@@ -1022,6 +1106,152 @@ export async function execBrowserUseWaitFor(args: any, _ctx: RouterContext): Pro
     }
     return await resp.json();
   });
+}
+
+/**
+ * Fast screenshot mirror for sidebar — returns raw JPEG as base64 data URL.
+ * Uses the /screenshot_mirror GET endpoint for efficiency.
+ */
+export async function browserMirrorScreenshot(sessionId = 'default', quality = 50): Promise<{
+  ok: boolean;
+  dataUrl?: string;
+  url?: string;
+  title?: string;
+  viewportWidth?: number;
+  viewportHeight?: number;
+  error?: string;
+}> {
+  const alive = await isBrowserUseAlive(sessionId);
+  if (!alive) return { ok: false, error: 'Browser not running' };
+
+  try {
+    const runtime = await getRuntime(sessionId);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      const headers = new Headers();
+      headers.set(BROWSER_USE_AUTH_HEADER, BROWSER_USE_AUTH_TOKEN);
+      const resp = await fetch(
+        `${getBrowserUseHost(runtime)}/screenshot_mirror?quality=${quality}`,
+        { headers, signal: controller.signal },
+      );
+      if (!resp.ok) return { ok: false, error: `Screenshot failed: ${resp.status}` };
+
+      const buf = await resp.arrayBuffer();
+      const base64 = Buffer.from(buf).toString('base64');
+      return {
+        ok: true,
+        dataUrl: `data:image/jpeg;base64,${base64}`,
+        url: resp.headers.get('x-page-url') || '',
+        title: resp.headers.get('x-page-title') || '',
+        viewportWidth: parseInt(resp.headers.get('x-viewport-width') || '0', 10) || 0,
+        viewportHeight: parseInt(resp.headers.get('x-viewport-height') || '0', 10) || 0,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Screenshot failed' };
+  }
+}
+
+/**
+ * Click at coordinates in the agent's browser — for sidebar mirror click forwarding.
+ */
+export async function browserMirrorClickAt(
+  sessionId = 'default',
+  x: number,
+  y: number,
+  type: 'click' | 'dblclick' = 'click',
+): Promise<{ ok: boolean; error?: string }> {
+  const alive = await isBrowserUseAlive(sessionId);
+  if (!alive) return { ok: false, error: 'Browser not running' };
+
+  try {
+    const resp = await browserUseFetch('/click_at', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ x, y, type }),
+      timeoutMs: 5000,
+    }, sessionId);
+    if (!resp.ok) return { ok: false, error: `Click failed: ${resp.status}` };
+    return await resp.json();
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Click failed' };
+  }
+}
+
+/**
+ * Type text in the agent's browser — for sidebar mirror keyboard forwarding.
+ */
+export async function browserMirrorType(
+  sessionId = 'default',
+  text: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const alive = await isBrowserUseAlive(sessionId);
+  if (!alive) return { ok: false, error: 'Browser not running' };
+
+  try {
+    const resp = await browserUseFetch('/type', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, clear: false }),
+      timeoutMs: 5000,
+    }, sessionId);
+    if (!resp.ok) return { ok: false, error: `Type failed: ${resp.status}` };
+    return await resp.json();
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Type failed' };
+  }
+}
+
+/**
+ * Press a key in the agent's browser — for sidebar mirror keyboard forwarding.
+ */
+export async function browserMirrorPressKey(
+  sessionId = 'default',
+  key: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const alive = await isBrowserUseAlive(sessionId);
+  if (!alive) return { ok: false, error: 'Browser not running' };
+
+  try {
+    const resp = await browserUseFetch('/press_key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key }),
+      timeoutMs: 5000,
+    }, sessionId);
+    if (!resp.ok) return { ok: false, error: `Press key failed: ${resp.status}` };
+    return await resp.json();
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Press key failed' };
+  }
+}
+
+/**
+ * Scroll the agent's browser — for sidebar mirror scroll forwarding.
+ */
+export async function browserMirrorScroll(
+  sessionId = 'default',
+  direction: 'up' | 'down' = 'down',
+  amount = 300,
+): Promise<{ ok: boolean; error?: string }> {
+  const alive = await isBrowserUseAlive(sessionId);
+  if (!alive) return { ok: false, error: 'Browser not running' };
+
+  try {
+    const resp = await browserUseFetch('/scroll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ direction, amount }),
+      timeoutMs: 5000,
+    }, sessionId);
+    if (!resp.ok) return { ok: false, error: `Scroll failed: ${resp.status}` };
+    return await resp.json();
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Scroll failed' };
+  }
 }
 
 export async function execBrowserUseClose(args: any, _ctx: RouterContext): Promise<any> {

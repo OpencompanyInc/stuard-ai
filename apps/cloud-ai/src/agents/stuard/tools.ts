@@ -37,6 +37,7 @@ import { stopHeadlessAgent } from '../../tools/stop-headless-agent';
 import { ffmpeg_status, ffmpeg_setup, ffmpeg_run, ffmpeg_convert_media, ffmpeg_extract_audio, ffmpeg_trim_media, ffmpeg_probe_media, ffmpeg_extract_frames, folder_permission_add, folder_permission_remove, folder_permission_list, folder_permission_set_enabled, folder_permission_check, get_datetime, math_eval, generate_uuid, random_number, random_choice, get_env_var, get_system_info, hash_string, base64_encode, base64_decode, json_parse, json_stringify, sleep, regex_match, regex_replace } from '../../tools/device-tools';
 import { ollama_status, ollama_chat, ollama_generate, ollama_vision, ollama_embeddings, ollama_models } from '../../tools/device-tools';
 import { browser_use_status, browser_use_configure, browser_use_execute_script, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies, browser_use_hover, browser_use_select_option, browser_use_get_dropdown_options, browser_use_get_interactive_elements, browser_use_fill_form, browser_use_upload_file, browser_use_wait_for } from '../../tools/device-tools';
+import { reddit_search, reddit_view_subreddit, reddit_view_comments, reddit_create_post, reddit_comment } from '../../tools/reddit-tools';
 import { submitFeedback, reportBug, suggestFeature, listMyFeedback, getFeedbackDetails } from '../../tools/feedback-tools';
 import { telnyx_send_sms, telnyx_call_control, telnyx_phone_status, telnyx_send_mms, telnyx_send_voice_note, telnyx_voice_call, telnyx_list_voice_providers, telnyx_list_active_calls, telnyx_hangup_call } from '../../tools/telnyx-tools';
 import { whatsapp_send_message, whatsapp_send_media, whatsapp_send_reaction, whatsapp_mark_read, whatsapp_upload_media, whatsapp_status, whatsapp_get_media_url, whatsapp_download_media, whatsapp_send_voice_note, whatsapp_transcribe_voice_note, whatsapp_send_template, whatsapp_voice_call, whatsapp_make_call } from '../../tools/whatsapp-tools';
@@ -440,6 +441,12 @@ export const ALL_TOOLS = {
   instagram_list_conversations,
   instagram_get_conversation_messages,
   instagram_send_dm,
+  // Reddit
+  reddit_search,
+  reddit_view_subreddit,
+  reddit_view_comments,
+  reddit_create_post,
+  reddit_comment,
   // Meta social tools — Threads
   threads_get_me,
   threads_list_posts,
@@ -705,6 +712,11 @@ export function getTools(
       if (name.startsWith('threads_')) tools[name] = tool;
     }
   }
+  if (enabledIntegrations.includes('reddit')) {
+    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+      if (name.startsWith('reddit_')) tools[name] = tool;
+    }
+  }
   if (enabledIntegrations.includes('ollama')) {
     for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
       if (name.startsWith('ollama_')) tools[name] = tool;
@@ -799,6 +811,7 @@ export async function getToolsForQuery(
     threads: ['threads_'],
     notion: ['notion_'],
     linear: ['linear_'],
+    reddit: ['reddit_'],
     ollama: ['ollama_'],
     telnyx: ['telnyx_'],
     whatsapp: ['whatsapp_'],
@@ -831,4 +844,3 @@ export async function getToolsForQuery(
 
   return selected;
 }
-

@@ -72,6 +72,15 @@ const HIDDEN_TOOL_NAMES = new Set([
   'knowledge_get_identity',
   // Planner internal tools
   'planner_list_items',
+  // Internal subagent lifecycle tools
+  'subagent_spawn',
+  'subagent_update',
+  'subagent_status',
+  'subagent_list',
+  'subagent_stop',
+  'subagent_create',
+  'run_subagent',
+  'spawn_agent',
   // Internal meta-tools (invisible to user)
   'get_tool_schema',
   'search_tools',
@@ -93,8 +102,15 @@ const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool }) => {
   const resolvedToolName = tool.tool === 'execute_tool' && tool.args?.tool_name
     ? String(tool.args.tool_name)
     : tool.tool;
-  // Use description from tool if available, otherwise humanize tool name
-  const displayText = tool.description || humanizeToolName(resolvedToolName);
+
+  // For subagent tools, show the objective/task instead of generic tool name
+  const isSubagentTool = resolvedToolName === 'deploy_headless_agent' || resolvedToolName === 'deploy_subagent';
+  const subagentObjective = isSubagentTool && tool.args?.objective
+    ? String(tool.args.objective).slice(0, 80) + (String(tool.args.objective).length > 80 ? '…' : '')
+    : null;
+
+  // Use description from tool if available, objective for subagent tools, otherwise humanize tool name
+  const displayText = subagentObjective || tool.description || humanizeToolName(resolvedToolName);
 
   // Filter out internal IDs from display data
   const filterInternalIds = (obj: any): any => {
@@ -179,20 +195,30 @@ const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool }) => {
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="flex items-center gap-2.5 text-[12px] font-semibold tracking-tight w-fit"
+        className={clsx(
+          "flex items-center gap-2.5 text-[12px] font-semibold tracking-tight w-fit py-0.5 px-0.5 rounded-md",
+          status === 'running' && "tool-glow-bar"
+        )}
       >
-        <div className="flex items-center justify-center w-5.5 h-5.5">
-          {isCompleted ? (
-            <CheckCircle className="w-3.5 h-3.5 text-green-600" />
-          ) : isError ? (
-            <XCircle className="w-3.5 h-3.5 text-red-500" />
-          ) : (
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
-          )}
+        {/* Status indicator — small colored dot instead of icons */}
+        <div className="flex items-center justify-center w-2 h-2">
+          <span className={clsx(
+            "block rounded-full transition-all duration-300",
+            isCompleted ? "w-2 h-2 bg-emerald-500 tool-complete-fade" :
+            isError ? "w-2 h-2 bg-red-500 tool-complete-fade" :
+            "w-1.5 h-1.5 bg-primary animate-pulse"
+          )} />
         </div>
 
         <div className="flex items-center gap-1.5">
-          <span className="text-black">{displayText}</span>
+          <span className={clsx(
+            "transition-all duration-300",
+            status === 'running' ? "tool-glow-sweep font-semibold" :
+            isError ? "text-red-600" :
+            "text-theme-fg tool-complete-fade"
+          )}>
+            {displayText}
+          </span>
         </div>
 
         <button
@@ -200,18 +226,10 @@ const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool }) => {
           className="flex items-center justify-center p-1 hover:bg-gray-100 rounded transition-colors"
         >
           <ChevronRight
-            className={`w-3.5 h-3.5 text-black transition-transform duration-200 ${showDetails ? 'rotate-90' : ''
+            className={`w-3.5 h-3.5 text-theme-fg transition-transform duration-200 ${showDetails ? 'rotate-90' : ''
               }`}
           />
         </button>
-
-        {status === 'running' && (
-          <span className="flex items-center gap-0.5 text-black text-[10px] font-medium uppercase tracking-wider">
-            <span className="w-1 h-1 rounded-full bg-current animate-bounce" style={{ animationDelay: '0ms' }} />
-            <span className="w-1 h-1 rounded-full bg-current animate-bounce" style={{ animationDelay: '150ms' }} />
-            <span className="w-1 h-1 rounded-full bg-current animate-bounce" style={{ animationDelay: '300ms' }} />
-          </span>
-        )}
       </motion.div>
 
       {showDetails && (
@@ -1612,6 +1630,11 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                     <div className="select-text whitespace-pre-wrap font-medium break-words">
                       {chunkSegments.map((seg, segIdx) => {
                         if (seg.kind === 'genui') {
+                          // Route agent_todo to sidebar instead of rendering inline
+                          if (seg.component === 'agent_todo' && seg.args?.items) {
+                            window.dispatchEvent(new CustomEvent('agent-todo-update', { detail: seg.args }));
+                            return null;
+                          }
                           const isCompleted = genUIResults[seg.id] !== undefined;
                           return (
                             <div key={`genui-${idx}-${segIdx}`} className="my-3">
@@ -1635,6 +1658,8 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                           );
                         }
                         if (seg.kind === 'genui_loading') {
+                          // Hide agent_todo loading skeleton from chat (shows in sidebar)
+                          if (seg.component === 'agent_todo') return null;
                           return (
                             <div key={`genui-loading-${idx}-${segIdx}`} className="my-3 p-5 border border-theme/20 rounded-xl bg-theme-hover/30 animate-pulse shadow-inner">
                               <div className="flex items-center gap-3">
@@ -1762,6 +1787,11 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                 ) : (
                   segments.map((seg, idx) => {
                     if (seg.kind === 'genui') {
+                      // Route agent_todo to sidebar instead of rendering inline
+                      if (seg.component === 'agent_todo' && seg.args?.items) {
+                        window.dispatchEvent(new CustomEvent('agent-todo-update', { detail: seg.args }));
+                        return null;
+                      }
                       const isCompleted = genUIResults[seg.id] !== undefined;
                       return (
                         <div key={`genui-${idx}`} className="my-3">
@@ -1785,6 +1815,8 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                       );
                     }
                     if (seg.kind === 'genui_loading') {
+                      // Hide agent_todo loading skeleton from chat (shows in sidebar)
+                      if (seg.component === 'agent_todo') return null;
                       return (
                         <div key={`genui-loading-${idx}`} className="my-3 p-5 border border-theme/20 rounded-xl bg-theme-hover/30 animate-pulse shadow-inner">
                           <div className="flex items-center gap-3">

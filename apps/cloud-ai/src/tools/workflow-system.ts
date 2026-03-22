@@ -166,37 +166,67 @@ function getCloudTools(): Map<string, any> {
   add(scrape_url);
   for (const v of Object.values(deviceTools as any)) {
     const maybe = v as any;
-    if (maybe && typeof maybe === 'object' && typeof maybe.execute === 'function' && typeof maybe.name === 'string') {
+    if (
+      maybe &&
+      typeof maybe === 'object' &&
+      typeof maybe.execute === 'function' &&
+      (typeof maybe.id === 'string' || typeof maybe.name === 'string')
+    ) {
       add(maybe);
     }
   }
   for (const v of Object.values(googleTools as any)) {
     const maybe = v as any;
-    if (maybe && typeof maybe === 'object' && typeof maybe.execute === 'function' && typeof maybe.name === 'string') {
+    if (
+      maybe &&
+      typeof maybe === 'object' &&
+      typeof maybe.execute === 'function' &&
+      (typeof maybe.id === 'string' || typeof maybe.name === 'string')
+    ) {
       add(maybe);
     }
   }
   for (const v of Object.values(ocrTools as any)) {
     const maybe = v as any;
-    if (maybe && typeof maybe === 'object' && typeof maybe.execute === 'function' && typeof maybe.name === 'string') {
+    if (
+      maybe &&
+      typeof maybe === 'object' &&
+      typeof maybe.execute === 'function' &&
+      (typeof maybe.id === 'string' || typeof maybe.name === 'string')
+    ) {
       add(maybe);
     }
   }
   for (const v of Object.values(httpTools as any)) {
     const maybe = v as any;
-    if (maybe && typeof maybe === 'object' && typeof maybe.execute === 'function' && typeof maybe.name === 'string') {
+    if (
+      maybe &&
+      typeof maybe === 'object' &&
+      typeof maybe.execute === 'function' &&
+      (typeof maybe.id === 'string' || typeof maybe.name === 'string')
+    ) {
       add(maybe);
     }
   }
   for (const v of Object.values(marketplaceTools as any)) {
     const maybe = v as any;
-    if (maybe && typeof maybe === 'object' && typeof maybe.execute === 'function' && typeof maybe.name === 'string') {
+    if (
+      maybe &&
+      typeof maybe === 'object' &&
+      typeof maybe.execute === 'function' &&
+      (typeof maybe.id === 'string' || typeof maybe.name === 'string')
+    ) {
       add(maybe);
     }
   }
   for (const v of Object.values(ttsTools as any)) {
     const maybe = v as any;
-    if (maybe && typeof maybe === 'object' && typeof maybe.execute === 'function' && typeof maybe.name === 'string') {
+    if (
+      maybe &&
+      typeof maybe === 'object' &&
+      typeof maybe.execute === 'function' &&
+      (typeof maybe.id === 'string' || typeof maybe.name === 'string')
+    ) {
       add(maybe);
     }
   }
@@ -299,7 +329,7 @@ async function runOne(step: z.infer<typeof StepSchema>, writer?: WritableStreamD
     if (kind === 'cloud' || (kind === 'auto' && getCloudTools().has(toolName))) {
       const t = getCloudTools().get(toolName);
       // Do NOT pass the outer ToolStream writer to nested cloud tool to avoid stream lock
-      result = await (t as any).execute?.({ context: args });
+      result = await (t as any).execute?.(args);
     } else {
       result = await execLocalTool(
         toolName,
@@ -375,7 +405,7 @@ export const runParallelTool = createTool({
           if (step.kind === 'cloud' || (step.kind === 'auto' && getCloudTools().has(toolName))) {
             const t = getCloudTools().get(toolName);
             // Avoid passing parent ToolStream writer to nested cloud tool to prevent lock
-            result = await (t as any).execute?.({ context: step.args });
+            result = await (t as any).execute?.(step.args);
           } else {
             result = await execLocalTool(
               toolName,
@@ -833,7 +863,7 @@ export const testWorkflowStepTool = createTool({
         const cloudTools = getCloudTools();
         if (cloudTools.has(toolName)) {
           const t = cloudTools.get(toolName);
-          result = await (t as any).execute?.({ context: c?.args });
+          result = await (t as any).execute?.(c?.args);
         } else {
           result = await execLocalTool(toolName, markWorkflowToolArgs(c?.args), writer as any, 30000);
         }

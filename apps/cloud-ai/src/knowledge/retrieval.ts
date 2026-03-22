@@ -23,6 +23,7 @@ export interface Fact {
   created_at: string;
   validity: boolean;
   source: string;
+  vector?: number[];
 }
 
 export interface Entity {
@@ -208,21 +209,134 @@ export async function getPendingMemoriesLens(limit: number = 10): Promise<Pendin
 export async function searchGlobalFacts(
   queryVector: number[],
   limit: number = 10,
-  threshold: number = 0.65
+  threshold: number = 0.65,
+  includeVectors: boolean = true,
 ): Promise<Array<{ fact: Fact; score: number }>> {
   if (!hasClientBridge()) return [];
-  
+
   try {
     const results = await execLocalTool('knowledge_search_facts', {
       vector: queryVector,
       limit,
       threshold,
+      include_vectors: includeVectors,
     }, undefined, 10000);
     return Array.isArray(results) ? results : [];
   } catch (error) {
     writeLog('global_search_error', { error: String(error) });
     return [];
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RETRIEVAL QUALITY — Composite scoring, MMR, temporal awareness
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Compute a composite retrieval score from multiple signals.
+ */
+function computeCompositeScore(
+  cosineSimilarity: number,
+  fact: { created_at?: string; confidence?: number; source?: string },
+  options?: { temporalBoost?: boolean },
+): number {
+  // Recency boost: linearly decays to 0 over 365 days
+  let recencyBoost = 0;
+  try {
+    const createdMs = Date.parse(String(fact.created_at || ''));
+    if (Number.isFinite(createdMs)) {
+      const daysSince = (Date.now() - createdMs) / (86400 * 1000);
+      recencyBoost = Math.max(0, 1 - daysSince / 365);
+    }
+  } catch {}
+
+  const confidence = typeof fact.confidence === 'number' ? Math.max(0, Math.min(1, fact.confidence)) : 1.0;
+  const sourceBonus = fact.source === 'user_manual' ? 1.0 : 0.0;
+
+  let score = 0.60 * cosineSimilarity + 0.20 * recencyBoost + 0.15 * confidence + 0.05 * sourceBonus;
+
+  // Extra boost for recent facts when temporal intent detected
+  if (options?.temporalBoost) {
+    try {
+      const createdMs = Date.parse(String(fact.created_at || ''));
+      if (Number.isFinite(createdMs)) {
+        const daysSince = (Date.now() - createdMs) / (86400 * 1000);
+        if (daysSince <= 30) score *= 1.5;
+      }
+    } catch {}
+  }
+
+  return score;
+}
+
+/**
+ * Maximal Marginal Relevance reranking for diversity.
+ * Balances relevance with diversity by penalising candidates similar
+ * to already-selected results.
+ */
+function mmrRerank(
+  candidates: Array<{ fact: Fact; score: number; vector?: number[] }>,
+  k: number,
+  lambda: number = 0.7,
+): Array<{ fact: Fact; score: number }> {
+  if (candidates.length <= k) return candidates.map((c) => ({ fact: c.fact, score: c.score }));
+
+  const selected: Array<{ fact: Fact; score: number; vector?: number[] }> = [];
+  const remaining = [...candidates];
+
+  // Pick the highest-scored first
+  remaining.sort((a, b) => b.score - a.score);
+  selected.push(remaining.shift()!);
+
+  while (selected.length < k && remaining.length > 0) {
+    let bestIdx = 0;
+    let bestMmr = -Infinity;
+
+    for (let i = 0; i < remaining.length; i++) {
+      const cand = remaining[i];
+
+      // Find max similarity to any already-selected
+      let maxSim = 0;
+      if (cand.vector && cand.vector.length > 0) {
+        for (const sel of selected) {
+          if (sel.vector && sel.vector.length > 0) {
+            maxSim = Math.max(maxSim, cosineSim(cand.vector, sel.vector));
+          }
+        }
+      }
+
+      const mmrScore = lambda * cand.score - (1 - lambda) * maxSim;
+      if (mmrScore > bestMmr) {
+        bestMmr = mmrScore;
+        bestIdx = i;
+      }
+    }
+
+    selected.push(remaining.splice(bestIdx, 1)[0]);
+  }
+
+  return selected.map((c) => ({ fact: c.fact, score: c.score }));
+}
+
+function cosineSim(a: number[], b: number[]): number {
+  if (a.length !== b.length || a.length === 0) return 0;
+  let dot = 0,
+    normA = 0,
+    normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom > 0 ? dot / denom : 0;
+}
+
+/** Detect whether the user message expresses temporal intent */
+function hasTemporalIntent(message: string): boolean {
+  const lower = message.toLowerCase();
+  const keywords = ['recently', 'lately', 'last week', 'this week', 'this month', 'last month', 'just', 'yesterday', 'today', 'few days ago'];
+  return keywords.some((kw) => lower.includes(kw));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -344,7 +458,7 @@ export async function buildKnowledgeContext(
     sections.push(lines.join('\n'));
   }
 
-  // Layer 5: Global search (semantic)
+  // Layer 5: Global search (semantic) with composite scoring + MMR diversity
   if (opts.maxGlobalFacts > 0) {
     try {
       // Reuse pre-computed embedding when available; otherwise generate one
@@ -355,17 +469,34 @@ export async function buildKnowledgeContext(
             value: userMessage,
           })).embedding;
 
-      const searchResults = await searchGlobalFacts(embeddingVec, opts.maxGlobalFacts);
-      
+      // Fetch more candidates than needed so composite scoring + MMR can select the best
+      const fetchLimit = Math.min(opts.maxGlobalFacts * 3, 30);
+      const searchResults = await searchGlobalFacts(embeddingVec, fetchLimit, 0.45);
+
       // Filter out facts already shown in entity context
       const entityFactIds = new Set(lenses.activeEntity?.facts.map(f => f.id) || []);
-      const filteredResults = searchResults.filter(r => !entityFactIds.has(r.fact.id));
-      
-      lenses.globalSearch = filteredResults;
+      const filtered = searchResults.filter(r => !entityFactIds.has(r.fact.id));
 
-      if (filteredResults.length > 0) {
+      // Apply composite scoring (cosine + recency + confidence + source)
+      const temporalBoost = hasTemporalIntent(userMessage);
+      const scored = filtered.map((r) => ({
+        fact: r.fact,
+        score: computeCompositeScore(r.score, {
+          created_at: r.fact.created_at,
+          confidence: (r.fact as any).confidence,
+          source: r.fact.source,
+        }, { temporalBoost }),
+        vector: r.fact.vector || undefined,
+      }));
+
+      // Apply MMR reranking for diversity
+      const reranked = mmrRerank(scored, opts.maxGlobalFacts, 0.7);
+
+      lenses.globalSearch = reranked;
+
+      if (reranked.length > 0) {
         const lines = ['[RELEVANT MEMORIES]'];
-        for (const { fact } of filteredResults) {
+        for (const { fact } of reranked) {
           lines.push(`- ${fact.text}`);
         }
         sections.push(lines.join('\n'));

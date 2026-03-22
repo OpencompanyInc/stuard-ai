@@ -13,6 +13,19 @@ from browser_server.lifecycle import (
 )
 
 
+async def _get_cdp_session():
+    """Get or create a Playwright CDPSession for raw CDP commands."""
+    if state._cdp_session is not None:
+        return state._cdp_session
+    if state._context is not None and state._page is not None:
+        try:
+            state._cdp_session = await state._context.new_cdp_session(state._page)
+            return state._cdp_session
+        except Exception:
+            pass
+    return None
+
+
 async def _cdp_click_element_by_selector(selector: str) -> bool:
     """Click an element by CSS selector using CDP mouse events.
 
@@ -33,23 +46,17 @@ async def _cdp_click_element_by_selector(selector: str) -> bool:
     )
     if isinstance(coords, dict) and "x" in coords and "y" in coords:
         x, y = float(coords["x"]), float(coords["y"])
-        # Use the browser-use page's mouse if available (CDP mouse events)
-        page = state._page
-        # Try CDP client directly (works with browser-use pages)
-        if page and hasattr(page, "_client") and hasattr(page, "_ensure_session"):
+        cdp = await _get_cdp_session()
+        if cdp:
             try:
-                sid = await page._ensure_session()
-                client = page._client
-                await client.send.Input.dispatchMouseEvent(
-                    {"type": "mouseMoved", "x": int(x), "y": int(y)}, session_id=sid)
+                await cdp.send("Input.dispatchMouseEvent",
+                    {"type": "mouseMoved", "x": int(x), "y": int(y)})
                 await asyncio.sleep(0.02)
-                await client.send.Input.dispatchMouseEvent(
-                    {"type": "mousePressed", "x": int(x), "y": int(y), "button": "left", "clickCount": 1},
-                    session_id=sid)
+                await cdp.send("Input.dispatchMouseEvent",
+                    {"type": "mousePressed", "x": int(x), "y": int(y), "button": "left", "clickCount": 1})
                 await asyncio.sleep(0.05)
-                await client.send.Input.dispatchMouseEvent(
-                    {"type": "mouseReleased", "x": int(x), "y": int(y), "button": "left", "clickCount": 1},
-                    session_id=sid)
+                await cdp.send("Input.dispatchMouseEvent",
+                    {"type": "mouseReleased", "x": int(x), "y": int(y), "button": "left", "clickCount": 1})
                 await asyncio.sleep(0.05)
                 return True
             except Exception:
@@ -75,43 +82,35 @@ async def _cdp_type_text(text: str) -> bool:
     if page is None:
         return False
 
-    # Use CDP client directly if available (browser-use Page)
-    if hasattr(page, "_client") and hasattr(page, "_ensure_session"):
+    cdp = await _get_cdp_session()
+    if cdp:
         try:
-            sid = await page._ensure_session()
-            client = page._client
             for char in text:
                 if char == "\n":
-                    await client.send.Input.dispatchKeyEvent(
-                        {"type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13},
-                        session_id=sid)
+                    await cdp.send("Input.dispatchKeyEvent",
+                        {"type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13})
                     await asyncio.sleep(0.001)
-                    await client.send.Input.dispatchKeyEvent(
-                        {"type": "char", "text": "\r", "key": "Enter"}, session_id=sid)
-                    await client.send.Input.dispatchKeyEvent(
-                        {"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13},
-                        session_id=sid)
+                    await cdp.send("Input.dispatchKeyEvent",
+                        {"type": "char", "text": "\r", "key": "Enter"})
+                    await cdp.send("Input.dispatchKeyEvent",
+                        {"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13})
                 else:
-                    await client.send.Input.dispatchKeyEvent(
-                        {"type": "keyDown", "key": char, "code": f"Key{char.upper()}" if char.isalpha() else char},
-                        session_id=sid)
+                    await cdp.send("Input.dispatchKeyEvent",
+                        {"type": "keyDown", "key": char, "code": f"Key{char.upper()}" if char.isalpha() else char})
                     await asyncio.sleep(0.001)
-                    await client.send.Input.dispatchKeyEvent(
-                        {"type": "char", "text": char, "key": char}, session_id=sid)
-                    await client.send.Input.dispatchKeyEvent(
-                        {"type": "keyUp", "key": char, "code": f"Key{char.upper()}" if char.isalpha() else char},
-                        session_id=sid)
+                    await cdp.send("Input.dispatchKeyEvent",
+                        {"type": "char", "text": char, "key": char})
+                    await cdp.send("Input.dispatchKeyEvent",
+                        {"type": "keyUp", "key": char, "code": f"Key{char.upper()}" if char.isalpha() else char})
                 await asyncio.sleep(0.03)
             return True
         except Exception:
             pass
 
-    # Fallback: use page.press if available (browser-use Page has this)
-    if hasattr(page, "press"):
+    # Fallback: use Playwright keyboard
+    if hasattr(page, "keyboard"):
         try:
-            for char in text:
-                await page.press(char)
-                await asyncio.sleep(0.03)
+            await page.keyboard.type(text, delay=30)
             return True
         except Exception:
             pass
@@ -464,7 +463,7 @@ async def _select_dropdown(selector: str, value: Any = None, label: Any = None, 
 
     Strategy: click to open -> read options -> try to match -> if no match and
     element is searchable, type to filter -> read filtered options -> select.
-    Works with CDP (browser-use) and Playwright pages alike.
+    Works with CDP and Playwright pages alike.
     """
     MARKER_ATTR = "data-stuard-select-target"
 
@@ -567,7 +566,7 @@ async def _select_dropdown(selector: str, value: Any = None, label: Any = None, 
 async def _upload_local_file(selector: str, file_path: str, timeout: int = 5000) -> dict[str, Any]:
     """Upload a file to a file input using CDP DOM.setFileInputFiles.
 
-    Works with both browser-use (CDP) and Playwright pages.
+    Works with Playwright CDPSession.
     Strategy:
     1. Find the <input type="file"> element (via selector, or by searching nearby)
     2. Use CDP DOM.setFileInputFiles to set the file directly (no file dialog needed)
@@ -656,60 +655,32 @@ async def _upload_local_file(selector: str, file_path: str, timeout: int = 5000)
     marker = find_result.get("marker", "")
     file_input_sel = f'input[type="file"][data-stuard-upload-target="{marker}"]'
 
-    # Try CDP DOM.setFileInputFiles (works with browser-use CDP pages)
+    # Try CDP DOM.setFileInputFiles via Playwright CDPSession
     page = state._page
     upload_success = False
 
-    if page and hasattr(page, "_client") and hasattr(page, "_ensure_session"):
+    cdp = await _get_cdp_session()
+    if cdp:
         try:
-            sid = await page._ensure_session()
-            client = page._client
-
-            # Get the backendNodeId of the file input via CDP
-            # First, get the document root
-            doc_result = await client.send.DOM.getDocument(
-                {"depth": 0}, session_id=sid)
+            doc_result = await cdp.send("DOM.getDocument", {"depth": 0})
             root_id = doc_result["root"]["nodeId"]
 
-            # Find the file input by selector
-            query_result = await client.send.DOM.querySelector(
-                {"nodeId": root_id, "selector": file_input_sel}, session_id=sid)
+            query_result = await cdp.send("DOM.querySelector",
+                {"nodeId": root_id, "selector": file_input_sel})
             file_node_id = query_result.get("nodeId", 0)
 
             if file_node_id:
-                # Get backendNodeId
-                desc_result = await client.send.DOM.describeNode(
-                    {"nodeId": file_node_id}, session_id=sid)
+                desc_result = await cdp.send("DOM.describeNode",
+                    {"nodeId": file_node_id})
                 backend_node_id = desc_result["node"]["backendNodeId"]
 
-                # Set the files using CDP
-                await client.send.DOM.setFileInputFiles(
-                    {"files": [file_path_str], "backendNodeId": backend_node_id},
-                    session_id=sid,
-                )
+                await cdp.send("DOM.setFileInputFiles",
+                    {"files": [file_path_str], "backendNodeId": backend_node_id})
                 upload_success = True
         except Exception as cdp_err:
-            print(f"[browser-use-server] CDP file upload failed: {cdp_err}", flush=True)
+            print(f"[browser-server] CDP file upload failed: {cdp_err}", flush=True)
 
-    # Fallback: use browser-use Element API if available
-    if not upload_success and page and hasattr(page, "get_elements_by_css_selector"):
-        try:
-            elements = await page.get_elements_by_css_selector(file_input_sel)
-            if elements:
-                el = elements[0]
-                # Try to set files via JS (limited but may work for some sites)
-                await el.evaluate(
-                    """(filePath) => {
-                      const dt = new DataTransfer();
-                      // We can't create real File objects from paths in JS, but we trigger the change event
-                      this.dispatchEvent(new Event('change', { bubbles: true }));
-                    }""",
-                    file_path_str,
-                )
-        except Exception:
-            pass
-
-    # Fallback: try Playwright-style set_input_files if the page supports it
+    # Fallback: try Playwright-style set_input_files
     if not upload_success and page and hasattr(page, "locator"):
         try:
             locator = page.locator(file_input_sel).first
@@ -1325,7 +1296,7 @@ async def handle_fill_form(req: web.Request) -> web.Response:
                             await _cdp_click_element_by_selector(sel)
                         filled += 1
                     else:
-                        # Text input — use browser-use Element.fill() or CDP type
+                        # Text input — use Playwright fill or CDP type
                         els = await _find_elements(sel)
                         if els:
                             await els[0].fill(val, clear=True)

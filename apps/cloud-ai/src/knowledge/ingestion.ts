@@ -40,7 +40,7 @@ async function execSilentLocalTool(tool: string, args: any, timeoutMs: number): 
 
 export async function executeKnowledgeActions(
   actions: KnowledgeAction[],
-  options?: { skipEmbeddings?: boolean }
+  options?: { skipEmbeddings?: boolean; conversationId?: string }
 ): Promise<{ success: number; failed: number; results: any[] }> {
   const results: any[] = [];
   let success = 0;
@@ -48,7 +48,7 @@ export async function executeKnowledgeActions(
 
   for (const action of actions) {
     try {
-      const result = await executeAction(action, options?.skipEmbeddings ?? false);
+      const result = await executeAction(action, options?.skipEmbeddings ?? false, options?.conversationId);
       results.push({ action: action.action, ok: true, result });
       success++;
     } catch (error) {
@@ -61,25 +61,27 @@ export async function executeKnowledgeActions(
   return { success, failed, results };
 }
 
-async function executeAction(action: KnowledgeAction, skipEmbeddings: boolean): Promise<any> {
+async function executeAction(action: KnowledgeAction, skipEmbeddings: boolean, conversationId?: string): Promise<any> {
+  const confidence = 'confidence' in action ? (action as any).confidence ?? 1.0 : 1.0;
+
   switch (action.action) {
     case 'UPDATE_PROFILE':
-      return executeUpdateProfile(action.key, action.value, skipEmbeddings);
+      return executeUpdateProfile(action.key, action.value, skipEmbeddings, confidence, conversationId);
 
     case 'ADD_BIO':
-      return executeAddBio(action.value, skipEmbeddings);
+      return executeAddBio(action.value, skipEmbeddings, confidence, conversationId);
 
     case 'ADD_INSTRUCTION':
-      return executeAddInstruction(action.value, skipEmbeddings);
+      return executeAddInstruction(action.value, skipEmbeddings, confidence, conversationId);
 
     case 'ADD_FACT':
-      return executeAddFact(action.entity_name, action.value, action.entity_type, skipEmbeddings);
+      return executeAddFact(action.entity_name, action.value, action.entity_type, skipEmbeddings, confidence, conversationId);
 
     case 'ADD_PROCEDURAL':
-      return executeAddProcedural(action.key, action.value, action.entity_name, skipEmbeddings);
+      return executeAddProcedural(action.key, action.value, action.entity_name, skipEmbeddings, confidence, conversationId);
 
     case 'LOG_EVENT':
-      return executeLogEvent(action.value, action.entity_name, skipEmbeddings);
+      return executeLogEvent(action.value, action.entity_name, skipEmbeddings, confidence, conversationId);
 
     case 'CREATE_ENTITY':
       return executeCreateEntity(action.name, action.type, action.summary, skipEmbeddings);
@@ -103,28 +105,32 @@ async function executeAction(action: KnowledgeAction, skipEmbeddings: boolean): 
 // ACTION EXECUTORS (via local agent bridge)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function executeUpdateProfile(key: string, value: string, skipEmbeddings: boolean): Promise<any> {
+async function executeUpdateProfile(key: string, value: string, skipEmbeddings: boolean, confidence: number = 1.0, conversationId?: string): Promise<any> {
   const vector = skipEmbeddings ? [] : await getEmbedding(`${key}: ${value}`);
-  return execSilentLocalTool('knowledge_upsert_core', { key, value, vector }, 10000);
+  return execSilentLocalTool('knowledge_upsert_core', { key, value, vector, confidence, source_conversation_id: conversationId }, 10000);
 }
 
-async function executeAddBio(value: string, skipEmbeddings: boolean): Promise<any> {
+async function executeAddBio(value: string, skipEmbeddings: boolean, confidence: number = 1.0, conversationId?: string): Promise<any> {
   const vector = skipEmbeddings ? [] : await getEmbedding(value);
   return execSilentLocalTool('knowledge_add_fact', {
     category: 'personal',
     subtype: 'bio',
     text: value,
     vector,
+    confidence,
+    source_conversation_id: conversationId,
   }, 10000);
 }
 
-async function executeAddInstruction(value: string, skipEmbeddings: boolean): Promise<any> {
+async function executeAddInstruction(value: string, skipEmbeddings: boolean, confidence: number = 1.0, conversationId?: string): Promise<any> {
   const vector = skipEmbeddings ? [] : await getEmbedding(value);
   return execSilentLocalTool('knowledge_add_fact', {
     category: 'instruction',
     subtype: 'system',
     text: value,
     vector,
+    confidence,
+    source_conversation_id: conversationId,
   }, 10000);
 }
 
@@ -132,11 +138,13 @@ async function executeAddFact(
   entityName: string,
   value: string,
   entityType?: string,
-  skipEmbeddings?: boolean
+  skipEmbeddings?: boolean,
+  confidence: number = 1.0,
+  conversationId?: string,
 ): Promise<any> {
   // First, find or create the entity
   let entity = await execSilentLocalTool('knowledge_find_entity', { name: entityName }, 5000);
-  
+
   if (!entity?.id) {
     // Create entity if not found
     const entityVector = skipEmbeddings ? [] : await getEmbedding(entityName);
@@ -146,7 +154,7 @@ async function executeAddFact(
       vector: entityVector,
     }, 5000);
   }
-  
+
   // Add fact linked to entity
   const vector = skipEmbeddings ? [] : await getEmbedding(value);
   return execSilentLocalTool('knowledge_add_fact', {
@@ -155,6 +163,8 @@ async function executeAddFact(
     text: value,
     entity_id: entity?.id,
     vector,
+    confidence,
+    source_conversation_id: conversationId,
   }, 10000);
 }
 
@@ -162,32 +172,36 @@ async function executeAddProcedural(
   key: string,
   value: string,
   entityName?: string,
-  skipEmbeddings?: boolean
+  skipEmbeddings?: boolean,
+  confidence: number = 1.0,
+  conversationId?: string,
 ): Promise<any> {
   let entityId: string | undefined;
-  
+
   if (entityName) {
     const entity = await execSilentLocalTool('knowledge_find_entity', { name: entityName }, 5000);
     entityId = entity?.id;
   }
-  
+
   const vector = skipEmbeddings ? [] : await getEmbedding(`${key}: ${value}`);
   return execSilentLocalTool('knowledge_upsert_procedural', {
     key,
     value,
     entity_id: entityId,
     vector,
+    confidence,
+    source_conversation_id: conversationId,
   }, 10000);
 }
 
-async function executeLogEvent(value: string, entityName?: string, skipEmbeddings?: boolean): Promise<any> {
+async function executeLogEvent(value: string, entityName?: string, skipEmbeddings?: boolean, confidence: number = 1.0, conversationId?: string): Promise<any> {
   let entityId: string | undefined;
-  
+
   if (entityName) {
     const entity = await execSilentLocalTool('knowledge_find_entity', { name: entityName }, 5000);
     entityId = entity?.id;
   }
-  
+
   const vector = skipEmbeddings ? [] : await getEmbedding(value);
   return execSilentLocalTool('knowledge_add_fact', {
     category: 'event',
@@ -195,6 +209,8 @@ async function executeLogEvent(value: string, entityName?: string, skipEmbedding
     text: value,
     entity_id: entityId,
     vector,
+    confidence,
+    source_conversation_id: conversationId,
   }, 10000);
 }
 
@@ -246,6 +262,7 @@ export async function ingestConversationTurn(
   options?: {
     skipExtraction?: boolean;
     skipEmbeddings?: boolean;
+    conversationId?: string;
   }
 ): Promise<{
   extracted: ExtractionResult;
@@ -349,7 +366,7 @@ export async function ingestConversationTurn(
 
   // Step 2: Execute actions
   const executed = extracted.actions.length > 0
-    ? await executeKnowledgeActions(extracted.actions, { skipEmbeddings: options?.skipEmbeddings })
+    ? await executeKnowledgeActions(extracted.actions, { skipEmbeddings: options?.skipEmbeddings, conversationId: options?.conversationId })
     : { success: 0, failed: 0, results: [] };
 
   writeLog('knowledge_ingestion_complete', {

@@ -11,7 +11,6 @@ import { useIntegrationsState } from "./hooks/useIntegrationsState";
 import { UnifiedPlannerView } from "./components/UnifiedPlannerView";
 import { OverviewView } from "./components/OverviewView";
 import { HistoryView } from "./components/HistoryView";
-import { AutomationsView } from "./components/AutomationsView";
 import { SettingsView } from "./components/SettingsView";
 import { IntegrationsView } from "./components/IntegrationsView";
 import { MemoriesView } from "./components/MemoriesView";
@@ -25,7 +24,6 @@ import {
   LayoutDashboard,
   Clock,
   Settings,
-  Zap,
   Link,
   Calendar,
   LogOut,
@@ -229,7 +227,7 @@ function DashboardApp() {
     try {
       const params = new URLSearchParams(window.location.search);
       const initialTab = params.get('tab');
-      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'proactive', 'memories', 'automations', 'integrations', 'settings', 'cloud', 'storage', 'vault'].includes(initialTab)) {
+      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'proactive', 'memories', 'integrations', 'settings', 'cloud', 'storage', 'vault'].includes(initialTab)) {
         return initialTab;
       }
     } catch { }
@@ -311,11 +309,12 @@ function DashboardApp() {
     setDefaultProfile,
     deleteProfile,
     // telnyx
-    telnyxPhone,
+    telnyxPhones,
     telnyxVerifying,
     telnyxRequestCode,
     telnyxVerifyCode,
     telnyxDisconnect,
+    telnyxRemovePhone,
     refreshTelnyxStatus,
     // whatsapp
     whatsappPhone,
@@ -327,10 +326,6 @@ function DashboardApp() {
     whatsappInitiateLink,
     whatsappDisconnect,
   } = useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP });
-
-  // Local automations (Deployed Stuards)
-  const [stuards, setStuards] = useState<any[]>([]);
-  const [stuardsLoading, setStuardsLoading] = useState(false);
   // Calendar (Google-backed, Stuard blocks)
   const [calendarView, setCalendarView] = useState<'today' | 'month'>('month');
   const [calendarRefDate, setCalendarRefDateRaw] = useState<Date>(() => new Date());
@@ -387,34 +382,15 @@ function DashboardApp() {
 
   const handleRefresh = async () => {
     await fetchData();
-    if (tab === 'automations') {
-      await loadStuards();
-    }
     if (tab === 'planner') {
       await loadPlannerData();
     }
   };
 
-  // Local automations loaders
-  const loadStuards = async () => {
-    setStuardsLoading(true);
-    try {
-      const res = await (window as any).desktopAPI?.stuardsList?.();
-      if (res && res.ok && Array.isArray(res.items)) setStuards(res.items);
-    } finally {
-      setStuardsLoading(false);
-    }
-  };
-  useEffect(() => {
-    if (tab === 'automations') {
-      loadStuards();
-    }
-  }, [tab]);
-
   // Listen for navigation events from main process (when dashboard is already open)
   useEffect(() => {
     const unsub = window.desktopAPI?.onDashboardNavigate?.((data) => {
-      if (data?.tab && ['overview', 'history', 'planner', 'memories', 'automations', 'integrations', 'settings', 'vault'].includes(data.tab)) {
+      if (data?.tab && ['overview', 'history', 'planner', 'memories', 'integrations', 'settings', 'vault'].includes(data.tab)) {
         setTab(data.tab);
       }
     });
@@ -1074,7 +1050,6 @@ function DashboardApp() {
       items: [
         { id: 'memories', label: 'Memories', icon: Archive },
         { id: 'proactive', label: 'Proactive', icon: Sparkles },
-        { id: 'automations', label: 'Automation', icon: Zap },
       ],
     },
     {
@@ -1101,7 +1076,6 @@ function DashboardApp() {
     tasks: { title: 'Tasks', subtitle: 'Track what matters and keep your day moving.' },
     proactive: { title: 'Proactive', subtitle: 'Discover suggestions and actions Stuard can take for you.' },
     memories: { title: 'Memories', subtitle: 'Browse notes, profile details, and remembered context.' },
-    automations: { title: 'Automation', subtitle: 'Build and manage your workflows from one studio.' },
     integrations: { title: 'Connected Apps', subtitle: 'Manage the tools and services connected to Stuard.' },
     settings: { title: 'Settings', subtitle: 'Tune themes, behavior, and personalization preferences.' },
     cloud: { title: 'Cloud Engine', subtitle: 'Monitor remote runtime, deployment, and compute status.' },
@@ -1113,7 +1087,7 @@ function DashboardApp() {
     title: tab.charAt(0).toUpperCase() + tab.slice(1),
     subtitle: 'Manage your Stuard workspace from a single dashboard.',
   };
-  const showGlobalHeader = !['automations', 'integrations', 'settings', 'proactive'].includes(tab);
+  const showGlobalHeader = !['integrations', 'settings', 'proactive'].includes(tab);
   const showRefresh = showGlobalHeader && !['planner', 'memories'].includes(tab);
 
 
@@ -1215,7 +1189,7 @@ function DashboardApp() {
             ) : (
               <main className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
                 <div className="h-full">
-                  {!userEmail && !['planner', 'automations'].includes(tab) ? (
+                  {!userEmail && tab !== 'planner' ? (
                     <div className="flex flex-col items-center justify-center h-[70vh] text-center space-y-8 animate-in fade-in zoom-in duration-700">
                       <div className="h-32 w-32 rounded-[2.5rem] bg-theme-card/50 flex items-center justify-center mb-4 shadow-2xl border border-theme backdrop-blur-xl relative group">
                         <div className="absolute inset-0 bg-primary/20 rounded-[2.5rem] blur-2xl group-hover:blur-3xl transition-all duration-500 opacity-50" />
@@ -1352,14 +1326,6 @@ function DashboardApp() {
                             />
                           )}
 
-                          {tab === 'automations' && (
-                            <AutomationsView
-                              stuards={stuards}
-                              stuardsLoading={stuardsLoading}
-                              loadStuards={loadStuards}
-                            />
-                          )}
-
                           {tab === 'cloud' && (
                             <CloudEngineDashboard />
                           )}
@@ -1419,11 +1385,12 @@ function DashboardApp() {
                                 refreshProfiles={refreshProfiles}
                                 setDefaultProfile={setDefaultProfile}
                                 deleteProfile={deleteProfile}
-                                telnyxPhone={telnyxPhone}
+                                telnyxPhones={telnyxPhones}
                                 telnyxVerifying={telnyxVerifying}
                                 telnyxRequestCode={telnyxRequestCode}
                                 telnyxVerifyCode={telnyxVerifyCode}
                                 telnyxDisconnect={telnyxDisconnect}
+                                telnyxRemovePhone={telnyxRemovePhone}
                                 getToken={() => session?.access_token || null}
                                 whatsappPhone={whatsappPhone}
                                 whatsappConnecting={whatsappConnecting}

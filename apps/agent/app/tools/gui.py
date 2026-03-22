@@ -373,6 +373,22 @@ async def computer_use(args: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+def _get_dpi_scale() -> float:
+    """Get the Windows display DPI scale factor (e.g. 1.25 for 125% scaling)."""
+    try:
+        import ctypes
+        # SetProcessDPIAware so we get real physical coords
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+        # GetScaleFactorForDevice returns percentage (100, 125, 150, etc.)
+        scale_pct = ctypes.windll.shcore.GetScaleFactorForDevice(0)
+        return scale_pct / 100.0
+    except Exception:
+        return 1.0
+
+
 async def take_screenshot(args: Dict[str, Any]) -> Dict[str, Any]:
     region = args.get("region") or {}
     try:
@@ -382,11 +398,14 @@ async def take_screenshot(args: Dict[str, Any]) -> Dict[str, Any]:
         raise RuntimeError("mss not installed")
     with mss.mss() as sct:
         if all(k in region for k in ("x", "y", "width", "height")):
+            # Region coords come from browser CSS pixels (logical).
+            # mss operates in physical pixels, so scale by DPI factor.
+            scale = _get_dpi_scale()
             monitor = {
-                "left": int(region["x"]),
-                "top": int(region["y"]),
-                "width": int(region["width"]),
-                "height": int(region["height"]),
+                "left": int(int(region["x"]) * scale),
+                "top": int(int(region["y"]) * scale),
+                "width": int(int(region["width"]) * scale),
+                "height": int(int(region["height"]) * scale),
             }
         else:
             monitor = sct.monitors[0]
@@ -412,11 +431,12 @@ async def capture_screen_to_file(args: Dict[str, Any]) -> Dict[str, Any]:
         raise RuntimeError("mss not installed")
     with mss.mss() as sct:
         if all(k in region for k in ("x", "y", "width", "height")):
+            scale = _get_dpi_scale()
             monitor = {
-                "left": int(region["x"]),
-                "top": int(region["y"]),
-                "width": int(region["width"]),
-                "height": int(region["height"]),
+                "left": int(int(region["x"]) * scale),
+                "top": int(int(region["y"]) * scale),
+                "width": int(int(region["width"]) * scale),
+                "height": int(int(region["height"]) * scale),
             }
         else:
             monitor = sct.monitors[0]

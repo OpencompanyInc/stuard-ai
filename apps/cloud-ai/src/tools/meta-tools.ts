@@ -90,6 +90,9 @@ const MEMORY_AI_TOOL_IDS = new Set([
     'memory_extract_texts',
     'search_past_conversations',
     'get_conversation_context',
+    'browse_topic_collections',
+    'get_collection_detail',
+    'synthesize_collection',
     'list_user_spaces',
     'get_space_contents',
     'add_to_space',
@@ -108,7 +111,17 @@ const MEMORY_AI_TOOL_IDS = new Set([
     'delete_space_item',
 ]);
 
-const MEMORY_AI_ALLOWLIST = new Set(['search_past_conversations', 'get_conversation_context']);
+const MEMORY_AI_ALLOWLIST = new Set([
+    'search_past_conversations', 'get_conversation_context',
+    'browse_topic_collections', 'get_collection_detail', 'synthesize_collection',
+    // Space management tools — must be registered so search_tools/get_tool_schema/execute_tool can find them
+    'list_user_spaces', 'get_space_contents', 'add_to_space',
+    'ensure_space_path', 'list_space_path', 'add_to_space_path', 'get_space_tree',
+    'create_space', 'get_memory_stats',
+    'add_source_to_space', 'add_note_to_space', 'add_code_snippet_to_space',
+    'link_conversation_to_space', 'find_or_create_space',
+    'update_space_item', 'delete_space_item',
+]);
 
 const LEGACY_BROWSER_EXTENSION_TOOL_IDS = new Set([
    'browser_get_content',
@@ -275,12 +288,105 @@ CLIPBOARD:
 NOTIFICATIONS:
   stuard.notify('Title', 'Body text');
 
+MARKDOWN RENDERING:
+  Use the built-in <Markdown> component to render markdown as real React elements.
+  Powered by react-markdown + remark-gfm + remark-math + rehype-katex.
+  Supports: GFM tables, task lists, strikethrough, code blocks, AND LaTeX/KaTeX math.
+
+  Usage:
+    <Markdown>{markdownString}</Markdown>
+    <Markdown content={markdownString} />
+    <Markdown src={markdownString} dark />
+
+  Props:
+    - content / src / children: the markdown string to render
+    - dark: boolean — use dark-mode styles (auto-detected if body has .dark class)
+    - compact: boolean — tighter spacing for small containers
+    - className: additional CSS classes
+    - style: inline style object
+    GFM (tables, strikethrough, task lists, autolinks) is always enabled via remark-gfm.
+    Math rendering (KaTeX) is always enabled via remark-math + rehype-katex.
+
+  MATH / LATEX:
+    - Inline math: use single dollar signs: $E = mc^2$ or \\(E = mc^2\\)
+    - Block/display math: use double dollar signs on their own line:
+        $$
+        \\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}
+        $$
+    - All standard LaTeX math notation is supported (fractions, matrices, Greek letters, etc.)
+    - Math inherits color from the parent element — works on dark and light backgrounds.
+
+  CSS classes for the container:
+    - markdown-body — base styled container (applied automatically)
+    - markdown-dark — dark mode variant (use dark prop or add class)
+    - markdown-compact — tighter spacing for small containers
+
+  Example:
+    function App() {
+      const md = "# Physics\\n\\nThe equation $F = ma$ relates force to acceleration.\\n\\n$$\\\\sum_{i=1}^{n} F_i = m \\\\cdot a$$\\n\\n- Item 1\\n- Item 2\\n\\n\`\`\`js\\nconsole.log('hi');\\n\`\`\`";
+      return <Markdown dark>{md}</Markdown>;
+    }
+
+  Also available: <CodeBlock code={codeString} language="js" copyable />
+    Shows code with a copy button. Props: code/children, language/lang, copyable (default true).
+
+TYPOGRAPHY & FONTS:
+  30+ Google Fonts are loaded. Use font-family classes to switch fonts on any element:
+
+  Sans-serif: font-inter, font-poppins, font-roboto, font-open-sans, font-lato, font-montserrat,
+    font-raleway, font-dm-sans (or font-dm), font-jakarta (or font-plus-jakarta), font-manrope,
+    font-sora, font-archivo, font-nunito, font-quicksand, font-comfortaa, font-ibm (or font-ibm-plex),
+    font-outfit, font-grotesk (or font-space-grotesk)
+  Serif: font-playfair, font-merriweather, font-lora, font-source-serif, font-dm-serif
+  Display/Condensed: font-bebas (or font-bebas-neue), font-oswald
+  Handwriting/Script: font-caveat, font-dancing (or font-dancing-script), font-pacifico,
+    font-marker (or font-permanent-marker), font-satisfy
+  Monospace: font-mono, font-code, font-jetbrains, font-fira-code, font-source-code,
+    font-space-mono, font-ibm-mono
+  Generic stacks: font-system, font-serif-stack, font-mono-stack
+
+  Font sizes: text-2xs (10px), text-xs (12px), text-sm (14px), text-base (16px), text-lg (18px),
+    text-xl (20px), text-2xl (24px), text-3xl (30px), text-4xl (36px), text-5xl (48px),
+    text-6xl (60px), text-7xl (72px), text-8xl (96px), text-9xl (128px)
+  Fluid/responsive: text-fluid-sm, text-fluid-base, text-fluid-lg, text-fluid-xl,
+    text-fluid-2xl, text-fluid-3xl, text-fluid-hero (auto-scales with window size via clamp())
+
+  Font weights: font-thin (100), font-extralight (200), font-light (300), font-normal (400),
+    font-medium (500), font-semibold (600), font-bold (700), font-extrabold (800), font-black (900)
+  Font style: italic, not-italic
+  Letter spacing: tracking-tighter, tracking-tight, tracking-normal, tracking-wide,
+    tracking-wider, tracking-widest
+  Line height: leading-none (1), leading-tight (1.25), leading-snug (1.375), leading-normal (1.5),
+    leading-relaxed (1.625), leading-loose (2), leading-3 through leading-10
+  Text transform: uppercase, lowercase, capitalize, normal-case
+  Text decoration: underline, overline, line-through, no-underline, decoration-solid/double/dotted/dashed/wavy,
+    decoration-1/2/4 (thickness), underline-offset-1/2/4/8
+  Text alignment: text-left, text-center, text-right, text-justify
+  OpenType: tabular-nums, small-caps, all-small-caps, slashed-zero, oldstyle-nums, ordinal
+
+  Typography presets (one class = complete style):
+    heading-display — bold modern sans (Outfit), tight tracking
+    heading-serif — elegant serif (Playfair Display)
+    heading-editorial — editorial serif (DM Serif Display)
+    heading-condensed — uppercase condensed (Bebas Neue), great for hero text
+    body-readable — long-form serif (Merriweather), wide line-height
+    body-clean — UI body text (Inter)
+    body-friendly — rounded friendly feel (Nunito/Quicksand)
+    label-ui — small UI labels (Inter medium 13px)
+    caption — subtle gray small text
+    overline — uppercase spaced category labels
+    code-block — code with ligatures (JetBrains Mono)
+
 CRITICAL RULES:
   1. EVERY button MUST have onClick. Use onClick={() => stuard.submit(data)} for submit/done/action buttons.
      A button without onClick does NOTHING and blocks the workflow forever.
   2. useVar auto-seeds from data: if data has {"name": "{{step1.json.name}}"}, useVar('name', '') returns it.
   3. Use JSX style objects: style={{color: 'red'}} NOT style="color: red".
   4. Use standard Tailwind classes (bg-slate-950), not arbitrary values (bg-[#050510]).
+  5. When displaying AI-generated text, summaries, descriptions, or any content that may contain
+     markdown (headers, bold, lists, code blocks, links), ALWAYS use <Markdown dark>{text}</Markdown>
+     instead of rendering in a <p> or <span>. Raw text in a <p> tag shows asterisks/hashtags literally.
+     The Markdown component renders them as actual formatted headings, bold, lists, etc.
 
 MULTI-PAGE:
   Use useState for page navigation inside the component:
@@ -406,8 +512,10 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'AI');
     } else if (['search_local_workflows', 'list_local_stuards', 'show_json_workflow_code', 'import_workflow', 'run_automation', 'stop_automation', 'create_workflow', 'workflow_modify', 'retrieve_tool_format', 'run_workflow', 'execute_workflow', 'invoke_workflow'].includes(name)) {
         registerTool(t, 'Workflow');
-    } else if (['search_past_conversations', 'get_conversation_context'].includes(name)) {
+    } else if (['search_past_conversations', 'get_conversation_context', 'browse_topic_collections', 'get_collection_detail', 'synthesize_collection'].includes(name)) {
         registerTool(t, 'Memory');
+    } else if (['list_user_spaces', 'get_space_contents', 'add_to_space', 'ensure_space_path', 'list_space_path', 'add_to_space_path', 'get_space_tree', 'create_space', 'get_memory_stats', 'add_source_to_space', 'add_note_to_space', 'add_code_snippet_to_space', 'link_conversation_to_space', 'find_or_create_space', 'update_space_item', 'delete_space_item'].includes(name)) {
+        registerTool(t, 'Spaces');
     } else if (['knowledge_add_instruction', 'knowledge_remember_about_user', 'knowledge_update_profile', 'knowledge_add_project_fact', 'knowledge_stats'].includes(name)) {
         registerTool(t, 'Knowledge');
     } else if (['calendar_crud', 'task_crud', 'task_reminders', 'planner_list_items'].includes(name)) {
@@ -502,7 +610,7 @@ export const search_tools = createTool({
     id: 'search_tools',
     description: 'Search for available tools by category or query string. Returns tool names and descriptions.',
     inputSchema: z.object({
-        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Streaming', 'Workflow', 'Memory', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'Discord', 'Reddit', 'YouTube', 'Marketplace', 'Variables', 'Database', 'Embeddings', 'Math', 'Feedback', 'Webhooks', 'Integrations', 'Canvas', 'Ollama', 'Other']).optional(),
+        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Streaming', 'Workflow', 'Memory', 'Spaces', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'Discord', 'Reddit', 'YouTube', 'Marketplace', 'Variables', 'Database', 'Embeddings', 'Math', 'Feedback', 'Webhooks', 'Integrations', 'Canvas', 'Ollama', 'Other']).optional(),
         query: z.string().optional(),
     }),
     outputSchema: z.object({

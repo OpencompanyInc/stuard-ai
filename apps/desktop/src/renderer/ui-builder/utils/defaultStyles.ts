@@ -205,17 +205,40 @@ export function styleToCSS(style: UIElementStyle): string {
   if (style.fontSize) {
     rules.push(`font-size: ${style.fontSize}px`);
   }
+  if (style.fontFamily) {
+    rules.push(`font-family: ${style.fontFamily}`);
+  }
   if (style.fontWeight) {
     const weights: Record<string, number> = {
+      thin: 100,
+      extralight: 200,
+      light: 300,
       normal: 400,
       medium: 500,
       semibold: 600,
       bold: 700,
+      extrabold: 800,
+      black: 900,
     };
     rules.push(`font-weight: ${weights[style.fontWeight] || 400}`);
   }
+  if (style.fontStyle && style.fontStyle !== 'normal') {
+    rules.push(`font-style: ${style.fontStyle}`);
+  }
   if (style.textAlign) {
     rules.push(`text-align: ${style.textAlign}`);
+  }
+  if (style.letterSpacing !== undefined) {
+    rules.push(`letter-spacing: ${style.letterSpacing}em`);
+  }
+  if (style.lineHeight !== undefined) {
+    rules.push(`line-height: ${style.lineHeight}`);
+  }
+  if (style.textTransform && style.textTransform !== 'none') {
+    rules.push(`text-transform: ${style.textTransform}`);
+  }
+  if (style.textDecoration && style.textDecoration !== 'none') {
+    rules.push(`text-decoration: ${style.textDecoration}`);
   }
   if (style.shadow && style.shadow !== 'none') {
     rules.push(`box-shadow: ${SHADOWS[style.shadow]}`);

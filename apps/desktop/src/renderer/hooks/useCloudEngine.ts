@@ -97,14 +97,26 @@ async function cloudFetch(path: string, opts?: RequestInit) {
   return resp.json();
 }
 
+// ── Module-level cache so tab re-mounts are instant ──────────────────
+interface EngineCache {
+  engine: CloudEngine | null;
+  metrics: CloudMetrics | null;
+  billing: CloudBilling | null;
+  snapshots: CloudSnapshot[];
+  deployments: CloudDeployment[];
+  ts: number; // last update timestamp
+}
+let _cache: EngineCache | null = null;
+const CACHE_MAX_AGE_MS = 60_000; // consider stale after 60s
+
 export function useCloudEngine() {
-  const [engine, setEngine] = useState<CloudEngine | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [engine, setEngine] = useState<CloudEngine | null>(_cache?.engine ?? null);
+  const [loading, setLoading] = useState(!_cache);
   const [error, setError] = useState<string | null>(null);
-  const [metrics, setMetrics] = useState<CloudMetrics | null>(null);
-  const [billing, setBilling] = useState<CloudBilling | null>(null);
-  const [snapshots, setSnapshots] = useState<CloudSnapshot[]>([]);
-  const [deployments, setDeployments] = useState<CloudDeployment[]>([]);
+  const [metrics, setMetrics] = useState<CloudMetrics | null>(_cache?.metrics ?? null);
+  const [billing, setBilling] = useState<CloudBilling | null>(_cache?.billing ?? null);
+  const [snapshots, setSnapshots] = useState<CloudSnapshot[]>(_cache?.snapshots ?? []);
+  const [deployments, setDeployments] = useState<CloudDeployment[]>(_cache?.deployments ?? []);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchEngine = useCallback(async () => {
@@ -113,7 +125,7 @@ export function useCloudEngine() {
       if (data.ok && data.engine) {
         // Map camelCase server response to our snake_case interface
         const e = data.engine;
-        setEngine({
+        const mapped: CloudEngine = {
           id: e.id || '',
           user_id: e.user_id || e.userId || '',
           instance_name: e.instance_name || e.instanceName || '',
@@ -128,22 +140,28 @@ export function useCloudEngine() {
           health_status: e.health_status || e.healthStatus,
           external_ip: e.external_ip || e.externalIp,
           provision_step: e.provision_step || e.provisionStep || null,
-        });
+        };
+        setEngine(mapped);
         // Extract billing from status response
+        let mappedBilling: CloudBilling | null = null;
         if (data.billing) {
-          setBilling({
+          mappedBilling = {
             total_credits_used: data.billing.total_credits_used ?? data.billing.totalCreditsUsed ?? 0,
             compute_credits: data.billing.compute_credits ?? data.billing.computeCredits ?? 0,
             storage_credits: data.billing.storage_credits ?? data.billing.storageCredits ?? 0,
             current_tier: data.billing.current_tier ?? data.billing.currentTier ?? e.tier,
             engine_status: e.status,
             hours_this_month: data.billing.hours_this_month ?? data.billing.hoursThisMonth ?? 0,
-          });
+          };
+          setBilling(mappedBilling);
         }
+        // Update module cache
+        _cache = { ...(_cache || { snapshots: [], deployments: [] }), engine: mapped, billing: mappedBilling ?? _cache?.billing ?? null, metrics: _cache?.metrics ?? null, snapshots: _cache?.snapshots ?? [], deployments: _cache?.deployments ?? [], ts: Date.now() };
         setError(null);
       } else if (data.ok && !data.engine) {
         setEngine(null);
         setBilling(null);
+        _cache = null;
         setError(null);
       } else {
         setError(data.message || data.error || 'Could not load cloud engine status');
@@ -160,6 +178,7 @@ export function useCloudEngine() {
       const data = await cloudFetch('/v1/cloud-engine/metrics');
       if (data.ok && data.metrics) {
         setMetrics(data.metrics);
+        if (_cache) { _cache.metrics = data.metrics; _cache.ts = Date.now(); }
       }
     } catch {
       // Silently fail — metrics are optional
@@ -284,7 +303,7 @@ export function useCloudEngine() {
   const destroy = useCallback(async () => {
     try {
       const data = await cloudFetch('/v1/cloud-engine', { method: 'DELETE' });
-      if (data.ok) { setEngine(null); setMetrics(null); setBilling(null); setSnapshots([]); setError(null); }
+      if (data.ok) { setEngine(null); setMetrics(null); setBilling(null); setSnapshots([]); setError(null); _cache = null; }
       else setError(data.message || data.error || 'Failed to delete engine');
     } catch {
       setError('Connection failed');
@@ -295,7 +314,11 @@ export function useCloudEngine() {
   const fetchSnapshots = useCallback(async () => {
     try {
       const data = await cloudFetch('/v1/cloud-engine/snapshots');
-      if (data.ok) setSnapshots(data.snapshots || []);
+      if (data.ok) {
+        const snaps = data.snapshots || [];
+        setSnapshots(snaps);
+        if (_cache) { _cache.snapshots = snaps; _cache.ts = Date.now(); }
+      }
     } catch { /* silent */ }
   }, []);
 
@@ -335,7 +358,11 @@ export function useCloudEngine() {
   const fetchDeployments = useCallback(async () => {
     try {
       const data = await cloudFetch('/v1/cloud-engine/deploys');
-      if (data.ok) setDeployments(data.deployments || []);
+      if (data.ok) {
+        const deps = data.deployments || [];
+        setDeployments(deps);
+        if (_cache) { _cache.deployments = deps; _cache.ts = Date.now(); }
+      }
     } catch { /* silent */ }
   }, []);
 

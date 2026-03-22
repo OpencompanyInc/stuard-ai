@@ -10,7 +10,7 @@ from aiohttp import web
 from browser_server import state
 from browser_server.utils import _safe_json, _ok, _err, _clamp_int, _make_json_safe
 from browser_server.lifecycle import (
-    _ensure_browser, _get_page_url, _get_page_title, _evaluate, _wait_for_selector,
+    _ensure_browser, _page_is_alive, _get_page_url, _get_page_title, _evaluate, _wait_for_selector,
 )
 
 
@@ -24,9 +24,9 @@ async def handle_screenshot(req: web.Request) -> web.Response:
         try:
             full_page = body.get("full_page", False)
             if hasattr(state._page, "screenshot"):
-                screenshot_dir = Path(tempfile.gettempdir()) / "stuard-browser-use-screenshots"
+                screenshot_dir = Path(tempfile.gettempdir()) / "stuard-browser-screenshots"
                 screenshot_dir.mkdir(parents=True, exist_ok=True)
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="browser-use-", dir=str(screenshot_dir)) as tmp:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="browser-", dir=str(screenshot_dir)) as tmp:
                     screenshot_path = Path(tmp.name)
                 if "full_page" in str(state._page.screenshot):
                     raw_screenshot = await state._page.screenshot(full_page=full_page)
@@ -47,16 +47,115 @@ async def handle_screenshot(req: web.Request) -> web.Response:
                 screenshot_path.write_bytes(screenshot_bytes)
             else:
                 return _err("Screenshot not supported")
-            return _ok({
+            include_base64 = body.get("include_base64", False)
+            result = {
                 "image_path": str(screenshot_path),
                 "screenshot_path": str(screenshot_path),
                 "format": "png",
                 "url": await _get_page_url(),
                 "width": int(await _evaluate("() => String(window.innerWidth || 0)") or "0"),
                 "height": int(await _evaluate("() => String(window.innerHeight || 0)") or "0"),
-            })
+            }
+            if include_base64:
+                result["base64"] = base64.b64encode(screenshot_bytes).decode("ascii")
+            return _ok(result)
         except Exception as e:
             return _err(f"Screenshot failed: {e}")
+
+
+async def handle_screenshot_mirror(req: web.Request) -> web.Response:
+    """Fast screenshot endpoint for sidebar mirroring.
+
+    Returns raw JPEG bytes with image/jpeg content-type for efficiency.
+    Query params: quality (1-100, default 60), width (optional resize).
+
+    This is a hot-path endpoint called every 500-1000ms by the sidebar.
+    It does NOT acquire state._lock or call _ensure_browser() — the browser
+    must already be running. This avoids lock contention that causes the
+    headed window to shake/glitch.
+    """
+    quality = min(100, max(1, int(req.query.get("quality", "60"))))
+    resize_width = int(req.query.get("width", "0")) or 0
+
+    if state._page is None or not await _page_is_alive():
+        return web.Response(status=503, text="Browser not running")
+
+    try:
+        if not hasattr(state._page, "screenshot"):
+            return web.Response(status=503, text="Screenshot not supported")
+
+        raw = await state._page.screenshot(type="jpeg", quality=quality)
+        if isinstance(raw, memoryview):
+            img_bytes = raw.tobytes()
+        elif isinstance(raw, (bytes, bytearray)):
+            img_bytes = bytes(raw)
+        else:
+            return web.Response(status=500, text="Unexpected screenshot format")
+
+        if resize_width > 0:
+            try:
+                import io
+                from PIL import Image
+                img = Image.open(io.BytesIO(img_bytes))
+                ratio = resize_width / img.width
+                new_h = int(img.height * ratio)
+                img = img.resize((resize_width, new_h), Image.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=quality)
+                img_bytes = buf.getvalue()
+            except ImportError:
+                pass  # PIL not available, return original size
+
+        url = await _get_page_url()
+        title = await _get_page_title(timeout=0.3)
+
+        # Cache viewport size — avoid JS eval on every poll
+        vw = str(state._viewport_cache.get("w", 1280))
+        vh = str(state._viewport_cache.get("h", 900))
+
+        return web.Response(
+            body=img_bytes,
+            content_type="image/jpeg",
+            headers={
+                "X-Page-Url": url or "",
+                "X-Page-Title": title or "",
+                "X-Viewport-Width": vw,
+                "X-Viewport-Height": vh,
+                "Cache-Control": "no-cache, no-store",
+            },
+        )
+    except Exception as e:
+        return web.Response(status=500, text=f"Screenshot failed: {e}")
+
+
+async def handle_click_at(req: web.Request) -> web.Response:
+    """Click at specific x,y coordinates using Playwright mouse."""
+    body = await _safe_json(req)
+    x = body.get("x")
+    y = body.get("y")
+    if x is None or y is None:
+        return _err("x and y are required")
+    x = float(x)
+    y = float(y)
+    click_type = str(body.get("type", "click"))  # click, dblclick
+
+    async with state._lock:
+        ok, err = await _ensure_browser()
+        if not ok:
+            return _err(err or "Browser init failed", status=500)
+        try:
+            mouse = getattr(state._page, "mouse", None)
+            if mouse is None:
+                return _err("Mouse not available")
+
+            if click_type == "dblclick":
+                await mouse.dblclick(x, y)
+            else:
+                await mouse.click(x, y)
+
+            return _ok({"clicked_at": {"x": x, "y": y}, "type": click_type})
+        except Exception as e:
+            return _err(f"Click at coordinates failed: {e}")
 
 
 async def handle_content(req: web.Request) -> web.Response:
@@ -306,8 +405,8 @@ async def handle_execute_script(req: web.Request) -> web.Response:
     wait_timeout = _clamp_int(body.get("wait_timeout", 5000), 5000, 250, 120000)
     timeout_ms = _clamp_int(body.get("timeout", 30000), 30000, 250, 300000)
     # Inline args as JSON so we don't need to pass them through evaluate().
-    # Outer () => wrapper satisfies browser-use's format validation (must start
-    # with "("), and the inner async IIFE preserves await support for user scripts.
+    # Outer () => wrapper ensures evaluate() receives a proper function expression,
+    # and the inner async IIFE preserves await support for user scripts.
     args_json = json.dumps(script_args, default=str)
     wrapped_script = (
         "() => {\n"

@@ -97,10 +97,16 @@ function getProfileProvider(toolName: string, argKey: string): { provider: strin
  * Unescape double-escaped component code from LLM output.
  * Converts literal \n → newline, \t → tab, \" → ", \' → '
  * so the code editor shows properly formatted code.
+ *
+ * Only triggers when the code has NO real newlines (indicating double JSON
+ * encoding). If the code already has real newlines, \n sequences are
+ * legitimate JS escape sequences (e.g., 'Hello\nWorld') and must stay.
  */
 function unescapeComponentCode(code: string): string {
   if (!code) return code;
-  // Detect double-escaping: has literal \n or \" text
+  // If code already has real newlines, the \n sequences are real JS escapes — don't touch
+  if (code.includes('\n')) return code;
+  // Detect double-escaping: has literal \n or \" text but no real newlines
   const hasLiteralEscapes = code.includes('\\n') || code.includes('\\t') || code.includes('\\"');
   if (!hasLiteralEscapes) return code;
   // Preserve real backslashes first
@@ -772,7 +778,7 @@ export function ToolArgsEditor({
                 width: args.window?.width || args.width || 600,
                 height: args.window?.height || args.height || 450,
                 position: args.window?.position || args.position || 'center',
-                alwaysOnTop: args.window?.alwaysOnTop ?? args.alwaysOnTop ?? true,
+                alwaysOnTop: args.window?.alwaysOnTop ?? args.alwaysOnTop ?? false,
                 frameless: args.window?.frameless ?? args.frameless ?? false,
                 transparent: args.window?.transparent ?? args.transparent ?? false,
                 borderRadius: args.window?.borderRadius || args.borderRadius || 12,
@@ -924,7 +930,7 @@ export function ToolArgsEditor({
               width: args.window?.width || args.width || 600,
               height: args.window?.height || args.height || 450,
               position: args.window?.position || args.position || 'center',
-              alwaysOnTop: args.window?.alwaysOnTop ?? args.alwaysOnTop ?? true,
+              alwaysOnTop: args.window?.alwaysOnTop ?? args.alwaysOnTop ?? false,
               frameless: args.window?.frameless ?? args.frameless ?? false,
               transparent: args.window?.transparent ?? args.transparent ?? false,
               borderRadius: args.window?.borderRadius || args.borderRadius || 12,

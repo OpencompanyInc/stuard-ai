@@ -10,6 +10,7 @@ from .session import WebSocketSession
 from .chat import handle_chat
 from .tools import handle_tool_exec
 from ..tools import tasks as tasks_tools
+from .. import permissions as vm_permissions
 
 logger = get_logger("agent")
 
@@ -140,6 +141,26 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 # Desktop client sends auth after handshake for webhook registration.
                 # Local agent has no auth – just acknowledge silently.
                 await session.send_json({"type": "auth_result", "ok": True, "queued": 0})
+
+            elif kind == "permissions_get":
+                # Return current VM tool permissions config
+                try:
+                    config = vm_permissions.get()
+                    await session.send_json({"type": "permissions", "ok": True, "config": config})
+                except Exception:
+                    await session.send_json({"type": "permissions", "ok": False, "error": "failed to read permissions"})
+
+            elif kind == "permissions_update":
+                # Update VM tool permissions config
+                try:
+                    new_config = msg.get("config") or {}
+                    vm_permissions.save(new_config)
+                    config = vm_permissions.get()
+                    await session.send_json({"type": "permissions", "ok": True, "config": config})
+                    logger.info("permissions_updated mode=%s", config.get("mode"))
+                except Exception:
+                    logger.exception("permissions_update_error")
+                    await session.send_json({"type": "permissions", "ok": False, "error": "failed to update permissions"})
 
             else:
                 logger.warning("unknown_message_type %s", kind)

@@ -421,7 +421,17 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={config.alwaysOnTop !== false}
+                  checked={config.frameless === true}
+                  onChange={(e) => updateConfig('frameless', e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                <span className="text-sm text-slate-700">Frameless window (no title bar)</span>
+              </label>
+
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.alwaysOnTop === true}
                   onChange={(e) => updateConfig('alwaysOnTop', e.target.checked)}
                   className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                 />
@@ -431,11 +441,11 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={config.frameless === true}
-                  onChange={(e) => updateConfig('frameless', e.target.checked)}
+                  checked={config.minimizable !== false}
+                  onChange={(e) => updateConfig('minimizable', e.target.checked)}
                   className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                 />
-                <span className="text-sm text-slate-700">Frameless window (no title bar)</span>
+                <span className="text-sm text-slate-700">Minimizable</span>
               </label>
 
               <label className="flex items-center gap-2 cursor-pointer">
@@ -1020,12 +1030,55 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                       }}
                       className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
                     >
-                      <option value="system">System Default</option>
-                      <option value="Inter, sans-serif">Inter</option>
-                      <option value="'Roboto', sans-serif">Roboto</option>
-                      <option value="'Poppins', sans-serif">Poppins</option>
-                      <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
-                      <option value="Georgia, serif">Georgia</option>
+                      <optgroup label="System">
+                        <option value="system">System Default</option>
+                      </optgroup>
+                      <optgroup label="Sans-Serif">
+                        <option value="'Inter', system-ui, sans-serif">Inter</option>
+                        <option value="'Poppins', system-ui, sans-serif">Poppins</option>
+                        <option value="'Roboto', system-ui, sans-serif">Roboto</option>
+                        <option value="'Open Sans', system-ui, sans-serif">Open Sans</option>
+                        <option value="'Lato', system-ui, sans-serif">Lato</option>
+                        <option value="'Montserrat', system-ui, sans-serif">Montserrat</option>
+                        <option value="'Raleway', system-ui, sans-serif">Raleway</option>
+                        <option value="'Outfit', system-ui, sans-serif">Outfit</option>
+                        <option value="'DM Sans', system-ui, sans-serif">DM Sans</option>
+                        <option value="'Plus Jakarta Sans', system-ui, sans-serif">Plus Jakarta Sans</option>
+                        <option value="'Manrope', system-ui, sans-serif">Manrope</option>
+                        <option value="'Sora', system-ui, sans-serif">Sora</option>
+                        <option value="'Archivo', system-ui, sans-serif">Archivo</option>
+                        <option value="'Space Grotesk', system-ui, sans-serif">Space Grotesk</option>
+                        <option value="'Nunito', system-ui, sans-serif">Nunito</option>
+                        <option value="'Quicksand', system-ui, sans-serif">Quicksand</option>
+                        <option value="'Comfortaa', system-ui, sans-serif">Comfortaa</option>
+                        <option value="'IBM Plex Sans', system-ui, sans-serif">IBM Plex Sans</option>
+                      </optgroup>
+                      <optgroup label="Serif">
+                        <option value="'Playfair Display', Georgia, serif">Playfair Display</option>
+                        <option value="'Merriweather', Georgia, serif">Merriweather</option>
+                        <option value="'Lora', Georgia, serif">Lora</option>
+                        <option value="'Source Serif 4', Georgia, serif">Source Serif 4</option>
+                        <option value="'DM Serif Display', Georgia, serif">DM Serif Display</option>
+                        <option value="Georgia, serif">Georgia</option>
+                      </optgroup>
+                      <optgroup label="Display">
+                        <option value="'Bebas Neue', Impact, sans-serif">Bebas Neue</option>
+                        <option value="'Oswald', Impact, sans-serif">Oswald</option>
+                      </optgroup>
+                      <optgroup label="Handwriting">
+                        <option value="'Caveat', cursive">Caveat</option>
+                        <option value="'Dancing Script', cursive">Dancing Script</option>
+                        <option value="'Pacifico', cursive">Pacifico</option>
+                        <option value="'Permanent Marker', cursive">Permanent Marker</option>
+                        <option value="'Satisfy', cursive">Satisfy</option>
+                      </optgroup>
+                      <optgroup label="Monospace">
+                        <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
+                        <option value="'Fira Code', monospace">Fira Code</option>
+                        <option value="'Source Code Pro', monospace">Source Code Pro</option>
+                        <option value="'Space Mono', monospace">Space Mono</option>
+                        <option value="'IBM Plex Mono', monospace">IBM Plex Mono</option>
+                      </optgroup>
                     </select>
                   </div>
                   <div>

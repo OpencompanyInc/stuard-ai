@@ -944,6 +944,73 @@ export async function storeMessageLocally(
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// TOPIC NORMALIZATION — prevent topic fragmentation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let _topicCache: { topics: string[]; expiresAt: number } = { topics: [], expiresAt: 0 };
+const TOPIC_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+async function getExistingTopics(): Promise<string[]> {
+  if (Date.now() < _topicCache.expiresAt && _topicCache.topics.length > 0) {
+    return _topicCache.topics;
+  }
+
+  try {
+    const result = await execLocalTool('segment_build_topic_drawers', {
+      limit_topics: 200,
+      limit_segments_per_topic: 0,
+      segments_scan_limit: 2000,
+    }, undefined, 10000);
+
+    const drawers: any[] = result?.drawers || [];
+    const topics = drawers.map((d: any) => String(d.topic || '').trim()).filter(Boolean);
+    _topicCache = { topics, expiresAt: Date.now() + TOPIC_CACHE_TTL_MS };
+    return topics;
+  } catch {
+    return _topicCache.topics; // return stale cache on error
+  }
+}
+
+/**
+ * Normalize proposed topics against existing topic names.
+ * Uses case-insensitive substring matching to merge near-duplicates.
+ */
+async function normalizeTopics(proposedTopics: string[]): Promise<string[]> {
+  const existing = await getExistingTopics();
+  if (existing.length === 0) return proposedTopics;
+
+  const existingLower = existing.map((t) => t.toLowerCase());
+
+  return proposedTopics.map((proposed) => {
+    const pLower = proposed.toLowerCase().trim();
+    if (!pLower) return proposed;
+
+    // Exact match (case-insensitive)
+    const exactIdx = existingLower.indexOf(pLower);
+    if (exactIdx >= 0) return existing[exactIdx];
+
+    // Substring match: "React.js" matches existing "React", "ReactJS" matches "React"
+    // Also: "React" matches existing "React Development"
+    for (let i = 0; i < existing.length; i++) {
+      const eLower = existingLower[i];
+      // proposed is a substring of existing (e.g., "React" matches "React Development")
+      if (eLower.includes(pLower) && pLower.length >= 3) return existing[i];
+      // existing is a substring of proposed (e.g., existing "React" found in "React.js")
+      if (pLower.includes(eLower) && eLower.length >= 3) return existing[i];
+    }
+
+    // Strip common suffixes and try again
+    const stripped = pLower.replace(/\.(js|ts|py|go|rs)$/i, '').replace(/js$/i, '').trim();
+    if (stripped !== pLower) {
+      const stripIdx = existingLower.indexOf(stripped);
+      if (stripIdx >= 0) return existing[stripIdx];
+    }
+
+    return proposed; // No match — keep as-is
+  });
+}
+
 export async function processConversationTurn(
   conversationId: string,
   messages: Array<{ role: string; content: any }>
@@ -982,11 +1049,14 @@ export async function processConversationTurn(
       lastSegment?.topics
     );
 
-    writeLog('segment_analysis', { 
-      conversationId, 
-      action: analysis.action, 
+    // Normalize topics to prevent fragmentation (React.js -> React, etc.)
+    analysis.topics = await normalizeTopics(analysis.topics);
+
+    writeLog('segment_analysis', {
+      conversationId,
+      action: analysis.action,
       reason: analysis.reason,
-      topics: analysis.topics 
+      topics: analysis.topics
     });
 
     // Handle based on AI's decision
@@ -1094,5 +1164,61 @@ export async function processConversationTurn(
     });
   } catch (error) {
     writeLog('conversation_processing_error', { conversationId, error: String(error) });
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COLLECTION CONTEXT — runtime injection of relevant topic summaries
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Build a concise collection-context block for prompt injection.
+ *
+ * Given a query embedding, finds the most relevant topic drawers and
+ * returns a formatted text block that can be appended to the knowledge context.
+ * Also checks pre-computed collection summaries.
+ */
+export async function buildCollectionContext(
+  queryEmbedding: number[],
+  options?: { maxTopics?: number }
+): Promise<string> {
+  const maxTopics = options?.maxTopics ?? 3;
+
+  try {
+    const result = await execLocalTool('segment_search_drawers_by_embedding', {
+      vector: queryEmbedding,
+      limit: maxTopics,
+    }, undefined, 10000);
+
+    if (!result?.ok) return '';
+
+    const sections: string[] = [];
+
+    // Prefer pre-computed collection summaries if available
+    const collectionSummaries: any[] = result.collection_summaries || [];
+    const topicHits: any[] = result.topics || [];
+
+    // Merge: use collection summaries when available, fall back to raw topic hits
+    const usedTopics = new Set<string>();
+    for (const cs of collectionSummaries.slice(0, maxTopics)) {
+      if (!cs.topic || !cs.summary) continue;
+      sections.push(`- "${cs.topic}" (${cs.segment_count || '?'} conversations): ${cs.summary}`);
+      usedTopics.add(String(cs.topic).toLowerCase());
+    }
+
+    // Fill remaining slots with raw topic hits
+    for (const hit of topicHits) {
+      if (sections.length >= maxTopics) break;
+      if (usedTopics.has(String(hit.topic || '').toLowerCase())) continue;
+      sections.push(`- "${hit.topic}" (${hit.segment_count || '?'} conversations, latest: ${String(hit.latest_at || '').slice(0, 10) || '?'})`);
+    }
+
+    if (sections.length === 0) return '';
+
+    return `[RELEVANT COLLECTIONS]\n${sections.join('\n')}`;
+  } catch (error) {
+    writeLog('build_collection_context_error', { error: String(error) });
+    return '';
   }
 }

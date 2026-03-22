@@ -1,6 +1,10 @@
 import { createTool } from '@mastra/core/tools';
+import { generateText } from 'ai';
 import { z } from 'zod';
 import { hasClientBridge } from './shared';
+import { execLocalTool } from '../bridge';
+import { buildProviderModel } from '../../utils/models';
+import { getDefaultModelForCategory } from '../../pricing';
 import * as memoryService from '../../memory/conversations';
 
 function normalizePath(rawPath: unknown): string[] {
@@ -232,6 +236,229 @@ export const search_past_conversations = createTool({
     }
   },
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COLLECTION TOOLS — Give the agent access to topic drawers / collections
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const browse_topic_collections = createTool({
+  id: 'browse_topic_collections',
+  description:
+    'Browse conversation topic collections — returns a table of contents of all discussion topics with counts and dates. Use this when the user asks what topics you have discussed, or when you need an overview of conversation history organized by topic.',
+  inputSchema: z.object({
+    query: z.string().optional().default('').describe('Optional text filter for topic names'),
+    limit: z.number().int().min(1).max(50).default(20).optional(),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    topics: z
+      .array(
+        z.object({
+          topic: z.string(),
+          count: z.number(),
+          cluster_count: z.number(),
+          latest_at: z.string().nullable(),
+        }),
+      )
+      .optional(),
+    error: z.string().optional(),
+  }),
+  execute: async (inputData) => {
+    if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
+    try {
+      const c = inputData as any;
+      const result = await execLocalTool('segment_build_topic_drawers', {
+        query: c.query || undefined,
+        limit_topics: c.limit || 20,
+        limit_segments_per_topic: 1, // minimal — just need metadata
+        segments_scan_limit: 2000,
+      });
+      if (!result?.ok) return { ok: false, error: result?.error || 'Failed', topics: [] };
+      const topics = (result.drawers || []).map((d: any) => ({
+        topic: d.topic,
+        count: d.count || 0,
+        cluster_count: Array.isArray(d.clusters) ? d.clusters.length : 0,
+        latest_at: d.latest_at || null,
+      }));
+      return { ok: true, topics };
+    } catch (error) {
+      return { ok: false, error: String(error) };
+    }
+  },
+});
+
+export const get_collection_detail = createTool({
+  id: 'get_collection_detail',
+  description:
+    'Get detailed view of a single topic collection — its clusters and segment summaries. Use after browse_topic_collections to drill into a specific topic.',
+  inputSchema: z.object({
+    topic: z.string().describe('The topic name to get details for'),
+    max_clusters: z.number().int().min(1).max(20).default(8).optional(),
+    max_segments_per_cluster: z.number().int().min(1).max(10).default(5).optional(),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    topic: z.string().optional(),
+    clusters: z
+      .array(
+        z.object({
+          title: z.string(),
+          count: z.number(),
+          segments: z.array(
+            z.object({
+              id: z.string(),
+              conversation_id: z.string(),
+              summary: z.string().optional(),
+              topics: z.array(z.string()).optional(),
+              created_at: z.string(),
+            }),
+          ),
+        }),
+      )
+      .optional(),
+    error: z.string().optional(),
+  }),
+  execute: async (inputData) => {
+    if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
+    try {
+      const c = inputData as any;
+      const topicQuery = String(c.topic || '').trim();
+      if (!topicQuery) return { ok: false, error: 'topic is required' };
+
+      const result = await execLocalTool('segment_build_topic_drawers', {
+        query: topicQuery,
+        limit_topics: 5,
+        limit_segments_per_topic: (c.max_clusters || 8) * (c.max_segments_per_cluster || 5),
+        segments_scan_limit: 2000,
+      });
+      if (!result?.ok) return { ok: false, error: result?.error || 'Failed' };
+
+      // Find the best matching drawer
+      const drawers: any[] = result.drawers || [];
+      const match = drawers.find(
+        (d: any) => String(d.topic || '').toLowerCase() === topicQuery.toLowerCase(),
+      ) || drawers[0];
+
+      if (!match) return { ok: true, topic: topicQuery, clusters: [] };
+
+      const maxClusters = c.max_clusters || 8;
+      const maxSegs = c.max_segments_per_cluster || 5;
+      const clusters = (match.clusters || []).slice(0, maxClusters).map((cl: any) => ({
+        title: cl.title || 'Cluster',
+        count: cl.count || 0,
+        segments: (cl.segments || []).slice(0, maxSegs).map((s: any) => ({
+          id: s.id,
+          conversation_id: s.conversation_id,
+          summary: s.summary,
+          topics: s.topics,
+          created_at: s.created_at,
+        })),
+      }));
+
+      return { ok: true, topic: match.topic, clusters };
+    } catch (error) {
+      return { ok: false, error: String(error) };
+    }
+  },
+});
+
+export const synthesize_collection = createTool({
+  id: 'synthesize_collection',
+  description:
+    'Synthesize a narrative summary across all conversations in a topic collection. Use when the user asks "what do you know about X" or "summarize everything about X".',
+  inputSchema: z.object({
+    topic: z.string().describe('The topic to synthesize'),
+    focus: z.string().optional().describe('Optional focus area within the topic'),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    synthesis: z.string().optional(),
+    segment_count: z.number().optional(),
+    date_range: z
+      .object({
+        earliest: z.string(),
+        latest: z.string(),
+      })
+      .optional(),
+    error: z.string().optional(),
+  }),
+  execute: async (inputData) => {
+    if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
+    try {
+      const c = inputData as any;
+      const topicQuery = String(c.topic || '').trim();
+      if (!topicQuery) return { ok: false, error: 'topic is required' };
+
+      // Fetch segments for this topic
+      const result = await execLocalTool('segment_build_topic_drawers', {
+        query: topicQuery,
+        limit_topics: 3,
+        limit_segments_per_topic: 20,
+        segments_scan_limit: 2000,
+      });
+
+      const drawers: any[] = result?.drawers || [];
+      const match = drawers.find(
+        (d: any) => String(d.topic || '').toLowerCase() === topicQuery.toLowerCase(),
+      ) || drawers[0];
+
+      if (!match || !match.clusters?.length) {
+        return { ok: true, synthesis: `No conversations found about "${topicQuery}".`, segment_count: 0 };
+      }
+
+      // Collect all segment summaries
+      const allSegments: any[] = [];
+      for (const cluster of match.clusters) {
+        for (const seg of cluster.segments || []) {
+          allSegments.push(seg);
+        }
+      }
+
+      if (allSegments.length === 0) {
+        return { ok: true, synthesis: `Topic "${topicQuery}" exists but has no segment summaries.`, segment_count: 0 };
+      }
+
+      // Sort by date and take up to 20
+      allSegments.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+      const top = allSegments.slice(0, 20);
+
+      const summaryBlock = top
+        .map((s, i) => `[${i + 1}] (${s.created_at?.slice(0, 10) || '?'}): ${s.summary || 'No summary'}`)
+        .join('\n');
+
+      const dates = top.map((s) => s.created_at || '').filter(Boolean).sort();
+      const dateRange = { earliest: dates[0] || '', latest: dates[dates.length - 1] || '' };
+
+      // Use fast LLM to produce a synthesized narrative
+      const modelId = getDefaultModelForCategory('fast');
+      const model = buildProviderModel(modelId);
+
+      const focusInstruction = c.focus
+        ? `\nFocus specifically on: ${c.focus}`
+        : '';
+
+      const { text: synthesis } = await generateText({
+        model: model as any,
+        system: `You synthesize conversation segment summaries into a coherent narrative about a topic. Be concise (2-4 paragraphs). Include key facts, decisions, and outcomes. Mention approximate dates when relevant.${focusInstruction}`,
+        prompt: `Topic: "${topicQuery}"\n\nConversation segments (${top.length} most recent):\n${summaryBlock}`,
+        temperature: 0.3,
+      });
+
+      return {
+        ok: true,
+        synthesis: synthesis.trim(),
+        segment_count: allSegments.length,
+        date_range: dateRange,
+      };
+    } catch (error) {
+      return { ok: false, error: String(error) };
+    }
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SPACE TOOLS
+// ═══════════════════════════════════════════════════════════════════════════════
 
 export const ensure_space_path = createTool({
   id: 'ensure_space_path',

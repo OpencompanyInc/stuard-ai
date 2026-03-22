@@ -32,7 +32,7 @@ export type UIElementType =
 
 export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'outline';
 export type TextAlign = 'left' | 'center' | 'right';
-export type FontWeight = 'normal' | 'medium' | 'semibold' | 'bold';
+export type FontWeight = 'thin' | 'extralight' | 'light' | 'normal' | 'medium' | 'semibold' | 'bold' | 'extrabold' | 'black';
 export type ShadowSize = 'none' | 'sm' | 'md' | 'lg' | 'xl';
 export type LayoutMode = 'free' | 'flex-row' | 'flex-col' | 'grid';
 export type FlexAlign = 'start' | 'center' | 'end' | 'stretch';
@@ -50,8 +50,14 @@ export interface UIElementStyle {
   padding?: number | [number, number, number, number];
   margin?: number | [number, number, number, number];
   fontSize?: number;
+  fontFamily?: string;
   fontWeight?: FontWeight;
+  fontStyle?: 'normal' | 'italic';
   textAlign?: TextAlign;
+  letterSpacing?: number;  // em units (e.g. -0.05, 0, 0.025, 0.05, 0.1)
+  lineHeight?: number;     // unitless multiplier (e.g. 1, 1.25, 1.5, 2)
+  textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize';
+  textDecoration?: 'none' | 'underline' | 'line-through';
   shadow?: ShadowSize;
   opacity?: number;
   minWidth?: number;
@@ -207,8 +213,10 @@ export interface UIWindowConfig {
   borderRadius: number;
   resizable?: boolean;
   minimizable?: boolean;
+  maximizable?: boolean;
   closable?: boolean;
   draggable?: boolean;
+  skipTaskbar?: boolean;
   title?: string;
 
   // === ENHANCED WINDOW APPEARANCE ===

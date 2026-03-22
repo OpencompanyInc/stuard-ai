@@ -179,6 +179,103 @@
   background-color: var(--primary);
 }
 
+/* Memories: dark-mode collection cards should read deeper than default card surfaces */
+[data-theme='dark'] .memory-collection-card,
+[data-theme='dark'] .memory-collection-folder {
+  background-color: #171717 !important;
+}
+
+[data-theme='dark'] .memory-collection-card:hover,
+[data-theme='dark'] .memory-collection-folder:hover {
+  background-color: #1b1b1b !important;
+}
+
+/* Memories: opened collection panel should be darker, with lighter inner elements */
+[data-theme='dark'] .memory-collection-detail {
+  background-color: #0f0f0f !important;
+}
+
+[data-theme='dark'] .memory-collection-detail .memory-collection-folder {
+  background-color: #222222 !important;
+}
+
+[data-theme='dark'] .memory-collection-detail .memory-collection-folder:hover {
+  background-color: #292929 !important;
+}
+
+[data-theme='dark'] .memory-collection-sublist {
+  background-color: #161616 !important;
+}
+
+[data-theme='dark'] .memory-collection-subitem {
+  background-color: #2a2a2a !important;
+}
+
+[data-theme='dark'] .memory-collection-subitem:hover {
+  background-color: #323232 !important;
+}
+
+/* Memories: dark mode active top tab should be white with black text */
+[data-theme='dark'] .memory-mode-tab.memory-mode-tab-active {
+  background-color: #ffffff !important;
+  color: #000000 !important;
+}
+
+.memory-context-surface {
+  background-color: var(--card-bg);
+}
+
+.memory-context-card {
+  background-color: var(--card-bg);
+}
+
+[data-theme='dark'] .memory-context-surface {
+  background-color: #101010;
+}
+
+[data-theme='dark'] .memory-context-card {
+  background-color: #1c1c1c;
+}
+
+.memory-context-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.26) transparent;
+}
+
+.memory-context-scrollbar::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+
+.memory-context-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.memory-context-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.26);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.memory-context-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.42);
+}
+
+[data-theme='dark'] .memory-context-scrollbar {
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+[data-theme='dark'] .memory-context-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+[data-theme='dark'] .memory-context-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
 .text-primary-fg {
   color: var(--primary-foreground);
 }
@@ -403,7 +500,7 @@
 }
 
 /* ========================================================================
-   Workflow Studio Theme Variables
+   Stuard Studio Theme Variables
    Scoped via [data-wf-theme] on the workflow root container.
    ======================================================================== */
 
@@ -907,6 +1004,85 @@ body {
 
 .animate-spin {
   animation: spin 1s linear infinite;
+}
+
+/* ─── Tool Call Glow Sweep ─── */
+@keyframes toolGlowSweep {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+@keyframes toolGlowBar {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0.6;
+  }
+}
+
+@keyframes toolFadeComplete {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.tool-glow-sweep {
+  background: linear-gradient(
+    90deg,
+    var(--foreground) 0%,
+    var(--foreground) 35%,
+    var(--primary, #007acc) 50%,
+    var(--foreground) 65%,
+    var(--foreground) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: toolGlowSweep 2s ease-in-out infinite;
+}
+
+.tool-glow-bar {
+  position: relative;
+  overflow: hidden;
+}
+
+.tool-glow-bar::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--primary, #007acc) 40%,
+    color-mix(in srgb, var(--primary, #007acc) 70%, white) 50%,
+    var(--primary, #007acc) 60%,
+    transparent 100%
+  );
+  animation: toolGlowBar 1.8s ease-in-out infinite;
+  border-radius: 2px;
+}
+
+.tool-complete-fade {
+  animation: toolFadeComplete 0.3s ease-out both;
 }
 
 /* Radix Dropdown Animations */

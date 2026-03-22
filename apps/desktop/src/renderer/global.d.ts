@@ -1,5 +1,7 @@
 export { };
 
+ type SidebarTabId = 'spaces' | 'canvas' | 'terminal' | 'tasks' | 'browser' | 'todo';
+
 declare global {
   interface Window {
     desktopAPI: {
@@ -23,13 +25,14 @@ declare global {
       openSpaces: () => Promise<void>;
       closeSpaces: () => Promise<void>;
       toggleSpaces: () => Promise<void>;
-      // Sidebar window (unified Spaces, Canvas, Terminal)
-      openSidebar: (options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) => Promise<void>;
+      // Sidebar window (unified Spaces, Notes, Terminal, Agent Tasks, Browser)
+      openSidebar: (options?: { tab?: SidebarTabId; expanded?: boolean }) => Promise<void>;
       closeSidebar: () => Promise<void>;
-      toggleSidebar: (options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) => Promise<void>;
+      toggleSidebar: (options?: { tab?: SidebarTabId; expanded?: boolean }) => Promise<void>;
       toggleSidebarExpanded: () => Promise<{ expanded: boolean }>;
       isSidebarExpanded: () => Promise<{ expanded: boolean }>;
-      onSidebarNavigate: (cb: (data: { tab: 'spaces' | 'canvas' | 'terminal' }) => void) => () => void;
+      sidebarSetPresentation: (mode: 'full' | 'popup', tab?: SidebarTabId) => Promise<{ ok: boolean; mode?: 'full' | 'popup'; error?: string }>;
+      onSidebarNavigate: (cb: (data: { tab: SidebarTabId }) => void) => () => void;
       onSidebarExpandedChange: (cb: (data: { expanded: boolean }) => void) => () => void;
       onSidebarSelectItem: (cb: (data: { type: 'space' | 'canvas'; id: string }) => void) => () => void;
       // Canvas document operations
@@ -126,6 +129,7 @@ declare global {
       onDismissNotification: (cb: (data: { id: string }) => void) => void | (() => void);
       respondToNotification: (payload: { responseId: string; type: 'submit' | 'cancel' | 'dismiss'; value?: string }) => Promise<{ ok: boolean; error?: string }>;
 
+      onBrowserActivity: (cb: (data: { action: string; sessionId: string; timestamp: number }) => void) => () => void;
       execTool: (tool: string, args: any) => Promise<any>;
 
       // File Indexing

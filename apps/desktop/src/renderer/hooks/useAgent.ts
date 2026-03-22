@@ -49,6 +49,16 @@ const HIDDEN_TOOL_NAMES = new Set([
   'pending_memory_reject',
   'pending_memory_delete',
 
+  // Internal subagent lifecycle tools (track in hidden state only)
+  'subagent_spawn',
+  'subagent_update',
+  'subagent_status',
+  'subagent_list',
+  'subagent_stop',
+  'subagent_create',
+  'run_subagent',
+  'spawn_agent',
+
   // Internal meta-tools (invisible to user)
   'get_tool_schema',
   'search_tools',

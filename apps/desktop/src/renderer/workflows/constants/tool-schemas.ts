@@ -204,7 +204,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'web_search', category: 'data', kind: 'cloud', description: 'Search the web using Perplexity AI', argsTemplate: { query: '', max_results: 5, max_tokens_per_page: 1024 }, outputSchema: { results: 'any[]', id: 'string' } },
 
   // --- UI ---
-  { id: 'custom_ui', category: 'ui', kind: 'local', description: 'Display custom overlay UI using React JSX components (offline). Full React + Framer Motion runtime. Animation: motion.div/span/button etc., AnimatePresence, useAnimation, useMotionValue, useTransform, useSpring, useInView. Hooks: useState, useEffect, useVar(name, default), useStyles(css) for dynamic keyframes, useInterval(fn, ms), useTimeout(fn, ms), useLocalStorage(key, init). Pre-built components: Spinner, Badge(variant), Progress(value), Skeleton, Tooltip(content), Switch(checked, onChange), Toast(message, type), Avatar(src|name), Divider, Kbd. API: stuard.callNode(id|label, data), stuard.callTool(name, args), stuard.pickFile/pickFolder/pickSavePath, stuard.readFile/writeFile, stuard.copyToClipboard/readClipboard, stuard.notify. Fonts: Inter, Outfit, Space Grotesk, JetBrains Mono (use font-inter, font-outfit, font-grotesk, font-mono classes). 50+ CSS animations: animate-fade-in, animate-slide-up, animate-bounce-in, animate-float, animate-glow, animate-shimmer, animate-gradient-shift, animate-morph, animate-heartbeat, animate-tada, etc. Stagger children with stagger-children class + delay-100 through delay-2000. Gradient presets: gradient-purple-pink, gradient-ocean, gradient-aurora, gradient-sunset, gradient-cosmic, gradient-text. Effects: glass, glass-heavy, glass-colored, noise, shadow-neon-blue/purple/cyan/pink, text-glow, gradient-border. All Tailwind utilities available.', argsTemplate: { id: 'my-panel', title: 'My Custom UI', component: '', css: '', data: {}, window: { width: 400, height: 500, position: 'center', alwaysOnTop: true, frameless: true, borderRadius: 12, resizable: false, draggable: true, backgroundType: 'color', backgroundColor: '#1a1a2e', contentPadding: 24, shadow: { enabled: true, color: '#00000040', blur: 20, spread: 0, x: 0, y: 8 }, animation: { open: 'fade', close: 'fade', duration: 300, easing: 'ease-out' }, invisible: false, translucent: { color: '#1a1a2e', opacity: 0.7, blur: 12 } }, blocking: true }, outputSchema: { ok: 'boolean', action: 'string', data: 'object' } },
+  { id: 'custom_ui', category: 'ui', kind: 'local', description: 'Display custom overlay UI using React JSX components (offline). Full React + Framer Motion runtime. Animation: motion.div/span/button etc., AnimatePresence, useAnimation, useMotionValue, useTransform, useSpring, useInView. Hooks: useState, useEffect, useVar(name, default), useStyles(css) for dynamic keyframes, useInterval(fn, ms), useTimeout(fn, ms), useLocalStorage(key, init). Pre-built components: Spinner, Badge(variant), Progress(value), Skeleton, Tooltip(content), Switch(checked, onChange), Toast(message, type), Avatar(src|name), Divider, Kbd, CodeBlock(code, language, copyable), Markdown(content|children, dark, compact, className) — renders markdown as real React elements via react-markdown + remark-gfm + remark-math + rehype-katex (tables, task lists, strikethrough, code blocks, LaTeX/KaTeX math). Inline math: $E=mc^2$, block math: $$ on its own line. All LaTeX notation supported (fractions, matrices, Greek letters, integrals, etc.). CSS: markdown-body (base), markdown-dark (dark mode), markdown-compact (tight spacing). API: stuard.callNode(id|label, data), stuard.callTool(name, args), stuard.pickFile/pickFolder/pickSavePath, stuard.readFile/writeFile, stuard.copyToClipboard/readClipboard, stuard.notify. TYPOGRAPHY: 30+ Google Fonts loaded. Sans-serif: font-inter, font-poppins, font-roboto, font-open-sans, font-lato, font-montserrat, font-raleway, font-dm-sans, font-jakarta, font-manrope, font-sora, font-archivo, font-nunito, font-quicksand, font-comfortaa, font-ibm, font-outfit, font-grotesk. Serif: font-playfair, font-merriweather, font-lora, font-source-serif, font-dm-serif. Display: font-bebas, font-oswald. Handwriting: font-caveat, font-dancing, font-pacifico, font-marker, font-satisfy. Mono: font-mono, font-jetbrains, font-fira-code, font-source-code, font-space-mono, font-ibm-mono. Generic: font-system, font-serif-stack, font-mono-stack. Font sizes: text-2xs (10px) through text-9xl (128px), plus text-fluid-sm/base/lg/xl/2xl/3xl/hero for responsive sizing. Weights: font-thin through font-black (100-900). Style: italic, not-italic. Tracking: tracking-tighter through tracking-widest. Leading: leading-none through leading-loose. Transform: uppercase, lowercase, capitalize, normal-case. Decoration: underline, line-through, no-underline, decoration-solid/double/dotted/dashed/wavy, decoration-1/2/4. Typography presets: heading-display, heading-serif, heading-editorial, heading-condensed, body-readable, body-clean, body-friendly, label-ui, caption, overline, code-block. OpenType: tabular-nums, small-caps, slashed-zero, oldstyle-nums. 50+ CSS animations: animate-fade-in, animate-slide-up, animate-bounce-in, animate-float, animate-glow, animate-shimmer, animate-gradient-shift, animate-morph, animate-heartbeat, animate-tada, etc. Stagger children with stagger-children class + delay-100 through delay-2000. Gradient presets: gradient-purple-pink, gradient-ocean, gradient-aurora, gradient-sunset, gradient-cosmic, gradient-text. Effects: glass, glass-heavy, glass-colored, noise, shadow-neon-blue/purple/cyan/pink, text-glow, gradient-border. All Tailwind utilities available. IMPORTANT: When displaying AI-generated text, summaries, or any content with markdown formatting, ALWAYS use <Markdown dark>{text}</Markdown> instead of <p>{text}</p>. Raw text in a <p> shows literal asterisks/hashtags — the Markdown component renders them as formatted headings, bold, lists, code blocks etc.', argsTemplate: { id: 'my-panel', title: 'My Custom UI', component: '', css: '', data: {}, window: { width: 400, height: 500, position: 'center', alwaysOnTop: false, frameless: true, borderRadius: 12, resizable: false, draggable: true, minimizable: true, backgroundType: 'color', backgroundColor: '#1a1a2e', contentPadding: 24, shadow: { enabled: true, color: '#00000040', blur: 20, spread: 0, x: 0, y: 8 }, animation: { open: 'fade', close: 'fade', duration: 300, easing: 'ease-out' }, invisible: false, translucent: { color: '#1a1a2e', opacity: 0.7, blur: 12 } }, blocking: true }, outputSchema: { ok: 'boolean', action: 'string', data: 'object' } },
   { id: 'update_custom_ui', category: 'ui', kind: 'local', description: 'Update existing custom_ui window with new content', argsTemplate: { id: 'my-panel', title: '', html: '', css: '', data: {}, window: {} }, outputSchema: { ok: 'boolean', action: 'string', data: 'object' } },
   { id: 'close_custom_ui', category: 'ui', kind: 'local', description: 'Close a UI window', argsTemplate: { id: '' }, outputSchema: { ok: 'boolean' } },
   { id: 'ask_confirmation', category: 'ui', kind: 'local', description: 'Show a confirmation dialog to the user', argsTemplate: { title: 'Confirm Action', message: '', confirmLabel: 'Confirm', cancelLabel: 'Cancel', variant: 'warning' }, outputSchema: { confirmed: 'boolean' } },
@@ -292,11 +292,11 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'discord_send_dm', category: 'integrations', kind: 'cloud', description: 'Send a direct message on Discord', argsTemplate: { channel_id: '', content: '' }, outputSchema: { sent: 'boolean', id: 'string', content: 'string' } },
   { id: 'discord_add_reaction', category: 'integrations', kind: 'cloud', description: 'React to a Discord message with an emoji', argsTemplate: { channel_id: '', message_id: '', emoji: '👍' }, outputSchema: { success: 'boolean' } },
   // Reddit
-  { id: 'reddit_search', category: 'integrations', kind: 'cloud', description: 'Search Reddit for posts', argsTemplate: { query: '', subreddit: '', sort: 'relevance', limit: 25 }, outputSchema: { items: 'any[]', count: 'number' } },
-  { id: 'reddit_view_subreddit', category: 'integrations', kind: 'cloud', description: 'View posts from a subreddit', argsTemplate: { subreddit: '', sort: 'hot', limit: 25 }, outputSchema: { items: 'any[]', count: 'number' } },
-  { id: 'reddit_view_comments', category: 'integrations', kind: 'cloud', description: 'View comments on a Reddit post', argsTemplate: { subreddit: '', post_id: '' }, outputSchema: { post: 'object', comments: 'any[]' } },
-  { id: 'reddit_create_post', category: 'integrations', kind: 'cloud', description: 'Create a new post on a subreddit', argsTemplate: { subreddit: '', title: '', kind: 'self', text: '' }, outputSchema: { success: 'boolean', id: 'string', url: 'string' } },
-  { id: 'reddit_comment', category: 'integrations', kind: 'cloud', description: 'Comment on a Reddit post or reply to a comment', argsTemplate: { thing_id: '', text: '' }, outputSchema: { success: 'boolean', id: 'string' } },
+  { id: 'reddit_search', category: 'integrations', kind: 'cloud', description: 'Search Reddit for posts globally or within a specific subreddit', argsTemplate: { query: '', subreddit: '', sort: 'relevance', time: 'all', limit: 25, profile: '' }, outputSchema: { items: 'any[]', count: 'number' } },
+  { id: 'reddit_view_subreddit', category: 'integrations', kind: 'cloud', description: 'Browse posts from a subreddit sorted by hot, new, top, or rising', argsTemplate: { subreddit: '', sort: 'hot', time: 'day', limit: 25, profile: '' }, outputSchema: { items: 'any[]', count: 'number' } },
+  { id: 'reddit_view_comments', category: 'integrations', kind: 'cloud', description: 'View comments on a Reddit post with sorting options', argsTemplate: { subreddit: '', post_id: '', sort: 'confidence', limit: 25, profile: '' }, outputSchema: { post: 'object', comments: 'any[]' } },
+  { id: 'reddit_create_post', category: 'integrations', kind: 'cloud', description: 'Create a text or link post on a subreddit', argsTemplate: { subreddit: '', title: '', kind: 'self', text: '', url: '', profile: '' }, outputSchema: { success: 'boolean', id: 'string', url: 'string', errors: 'any[]' } },
+  { id: 'reddit_comment', category: 'integrations', kind: 'cloud', description: 'Comment on a Reddit post or reply to a comment (use t3_id for posts, t1_id for comments)', argsTemplate: { thing_id: '', text: '', profile: '' }, outputSchema: { success: 'boolean', id: 'string', errors: 'any[]' } },
   // YouTube
   { id: 'youtube_get_video', category: 'integrations', kind: 'cloud', description: 'Get detailed information about a YouTube video', argsTemplate: { url: '' }, outputSchema: { ok: 'boolean', video: 'object', error: 'string' } },
   { id: 'youtube_get_channel', category: 'integrations', kind: 'cloud', description: 'Get information about a YouTube channel', argsTemplate: { url: '' }, outputSchema: { ok: 'boolean', channel: 'object', error: 'string' } },
@@ -1265,6 +1265,238 @@ if (TOOL_SCHEMAS['threads_publish_post']) {
       type: 'string',
       label: 'Threads Profile',
       description: 'Which connected Threads profile to use for publishing.',
+      placeholder: 'default',
+    },
+  };
+}
+
+// ── Reddit smart args ──
+
+const REDDIT_SEARCH_SORT_OPTIONS = [
+  { value: 'relevance', label: 'Relevance', description: 'Best match for the query (default)' },
+  { value: 'hot', label: 'Hot', description: 'Trending posts right now' },
+  { value: 'top', label: 'Top', description: 'Highest scored posts' },
+  { value: 'new', label: 'New', description: 'Most recently posted' },
+  { value: 'comments', label: 'Most Comments', description: 'Posts with the most discussion' },
+];
+
+const REDDIT_TIME_FILTER_OPTIONS = [
+  { value: 'all', label: 'All Time', description: 'No time restriction' },
+  { value: 'hour', label: 'Past Hour' },
+  { value: 'day', label: 'Past 24 Hours' },
+  { value: 'week', label: 'Past Week' },
+  { value: 'month', label: 'Past Month' },
+  { value: 'year', label: 'Past Year' },
+];
+
+const REDDIT_SUBREDDIT_SORT_OPTIONS = [
+  { value: 'hot', label: 'Hot', description: 'Trending posts (default)' },
+  { value: 'new', label: 'New', description: 'Most recently posted' },
+  { value: 'top', label: 'Top', description: 'Highest scored posts' },
+  { value: 'rising', label: 'Rising', description: 'Gaining traction quickly' },
+];
+
+const REDDIT_COMMENT_SORT_OPTIONS = [
+  { value: 'confidence', label: 'Best', description: 'Highest confidence score (default)' },
+  { value: 'top', label: 'Top', description: 'Highest voted comments' },
+  { value: 'new', label: 'New', description: 'Most recent comments' },
+  { value: 'controversial', label: 'Controversial', description: 'Most divisive comments' },
+  { value: 'old', label: 'Old', description: 'Oldest comments first' },
+  { value: 'qa', label: 'Q&A', description: 'Q&A style ordering' },
+];
+
+const REDDIT_POST_KIND_OPTIONS = [
+  { value: 'self', label: 'Text Post', description: 'A text/self post with a body' },
+  { value: 'link', label: 'Link Post', description: 'A post linking to an external URL' },
+];
+
+if (TOOL_SCHEMAS['reddit_search']) {
+  TOOL_SCHEMAS['reddit_search'].args = {
+    query: {
+      type: 'string',
+      label: 'Search Query',
+      description: 'What to search for on Reddit.',
+      required: true,
+      placeholder: 'best mechanical keyboards 2025',
+    },
+    subreddit: {
+      type: 'string',
+      label: 'Subreddit',
+      description: 'Limit search to a specific subreddit. Leave empty to search all of Reddit.',
+      placeholder: 'MechanicalKeyboards',
+    },
+    sort: {
+      type: 'select',
+      label: 'Sort By',
+      description: 'How to sort search results.',
+      options: REDDIT_SEARCH_SORT_OPTIONS,
+      default: 'relevance',
+    },
+    time: {
+      type: 'select',
+      label: 'Time Filter',
+      description: 'Only show posts from this time period.',
+      options: REDDIT_TIME_FILTER_OPTIONS,
+      default: 'all',
+    },
+    limit: {
+      type: 'number',
+      label: 'Max Results',
+      description: 'Number of posts to return (1-100).',
+      default: 25,
+    },
+    profile: {
+      type: 'string',
+      label: 'Reddit Profile',
+      description: 'Which connected Reddit account to use.',
+      placeholder: 'default',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['reddit_view_subreddit']) {
+  TOOL_SCHEMAS['reddit_view_subreddit'].args = {
+    subreddit: {
+      type: 'string',
+      label: 'Subreddit',
+      description: 'Name of the subreddit to browse (without the r/ prefix).',
+      required: true,
+      placeholder: 'programming',
+    },
+    sort: {
+      type: 'select',
+      label: 'Sort By',
+      description: 'How to sort the subreddit feed.',
+      options: REDDIT_SUBREDDIT_SORT_OPTIONS,
+      default: 'hot',
+    },
+    time: {
+      type: 'select',
+      label: 'Time Filter',
+      description: 'Time filter (only applies when sorting by Top).',
+      options: REDDIT_TIME_FILTER_OPTIONS,
+      default: 'day',
+      showWhen: { field: 'sort', value: 'top' },
+    },
+    limit: {
+      type: 'number',
+      label: 'Max Posts',
+      description: 'Number of posts to return (1-100).',
+      default: 25,
+    },
+    profile: {
+      type: 'string',
+      label: 'Reddit Profile',
+      description: 'Which connected Reddit account to use.',
+      placeholder: 'default',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['reddit_view_comments']) {
+  TOOL_SCHEMAS['reddit_view_comments'].args = {
+    subreddit: {
+      type: 'string',
+      label: 'Subreddit',
+      description: 'The subreddit the post is in (without r/ prefix).',
+      required: true,
+      placeholder: 'AskReddit',
+    },
+    post_id: {
+      type: 'string',
+      label: 'Post ID',
+      description: 'The Reddit post ID to view comments on. Usually from a previous reddit_search or reddit_view_subreddit step.',
+      required: true,
+      placeholder: '{{previous_step.items[0].id}}',
+    },
+    sort: {
+      type: 'select',
+      label: 'Comment Sort',
+      description: 'How to sort the comments.',
+      options: REDDIT_COMMENT_SORT_OPTIONS,
+      default: 'confidence',
+    },
+    limit: {
+      type: 'number',
+      label: 'Max Comments',
+      description: 'Number of top-level comments to return (1-100).',
+      default: 25,
+    },
+    profile: {
+      type: 'string',
+      label: 'Reddit Profile',
+      description: 'Which connected Reddit account to use.',
+      placeholder: 'default',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['reddit_create_post']) {
+  TOOL_SCHEMAS['reddit_create_post'].args = {
+    subreddit: {
+      type: 'string',
+      label: 'Subreddit',
+      description: 'Which subreddit to post in (without r/ prefix).',
+      required: true,
+      placeholder: 'SideProject',
+    },
+    title: {
+      type: 'string',
+      label: 'Post Title',
+      description: 'Title for the post (max 300 characters).',
+      required: true,
+      placeholder: 'Just launched my new project — feedback welcome!',
+    },
+    kind: {
+      type: 'select',
+      label: 'Post Type',
+      description: 'Whether this is a text post or a link to an external URL.',
+      options: REDDIT_POST_KIND_OPTIONS,
+      default: 'self',
+    },
+    text: {
+      type: 'string',
+      label: 'Post Body',
+      description: 'Body text for a text post. Supports Markdown formatting.',
+      placeholder: 'Here is what I built and why...',
+      showWhen: { field: 'kind', value: 'self' },
+    },
+    url: {
+      type: 'string',
+      label: 'Link URL',
+      description: 'External URL for a link post.',
+      placeholder: 'https://example.com/my-project',
+      showWhen: { field: 'kind', value: 'link' },
+    },
+    profile: {
+      type: 'string',
+      label: 'Reddit Profile',
+      description: 'Which connected Reddit account to use.',
+      placeholder: 'default',
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['reddit_comment']) {
+  TOOL_SCHEMAS['reddit_comment'].args = {
+    thing_id: {
+      type: 'string',
+      label: 'Reply To (Thing ID)',
+      description: 'The fullname of the post or comment to reply to. Use "t3_<postId>" for posts, "t1_<commentId>" for comments. Usually from a previous Reddit step.',
+      required: true,
+      placeholder: '{{previous_step.items[0].id}}',
+    },
+    text: {
+      type: 'string',
+      label: 'Comment Text',
+      description: 'The comment body. Supports Reddit Markdown (bold, links, lists, etc.).',
+      required: true,
+      placeholder: 'Great post! Here are my thoughts...',
+    },
+    profile: {
+      type: 'string',
+      label: 'Reddit Profile',
+      description: 'Which connected Reddit account to use.',
       placeholder: 'default',
     },
   };

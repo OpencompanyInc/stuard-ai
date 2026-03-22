@@ -1,6 +1,7 @@
 /**
  * React Runtime Loader
- * Reads React + ReactDOM + Framer Motion UMD production builds from node_modules at runtime.
+ * Reads React + ReactDOM + Framer Motion UMD production builds
+ * from node_modules at runtime.
  * These are inlined into custom UI HTML for fully offline operation.
  *
  * Since tsup uses skipNodeModulesBundle: true, node_modules remain
@@ -13,12 +14,30 @@ import * as path from 'path';
 let _reactUmd: string | null = null;
 let _reactDomUmd: string | null = null;
 let _framerMotionUmd: string | null = null;
+let _reactMarkdownBundle: string | null = null;
+let _katexCss: string | null = null;
 
 function resolveModulePath(modulePath: string): string {
   try {
     return require.resolve(modulePath);
   } catch {
-    // Fallback: walk up from __dirname looking for node_modules
+    // require.resolve may fail for subpaths blocked by package.json "exports".
+    // Strategy: resolve the package root via package.json (which is always exported),
+    // then join the subpath manually.
+    const parts = modulePath.split('/');
+    const pkgName = parts[0].startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+    const subPath = parts.slice(pkgName.split('/').length).join('/');
+
+    if (subPath) {
+      try {
+        const pkgJson = require.resolve(pkgName + '/package.json');
+        const pkgDir = path.dirname(pkgJson);
+        const candidate = path.join(pkgDir, subPath);
+        if (fs.existsSync(candidate)) return candidate;
+      } catch {}
+    }
+
+    // Final fallback: walk up from __dirname looking for node_modules
     let dir = __dirname;
     for (let i = 0; i < 10; i++) {
       const candidate = path.join(dir, 'node_modules', modulePath);
@@ -71,10 +90,48 @@ export function getFramerMotionUmd(): string {
 }
 
 /**
- * Get combined React + ReactDOM + Framer Motion runtime for inlining into HTML.
- * Cached after first call.
+ * Get the pre-built react-markdown + remark-gfm + remark-math + rehype-katex bundle.
+ * Built at build time by scripts/build-react-markdown-bundle.cjs using esbuild.
+ * Exposes window.ReactMarkdown, window.remarkGfm, window.remarkMath, window.rehypeKatex.
+ * Requires React to be loaded first.
  */
-export function getReactRuntime(): string {
-  return getReactUmd() + '\n' + getReactDomUmd() + '\n' + getFramerMotionUmd();
+export function getReactMarkdownBundle(): string {
+  if (!_reactMarkdownBundle) {
+    try {
+      const mod = require('./react-markdown-bundle') as { REACT_MARKDOWN_BUNDLE?: string };
+      _reactMarkdownBundle = typeof mod?.REACT_MARKDOWN_BUNDLE === 'string'
+        ? mod.REACT_MARKDOWN_BUNDLE
+        : '// react-markdown bundle not found';
+    } catch (err: any) {
+      console.error('[custom-ui] Failed to load react-markdown bundle:', err?.message || err);
+      _reactMarkdownBundle = '// react-markdown bundle failed to load';
+    }
+  }
+  return _reactMarkdownBundle;
 }
 
+/**
+ * Get the KaTeX CSS for math rendering (~24KB).
+ * Pre-built alongside the react-markdown bundle.
+ */
+export function getKatexCss(): string {
+  if (!_katexCss) {
+    try {
+      const mod = require('./react-markdown-bundle') as { KATEX_CSS?: string };
+      _katexCss = typeof mod?.KATEX_CSS === 'string'
+        ? mod.KATEX_CSS
+        : '';
+    } catch (err: any) {
+      console.error('[custom-ui] Failed to load KaTeX CSS:', err?.message || err);
+      _katexCss = '';
+    }
+  }
+  return _katexCss;
+}
+
+/**
+ * Get combined React + ReactDOM + Framer Motion + React-Markdown runtime for inlining into HTML.
+ */
+export function getReactRuntime(): string {
+  return getReactUmd() + '\n' + getReactDomUmd() + '\n' + getFramerMotionUmd() + '\n' + getReactMarkdownBundle();
+}

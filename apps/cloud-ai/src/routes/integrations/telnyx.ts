@@ -35,9 +35,27 @@ const callDirectionCache = new Map<string, string>();
 // (Telnyx custom_headers are unreliable — values may be truncated or not echoed in webhooks)
 const proactiveCallCache = new Map<string, { audioUrl?: string; ttsMessage?: string; createdAt: number }>();
 
-// Pending verification maps (primary & secondary)
-const pendingVerifications = new Map<string, { code: string; phone: string; expiresAt: number }>();
-const pendingSecondaryVerifications = new Map<string, { code: string; phone: string; expiresAt: number }>();
+// ── Multi-phone profile support (up to 5 verified numbers) ────────────────
+const MAX_PHONE_SLOTS = 5;
+
+// Unified pending-verification map keyed by "userId:slot"
+const pendingPhoneVerifications = new Map<string, { code: string; phone: string; expiresAt: number }>();
+
+function phoneKey(slot: number): string { return slot === 0 ? 'phone' : `phone${slot + 1}`; }
+function verifiedKey(slot: number): string { return slot === 0 ? 'verified' : `verified${slot + 1}`; }
+function verifiedAtKey(slot: number): string { return slot === 0 ? 'verifiedAt' : `verifiedAt${slot + 1}`; }
+
+function getPhoneSlots(meta: any): Array<{ phone: string; slot: number; verifiedAt?: string }> {
+  const phones: Array<{ phone: string; slot: number; verifiedAt?: string }> = [];
+  for (let i = 0; i < MAX_PHONE_SLOTS; i++) {
+    const pKey = phoneKey(i);
+    const vKey = verifiedKey(i);
+    if (meta[vKey] && meta[pKey]) {
+      phones.push({ phone: meta[pKey], slot: i, verifiedAt: meta[verifiedAtKey(i)] });
+    }
+  }
+  return phones;
+}
 
 function normalizePhone(raw: string): string {
   let digits = raw.replace(/[^\d+]/g, '');
@@ -188,16 +206,18 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
     }
     const acc = await getExternalAccount(auth.userId, 'telnyx');
     const meta = acc?.meta || {};
+    const phones = getPhoneSlots(meta);
     sendJson(res, 200, {
       ok: true,
-      connected: !!meta.verified,
+      connected: phones.length > 0,
       phone: meta.verified ? meta.phone : undefined,
       phone2: meta.verified2 ? meta.phone2 : undefined,
+      phones,
     });
     return true;
   }
 
-  // ── Request verification code (primary) ───────────────────────────────────
+  // ── Request verification code (any slot 0-4) ─────────────────────────────
   if (req.method === 'POST' && pathname === '/integrations/telnyx/request-code') {
     const auth = await authenticateHttpLegacy(req, parsedUrl);
     if (!auth.success || !auth.userId) {
@@ -210,22 +230,41 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
     }
     try {
       const body = JSON.parse(await readBody(req));
+      const slot = typeof body.slot === 'number' ? body.slot : 0;
+      if (slot < 0 || slot >= MAX_PHONE_SLOTS || !Number.isInteger(slot)) {
+        sendJson(res, 400, { ok: false, error: `Invalid slot. Must be 0-${MAX_PHONE_SLOTS - 1}.` });
+        return true;
+      }
       const phone = normalizePhone(body.phone || '');
       if (!phone || phone.length < 10) {
         sendJson(res, 400, { ok: false, error: 'Invalid phone number. Include country code (e.g. +1...).' });
         return true;
       }
+      // Non-primary slots require primary to be verified first
+      if (slot > 0) {
+        const acc = await getExternalAccount(auth.userId, 'telnyx');
+        const meta = acc?.meta || {};
+        if (!meta.verified) {
+          sendJson(res, 400, { ok: false, error: 'Verify your primary phone number (slot 0) first.' });
+          return true;
+        }
+        const verifiedCount = getPhoneSlots(meta).length;
+        if (verifiedCount >= MAX_PHONE_SLOTS) {
+          sendJson(res, 400, { ok: false, error: `Maximum of ${MAX_PHONE_SLOTS} verified phones reached.` });
+          return true;
+        }
+      }
       const code = String(randomInt(100000, 999999));
-      pendingVerifications.set(auth.userId, { code, phone, expiresAt: Date.now() + 10 * 60 * 1000 });
+      pendingPhoneVerifications.set(`${auth.userId}:${slot}`, { code, phone, expiresAt: Date.now() + 10 * 60 * 1000 });
       await telnyxSendSms(phone, `Your Stuard verification code is: ${code}`);
-      sendJson(res, 200, { ok: true, message: 'Verification code sent.' });
+      sendJson(res, 200, { ok: true, message: 'Verification code sent.', slot });
     } catch (e: any) {
       sendJson(res, 500, { ok: false, error: String(e?.message || e) });
     }
     return true;
   }
 
-  // ── Verify code (primary) ─────────────────────────────────────────────────
+  // ── Verify code (any slot 0-4) ────────────────────────────────────────────
   if (req.method === 'POST' && pathname === '/integrations/telnyx/verify-code') {
     const auth = await authenticateHttpLegacy(req, parsedUrl);
     if (!auth.success || !auth.userId) {
@@ -234,14 +273,20 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
     }
     try {
       const body = JSON.parse(await readBody(req));
+      const slot = typeof body.slot === 'number' ? body.slot : 0;
+      if (slot < 0 || slot >= MAX_PHONE_SLOTS || !Number.isInteger(slot)) {
+        sendJson(res, 400, { ok: false, error: `Invalid slot. Must be 0-${MAX_PHONE_SLOTS - 1}.` });
+        return true;
+      }
       const userCode = String(body.code || '').trim();
-      const pending = pendingVerifications.get(auth.userId);
+      const pendingKey = `${auth.userId}:${slot}`;
+      const pending = pendingPhoneVerifications.get(pendingKey);
       if (!pending) {
         sendJson(res, 400, { ok: false, error: 'No pending verification. Request a new code.' });
         return true;
       }
       if (Date.now() > pending.expiresAt) {
-        pendingVerifications.delete(auth.userId);
+        pendingPhoneVerifications.delete(pendingKey);
         sendJson(res, 400, { ok: false, error: 'Verification code expired. Request a new one.' });
         return true;
       }
@@ -249,9 +294,9 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         sendJson(res, 400, { ok: false, error: 'Incorrect code. Please try again.' });
         return true;
       }
-      pendingVerifications.delete(auth.userId);
+      pendingPhoneVerifications.delete(pendingKey);
 
-      // Preserve existing secondary phone if any
+      // Preserve existing phone data for other slots
       const existing = await getExternalAccount(auth.userId, 'telnyx');
       const existingMeta = existing?.meta || {};
 
@@ -262,55 +307,24 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         scopes: ['sms', 'voice'],
         meta: {
           ...existingMeta,
-          phone: pending.phone,
-          verified: true,
-          verifiedAt: new Date().toISOString(),
+          [phoneKey(slot)]: pending.phone,
+          [verifiedKey(slot)]: true,
+          [verifiedAtKey(slot)]: new Date().toISOString(),
         },
       });
-      sendJson(res, 200, { ok: true, phone: pending.phone, verified: true });
-      // Fire-and-forget welcome SMS
-      sendWelcomeSms(pending.phone).catch(() => {});
-    } catch (e: any) {
-      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
-    }
-    return true;
-  }
-
-  // ── Add / request code for secondary phone ────────────────────────────────
-  if (req.method === 'POST' && pathname === '/integrations/telnyx/add-secondary') {
-    const auth = await authenticateHttpLegacy(req, parsedUrl);
-    if (!auth.success || !auth.userId) {
-      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
-      return true;
-    }
-    if (!TELNYX_API_KEY || !TELNYX_FROM_NUMBER) {
-      sendJson(res, 503, { ok: false, error: 'Telnyx integration is not configured on the server.' });
-      return true;
-    }
-    const acc = await getExternalAccount(auth.userId, 'telnyx');
-    if (!acc?.meta?.verified) {
-      sendJson(res, 400, { ok: false, error: 'Verify your primary phone number first.' });
-      return true;
-    }
-    try {
-      const body = JSON.parse(await readBody(req));
-      const phone = normalizePhone(body.phone || '');
-      if (!phone || phone.length < 10) {
-        sendJson(res, 400, { ok: false, error: 'Invalid phone number. Include country code (e.g. +1...).' });
-        return true;
+      sendJson(res, 200, { ok: true, phone: pending.phone, verified: true, slot });
+      // Fire-and-forget welcome SMS only for primary phone (slot 0)
+      if (slot === 0) {
+        sendWelcomeSms(pending.phone).catch(() => {});
       }
-      const code = String(randomInt(100000, 999999));
-      pendingSecondaryVerifications.set(auth.userId, { code, phone, expiresAt: Date.now() + 10 * 60 * 1000 });
-      await telnyxSendSms(phone, `Your Stuard secondary number verification code is: ${code}`);
-      sendJson(res, 200, { ok: true, message: 'Verification code sent to secondary number.' });
     } catch (e: any) {
       sendJson(res, 500, { ok: false, error: String(e?.message || e) });
     }
     return true;
   }
 
-  // ── Verify secondary phone ────────────────────────────────────────────────
-  if (req.method === 'POST' && pathname === '/integrations/telnyx/verify-secondary') {
+  // ── Remove a phone by slot (0-4) ──────────────────────────────────────────
+  if (req.method === 'POST' && pathname === '/integrations/telnyx/remove-phone') {
     const auth = await authenticateHttpLegacy(req, parsedUrl);
     if (!auth.success || !auth.userId) {
       sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
@@ -318,57 +332,24 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
     }
     try {
       const body = JSON.parse(await readBody(req));
-      const userCode = String(body.code || '').trim();
-      const pending = pendingSecondaryVerifications.get(auth.userId);
-      if (!pending) {
-        sendJson(res, 400, { ok: false, error: 'No pending secondary verification. Request a new code.' });
+      const slot = typeof body.slot === 'number' ? body.slot : -1;
+      if (slot < 0 || slot >= MAX_PHONE_SLOTS || !Number.isInteger(slot)) {
+        sendJson(res, 400, { ok: false, error: `Invalid slot. Must be 0-${MAX_PHONE_SLOTS - 1}.` });
         return true;
       }
-      if (Date.now() > pending.expiresAt) {
-        pendingSecondaryVerifications.delete(auth.userId);
-        sendJson(res, 400, { ok: false, error: 'Code expired. Request a new one.' });
+      if (slot === 0) {
+        // Removing primary phone disconnects everything (same as disconnect)
+        const { deleteExternalAccount } = await import('../../supabase');
+        await deleteExternalAccount(auth.userId, 'telnyx', 'default');
+        sendJson(res, 200, { ok: true, removedSlot: 0, disconnected: true });
         return true;
       }
-      if (userCode !== pending.code) {
-        sendJson(res, 400, { ok: false, error: 'Incorrect code. Please try again.' });
-        return true;
-      }
-      pendingSecondaryVerifications.delete(auth.userId);
-
-      const existing = await getExternalAccount(auth.userId, 'telnyx');
-      const existingMeta = existing?.meta || {};
-      await upsertExternalAccount({
-        userId: auth.userId,
-        provider: 'telnyx',
-        access_token: 'verified',
-        scopes: ['sms', 'voice'],
-        meta: {
-          ...existingMeta,
-          phone2: pending.phone,
-          verified2: true,
-          verifiedAt2: new Date().toISOString(),
-        },
-      });
-      sendJson(res, 200, { ok: true, phone2: pending.phone, verified2: true });
-    } catch (e: any) {
-      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
-    }
-    return true;
-  }
-
-  // ── Remove secondary phone ────────────────────────────────────────────────
-  if (req.method === 'POST' && pathname === '/integrations/telnyx/remove-secondary') {
-    const auth = await authenticateHttpLegacy(req, parsedUrl);
-    if (!auth.success || !auth.userId) {
-      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
-      return true;
-    }
-    try {
+      // Remove just this slot's keys from meta
       const existing = await getExternalAccount(auth.userId, 'telnyx');
       const existingMeta = { ...(existing?.meta || {}) };
-      delete existingMeta.phone2;
-      delete existingMeta.verified2;
-      delete existingMeta.verifiedAt2;
+      delete existingMeta[phoneKey(slot)];
+      delete existingMeta[verifiedKey(slot)];
+      delete existingMeta[verifiedAtKey(slot)];
       await upsertExternalAccount({
         userId: auth.userId,
         provider: 'telnyx',
@@ -376,7 +357,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         scopes: ['sms', 'voice'],
         meta: existingMeta,
       });
-      sendJson(res, 200, { ok: true });
+      sendJson(res, 200, { ok: true, removedSlot: slot });
     } catch (e: any) {
       sendJson(res, 500, { ok: false, error: String(e?.message || e) });
     }

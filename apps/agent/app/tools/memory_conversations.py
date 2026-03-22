@@ -374,6 +374,134 @@ async def segment_build_topic_drawers(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": str(e), "drawers": []}
 
 
+async def segment_search_drawers_by_embedding(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Search topic drawers by embedding similarity.
+
+    Takes a query embedding, computes centroids for each topic drawer from
+    segment embeddings, and returns the top-N most relevant topics.
+    """
+    try:
+        vector = args.get("vector")
+        if not isinstance(vector, list) or len(vector) == 0:
+            return {"ok": False, "error": "vector is required", "topics": []}
+
+        limit = int(args.get("limit", 3))
+        db = get_memory_db()
+
+        # Build drawers to get segment data (including embeddings)
+        segments = db.list_recent_segments_with_embeddings(limit=2000)
+
+        # Group segments by topic and compute centroid
+        import numpy as _np
+        topic_vecs: Dict[str, list] = {}
+        topic_meta: Dict[str, Dict[str, Any]] = {}
+
+        for seg in segments:
+            if not seg.embedding or not isinstance(seg.embedding, list):
+                continue
+            for t in (seg.topics if isinstance(seg.topics, list) else []):
+                t = str(t or "").strip()
+                if not t:
+                    continue
+                topic_vecs.setdefault(t, []).append(seg.embedding)
+                meta = topic_meta.setdefault(t, {"count": 0, "latest": "", "earliest": ""})
+                meta["count"] += 1
+                ts = seg.created_at or ""
+                if not meta["latest"] or ts > meta["latest"]:
+                    meta["latest"] = ts
+                if not meta["earliest"] or ts < meta["earliest"]:
+                    meta["earliest"] = ts
+
+        query_np = _np.array(vector, dtype=_np.float32)
+        scored: list = []
+        for topic, vecs in topic_vecs.items():
+            centroid = _np.mean([_np.array(v, dtype=_np.float32) for v in vecs], axis=0)
+            norm = float(_np.linalg.norm(query_np) * _np.linalg.norm(centroid))
+            score = float(_np.dot(query_np, centroid) / norm) if norm > 0 else 0.0
+            meta = topic_meta.get(topic, {})
+            scored.append({
+                "topic": topic,
+                "score": round(score, 4),
+                "segment_count": meta.get("count", 0),
+                "latest_at": meta.get("latest", ""),
+                "earliest_at": meta.get("earliest", ""),
+            })
+
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        # Also check pre-computed collection summaries
+        collection_hits = db.search_collection_summaries_by_vector(vector, limit=limit, threshold=0.5)
+
+        return {
+            "ok": True,
+            "topics": scored[:limit],
+            "collection_summaries": collection_hits,
+        }
+    except Exception as e:
+        logger.exception("segment_search_drawers_by_embedding failed")
+        return {"ok": False, "error": str(e), "topics": []}
+
+
+async def collection_summary_upsert(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Upsert a pre-computed collection summary for a topic."""
+    try:
+        db = get_memory_db()
+        result = db.upsert_collection_summary(
+            topic=str(args.get("topic", "")),
+            summary=str(args.get("summary", "")),
+            segment_count=int(args.get("segment_count", 0)),
+            date_range_start=args.get("date_range_start"),
+            date_range_end=args.get("date_range_end"),
+            entity_ids=args.get("entity_ids"),
+            embedding=args.get("embedding"),
+        )
+        return {"ok": True, **result}
+    except Exception as e:
+        logger.exception("collection_summary_upsert failed")
+        return {"ok": False, "error": str(e)}
+
+
+async def collection_summary_get(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Get a pre-computed collection summary by topic."""
+    try:
+        db = get_memory_db()
+        result = db.get_collection_summary(str(args.get("topic", "")))
+        if result is None:
+            return {"ok": False, "error": "not_found"}
+        return {"ok": True, **result}
+    except Exception as e:
+        logger.exception("collection_summary_get failed")
+        return {"ok": False, "error": str(e)}
+
+
+async def collection_summary_search(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Search collection summaries by embedding similarity."""
+    try:
+        vector = args.get("vector")
+        if not isinstance(vector, list) or len(vector) == 0:
+            return {"ok": False, "error": "vector is required", "results": []}
+        db = get_memory_db()
+        results = db.search_collection_summaries_by_vector(
+            query_vector=vector,
+            limit=int(args.get("limit", 5)),
+            threshold=float(args.get("threshold", 0.6)),
+        )
+        return {"ok": True, "results": results}
+    except Exception as e:
+        logger.exception("collection_summary_search failed")
+        return {"ok": False, "error": str(e), "results": []}
+
+
+async def collection_summary_list(args: Dict[str, Any]) -> Dict[str, Any]:
+    """List all collection summaries."""
+    try:
+        db = get_memory_db()
+        results = db.list_collection_summaries(limit=int(args.get("limit", 100)))
+        return {"ok": True, "summaries": results}
+    except Exception as e:
+        logger.exception("collection_summary_list failed")
+        return {"ok": False, "error": str(e), "summaries": []}
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SPACE HANDLERS
 # ═══════════════════════════════════════════════════════════════════════════════

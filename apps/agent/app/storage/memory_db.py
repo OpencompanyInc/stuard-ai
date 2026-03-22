@@ -124,7 +124,8 @@ class ConversationSegment:
     embedding: Optional[List[float]]
     created_at: str
     updated_at: str
-    
+    entity_ids: Optional[List[str]] = None  # linked knowledge-graph entity IDs
+
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
         d['embedding'] = None
@@ -374,6 +375,27 @@ class MemoryDB:
                 )
             """)
             
+            # Migrations: add entity_ids_enc column to segments if missing
+            try:
+                cur.execute("ALTER TABLE conversation_segments ADD COLUMN entity_ids_enc TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+            # Collection summaries — pre-computed topic drawer summaries
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS collection_summaries (
+                    topic TEXT PRIMARY KEY,
+                    summary TEXT NOT NULL,
+                    segment_count INTEGER,
+                    date_range_start TEXT,
+                    date_range_end TEXT,
+                    entity_ids TEXT,
+                    embedding BLOB,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+
             # Spaces
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS spaces (
@@ -1196,6 +1218,15 @@ class MemoryDB:
                     continue
                 if before_ts is not None and created_ts > before_ts:
                     continue
+            # Parse entity_ids from JSON column if present
+            _eid_raw = row['entity_ids_enc'] if 'entity_ids_enc' in (row.keys() if hasattr(row, 'keys') else []) else None
+            _entity_ids = None
+            if _eid_raw:
+                try:
+                    _entity_ids = json.loads(_eid_raw) if isinstance(_eid_raw, str) else None
+                except Exception:
+                    _entity_ids = None
+
             seg = ConversationSegment(
                 id=row['id'],
                 conversation_id=row['conversation_id'],
@@ -1206,6 +1237,7 @@ class MemoryDB:
                 embedding=_deserialize_vector(row['embedding']),
                 created_at=row['created_at'],
                 updated_at=row['updated_at'],
+                entity_ids=_entity_ids,
             )
             filtered.append((created_ts if created_ts is not None else float('-inf'), seg))
 
@@ -1381,7 +1413,119 @@ class MemoryDB:
             })
 
         return drawers
-    
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # COLLECTION SUMMARIES
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def upsert_collection_summary(
+        self,
+        topic: str,
+        summary: str,
+        segment_count: int = 0,
+        date_range_start: Optional[str] = None,
+        date_range_end: Optional[str] = None,
+        entity_ids: Optional[List[str]] = None,
+        embedding: Optional[List[float]] = None,
+    ) -> Dict[str, Any]:
+        """Insert or update a pre-computed collection summary for a topic."""
+        now = datetime.now().astimezone().isoformat()
+        with self._get_conn() as conn:
+            conn.execute(
+                """INSERT INTO collection_summaries
+                   (topic, summary, segment_count, date_range_start, date_range_end,
+                    entity_ids, embedding, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(topic) DO UPDATE SET
+                    summary = excluded.summary,
+                    segment_count = excluded.segment_count,
+                    date_range_start = excluded.date_range_start,
+                    date_range_end = excluded.date_range_end,
+                    entity_ids = excluded.entity_ids,
+                    embedding = excluded.embedding,
+                    updated_at = excluded.updated_at""",
+                (
+                    topic, summary, segment_count, date_range_start, date_range_end,
+                    json.dumps(entity_ids) if entity_ids else None,
+                    _serialize_vector(embedding),
+                    now, now,
+                ),
+            )
+            conn.commit()
+        return {"topic": topic, "summary": summary, "segment_count": segment_count}
+
+    def get_collection_summary(self, topic: str) -> Optional[Dict[str, Any]]:
+        """Get a pre-computed collection summary by topic name."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM collection_summaries WHERE topic = ?", (topic,)
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "topic": row["topic"],
+            "summary": row["summary"],
+            "segment_count": row["segment_count"],
+            "date_range_start": row["date_range_start"],
+            "date_range_end": row["date_range_end"],
+            "entity_ids": json.loads(row["entity_ids"]) if row["entity_ids"] else [],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def search_collection_summaries_by_vector(
+        self,
+        query_vector: List[float],
+        limit: int = 5,
+        threshold: float = 0.6,
+    ) -> List[Dict[str, Any]]:
+        """Search collection summaries by embedding similarity."""
+        query_np = np.array(query_vector, dtype=np.float32)
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM collection_summaries WHERE embedding IS NOT NULL"
+            ).fetchall()
+
+        results: List[Tuple[float, Dict[str, Any]]] = []
+        for row in rows:
+            vec = _deserialize_vector(row["embedding"])
+            if not vec:
+                continue
+            vec_np = np.array(vec, dtype=np.float32)
+            norm = float(np.linalg.norm(query_np) * np.linalg.norm(vec_np))
+            score = float(np.dot(query_np, vec_np) / norm) if norm > 0 else 0.0
+            if score >= threshold:
+                results.append((score, {
+                    "topic": row["topic"],
+                    "summary": row["summary"],
+                    "segment_count": row["segment_count"],
+                    "date_range_start": row["date_range_start"],
+                    "date_range_end": row["date_range_end"],
+                    "score": round(score, 4),
+                }))
+
+        results.sort(key=lambda x: x[0], reverse=True)
+        return [r for _, r in results[:limit]]
+
+    def list_collection_summaries(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """List all collection summaries ordered by recency."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM collection_summaries ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "topic": row["topic"],
+                "summary": row["summary"],
+                "segment_count": row["segment_count"],
+                "date_range_start": row["date_range_start"],
+                "date_range_end": row["date_range_end"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]
+
     # ═══════════════════════════════════════════════════════════════════════════
     # SPACES
     # ═══════════════════════════════════════════════════════════════════════════

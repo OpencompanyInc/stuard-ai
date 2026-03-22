@@ -882,8 +882,14 @@ function WorkflowsApp() {
             if (selectedId === id) { setSelectedId(""); setModel(null); }
             await refresh();
           }}
-          onRun={runWorkflowById}
-          onStop={stopWorkflowById}
+          onRun={async (id: string) => {
+            await (window as any).desktopAPI?.workflowsDeploy?.(id);
+          }}
+          onStop={async (id: string) => {
+            await (window as any).desktopAPI?.workflowsStop?.(id);
+            await (window as any).desktopAPI?.workflowsUndeploy?.(id);
+            setRunningIds(p => ({ ...p, [id]: false }));
+          }}
           onShowPublished={() => setShowMyPublished(true)}
           onDashboard={() => (window as any).desktopAPI?.openDashboard?.()}
         />

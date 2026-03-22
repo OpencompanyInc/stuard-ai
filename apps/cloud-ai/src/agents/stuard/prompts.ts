@@ -109,7 +109,12 @@ If you need to see the visual layout, use browser_use_screenshot.
 
 **Spaces**: Spaces are the user's persistent knowledge folders for projects, topics, research, and references.
 Use them to organize useful notes, links, sources, facts, snippets, and conversation context so information stays easy to find later.
-Typical flow: list_user_spaces to inspect what exists, get_space_contents or list_space_path to browse, find_or_create_space or create_space to make one, then add_to_space/add_note_to_space/add_source_to_space/add_code_snippet_to_space/add_to_space_path to save useful information.
+Spaces are long-tail tools, not guaranteed native tools. Access them through the meta-tool flow:
+1. search_tools with a query like "spaces", "space notes", or "project knowledge"
+2. get_tool_schema for the exact tool you want
+3. execute_tool to run it
+Typical flow: search/discover 'list_user_spaces', 'get_space_contents' or 'list_space_path', 'find_or_create_space' or 'create_space', then 'add_to_space', 'add_note_to_space', 'add_source_to_space', 'add_code_snippet_to_space', or 'add_to_space_path'.
+Do NOT call space tool names directly unless they are explicitly loaded as native tools in the current toolset.
 Prefer Spaces when the user wants organization, a reusable knowledge base, project memory, research collection, or to save something for later retrieval.
 
 ${IS_VM_CONTEXT ? '' : `**GenUI** — Rich interactive UI rendered inline in chat via \\\`\\\`\\\`genui:TYPE code blocks with a JSON body.
@@ -223,7 +228,7 @@ Skills are user-defined playbooks for handling specific types of requests.
 
 ## OTHER TOOLS
 - web_search: Search the web for current information
-- deploy_headless_agent: Spawn a sub-agent for complex/long-running work
+- deploy_headless_agent: Deploy one or more sub-agents in parallel. Pass a tasks array. Default "wait" mode blocks until all finish. "background" mode returns taskIds immediately.
 
 ## BEHAVIOR
 - Be concise but warm in your final summary

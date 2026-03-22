@@ -938,25 +938,15 @@ export async function findUserIdByPhone(phone: string): Promise<string | null> {
   try {
     const normalizedPhone = normalizePhoneLookup(phone);
     if (!normalizedPhone) return null;
-    // Primary phone
-    const { data: d1 } = await supabaseService
+    // Search across all 5 phone slots (phone, phone2, phone3, phone4, phone5)
+    const { data } = await supabaseService
       .from('external_accounts')
       .select('user_id')
       .eq('provider', 'telnyx')
-      .eq('meta->>phone', normalizedPhone)
+      .or(`meta->>phone.eq.${normalizedPhone},meta->>phone2.eq.${normalizedPhone},meta->>phone3.eq.${normalizedPhone},meta->>phone4.eq.${normalizedPhone},meta->>phone5.eq.${normalizedPhone}`)
       .limit(1)
       .maybeSingle();
-    if (d1?.user_id) return d1.user_id as string;
-    // Secondary phone
-    const { data: d2 } = await supabaseService
-      .from('external_accounts')
-      .select('user_id')
-      .eq('provider', 'telnyx')
-      .eq('meta->>phone2', normalizedPhone)
-      .limit(1)
-      .maybeSingle();
-    if (d2?.user_id) return d2.user_id as string;
-    return null;
+    return data?.user_id as string || null;
   } catch {
     return null;
   }

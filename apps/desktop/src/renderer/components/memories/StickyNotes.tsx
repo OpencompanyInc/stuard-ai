@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { clsx } from 'clsx';
 import { PlusIcon, Cross2Icon, CheckIcon, TrashIcon } from '@radix-ui/react-icons';
 
 interface Fact {
@@ -8,12 +7,45 @@ interface Fact {
   category: string;
   subtype: string;
   created_at: string;
+  attribute_key?: string;
 }
 
 interface StickyNotesProps {
   notes: Fact[];
   onAdd: (text: string, type: 'bio' | 'instruction') => Promise<void>;
   onDelete: (id: string, type: 'bio' | 'instruction') => Promise<void>;
+}
+
+function formatContextDate(value: string) {
+  return new Intl.DateTimeFormat('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'long',
+  }).format(new Date(value));
+}
+
+function splitNoteText(text: string) {
+  const cleaned = text.trim().replace(/\s+/g, ' ');
+  if (!cleaned) return { title: 'Untitled', body: '' };
+
+  const firstSentence = cleaned.split(/(?<=[.!?])\s+/)[0] || cleaned;
+  const shortSentence = firstSentence.length <= 40 ? firstSentence : '';
+
+  if (shortSentence) {
+    const title = shortSentence.replace(/[.!?]+$/, '');
+    const remaining = cleaned.slice(shortSentence.length).trim();
+    return {
+      title,
+      body: remaining || cleaned,
+    };
+  }
+
+  const words = cleaned.split(' ');
+  const title = words.slice(0, 3).join(' ');
+  return {
+    title: title.replace(/[.!?,:;]+$/, ''),
+    body: cleaned,
+  };
 }
 
 export function StickyNotes({ notes, onAdd, onDelete }: StickyNotesProps) {
@@ -27,179 +59,235 @@ export function StickyNotes({ notes, onAdd, onDelete }: StickyNotesProps) {
     setIsAdding(null);
   };
 
-  // Group by type for visual separation
   const profileNotes = notes.filter(n => n.category === 'personal' && n.subtype === 'core');
   const bioNotes = notes.filter(n => n.category === 'personal' && n.subtype === 'bio');
   const instructionNotes = notes.filter(n => n.category === 'instruction');
 
   return (
-    <div className="h-full overflow-y-auto p-8 bg-theme-bg">
-      {/* Profile Section - Core identity facts */}
-      {profileNotes.length > 0 && (
-        <div className="mb-12">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl font-bold text-theme-fg flex items-center gap-2 font-stuard">
-              <span className="text-3xl">👤</span> Profile
-            </h2>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-            {profileNotes.map((note) => (
-              <div 
-                key={note.id} 
-                className="bg-theme-card border border-theme rounded-theme-card p-4 shadow-sm group hover:border-primary/30 transition-all"
-              >
-                <div className="text-[10px] font-black text-primary uppercase tracking-widest mb-2">
-                  {(note as any).attribute_key || 'info'}
-                </div>
-                <div className="text-sm text-theme-fg font-bold leading-tight">{note.text}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Bio Section */}
-      <div className="mb-16">
-        <div className="flex items-center justify-between mb-8">
-          <h2 className="text-2xl font-bold text-theme-fg flex items-center gap-2 font-stuard">
-            <span className="text-3xl">🌱</span> About You
-          </h2>
-          <button
-            onClick={() => setIsAdding('bio')}
-            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-fg rounded-theme-button hover:opacity-90 transition-all text-xs font-bold shadow-md"
-          >
-            <PlusIcon /> Add Note
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 pl-2">
-          {isAdding === 'bio' && (
-            <div className="aspect-square bg-theme-card rounded-theme-card shadow-xl p-6 flex flex-col transform rotate-1 transition-all border-2 border-primary/30 animate-in zoom-in duration-200">
-              <textarea
-                autoFocus
-                value={newText}
-                onChange={e => setNewText(e.target.value)}
-                placeholder="Type your note..."
-                className="flex-1 bg-transparent border-none resize-none focus:outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-stuard font-bold leading-relaxed"
-                onKeyDown={e => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleAddSubmit();
-                    }
-                }}
-              />
-              <div className="flex justify-end gap-3 mt-4">
-                <button onClick={() => setIsAdding(null)} className="p-2 text-theme-muted hover:bg-theme-hover rounded-full transition-colors"><Cross2Icon className="w-5 h-5" /></button>
-                <button onClick={handleAddSubmit} className="p-2 text-primary hover:bg-primary/10 rounded-full transition-colors"><CheckIcon className="w-5 h-5" /></button>
-              </div>
+    <div className="memory-context-surface memory-context-scrollbar h-full overflow-y-auto rounded-[26px] px-5 pb-10 pt-5 md:px-6">
+      <div className="space-y-12">
+        {profileNotes.length > 0 && (
+          <section className="space-y-5">
+            <div className="flex items-center justify-between gap-4">
+              <h2 className="text-[1.35rem] font-semibold text-theme-fg">Profile</h2>
             </div>
-          )}
 
-          {bioNotes.map((note, idx) => (
-            <StickyNote 
-              key={note.id} 
-              note={note} 
-              color="yellow" 
-              rotation={idx % 2 === 0 ? 1 : -1} 
-              onDelete={() => onDelete(note.id, 'bio')} 
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* Instructions Section */}
-      <div className="pb-12">
-        <div className="flex items-center justify-between mb-8">
-          <h2 className="text-2xl font-bold text-theme-fg flex items-center gap-2 font-stuard">
-            <span className="text-3xl">⚙️</span> System Instructions
-          </h2>
-          <button
-            onClick={() => setIsAdding('instruction')}
-            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-fg rounded-theme-button hover:opacity-90 transition-all text-xs font-bold shadow-md"
-          >
-            <PlusIcon /> Add Instruction
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 pl-2">
-          {isAdding === 'instruction' && (
-            <div className="aspect-square bg-theme-card rounded-theme-card shadow-xl p-6 flex flex-col transform -rotate-1 transition-all border-2 border-primary/30 animate-in zoom-in duration-200">
-              <textarea
-                autoFocus
-                value={newText}
-                onChange={e => setNewText(e.target.value)}
-                placeholder="Type instruction..."
-                className="flex-1 bg-transparent border-none resize-none focus:outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-stuard font-bold leading-relaxed"
-                onKeyDown={e => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleAddSubmit();
-                    }
-                }}
-              />
-              <div className="flex justify-end gap-3 mt-4">
-                <button onClick={() => setIsAdding(null)} className="p-2 text-theme-muted hover:bg-theme-hover rounded-full transition-colors"><Cross2Icon className="w-5 h-5" /></button>
-                <button onClick={handleAddSubmit} className="p-2 text-primary hover:bg-primary/10 rounded-full transition-colors"><CheckIcon className="w-5 h-5" /></button>
-              </div>
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+              {profileNotes.map((note, index) => (
+                <ProfileCard key={note.id} note={note} index={index} />
+              ))}
             </div>
-          )}
+          </section>
+        )}
 
-          {instructionNotes.map((note, idx) => (
-            <StickyNote 
-              key={note.id} 
-              note={note} 
-              color="purple" 
-              rotation={idx % 3 === 0 ? -1 : idx % 3 === 1 ? 2 : 0} 
-              onDelete={() => onDelete(note.id, 'instruction')} 
-            />
-          ))}
-        </div>
+        <ContextSection
+          title="About You"
+          addLabel="Add Note"
+          type="bio"
+          notes={bioNotes}
+          isAdding={isAdding === 'bio'}
+          newText={newText}
+          onStartAdd={() => setIsAdding('bio')}
+          onCancel={() => {
+            setIsAdding(null);
+            setNewText('');
+          }}
+          onTextChange={setNewText}
+          onSubmit={handleAddSubmit}
+          onDelete={onDelete}
+          emptyText="Add notes about preferences, work, goals, and personal context."
+        />
+
+        <ContextSection
+          title="System Instructions"
+          addLabel="Add Instruction"
+          type="instruction"
+          notes={instructionNotes}
+          isAdding={isAdding === 'instruction'}
+          newText={newText}
+          onStartAdd={() => setIsAdding('instruction')}
+          onCancel={() => {
+            setIsAdding(null);
+            setNewText('');
+          }}
+          onTextChange={setNewText}
+          onSubmit={handleAddSubmit}
+          onDelete={onDelete}
+          emptyText="Add standing instructions that should guide responses and behavior."
+        />
       </div>
     </div>
   );
 }
 
-function StickyNote({ note, color, rotation, onDelete }: { note: Fact, color: 'yellow' | 'purple', rotation: number, onDelete: () => void }) {
-  const bgColors = {
-    yellow: 'bg-[#FEFCE8] dark:bg-[#252526] border border-yellow-200 dark:border-[#3e3e3e]',
-    purple: 'bg-[#F5F3FF] dark:bg-[#252526] border border-violet-200 dark:border-[#3e3e3e]'
-  };
-  
-  const noteStyle = {
-    lineHeight: '1.6rem',
-    fontSize: '0.95rem',
-  };
-
+function ContextSection({
+  title,
+  addLabel,
+  type,
+  notes,
+  isAdding,
+  newText,
+  onStartAdd,
+  onCancel,
+  onTextChange,
+  onSubmit,
+  onDelete,
+  emptyText,
+}: {
+  title: string;
+  addLabel: string;
+  type: 'bio' | 'instruction';
+  notes: Fact[];
+  isAdding: boolean;
+  newText: string;
+  onStartAdd: () => void;
+  onCancel: () => void;
+  onTextChange: (value: string) => void;
+  onSubmit: () => Promise<void>;
+  onDelete: (id: string, type: 'bio' | 'instruction') => Promise<void>;
+  emptyText: string;
+}) {
   return (
-    <div 
-      className={clsx(
-        "group relative aspect-square p-0 shadow-sm transition-all hover:scale-[1.03] hover:z-10 hover:shadow-xl overflow-hidden rounded-theme-card",
-        bgColors[color]
-      )}
-      style={{ 
-        transform: `rotate(${rotation}deg)`,
-      }}
-    >
-      <div className={clsx("absolute top-0 left-0 right-0 h-1.5", color === 'yellow' ? "bg-yellow-400 dark:bg-yellow-600" : "bg-violet-400 dark:bg-violet-600")} />
+    <section className="space-y-5">
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="text-[1.35rem] font-semibold text-theme-fg">{title}</h2>
 
-      <div className="h-full flex flex-col p-6 pt-8">
-        <div 
-            className="flex-1 text-theme-fg overflow-y-auto custom-scrollbar pr-2 font-stuard font-bold leading-relaxed"
-            style={noteStyle}
+        <button
+          onClick={onStartAdd}
+          className="inline-flex items-center gap-2 rounded-2xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-fg shadow-sm transition-all hover:opacity-90"
         >
-           {note.text}
-        </div>
-        <div className="mt-4 text-[10px] text-theme-muted font-bold tracking-tight text-right z-10 uppercase bg-theme-hover/30 px-2 py-1 rounded-full self-end border border-theme/20">
-          {new Date(note.created_at).toLocaleDateString()}
-        </div>
+          <PlusIcon />
+          <span>{addLabel}</span>
+        </button>
       </div>
 
-      <button 
-        onClick={(e) => { e.stopPropagation(); onDelete(); }}
-        className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 p-2 text-theme-muted hover:text-red-500 hover:bg-red-500/10 rounded-full transition-all z-20"
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-3 xl:grid-cols-4">
+        {isAdding && (
+          <ComposerCard
+            value={newText}
+            placeholder={type === 'bio' ? 'Type your note...' : 'Type instruction...'}
+            onCancel={onCancel}
+            onChange={onTextChange}
+            onSubmit={onSubmit}
+          />
+        )}
+
+        {notes.map((note, index) => (
+          <ContextCard
+            key={note.id}
+            note={note}
+            index={index}
+            onDelete={() => onDelete(note.id, type)}
+          />
+        ))}
+
+        {!isAdding && notes.length === 0 && (
+          <div className="rounded-[24px] bg-theme-card px-5 py-6 text-sm text-theme-muted shadow-sm">
+            {emptyText}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ProfileCard({ note, index }: { note: Fact; index: number }) {
+  const rotation = [-0.8, 0.6, -0.35][index % 3];
+
+  return (
+    <div
+      className="memory-context-card group relative overflow-hidden rounded-[24px] px-5 py-5 shadow-sm transition-all hover:scale-[1.01] hover:shadow-md"
+      style={{ transform: `rotate(${rotation}deg)` }}
+    >
+      <div className="absolute inset-x-0 top-0 h-px bg-primary/50" />
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="rounded-full bg-primary/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">
+          {note.attribute_key || 'Profile'}
+        </div>
+        <div className="text-[11px] font-medium text-theme-muted">
+          {formatContextDate(note.created_at)}
+        </div>
+      </div>
+      <p className="text-[15px] leading-8 text-theme-fg">{note.text}</p>
+    </div>
+  );
+}
+
+function ComposerCard({
+  value,
+  placeholder,
+  onChange,
+  onCancel,
+  onSubmit,
+}: {
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+  onCancel: () => void;
+  onSubmit: () => Promise<void>;
+}) {
+  return (
+    <div className="memory-context-card rounded-[24px] px-5 py-5 shadow-sm">
+      <textarea
+        autoFocus
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="memory-context-scrollbar min-h-[170px] w-full resize-none bg-transparent text-[15px] leading-7 text-theme-fg outline-none placeholder:text-theme-muted"
+        onKeyDown={e => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            void onSubmit();
+          }
+        }}
+      />
+
+      <div className="mt-4 flex justify-end gap-2">
+        <button
+          onClick={onCancel}
+          className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-theme-hover text-theme-muted transition-colors hover:bg-theme-bg hover:text-theme-fg"
+        >
+          <Cross2Icon className="h-4 w-4" />
+        </button>
+        <button
+          onClick={() => void onSubmit()}
+          className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-primary/12 text-primary transition-colors hover:bg-primary/18"
+        >
+          <CheckIcon className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ContextCard({ note, index, onDelete }: { note: Fact; index: number; onDelete: () => void }) {
+  const { title, body } = splitNoteText(note.text);
+  const rotation = [0.9, -0.7, 0.45, -0.35][index % 4];
+
+  return (
+    <div
+      className="memory-context-card group relative min-h-[260px] rounded-[24px] px-5 py-5 shadow-sm transition-all hover:scale-[1.015] hover:shadow-md"
+      style={{ transform: `rotate(${rotation}deg)` }}
+    >
+      <div className="absolute inset-x-0 top-0 h-1 rounded-t-[24px] bg-primary/80" />
+      <button
+        onClick={onDelete}
+        className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-xl bg-theme-hover text-theme-muted opacity-0 transition-all hover:text-red-400 group-hover:opacity-100"
       >
-        <TrashIcon className="w-4 h-4" />
+        <TrashIcon className="h-4 w-4" />
       </button>
+
+      <div className="flex h-full flex-col">
+        <h3 className="pr-10 pt-3 text-[1.05rem] font-semibold leading-7 text-theme-fg">
+          {title}
+        </h3>
+        <p className="memory-context-scrollbar mt-4 flex-1 overflow-y-auto pr-1 text-[15px] leading-8 text-theme-fg">
+          {body}
+        </p>
+        <div className="mt-5 text-[12px] font-medium text-theme-muted">
+          {formatContextDate(note.created_at)}
+        </div>
+      </div>
     </div>
   );
 }

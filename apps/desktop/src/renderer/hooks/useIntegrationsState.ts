@@ -61,7 +61,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     chromeSyncUserDataDir: null,
   });
   const [browserUseSyncSaving, setBrowserUseSyncSaving] = useState<boolean>(false);
-  const [telnyxPhone, setTelnyxPhone] = useState<string | null>(null);
+  const [telnyxPhones, setTelnyxPhones] = useState<Array<{phone: string, slot: number}>>([]);
   const [telnyxVerifying, setTelnyxVerifying] = useState(false);
   const [whatsappPhone, setWhatsappPhone] = useState<string | null>(null);
   const [whatsappConnecting, setWhatsappConnecting] = useState(false);
@@ -130,7 +130,21 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/facebook/status`, "facebook"),
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/instagram/status`, "instagram"),
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/threads/status`, "threads"),
-        fetchStatus(`${CLOUD_AI_HTTP}/integrations/telnyx/status`, "telnyx"),
+        (async () => {
+          try {
+            const resp = await fetch(`${CLOUD_AI_HTTP}/integrations/telnyx/status`, { headers });
+            const j = await resp.json().catch(() => null);
+            if (j && (j as any).ok) {
+              serverConnected['telnyx'] = !!(j as any).connected;
+              const phones = Array.isArray((j as any).phones) ? (j as any).phones : [];
+              setTelnyxPhones(phones);
+            } else {
+              serverConnected['telnyx'] = null;
+            }
+          } catch {
+            serverConnected['telnyx'] = null;
+          }
+        })(),
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/whatsapp/status`, "whatsapp"),
       ]);
 
@@ -177,7 +191,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   }, [syncConnectedFromServer]);
 
   // Regular integrations (OAuth-based, not MCPs)
-  const integrationLibrary = useMemo(
+  const integrationLibraryRaw = useMemo(
     () => [
       { slug: "python", name: "Python", description: "Required for local tools. Stuard sets it up automatically when needed.", category: "Local", homepage: "https://www.python.org/", available: true },
       { slug: "ffmpeg", name: "FFmpeg", description: "Convert and edit audio & video files. Installs automatically when needed.", category: "Local", homepage: "https://ffmpeg.org/", available: true },
@@ -202,6 +216,20 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       { slug: "whatsapp", name: "WhatsApp", description: "Connect your WhatsApp number to receive messages, voice notes, images, and files from Stuard.", category: "Communication", homepage: "https://business.whatsapp.com/", available: true },
     ],
     []
+  );
+
+  const integrationLibrary = useMemo(
+    () => integrationLibraryRaw.map((entry) => (
+      entry.slug === "browser-use"
+        ? {
+            ...entry,
+            name: "Playwright Browser",
+            description: "Playwright-based browser automation for web tasks, forms, logins, and session-aware browsing. Mirrors your Chromium profile when needed.",
+            homepage: "https://playwright.dev/",
+          }
+        : entry
+    )),
+    [integrationLibraryRaw]
   );
 
   const intCategories = useMemo(() => {
@@ -435,7 +463,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     }
   };
 
-  /** One-click: installs browser-use + playwright + starts the server */
+  /** One-click: installs the Playwright browser runtime and starts the server */
   const setupBrowserUse = async () => {
     setBrowserUseChecking(true);
     setBrowserUseSetupProgress('Setting up...');
@@ -452,7 +480,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       await refreshBrowserUseStatus();
     } catch {
       setBrowserUseSetupProgress(null);
-      setBrowserUseStatus((prev: any) => ({ ...(prev || {}), error: 'Failed to set up Browser Use.' }));
+      setBrowserUseStatus((prev: any) => ({ ...(prev || {}), error: 'Failed to set up the Playwright browser runtime.' }));
     } finally {
       setBrowserUseChecking(false);
     }
@@ -466,14 +494,14 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       if (res && typeof res === 'object' && !res.ok) {
         setBrowserUseStatus((prev: any) => ({
           ...(prev || {}),
-          error: res.error || 'Failed to start Browser Use.',
+          error: res.error || 'Failed to start the Playwright browser runtime.',
         }));
       } else {
         setBrowserUseStatus((prev: any) => ({ ...(prev || {}), error: null }));
       }
       await refreshBrowserUseStatus();
     } catch {
-      setBrowserUseStatus((prev: any) => ({ ...(prev || {}), error: 'Failed to start Browser Use.' }));
+      setBrowserUseStatus((prev: any) => ({ ...(prev || {}), error: 'Failed to start the Playwright browser runtime.' }));
     } finally {
       setBrowserUseSetupProgress(null);
       setBrowserUseChecking(false);
@@ -717,7 +745,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     await syncConnectedFromServer(token);
   }, [session?.access_token, CLOUD_AI_HTTP, refreshProfiles, syncConnectedFromServer]);
 
-  const telnyxRequestCode = async (phone: string): Promise<{ ok: boolean; error?: string }> => {
+  const telnyxRequestCode = async (phone: string, slot: number = 0): Promise<{ ok: boolean; error?: string }> => {
     const token = session?.access_token;
     if (!token) return { ok: false, error: 'Not signed in.' };
     try {
@@ -725,7 +753,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       const resp = await fetch(`${CLOUD_AI_HTTP}/integrations/telnyx/request-code`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone }),
+        body: JSON.stringify({ phone, slot }),
       });
       const j = await resp.json().catch(() => null) as any;
       return { ok: !!j?.ok, error: j?.error };
@@ -736,7 +764,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     }
   };
 
-  const telnyxVerifyCode = async (code: string): Promise<{ ok: boolean; phone?: string; error?: string }> => {
+  const telnyxVerifyCode = async (code: string, slot: number = 0): Promise<{ ok: boolean; phone?: string; error?: string }> => {
     const token = session?.access_token;
     if (!token) return { ok: false, error: 'Not signed in.' };
     try {
@@ -744,17 +772,11 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       const resp = await fetch(`${CLOUD_AI_HTTP}/integrations/telnyx/verify-code`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code }),
+        body: JSON.stringify({ code, slot }),
       });
       const j = await resp.json().catch(() => null) as any;
       if (j?.ok && j?.verified) {
-        setTelnyxPhone(j.phone);
-        setConnectedMap((prev) => {
-          const next = { ...prev, telnyx: true };
-          try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
-          emitConnectedChanged();
-          return next;
-        });
+        await refreshTelnyxStatus();
       }
       return { ok: !!j?.ok, phone: j?.phone, error: j?.error };
     } catch (e: any) {
@@ -772,7 +794,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
-      setTelnyxPhone(null);
+      setTelnyxPhones([]);
       setConnectedMap((prev) => {
         const next = { ...prev };
         delete next.telnyx;
@@ -780,6 +802,19 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
         emitConnectedChanged();
         return next;
       });
+    } catch {}
+  };
+
+  const telnyxRemovePhone = async (slot: number): Promise<void> => {
+    const token = session?.access_token;
+    if (!token) return;
+    try {
+      await fetch(`${CLOUD_AI_HTTP}/integrations/telnyx/remove-phone`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slot }),
+      });
+      await refreshTelnyxStatus();
     } catch {}
   };
 
@@ -791,14 +826,17 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
         headers: { Authorization: `Bearer ${token}` },
       });
       const j = await resp.json().catch(() => null) as any;
-      if (j?.ok && j?.connected) {
-        setTelnyxPhone(j.phone || null);
-        setConnectedMap((prev) => {
-          const next = { ...prev, telnyx: true };
-          try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
-          emitConnectedChanged();
-          return next;
-        });
+      if (j?.ok) {
+        const phones = Array.isArray(j.phones) ? j.phones : [];
+        setTelnyxPhones(phones);
+        if (phones.length > 0) {
+          setConnectedMap((prev) => {
+            const next = { ...prev, telnyx: true };
+            try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
+            emitConnectedChanged();
+            return next;
+          });
+        }
       }
     } catch {}
   }, [session?.access_token, CLOUD_AI_HTTP]);
@@ -1167,7 +1205,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     browserUseChromeProfiles,
     browserUseSyncSettings,
     browserUseSyncSaving,
-    telnyxPhone,
+    telnyxPhones,
     telnyxVerifying,
     whatsappPhone,
     whatsappConnecting,
@@ -1211,6 +1249,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     telnyxRequestCode,
     telnyxVerifyCode,
     telnyxDisconnect,
+    telnyxRemovePhone,
     refreshTelnyxStatus,
     // whatsapp
     whatsappConnect,

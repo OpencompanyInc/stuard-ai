@@ -19,16 +19,18 @@ async def knowledge_upsert_core(args: Dict[str, Any]) -> Dict[str, Any]:
     key = str(args.get("key") or "").strip()
     value = str(args.get("value") or "").strip()
     vector = args.get("vector")
-    
+
     if not key or not value:
         return {"ok": False, "error": "key and value are required"}
-    
+
     try:
         fact = kdb.upsert_core_fact(
             attribute_key=key,
             text=value,
             vector=vector if isinstance(vector, list) else None,
-            source=str(args.get("source", "ai_extracted"))
+            source=str(args.get("source", "ai_extracted")),
+            confidence=float(args.get("confidence", 1.0)),
+            source_conversation_id=args.get("source_conversation_id"),
         )
         return {"ok": True, "fact": fact.to_dict()}
     except Exception as e:
@@ -45,10 +47,10 @@ async def knowledge_add_fact(args: Dict[str, Any]) -> Dict[str, Any]:
     attribute_key = args.get("attribute_key")
     vector = args.get("vector")
     source = str(args.get("source", "ai_extracted"))
-    
+
     if not category or not subtype or not text:
         return {"ok": False, "error": "category, subtype, and text are required"}
-    
+
     try:
         fact = kdb.append_fact(
             category=category,  # type: ignore
@@ -56,7 +58,9 @@ async def knowledge_add_fact(args: Dict[str, Any]) -> Dict[str, Any]:
             text=text,
             entity_id=str(entity_id) if entity_id else None,
             vector=vector if isinstance(vector, list) else None,
-            source=source
+            source=source,
+            confidence=float(args.get("confidence", 1.0)),
+            source_conversation_id=args.get("source_conversation_id"),
         )
         return {"ok": True, "fact": fact.to_dict()}
     except Exception as e:
@@ -215,22 +219,67 @@ async def knowledge_search_facts(args: Dict[str, Any]) -> List[Dict[str, Any]]:
     threshold = float(args.get("threshold", 0.65))
     category = args.get("category")
     entity_id = args.get("entity_id")
-    
+    include_vectors = bool(args.get("include_vectors", False))
+
     if not isinstance(vector, list) or len(vector) == 0:
         return []
-    
+
     try:
         results = kdb.search_facts_by_vector(
             query_vector=vector,
             limit=limit,
             category=str(category) if category else None,  # type: ignore
             entity_id=str(entity_id) if entity_id else None,
-            threshold=threshold
+            threshold=threshold,
+            include_vectors=include_vectors,
         )
-        return [{"fact": f.to_dict(), "score": s} for f, s in results]
+        out = []
+        for f, s in results:
+            d = f.to_dict()
+            if include_vectors and f.vector:
+                d['vector'] = f.vector
+            out.append({"fact": d, "score": s})
+        return out
     except Exception as e:
         logger.error(f"[knowledge] search_facts error: {e}")
         return []
+
+
+async def knowledge_get_facts_for_conversation(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Return all facts extracted from a specific conversation."""
+    conversation_id = str(args.get("conversation_id") or "").strip()
+    if not conversation_id:
+        return {"ok": False, "error": "conversation_id is required"}
+    try:
+        facts = kdb.get_facts_for_conversation(conversation_id)
+        return {"ok": True, "facts": [f.to_dict() for f in facts]}
+    except Exception as e:
+        logger.error(f"[knowledge] get_facts_for_conversation error: {e}")
+        return {"ok": False, "error": str(e)}
+
+
+async def knowledge_get_conversations_for_entity(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Return conversation IDs that produced facts for a given entity."""
+    entity_id = str(args.get("entity_id") or "").strip()
+    if not entity_id:
+        return {"ok": False, "error": "entity_id is required"}
+    try:
+        conv_ids = kdb.get_conversations_for_entity(entity_id)
+        return {"ok": True, "conversation_ids": conv_ids}
+    except Exception as e:
+        logger.error(f"[knowledge] get_conversations_for_entity error: {e}")
+        return {"ok": False, "error": str(e)}
+
+
+async def knowledge_deduplicate_facts(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Run fact deduplication to remove near-duplicate entries."""
+    threshold = float(args.get("threshold", 0.92))
+    try:
+        count = kdb.deduplicate_facts(similarity_threshold=threshold)
+        return {"ok": True, "invalidated": count}
+    except Exception as e:
+        logger.error(f"[knowledge] deduplicate_facts error: {e}")
+        return {"ok": False, "error": str(e)}
 
 
 async def knowledge_stats(args: Dict[str, Any]) -> Dict[str, Any]:

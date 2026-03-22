@@ -439,12 +439,45 @@ export function UIBuilderProperties({
               onChange={v => updateStyle({ textColor: v })}
             />
           </PropertyRow>
+          <PropertyRow label="Font Family">
+            <SelectInput
+              value={element.style.fontFamily || ''}
+              onChange={v => updateStyle({ fontFamily: v || undefined })}
+              options={[
+                { value: '', label: 'Inherit' },
+                { value: "'Inter', system-ui, sans-serif", label: 'Inter' },
+                { value: "'Poppins', system-ui, sans-serif", label: 'Poppins' },
+                { value: "'Roboto', system-ui, sans-serif", label: 'Roboto' },
+                { value: "'Open Sans', system-ui, sans-serif", label: 'Open Sans' },
+                { value: "'Montserrat', system-ui, sans-serif", label: 'Montserrat' },
+                { value: "'Outfit', system-ui, sans-serif", label: 'Outfit' },
+                { value: "'DM Sans', system-ui, sans-serif", label: 'DM Sans' },
+                { value: "'Plus Jakarta Sans', system-ui, sans-serif", label: 'Plus Jakarta Sans' },
+                { value: "'Manrope', system-ui, sans-serif", label: 'Manrope' },
+                { value: "'Sora', system-ui, sans-serif", label: 'Sora' },
+                { value: "'Nunito', system-ui, sans-serif", label: 'Nunito' },
+                { value: "'Quicksand', system-ui, sans-serif", label: 'Quicksand' },
+                { value: "'Playfair Display', Georgia, serif", label: 'Playfair Display' },
+                { value: "'Merriweather', Georgia, serif", label: 'Merriweather' },
+                { value: "'Lora', Georgia, serif", label: 'Lora' },
+                { value: "'DM Serif Display', Georgia, serif", label: 'DM Serif Display' },
+                { value: "'Bebas Neue', Impact, sans-serif", label: 'Bebas Neue' },
+                { value: "'Oswald', Impact, sans-serif", label: 'Oswald' },
+                { value: "'Caveat', cursive", label: 'Caveat' },
+                { value: "'Dancing Script', cursive", label: 'Dancing Script' },
+                { value: "'Pacifico', cursive", label: 'Pacifico' },
+                { value: "'JetBrains Mono', monospace", label: 'JetBrains Mono' },
+                { value: "'Fira Code', monospace", label: 'Fira Code' },
+                { value: "'Source Code Pro', monospace", label: 'Source Code Pro' },
+              ]}
+            />
+          </PropertyRow>
           <PropertyRow label="Font Size">
             <NumberInput
               value={element.style.fontSize}
               onChange={v => updateStyle({ fontSize: v })}
               min={8}
-              max={72}
+              max={128}
             />
           </PropertyRow>
           <PropertyRow label="Font Weight">
@@ -452,10 +485,67 @@ export function UIBuilderProperties({
               value={element.style.fontWeight}
               onChange={v => updateStyle({ fontWeight: v })}
               options={[
+                { value: 'thin', label: 'Thin (100)' },
+                { value: 'extralight', label: 'Extra Light (200)' },
+                { value: 'light', label: 'Light (300)' },
+                { value: 'normal', label: 'Normal (400)' },
+                { value: 'medium', label: 'Medium (500)' },
+                { value: 'semibold', label: 'Semibold (600)' },
+                { value: 'bold', label: 'Bold (700)' },
+                { value: 'extrabold', label: 'Extra Bold (800)' },
+                { value: 'black', label: 'Black (900)' },
+              ]}
+            />
+          </PropertyRow>
+          <PropertyRow label="Style">
+            <SelectInput
+              value={element.style.fontStyle || 'normal'}
+              onChange={v => updateStyle({ fontStyle: v as 'normal' | 'italic' })}
+              options={[
                 { value: 'normal', label: 'Normal' },
-                { value: 'medium', label: 'Medium' },
-                { value: 'semibold', label: 'Semibold' },
-                { value: 'bold', label: 'Bold' },
+                { value: 'italic', label: 'Italic' },
+              ]}
+            />
+          </PropertyRow>
+          <PropertyRow label="Letter Spacing">
+            <SelectInput
+              value={String(element.style.letterSpacing ?? '')}
+              onChange={v => updateStyle({ letterSpacing: v ? parseFloat(v) : undefined })}
+              options={[
+                { value: '', label: 'Default' },
+                { value: '-0.05', label: 'Tighter' },
+                { value: '-0.025', label: 'Tight' },
+                { value: '0', label: 'Normal' },
+                { value: '0.025', label: 'Wide' },
+                { value: '0.05', label: 'Wider' },
+                { value: '0.1', label: 'Widest' },
+              ]}
+            />
+          </PropertyRow>
+          <PropertyRow label="Line Height">
+            <SelectInput
+              value={String(element.style.lineHeight ?? '')}
+              onChange={v => updateStyle({ lineHeight: v ? parseFloat(v) : undefined })}
+              options={[
+                { value: '', label: 'Default' },
+                { value: '1', label: 'None (1)' },
+                { value: '1.25', label: 'Tight (1.25)' },
+                { value: '1.375', label: 'Snug (1.375)' },
+                { value: '1.5', label: 'Normal (1.5)' },
+                { value: '1.625', label: 'Relaxed (1.625)' },
+                { value: '2', label: 'Loose (2)' },
+              ]}
+            />
+          </PropertyRow>
+          <PropertyRow label="Transform">
+            <SelectInput
+              value={element.style.textTransform || 'none'}
+              onChange={v => updateStyle({ textTransform: v as any })}
+              options={[
+                { value: 'none', label: 'None' },
+                { value: 'uppercase', label: 'UPPERCASE' },
+                { value: 'lowercase', label: 'lowercase' },
+                { value: 'capitalize', label: 'Capitalize' },
               ]}
             />
           </PropertyRow>

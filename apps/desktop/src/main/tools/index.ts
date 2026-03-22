@@ -17,7 +17,7 @@ import {
   execCanvasDelete,
 } from './handlers/canvas';
 import { execOllamaStatus, execOllamaStart, execOllamaChat, execOllamaGenerate, execOllamaVision, execOllamaEmbeddings, execOllamaModels } from './handlers/ollama';
-import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseExecuteScript, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, execBrowserUseSyncChrome, execBrowserUseListChromeProfiles, execBrowserUseHover, execBrowserUseSelectOption, execBrowserUseGetDropdownOptions, execBrowserUseGetInteractiveElements, execBrowserUseFillForm, execBrowserUseUploadFile, execBrowserUseWaitFor, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse } from './handlers/browser-use';
+import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseExecuteScript, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, execBrowserUseSyncChrome, execBrowserUseListChromeProfiles, execBrowserUseHover, execBrowserUseSelectOption, execBrowserUseGetDropdownOptions, execBrowserUseGetInteractiveElements, execBrowserUseFillForm, execBrowserUseUploadFile, execBrowserUseWaitFor, execBrowserUseConnectedProfiles, execBrowserUseSwitchProfile, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse } from './handlers/browser-use';
 import {
   execBrowserGetContent,
   execBrowserClickElement,
@@ -153,10 +153,10 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'ollama_models') return execOllamaModels(args, ctx);
 
       // Browser Use (AI browser automation) tools
-      if (toolName === 'browser_use_setup') return setupBrowserUse();
+      if (toolName === 'browser_use_setup') return setupBrowserUse(args?.session_id || args?._browserUseSessionId || 'default');
       if (toolName === 'browser_use_install') return installBrowserUse();
-      if (toolName === 'browser_use_start') return startBrowserUseServer();
-      if (toolName === 'browser_use_stop') return stopBrowserUseServer();
+      if (toolName === 'browser_use_start') return startBrowserUseServer(args?.session_id || args?._browserUseSessionId || 'default');
+      if (toolName === 'browser_use_stop') return stopBrowserUseServer(args?.session_id || args?._browserUseSessionId || 'default');
       if (toolName === 'browser_use_uninstall') return uninstallBrowserUse();
       if (toolName === 'browser_use_status') return execBrowserUseStatus(args, ctx);
       if (toolName === 'browser_use_configure') return execBrowserUseConfigure(args, ctx);
@@ -180,6 +180,8 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'browser_use_fill_form') return execBrowserUseFillForm(args, ctx);
       if (toolName === 'browser_use_upload_file') return execBrowserUseUploadFile(args, ctx);
       if (toolName === 'browser_use_wait_for') return execBrowserUseWaitFor(args, ctx);
+      if (toolName === 'browser_use_connected_profiles') return execBrowserUseConnectedProfiles(args, ctx);
+      if (toolName === 'browser_use_switch_profile') return execBrowserUseSwitchProfile(args, ctx);
       if (toolName === 'proactive_task_list') return execProactiveTaskList(args, ctx);
       if (toolName === 'proactive_task_update') return execProactiveTaskUpdate(args, ctx);
       if (toolName === 'proactive_task_create') return execProactiveTaskCreate(args, ctx);

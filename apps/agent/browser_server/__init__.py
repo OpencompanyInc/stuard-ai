@@ -1,7 +1,7 @@
-"""browser-use bridge server — lightweight HTTP wrapper around the browser-use library.
+"""Browser automation server — lightweight HTTP wrapper around Playwright + CDP.
 
 Managed by the Stuard desktop app as a child process.
-Requires: pip install browser-use aiohttp
+Requires: pip install playwright aiohttp cryptography
 Runs on port 18082 by default.
 """
 
@@ -17,6 +17,8 @@ from browser_server.handlers_config import (
     handle_setup_debug_port,
     handle_configure,
     handle_task,
+    handle_connected_profiles,
+    handle_switch_profile,
 )
 from browser_server.handlers_nav import (
     handle_navigate,
@@ -26,6 +28,8 @@ from browser_server.handlers_nav import (
 )
 from browser_server.handlers_content import (
     handle_screenshot,
+    handle_screenshot_mirror,
+    handle_click_at,
     handle_content,
     handle_execute_script,
     handle_scroll,
@@ -67,6 +71,8 @@ def create_app() -> web.Application:
     app.router.add_post("/type", handle_type)
     app.router.add_post("/press_key", handle_press_key)
     app.router.add_post("/screenshot", handle_screenshot)
+    app.router.add_get("/screenshot_mirror", handle_screenshot_mirror)
+    app.router.add_post("/click_at", handle_click_at)
     app.router.add_post("/content", handle_content)
     app.router.add_post("/execute-script", handle_execute_script)
     app.router.add_post("/scroll", handle_scroll)
@@ -74,6 +80,8 @@ def create_app() -> web.Application:
     app.router.add_post("/cookies", handle_cookies)
     app.router.add_post("/sync-chrome", handle_sync_chrome)
     app.router.add_post("/setup-debug-port", handle_setup_debug_port)
+    app.router.add_get("/connected-profiles", handle_connected_profiles)
+    app.router.add_post("/switch-profile", handle_switch_profile)
     app.router.add_post("/hover", handle_hover)
     app.router.add_post("/select_option", handle_select_option)
     app.router.add_post("/get_dropdown_options", handle_get_dropdown_options)
@@ -92,5 +100,5 @@ async def on_shutdown(_app: web.Application):
 def main():
     app = create_app()
     app.on_shutdown.append(on_shutdown)
-    print(f"[browser-use-server] Starting on {HOST}:{PORT}", flush=True)
+    print(f"[browser-server] Starting on {HOST}:{PORT}", flush=True)
     web.run_app(app, host=HOST, port=PORT, print=lambda msg: print(msg, flush=True))

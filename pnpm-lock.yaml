@@ -184,6 +184,9 @@ importers:
       lucide-react:
         specifier: ^0.554.0
         version: 0.554.0(react@18.2.0)
+      marked:
+        specifier: ^17.0.5
+        version: 17.0.5
       node-cron:
         specifier: ^3.0.3
         version: 3.0.3
@@ -6906,7 +6909,7 @@ packages:
       '@vitest/spy': 4.0.10
       estree-walker: 3.0.3
       magic-string: 0.30.21
-      vite: 7.2.2(@types/node@24.10.1)(tsx@4.20.6)
+      vite: 7.2.2(@types/node@20.19.22)(terser@5.46.0)
     dev: true
 
   /@vitest/pretty-format@4.0.10:
@@ -11837,6 +11840,12 @@ packages:
 
   /markdown-table@3.0.4:
     resolution: {integrity: sha512-wiYz4+JrLyb/DqW2hkFJxP7Vd7JuTDm77fvbM8VfEQdmSMqcImWeeRbHwZjBjIFki/VaMK2BhFi7oUUZeM5bqw==}
+    dev: false
+
+  /marked@17.0.5:
+    resolution: {integrity: sha512-6hLvc0/JEbRjRgzI6wnT2P1XuM1/RrrDEX0kPt0N7jGm1133g6X7DlxFasUIx+72aKAr904GTxhSLDrd5DIlZg==}
+    engines: {node: '>= 20'}
+    hasBin: true
     dev: false
 
   /matcher@3.0.0:

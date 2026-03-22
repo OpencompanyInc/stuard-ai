@@ -945,23 +945,15 @@ def enable_chrome_debug_port(port: int = 9222) -> dict[str, Any]:
 
 
 def _enable_debug_port_windows(port: int) -> dict[str, Any]:
-    """Add --remote-debugging-port to Chrome's registry command line on Windows."""
-    import winreg
+    """Add --remote-debugging-port to Chrome shortcuts and registry on Windows."""
+    import subprocess
     flag = f"--remote-debugging-port={port}"
+    modified: list[str] = []
+    errors: list[str] = []
 
-    # Method 1: Modify Chrome's shell/open/command in registry
-    # This affects what happens when you double-click a .html file or URL
-    chrome_keys = [
-        r"SOFTWARE\Classes\ChromeHTML\shell\open\command",
-        r"SOFTWARE\Classes\http\shell\open\command",
-    ]
-
-    # Method 2 (preferred): Add to Chrome's AppUserModelId launch
-    # Actually, the most reliable way is to modify the taskbar/Start Menu shortcut
+    # ── Method 1: Modify Chrome shortcuts (.lnk files) ──
+    # This is what applies when you click the Chrome icon on Taskbar / Start Menu / Desktop.
     try:
-        import subprocess
-
-        # Find Chrome shortcuts
         shortcuts: list[Path] = []
         for search_dir in [
             Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar",
@@ -973,60 +965,81 @@ def _enable_debug_port_windows(port: int) -> dict[str, Any]:
                 for f in search_dir.rglob("Google Chrome*.lnk"):
                     shortcuts.append(f)
 
-        if not shortcuts:
-            return {
-                "success": False,
-                "message": f"No Chrome shortcuts found. Manually add {flag} to your Chrome shortcut target.",
-                "method": "manual",
-            }
-
-        # Use PowerShell to modify shortcuts
-        modified = []
         for shortcut in shortcuts:
+            # NOTE: use $curArgs instead of $args — $args is a reserved
+            # PowerShell automatic variable and using it causes silent bugs.
             ps_script = (
-                f'$ws = New-Object -ComObject WScript.Shell; '
+                '$ws = New-Object -ComObject WScript.Shell; '
                 f'$s = $ws.CreateShortcut("{shortcut}"); '
-                f'$args = $s.Arguments; '
-                f'if ($args -notlike "*--remote-debugging-port*") {{ '
-                f'  $s.Arguments = "$args {flag}"; '
-                f'  $s.Save(); '
-                f'  Write-Output "modified" '
-                f'}} else {{ '
-                f'  Write-Output "already_set" '
-                f'}}'
+                '$curArgs = $s.Arguments; '
+                f'if ($curArgs -notlike "*--remote-debugging-port*") {{ '
+                f'  $s.Arguments = ("$curArgs {flag}").Trim(); '
+                '  $s.Save(); '
+                '  Write-Output "modified" '
+                '} else { '
+                '  Write-Output "already_set" '
+                '}'
             )
             result = subprocess.run(
-                ["powershell", "-Command", ps_script],
+                ["powershell", "-NoProfile", "-Command", ps_script],
                 capture_output=True, text=True, timeout=10,
             )
             output = result.stdout.strip()
             if output == "modified":
-                modified.append(str(shortcut))
+                modified.append(f"shortcut: {shortcut}")
             elif output == "already_set":
-                modified.append(f"{shortcut} (already set)")
-
-        if modified:
-            return {
-                "success": True,
-                "message": f"Added {flag} to {len(modified)} Chrome shortcut(s). "
-                           f"Restart Chrome for it to take effect.",
-                "method": "shortcut",
-                "shortcuts": modified,
-            }
-        else:
-            return {
-                "success": False,
-                "message": f"Could not modify Chrome shortcuts. Manually add {flag} to your Chrome shortcut target.",
-                "method": "manual",
-            }
-
+                modified.append(f"shortcut: {shortcut} (already set)")
+            elif result.returncode != 0:
+                errors.append(f"shortcut {shortcut.name}: {result.stderr.strip()[:100]}")
     except Exception as e:
+        errors.append(f"shortcut search: {e}")
+
+    # ── Method 2: Modify Chrome's file-association registry command ──
+    # This applies when you click a URL or .html file that opens Chrome.
+    try:
+        import winreg
+        reg_keys = [
+            (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Classes\ChromeHTML\shell\open\command"),
+        ]
+        for hive, key_path in reg_keys:
+            try:
+                with winreg.OpenKey(hive, key_path, 0, winreg.KEY_READ | winreg.KEY_WRITE) as key:
+                    current_val, val_type = winreg.QueryValueEx(key, "")
+                    if "--remote-debugging-port" not in current_val:
+                        # Insert flag before the last argument (usually -- "%1" or --single-argument %1)
+                        # Pattern: "C:\...\chrome.exe" --single-argument %1
+                        # Result:  "C:\...\chrome.exe" --remote-debugging-port=9222 --single-argument %1
+                        parts = current_val.split(" --", 1)
+                        if len(parts) == 2:
+                            new_val = f"{parts[0]} {flag} --{parts[1]}"
+                        else:
+                            new_val = f"{current_val} {flag}"
+                        winreg.SetValueEx(key, "", 0, val_type, new_val)
+                        modified.append(f"registry: {key_path}")
+                    else:
+                        modified.append(f"registry: {key_path} (already set)")
+            except FileNotFoundError:
+                pass
+            except PermissionError:
+                errors.append(f"registry {key_path}: permission denied")
+    except Exception as e:
+        errors.append(f"registry: {e}")
+
+    if modified:
         return {
-            "success": False,
-            "message": f"Failed to modify Chrome shortcuts: {e}. "
-                       f"Manually add {flag} to your Chrome shortcut target.",
-            "method": "manual",
+            "success": True,
+            "message": f"Configured {flag} on {len(modified)} target(s). Restart Chrome for it to take effect.",
+            "method": "shortcut+registry",
+            "modified": modified,
+            "errors": errors or None,
         }
+
+    return {
+        "success": False,
+        "message": f"Could not configure Chrome. Errors: {'; '.join(errors) if errors else 'no shortcuts found'}. "
+                   f"Manually add {flag} to your Chrome shortcut target.",
+        "method": "manual",
+    }
 
 
 def _enable_debug_port_macos(port: int) -> dict[str, Any]:

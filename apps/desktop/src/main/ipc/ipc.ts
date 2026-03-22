@@ -25,6 +25,7 @@ import {
   openSidebarWindow,
   closeSidebarWindow,
   toggleSidebarWindow,
+  setSidebarPresentation,
   getSidebarWindow,
   setOverlayMode,
   setOverlaySize,
@@ -507,12 +508,12 @@ export function setupIpc() {
   ipcMain.handle("spaces:close", () => closeSpacesWindow());
   ipcMain.handle("spaces:toggle", () => toggleSpacesWindow());
 
-  // Sidebar window (new unified sidebar with Spaces, Canvas, Terminal)
+  // Sidebar window (new unified sidebar with Spaces, Notes, Terminal, Agent Tasks, Browser)
   ipcMain.handle(
     "sidebar:open",
     (
       _e,
-      options?: { tab?: "spaces" | "canvas" | "terminal"; expanded?: boolean },
+      options?: { tab?: "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo"; expanded?: boolean; presentation?: "full" | "popup" },
     ) => openSidebarWindow(options),
   );
   ipcMain.handle("sidebar:close", () => closeSidebarWindow());
@@ -520,17 +521,22 @@ export function setupIpc() {
     "sidebar:toggle",
     (
       _e,
-      options?: { tab?: "spaces" | "canvas" | "terminal"; expanded?: boolean },
+      options?: { tab?: "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo"; expanded?: boolean },
     ) => toggleSidebarWindow(options),
   );
   ipcMain.handle(
     "sidebar:navigate",
-    (_e, tab: "spaces" | "canvas" | "terminal") => {
+    (_e, tab: "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo") => {
       const sidebar = getSidebarWindow();
       if (sidebar && !sidebar.isDestroyed()) {
         sidebar.webContents.send("sidebar:navigate", { tab });
       }
     },
+  );
+  ipcMain.handle(
+    "sidebar:setPresentation",
+    (_e, payload: { mode: "full" | "popup"; tab?: "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo" }) =>
+      setSidebarPresentation(payload?.mode || "full", payload?.tab),
   );
   ipcMain.handle("sidebar:toggleExpanded", () => {
     const { toggleSidebarExpanded } = require("../windows");
@@ -1293,6 +1299,52 @@ export function setupIpc() {
           chromeSyncEnabled: next.chromeSyncEnabled !== false,
         },
       };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || "failed") };
+    }
+  });
+
+  // Browser mirror (sidebar live view)
+  ipcMain.handle("browserMirror:screenshot", async (_e, sessionId?: string, quality?: number) => {
+    try {
+      const { browserMirrorScreenshot } = await import("../tools/handlers/browser-use");
+      return await browserMirrorScreenshot(sessionId || "default", quality || 50);
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || "failed") };
+    }
+  });
+
+  ipcMain.handle("browserMirror:clickAt", async (_e, sessionId: string, x: number, y: number, type?: string) => {
+    try {
+      const { browserMirrorClickAt } = await import("../tools/handlers/browser-use");
+      return await browserMirrorClickAt(sessionId || "default", x, y, (type as any) || "click");
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || "failed") };
+    }
+  });
+
+  ipcMain.handle("browserMirror:type", async (_e, sessionId: string, text: string) => {
+    try {
+      const { browserMirrorType } = await import("../tools/handlers/browser-use");
+      return await browserMirrorType(sessionId || "default", text);
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || "failed") };
+    }
+  });
+
+  ipcMain.handle("browserMirror:pressKey", async (_e, sessionId: string, key: string) => {
+    try {
+      const { browserMirrorPressKey } = await import("../tools/handlers/browser-use");
+      return await browserMirrorPressKey(sessionId || "default", key);
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || "failed") };
+    }
+  });
+
+  ipcMain.handle("browserMirror:scroll", async (_e, sessionId: string, direction: string, amount?: number) => {
+    try {
+      const { browserMirrorScroll } = await import("../tools/handlers/browser-use");
+      return await browserMirrorScroll(sessionId || "default", (direction as any) || "down", amount || 300);
     } catch (e: any) {
       return { ok: false, error: String(e?.message || "failed") };
     }

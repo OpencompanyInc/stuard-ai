@@ -70,11 +70,12 @@ interface IntegrationsViewProps {
   refreshProfiles: (provider?: string) => Promise<void> | void;
   setDefaultProfile: (provider: string, profileLabel: string) => Promise<void> | void;
   deleteProfile: (provider: string, profileLabel: string) => Promise<void> | void;
-  telnyxPhone: string | null;
+  telnyxPhones: Array<{phone: string, slot: number}>;
   telnyxVerifying: boolean;
-  telnyxRequestCode: (phone: string) => Promise<{ ok: boolean; error?: string }>;
-  telnyxVerifyCode: (code: string) => Promise<{ ok: boolean; phone?: string; error?: string }>;
+  telnyxRequestCode: (phone: string, slot?: number) => Promise<{ ok: boolean; error?: string }>;
+  telnyxVerifyCode: (code: string, slot?: number) => Promise<{ ok: boolean; phone?: string; error?: string }>;
   telnyxDisconnect: () => Promise<void>;
+  telnyxRemovePhone: (slot: number) => Promise<void>;
   getToken?: () => string | null;
   whatsappPhone: string | null;
   whatsappConnecting: boolean;
@@ -452,10 +453,11 @@ function formatLocalDigits(digits: string): string {
 
 interface TelnyxPhoneCardProps {
   isConnected: boolean;
-  phone: string | null;
+  phones: Array<{phone: string, slot: number}>;
   verifying: boolean;
-  requestCode: (phone: string) => Promise<{ ok: boolean; error?: string }>;
-  verifyCode: (code: string) => Promise<{ ok: boolean; phone?: string; error?: string }>;
+  requestCode: (phone: string, slot?: number) => Promise<{ ok: boolean; error?: string }>;
+  verifyCode: (code: string, slot?: number) => Promise<{ ok: boolean; phone?: string; error?: string }>;
+  removePhone: (slot: number) => Promise<void>;
   disconnect: () => Promise<void>;
   getToken?: () => string | null;
 }
@@ -463,7 +465,7 @@ interface TelnyxPhoneCardProps {
 type SmsAgentTarget = 'desktop' | 'vm' | 'auto';
 
 const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
-  isConnected, phone, verifying, requestCode, verifyCode, disconnect, getToken,
+  isConnected, phones, verifying, requestCode, verifyCode, removePhone, disconnect, getToken,
 }) => {
   const [step, setStep] = useState<'idle' | 'enter-phone' | 'enter-code'>('idle');
   // Split input: country code + local digits
@@ -473,11 +475,20 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
   const [codeInput, setCodeInput] = useState('');
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
+  const [addingSlot, setAddingSlot] = useState(0);
 
   // SMS routing settings
   const [smsTarget, setSmsTarget] = useState<SmsAgentTarget>('auto');
   const [vmAvailable, setVmAvailable] = useState(false);
   const [loadingSettings, setLoadingSettings] = useState(false);
+
+  const nextAvailableSlot = () => {
+    const usedSlots = new Set(phones.map(p => p.slot));
+    for (let i = 0; i < 5; i++) {
+      if (!usedSlots.has(i)) return i;
+    }
+    return -1;
+  };
 
   useEffect(() => {
     if (!isConnected) return;
@@ -538,7 +549,7 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
   const handleRequestCode = async () => {
     setError('');
     setSending(true);
-    const result = await requestCode(e164);
+    const result = await requestCode(e164, addingSlot);
     setSending(false);
     if (result.ok) {
       setStep('enter-code');
@@ -550,7 +561,7 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
   const handleVerify = async () => {
     setError('');
     setSending(true);
-    const result = await verifyCode(codeInput);
+    const result = await verifyCode(codeInput, addingSlot);
     setSending(false);
     if (result.ok) {
       setStep('idle');
@@ -569,6 +580,142 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
     setError('');
   };
 
+  // Phone input UI shared between connected "add phone" and initial verify flows
+  const phoneInputUI = (
+    <div className="space-y-3">
+      <div>
+        <label className="block text-[11px] text-theme-muted font-medium mb-1.5">Phone Number</label>
+        <div className="flex gap-1.5">
+          {/* Country code badge -- click to edit */}
+          {editingCountry ? (
+            <input
+              type="text"
+              value={countryCode}
+              onChange={(e) => setCountryCode(e.target.value.replace(/[^\d+]/g, '') || '+')}
+              onBlur={() => setEditingCountry(false)}
+              autoFocus
+              className="w-16 px-2 py-2.5 rounded-lg bg-theme-bg border border-primary/50 text-[13px] text-theme-fg text-center font-mono focus:outline-none"
+              placeholder="+1"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setEditingCountry(true)}
+              className="px-3 py-2.5 rounded-lg bg-theme-hover border border-theme text-[13px] font-mono text-theme-fg hover:border-primary/50 transition-colors whitespace-nowrap"
+              title="Click to change country code"
+            >
+              {countryCode}
+            </button>
+          )}
+          {/* Local number */}
+          <input
+            type="tel"
+            inputMode="numeric"
+            value={localDigits}
+            onChange={handleLocalChange}
+            onKeyDown={(e) => { if (e.key === 'Enter' && phoneValid) handleRequestCode(); }}
+            placeholder={countryCode === '+1' ? '(614) 380-9607' : '123456789'}
+            autoComplete="tel-national"
+            autoFocus={!editingCountry}
+            className={clsx(
+              "flex-1 px-3 py-2.5 rounded-lg bg-theme-bg border text-[13px] text-theme-fg placeholder:text-theme-muted/40 focus:outline-none transition-colors",
+              localRaw.length > 0 && phoneValid ? "border-emerald-500/50 focus:border-emerald-500" :
+              localRaw.length > 0 && !phoneValid ? "border-red-500/40 focus:border-red-500/60" :
+              "border-theme focus:border-primary/50"
+            )}
+          />
+        </div>
+        {/* Preview */}
+        {phoneValid && (
+          <p className="text-[11px] text-emerald-400 mt-1.5 flex items-center gap-1">
+            <span className="opacity-60">Sending to:</span>
+            <span className="font-mono font-medium">{e164}</span>
+          </p>
+        )}
+        {!phoneValid && localRaw.length > 0 && (
+          <p className="text-[11px] text-theme-muted mt-1.5">
+            {countryCode === '+1' ? `${10 - localRaw.length} more digit${10 - localRaw.length !== 1 ? 's' : ''} needed` : 'Enter full number'}
+          </p>
+        )}
+        {localRaw.length === 0 && (
+          <p className="text-[10px] text-theme-muted mt-1.5">
+            Click <span className="font-mono text-theme-fg">{countryCode}</span> to change country code
+          </p>
+        )}
+      </div>
+      {error && (
+        <div className="px-3 py-2 rounded-md bg-red-900/20 border border-red-900/30">
+          <p className="text-[11px] text-red-400">{error}</p>
+        </div>
+      )}
+      <div className="flex gap-2">
+        <button
+          onClick={() => { setStep('idle'); setError(''); setLocalDigits(''); }}
+          className="px-4 py-2 rounded-md bg-theme-hover text-theme-fg text-[11px] font-bold border border-theme hover:bg-theme-active transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={handleRequestCode}
+          disabled={sending || !phoneValid}
+          className="flex-1 px-4 py-2 rounded-md bg-primary text-white text-[11px] font-bold hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {sending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Phone className="w-3 h-3" />}
+          {sending ? 'Sending...' : 'Send Code'}
+        </button>
+      </div>
+    </div>
+  );
+
+  // Code verification UI shared between connected "add phone" and initial verify flows
+  const codeInputUI = (
+    <div className="space-y-3">
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="text-[11px] text-theme-muted font-medium">Verification Code</label>
+          <span className="text-[10px] text-emerald-400 font-mono">{e164}</span>
+        </div>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={codeInput}
+          onChange={(e) => setCodeInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
+          onKeyDown={(e) => { if (e.key === 'Enter' && codeInput.length === 6) handleVerify(); }}
+          placeholder="&#183; &#183; &#183; &#183; &#183; &#183;"
+          maxLength={6}
+          autoFocus
+          className="w-full px-3 py-3 rounded-lg bg-theme-bg border border-theme text-[18px] text-theme-fg text-center tracking-[0.5em] font-mono placeholder:text-theme-muted/30 focus:outline-none focus:border-primary/50 transition-colors"
+        />
+        <p className="text-[10px] text-theme-muted mt-1.5 text-center">
+          Check your texts — code expires in 10 min
+        </p>
+      </div>
+      {error && (
+        <div className="px-3 py-2 rounded-md bg-red-900/20 border border-red-900/30">
+          <p className="text-[11px] text-red-400">{error}</p>
+        </div>
+      )}
+      <div className="flex gap-2">
+        <button
+          onClick={() => { setStep('enter-phone'); setError(''); setCodeInput(''); }}
+          className="px-4 py-2 rounded-md bg-theme-hover text-theme-fg text-[11px] font-bold border border-theme hover:bg-theme-active transition-colors"
+        >
+          Back
+        </button>
+        <button
+          onClick={handleVerify}
+          disabled={sending || codeInput.length !== 6}
+          className="flex-1 px-4 py-2 rounded-md bg-primary text-white text-[11px] font-bold hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {sending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />}
+          {sending ? 'Verifying...' : 'Verify'}
+        </button>
+      </div>
+    </div>
+  );
+
+  const primaryPhone = phones.length > 0 ? phones[0].phone : null;
+
   return (
     <div className={clsx(
       "bg-theme-card rounded-theme-card border shadow-sm transition-all duration-300",
@@ -585,8 +732,8 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
             </div>
             <div>
               <h3 className="font-bold text-[14px] text-theme-fg">Phone (SMS / Call)</h3>
-              {isConnected && phone ? (
-                <span className="text-[11px] text-emerald-400 font-medium">{phone}</span>
+              {isConnected && primaryPhone ? (
+                <span className="text-[11px] text-emerald-400 font-medium">{phones.length} phone{phones.length !== 1 ? 's' : ''} verified</span>
               ) : (
                 <span className="text-[11px] text-theme-muted">Verify your phone number</span>
               )}
@@ -606,18 +753,38 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
 
         {isConnected ? (
           <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-md bg-theme-bg border border-theme text-[12px]">
-                <MessageSquare className="w-4 h-4 text-emerald-400" />
-                <span className="text-theme-fg font-medium">{phone}</span>
+            {/* List of verified phones */}
+            {phones.map((p) => (
+              <div key={p.slot} className="flex items-center gap-2">
+                <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-md bg-theme-bg border border-theme text-[12px]">
+                  <MessageSquare className="w-4 h-4 text-emerald-400" />
+                  <span className="text-theme-fg font-medium">{p.phone}</span>
+                  {p.slot === 0 && <span className="text-[9px] text-theme-muted uppercase">Primary</span>}
+                </div>
+                <button
+                  onClick={() => p.slot === 0 ? handleDisconnect() : removePhone(p.slot)}
+                  className="px-2 py-2 rounded-md bg-red-900/20 text-red-400 text-[11px] font-bold border border-red-900/30 hover:bg-red-900/30 transition-colors"
+                  title={p.slot === 0 ? 'Remove all phones' : 'Remove this phone'}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
+            ))}
+
+            {/* Add more phone button (up to 5) */}
+            {phones.length < 5 && step === 'idle' && (
               <button
-                onClick={handleDisconnect}
-                className="px-3 py-2 rounded-md bg-red-900/20 text-red-400 text-[11px] font-bold border border-red-900/30 hover:bg-red-900/30 transition-colors"
+                onClick={() => { setAddingSlot(nextAvailableSlot()); setStep('enter-phone'); }}
+                className="w-full px-3 py-2 rounded-md bg-theme-hover text-theme-fg text-[11px] font-bold border border-dashed border-theme hover:border-theme-hover transition-colors flex items-center justify-center gap-2"
               >
-                Remove
+                <Plus className="w-3.5 h-3.5" />
+                Add Phone ({phones.length}/5)
               </button>
-            </div>
+            )}
+
+            {/* Phone input / code verification UI for adding a phone */}
+            {step === 'enter-phone' && phoneInputUI}
+            {step === 'enter-code' && codeInputUI}
 
             {/* SMS Routing Target */}
             <div>
@@ -654,140 +821,16 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
           </div>
         ) : step === 'idle' ? (
           <button
-            onClick={() => setStep('enter-phone')}
+            onClick={() => { setAddingSlot(0); setStep('enter-phone'); }}
             className="w-full px-4 py-2.5 rounded-lg bg-primary text-white text-[12px] font-bold hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
           >
             <Phone className="w-4 h-4" />
             Verify Phone Number
           </button>
         ) : step === 'enter-phone' ? (
-          <div className="space-y-3">
-            <div>
-              <label className="block text-[11px] text-theme-muted font-medium mb-1.5">Phone Number</label>
-              <div className="flex gap-1.5">
-                {/* Country code badge — click to edit */}
-                {editingCountry ? (
-                  <input
-                    type="text"
-                    value={countryCode}
-                    onChange={(e) => setCountryCode(e.target.value.replace(/[^\d+]/g, '') || '+')}
-                    onBlur={() => setEditingCountry(false)}
-                    autoFocus
-                    className="w-16 px-2 py-2.5 rounded-lg bg-theme-bg border border-primary/50 text-[13px] text-theme-fg text-center font-mono focus:outline-none"
-                    placeholder="+1"
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setEditingCountry(true)}
-                    className="px-3 py-2.5 rounded-lg bg-theme-hover border border-theme text-[13px] font-mono text-theme-fg hover:border-primary/50 transition-colors whitespace-nowrap"
-                    title="Click to change country code"
-                  >
-                    {countryCode}
-                  </button>
-                )}
-                {/* Local number */}
-                <input
-                  type="tel"
-                  inputMode="numeric"
-                  value={localDigits}
-                  onChange={handleLocalChange}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && phoneValid) handleRequestCode(); }}
-                  placeholder={countryCode === '+1' ? '(614) 380-9607' : '123456789'}
-                  autoComplete="tel-national"
-                  autoFocus={!editingCountry}
-                  className={clsx(
-                    "flex-1 px-3 py-2.5 rounded-lg bg-theme-bg border text-[13px] text-theme-fg placeholder:text-theme-muted/40 focus:outline-none transition-colors",
-                    localRaw.length > 0 && phoneValid ? "border-emerald-500/50 focus:border-emerald-500" :
-                    localRaw.length > 0 && !phoneValid ? "border-red-500/40 focus:border-red-500/60" :
-                    "border-theme focus:border-primary/50"
-                  )}
-                />
-              </div>
-              {/* Preview */}
-              {phoneValid && (
-                <p className="text-[11px] text-emerald-400 mt-1.5 flex items-center gap-1">
-                  <span className="opacity-60">Sending to:</span>
-                  <span className="font-mono font-medium">{e164}</span>
-                </p>
-              )}
-              {!phoneValid && localRaw.length > 0 && (
-                <p className="text-[11px] text-theme-muted mt-1.5">
-                  {countryCode === '+1' ? `${10 - localRaw.length} more digit${10 - localRaw.length !== 1 ? 's' : ''} needed` : 'Enter full number'}
-                </p>
-              )}
-              {localRaw.length === 0 && (
-                <p className="text-[10px] text-theme-muted mt-1.5">
-                  Click <span className="font-mono text-theme-fg">{countryCode}</span> to change country code
-                </p>
-              )}
-            </div>
-            {error && (
-              <div className="px-3 py-2 rounded-md bg-red-900/20 border border-red-900/30">
-                <p className="text-[11px] text-red-400">{error}</p>
-              </div>
-            )}
-            <div className="flex gap-2">
-              <button
-                onClick={() => { setStep('idle'); setError(''); setLocalDigits(''); }}
-                className="px-4 py-2 rounded-md bg-theme-hover text-theme-fg text-[11px] font-bold border border-theme hover:bg-theme-active transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleRequestCode}
-                disabled={sending || !phoneValid}
-                className="flex-1 px-4 py-2 rounded-md bg-primary text-white text-[11px] font-bold hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {sending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Phone className="w-3 h-3" />}
-                {sending ? 'Sending…' : 'Send Code'}
-              </button>
-            </div>
-          </div>
+          phoneInputUI
         ) : (
-          <div className="space-y-3">
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-[11px] text-theme-muted font-medium">Verification Code</label>
-                <span className="text-[10px] text-emerald-400 font-mono">{e164}</span>
-              </div>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={codeInput}
-                onChange={(e) => setCodeInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                onKeyDown={(e) => { if (e.key === 'Enter' && codeInput.length === 6) handleVerify(); }}
-                placeholder="· · · · · ·"
-                maxLength={6}
-                autoFocus
-                className="w-full px-3 py-3 rounded-lg bg-theme-bg border border-theme text-[18px] text-theme-fg text-center tracking-[0.5em] font-mono placeholder:text-theme-muted/30 focus:outline-none focus:border-primary/50 transition-colors"
-              />
-              <p className="text-[10px] text-theme-muted mt-1.5 text-center">
-                Check your texts — code expires in 10 min
-              </p>
-            </div>
-            {error && (
-              <div className="px-3 py-2 rounded-md bg-red-900/20 border border-red-900/30">
-                <p className="text-[11px] text-red-400">{error}</p>
-              </div>
-            )}
-            <div className="flex gap-2">
-              <button
-                onClick={() => { setStep('enter-phone'); setError(''); setCodeInput(''); }}
-                className="px-4 py-2 rounded-md bg-theme-hover text-theme-fg text-[11px] font-bold border border-theme hover:bg-theme-active transition-colors"
-              >
-                Back
-              </button>
-              <button
-                onClick={handleVerify}
-                disabled={sending || codeInput.length !== 6}
-                className="flex-1 px-4 py-2 rounded-md bg-primary text-white text-[11px] font-bold hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {sending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />}
-                {sending ? 'Verifying…' : 'Verify'}
-              </button>
-            </div>
-          </div>
+          codeInputUI
         )}
       </div>
     </div>
@@ -1385,7 +1428,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
         </div>
       )}
 
-      {/* Browser Use details */}
+      {/* Playwright browser details */}
       {isBrowserUse && (
         <div className="mb-4 p-3 bg-theme-bg rounded-lg border border-theme space-y-3">
           {browserUseStatus?.running ? (
@@ -1411,7 +1454,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
                   onClick={uninstallBrowserUse}
                   disabled={browserUseChecking}
                   className="h-7 px-3 flex items-center justify-center gap-1.5 rounded-md border border-red-500/30 text-red-400 text-[10px] font-bold hover:bg-red-500/10 transition-all disabled:opacity-50"
-                  title="Uninstall Browser Use"
+                  title="Uninstall Playwright Browser"
                 >
                   <Trash2 className="w-3 h-3" />
                 </button>
@@ -1433,14 +1476,14 @@ const StandardCard: React.FC<StandardCardProps> = ({
                 <span className="text-theme-muted ml-auto text-[10px]">Auto-start on use</span>
               </div>
               <p className="text-[11px] text-theme-muted leading-relaxed">
-                Browser Use is installed and launches automatically when a tool needs it.
+                The Playwright browser runtime is installed and launches automatically when a browser tool needs it.
               </p>
               <div className="flex gap-2">
                 <button
                   onClick={uninstallBrowserUse}
                   disabled={browserUseChecking}
                   className="w-full h-7 flex items-center justify-center gap-1.5 rounded-md border border-red-500/30 text-red-400 text-[10px] font-bold hover:bg-red-500/10 transition-all disabled:opacity-50"
-                  title="Uninstall Browser Use"
+                  title="Uninstall Playwright Browser"
                 >
                   <Trash2 className="w-3 h-3" />
                   Uninstall
@@ -1457,7 +1500,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
                 <span className="font-semibold text-theme-fg">Python required</span>
               </div>
               <p className="text-[11px] text-theme-muted leading-relaxed">
-                Browser Use needs Python 3.11+. Download it first, then come back and click Set Up.
+                The Playwright browser runtime needs Python 3.11+. Download it first, then come back and click Set Up.
               </p>
               <div className="flex gap-2">
                 <button
@@ -1494,7 +1537,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
           ) : (
             <div className="space-y-2.5">
               <p className="text-[11px] text-theme-muted leading-relaxed">
-                Click below to automatically install Browser Use and set up browser automation.
+                Click below to install the Playwright browser runtime and set up browser automation.
               </p>
             </div>
           )}
@@ -1600,7 +1643,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
             browserUseStatus?.running ? (
               <div className="flex-1 flex items-center gap-2 text-[10px] text-theme-muted font-medium">
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Browser Active
+                Playwright Active
               </div>
             ) : browserUseSetupProgress ? (
               <div className="flex-1 flex items-center gap-2 text-[10px] text-theme-muted font-medium">
@@ -1790,11 +1833,12 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     ollamaChecking,
     refreshOllamaStatus,
     startOllama,
-    telnyxPhone,
+    telnyxPhones,
     telnyxVerifying,
     telnyxRequestCode,
     telnyxVerifyCode,
     telnyxDisconnect,
+    telnyxRemovePhone,
     getToken,
     whatsappPhone,
     whatsappConnecting,
@@ -1934,10 +1978,11 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
           {showTelnyxCard && (
             <TelnyxPhoneCard
               isConnected={!!connectedMap.telnyx}
-              phone={telnyxPhone}
+              phones={telnyxPhones}
               verifying={telnyxVerifying}
               requestCode={telnyxRequestCode}
               verifyCode={telnyxVerifyCode}
+              removePhone={telnyxRemovePhone}
               disconnect={telnyxDisconnect}
               getToken={getToken}
             />
@@ -1962,7 +2007,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
           {nonGoogleIntegrations.map((i: any) => {
             const isBrowserUseSlug = i.slug === 'browser-use';
             const isConnected = isBrowserUseSlug
-              ? !!(browserUseStatus?.running)
+              ? !!(browserUseStatus?.running || browserUseStatus?.installed)
               : !!connectedMap[i.slug];
 
             return (

@@ -21,9 +21,13 @@ export const EXTRA_CSS = `
 ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.25); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.4); }
 
-/* Window dragging */
+/* Window dragging — exclude interactive & scrollable elements so scroll works */
 .drag { -webkit-app-region: drag; }
-.drag input, .drag textarea, .drag button, .drag a, .drag select, .no-drag { -webkit-app-region: no-drag; }
+.drag input, .drag textarea, .drag button, .drag a, .drag select, .no-drag,
+.drag [style*="overflow"], .drag .overflow-auto, .drag .overflow-scroll,
+.drag .overflow-y-auto, .drag .overflow-x-auto,
+.drag .markdown-body, .drag pre, .drag code,
+.drag [class*="scroll"] { -webkit-app-region: no-drag; }
 
 /* ========================================
    2. ENTRANCE ANIMATIONS
@@ -794,4 +798,202 @@ export const EXTRA_CSS = `
 .object-contain { object-fit: contain; }
 .object-fill { object-fit: fill; }
 .object-center { object-position: center; }
+
+/* ========================================
+   24. MARKDOWN BODY STYLES
+   ======================================== */
+
+.markdown-body {
+  font-size: 1rem;
+  line-height: 1.75;
+  color: inherit;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Override the global theme defaults (html.ts sets p{color:#475569}, h1-h6{color:#0f172a})
+   so markdown content inherits from the parent instead */
+.markdown-body p,
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6,
+.markdown-body li,
+.markdown-body td,
+.markdown-body th,
+.markdown-body blockquote,
+.markdown-body span {
+  color: inherit;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  font-weight: 600;
+  line-height: 1.3;
+  color: inherit;
+}
+
+.markdown-body h1 { font-size: 2em; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.3em; }
+.markdown-body h2 { font-size: 1.5em; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.3em; }
+.markdown-body h3 { font-size: 1.25em; }
+.markdown-body h4 { font-size: 1em; }
+.markdown-body h5 { font-size: 0.875em; }
+.markdown-body h6 { font-size: 0.85em; opacity: 0.7; }
+
+.markdown-body p { margin-bottom: 1em; }
+
+.markdown-body a {
+  color: currentColor;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  opacity: 0.9;
+}
+.markdown-body a:hover { opacity: 1; }
+
+.markdown-body strong { font-weight: 600; color: inherit; }
+.markdown-body em { font-style: italic; }
+
+.markdown-body ul, .markdown-body ol {
+  margin-bottom: 1em;
+  padding-left: 1.5em;
+}
+.markdown-body ul { list-style-type: disc; }
+.markdown-body ol { list-style-type: decimal; }
+.markdown-body li { margin-bottom: 0.35em; }
+.markdown-body li > ul, .markdown-body li > ol { margin-top: 0.35em; margin-bottom: 0; }
+
+.markdown-body blockquote {
+  margin: 1em 0;
+  padding: 0.5em 1em;
+  border-left: 4px solid rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.03);
+  color: inherit;
+  opacity: 0.85;
+  border-radius: 0 8px 8px 0;
+}
+.markdown-body blockquote p:last-child { margin-bottom: 0; }
+
+.markdown-body code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.875em;
+  padding: 0.15em 0.4em;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  color: inherit;
+}
+
+.markdown-body pre {
+  margin: 1em 0;
+  padding: 1em;
+  background: #0f172a;
+  border-radius: 8px;
+  overflow-x: auto;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.markdown-body pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.8125rem;
+  line-height: 1.7;
+  color: #e2e8f0;
+}
+
+.markdown-body img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin: 1em 0;
+}
+
+.markdown-body hr {
+  border: 0;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.15;
+  margin: 2em 0;
+}
+
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+  font-size: 0.9em;
+}
+.markdown-body th, .markdown-body td {
+  padding: 0.6em 0.8em;
+  border: 1px solid currentColor;
+  border-color: inherit;
+  opacity: 1;
+  border-opacity: 0.15;
+  text-align: left;
+}
+.markdown-body th, .markdown-body td {
+  border-color: rgba(255,255,255,0.1);
+}
+.markdown-body th {
+  background: rgba(255,255,255,0.05);
+  font-weight: 600;
+  color: inherit;
+}
+.markdown-body tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+
+.markdown-body input[type="checkbox"] {
+  margin-right: 0.5em;
+  vertical-align: middle;
+}
+
+/* Markdown light mode — opt-in for light backgrounds */
+.markdown-light {
+  color: #1e293b;
+}
+.markdown-light h1, .markdown-light h2, .markdown-light h3,
+.markdown-light h4, .markdown-light h5, .markdown-light h6 {
+  color: #0f172a;
+}
+.markdown-light h1, .markdown-light h2 {
+  border-bottom-color: #e2e8f0;
+}
+.markdown-light a { color: #4f46e5; }
+.markdown-light blockquote {
+  border-left-color: #6366f1;
+  background: rgba(99, 102, 241, 0.05);
+}
+.markdown-light code {
+  background: rgba(0, 0, 0, 0.06);
+}
+.markdown-light th, .markdown-light td {
+  border-color: #e2e8f0;
+}
+.markdown-light th {
+  background: #f8fafc;
+}
+.markdown-light tr:nth-child(even) { background: #f8fafc; }
+.markdown-light hr { opacity: 0.3; }
+
+/* Compact markdown variant — tighter spacing for small containers */
+.markdown-compact { font-size: 0.875rem; line-height: 1.6; }
+.markdown-compact h1 { font-size: 1.5em; }
+.markdown-compact h2 { font-size: 1.25em; }
+.markdown-compact h3 { font-size: 1.1em; }
+.markdown-compact p { margin-bottom: 0.6em; }
+.markdown-compact pre { padding: 0.75em; }
+.markdown-compact blockquote { padding: 0.4em 0.8em; }
+
+/* KaTeX math — inherit color from parent */
+.markdown-body .katex { color: inherit; font-size: 1.1em; }
+.markdown-body .katex-display { color: inherit; margin: 1em 0; overflow-x: auto; overflow-y: hidden; padding: 0.25em 0; }
+.markdown-body .katex-display > .katex { color: inherit; }
+.markdown-body .katex .mord, .markdown-body .katex .mop,
+.markdown-body .katex .mbin, .markdown-body .katex .mrel,
+.markdown-body .katex .mopen, .markdown-body .katex .mclose,
+.markdown-body .katex .mpunct, .markdown-body .katex .minner { color: inherit; }
+
 `;

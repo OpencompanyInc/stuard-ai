@@ -5,17 +5,24 @@ import './scrollbar.css';
 import { usePreferences } from './hooks/usePreferences';
 import { SidebarView } from './components/sidebar/SidebarView';
 
+type SidebarTabId = 'spaces' | 'canvas' | 'terminal' | 'tasks' | 'browser' | 'todo';
+
 function SidebarApp() {
   const { translucentMode, themeMode, themeDarkShade, themeLightShade, themeText } = usePreferences();
-  
+
   // Parse URL params for initial tab and expanded state
   const urlParams = new URLSearchParams(window.location.search);
-  const initialTab = (urlParams.get('tab') as 'spaces' | 'canvas' | 'terminal' | 'cloud') || 'spaces';
+  const initialTab = (urlParams.get('tab') as SidebarTabId) || 'spaces';
   const initialExpanded = urlParams.get('expanded') === 'true';
-  
-  const [activeTab, setActiveTab] = useState<'spaces' | 'canvas' | 'terminal' | 'cloud'>(initialTab);
+
+  const [activeTab, setActiveTab] = useState<SidebarTabId>(initialTab);
   const [isExpanded, setIsExpanded] = useState(initialExpanded);
   const [selectedItem, setSelectedItem] = useState<{ type: 'space' | 'canvas'; id: string } | null>(null);
+
+  // Notify main process of active tab changes
+  useEffect(() => {
+    Promise.resolve((window as any).desktopAPI?.sidebarSetPresentation?.('full', activeTab)).catch(() => {});
+  }, [activeTab]);
 
   // Load initial expanded state from main process (fallback)
   useEffect(() => {
@@ -73,7 +80,7 @@ function SidebarApp() {
 
   // Listen for tab navigation from main process
   useEffect(() => {
-    const unsub = (window as any).desktopAPI?.onSidebarNavigate?.((data: { tab: 'spaces' | 'canvas' | 'terminal' }) => {
+    const unsub = (window as any).desktopAPI?.onSidebarNavigate?.((data: { tab: SidebarTabId }) => {
       if (data?.tab) setActiveTab(data.tab);
     });
     return () => { try { (typeof unsub === 'function') && unsub(); } catch { } };
@@ -83,10 +90,8 @@ function SidebarApp() {
   useEffect(() => {
     const unsub = (window as any).desktopAPI?.onSidebarSelectItem?.((data: { type: 'space' | 'canvas'; id: string }) => {
       if (data?.type && data?.id) {
-        // Switch to the correct tab
         if (data.type === 'space') setActiveTab('spaces');
         else if (data.type === 'canvas') setActiveTab('canvas');
-        // Set selected item for the view to pick up
         setSelectedItem(data);
       }
     });
