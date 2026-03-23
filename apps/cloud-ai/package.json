@@ -1,6 +1,6 @@
 {
   "name": "@stuardai/cloud-ai",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "private": true,
   "type": "module",
   "scripts": {
@@ -40,6 +40,7 @@
     "ai": "^6.0.64",
     "ai-sdk-ollama": "^1.1.0",
     "better-sqlite3": "^12.8.0",
+    "discord.js": "^14.18.0",
     "dotenv": "^16.4.5",
     "openai": "^4.85.0",
     "sis-tools": "^0.1.2",
