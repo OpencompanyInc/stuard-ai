@@ -759,31 +759,26 @@ export function openOnboardingWindow() {
     return;
   }
 
-  const { workArea } = screen.getPrimaryDisplay();
-  const WIDTH = Math.min(1120, Math.max(560, workArea.width - 80));
-  const HEIGHT = Math.min(780, Math.max(620, workArea.height - 80));
-  const MIN_WIDTH = Math.min(WIDTH, 920);
-  const MIN_HEIGHT = Math.min(HEIGHT, 700);
+  const { size } = screen.getPrimaryDisplay();
 
   onboardingWin = new BrowserWindow({
-    width: WIDTH,
-    height: HEIGHT,
-    minWidth: MIN_WIDTH,
-    minHeight: MIN_HEIGHT,
-    maxWidth: 1280,
-    maxHeight: 900,
-    show: false, // Show after ready-to-show for smoother appearance
+    width: size.width,
+    height: size.height,
+    x: 0,
+    y: 0,
+    show: false,
     frame: false,
     transparent: true,
-    hasShadow: true,
-    resizable: true,
-    movable: true,
-    minimizable: true,
+    hasShadow: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
     maximizable: false,
-    fullscreenable: false,
-    skipTaskbar: false, // Show in taskbar like a normal window
-    alwaysOnTop: false, // Act like a normal window
-    useContentSize: true,
+    fullscreenable: true,
+    fullscreen: true,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    useContentSize: false,
     titleBarStyle: "hidden",
     webPreferences: {
       preload: getPreloadPath(),
@@ -803,15 +798,11 @@ export function openOnboardingWindow() {
     } catch {}
   }
 
-  // Center on screen
-  const x = Math.round(workArea.x + (workArea.width - WIDTH) / 2);
-  const y = Math.round(workArea.y + (workArea.height - HEIGHT) / 2);
-  onboardingWin.setPosition(x, y);
-
-  // Show when ready for smoother appearance
+  // Show when ready — full-screen OOBE experience
   onboardingWin.once("ready-to-show", () => {
     onboardingWin?.show();
     onboardingWin?.focus();
+    onboardingWin?.setFullScreen(true);
   });
 
   if (isDev) {

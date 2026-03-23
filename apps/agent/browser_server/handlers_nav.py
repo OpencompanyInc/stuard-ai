@@ -162,7 +162,7 @@ async def handle_click(req: web.Request) -> web.Response:
             # Strategy 7: Enhanced JS click with broad element search, scoring, and full event dispatch
             if text:
                 clicked = await _evaluate(
-                    """(needle, exact, timeoutMs) => {
+                    """([needle, exact, timeoutMs]) => {
                       return new Promise((resolve) => {
                         const deadline = Date.now() + timeoutMs;
                         function attempt() {
@@ -313,7 +313,7 @@ async def handle_type(req: web.Request) -> web.Response:
 
             # Strategy 4: Enhanced JS with React/Vue-compatible event simulation
             result = await _evaluate(
-                """(value, clearFirst, sel) => {
+                """([value, clearFirst, sel]) => {
                   let el = sel ? document.querySelector(sel) : document.activeElement;
                   if (!el) return { status: 'no_element', detail: 'No element found' };
 

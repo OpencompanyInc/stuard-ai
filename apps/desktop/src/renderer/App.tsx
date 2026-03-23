@@ -613,7 +613,7 @@ export default function App() {
     }
   }, [onboardingComplete]);
 
-  // Show tour in overlay after wizard is done
+  // Show tour in overlay after wizard is done (legacy)
   const showTour = onboardingComplete && !tourComplete;
 
   // Ensure overlay is shown when tour starts
@@ -2523,7 +2523,7 @@ export default function App() {
           />
           <HotkeysHelp open={showHotkeys} onClose={handleCloseHotkeys} />
 
-          {/* Spotlight tour after wizard */}
+          {/* Legacy spotlight tour (fallback for users who started old flow) */}
           {showTour && (
             <OnboardingFlow
               startAtTour={true}

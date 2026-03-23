@@ -1,5 +1,11 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { estimateCostUsd, monthlyCreditLimitForPlan, creditsPerUsd } from './pricing';
+import { estimateCostUsd, monthlyCreditLimitForPlan, creditsPerUsd, snapCredits } from './pricing';
+
+/** Floor to nearest 0.25 for display — never overstate a balance. */
+function displayCredits(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.floor(value * 4) / 4;
+}
 import { DEV_MODE, SYNC_ACCOUNTS_FALLBACK } from './utils/config';
 import { normalizeUsage } from './utils/usage';
 import { embedMany } from 'ai';
@@ -820,7 +826,7 @@ export async function logUsageEvent(userId: string, conversationId: string | nul
     const costUsd = Number.isFinite(explicitCostUsd) && explicitCostUsd >= 0
       ? Number(explicitCostUsd.toFixed(8))
       : estimateCostUsd(model, promptTokens, completionTokens, cachedPromptTokens);
-    const creditCost = roundCredits(costUsd * creditsPerUsd());
+    const creditCost = snapCredits(costUsd * creditsPerUsd());
     const persistedConversationId = await resolveUsageConversationId(userId, conversationId);
     const usageEventId = await insertUsageEvent({
       user_id: userId,
@@ -978,6 +984,110 @@ export async function findUserIdByWhatsApp(waId: string): Promise<string | null>
     return null;
   } catch {
     return null;
+  }
+}
+
+// ── Discord Bot Helpers ──────────────────────────────────────────────────────
+
+// Find a StuardAI user by their Discord user ID (stored in external_accounts meta)
+export async function findUserIdByDiscordId(discordUserId: string): Promise<string | null> {
+  if (!supabaseService) return null;
+  try {
+    const id = String(discordUserId || '').trim();
+    if (!id) return null;
+    const { data } = await supabaseService
+      .from('external_accounts')
+      .select('user_id')
+      .eq('provider', 'discord')
+      .eq('meta->>discord_user_id', id)
+      .limit(1)
+      .maybeSingle();
+    return data?.user_id as string || null;
+  } catch {
+    return null;
+  }
+}
+
+export type DiscordPreferredModel = 'fast' | 'balanced' | 'smart' | 'research';
+
+export interface DiscordUserState {
+  user_id: string;
+  discord_user_id: string;
+  preferred_model: DiscordPreferredModel;
+  conversation_id: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+const DEFAULT_DISCORD_STATE: DiscordUserState = {
+  user_id: '',
+  discord_user_id: '',
+  preferred_model: 'balanced',
+  conversation_id: null,
+};
+
+function normalizeDiscordModel(model: unknown): DiscordPreferredModel {
+  const raw = String(model || '').toLowerCase().trim();
+  if (raw === 'fast') return 'fast';
+  if (raw === 'smart') return 'smart';
+  if (raw === 'research') return 'research';
+  return 'balanced';
+}
+
+export async function getDiscordUserState(userId: string): Promise<DiscordUserState> {
+  if (!supabaseService) return { ...DEFAULT_DISCORD_STATE, user_id: userId };
+  try {
+    const { data, error } = await supabaseService
+      .from('discord_user_state')
+      .select('user_id, discord_user_id, preferred_model, conversation_id, created_at, updated_at')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (error || !data) return { ...DEFAULT_DISCORD_STATE, user_id: userId };
+    return {
+      user_id: String((data as any).user_id),
+      discord_user_id: String((data as any).discord_user_id || ''),
+      preferred_model: normalizeDiscordModel((data as any).preferred_model),
+      conversation_id: (data as any).conversation_id ? String((data as any).conversation_id) : null,
+      created_at: (data as any).created_at || null,
+      updated_at: (data as any).updated_at || null,
+    };
+  } catch (error: any) {
+    console.error('[discord-bot] getDiscordUserState exception:', error?.message || error, { userId });
+    return { ...DEFAULT_DISCORD_STATE, user_id: userId };
+  }
+}
+
+export async function upsertDiscordUserState(input: {
+  userId: string;
+  discordUserId?: string;
+  preferredModel?: DiscordPreferredModel;
+  conversationId?: string | null;
+}): Promise<boolean> {
+  if (!supabaseService) return false;
+  try {
+    const existing = await getDiscordUserState(input.userId);
+    const payload = {
+      user_id: input.userId,
+      discord_user_id: input.discordUserId || existing.discord_user_id || '',
+      preferred_model: normalizeDiscordModel(input.preferredModel ?? existing.preferred_model),
+      conversation_id: input.conversationId !== undefined ? input.conversationId : existing.conversation_id,
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabaseService
+      .from('discord_user_state')
+      .upsert(payload, { onConflict: 'user_id' });
+    if (error) {
+      console.error('[discord-bot] upsertDiscordUserState failed:', {
+        userId: input.userId,
+        code: (error as any)?.code,
+        message: (error as any)?.message,
+      });
+      return false;
+    }
+    return true;
+  } catch (error: any) {
+    console.error('[discord-bot] upsertDiscordUserState exception:', error?.message || error);
+    return false;
   }
 }
 
@@ -1530,7 +1640,7 @@ export async function getCurrentPeriodDebitedCredits(userId: string, monthStart?
       .eq('entry_type', 'debit')
       .gte('created_at', start);
     if (error || !data) return 0;
-    return Math.max(0, Math.ceil((data as any[]).reduce((sum, row) => sum + (Number(row.credits) || 0), 0)));
+    return snapCredits((data as any[]).reduce((sum, row) => sum + (Number(row.credits) || 0), 0));
   } catch {
     return 0;
   }
@@ -1565,23 +1675,23 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
   const used = Math.max(fallbackUsed, debitedCredits);
   const grantedCredits = includedCredits + addonCredits;
   const remainingCredits = includedRemaining + addonRemaining;
-  const fallbackRemaining = unlimited ? -1 : Math.max(0, Math.floor(fallbackLimit - fallbackUsed));
+  const fallbackRemaining = unlimited ? -1 : Math.max(0, displayCredits(fallbackLimit - fallbackUsed));
   const remaining = unlimited
     ? -1
-    : Math.max(0, Math.floor(grantedCredits > 0 ? remainingCredits : fallbackRemaining));
+    : Math.max(0, displayCredits(grantedCredits > 0 ? remainingCredits : fallbackRemaining));
   const limit = unlimited
     ? -1
-    : Math.max(0, Math.floor(grantedCredits > 0 ? grantedCredits : fallbackLimit));
+    : Math.max(0, displayCredits(grantedCredits > 0 ? grantedCredits : fallbackLimit));
   return {
     plan,
     limit,
-    used,
+    used: snapCredits(used),
     remaining,
     unlimited,
-    includedCredits: Math.max(0, Math.floor(includedCredits || Math.max(0, fallbackLimit))),
-    includedRemaining: Math.max(0, Math.floor(includedRemaining || Math.max(0, fallbackRemaining))),
-    addonCredits: Math.max(0, Math.floor(addonCredits)),
-    addonRemaining: Math.max(0, Math.floor(addonRemaining)),
+    includedCredits: Math.max(0, displayCredits(includedCredits || Math.max(0, fallbackLimit))),
+    includedRemaining: Math.max(0, displayCredits(includedRemaining || Math.max(0, fallbackRemaining))),
+    addonCredits: Math.max(0, displayCredits(addonCredits)),
+    addonRemaining: Math.max(0, displayCredits(addonRemaining)),
     currentPeriodStart: period.start.toISOString(),
     currentPeriodEnd: period.end.toISOString(),
   };

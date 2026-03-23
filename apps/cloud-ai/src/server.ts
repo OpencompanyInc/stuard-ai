@@ -483,6 +483,24 @@ function getConversationHistory(ws: WebSocket, convKey: string): Array<any> {
   return history;
 }
 
+// Track active compaction promises per conversation so incoming requests wait
+// for compaction to finish before touching the history array.
+const compactionLocks = new WeakMap<WebSocket, Map<string, Promise<void>>>();
+
+function getCompactionLock(ws: WebSocket, convKey: string): Promise<void> | undefined {
+  return compactionLocks.get(ws)?.get(convKey);
+}
+
+function setCompactionLock(ws: WebSocket, convKey: string, promise: Promise<void>) {
+  let m = compactionLocks.get(ws);
+  if (!m) { m = new Map(); compactionLocks.set(ws, m); }
+  m.set(convKey, promise);
+}
+
+function clearCompactionLock(ws: WebSocket, convKey: string) {
+  compactionLocks.get(ws)?.delete(convKey);
+}
+
 // Anonymous resource/thread IDs per connection for memory when not authenticated
 const anonResources = new WeakMap<WebSocket, string>();
 const anonThreads = new WeakMap<WebSocket, string>();
@@ -925,6 +943,14 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         // Falls back to requestId or default key for anonymous/legacy clients.
         const clientConvId = typeof (msg as any)?.conversationId === 'string' ? String((msg as any).conversationId).trim() : '';
         const historyKey = clientConvId || requestId || '__default__';
+
+        // Wait for any in-progress compaction to finish before touching history
+        const pendingCompaction = getCompactionLock(ws, historyKey);
+        if (pendingCompaction) {
+          console.log(`[cloud-ai] Waiting for compaction to finish on ${historyKey}`);
+          await pendingCompaction;
+        }
+
         const history = getConversationHistory(ws, historyKey);
 
         // Hydrate from Supabase when reconnecting to an existing conversation on a
@@ -1401,6 +1427,9 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                 messages: [{ role: 'user' as const, content: mediaParts }],
                 temperature: 0.2,
               });
+              if (authUser) {
+                try { await logUsageEvent(authUser.userId, conversationId || null, 'google/gemini-2.5-flash', { ...(analysisResult.usage || {}), sourceType: 'attachment_analysis' }); } catch {}
+              }
 
               const analysisText = analysisResult.text?.trim() || 'Unable to analyze the attached media.';
               const fileNames = allAttachments.map((a: any) => a?.name || 'file').join(', ');
@@ -1872,13 +1901,16 @@ ${skillLines}`;
 
             const compactionCheck = shouldCompact(history as any[], compactionModelId);
             if (compactionCheck.shouldCompact) {
-              compactHistory(history, compactionModelId).then(() => {
-                // history array is mutated in-place, already stored in the per-conversation Map
+              const compactionPromise = compactHistory(history, compactionModelId).then(() => {
                 console.log(`[compactor] Compacted: ${estimateTokens(history as any[]).totalTokens} tokens remaining`);
               }).catch((err) => {
                 console.warn('[cloud-ai] Compaction failed, emergency truncating:', err);
                 emergencyTruncate(history as any[], compactionCheck.budget);
+              }).finally(() => {
+                clearCompactionLock(ws, historyKey);
               });
+              // Register the lock so the next request on this conversation waits
+              setCompactionLock(ws, historyKey, compactionPromise);
             }
             if (authUser && conversationId) {
               // Build metadata for persistence
@@ -1898,6 +1930,9 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                 const titleModelId = getDefaultModelForCategory('fast');
                 const titleModel = buildProviderModel(titleModelId);
                 const tRes = await generateText({ model: titleModel as any, prompt: titlePrompt, temperature: 0.2 });
+                if (authUser) {
+                  try { await logUsageEvent(authUser.userId, conversationId || null, titleModelId, { ...((tRes as any).usage || {}), sourceType: 'title_generation' }); } catch {}
+                }
                 let title = String((tRes as any)?.text || '').trim();
                 title = title.replace(/^"+|"+$/g, '').replace(/[\.\!?]+$/g, '').slice(0, 80);
                 if (authUser && conversationId) {

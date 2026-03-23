@@ -216,6 +216,57 @@ describe('Conversation memory pipeline', () => {
     expect(missingLog).toBe(true);
   });
 
+  it('skips segment creation for low-value conversations (action=skip)', async () => {
+    const conversationId = 'conv_skip';
+
+    generateObjectMock.mockResolvedValue({
+      object: {
+        action: 'skip',
+        summary: '',
+        topics: ['physics'],
+        reason: 'Generic homework Q&A with no lasting recall value',
+      },
+    });
+
+    execLocalToolMock.mockImplementation(async (tool: string) => {
+      switch (tool) {
+        case 'conversation_get':
+          return {
+            ok: true,
+            conversation: {
+              id: conversationId,
+              title: 'Physics Help',
+              model: 'test',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              message_count: 2,
+              status: 'active',
+            },
+          };
+        case 'segment_list':
+          return { ok: true, segments: [] };
+        default:
+          return { ok: true };
+      }
+    });
+
+    await processConversationTurn(conversationId, [
+      { role: 'user', content: 'What is the work-energy theorem?' },
+      { role: 'assistant', content: 'The work-energy theorem states that W_net = ΔKE...' },
+    ]);
+
+    // No segment should be created
+    const segmentCreateCall = execLocalToolMock.mock.calls.find(([tool]) => tool === 'segment_create');
+    expect(segmentCreateCall).toBeUndefined();
+
+    // No embedding should be generated
+    expect(embedMock).not.toHaveBeenCalled();
+
+    // Should log the skip
+    const skipLog = writeLogMock.mock.calls.some(([event]) => event === 'segment_skipped');
+    expect(skipLog).toBe(true);
+  });
+
   it('passes threshold 0.0 through to segment_search (does not default to 0.6)', async () => {
     const embedding = Array.from({ length: 3072 }, () => 0);
     embedMock.mockResolvedValue({ embedding });

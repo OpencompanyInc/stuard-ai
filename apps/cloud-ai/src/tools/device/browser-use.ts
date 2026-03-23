@@ -332,7 +332,7 @@ export const browser_use_hover = makeLocalTool(
 
 export const browser_use_select_option = makeLocalTool(
   'browser_use_select_option',
-  'Select an option from a dropdown or searchable combobox. Clicks to open the dropdown, reads the available options, finds the match, and clicks to select it. If the option is not found and the dropdown is searchable, it types to filter, re-reads the filtered options, and selects. If selection fails, the error includes the list of available options so you can retry with the exact text. Works with native <select> elements, custom listbox/combobox dropdowns, and searchable autocomplete inputs (React Select, MUI Autocomplete, Headless UI, etc.). For searchable dropdowns, provide the "search" parameter. For native selects, use value, label, or index.',
+  'Select an option from a dropdown or searchable combobox. Use this only AFTER you have already inspected the page and, for dropdowns, read the available options first. The correct sequence is: browser_use_get_interactive_elements -> browser_use_get_dropdown_options -> reason about the returned options -> browser_use_select_option. Do NOT call get_dropdown_options and select_option in parallel. Pass the exact text/value returned by get_dropdown_options whenever possible. For searchable dropdowns, provide the "search" parameter after first inspecting the control/options. Works with native <select> elements, custom listbox/combobox dropdowns, and searchable autocomplete inputs (React Select, MUI Autocomplete, Headless UI, etc.).',
   z.object({
     selector: z.string().describe('CSS selector of the dropdown control (select, input, button, or combobox element)'),
     value: z.string().optional().describe('Option value attribute to select'),
@@ -356,7 +356,7 @@ export const browser_use_select_option = makeLocalTool(
 
 export const browser_use_get_dropdown_options = makeLocalTool(
   'browser_use_get_dropdown_options',
-  'Read all available options from a dropdown or select element WITHOUT selecting anything. Use this BEFORE selecting to see what choices exist. For native <select> elements, reads options directly. For custom dropdowns (React Select, MUI, Headless UI, etc.), clicks to open, reads the visible options, then closes the dropdown. Returns the full list of options with their text and value. Call this first, then use browser_use_select_option with the exact text/value from the results.',
+  'Read all available options from a dropdown or select element WITHOUT selecting anything. This is the required first step before selecting from a dropdown. Use the sequence: browser_use_get_interactive_elements -> browser_use_get_dropdown_options -> reason about the returned options -> browser_use_select_option. Do NOT call this in parallel with browser_use_select_option. For native <select> elements, reads options directly. For custom dropdowns (React Select, MUI, Headless UI, etc.), clicks to open, reads the visible options, then closes the dropdown. Returns the full list of options with their text and value so you can choose the exact text/value to pass into browser_use_select_option.',
   z.object({
     selector: z.string().describe('CSS selector of the dropdown control (select, input, button, or combobox element)'),
     timeout: z.number().optional().describe('Timeout in ms for custom dropdowns to open (default: 5000)'),

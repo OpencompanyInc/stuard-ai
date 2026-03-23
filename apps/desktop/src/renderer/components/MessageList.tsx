@@ -11,6 +11,8 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
 import type { ToolCall, StreamChunk } from '../hooks/useAgent';
+import { DiscoverTips } from '../workflows/components/DiscoverTips';
+import { useDiscovery } from '../hooks/useDiscovery';
 
 // Performance constants
 const INITIAL_MESSAGES_TO_RENDER = 10; // Start with last 10 messages
@@ -234,6 +236,13 @@ const MessageList: React.FC<MessageListProps> = ({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const topAnchorRef = useRef<HTMLDivElement>(null);
 
+  // Discovery tips for thinking state
+  const { getTipsForCarousel } = useDiscovery();
+  const thinkingTips = useMemo(() => {
+    const tips = getTipsForCarousel(4);
+    return tips.map(t => ({ id: t.id, title: t.title, description: t.description }));
+  }, []); // Static on mount to avoid reshuffling during thinking
+
   // Track how many messages to render (start from most recent)
   const [visibleCount, setVisibleCount] = useState(INITIAL_MESSAGES_TO_RENDER);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -391,6 +400,16 @@ const MessageList: React.FC<MessageListProps> = ({
                   startTime={thinkingStartTime}
                   reasoning={currentReasoning}
                 />
+                {/* Discovery tips while AI is thinking */}
+                {thinkingTips.length > 0 && (
+                  <div className="mt-3">
+                    <DiscoverTips
+                      tips={thinkingTips}
+                      title="Did you know?"
+                      compact
+                    />
+                  </div>
+                )}
               </div>
             </div>
           )}

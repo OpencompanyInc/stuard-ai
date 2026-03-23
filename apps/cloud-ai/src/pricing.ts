@@ -147,6 +147,7 @@ export const STORAGE_PRICING = {
 export const MESSAGING_PRICING: Record<string, { perMessageUsd: number; label: string }> = {
   telnyx:   { perMessageUsd: 0.004, label: 'Telnyx SMS' },
   whatsapp: { perMessageUsd: 0.005, label: 'WhatsApp' },
+  discord:  { perMessageUsd: 0.001, label: 'Discord DM' },
 };
 
 /** Return credit cost for a single outbound message on the given provider. */
@@ -246,9 +247,23 @@ export function creditsPerUsd(): number {
   return envNumber('CREDITS_PER_USD', 33);
 }
 
+/**
+ * Snap a credit value UP to clean display-friendly steps.
+ * Valid values: 0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, ...
+ * Always rounds up so we never undercharge.
+ * Any positive cost below 0.25 is the minimum billable unit (0.1).
+ */
+export function snapCredits(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  // Anything under 0.25 is too small for a quarter-credit — use minimum 0.1
+  if (value < 0.25) return 0.1;
+  // Ceil to nearest 0.25 — never round down
+  return Math.ceil(value * 4) / 4;
+}
+
 export function creditsFromUsd(usd: number): number {
   const c = usd * creditsPerUsd();
-  return Math.max(0, Math.round(c));
+  return snapCredits(c);
 }
 
 function planKey(plan: string): string {

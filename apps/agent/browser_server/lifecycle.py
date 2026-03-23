@@ -50,7 +50,12 @@ async def _get_page_title(timeout: float | None = None) -> str:
 async def _evaluate(js_arrow_fn: str, *args: Any) -> Any:
     if state._page is None:
         return ""
-    return await state._page.evaluate(js_arrow_fn, *args)
+    if len(args) == 0:
+        return await state._page.evaluate(js_arrow_fn)
+    elif len(args) == 1:
+        return await state._page.evaluate(js_arrow_fn, args[0])
+    else:
+        return await state._page.evaluate(js_arrow_fn, list(args))
 
 
 async def _wait_for_ready(wait_until: str = "domcontentloaded", timeout: int = 30000) -> None:

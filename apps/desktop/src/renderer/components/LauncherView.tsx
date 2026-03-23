@@ -59,6 +59,7 @@ import {
   type Bookmark,
 } from "./QuickShortcuts";
 import { TasksView, type TaskSubTab } from "./TasksView";
+import { SuggestedPrompts } from "./onboarding/SuggestedPrompts";
 
 interface LauncherViewProps {
   query: string;
@@ -940,6 +941,20 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                         </span>
                       </button>
                     ))}
+                  </div>
+                )}
+
+                {/* Suggested Prompts */}
+                {!showResults && (
+                  <div className="mb-3 shrink-0">
+                    <SuggestedPrompts
+                      onSelect={(text) => {
+                        setQuery(text);
+                        // Auto-focus happens via the textarea
+                      }}
+                      maxVisible={4}
+                      compact
+                    />
                   </div>
                 )}
 

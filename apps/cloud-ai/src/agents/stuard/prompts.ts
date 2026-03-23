@@ -57,7 +57,39 @@ Do NOT use ask_user — there is no interactive UI. Make decisions autonomously.
   : `**System**: Windows | Home: ${DEFAULT_USER_HOME_DIR} | Temp: %TEMP% | Use Windows paths (C:\\path or C:/path)
 Show local media in chat with <<path>> syntax.`;
 
-export const SYSTEM_INSTRUCTIONS = `You are Stuard — a proactive, warm AI assistant. Complete requests end-to-end. Be a thoughtful friend.
+/**
+ * Build connected integrations context for the system prompt.
+ * Instead of loading all integration tools natively (which bloats token usage),
+ * we tell the model what's connected and let it discover tools via SIS.
+ */
+function buildIntegrationsContext(enabledIntegrations: string[] = []): string {
+  if (enabledIntegrations.length === 0) return '';
+
+  const integrationLabels: Record<string, string> = {
+    google: 'Google Workspace (Gmail, Calendar, Drive, Sheets, Docs, Tasks)',
+    outlook: 'Microsoft Outlook (Email, Calendar)',
+    github: 'GitHub (Repos, Issues, PRs, Actions, Gists)',
+    facebook: 'Facebook (Pages, Posts, Messenger)',
+    instagram: 'Instagram (Media, Comments, DMs)',
+    threads: 'Threads (Posts, Replies)',
+    reddit: 'Reddit (Search, Subreddits, Posts, Comments)',
+    ollama: 'Ollama (Local AI Models)',
+    telnyx: 'Telnyx (SMS, Voice Calls)',
+    whatsapp: 'WhatsApp (Messages, Media, Voice)',
+    browser_use: 'Browser Use (AI Browser Automation)',
+  };
+
+  const connected = enabledIntegrations
+    .map(i => integrationLabels[i] || i)
+    .join('\n- ');
+
+  return `\n**Connected Integrations**:
+- ${connected}
+These integrations are available — use search_tools / get_tool_schema / execute_tool to discover and call their tools. Do NOT guess tool names; always search first.`;
+}
+
+export function buildSystemInstructions(enabledIntegrations: string[] = []): string {
+  return `You are Stuard — a proactive, warm AI assistant. Complete requests end-to-end. Be a thoughtful friend.
 
 ${_SYSTEM_CONTEXT}
 
@@ -92,9 +124,10 @@ When you need to interact with a website:
    - Text fields: browser_use_type or browser_use_fill_form with type "text".
    - Dropdowns (controlType: "dropdown"):
      * FIRST call browser_use_get_dropdown_options({ selector }) to read all available options WITHOUT selecting. This shows you exactly what choices exist.
+     * STOP and inspect the returned options before selecting. Do not call get_dropdown_options and browser_use_select_option in parallel.
      * Then call browser_use_select_option with the exact text/value from the options list.
      * Native <select>: get_dropdown_options reads options directly. Then select_option with value or label.
-     * Searchable combobox (role "combobox" or input with aria-haspopup): browser_use_select_option with "search" param — it types, waits for filtered results, and clicks the match. Example: { selector: "#country", search: "United States", label: "United States" }
+     * Searchable combobox (role "combobox" or input with aria-haspopup): still inspect first, then call browser_use_select_option with "search" if needed — it types, waits for filtered results, and clicks the match. Example: { selector: "#country", search: "United States", label: "United States" }
      * Custom dropdown (button/div trigger): get_dropdown_options clicks to open, reads options, closes. Then select_option with the exact label or value.
      * If select_option fails, it returns the available options in the error. Use those exact option texts to retry.
      * CRITICAL: NEVER use browser_use_type on dropdowns/comboboxes. Always use browser_use_select_option — typing alone won't register a selection.
@@ -179,7 +212,12 @@ RULES:
 
 ── TOOL CATALOG (use get_tool_schema + execute_tool to invoke) ──
 ${buildToolCatalog()}
-── END TOOL CATALOG ──`;
+── END TOOL CATALOG ──
+${buildIntegrationsContext(enabledIntegrations)}`;
+}
+
+// Keep a default export for backward compatibility (no integrations)
+export const SYSTEM_INSTRUCTIONS = buildSystemInstructions();
 
 export const PROACTIVE_SYSTEM_PROMPT = `You are Stuard — the user's proactive AI companion. You wake up periodically to check on tasks, take initiative, and go the extra mile.
 

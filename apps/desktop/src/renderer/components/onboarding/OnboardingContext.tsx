@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { getDiscoveryEngine } from './DiscoveryEngine';
 
 // =============================================================================
 // TYPES & INTERFACES
@@ -42,6 +42,12 @@ export interface UserProgress {
   lastActiveArea?: FeatureArea;
   visitCount: Record<FeatureArea, number>;
   firstVisit: Record<FeatureArea, boolean>;
+  /** Tracks which features the user has actually used (not just seen a tooltip) */
+  featureExperienced: Record<string, boolean>;
+  /** How many app sessions the user has had */
+  sessionCount: number;
+  /** Whether the first guided session (Layer 2) is complete */
+  firstSessionComplete: boolean;
 }
 
 interface OnboardingContextValue {
@@ -51,27 +57,33 @@ interface OnboardingContextValue {
   currentStep: OnboardingStep | null;
   progress: UserProgress;
   showTooltips: boolean;
-  
+  /** Whether contextual coaching is enabled (works after onboarding, unlike isActive) */
+  coachingEnabled: boolean;
+
   // Actions
   startOnboarding: () => void;
   completePhase: (phase: OnboardingPhase) => void;
   nextPhase: () => void;
   skipOnboarding: () => void;
   resetOnboarding: () => void;
-  
+
   // Step management
   showStep: (step: OnboardingStep) => void;
   completeStep: (stepId: string) => void;
   dismissStep: () => void;
-  
+
   // Feature area tracking
   enterArea: (area: FeatureArea) => void;
   leaveArea: (area: FeatureArea) => void;
-  
+
+  // Feature experience tracking
+  markFeatureExperienced: (feature: string) => void;
+  setFirstSessionComplete: (complete: boolean) => void;
+
   // Tooltip control
   setShowTooltips: (show: boolean) => void;
   toggleTooltips: () => void;
-  
+
   // Checks
   hasCompletedStep: (stepId: string) => boolean;
   hasDismissedTip: (tipId: string) => boolean;
@@ -297,28 +309,78 @@ export const DEFAULT_STEPS: Record<FeatureArea, OnboardingStep[]> = {
 // STORAGE HELPERS
 // =============================================================================
 
-const STORAGE_KEY = 'stuard_onboarding_v2';
+const STORAGE_KEY_V2 = 'stuard_onboarding_v2';
+const STORAGE_KEY = 'stuard_onboarding_v3';
 
-function loadProgress(): UserProgress {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      return JSON.parse(saved);
-    }
-  } catch {}
-  
+const DEFAULT_VISIT_COUNT: Record<FeatureArea, number> = {
+  overlay: 0, chat: 0, workflows: 0, dashboard: 0,
+  planner: 0, memories: 0, automations: 0, settings: 0,
+};
+
+const DEFAULT_FIRST_VISIT: Record<FeatureArea, boolean> = {
+  overlay: true, chat: true, workflows: true, dashboard: true,
+  planner: true, memories: true, automations: true, settings: true,
+};
+
+function createDefaultProgress(): UserProgress {
   return {
     completedSteps: [],
     dismissedTips: [],
-    visitCount: {
-      overlay: 0, chat: 0, workflows: 0, dashboard: 0,
-      planner: 0, memories: 0, automations: 0, settings: 0,
-    },
-    firstVisit: {
-      overlay: true, chat: true, workflows: true, dashboard: true,
-      planner: true, memories: true, automations: true, settings: true,
-    },
+    visitCount: { ...DEFAULT_VISIT_COUNT },
+    firstVisit: { ...DEFAULT_FIRST_VISIT },
+    featureExperienced: {},
+    sessionCount: 0,
+    firstSessionComplete: false,
   };
+}
+
+function loadProgress(): UserProgress {
+  try {
+    // Try v3 first
+    const savedV3 = localStorage.getItem(STORAGE_KEY);
+    if (savedV3) {
+      const parsed = JSON.parse(savedV3);
+      return { ...createDefaultProgress(), ...parsed };
+    }
+
+    // Migrate from v2 if it exists
+    const savedV2 = localStorage.getItem(STORAGE_KEY_V2);
+    if (savedV2) {
+      const v2Data = JSON.parse(savedV2);
+      const migrated: UserProgress = {
+        ...createDefaultProgress(),
+        completedSteps: v2Data.completedSteps || [],
+        dismissedTips: v2Data.dismissedTips || [],
+        visitCount: v2Data.visitCount || { ...DEFAULT_VISIT_COUNT },
+        firstVisit: v2Data.firstVisit || { ...DEFAULT_FIRST_VISIT },
+        // Derive featureExperienced from v2 visit counts
+        featureExperienced: {},
+        sessionCount: 1, // They've used the app at least once
+        firstSessionComplete: true, // Existing users skip first session
+      };
+
+      // Mark features as experienced based on visit count
+      if (v2Data.visitCount) {
+        for (const [area, count] of Object.entries(v2Data.visitCount)) {
+          if ((count as number) > 0) {
+            migrated.featureExperienced[area] = true;
+          }
+        }
+      }
+
+      // Also initialize discovery engine with v2 data
+      try {
+        const engine = getDiscoveryEngine();
+        engine.initializeFromV2(v2Data);
+      } catch {}
+
+      // Save as v3
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+      return migrated;
+    }
+  } catch {}
+
+  return createDefaultProgress();
 }
 
 function saveProgress(progress: UserProgress) {
@@ -339,12 +401,21 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
   const [currentStep, setCurrentStep] = useState<OnboardingStep | null>(null);
   const [progress, setProgress] = useState<UserProgress>(loadProgress);
   const [showTooltips, setShowTooltips] = useState(true);
+  const [coachingEnabled, setCoachingEnabled] = useState(true);
   const currentAreaRef = useRef<FeatureArea | null>(null);
 
   // Persist progress changes
   useEffect(() => {
     saveProgress(progress);
   }, [progress]);
+
+  // Increment session count on mount (once per provider lifecycle)
+  useEffect(() => {
+    setProgress(prev => ({
+      ...prev,
+      sessionCount: prev.sessionCount + 1,
+    }));
+  }, []);
 
   const startOnboarding = useCallback(() => {
     setIsActive(true);
@@ -356,7 +427,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
     const phaseOrder: OnboardingPhase[] = ['welcome', 'persona', 'shortcut', 'explore', 'workflows', 'dashboard', 'complete'];
     const currentIndex = phaseOrder.indexOf(phase);
     const nextPhase = phaseOrder[currentIndex + 1];
-    
+
     if (nextPhase) {
       setCurrentPhase(nextPhase);
       if (nextPhase === 'complete') {
@@ -379,18 +450,10 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   const resetOnboarding = useCallback(() => {
-    setProgress({
-      completedSteps: [],
-      dismissedTips: [],
-      visitCount: {
-        overlay: 0, chat: 0, workflows: 0, dashboard: 0,
-        planner: 0, memories: 0, automations: 0, settings: 0,
-      },
-      firstVisit: {
-        overlay: true, chat: true, workflows: true, dashboard: true,
-        planner: true, memories: true, automations: true, settings: true,
-      },
-    });
+    setProgress(prev => ({
+      ...createDefaultProgress(),
+      sessionCount: prev.sessionCount, // preserve session count
+    }));
     setCurrentPhase('welcome');
     setIsActive(true);
   }, []);
@@ -399,7 +462,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
     if (!showTooltips) return;
     if (step.showOnce && progress.completedSteps.includes(step.id)) return;
     if (progress.dismissedTips.includes(step.id)) return;
-    
+
     setCurrentStep(step);
   }, [showTooltips, progress]);
 
@@ -423,9 +486,8 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
 
   const enterArea = useCallback((area: FeatureArea) => {
     currentAreaRef.current = area;
-    
+
     setProgress(prev => {
-      const isFirst = prev.firstVisit[area];
       return {
         ...prev,
         lastActiveArea: area,
@@ -440,24 +502,46 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
       };
     });
 
-    // Auto-show first step in area if applicable
+    // FIX: Auto-show first step in area whenever tooltips are enabled,
+    // not just when isActive && currentPhase === 'explore'.
+    // This enables contextual coaching to work after onboarding completes.
     const areaSteps = DEFAULT_STEPS[area];
-    const firstUncompleted = areaSteps?.find(s => 
-      !progress.completedSteps.includes(s.id) && 
+    const firstUncompleted = areaSteps?.find(s =>
+      !progress.completedSteps.includes(s.id) &&
       !progress.dismissedTips.includes(s.id)
     );
-    
-    if (firstUncompleted && isActive && currentPhase === 'explore') {
+
+    if (firstUncompleted && showTooltips) {
       // Small delay to let the UI settle
       setTimeout(() => showStep(firstUncompleted), 500);
     }
-  }, [progress, isActive, currentPhase, showStep]);
+  }, [progress, showTooltips, showStep]);
 
   const leaveArea = useCallback((area: FeatureArea) => {
     if (currentAreaRef.current === area) {
       currentAreaRef.current = null;
     }
     // Don't immediately dismiss - let user see the tip
+  }, []);
+
+  const markFeatureExperienced = useCallback((feature: string) => {
+    setProgress(prev => {
+      if (prev.featureExperienced[feature]) return prev;
+      const updated = {
+        ...prev,
+        featureExperienced: { ...prev.featureExperienced, [feature]: true },
+      };
+      // Also sync to discovery engine
+      try { getDiscoveryEngine().markFeatureExperienced(feature); } catch {}
+      return updated;
+    });
+  }, []);
+
+  const setFirstSessionComplete = useCallback((complete: boolean) => {
+    setProgress(prev => ({
+      ...prev,
+      firstSessionComplete: complete,
+    }));
   }, []);
 
   const toggleTooltips = useCallback(() => {
@@ -482,6 +566,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
     currentStep,
     progress,
     showTooltips,
+    coachingEnabled,
     startOnboarding,
     completePhase,
     nextPhase,
@@ -492,6 +577,8 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
     dismissStep,
     enterArea,
     leaveArea,
+    markFeatureExperienced,
+    setFirstSessionComplete,
     setShowTooltips,
     toggleTooltips,
     hasCompletedStep,

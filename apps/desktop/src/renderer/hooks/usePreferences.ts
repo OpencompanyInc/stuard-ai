@@ -319,6 +319,7 @@ const LS_TO_SETTINGS_KEY: Record<string, string> = {
   persona: 'persona',
   onboarding_complete: 'onboardingComplete',
   tour_complete: 'tourComplete',
+  first_session_complete: 'firstSessionComplete',
   theme_mode: 'themeMode',
   theme_dark: 'themeDarkShade',
   theme_light: 'themeLightShade',
@@ -363,6 +364,7 @@ export function usePreferences() {
   const [persona, setPersonaState] = useState<string>(() => getLS<string>("persona", ""));
   const [onboardingComplete, setOnboardingCompleteState] = useState<boolean>(() => getLS<boolean>("onboarding_complete", false));
   const [tourComplete, setTourCompleteState] = useState<boolean>(() => getLS<boolean>("tour_complete", false));
+  const [firstSessionComplete, setFirstSessionCompleteState] = useState<boolean>(() => getLS<boolean>("first_session_complete", false));
   const [themeMode, setThemeModeState] = useState<ThemeMode>(() => normalizeThemeMode(getLS<any>("theme_mode", "light")));
   const [themeDarkShade, setThemeDarkShadeState] = useState<string>(() => getLS<string>("theme_dark", "#0f172a"));
   const [themeLightShade, setThemeLightShadeState] = useState<string>(() => getLS<string>("theme_light", "#e2e8f0"));
@@ -403,6 +405,7 @@ export function usePreferences() {
         apply('persona', p.persona, setPersonaState);
         apply('onboarding_complete', p.onboardingComplete, setOnboardingCompleteState);
         apply('tour_complete', p.tourComplete, setTourCompleteState);
+        apply('first_session_complete', p.firstSessionComplete, setFirstSessionCompleteState);
         if (p.themeMode !== undefined) {
           const mode = normalizeThemeMode(p.themeMode);
           try { localStorage.setItem(LS_PREFIX + 'theme_mode', JSON.stringify(mode)); } catch { }
@@ -442,6 +445,7 @@ export function usePreferences() {
   useEffect(() => { setLS("persona", persona); }, [persona]);
   useEffect(() => { setLS("onboarding_complete", onboardingComplete); }, [onboardingComplete]);
   useEffect(() => { setLS("tour_complete", tourComplete); }, [tourComplete]);
+  useEffect(() => { setLS("first_session_complete", firstSessionComplete); }, [firstSessionComplete]);
   useEffect(() => { setLS("theme_mode", themeMode); }, [themeMode]);
   useEffect(() => { setLS("theme_dark", themeDarkShade); }, [themeDarkShade]);
   useEffect(() => { setLS("theme_light", themeLightShade); }, [themeLightShade]);
@@ -497,6 +501,7 @@ export function usePreferences() {
           if (key === 'persona') setPersonaState(val ?? '');
           if (key === 'onboarding_complete') setOnboardingCompleteState(val ?? false);
           if (key === 'tour_complete') setTourCompleteState(val ?? false);
+          if (key === 'first_session_complete') setFirstSessionCompleteState(val ?? false);
           if (key === 'theme_mode') setThemeModeState(normalizeThemeMode(val));
           if (key === 'theme_dark') setThemeDarkShadeState(val ?? '#0f172a');
           if (key === 'theme_light') setThemeLightShadeState(val ?? '#e2e8f0');
@@ -522,6 +527,7 @@ export function usePreferences() {
   const setPersona = useCallback((v: string) => { setPersonaState(v); }, []);
   const setOnboardingComplete = useCallback((v: boolean) => { setOnboardingCompleteState(v); }, []);
   const setTourComplete = useCallback((v: boolean) => { setTourCompleteState(v); }, []);
+  const setFirstSessionComplete = useCallback((v: boolean) => { setFirstSessionCompleteState(v); }, []);
   const setThemeMode = useCallback((m: ThemeMode) => { setThemeModeState(normalizeThemeMode(m)); }, []);
   const setThemeDarkShade = useCallback((v: string) => { setThemeDarkShadeState(v); }, []);
   const setThemeLightShade = useCallback((v: string) => { setThemeLightShadeState(v); }, []);
@@ -547,6 +553,8 @@ export function usePreferences() {
     setOnboardingComplete,
     tourComplete,
     setTourComplete,
+    firstSessionComplete,
+    setFirstSessionComplete,
     themeMode,
     setThemeMode,
     themeDarkShade,

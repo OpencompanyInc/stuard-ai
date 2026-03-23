@@ -3,7 +3,7 @@ import { generateText, generateObject, embed, embedMany } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { google, buildProviderEmbeddingModel } from '../utils/models';
 import { z } from 'zod';
-import { verifyToken } from '../supabase';
+import { verifyToken, checkAccess, logUsageEvent } from '../supabase';
 import { CORS_ALLOWED_ORIGINS, IS_DEVELOPMENT } from '../utils/config';
 
 /**
@@ -32,16 +32,38 @@ async function validateAuth(req: IncomingMessage): Promise<{ userId: string | nu
   return { userId: null, isAuthed: false };
 }
 
-async function validateStrictBearerAuth(req: IncomingMessage): Promise<boolean> {
+async function validateStrictBearerAuth(req: IncomingMessage): Promise<{ userId: string | null; isAuthed: boolean }> {
   const auth = req.headers.authorization || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-  if (!token) return false;
+  if (!token) return { userId: null, isAuthed: false };
   try {
     const user = await verifyToken(token);
-    return !!user?.userId;
+    if (user?.userId) return { userId: user.userId, isAuthed: true };
+    return { userId: null, isAuthed: false };
   } catch {
-    return false;
+    return { userId: null, isAuthed: false };
   }
+}
+
+/** Log inference usage after a successful generateText/embed call. */
+async function logInferenceUsage(userId: string | null, model: string, usage?: any): Promise<void> {
+  if (!userId) return;
+  try {
+    await logUsageEvent(userId, null, model, {
+      ...(usage || {}),
+      sourceType: 'inference',
+    });
+  } catch {}
+}
+
+/** Check if user has credits before running inference. Returns error string or null if OK. */
+async function requireCredits(userId: string | null): Promise<string | null> {
+  if (!userId) return null; // dev mode — no user to check
+  try {
+    const access = await checkAccess(userId);
+    if (!access.allowed) return access.reason || 'credit_limit_exceeded';
+  } catch {}
+  return null;
 }
 
 /**
@@ -241,9 +263,14 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
   if (req.method === 'POST' && path === '/inference/workflow/next') {
     try {
       // Workflow routing - requires Supabase auth in production
-      const { isAuthed } = await validateAuth(req);
+      const { userId, isAuthed } = await validateAuth(req);
       if (!isAuthed) {
         writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
+        return true;
+      }
+      const creditErr = await requireCredits(userId);
+      if (creditErr) {
+        writeJson(res, 403, { ok: false, error: creditErr }, corsOrigin);
         return true;
       }
       const body = await readJsonBody(req);
@@ -284,11 +311,13 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       let result: { next: string; argsPatch?: any } | null = null;
       try {
         const model = prov.kind === 'openai' ? openai(prov.model) : google(prov.model);
+        const modelId = `${prov.kind}/${prov.model}`;
         const out = await generateText({
           model: model as any,
           prompt: `${prompt}\n\nRespond with a valid JSON object matching this schema: ${JSON.stringify(schema.shape)}`,
           temperature: 0.2
         });
+        await logInferenceUsage(userId, modelId, out.usage);
         const obj = JSON.parse(out.text) as any;
         if (obj && typeof obj.next === 'string') result = { next: obj.next, argsPatch: obj.argsPatch };
       } catch {}
@@ -310,8 +339,14 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       const auth = req.headers.authorization || '';
       const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
       const authed = token ? await verifyToken(token) : null;
+      const embUserId = authed?.userId || null;
       if (!authed) {
         writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
+        return true;
+      }
+      const creditErr = await requireCredits(embUserId);
+      if (creditErr) {
+        writeJson(res, 403, { ok: false, error: creditErr }, corsOrigin);
         return true;
       }
 
@@ -340,6 +375,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         values,
       });
 
+      await logInferenceUsage(embUserId, modelId, out.usage);
       writeJson(res, 200, { ok: true, embeddings: out.embeddings, model: modelId }, corsOrigin);
       return true;
     } catch (e: any) {
@@ -355,9 +391,14 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
   if (req.method === 'POST' && path === '/inference/ai/analyze-media') {
     try {
       // Media analysis - requires Supabase auth in production
-      const { isAuthed } = await validateAuth(req);
+      const { userId: mediaUserId, isAuthed } = await validateAuth(req);
       if (!isAuthed) {
         writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
+        return true;
+      }
+      const creditErr = await requireCredits(mediaUserId);
+      if (creditErr) {
+        writeJson(res, 403, { ok: false, error: creditErr }, corsOrigin);
         return true;
       }
       const body = await readJsonBody(req);
@@ -394,6 +435,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         }
         
         const isProModel = requestedModel === 'gemini-3.1-pro-preview' || requestedModel === '3.1';
+        const mediaModelId = isProModel ? 'google/gemini-3.1-pro-preview' : 'google/gemini-3.1-flash-lite-preview';
         const out = await generateText({
           model: model as any,
           messages: [{ role: 'user' as const, content: contentParts }],
@@ -404,7 +446,8 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
             },
           }),
         });
-        
+        await logInferenceUsage(mediaUserId, mediaModelId, out.usage);
+
         const summary = out.text?.trim() || '';
         writeJson(res, 200, { ok: true, summary, text: summary }, corsOrigin);
         return true;
@@ -422,9 +465,14 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
   if (req.method === 'POST' && path === '/inference/ai/vision-structured') {
     try {
       // Vision inference consumes provider credits; require auth in production.
-      const { isAuthed } = await validateAuth(req);
+      const { userId: visionUserId, isAuthed } = await validateAuth(req);
       if (!isAuthed) {
         writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
+        return true;
+      }
+      const creditErr = await requireCredits(visionUserId);
+      if (creditErr) {
+        writeJson(res, 403, { ok: false, error: creditErr }, corsOrigin);
         return true;
       }
 
@@ -483,8 +531,10 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       let object: any = null;
       try {
         const model = prov.kind === 'openai' ? openai(prov.model) : google(prov.model);
+        const visionModelId = `${prov.kind}/${prov.model}`;
         const textPrompt = `${prompt}\n\nRespond with a valid JSON object matching this schema: ${JSON.stringify(objSchema.shape)}`;
         const out = await generateText({ model: model as any, messages: [{ role: 'user', content: textPrompt }], temperature: 0.2 });
+        await logInferenceUsage(visionUserId, visionModelId, out.usage);
         object = JSON.parse(out.text);
       } catch {}
 
@@ -505,9 +555,14 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
   if (req.method === 'POST' && path === '/inference/ai/text') {
     try {
       // Text inference - requires Supabase auth in production
-      const { isAuthed } = await validateAuth(req);
+      const { userId: textUserId, isAuthed } = await validateAuth(req);
       if (!isAuthed) {
         writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
+        return true;
+      }
+      const creditErr = await requireCredits(textUserId);
+      if (creditErr) {
+        writeJson(res, 403, { ok: false, error: creditErr }, corsOrigin);
         return true;
       }
       const body = await readJsonBody(req);
@@ -536,12 +591,13 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         const textToEmbed = input ? `${prompt}\n${input}` : prompt;
 
         try {
-          const { embedding } = await embed({
+          const embResult = await embed({
             model: aiEmbeddingModel,
             value: textToEmbed,
           });
+          await logInferenceUsage(textUserId, embeddingModelId, embResult.usage);
 
-          writeJson(res, 200, { ok: true, embedding, model: embeddingModelId }, corsOrigin);
+          writeJson(res, 200, { ok: true, embedding: embResult.embedding, model: embeddingModelId }, corsOrigin);
           return true;
         } catch (e: any) {
           console.error('[inference] ai/embedding error:', e);
@@ -572,6 +628,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
             messages,
             temperature,
           });
+          await logInferenceUsage(textUserId, modelId, result.usage);
 
           let jsonResult: any;
           try {
@@ -604,6 +661,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
             messages,
             temperature,
           });
+          await logInferenceUsage(textUserId, modelId, result.usage);
 
           const text = result.text?.trim() || '';
           writeJson(res, 200, { ok: true, text, model: modelId }, corsOrigin);
@@ -625,8 +683,14 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       const auth = req.headers.authorization || '';
       const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
       const authed = token ? await verifyToken(token) : null;
+      const singleEmbUserId = authed?.userId || null;
       if (!authed) {
         writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
+        return true;
+      }
+      const creditErr = await requireCredits(singleEmbUserId);
+      if (creditErr) {
+        writeJson(res, 403, { ok: false, error: creditErr }, corsOrigin);
         return true;
       }
 
@@ -648,6 +712,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         model: embModel,
         value: text.slice(0, 12000),
       });
+      await logInferenceUsage(singleEmbUserId, modelId, out.usage);
 
       writeJson(res, 200, { ok: true, embedding: out.embedding, model: modelId }, corsOrigin);
       return true;
@@ -662,9 +727,14 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
   if (req.method === 'POST' && path === '/inference/ai/summarize-file') {
     try {
       // Summarization consumes provider credits; require auth in production.
-      const { isAuthed } = await validateAuth(req);
+      const { userId: sumUserId, isAuthed } = await validateAuth(req);
       if (!isAuthed) {
         writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
+        return true;
+      }
+      const creditErr = await requireCredits(sumUserId);
+      if (creditErr) {
+        writeJson(res, 403, { ok: false, error: creditErr }, corsOrigin);
         return true;
       }
 
@@ -711,6 +781,7 @@ Filename: ${filename}`;
         messages: [{ role: 'user', content }],
         temperature: 0.3,
       });
+      await logInferenceUsage(sumUserId, 'google/gemini-2.5-flash', result.usage);
 
       const text = result.text?.trim() || '';
       const summaryMatch = text.match(/SUMMARY:\s*(.+?)(?=KEYWORDS:|$)/is);
@@ -737,9 +808,14 @@ Filename: ${filename}`;
     try {
       // Strict auth for cloud LLM proxy.
       // We do not allow development-mode bypass on this endpoint.
-      const isAuthed = await validateStrictBearerAuth(req);
-      if (!isAuthed) {
+      const { userId: chatUserId, isAuthed: chatAuthed } = await validateStrictBearerAuth(req);
+      if (!chatAuthed) {
         writeJson(res, 401, { error: { message: 'unauthorized', type: 'auth_error' } }, corsOrigin);
+        return true;
+      }
+      const creditErr = await requireCredits(chatUserId);
+      if (creditErr) {
+        writeJson(res, 403, { error: { message: creditErr, type: 'credit_error' } }, corsOrigin);
         return true;
       }
 
@@ -801,6 +877,7 @@ Filename: ${filename}`;
         }
       }
       if (!result) throw lastError || new Error('no_available_model');
+      await logInferenceUsage(chatUserId, usedModelId || modelCandidates[0], result.usage);
 
       const wantsJson = shouldNormalizeJsonOutput(nonEmptyMessages);
       const rawText = result.text?.trim() || '';

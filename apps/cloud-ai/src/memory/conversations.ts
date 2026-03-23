@@ -172,14 +172,15 @@ export async function generateConversationEmbedding(
  * - 'topic_change': Significant topic shift - create new segment, keep old
  * - 'correction': Typo fix or minor clarification - update previous segment
  * - 'same_topic': Same topic, no meaningful new info - do nothing
+ * - 'skip': Conversation has no lasting recall value - don't create a memory
  */
-type AnalysisAction = 'new' | 'topic_change' | 'correction' | 'same_topic';
+type AnalysisAction = 'new' | 'topic_change' | 'correction' | 'same_topic' | 'skip';
 
 const SegmentSchema = z.object({
-  action: z.enum(['new', 'topic_change', 'correction', 'same_topic']).describe(
-    'What action to take: "new" for first/unrelated topic, "topic_change" for significant shift, "correction" for typo fixes, "same_topic" if nothing meaningful changed'
+  action: z.enum(['new', 'topic_change', 'correction', 'same_topic', 'skip']).describe(
+    'What action to take: "new" for first/unrelated topic, "topic_change" for significant shift, "correction" for typo fixes, "same_topic" if nothing meaningful changed, "skip" if the conversation has no lasting recall value'
   ),
-  summary: z.string().describe('A concise 1-2 sentence summary of the conversation so far (or the new topic if topic_change)'),
+  summary: z.string().describe('The actual substance/content/answer — not a meta-description of what happened'),
   topics: z.array(z.string()).describe('2-5 topic tags for this segment'),
   reason: z.string().describe('Brief reason for the chosen action'),
 });
@@ -205,21 +206,44 @@ export async function analyzeConversationSegment(
     const { object } = await generateObject({
       model: model as any,
       schema: SegmentSchema,
-      system: `You analyze conversations to determine how to update the memory/summary.
+      system: `You analyze conversations to extract their core value as a lasting memory.
 
 ${previousContext}
 
-Choose the appropriate action:
-- "new": This is the first segment OR the topic is completely unrelated to previous
-- "topic_change": The conversation has shifted to a significantly different subject (keep the old segment, create new)
-- "correction": The latest message was just a typo fix, clarification, or minor correction (update existing summary)
-- "same_topic": The conversation continues on the same topic with no meaningful new information to add (do nothing)
+## ACTIONS
+- "skip": The conversation is a one-off Q&A, generic help, or has NO lasting recall value for the user. Examples: homework help, simple factual lookups, troubleshooting a one-time error, casual chitchat.
+- "new": First segment OR completely unrelated to previous — create a new memory.
+- "topic_change": Significant topic shift — create a new segment, keep old.
+- "correction": Typo fix or minor clarification — update previous segment.
+- "same_topic": Same topic, no meaningful new info — do nothing.
 
-Rules:
-- Summary should capture the main intent/outcome
-- Topics should be specific but not too narrow
-- Be conservative with "topic_change" - only use for significant shifts
-- Use "same_topic" if the new messages don't add substantial information worth summarizing`,
+## CRITICAL: SUMMARY FORMAT
+Your summary must capture the ACTUAL SUBSTANCE — the knowledge, decision, fact, or insight itself.
+
+NEVER write meta-descriptions like:
+- "The assistant explained how to..." ✗
+- "User asked about X and got help with Y" ✗
+- "Discussion about configuring..." ✗
+
+INSTEAD write the actual content:
+- "Work = F·d (constant force). Work-Energy Theorem: W_net = ΔKE = ½mv²_f - ½mv²_i. Combine by setting F·d equal to ΔKE to solve for unknowns." ✓
+- "Decided to use PostgreSQL over MongoDB for the project because of relational data needs and ACID compliance." ✓
+- "The API rate limit is 100 req/min. Use exponential backoff with jitter. Cache responses for 5 minutes." ✓
+
+Ask yourself: "If the user sees this summary in 3 months, can they extract value from it without re-reading the conversation?" If no, either rewrite it or use "skip".
+
+## WHEN TO SKIP
+- Generic Q&A with no personal/project relevance (homework, trivia, "what is X")
+- Troubleshooting a one-time error that won't recur
+- Casual conversation with no facts worth remembering
+- Simple lookups the user could re-search easily
+
+## WHEN TO REMEMBER
+- User made a decision or expressed a preference
+- User shared personal info, project details, or workflow choices
+- Conversation produced a reusable technique, config, or approach
+- User explicitly asked to remember something
+- Technical setup/config that would be painful to redo`,
       prompt: conversationText,
       temperature: 0.2,
     });
@@ -1149,6 +1173,15 @@ export async function processConversationTurn(
       case 'same_topic': {
         // Do nothing - topic is the same with no meaningful new info
         writeLog('segment_unchanged', { 
+          conversationId, 
+          reason: analysis.reason 
+        });
+        break;
+      }
+
+      case 'skip': {
+        // Conversation has no lasting recall value - don't create a memory
+        writeLog('segment_skipped', { 
           conversationId, 
           reason: analysis.reason 
         });

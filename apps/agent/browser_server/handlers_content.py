@@ -458,7 +458,7 @@ async def handle_scroll(req: web.Request) -> web.Response:
         try:
             if selector:
                 await _evaluate(
-                    """(sel, dir, amt) => {
+                    """([sel, dir, amt]) => {
                       const el = document.querySelector(sel);
                       if (!el) return 'not_found';
                       const delta = dir === 'down' ? amt : -amt;
@@ -477,7 +477,7 @@ async def handle_scroll(req: web.Request) -> web.Response:
                 delta = amount if direction == "down" else -amount
                 if direction in ("left", "right"):
                     await _evaluate(
-                        "(dir, amt) => { window.scrollBy(dir === 'right' ? amt : -amt, 0); return 'ok'; }",
+                        "([dir, amt]) => { window.scrollBy(dir === 'right' ? amt : -amt, 0); return 'ok'; }",
                         direction,
                         amount,
                     )

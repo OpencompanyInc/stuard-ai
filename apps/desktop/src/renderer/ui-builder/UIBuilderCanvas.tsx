@@ -47,9 +47,11 @@ interface UIBuilderCanvasProps {
   gridSize: number;
   previewMode: boolean;
   selectedPath: string | null;
+  onZoomChange?: (zoom: number) => void;
   onSelectElement: (element: SelectedElementInfo | null) => void;
   onHoverElement: (path: string | null) => void;
   onHtmlChange?: (html: string) => void;
+  onBreadcrumbsChange?: (breadcrumbs: { path: string; tagName: string; label: string }[]) => void;
 }
 
 export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasProps>(function UIBuilderCanvas({
@@ -68,9 +70,11 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   gridSize,
   previewMode,
   selectedPath,
+  onZoomChange,
   onSelectElement,
   onHoverElement,
   onHtmlChange,
+  onBreadcrumbsChange,
 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -588,6 +592,50 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       }
     });
 
+    // Build breadcrumb chain from element up to root
+    function getBreadcrumbs(el) {
+      const root = getDesignerRoot();
+      const crumbs = [];
+      let cur = el;
+      while (cur && cur !== root && cur !== document.body) {
+        const path = cur.getAttribute && cur.getAttribute('data-elements-path');
+        if (path) {
+          let label = cur.tagName.toLowerCase();
+          if (cur.id) label += '#' + cur.id;
+          else if (cur.className && typeof cur.className === 'string') {
+            const cls = cur.className.split(/\\s+/).filter(c => !c.startsWith('ui-'))[0];
+            if (cls) label += '.' + cls;
+          }
+          crumbs.unshift({ path: path, tagName: cur.tagName.toLowerCase(), label: label });
+        }
+        cur = cur.parentElement;
+      }
+      return crumbs;
+    }
+
+    function selectTarget(target) {
+      document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
+      if (target) {
+        target.classList.add('ui-selected');
+        selectedPath = target.getAttribute('data-elements-path');
+        const info = getElementInfo(target);
+        const breadcrumbs = getBreadcrumbs(target);
+        window.parent.postMessage({ type: 'select', element: info, breadcrumbs: breadcrumbs }, '*');
+      } else {
+        selectedPath = null;
+        window.parent.postMessage({ type: 'select', element: null, breadcrumbs: [] }, '*');
+      }
+    }
+
+    // Find the smallest (most deeply nested) element at a given point
+    function findDeepestElementAt(x, y) {
+      const els = document.elementsFromPoint(x, y);
+      if (!els || els.length === 0) return null;
+      const annotated = els.filter(el => el.hasAttribute('data-elements-path'));
+      if (annotated.length === 0) return null;
+      return annotated[0];
+    }
+
     document.body.addEventListener('click', (e) => {
       window.focus();
       if (isDragging) {
@@ -596,17 +644,49 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       }
       e.preventDefault();
       e.stopPropagation();
-      const target = e.target.closest('[data-elements-path]');
-      if (target) {
-        document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
-        target.classList.add('ui-selected');
-        selectedPath = target.getAttribute('data-elements-path');
-        const info = getElementInfo(target);
-        window.parent.postMessage({ type: 'select', element: info }, '*');
+
+      // Alt+click: select parent of currently selected element
+      if (e.altKey && selectedPath) {
+        const currentEl = findElementByPath(selectedPath);
+        if (currentEl && currentEl.parentElement) {
+          const parent = currentEl.parentElement.closest('[data-elements-path]');
+          if (parent) {
+            selectTarget(parent);
+            return;
+          }
+        }
+      }
+
+      // Default: find the deepest (smallest) element at click point
+      const deepest = findDeepestElementAt(e.clientX, e.clientY);
+      if (deepest) {
+        selectTarget(deepest);
       } else {
-        document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
-        selectedPath = null;
-        window.parent.postMessage({ type: 'select', element: null }, '*');
+        const target = e.target.closest('[data-elements-path]');
+        if (target) {
+          selectTarget(target);
+        } else {
+          selectTarget(null);
+        }
+      }
+    }, true);
+
+    // Double-click: drill into children of the currently selected element
+    document.body.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!selectedPath) return;
+      const currentEl = findElementByPath(selectedPath);
+      if (!currentEl) return;
+
+      const els = document.elementsFromPoint(e.clientX, e.clientY);
+      const annotated = els.filter(el =>
+        el.hasAttribute('data-elements-path') &&
+        el !== currentEl &&
+        currentEl.contains(el)
+      );
+      if (annotated.length > 0) {
+        selectTarget(annotated[0]);
       }
     }, true);
 
@@ -854,6 +934,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         }
       } else if (e.data.type === 'select') {
         onSelectElement(e.data.element);
+        onBreadcrumbsChange?.(e.data.breadcrumbs || []);
       } else if (e.data.type === 'hover') {
         setHoveredPath(e.data.path);
         onHoverElement(e.data.path);
@@ -877,6 +958,20 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       iframeRef.current.contentWindow.postMessage({ type: 'setSelected', path: selectedPath }, '*');
     }
   }, [selectedPath, iframeReady]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !onZoomChange) return;
+    const handleWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      const next = Math.round(Math.max(0.25, Math.min(3, zoom + delta)) * 100) / 100;
+      onZoomChange(next);
+    };
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, [zoom, onZoomChange]);
 
   useEffect(() => {
     const el = containerRef.current;

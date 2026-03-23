@@ -76,6 +76,7 @@ export const MS_REDIRECT_PATH = clean(process.env.MS_REDIRECT_PATH || '/integrat
 export const DISCORD_CLIENT_ID = clean(process.env.DISCORD_CLIENT_ID || '');
 export const DISCORD_CLIENT_SECRET = clean(process.env.DISCORD_CLIENT_SECRET || '');
 export const DISCORD_REDIRECT_PATH = clean(process.env.DISCORD_REDIRECT_PATH || '/integrations/discord/callback');
+export const DISCORD_BOT_TOKEN = clean(process.env.DISCORD_BOT_TOKEN || '');
 
 export const REDDIT_CLIENT_ID = clean(process.env.REDDIT_CLIENT_ID || '');
 export const REDDIT_CLIENT_SECRET = clean(process.env.REDDIT_CLIENT_SECRET || '');

@@ -642,6 +642,29 @@ function generateBaseJS(): string {
           window.stuard.submit(data);
         } else if (action === 'close' || action === 'cancel') {
           window.stuard.close(data);
+        } else if (action === 'pick_file' || action === 'pick_folder') {
+          // Native file/folder picker — populate target data-bind field
+          try {
+            const picker = action === 'pick_file' ? window.stuard.pickFile : window.stuard.pickFolder;
+            const result = await picker();
+            if (!result.canceled && result.filePaths && result.filePaths.length > 0) {
+              const picked = result.filePaths[0];
+              const target = this.getAttribute('data-target');
+              if (target) {
+                formData[target] = picked;
+                // Update bound elements
+                document.querySelectorAll('[data-bind="' + target + '"]').forEach(el => {
+                  if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+                    el.value = picked;
+                  } else {
+                    el.textContent = picked;
+                  }
+                });
+              }
+            }
+          } catch (err) {
+            console.error('[Action] ' + action + ' failed:', err);
+          }
         } else {
           window.stuard.action(action, data);
         }
@@ -1420,13 +1443,40 @@ function htmlToJsx(html: string): string {
     }
   );
 
-  // Convert data-action="name" buttons to onClick handler
+  // Convert data-action="close" buttons to onClick handler
+  result = result.replace(
+    /<button([^>]*?)data-action="close"([^>]*?)>([\s\S]*?)<\/button>/gi,
+    (_, before, after, content) => {
+      const cleanBefore = before.replace(/onclick="[^"]*"/gi, '');
+      const cleanAfter = after.replace(/onclick="[^"]*"/gi, '');
+      return `<button${cleanBefore}${cleanAfter} onClick={() => stuard.close()}>${content}</button>`;
+    }
+  );
+
+  // Convert data-action="pick_file" / "pick_folder" buttons to async file picker
+  result = result.replace(
+    /<button([^>]*?)data-action="(pick_file|pick_folder)"([^>]*?)>([\s\S]*?)<\/button>/gi,
+    (_, before, action, after, content) => {
+      const cleanBefore = before.replace(/onclick="[^"]*"/gi, '');
+      const cleanAfter = after.replace(/onclick="[^"]*"/gi, '');
+      const targetMatch = (before + after).match(/data-target="([^"]+)"/);
+      const target = targetMatch ? targetMatch[1] : null;
+      const picker = action === 'pick_file' ? 'pickFile' : 'pickFolder';
+      const handler = target
+        ? `async () => { const r = await stuard.${picker}(); if (!r.canceled && r.filePaths[0]) setFormData(d => ({...d, ${target}: r.filePaths[0]})); }`
+        : `async () => { await stuard.${picker}(); }`;
+      const cleanAttrs = (cleanBefore + cleanAfter).replace(/data-target="[^"]*"/gi, '');
+      return `<button${cleanAttrs} onClick={${handler}}>${content}</button>`;
+    }
+  );
+
+  // Convert remaining data-action="name" buttons to onClick handler
   result = result.replace(
     /<button([^>]*?)data-action="([^"]+)"([^>]*?)>([\s\S]*?)<\/button>/gi,
     (_, before, action, after, content) => {
       const cleanBefore = before.replace(/onclick="[^"]*"/gi, '');
       const cleanAfter = after.replace(/onclick="[^"]*"/gi, '');
-      return `<button${cleanBefore}${cleanAfter} onClick={() => stuard.submit({ action: '${action}', ...formData })}>${content}</button>`;
+      return `<button${cleanBefore}${cleanAfter} onClick={() => stuard.action('${action}', formData)}>${content}</button>`;
     }
   );
 

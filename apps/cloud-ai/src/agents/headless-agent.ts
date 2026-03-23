@@ -52,9 +52,10 @@ When browsing websites, filling forms, or interacting with web pages:
 
 HANDLING DROPDOWNS — read controlType from get_interactive_elements output:
 - When you encounter a dropdown, FIRST call browser_use_get_dropdown_options({ selector }) to read all available options WITHOUT selecting anything. This lets you see exactly what choices exist before making a selection.
+- STOP and inspect the returned options before selecting. Do not call browser_use_get_dropdown_options and browser_use_select_option in parallel.
 - Then call browser_use_select_option with the exact text/value from the options list.
 - Native <select> (tag: "select", controlType: "dropdown"): browser_use_get_dropdown_options reads options directly. Then use browser_use_select_option with value or label.
-- Searchable combobox / autocomplete (controlType: "dropdown" with role "combobox", or an input with aria-haspopup): Use browser_use_select_option with the "search" parameter. This types the search text, waits for filtered results, and clicks the match. Example: browser_use_select_option({ selector: "#country-input", search: "United States", label: "United States" })
+- Searchable combobox / autocomplete (controlType: "dropdown" with role "combobox", or an input with aria-haspopup): Still inspect first, then use browser_use_select_option with the "search" parameter if needed. This types the search text, waits for filtered results, and clicks the match. Example: browser_use_select_option({ selector: "#country-input", search: "United States", label: "United States" })
 - Custom dropdown (button/div with controlType: "dropdown"): browser_use_get_dropdown_options clicks to open, reads options, then closes. Then use browser_use_select_option with the exact label or value.
 - If select_option fails, the error response includes the list of available options. Use one of those exact option texts to retry with the correct label.
 - CRITICAL: NEVER use browser_use_type to fill a dropdown or combobox. The model must ALWAYS use browser_use_select_option for any element with controlType "dropdown". If you type into a combobox input, the dropdown will not register a selection — the form framework expects an option to be clicked from the popup list.

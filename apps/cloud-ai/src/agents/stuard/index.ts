@@ -1,6 +1,6 @@
 import { Agent } from '@mastra/core/agent';
 import type { ModelChoice } from '../../router/model-router';
-import { SYSTEM_INSTRUCTIONS } from './prompts';
+import { buildSystemInstructions } from './prompts';
 import { getTools, getToolsForQuery } from './tools';
 import { getModel, getAgentName } from './models';
 
@@ -25,17 +25,13 @@ export function getAgent(
   const instructions = [
     {
       role: 'system',
-      content: SYSTEM_INSTRUCTIONS,
+      content: buildSystemInstructions(enabledIntegrations),
       providerOptions: {
         anthropic: { cacheControl: { type: 'ephemeral' } },
       },
     },
   ];
 
-  // Note: Memory with LibSQLStore removed to allow parallel request processing.
-  // SQLite file locking was causing requests to serialize (stuck at "routing").
-  // The server already manages conversation history via the conversations WeakMap
-  // and passes full history in inputMessages, so agent-level memory is redundant.
   return new Agent({
     id: name,
     name,
@@ -61,7 +57,7 @@ export async function getAgentForQuery(
   const instructions = [
     {
       role: 'system',
-      content: SYSTEM_INSTRUCTIONS,
+      content: buildSystemInstructions(enabledIntegrations),
       providerOptions: {
         anthropic: { cacheControl: { type: 'ephemeral' } },
       },

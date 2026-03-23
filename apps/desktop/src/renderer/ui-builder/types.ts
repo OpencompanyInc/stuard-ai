@@ -329,6 +329,12 @@ export interface UIDesign {
 
   // Tags for organization
   tags?: string[];
+
+  // React-like state variables for the UI
+  stateVariables?: UIStateVariable[];
+
+  // No-code tool actions (call tools from UI without writing code)
+  toolActions?: UIToolAction[];
 }
 
 // === Palette Component Definition ===
@@ -450,6 +456,41 @@ export interface UIBuilderModalProps {
   onSave: (design: UIDesign, code: GeneratedCode) => void;
   onClose: () => void;
   isOpen?: boolean;
+}
+
+// === STATE MANAGEMENT (React-like useState) ===
+
+export type UIStateVarType = 'string' | 'number' | 'boolean' | 'array' | 'object';
+
+export interface UIStateVariable {
+  id: string;
+  name: string;              // Variable name (e.g., "count", "isLoading", "searchResults")
+  type: UIStateVarType;
+  defaultValue: any;         // Default value
+  description?: string;      // Optional description
+}
+
+export interface UIToolAction {
+  id: string;
+  name: string;              // Display name for the action
+  toolName: string;          // Tool to call (e.g., "web_search", "log")
+  args: Record<string, any>; // Static args or state refs like "$state.query"
+  resultVar?: string;        // State variable to store result in
+  loadingVar?: string;       // State variable to track loading
+  errorVar?: string;         // State variable to store error
+  trigger: 'click' | 'load' | 'stateChange';
+  triggerConfig?: {
+    elementId?: string;      // For click trigger - which element triggers this
+    stateVar?: string;       // For stateChange trigger
+    debounceMs?: number;
+  };
+}
+
+// Element breadcrumb for hierarchy navigation
+export interface ElementBreadcrumb {
+  path: string;
+  tagName: string;
+  label: string;           // Display label (tag + id/class)
 }
 
 // === PAGE SYSTEM ===

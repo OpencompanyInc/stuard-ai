@@ -47,6 +47,7 @@ import {
   estimateCostUsd,
   creditsPerUsd,
   creditsFromUsd,
+  snapCredits,
   monthlyCreditLimitForPlan,
   ALL_MODELS,
   PLAN_CONFIG,
@@ -179,16 +180,67 @@ describe('pricing module', () => {
     });
   });
 
-  describe('creditsFromUsd', () => {
-    it('should convert USD to credits correctly', () => {
-      expect(creditsFromUsd(1)).toBe(33);
-      expect(creditsFromUsd(2.5)).toBe(83);
-      expect(creditsFromUsd(0.5)).toBe(17);
+  describe('snapCredits', () => {
+    it('should return 0 for zero or negative', () => {
+      expect(snapCredits(0)).toBe(0);
+      expect(snapCredits(-5)).toBe(0);
     });
 
-    it('should round to nearest integer', () => {
-      expect(creditsFromUsd(1.016)).toBe(34);
-      expect(creditsFromUsd(1.014)).toBe(33);
+    it('should snap small positive values to 0.1 minimum', () => {
+      expect(snapCredits(0.01)).toBe(0.1);
+      expect(snapCredits(0.05)).toBe(0.1);
+      expect(snapCredits(0.1)).toBe(0.1);
+      expect(snapCredits(0.132)).toBe(0.1);  // Telnyx SMS
+      expect(snapCredits(0.165)).toBe(0.1);  // WhatsApp
+    });
+
+    it('should ceil to nearest 0.25 for values >= 0.25 (never undercharge)', () => {
+      expect(snapCredits(0.25)).toBe(0.25);
+      expect(snapCredits(0.26)).toBe(0.5);
+      expect(snapCredits(0.30)).toBe(0.5);
+      expect(snapCredits(0.50)).toBe(0.5);
+      expect(snapCredits(0.51)).toBe(0.75);
+      expect(snapCredits(0.75)).toBe(0.75);
+      expect(snapCredits(0.76)).toBe(1.0);
+      expect(snapCredits(1.0)).toBe(1.0);
+      expect(snapCredits(1.01)).toBe(1.25);
+    });
+
+    it('should handle large values', () => {
+      expect(snapCredits(214.5)).toBe(214.5);
+      expect(snapCredits(214.1)).toBe(214.25);
+      expect(snapCredits(1039.5)).toBe(1039.5);
+      expect(snapCredits(2475)).toBe(2475);
+    });
+
+    it('should handle NaN and Infinity', () => {
+      expect(snapCredits(NaN)).toBe(0);
+      expect(snapCredits(Infinity)).toBe(0);
+    });
+  });
+
+  describe('creditsFromUsd', () => {
+    it('should convert USD to credits with ceil snapping', () => {
+      // $1 * 33 = 33 credits (exact)
+      expect(creditsFromUsd(1)).toBe(33);
+      // $2.5 * 33 = 82.5 → exact quarter, stays 82.5
+      expect(creditsFromUsd(2.5)).toBe(82.5);
+      // $0.5 * 33 = 16.5 → exact quarter, stays 16.5
+      expect(creditsFromUsd(0.5)).toBe(16.5);
+    });
+
+    it('should ceil up so we never undercharge', () => {
+      // $0.017 * 33 = 0.561 → ceil to 0.75
+      expect(creditsFromUsd(0.017)).toBe(0.75);
+      // $0.134 * 33 = 4.422 → ceil to 4.5
+      expect(creditsFromUsd(0.134)).toBe(4.5);
+    });
+
+    it('should snap cheap services to 0.1 minimum', () => {
+      // Telnyx SMS: $0.004 * 33 = 0.132 → 0.1
+      expect(creditsFromUsd(0.004)).toBe(0.1);
+      // WhatsApp: $0.005 * 33 = 0.165 → 0.1
+      expect(creditsFromUsd(0.005)).toBe(0.1);
     });
 
     it('should return 0 for negative values', () => {
@@ -199,25 +251,25 @@ describe('pricing module', () => {
   describe('monthlyCreditLimitForPlan', () => {
     it('should return credits for FREE_TRIAL plan', () => {
       const credits = monthlyCreditLimitForPlan('FREE_TRIAL');
-      // $0.45 budget * 33 credits/USD ≈ 15 credits
+      // $0.45 budget * 33 credits/USD = 14.85 → ceil to 15
       expect(credits).toBe(15);
     });
 
     it('should return credits for STARTER plan', () => {
       const credits = monthlyCreditLimitForPlan('STARTER');
-      // $6.50 budget * 33 credits/USD ≈ 215 credits
-      expect(credits).toBe(215);
+      // $6.50 budget * 33 credits/USD = 214.5 → exact quarter
+      expect(credits).toBe(214.5);
     });
 
     it('should return credits for PRO plan', () => {
       const credits = monthlyCreditLimitForPlan('PRO');
-      // $31.50 budget (70%) * 33 credits/USD ≈ 1040 credits
-      expect(credits).toBe(1040);
+      // $31.50 budget (70%) * 33 credits/USD = 1039.5 → exact quarter
+      expect(credits).toBe(1039.5);
     });
 
     it('should return credits for POWER plan', () => {
       const credits = monthlyCreditLimitForPlan('POWER');
-      // $75 budget (75%) * 33 credits/USD = 2475 credits
+      // $75 budget (75%) * 33 credits/USD = 2475 → snap to 2475
       expect(credits).toBe(2475);
     });
 

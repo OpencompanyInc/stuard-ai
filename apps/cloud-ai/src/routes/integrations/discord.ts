@@ -188,12 +188,18 @@ export async function handleDiscordRoutes(req: IncomingMessage, res: ServerRespo
 
       // Fetch Discord user profile
       let accountEmail: string | null = null;
+      let discordUserId: string | null = null;
+      let discordUsername: string | null = null;
+      let discordAvatar: string | null = null;
       try {
         const userRes = await fetch('https://discord.com/api/v10/users/@me', {
           headers: { Authorization: `Bearer ${access_token}`, 'User-Agent': 'StuardAI-Cloud' },
         });
         const user: any = await (async () => { try { return await userRes.json(); } catch { return null; } })();
         accountEmail = String(user?.email || user?.username || '') || null;
+        discordUserId = user?.id ? String(user.id) : null;
+        discordUsername = user?.username ? String(user.username) : null;
+        discordAvatar = user?.avatar ? String(user.avatar) : null;
       } catch { }
 
       try {
@@ -204,7 +210,12 @@ export async function handleDiscordRoutes(req: IncomingMessage, res: ServerRespo
           scopes,
           refresh_token,
           expires_at: expires_in ? new Date(Date.now() + expires_in * 1000).toISOString() : null,
-          meta: { token_type: tokenBody.token_type || 'Bearer' },
+          meta: {
+            token_type: tokenBody.token_type || 'Bearer',
+            ...(discordUserId ? { discord_user_id: discordUserId } : {}),
+            ...(discordUsername ? { discord_username: discordUsername } : {}),
+            ...(discordAvatar ? { discord_avatar: discordAvatar } : {}),
+          },
           profileLabel,
           accountEmail,
         });

@@ -679,59 +679,11 @@ export function getTools(
     }
   }
 
-  // Add integration tools if user has them connected
-  if (enabledIntegrations.includes('google')) {
-    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
-      if (name.startsWith('google_') || name.startsWith('gmail_') || name.startsWith('calendar_') || name.startsWith('drive_') || name.startsWith('sheets_') || name.startsWith('docs_') || name.startsWith('tasks_')) {
-        tools[name] = tool;
-      }
-    }
-  }
-  if (enabledIntegrations.includes('outlook')) {
-    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
-      if (name.startsWith('outlook_')) tools[name] = tool;
-    }
-  }
-  if (enabledIntegrations.includes('github')) {
-    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
-      if (name.startsWith('github_')) tools[name] = tool;
-    }
-  }
-  if (enabledIntegrations.includes('facebook')) {
-    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
-      if (name.startsWith('facebook_')) tools[name] = tool;
-    }
-  }
-  if (enabledIntegrations.includes('instagram')) {
-    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
-      if (name.startsWith('instagram_')) tools[name] = tool;
-    }
-  }
-  if (enabledIntegrations.includes('threads')) {
-    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
-      if (name.startsWith('threads_')) tools[name] = tool;
-    }
-  }
-  if (enabledIntegrations.includes('reddit')) {
-    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
-      if (name.startsWith('reddit_')) tools[name] = tool;
-    }
-  }
-  if (enabledIntegrations.includes('ollama')) {
-    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
-      if (name.startsWith('ollama_')) tools[name] = tool;
-    }
-  }
-  if (enabledIntegrations.includes('telnyx')) {
-    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
-      if (name.startsWith('telnyx_')) tools[name] = tool;
-    }
-  }
-  if (enabledIntegrations.includes('whatsapp')) {
-    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
-      if (name.startsWith('whatsapp_')) tools[name] = tool;
-    }
-  }
+  // Integration tools are NOT loaded natively to save tokens.
+  // Instead, the system prompt tells the model which integrations are connected,
+  // and the model discovers/executes them via search_tools + get_tool_schema + execute_tool.
+
+  // Browser use tools are still loaded natively when bridge is active (needed for real-time automation)
   if (enabledIntegrations.includes('browser_use') || hasClientBridge()) {
     for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
       if (name.startsWith('browser_use_')) tools[name] = tool;
@@ -739,7 +691,7 @@ export function getTools(
   }
 
   if (process.env.SIS_DEBUG === '1') {
-    console.log(`[tools] Lean mode: ${Object.keys(tools).length} tools (Tier1 + SIS + integrations)`);
+    console.log(`[tools] Lean mode: ${Object.keys(tools).length} tools (Tier1 + SIS, integrations via prompt)`);
   }
 
   return tools;
@@ -801,35 +753,12 @@ export async function getToolsForQuery(
     }
   }
 
-  // ── 4. Integration tools (only if user has the integration connected) ──
-  const integrationPrefixes: Record<string, string[]> = {
-    google: ['google_', 'gmail_', 'calendar_', 'drive_', 'sheets_', 'docs_', 'tasks_'],
-    outlook: ['outlook_'],
-    github: ['github_'],
-    facebook: ['facebook_'],
-    instagram: ['instagram_'],
-    threads: ['threads_'],
-    notion: ['notion_'],
-    linear: ['linear_'],
-    reddit: ['reddit_'],
-    ollama: ['ollama_'],
-    telnyx: ['telnyx_'],
-    whatsapp: ['whatsapp_'],
-    browser_use: ['browser_use_'],
-  };
-  for (const integration of enabledIntegrations) {
-    const prefixes = integrationPrefixes[integration];
-    if (!prefixes) continue;
-    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
-      if (!selected[name] && prefixes.some(p => name.startsWith(p))) {
-        selected[name] = tool;
-      }
-    }
-  }
+  // ── 4. Integration tools are NOT loaded natively to save tokens ──
+  // The system prompt tells the model which integrations are connected,
+  // and it discovers/executes them via search_tools + get_tool_schema + execute_tool.
 
-  // Safety net: when a desktop bridge is active, keep browser_use tools available
-  // even if integration state arrives late/stale.
-  if (hasClientBridge()) {
+  // Browser use tools are still loaded natively when bridge is active (needed for real-time automation)
+  if (enabledIntegrations.includes('browser_use') || hasClientBridge()) {
     for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
       if (!selected[name] && name.startsWith('browser_use_')) {
         selected[name] = tool;
@@ -839,7 +768,7 @@ export async function getToolsForQuery(
 
   if (process.env.SIS_DEBUG === '1') {
     const rankedCount = rankedToolNames?.length || 0;
-    console.log(`[tools] ${Object.keys(selected).length} tools loaded (Tier1=${TIER_1_PARAMOUNT_TOOLS.length} + SIS=${SIS_META_TOOL_NAMES.length} + Ranked=${rankedCount} + Integrations)`);
+    console.log(`[tools] ${Object.keys(selected).length} tools loaded (Tier1=${TIER_1_PARAMOUNT_TOOLS.length} + SIS=${SIS_META_TOOL_NAMES.length} + Ranked=${rankedCount}, integrations via prompt)`);
   }
 
   return selected;

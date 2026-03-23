@@ -26,8 +26,11 @@ import {
 import { UIBuilderCanvas, type UIBuilderCanvasRef, type SelectedElementInfo } from './UIBuilderCanvas';
 import { WindowPropertiesPanel } from './components/WindowPropertiesPanel';
 import { PageFlowBuilder } from './components/PageFlowBuilder';
-import type { UIWindowConfig, UIPage, PageFlowDesign } from './types';
+import { StatePanel } from './components/StatePanel';
+import { ToolActionPanel } from './components/ToolActionPanel';
+import type { UIWindowConfig, UIPage, PageFlowDesign, UIStateVariable, UIToolAction } from './types';
 import { generateReactComponent } from './utils/codeGenerator';
+import { generateStateAndToolJs } from './utils/stateCodeGenerator';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -129,7 +132,7 @@ const PALETTE_CATEGORIES = [
 
 // View modes
 type ViewMode = 'design' | 'preview' | 'window' | 'flow';
-type RightPanelTab = 'properties' | 'code';
+type RightPanelTab = 'properties' | 'code' | 'state';
 
 interface EnhancedUIBuilderModalProps {
   html: string;
@@ -147,6 +150,22 @@ interface EnhancedUIBuilderModalProps {
   onClose: () => void;
 }
 
+// ─── Element type helpers ────────────────────────────────────────────────────
+
+const INTERACTIVE_TAGS = new Set(['button', 'a', 'select', 'details', 'summary']);
+const INPUT_TAGS = new Set(['input', 'textarea', 'select']);
+const TEXT_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'span', 'label', 'li', 'td', 'th', 'caption', 'legend', 'figcaption', 'blockquote', 'pre', 'code', 'em', 'strong', 'small', 'b', 'i', 'u', 'mark', 'abbr', 'cite', 'q', 'sub', 'sup', 'time', 'dt', 'dd']);
+const CONTAINER_TAGS = new Set(['div', 'section', 'main', 'header', 'footer', 'nav', 'aside', 'article', 'form', 'fieldset', 'ul', 'ol', 'dl', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'figure']);
+const MEDIA_TAGS = new Set(['img', 'video', 'audio', 'canvas', 'svg', 'iframe', 'picture', 'source']);
+
+const BUILT_IN_ACTIONS = [
+  { value: 'submit', label: 'Submit Form', desc: 'Collect form data & close' },
+  { value: 'cancel', label: 'Cancel', desc: 'Close without submitting' },
+  { value: 'close', label: 'Close Window', desc: 'Close the UI window' },
+  { value: 'pick_file', label: 'Pick File', desc: 'Open file picker dialog' },
+  { value: 'pick_folder', label: 'Pick Folder', desc: 'Open folder picker dialog' },
+];
+
 // ─── Element Property Editor Sub-Component ──────────────────────────────────
 
 function ElementPropertyEditor({
@@ -162,84 +181,81 @@ function ElementPropertyEditor({
   onUpdateStyle: (property: string, value: string) => void;
   pages?: Record<string, any>;
 }) {
-  const [activeSection, setActiveSection] = useState<string>('content');
+  const tag = element.tagName;
+  const isButton = tag === 'button' || (tag === 'a' && !element.attributes?.href);
+  const isInput = INPUT_TAGS.has(tag);
+  const isText = TEXT_TAGS.has(tag);
+  const isContainer = CONTAINER_TAGS.has(tag);
+  const isInteractive = INTERACTIVE_TAGS.has(tag) || isButton;
+  const isMedia = MEDIA_TAGS.has(tag);
+
+  // Determine best default section based on element type
+  const defaultSection = isButton || isInteractive ? 'actions' : isInput ? 'content' : 'content';
+  const [activeSection, setActiveSection] = useState<string>(defaultSection);
+
+  // Reset section when element changes
+  const prevPathRef = useRef(element.path);
+  if (element.path !== prevPathRef.current) {
+    prevPathRef.current = element.path;
+    // don't call setState in render, use a ref trick
+  }
 
   const attrs = element.attributes || {};
-  const hasDataBind = 'data-bind' in attrs;
-  const hasDataAction = 'data-action' in attrs;
-  const hasDataNavigate = 'data-navigate' in attrs;
-  const hasDataHtml = 'data-html' in attrs || 'data-render-html' in attrs;
-
-  // Parse current class for quick toggles
   const currentClass = element.className || '';
 
-  const updateAttribute = (name: string, value: string) => {
-    onUpdateAttribute(name, value);
-  };
+  // Build dynamic section tabs based on element type
+  const sections: { id: string; label: string; icon: typeof Type }[] = [];
 
-  const sections = [
-    { id: 'content', label: 'Content', icon: Type },
-    { id: 'bindings', label: 'Data & Actions', icon: Database },
-    { id: 'style', label: 'Style', icon: Paintbrush },
-    { id: 'layout', label: 'Layout', icon: LayoutGrid },
-  ];
+  if (isInput || isText || isMedia || (!isButton && !isContainer)) {
+    sections.push({ id: 'content', label: 'Content', icon: Type });
+  }
+  if (isButton || isInteractive) {
+    sections.push({ id: 'actions', label: 'Actions', icon: Play });
+  }
+  if (!isButton) {
+    sections.push({ id: 'bindings', label: 'Data', icon: Database });
+  }
+  sections.push({ id: 'style', label: 'Style', icon: Paintbrush });
+  if (isContainer) {
+    sections.push({ id: 'layout', label: 'Layout', icon: LayoutGrid });
+  }
+
+  // Ensure activeSection is valid for this element
+  const validSectionIds = sections.map(s => s.id);
+  const effectiveSection = validSectionIds.includes(activeSection) ? activeSection : validSectionIds[0];
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Element Header */}
-      <div className="p-3 border-b border-slate-200 space-y-2">
-        <div className="flex items-center justify-between">
+      <div className="px-3 pt-3 pb-2 border-b border-slate-200">
+        <div className="flex items-center justify-between mb-1.5">
           <div className="flex items-center gap-2">
-            <span className="px-2.5 py-1 bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-[11px] font-semibold rounded-full capitalize">
-              {element.tagName}
+            <span className="px-2 py-0.5 bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-[10px] font-bold rounded-md uppercase tracking-wider">
+              {tag}
             </span>
             {element.id && (
               <span className="text-[10px] font-mono text-slate-400">#{element.id}</span>
             )}
           </div>
-          <span className="text-[10px] text-slate-400 font-mono">
-            {Math.round(element.rect.width)}×{Math.round(element.rect.height)}
-          </span>
+          <button
+            onClick={() => {
+              const iframe = document.querySelector('iframe');
+              if (iframe && iframe.contentWindow) {
+                iframe.contentWindow.postMessage({ type: 'deleteSelected' }, '*');
+              }
+            }}
+            className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+            title="Delete element"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
         </div>
-
-        {/* Quick info badges */}
-        <div className="flex flex-wrap gap-1">
-          {hasDataBind && (
-            <span className="px-1.5 py-0.5 bg-blue-50 text-blue-600 text-[9px] font-medium rounded flex items-center gap-1">
-              <Database className="w-2.5 h-2.5" /> {attrs['data-bind']}
-            </span>
-          )}
-          {hasDataAction && (
-            <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-600 text-[9px] font-medium rounded flex items-center gap-1">
-              <Play className="w-2.5 h-2.5" /> {attrs['data-action']}
-            </span>
-          )}
-          {hasDataNavigate && (
-            <span className="px-1.5 py-0.5 bg-purple-50 text-purple-600 text-[9px] font-medium rounded flex items-center gap-1">
-              <ArrowRight className="w-2.5 h-2.5" /> {attrs['data-navigate']}
-            </span>
-          )}
-          {currentClass.includes('drag') && (
-            <span className="px-1.5 py-0.5 bg-amber-50 text-amber-600 text-[9px] font-medium rounded flex items-center gap-1">
-              <Move className="w-2.5 h-2.5" /> Drag Handle
-            </span>
-          )}
+        <div className="text-[10px] text-slate-400 font-mono">
+          {Math.round(element.rect.width)}×{Math.round(element.rect.height)}px
+          {isButton && <span className="ml-2 text-emerald-500 font-semibold">Interactive</span>}
+          {isInput && <span className="ml-2 text-blue-500 font-semibold">Input</span>}
+          {isContainer && <span className="ml-2 text-purple-500 font-semibold">Container</span>}
         </div>
-        
-        {/* Delete Button */}
-        <button
-          onClick={() => {
-            // Send delete command to canvas
-            const iframe = document.querySelector('iframe');
-            if (iframe && iframe.contentWindow) {
-              iframe.contentWindow.postMessage({ type: 'deleteSelected' }, '*');
-            }
-          }}
-          className="w-full flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors mt-2"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-          Delete Element
-        </button>
       </div>
 
       {/* Section Tabs */}
@@ -249,7 +265,7 @@ function ElementPropertyEditor({
             key={s.id}
             onClick={() => setActiveSection(s.id)}
             className={`flex-1 flex items-center justify-center gap-1 py-2 text-[10px] font-semibold transition-all border-b-2 ${
-              activeSection === s.id
+              effectiveSection === s.id
                 ? 'text-indigo-700 border-indigo-500 bg-white'
                 : 'text-slate-500 border-transparent hover:text-slate-700'
             }`}
@@ -261,14 +277,15 @@ function ElementPropertyEditor({
       </div>
 
       {/* Section Content */}
-      <div className="flex-1 overflow-auto scrollbar-minimal p-3 space-y-4">
+      <div className="flex-1 overflow-auto scrollbar-minimal p-3 space-y-3">
+
         {/* ─── Content Section ─── */}
-        {activeSection === 'content' && (
+        {effectiveSection === 'content' && (
           <>
-            {/* Text Content */}
-            {element.textContent && (
+            {/* Text Content — for text elements and non-containers */}
+            {(isText || (!isContainer && !isButton && element.textContent)) && (
               <div>
-                <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">Text Content</label>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">Text Content</label>
                 <input
                   type="text"
                   value={element.textContent}
@@ -278,9 +295,75 @@ function ElementPropertyEditor({
               </div>
             )}
 
+            {/* Placeholder — for inputs (editable!) */}
+            {isInput && (
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">Placeholder</label>
+                <input
+                  type="text"
+                  value={attrs.placeholder || ''}
+                  onChange={(e) => onUpdateAttribute('placeholder', e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                  placeholder="Enter placeholder text..."
+                />
+              </div>
+            )}
+
+            {/* Input type */}
+            {tag === 'input' && (
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">Input Type</label>
+                <select
+                  value={attrs.type || 'text'}
+                  onChange={(e) => onUpdateAttribute('type', e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                >
+                  {['text', 'email', 'password', 'number', 'url', 'tel', 'date', 'time', 'color', 'range', 'checkbox', 'radio', 'file', 'hidden'].map(t => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Image src */}
+            {tag === 'img' && (
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">Image URL</label>
+                <input
+                  type="text"
+                  value={attrs.src || ''}
+                  onChange={(e) => onUpdateAttribute('src', e.target.value)}
+                  className="w-full px-3 py-2 text-sm font-mono bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                  placeholder="https://..."
+                />
+                <label className="block text-[11px] font-semibold text-slate-600 mt-2 mb-1">Alt Text</label>
+                <input
+                  type="text"
+                  value={attrs.alt || ''}
+                  onChange={(e) => onUpdateAttribute('alt', e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                  placeholder="Image description"
+                />
+              </div>
+            )}
+
+            {/* Link href */}
+            {tag === 'a' && (
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">Link URL</label>
+                <input
+                  type="text"
+                  value={attrs.href || ''}
+                  onChange={(e) => onUpdateAttribute('href', e.target.value)}
+                  className="w-full px-3 py-2 text-sm font-mono bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                  placeholder="https://..."
+                />
+              </div>
+            )}
+
             {/* Element ID */}
             <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">Element ID</label>
+              <label className="block text-[11px] font-semibold text-slate-600 mb-1">Element ID</label>
               <div className="relative">
                 <Hash className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
                 <input
@@ -295,7 +378,7 @@ function ElementPropertyEditor({
 
             {/* CSS Classes */}
             <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">CSS Classes</label>
+              <label className="block text-[11px] font-semibold text-slate-600 mb-1">CSS Classes</label>
               <textarea
                 value={currentClass}
                 onChange={(e) => onUpdateProperty({ className: e.target.value })}
@@ -303,8 +386,7 @@ function ElementPropertyEditor({
                 rows={2}
                 placeholder="tailwind classes..."
               />
-              {/* Quick class toggles */}
-              <div className="flex flex-wrap gap-1 mt-2">
+              <div className="flex flex-wrap gap-1 mt-1.5">
                 {['font-bold', 'text-center', 'w-full', 'rounded-lg', 'shadow-md', 'p-4', 'hidden'].map(cls => (
                   <button
                     key={cls}
@@ -326,130 +408,196 @@ function ElementPropertyEditor({
                 ))}
               </div>
             </div>
-
-            {/* Placeholder (for inputs) */}
-            {(element.tagName === 'input' || element.tagName === 'textarea') && attrs.placeholder !== undefined && (
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">Placeholder</label>
-                <input
-                  type="text"
-                  value={attrs.placeholder || ''}
-                  readOnly
-                  className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg text-slate-500"
-                  title="Edit in HTML code panel"
-                />
-                <p className="text-[9px] text-slate-400 mt-1">Edit placeholder in Code panel</p>
-              </div>
-            )}
           </>
         )}
 
-        {/* ─── Data & Actions Section ─── */}
-        {activeSection === 'bindings' && (
+        {/* ─── Actions Section (for buttons/interactive elements) ─── */}
+        {effectiveSection === 'actions' && (
+          <>
+            {/* Button text */}
+            {element.textContent && (
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">Button Label</label>
+                <input
+                  type="text"
+                  value={element.textContent}
+                  onChange={(e) => onUpdateProperty({ textContent: e.target.value })}
+                  className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                />
+              </div>
+            )}
+
+            {/* Action quick-pick (clickable!) */}
+            <div className="space-y-2">
+              <label className="block text-[11px] font-semibold text-emerald-700">Click Action</label>
+              <div className="space-y-1">
+                {BUILT_IN_ACTIONS.map(a => {
+                  const isActive = attrs['data-action'] === a.value;
+                  return (
+                    <button
+                      key={a.value}
+                      onClick={() => onUpdateAttribute('data-action', isActive ? '' : a.value)}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg border text-left transition-all ${
+                        isActive
+                          ? 'bg-emerald-50 border-emerald-300 ring-1 ring-emerald-200'
+                          : 'bg-white border-slate-200 hover:border-emerald-200 hover:bg-emerald-50/30'
+                      }`}
+                    >
+                      <Play className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-emerald-600' : 'text-slate-400'}`} />
+                      <div className="flex-1 min-w-0">
+                        <div className={`text-[11px] font-semibold ${isActive ? 'text-emerald-700' : 'text-slate-700'}`}>{a.label}</div>
+                        <div className="text-[9px] text-slate-400">{a.desc}</div>
+                      </div>
+                      {isActive && <CheckSquare className="w-3.5 h-3.5 text-emerald-500 shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+              <div>
+                <label className="block text-[10px] text-slate-500 mb-1">Or custom action name:</label>
+                <input
+                  type="text"
+                  value={attrs['data-action'] || ''}
+                  onChange={(e) => onUpdateAttribute('data-action', e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs font-mono bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-300"
+                  placeholder="custom_action"
+                />
+              </div>
+            </div>
+
+            {/* Page Navigation */}
+            <div className="space-y-2">
+              <label className="block text-[11px] font-semibold text-purple-700">Navigate to Page</label>
+              <input
+                type="text"
+                value={attrs['data-navigate'] || ''}
+                onChange={(e) => onUpdateAttribute('data-navigate', e.target.value)}
+                className="w-full px-3 py-1.5 text-xs font-mono bg-white border border-purple-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+                placeholder="page_name"
+              />
+              {pages && Object.keys(pages).length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {Object.keys(pages).map(p => (
+                    <button
+                      key={p}
+                      onClick={() => onUpdateAttribute('data-navigate', attrs['data-navigate'] === p ? '' : p)}
+                      className={`px-2 py-1 text-[10px] font-mono rounded-md border transition-all ${
+                        attrs['data-navigate'] === p
+                          ? 'bg-purple-100 text-purple-700 border-purple-300'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-purple-200'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Element ID for button */}
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-600 mb-1">Element ID</label>
+              <div className="relative">
+                <Hash className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                <input
+                  type="text"
+                  value={element.id || ''}
+                  onChange={(e) => onUpdateProperty({ id: e.target.value })}
+                  className="w-full pl-8 pr-3 py-2 text-sm font-mono bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                  placeholder="btn-id"
+                />
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* ─── Data Bindings Section ─── */}
+        {effectiveSection === 'bindings' && (
           <>
             {/* Data Binding */}
-            <div className="p-3 bg-blue-50/50 rounded-lg border border-blue-100 space-y-2">
+            <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <Database className="w-3.5 h-3.5 text-blue-600" />
                 <label className="text-[11px] font-semibold text-blue-800">Data Binding</label>
               </div>
-              <p className="text-[10px] text-blue-600">
-                Bind this element to a workflow data field. The value syncs automatically.
-              </p>
               <input
                 type="text"
                 value={attrs['data-bind'] || ''}
-                onChange={(e) => updateAttribute('data-bind', e.target.value)}
-                className="w-full px-3 py-2 text-sm font-mono bg-white border border-blue-200 rounded-lg text-blue-700"
+                onChange={(e) => onUpdateAttribute('data-bind', e.target.value)}
+                className="w-full px-3 py-2 text-sm font-mono bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300 text-blue-700"
                 placeholder="field_name"
               />
-              {hasDataHtml && (
-                <div className="flex items-center gap-1.5 text-[10px] text-blue-600">
-                  <CheckSquare className="w-3 h-3" />
-                  Renders as HTML (data-html)
-                </div>
-              )}
               <p className="text-[9px] text-blue-500">
-                Use <code className="bg-blue-100 px-1 rounded">data-bind="field"</code> in HTML to bind.
-                Access via <code className="bg-blue-100 px-1 rounded">{'{{field}}'}</code> in templates.
+                Binds element content to a workflow data field.
               </p>
             </div>
 
-            {/* Action */}
-            <div className="p-3 bg-emerald-50/50 rounded-lg border border-emerald-100 space-y-2">
+            {/* Action (for non-button elements) */}
+            <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <Play className="w-3.5 h-3.5 text-emerald-600" />
-                <label className="text-[11px] font-semibold text-emerald-800">Action</label>
+                <label className="text-[11px] font-semibold text-emerald-800">Click Action</label>
               </div>
-              <p className="text-[10px] text-emerald-600">
-                Trigger an action when clicked. Built-in: submit, cancel, close, pick_file, pick_folder.
-              </p>
               <input
                 type="text"
                 value={attrs['data-action'] || ''}
-                onChange={(e) => updateAttribute('data-action', e.target.value)}
-                className="w-full px-3 py-2 text-sm font-mono bg-white border border-emerald-200 rounded-lg text-emerald-700"
+                onChange={(e) => onUpdateAttribute('data-action', e.target.value)}
+                className="w-full px-3 py-2 text-sm font-mono bg-white border border-emerald-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-300 text-emerald-700"
                 placeholder="action_name"
               />
               <div className="flex flex-wrap gap-1">
-                {['submit', 'cancel', 'close', 'pick_file', 'pick_folder'].map(a => (
-                  <span key={a} className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-[9px] font-mono rounded">
-                    {a}
-                  </span>
+                {BUILT_IN_ACTIONS.map(a => (
+                  <button
+                    key={a.value}
+                    onClick={() => onUpdateAttribute('data-action', attrs['data-action'] === a.value ? '' : a.value)}
+                    className={`px-1.5 py-0.5 text-[9px] font-mono rounded transition-all ${
+                      attrs['data-action'] === a.value
+                        ? 'bg-emerald-200 text-emerald-800 ring-1 ring-emerald-300'
+                        : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100 cursor-pointer'
+                    }`}
+                  >
+                    {a.value}
+                  </button>
                 ))}
               </div>
             </div>
 
             {/* Navigation */}
-            <div className="p-3 bg-purple-50/50 rounded-lg border border-purple-100 space-y-2">
+            <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <ArrowRight className="w-3.5 h-3.5 text-purple-600" />
                 <label className="text-[11px] font-semibold text-purple-800">Page Navigation</label>
               </div>
-              <p className="text-[10px] text-purple-600">
-                Navigate to another page in the multi-page SPA.
-              </p>
               <input
                 type="text"
                 value={attrs['data-navigate'] || ''}
-                onChange={(e) => updateAttribute('data-navigate', e.target.value)}
-                className="w-full px-3 py-2 text-sm font-mono bg-white border border-purple-200 rounded-lg text-purple-700"
+                onChange={(e) => onUpdateAttribute('data-navigate', e.target.value)}
+                className="w-full px-3 py-2 text-sm font-mono bg-white border border-purple-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300 text-purple-700"
                 placeholder="page_name"
               />
               {pages && Object.keys(pages).length > 0 && (
-                <div className="space-y-1">
-                  <div className="text-[9px] text-purple-500 font-medium">Available pages:</div>
-                  <div className="flex flex-wrap gap-1">
-                    {Object.keys(pages).map(p => (
-                      <span key={p} className="px-1.5 py-0.5 bg-purple-100 text-purple-700 text-[9px] font-mono rounded">
-                        {p}
-                      </span>
-                    ))}
-                  </div>
+                <div className="flex flex-wrap gap-1">
+                  {Object.keys(pages).map(p => (
+                    <button
+                      key={p}
+                      onClick={() => onUpdateAttribute('data-navigate', attrs['data-navigate'] === p ? '' : p)}
+                      className={`px-1.5 py-0.5 text-[9px] font-mono rounded transition-all ${
+                        attrs['data-navigate'] === p
+                          ? 'bg-purple-200 text-purple-800 ring-1 ring-purple-300'
+                          : 'bg-purple-50 text-purple-600 hover:bg-purple-100 cursor-pointer'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ))}
                 </div>
               )}
-              <p className="text-[9px] text-purple-500">
-                Use <code className="bg-purple-100 px-1 rounded">data-navigate="page"</code> or call <code className="bg-purple-100 px-1 rounded">navigateTo('page')</code> in JS.
-              </p>
-            </div>
-
-            {/* Stuard API Reference */}
-            <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2">
-              <div className="text-[11px] font-semibold text-slate-700">Stuard API Reference</div>
-              <div className="space-y-1 text-[9px] font-mono text-slate-600">
-                <div><code className="bg-slate-100 px-1 rounded">stuard.submit(formData)</code> - Submit & close</div>
-                <div><code className="bg-slate-100 px-1 rounded">stuard.close()</code> - Close window</div>
-                <div><code className="bg-slate-100 px-1 rounded">stuard.callTool(name, args)</code> - Call workflow tool</div>
-                <div><code className="bg-slate-100 px-1 rounded">stuard.navigate(page, data)</code> - Navigate</div>
-                <div><code className="bg-slate-100 px-1 rounded">stuard.pickFile(opts)</code> - File picker</div>
-                <div><code className="bg-slate-100 px-1 rounded">stuard.notify(opts)</code> - Show notification</div>
-              </div>
             </div>
           </>
         )}
 
         {/* ─── Style Section ─── */}
-        {activeSection === 'style' && (
+        {effectiveSection === 'style' && (
           <>
             {/* Colors */}
             <div>
@@ -582,7 +730,7 @@ function ElementPropertyEditor({
         )}
 
         {/* ─── Layout Section ─── */}
-        {activeSection === 'layout' && (
+        {effectiveSection === 'layout' && (
           <>
             {/* Window Drag Handle */}
             <div className="p-3 bg-amber-50/50 rounded-lg border border-amber-100 mb-2">
@@ -794,6 +942,11 @@ export function EnhancedUIBuilderModal({
 
   const [pageFlowDesign, setPageFlowDesign] = useState<PageFlowDesign | undefined>();
 
+  // State variables & tool actions (React-like state management)
+  const [stateVariables, setStateVariables] = useState<UIStateVariable[]>([]);
+  const [toolActions, setToolActions] = useState<UIToolAction[]>([]);
+  const [breadcrumbs, setBreadcrumbs] = useState<{ path: string; tagName: string; label: string }[]>([]);
+
   // UI State
   const [viewMode, setViewMode] = useState<ViewMode>('design');
   const [zoom, setZoom] = useState(1);
@@ -880,7 +1033,9 @@ export function EnhancedUIBuilderModal({
   const transformPendingRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const raw = getCurrentJs();
+    const userJs = getCurrentJs();
+    const stateJs = generateStateAndToolJs(stateVariables, toolActions);
+    const raw = stateJs ? stateJs + userJs : userJs;
     if (!raw) {
       setTransformedJs('');
       return;
@@ -901,7 +1056,7 @@ export function EnhancedUIBuilderModal({
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [getCurrentJs]);
+  }, [getCurrentJs, stateVariables, toolActions]);
 
   // Transform the original component code for live preview rendering.
   // The iframe already detects `typeof App === 'function'` and calls
@@ -1462,6 +1617,32 @@ export function EnhancedUIBuilderModal({
                     </div>
                   </div>
                 )}
+                {/* Breadcrumb bar */}
+                {breadcrumbs.length > 0 && selectedElement && (
+                  <div className="absolute top-2 left-2 z-20 flex items-center gap-0.5 px-2 py-1 bg-white/95 rounded-lg border border-slate-200 shadow-sm max-w-[60%] overflow-x-auto scrollbar-minimal">
+                    {breadcrumbs.map((crumb, i) => (
+                      <React.Fragment key={crumb.path}>
+                        {i > 0 && <ChevronRight className="w-3 h-3 text-slate-300 shrink-0" />}
+                        <button
+                          onClick={() => {
+                            setSelectedPath(crumb.path);
+                            if (canvasRef.current) {
+                              (canvasRef.current as any).focus?.();
+                            }
+                          }}
+                          className={`text-[10px] font-mono px-1.5 py-0.5 rounded whitespace-nowrap transition-colors ${
+                            crumb.path === selectedPath
+                              ? 'bg-indigo-100 text-indigo-700 font-semibold'
+                              : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+                          }`}
+                          title={crumb.path}
+                        >
+                          {crumb.label}
+                        </button>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                )}
                 <UIBuilderCanvas
                   ref={canvasRef}
                   html={transformedComponentJs ? '' : getCurrentHtml()}
@@ -1479,9 +1660,11 @@ export function EnhancedUIBuilderModal({
                   gridSize={8}
                   previewMode={previewMode}
                   selectedPath={selectedPath}
+                  onZoomChange={setZoom}
                   onSelectElement={handleSelectElement}
                   onHoverElement={() => {}}
                   onHtmlChange={handleHtmlChange}
+                  onBreadcrumbsChange={setBreadcrumbs}
                 />
               </div>
             </div>
@@ -1512,6 +1695,22 @@ export function EnhancedUIBuilderModal({
                   >
                     <Code2 className="w-3.5 h-3.5" />
                     Code
+                  </button>
+                  <button
+                    onClick={() => setRightPanelTab('state')}
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold transition-all border-b-2 ${
+                      rightPanelTab === 'state'
+                        ? 'text-indigo-700 border-indigo-500'
+                        : 'text-slate-500 border-transparent hover:text-slate-700'
+                    }`}
+                  >
+                    <Database className="w-3.5 h-3.5" />
+                    State
+                    {(stateVariables.length + toolActions.length) > 0 && (
+                      <span className="ml-0.5 px-1.5 py-0 text-[9px] font-bold rounded-full bg-indigo-100 text-indigo-600 min-w-[16px] text-center">
+                        {stateVariables.length + toolActions.length}
+                      </span>
+                    )}
                   </button>
                 </div>
 
@@ -1609,6 +1808,33 @@ export function EnhancedUIBuilderModal({
                           />
                         </div>
                       </>
+                    )}
+                  </div>
+                )}
+
+                {/* State Panel */}
+                {rightPanelTab === 'state' && (
+                  <div className="flex-1 overflow-auto scrollbar-minimal p-3 space-y-3">
+                    <StatePanel
+                      stateVariables={stateVariables}
+                      onChange={setStateVariables}
+                    />
+                    <div className="border-t border-slate-200 pt-3">
+                      <ToolActionPanel
+                        toolActions={toolActions}
+                        stateVariables={stateVariables}
+                        onChange={setToolActions}
+                        currentHtml={getCurrentHtml()}
+                      />
+                    </div>
+                    {stateVariables.length === 0 && toolActions.length === 0 && (
+                      <div className="mt-2 p-3 bg-gradient-to-br from-indigo-50 to-emerald-50 rounded-lg border border-indigo-100/50">
+                        <div className="text-[11px] font-semibold text-slate-700 mb-1.5">How it works</div>
+                        <div className="text-[10px] text-slate-500 space-y-1">
+                          <div><strong className="text-indigo-600">State</strong> — reactive variables your UI reads/writes (counters, form values, loading flags)</div>
+                          <div><strong className="text-emerald-600">Tool Actions</strong> — call any Stuard tool from a button click or page load, and store the result in state</div>
+                        </div>
+                      </div>
                     )}
                   </div>
                 )}

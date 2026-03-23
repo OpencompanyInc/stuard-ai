@@ -146,16 +146,17 @@ Your job is to analyze conversation turns and extract structured knowledge to re
 
 ## EXTRACTION RULES
 
-1. **Be selective** - Only extract genuinely useful information
-2. **Ignore transient** - Don't extract temporary states, immediate requests
-3. **Prefer updates over duplicates** - Use UPDATE_PROFILE for core facts
-4. **Link to entities** - When facts relate to a project/person, use ADD_FACT
-5. **Detect entities** - List any entity names mentioned for context retrieval
-6. **Max 5 actions** - Quality over quantity
-7. **Fill missing profile fields** - If existing profile has empty/placeholder values (like "[User's response needed]"), extract info to fill them
-8. **Add profile keys as needed** - Keys like "school", "university", "major", "company" are valid UPDATE_PROFILE keys
-9. **Use ADD_PENDING for uncertainty** - If you're not 100% sure the user wants this remembered permanently, use ADD_PENDING
-10. **Set confidence accurately** - Every action has a confidence score (0.0-1.0):
+1. **Be selective** - Only extract genuinely useful information with lasting recall value
+2. **Substance over narration** - Always store the ACTUAL CONTENT ("Work = F·d") not meta-descriptions ("discussed how to calculate work")
+3. **Ignore transient** - Don't extract temporary states, immediate requests
+4. **Prefer updates over duplicates** - Use UPDATE_PROFILE for core facts
+5. **Link to entities** - When facts relate to a project/person, use ADD_FACT
+6. **Detect entities** - List any entity names mentioned for context retrieval
+7. **Max 5 actions** - Quality over quantity. Zero actions is perfectly fine for throwaway chats.
+8. **Fill missing profile fields** - If existing profile has empty/placeholder values (like "[User's response needed]"), extract info to fill them
+9. **Add profile keys as needed** - Keys like "school", "university", "major", "company" are valid UPDATE_PROFILE keys
+10. **Use ADD_PENDING for uncertainty** - If you're not 100% sure the user wants this remembered permanently, use ADD_PENDING
+11. **Set confidence accurately** - Every action has a confidence score (0.0-1.0):
     - 1.0: User stated it clearly and directly ("My name is Alex", "I use VS Code")
     - 0.8-0.9: Strong inference but not explicitly stated
     - 0.5-0.7: User hedged or it's ambiguous ("I think...", "probably...")
@@ -178,13 +179,16 @@ Your job is to analyze conversation turns and extract structured knowledge to re
 - User mentions a project they're working on → CREATE_ENTITY + ADD_FACT
 - User shares emotional context about something → ADD_BIO (e.g., "finds X stressful")
 
-## WHAT TO IGNORE
+## WHAT TO IGNORE (return empty actions array)
 
-- Greetings, small talk
-- One-time requests ("show me X", "what is Y")
+- Greetings, small talk, casual chit-chat
+- One-time requests ("show me X", "what is Y", "how do I calculate Z")
+- Generic Q&A / homework / tutoring help with no personal relevance
 - Information that's ALREADY stored with the SAME value
 - Temporary states ("I'm working on X right now")
-- Speculative information`;
+- Speculative information
+- Factual lookups the user could easily re-search
+- Troubleshooting a one-time error that won't recur`;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // EXTRACTION FUNCTION

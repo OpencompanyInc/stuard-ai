@@ -299,6 +299,17 @@ export async function handleToolsRoutes(req: IncomingMessage, res: ServerRespons
         return true;
       }
 
+      // Check credits before executing paid tools
+      if (userId) {
+        try {
+          const access = await checkAccess(userId);
+          if (!access.allowed) {
+            writeJson(res, 403, { ok: false, error: access.reason || 'credit_limit_exceeded' }, corsOrigin);
+            return true;
+          }
+        } catch {}
+      }
+
       const secrets = userId ? { userId } : {};
       console.log(`[tools] Executing ${toolName} (args: ${JSON.stringify(body).length} bytes, userId: ${userId || 'anonymous'})`);
 

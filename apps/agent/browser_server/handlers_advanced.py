@@ -191,7 +191,7 @@ async def _searchable_combobox_select(
 
         # Scan for visible option nodes, mark the match, and get its coordinates
         scan_result = await _evaluate(
-            """(sel, desiredVal, desiredLbl, desiredIdx, markerAttr) => {
+            """([sel, desiredVal, desiredLbl, desiredIdx, markerAttr]) => {
               document.querySelectorAll('[' + markerAttr + ']').forEach(el => el.removeAttribute(markerAttr));
               const control = document.querySelector(sel);
               if (!control) return { found: false, options: [] };
@@ -254,15 +254,34 @@ async def _searchable_combobox_select(
 
               const match = options[matchIdx].el;
               match.setAttribute(markerAttr, 'true');
-              match.scrollIntoView({ block: 'center', inline: 'center' });
+
+              // Click the option INLINE — no round-trip back to Python.
+              // Many frameworks (React Select, MUI, Radix) close on scroll or on
+              // any async delay, so clicking here in the same JS turn is most reliable.
               const r = match.getBoundingClientRect();
+              const cx = r.left + r.width / 2;
+              const cy = r.top + r.height / 2;
+              const evtOpts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window };
+              match.dispatchEvent(new PointerEvent('pointerdown', evtOpts));
+              match.dispatchEvent(new MouseEvent('mousedown', evtOpts));
+              match.dispatchEvent(new PointerEvent('pointerup', evtOpts));
+              match.dispatchEvent(new MouseEvent('mouseup', evtOpts));
+              match.dispatchEvent(new MouseEvent('click', evtOpts));
+
+              // Also try .click() as backup for frameworks that use it
+              try { match.click(); } catch(e) {}
+
+              // Clean up marker
+              match.removeAttribute(markerAttr);
+
               return {
                 found: true,
+                clicked: true,
                 matchIdx,
                 text: textOf(match),
                 selected: valueOf(match) || textOf(match),
-                clickX: r.left + r.width / 2,
-                clickY: r.top + r.height / 2,
+                clickX: cx,
+                clickY: cy,
                 options: options.map(o => ({ text: o.text, value: o.value })).slice(0, 30),
                 optionCount: options.length,
               };
@@ -280,19 +299,24 @@ async def _searchable_combobox_select(
         last_options = scan_result.get("options", [])
 
         if scan_result.get("found"):
-            # Click the matched option — try CDP coordinates first, then marker selector, then JS
-            clicked = await _cdp_click_element_by_selector(f"[{MARKER_ATTR}]")
-            if not clicked:
-                await _evaluate(f"""() => {{ const el = document.querySelector('[{MARKER_ATTR}]'); if (el) el.click(); }}""")
+            # The inline JS already clicked the option. If it reported clicked, we're done.
+            # Fall back to CDP click helper if inline JS somehow didn't fire.
+            if not scan_result.get("clicked"):
+                result = await _click_marked_option(MARKER_ATTR, scan_result)
+                result["method"] = "searchable_combobox"
+                if not result.get("options"):
+                    result["options"] = last_options[:30]
+                return result
 
-            # Clean up marker
+            await asyncio.sleep(0.15)
+            # Clean up any remaining markers
             await _evaluate(f"""() => {{ document.querySelectorAll('[{MARKER_ATTR}]').forEach(el => el.removeAttribute('{MARKER_ATTR}')); }}""")
             return {
                 "status": "ok",
                 "selected": scan_result.get("selected", ""),
                 "text": scan_result.get("text", ""),
                 "options": scan_result.get("options", last_options[:30]),
-                "method": "searchable_combobox",
+                "method": "searchable_combobox_inline",
             }
 
         if scan_result.get("optionCount", 0) > 0:
@@ -312,7 +336,7 @@ async def _scan_dropdown_options(selector: str, value: Any, label: Any, index: A
     Returns a dict with status: 'ok' (native select), 'matched', 'no_match', 'waiting', or 'not_found'.
     """
     return await _evaluate(
-        """(sel, val, lbl, idx, markerAttr) => {
+        """([sel, val, lbl, idx, markerAttr]) => {
           document.querySelectorAll('[' + markerAttr + ']').forEach(el => el.removeAttribute(markerAttr));
           const control = document.querySelector(sel);
           if (!control) return { status: 'not_found', detail: 'Selector not found: ' + sel };
@@ -422,16 +446,31 @@ async def _scan_dropdown_options(selector: str, value: Any, label: Any, index: A
           }
 
           match.setAttribute(markerAttr, 'true');
-          match.scrollIntoView({ block: 'center', inline: 'center' });
+
+          // Click the option INLINE to avoid round-trip delay that lets dropdowns close.
+          // Do NOT call scrollIntoView — it fires scroll events that close many custom dropdowns.
           const r = match.getBoundingClientRect();
+          const cx = r.left + r.width / 2;
+          const cy = r.top + r.height / 2;
+          const evtOpts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window };
+          match.dispatchEvent(new PointerEvent('pointerdown', evtOpts));
+          match.dispatchEvent(new MouseEvent('mousedown', evtOpts));
+          match.dispatchEvent(new PointerEvent('pointerup', evtOpts));
+          match.dispatchEvent(new MouseEvent('mouseup', evtOpts));
+          match.dispatchEvent(new MouseEvent('click', evtOpts));
+          try { match.click(); } catch(e) {}
+
+          match.removeAttribute(markerAttr);
+
           return {
             status: 'matched',
+            clicked: true,
             text: textOf(match),
             selected: valueOf(match) || textOf(match),
             optionCount: options.length,
             options: options.slice(0, 30).map(o => ({ text: textOf(o), value: valueOf(o) })),
-            clickX: r.left + r.width / 2,
-            clickY: r.top + r.height / 2,
+            clickX: cx,
+            clickY: cy,
           };
         }""",
         selector,
@@ -443,18 +482,81 @@ async def _scan_dropdown_options(selector: str, value: Any, label: Any, index: A
 
 
 async def _click_marked_option(marker_attr: str, scan: dict[str, Any]) -> dict[str, Any]:
-    """Click the option marked by marker_attr and return success result."""
-    clicked = await _cdp_click_element_by_selector(f"[{marker_attr}]")
-    if not clicked:
-        await _evaluate(f"""() => {{ const el = document.querySelector('[{marker_attr}]'); if (el) el.click(); }}""")
+    """Click the option marked by marker_attr and return success result.
 
+    Uses pre-computed coordinates from the scan to avoid scrollIntoView which
+    can close dropdown popups in many frameworks (React Select, MUI, Radix, etc.).
+    Falls back through multiple click strategies if CDP coordinate click fails.
+    """
+    clicked = False
+    method = "cdp_custom_dropdown"
+
+    # Strategy 1: CDP mouse events at pre-computed coordinates (best — no scrollIntoView)
+    click_x = scan.get("clickX")
+    click_y = scan.get("clickY")
+    if click_x is not None and click_y is not None:
+        cdp = await _get_cdp_session()
+        if cdp:
+            try:
+                x, y = int(float(click_x)), int(float(click_y))
+                await cdp.send("Input.dispatchMouseEvent",
+                    {"type": "mouseMoved", "x": x, "y": y})
+                await asyncio.sleep(0.02)
+                await cdp.send("Input.dispatchMouseEvent",
+                    {"type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1})
+                await asyncio.sleep(0.05)
+                await cdp.send("Input.dispatchMouseEvent",
+                    {"type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1})
+                clicked = True
+                method = "cdp_coords"
+            except Exception:
+                pass
+
+    # Strategy 2: Full JS event dispatch (mousedown + mouseup + click + pointer events)
+    if not clicked:
+        dispatched = await _evaluate(f"""() => {{
+          const el = document.querySelector('[{marker_attr}]');
+          if (!el) return false;
+          const r = el.getBoundingClientRect();
+          const cx = r.left + r.width / 2;
+          const cy = r.top + r.height / 2;
+          const opts = {{ bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window }};
+          el.dispatchEvent(new PointerEvent('pointerdown', opts));
+          el.dispatchEvent(new MouseEvent('mousedown', opts));
+          el.dispatchEvent(new PointerEvent('pointerup', opts));
+          el.dispatchEvent(new MouseEvent('mouseup', opts));
+          el.dispatchEvent(new MouseEvent('click', opts));
+          return true;
+        }}""")
+        if dispatched is True or dispatched == "true":
+            clicked = True
+            method = "js_dispatch"
+
+    # Strategy 3: Simple JS el.click()
+    if not clicked:
+        js_clicked = await _evaluate(f"""() => {{ const el = document.querySelector('[{marker_attr}]'); if (el) {{ el.click(); return true; }} return false; }}""")
+        if js_clicked is True or js_clicked == "true":
+            clicked = True
+            method = "js_click"
+
+    # Strategy 4: _cdp_click_element_by_selector as last resort (has scrollIntoView)
+    if not clicked:
+        clicked = await _cdp_click_element_by_selector(f"[{marker_attr}]")
+        if clicked:
+            method = "cdp_selector"
+
+    # Small delay to let framework process the selection
+    await asyncio.sleep(0.15)
+
+    # Clean up marker
     await _evaluate(f"""() => {{ document.querySelectorAll('[{marker_attr}]').forEach(el => el.removeAttribute('{marker_attr}')); }}""")
+
     return {
         "status": "ok",
         "selected": scan.get("selected", ""),
         "text": scan.get("text", ""),
         "options": scan.get("options", []),
-        "method": scan.get("method", "cdp_custom_dropdown"),
+        "method": method,
     }
 
 
@@ -532,6 +634,17 @@ async def _select_dropdown(selector: str, value: Any = None, label: Any = None, 
             return scan
 
         if status == "matched":
+            # If the inline JS already clicked the option, just return success
+            if scan.get("clicked"):
+                await asyncio.sleep(0.15)
+                return {
+                    "status": "ok",
+                    "selected": scan.get("selected", ""),
+                    "text": scan.get("text", ""),
+                    "options": scan.get("options", []),
+                    "method": "inline_click",
+                }
+            # Otherwise fall back to CDP click helper
             return await _click_marked_option(MARKER_ATTR, scan)
 
         if status == "not_found":
@@ -742,7 +855,7 @@ async def handle_hover(req: web.Request) -> web.Response:
         try:
             target = selector or text
             result = await _evaluate(
-                """(sel, needle) => {
+                """([sel, needle]) => {
                   let el = sel ? document.querySelector(sel) : null;
                   if (!el && needle) {
                     const all = document.querySelectorAll('*');
@@ -1304,7 +1417,7 @@ async def handle_fill_form(req: web.Request) -> web.Response:
                         else:
                             # Fallback: JS fill + events
                             fill_ok = await _evaluate(
-                                """(sel, val) => {
+                                """([sel, val]) => {
                                   const el = document.querySelector(sel);
                                   if (!el) return false;
                                   if ('value' in el) {
