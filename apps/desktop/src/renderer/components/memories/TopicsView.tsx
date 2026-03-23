@@ -155,7 +155,7 @@ export function TopicsView({ searchQuery, onStatsChange, refreshNonce = 0 }: Top
   }, [refreshNonce]);
 
   useEffect(() => {
-    setMemoriesRoot(document.querySelector('[data-onboarding="memories-view"]'));
+    setMemoriesRoot(document.querySelector<HTMLElement>('[data-onboarding="memories-view"]'));
   }, []);
 
   return (

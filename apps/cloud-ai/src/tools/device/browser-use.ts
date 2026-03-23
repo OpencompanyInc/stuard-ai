@@ -71,6 +71,7 @@ export const browser_use_switch_profile = makeLocalTool(
   z.object({
     profile: z.union([z.number(), z.string()]).describe('Profile index or search string matching a tab title/URL'),
   }),
+  undefined,
   5000,
   { noFallback: true },
 );
