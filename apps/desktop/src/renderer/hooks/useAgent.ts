@@ -271,6 +271,10 @@ function normalizeChatError(input: { code?: any; message?: any; data?: any }): {
   };
 }
 
+const POPUP_ONLY_ERROR_CODES = new Set([
+  'monthly_credit_limit_exceeded',
+]);
+
 function getLoadedConversationTime(value: { created_at?: string; timestamp?: number } | null | undefined): number {
   const direct = typeof value?.timestamp === 'number' ? value.timestamp : NaN;
   if (Number.isFinite(direct)) return direct;
@@ -1863,6 +1867,7 @@ export function useAgent(options?: string | UseAgentOptions) {
             console.error('[agent] Error:', msg.message, 'code:', msg.code);
             const errorTabId = getTargetTabId();
             const normalizedError = normalizeChatError({ code: msg.code, message: msg.message, data: msg.data });
+            const suppressInlineErrorMessage = POPUP_ONLY_ERROR_CODES.has(normalizedError.code);
 
             // Check for auth errors that require re-authentication
             const errorCode = msg.code || msg.message || '';
@@ -1914,18 +1919,29 @@ export function useAgent(options?: string | UseAgentOptions) {
               );
 
               if (hasAccumulatedWork) {
+                const preservedText = (t.currentResponse || '').trim();
                 // Commit partial work as an assistant message so it's not lost
                 return {
                   ...t,
                   messages: [...t.messages, {
                     id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
                     role: 'assistant',
-                    text: (t.currentResponse || '').trim() + errorSuffix,
+                    text: suppressInlineErrorMessage ? preservedText : preservedText + errorSuffix,
                     reasoning: t.currentReasoning || undefined,
                     toolCalls: finalizedToolCalls.length > 0 ? finalizedToolCalls : undefined,
                     streamChunks: finalizedStreamChunks.length > 0 ? finalizedStreamChunks : undefined,
                     timestamp: Date.now(),
                   }],
+                  currentResponse: '',
+                  currentReasoning: '',
+                  currentToolCalls: [],
+                  currentStreamChunks: [],
+                  liveUsage: null,
+                };
+              }
+              if (suppressInlineErrorMessage) {
+                return {
+                  ...t,
                   currentResponse: '',
                   currentReasoning: '',
                   currentToolCalls: [],

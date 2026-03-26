@@ -228,6 +228,7 @@ export function buildLocalProactivePrompt(payload: any): string {
   const inProgress = tasks.filter((t: any) => t.status === 'in_progress');
 
   parts.push('');
+  parts.push('ACTION REQUIRED: assess the user context, then actively move proactive tasks forward.');
   parts.push('STEP 1: Check the user\'s situation — call list_open_windows and calendar tools.');
   parts.push('STEP 2: If there\'s a conflict (distraction + deadline), lead with that.');
   parts.push('STEP 3: Work on tasks below.');
@@ -242,11 +243,11 @@ export function buildLocalProactivePrompt(payload: any): string {
       parts.push(`- [${String(t.status).toUpperCase()}] "${t.title}" (id: ${t.id})${detail}`);
     }
     parts.push('');
-    parts.push('For each task: claim it (in_progress), do the work, then mark completed/failed.');
+    parts.push('For each task: claim it (in_progress), do the work, then use proactive_task_update to mark completed/failed.');
   } else if (tasks.length > 0) {
     parts.push(`\nAll ${tasks.length} task(s) completed/failed. Review the board, create new tasks if useful.`);
   } else {
-    parts.push('\nNo tasks on the board. Focus on situational awareness and check in if needed.');
+    parts.push('\nNo proactive tasks on the board. Focus on situational awareness and check in if needed.');
   }
 
   if (payload?.config?.instructions) {

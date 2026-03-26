@@ -25,6 +25,9 @@ on:
         type: string
         default: ''
 
+env:
+  REQUESTED_OS: ${{ inputs.os || 'all' }}
+
 jobs:
   build:
     name: Services (${{ matrix.os }}${{ matrix.arch && format(' {0}', matrix.arch) || '' }})
@@ -47,24 +50,32 @@ jobs:
             platform: linux
             artifact-suffix: linux
     runs-on: ${{ matrix.os }}
-    # Skip platforms not requested (for workflow_dispatch)
-    if: >-
-      github.event_name != 'workflow_dispatch' ||
-      inputs.os == 'all' ||
-      inputs.os == matrix.platform
 
     steps:
+      - name: Check platform filter
+        id: filter
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" || "${{ env.REQUESTED_OS }}" == "all" || "${{ env.REQUESTED_OS }}" == "${{ matrix.platform }}" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Skipping ${{ matrix.platform }} (requested: ${{ env.REQUESTED_OS }})"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.filter.outputs.run == 'true'
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Install Linux system deps
-        if: runner.os == 'Linux'
+        if: steps.filter.outputs.run == 'true' && runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y python3-tk python3-dev libportaudio2
 
       - name: Set up Python
+        if: steps.filter.outputs.run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -72,12 +83,14 @@ jobs:
           cache-dependency-path: 'apps/agent/requirements.txt'
 
       - name: Install Python dependencies
+        if: steps.filter.outputs.run == 'true'
         working-directory: apps/agent
         run: |
           pip install -r requirements.txt
           pip install mediapipe opencv-python
 
       - name: Cache PyInstaller builds
+        if: steps.filter.outputs.run == 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -88,6 +101,7 @@ jobs:
             pyinstaller-services-${{ runner.os }}-
 
       - name: Build services
+        if: steps.filter.outputs.run == 'true'
         working-directory: apps/agent
         run: |
           SERVICES="${{ inputs.services || 'agent browser mediapipe' }}"
@@ -95,10 +109,12 @@ jobs:
         shell: bash
 
       - name: List outputs
+        if: steps.filter.outputs.run == 'true'
         run: ls -la dist/stuard-* 2>/dev/null || echo "No binaries found"
         shell: bash
 
       - name: Upload artifacts
+        if: steps.filter.outputs.run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: services-${{ matrix.artifact-suffix }}
