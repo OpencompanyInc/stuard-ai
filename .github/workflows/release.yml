@@ -287,7 +287,7 @@ jobs:
             echo "CHANNEL_FOLDER=beta" >> $GITHUB_OUTPUT
           fi
 
-      # ─── Build Python Agent ───
+      # ─── Build Python service executables (agent + browser + mediapipe) ───
       - name: Install Linux system deps
         if: runner.os == 'Linux'
         run: |
@@ -303,31 +303,43 @@ jobs:
 
       - name: Install Python dependencies
         working-directory: apps/agent
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install mediapipe opencv-python
 
-      - name: Cache PyInstaller
+      - name: Cache PyInstaller builds
         uses: actions/cache@v4
         with:
           path: |
             apps/agent/build
             ~/.pyinstaller
-          key: pyinstaller-${{ runner.os }}-${{ hashFiles('apps/agent/requirements.txt', 'apps/agent/stuard-agent.spec') }}
+          key: pyinstaller-services-${{ runner.os }}-${{ hashFiles('apps/agent/requirements.txt', 'apps/agent/stuard-agent.spec', 'apps/agent/stuard-browser.spec', 'apps/agent/stuard-mediapipe.spec') }}
           restore-keys: |
+            pyinstaller-services-${{ runner.os }}-
             pyinstaller-${{ runner.os }}-
 
-      - name: Build Python Agent
+      - name: Build all service executables
         working-directory: apps/agent
-        run: python build-agent.py
+        run: python build-services.py --services agent browser mediapipe
 
-      - name: Verify Agent Binary
+      - name: Verify service binaries
         shell: bash
         run: |
+          echo "=== Service binaries ==="
           if [ "$RUNNER_OS" == "Windows" ]; then
-            ls -la dist/stuard-agent.exe
+            ls -la dist/stuard-agent.exe dist/stuard-browser.exe dist/stuard-mediapipe.exe 2>/dev/null || true
           elif [ "$RUNNER_OS" == "macOS" ]; then
-            ls -la dist/stuard-agent-macos
+            ls -la dist/stuard-agent-macos dist/stuard-browser-macos dist/stuard-mediapipe-macos 2>/dev/null || true
           else
-            ls -la dist/stuard-agent-linux
+            ls -la dist/stuard-agent-linux dist/stuard-browser-linux dist/stuard-mediapipe-linux 2>/dev/null || true
+          fi
+          # Agent and browser are required
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            test -f dist/stuard-agent.exe && test -f dist/stuard-browser.exe
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            test -f dist/stuard-agent-macos && test -f dist/stuard-browser-macos
+          else
+            test -f dist/stuard-agent-linux && test -f dist/stuard-browser-linux
           fi
 
       # ─── Build Electron App ───

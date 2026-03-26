@@ -24,13 +24,19 @@ const proactiveTaskOutputSchema = z.object({
   ok: z.boolean(),
   tasks: z.array(z.any()).optional(),
   task: z.any().optional(),
+  total: z.number().optional(),
+  hasMore: z.boolean().optional(),
   error: z.string().optional(),
 });
 
 export const proactive_task_list = makeLocalTool(
   'proactive_task_list',
-  'List the current proactive task board stored in the user\'s desktop app.',
-  z.object({}).passthrough(),
+  'List the current proactive task board stored in the user\'s desktop app. Returns paginated results (default 20). Use status filter to narrow results.',
+  z.object({
+    status: z.enum(['queued', 'in_progress', 'completed', 'failed']).optional().describe('Filter tasks by status. Omit to return all statuses.'),
+    limit: z.number().int().min(1).max(100).default(20).describe('Max tasks to return (default 20).'),
+    offset: z.number().int().min(0).default(0).describe('Number of tasks to skip for pagination (default 0).'),
+  }),
   proactiveTaskOutputSchema,
   30000,
   { noFallback: true }

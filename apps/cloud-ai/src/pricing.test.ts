@@ -45,8 +45,10 @@ import {
   getDefaultModelForCategory,
   priceForModel,
   estimateCostUsd,
+  estimateStorageCostCredits,
   creditsPerUsd,
   creditsFromUsd,
+  preciseCreditsFromUsd,
   snapCredits,
   monthlyCreditLimitForPlan,
   ALL_MODELS,
@@ -245,6 +247,24 @@ describe('pricing module', () => {
 
     it('should return 0 for negative values', () => {
       expect(creditsFromUsd(-10)).toBe(0);
+    });
+  });
+
+  describe('preciseCreditsFromUsd', () => {
+    it('should preserve tiny metered costs without snapping to 0.1', () => {
+      expect(preciseCreditsFromUsd(0.0013698630136986301)).toBe(0.0452);
+      expect(preciseCreditsFromUsd(0.000006737131013037407)).toBe(0.0002);
+    });
+
+    it('should return 0 for invalid or negative values', () => {
+      expect(preciseCreditsFromUsd(-10)).toBe(0);
+      expect(preciseCreditsFromUsd(NaN)).toBe(0);
+    });
+  });
+
+  describe('estimateStorageCostCredits', () => {
+    it('should use precise storage credits instead of the minimum billable unit', () => {
+      expect(estimateStorageCostCredits(10, 0, 1)).toBe(0.0452);
     });
   });
 

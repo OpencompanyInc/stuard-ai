@@ -5,7 +5,7 @@ import { handleClientToolMessage, withClientBridge } from '../../tools/bridge';
 import { getTool } from '../../tools/tool-registry';
 import { normalizeMessages } from '../../utils/messages';
 import { verifyToken, checkAccess, incrementDailyRequestCounter, createConversation, addUserMessage, addAssistantMessage } from '../../supabase';
-import { verifyAccessToken } from '../../auth';
+import { verifyAccessToken, parseTokenInfo } from '../../auth';
 import { registerWebhookClient, deliverQueuedWebhooks } from '../../webhooks/dispatch';
 import { runAgent, abortAgent } from '../streaming/agent-runner';
 import { PING_INTERVAL_MS } from '../../utils/config';
@@ -17,6 +17,16 @@ import { verifyVMToken } from '../../services/vm-tokens';
 const wsAlive = new WeakMap<WebSocket, boolean>();
 const wsQueues = new WeakMap<WebSocket, Array<any>>();
 const wsIsRunning = new WeakMap<WebSocket, boolean>();
+
+// Token verification cache – avoids re-hitting Supabase auth on every message
+const _tokenCache = new Map<string, { ts: number; user: { userId: string; email?: string } }>();
+const TOKEN_CACHE_TTL_MS = 60_000; // 60 seconds
+
+function getCachedToken(token: string): { userId: string; email?: string } | null {
+  const entry = _tokenCache.get(token);
+  if (entry && Date.now() - entry.ts < TOKEN_CACHE_TTL_MS) return entry.user;
+  return null;
+}
 
 // Configuration
 const WS_MAX_PAYLOAD = Number(process.env.CLOUD_WS_MAX_PAYLOAD || 868435456);
@@ -192,13 +202,49 @@ export class SocketManager {
     }
 
     try {
+      const _t0 = Date.now();
       const accessToken = String(msg?.auth?.accessToken || '');
-      const authUser = accessToken ? await verifyToken(accessToken) : null;
+
+      // Fast path: use cached token + parse JWT locally for userId
+      let authUser: { userId: string; email?: string } | null = null;
+      let access: { allowed: boolean; reason?: string; plan?: string; limit?: number; used?: number } | null = null;
+
+      if (accessToken) {
+        authUser = getCachedToken(accessToken);
+        if (authUser) {
+          // Token is cached & valid — only need access check (which also has its own cache)
+          access = await checkAccess(authUser.userId);
+          console.log(`[perf] auth(cached)+access: ${Date.now() - _t0}ms`);
+        } else {
+          // Parse JWT locally for userId so we can run verifyToken + checkAccess in parallel
+          const tokenInfo = parseTokenInfo(accessToken);
+          if (tokenInfo && tokenInfo.userId && !tokenInfo.isExpired) {
+            const [verified, accessResult] = await Promise.all([
+              verifyToken(accessToken),
+              checkAccess(tokenInfo.userId),
+            ]);
+            authUser = verified;
+            access = accessResult;
+          } else {
+            authUser = await verifyToken(accessToken);
+            if (authUser) {
+              access = await checkAccess(authUser.userId);
+            }
+          }
+          console.log(`[perf] auth+access(parallel): ${Date.now() - _t0}ms`);
+          // Cache successful verification
+          if (authUser) {
+            _tokenCache.set(accessToken, { ts: Date.now(), user: authUser });
+          }
+        }
+      }
 
       if (REQUIRE_AUTH && !authUser) {
         this.send(ws, { type: 'error', message: 'unauthorized' });
         return;
       }
+
+      const userId = authUser?.userId || null;
 
       if (authUser) {
         // Register connection for VM ↔ Desktop relay
@@ -207,12 +253,12 @@ export class SocketManager {
           registerConnection(ws, authUser.userId, clientType as ClientType);
         }
 
-        const access = await checkAccess(authUser.userId);
-        if (!access.allowed) {
+        if (access && !access.allowed) {
           this.send(ws, { type: 'error', message: access.reason || 'access_denied', data: { plan: access.plan, limit: access.limit, used: access.used } });
           return;
         }
-        try { await incrementDailyRequestCounter(authUser.userId); } catch { }
+        // Fire-and-forget – don't block the request pipeline
+        incrementDailyRequestCounter(authUser.userId).catch(() => {});
       }
 
       wsIsRunning.set(ws, true);
@@ -232,32 +278,35 @@ export class SocketManager {
       const modelId = typeof msg?.modelId === 'string' ? String(msg.modelId).trim() : '';
       const chosenModelId = modelId || undefined;
       let conversationId = msg.conversationId || null;
-      const userId = authUser?.userId || null;
 
       // SMS-originated chats must always persist regardless of sync_conversations pref
       const hiddenCtx = String(msg.hiddenContext || '');
       const isSmsChat = hiddenCtx.includes('[SMS MODE]') || hiddenCtx.includes('[PROACTIVE FOLLOW-UP]');
       const forcePersist = isSmsChat;
 
-      // Create or continue conversation
+      const metaOpts = {
+        mode: modelName,
+        tier: modelName === 'auto' ? undefined : modelName,
+        modelId: chosenModelId,
+      };
+
+      // Fire off conversation creation/update concurrently – don't block agent start.
+      // We capture a promise so we can await the conversationId before storing the response.
+      let conversationPromise: Promise<string | null> | null = null;
       if (userId) {
         if (!conversationId) {
-          // New conversation
-          conversationId = await createConversation(userId, userText, modelName, {
-            mode: modelName,
-            tier: modelName === 'auto' ? undefined : modelName,
-            modelId: chosenModelId,
-          }, 'stuard', forcePersist);
-          if (conversationId) {
-            this.send(ws, { type: 'conversation', conversationId });
-          }
+          conversationPromise = createConversation(userId, userText, modelName, metaOpts, 'stuard', forcePersist)
+            .then((id) => {
+              if (id) {
+                conversationId = id;
+                this.send(ws, { type: 'conversation', conversationId: id });
+              }
+              return id;
+            })
+            .catch(() => null);
         } else {
-          // Continuing conversation - store user message
-          await addUserMessage(userId, conversationId, userText, {
-            mode: modelName,
-            tier: modelName === 'auto' ? undefined : modelName,
-            modelId: chosenModelId,
-          }, forcePersist);
+          // Continuing conversation – store user message in background
+          addUserMessage(userId, conversationId, userText, metaOpts, forcePersist).catch(() => {});
         }
       }
 
@@ -301,13 +350,15 @@ export class SocketManager {
           result = await runAgent(ws, agentConfig as any);
         }
 
+        // Wait for conversationId if it was being created concurrently
+        if (conversationPromise) {
+          const resolvedId = await conversationPromise;
+          if (resolvedId) conversationId = resolvedId;
+        }
+
         // Store assistant response
         if (userId && conversationId && result?.text) {
-          await addAssistantMessage(userId, conversationId, result.text, {
-            mode: modelName,
-            tier: modelName === 'auto' ? undefined : modelName,
-            modelId: chosenModelId,
-          }, forcePersist);
+          await addAssistantMessage(userId, conversationId, result.text, metaOpts, forcePersist);
         }
       } finally {
         try { wsIsRunning.set(ws, false); } catch { }

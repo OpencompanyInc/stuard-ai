@@ -841,6 +841,9 @@ interface CloudWakeUpResult {
   failureReason?: string;
   usage?: any;
   modelId?: string;
+  agentChannel?: string;
+  agentUrgency?: string;
+  sessionSummary?: string;
 }
 
 async function executeCloud(logId: string, payload: any): Promise<CloudWakeUpResult> {
@@ -874,7 +877,10 @@ async function executeCloud(logId: string, payload: any): Promise<CloudWakeUpRes
         screenshot: payload.context?.screenshot || null,
         systemAudio: payload.context?.systemAudio || false,
         micAudio: payload.context?.micAudio || false,
+        openWindows: payload.context?.openWindows || [],
+        recentSessionSummaries: payload.context?.recentSessionSummaries || [],
       },
+      notificationChannels: payload.config?.notificationChannels || ['app'],
       skills: activeSkills.map(s => ({
         id: s.id,
         name: s.name,
@@ -907,6 +913,9 @@ async function executeCloud(logId: string, payload: any): Promise<CloudWakeUpRes
       failureReason: data.ok === false ? `Cloud execution failed: ${data.error || 'Unknown error'}` : undefined,
       usage: data.usage,
       modelId: typeof data.modelId === 'string' ? data.modelId : undefined,
+      agentChannel: typeof data.agentChannel === 'string' ? data.agentChannel : undefined,
+      agentUrgency: typeof data.agentUrgency === 'string' ? data.agentUrgency : undefined,
+      sessionSummary: typeof data.sessionSummary === 'string' ? data.sessionSummary : undefined,
     };
   } catch (e: any) {
     clearTimeout(requestTimeout);
@@ -1042,6 +1051,33 @@ async function executeWakeUp() {
       emitStage(logId, 'gathering-context', contextUsed.join(', '));
     }
 
+    // Capture open windows for situational awareness
+    let openWindows: Array<{ id?: number; title: string }> = [];
+    try {
+      const { execListOpenWindows } = await import('../tools/handlers/electron');
+      const toolCtx: RouterContext = {
+        agentWsUrl: getAgentWsUrl(),
+        cloudAiUrl: getCloudAiUrl(),
+        logFn: (msg: string) => logger.debug(`[proactive-scheduler] ${msg}`),
+      };
+      const winResult = await execListOpenWindows({}, toolCtx);
+      if (winResult?.ok && Array.isArray(winResult.windows)) {
+        openWindows = winResult.windows
+          .filter((w: any) => {
+            const title = String(w?.title || '').toLowerCase();
+            // Filter out Stuard's own windows and system chrome
+            return title && !title.includes('stuard') && !title.includes('electron');
+          })
+          .map((w: any) => ({ id: w.id, title: String(w.title) }));
+        if (openWindows.length > 0) contextUsed.push('openWindows');
+      }
+    } catch (e) {
+      logger.debug('[proactive-scheduler] open windows capture failed:', e);
+    }
+
+    // Load recent session summaries for pattern awareness
+    const recentSessionSummaries = proactiveService.getRecentSessionSummaries(5);
+
     // Get all active tasks (queued + in_progress) — agent manages lifecycle via tools
     const activeTasks = proactiveService.getActiveTasks();
     taskIds = activeTasks.map(t => t.id);
@@ -1066,6 +1102,8 @@ async function executeWakeUp() {
         screenshot: screenshotData,
         systemAudio: systemAudioData,
         micAudio: micAudioData,
+        openWindows,
+        recentSessionSummaries,
       },
       tasks: activeTasks.map(t => ({
         id: t.id,
@@ -1152,8 +1190,28 @@ async function executeWakeUp() {
     proactiveService.setLastWakeUp(new Date().toISOString());
     emitStage(logId, 'complete');
 
+    // Persist session summary from the agent (if available from cloud response)
+    if ((executionResult as any).sessionSummary) {
+      proactiveService.addSessionSummary((executionResult as any).sessionSummary);
+    }
+
+    // Use agent's urgency-based channel choice if available, otherwise fall back to configured channels
+    const agentChannel = (executionResult as any).agentChannel;
+    const agentUrgency = (executionResult as any).agentUrgency;
+
     if (agentMessage) {
-      const channels: string[] = config.notificationChannels || ['app'];
+      let channels: string[] = config.notificationChannels || ['app'];
+
+      // If the agent chose to skip notification, respect that
+      if (agentChannel === 'skip') {
+        channels = [];
+        logger.info(`[proactive-scheduler] Agent chose to skip notification (urgency: ${agentUrgency})`);
+      } else if (agentChannel && agentChannel !== 'app') {
+        // Agent chose an elevated channel (sms/call/whatsapp)
+        channels = [agentChannel];
+        logger.info(`[proactive-scheduler] Agent chose channel: ${agentChannel} (urgency: ${agentUrgency})`);
+      }
+
       if (channels.includes('app')) {
         sendCheckinNotification(logId, agentMessage, contextUsed.includes('screenshot'), taskIds.length);
       }

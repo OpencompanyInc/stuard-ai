@@ -36,6 +36,7 @@ import { handleVMRelayRoutes } from './vm-relay';
 import { handleVMAgentRoutes } from './vm-agent-routes';
 import { handleDesktopToolRelayRoutes } from './desktop-tool-relay';
 import { handleProactiveRoutes } from './proactive';
+import { handleServerlessChatRoutes } from './serverless-chat';
 
 export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   if (await handleWebhooks(req, res, parsedUrl)) return true;
@@ -75,5 +76,6 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleVMAgentRoutes(req, res, parsedUrl)) return true;
   if (await handleDesktopToolRelayRoutes(req, res, parsedUrl)) return true;
   if (await handleProactiveRoutes(req, res, parsedUrl)) return true;
+  if (await handleServerlessChatRoutes(req, res, parsedUrl)) return true;
   return false;
 }

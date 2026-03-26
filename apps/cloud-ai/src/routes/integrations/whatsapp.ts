@@ -18,6 +18,8 @@ import { WA_PHONE_NUMBER_ID, WA_ACCESS_TOKEN, WA_WEBHOOK_VERIFY_TOKEN } from '..
 import { stripMarkdownForSms } from '../sms-utils';
 import { sendVMCommand } from '../../services/vm-command';
 import { messagingCreditCost } from '../../pricing';
+import { MediaProcessor, fromWhatsApp } from '../../media';
+import { runServerlessAgent } from '../serverless-agent';
 
 const WA_API = 'https://graph.facebook.com/v22.0';
 
@@ -333,6 +335,29 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
           text = `[Sticker received] (mediaId: ${mediaId})`;
         }
 
+        // ── Process media through unified MediaProcessor ─────────────
+        let mediaAttachments: any[] = [];
+        let mediaSuppText = '';
+        if (mediaId) {
+          try {
+            const inbound = fromWhatsApp(
+              mediaId,
+              mediaMimeType || 'application/octet-stream',
+              mediaCaption,
+              msgType === 'document' ? (msg?.document?.filename || undefined) : undefined,
+            );
+            const result = await MediaProcessor.process(inbound);
+            mediaAttachments = result.attachments;
+            mediaSuppText = result.supplementaryText;
+            // Replace placeholder text with actual content for media messages
+            if (mediaSuppText) {
+              text = [mediaCaption || '', mediaSuppText].filter(Boolean).join('\n');
+            }
+          } catch (e: any) {
+            console.error('[whatsapp] MediaProcessor failed:', e?.message);
+          }
+        }
+
         if (!from || !text) continue;
 
         // Mark message as read
@@ -388,17 +413,20 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
         }
 
         // ── Route based on user's agent_target setting ─────────────────────
-        const smsState = await getSmsUserState(userId);
+        const [smsState, engine] = await Promise.all([
+          getSmsUserState(userId),
+          getCloudEngine(userId),
+        ]);
         const target = smsState.agent_target;
-
-        const engine = await getCloudEngine(userId);
         const vmRunning = !!(engine && engine.status === 'running');
 
-        let effectiveTarget: 'vm' | 'desktop' = 'desktop';
+        let effectiveTarget: 'vm' | 'cloud' | 'desktop' = 'desktop';
         if (target === 'vm') {
-          effectiveTarget = vmRunning ? 'vm' : 'desktop';
+          effectiveTarget = vmRunning ? 'vm' : 'cloud';
+        } else if (target === 'cloud') {
+          effectiveTarget = 'cloud';
         } else if (target === 'auto') {
-          effectiveTarget = vmRunning ? 'vm' : 'desktop';
+          effectiveTarget = vmRunning ? 'vm' : 'cloud';
         }
 
         console.log('[whatsapp] message routing decision', {
@@ -414,6 +442,7 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
               conversationId: smsState.conversation_id || undefined,
               model: smsState.preferred_model || 'fast',
               context: { source: 'whatsapp', fromWaId: from },
+              ...(mediaAttachments.length > 0 ? { attachments: mediaAttachments } : {}),
             }, 60_000);
 
             if (vmResult.ok && vmResult.result?.text) {
@@ -421,7 +450,6 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
               await waSendText(from, replyText).catch((e: any) => {
                 console.error('[whatsapp] Failed to send VM agent reply:', e?.message);
               });
-              // Deduct credit for outbound message
               await deductWhatsAppCredit(userId);
               handled = true;
 
@@ -433,7 +461,38 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
               console.log('[whatsapp] message routed to VM', { userId, conversationId: vmConvId, responseLen: replyText.length });
             }
           } catch {
-            // VM call failed — fall through to desktop
+            // VM call failed — fall through to cloud
+          }
+        }
+
+        // ── Cloud serverless handler for WhatsApp ──────────────────────
+        if (!handled && (effectiveTarget === 'cloud' || (effectiveTarget === 'vm' && !vmRunning))) {
+          try {
+            const cloudResult = await runServerlessAgent({
+              userId,
+              message: text,
+              conversationId: smsState.conversation_id,
+              model: smsState.preferred_model || 'fast',
+              source: 'whatsapp',
+              attachments: mediaAttachments.length > 0 ? mediaAttachments : undefined,
+            });
+
+            if (cloudResult.ok && cloudResult.text) {
+              const replyText = stripMarkdownForSms(cloudResult.text).slice(0, 4096);
+              await waSendText(from, replyText).catch((e: any) => {
+                console.error('[whatsapp] Failed to send cloud agent reply:', e?.message);
+              });
+              await deductWhatsAppCredit(userId);
+              handled = true;
+
+              if (cloudResult.conversationId && cloudResult.conversationId !== smsState.conversation_id) {
+                await upsertSmsUserState({ userId, conversationId: cloudResult.conversationId });
+              }
+
+              console.log('[whatsapp] message routed to cloud', { userId, conversationId: cloudResult.conversationId, responseLen: replyText.length });
+            }
+          } catch (e: any) {
+            console.error('[whatsapp] Cloud agent failed:', e?.message);
           }
         }
 
@@ -441,10 +500,10 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
         if (!handled) {
           if (target === 'vm' && !vmRunning) {
             await waSendText(from,
-              'Your Cloud VM is not running. Start it from the desktop app, or text /auto to enable automatic routing.'
+              'Your Cloud VM is not running. Text /cloud to use cloud mode, or /auto for automatic routing.'
             ).catch(() => {});
             await deductWhatsAppCredit(userId);
-          } else {
+          } else if (effectiveTarget === 'desktop' || target === 'desktop') {
             const queued = await enqueueSmsInboxItem({
               userId,
               provider: 'whatsapp',
@@ -456,7 +515,7 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
               metadata: {
                 waId: from,
                 msgType,
-                ...(mediaId ? { mediaId, mediaMimeType } : {}),
+                ...(mediaAttachments.length > 0 ? { processedAttachments: mediaAttachments } : {}),
                 ...(mediaCaption ? { mediaCaption } : {}),
                 receivedAt: new Date().toISOString(),
               },
@@ -705,8 +764,10 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
       return true;
     }
     try {
-      const state = await getSmsUserState(auth.userId);
-      const engine = await getCloudEngine(auth.userId);
+      const [state, engine] = await Promise.all([
+        getSmsUserState(auth.userId),
+        getCloudEngine(auth.userId),
+      ]);
       sendJson(res, 200, {
         ok: true,
         agentTarget: state.agent_target,
@@ -755,6 +816,7 @@ const WA_HELP_TEXT =
   'Stuard WhatsApp Commands:\n' +
   '/vm - Route messages to Cloud VM agent\n' +
   '/desktop - Route messages to desktop agent\n' +
+  '/cloud - Route messages to cloud (no VM needed)\n' +
   '/auto - Auto-detect best agent (default)\n' +
   '/status - Show current routing & VM status\n' +
   '/model <fast|balanced|smart> - Set AI model\n' +
@@ -783,16 +845,23 @@ async function handleWaSlashCommand(userId: string, waId: string, command: strin
       await reply('Routing set to Desktop. Your messages will be queued for the desktop agent.\n\nText /auto to switch back to automatic routing.');
       return true;
     }
+    case '/cloud': {
+      await upsertSmsUserState({ userId, agentTarget: 'cloud' });
+      await reply('Routing set to Cloud. Messages handled directly in the cloud — no VM or desktop needed.\n\nText /auto to switch back to automatic routing.');
+      return true;
+    }
     case '/auto': {
       await upsertSmsUserState({ userId, agentTarget: 'auto' });
-      await reply('Routing set to Auto. Messages will try VM first, then fall back to desktop.\n\nText /status to check current routing.');
+      await reply('Routing set to Auto. Messages will try VM first, then cloud, then desktop.\n\nText /status to check current routing.');
       return true;
     }
     case '/status': {
-      const state = await getSmsUserState(userId);
-      const engine = await getCloudEngine(userId);
+      const [state, engine] = await Promise.all([
+        getSmsUserState(userId),
+        getCloudEngine(userId),
+      ]);
       const vmStatus = engine?.status === 'running' ? 'Running' : engine?.status ? `${engine.status}` : 'Not provisioned';
-      const targetLabel = { desktop: 'Desktop', vm: 'Cloud VM', auto: 'Auto (VM > Desktop)' }[state.agent_target] || 'Auto';
+      const targetLabel = { desktop: 'Desktop', vm: 'Cloud VM', cloud: 'Cloud (serverless)', auto: 'Auto (VM > Cloud > Desktop)' }[state.agent_target] || 'Auto';
       const modeLabel = state.mode === 'proactive' ? 'Proactive' : 'Agent';
       await reply(
         `Stuard Status:\n` +

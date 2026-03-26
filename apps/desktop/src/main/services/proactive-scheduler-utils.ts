@@ -220,11 +220,18 @@ export async function executeAgentToolRequest(
 const LOCAL_PROACTIVE_MARKER = '[PROACTIVE MODE]';
 
 export function buildLocalProactivePrompt(payload: any): string {
-  const parts: string[] = ['[Proactive Wake-Up] — Act on your tasks NOW.'];
+  const parts: string[] = ['[Proactive Wake-Up] — Observe first, then act.'];
 
+  // Task summary
   const tasks: any[] = Array.isArray(payload?.tasks) ? payload.tasks : [];
   const queued = tasks.filter((t: any) => t.status === 'queued');
   const inProgress = tasks.filter((t: any) => t.status === 'in_progress');
+
+  parts.push('');
+  parts.push('STEP 1: Check the user\'s situation — call list_open_windows and calendar tools.');
+  parts.push('STEP 2: If there\'s a conflict (distraction + deadline), lead with that.');
+  parts.push('STEP 3: Work on tasks below.');
+  parts.push('STEP 4: Call write_session_summary before finishing.');
 
   if (queued.length > 0 || inProgress.length > 0) {
     parts.push('');
@@ -232,19 +239,14 @@ export function buildLocalProactivePrompt(payload: any): string {
     parts.push('');
     for (const t of [...inProgress, ...queued].slice(0, 15)) {
       const detail = t.instructions ? ` — ${t.instructions}` : '';
-      parts.push(`• [${String(t.status).toUpperCase()}] "${t.title}" (id: ${t.id})${detail}`);
+      parts.push(`- [${String(t.status).toUpperCase()}] "${t.title}" (id: ${t.id})${detail}`);
     }
     parts.push('');
-    parts.push('ACTION REQUIRED:');
-    parts.push('1. Call proactive_task_update(task_id, status="in_progress") to claim each task');
-    parts.push('2. Use your tools (web_search, execute_tool, etc.) to actually complete the task');
-    parts.push('3. Call proactive_task_update(task_id, status="completed", result="what you did")');
-    parts.push('4. If you cannot complete it, set status="failed" with the reason');
-    parts.push('Do NOT just list the tasks — actually work on them and change their status.');
+    parts.push('For each task: claim it (in_progress), do the work, then mark completed/failed.');
   } else if (tasks.length > 0) {
-    parts.push(`You have ${tasks.length} task(s) (all completed/failed). Call proactive_task_list to review. Create new tasks if needed.`);
+    parts.push(`\nAll ${tasks.length} task(s) completed/failed. Review the board, create new tasks if useful.`);
   } else {
-    parts.push('No proactive tasks on the board. Check in with the user and create a task if useful.');
+    parts.push('\nNo tasks on the board. Focus on situational awareness and check in if needed.');
   }
 
   if (payload?.config?.instructions) {
@@ -252,33 +254,84 @@ export function buildLocalProactivePrompt(payload: any): string {
   }
 
   if (payload?.context?.screenshot) {
-    parts.push('(A screenshot of the user\'s current screen is attached.)');
+    parts.push('\n(A screenshot of the user\'s current screen is attached for context.)');
   }
 
-  parts.push('\nYour final response will be shown as a user notification. Return ONLY a concise summary of what you accomplished. Mention task status changes you made.');
+  parts.push('\nYour final response becomes the user notification. Be concise and lead with the most important thing.');
   return parts.join('\n');
 }
 
 export function buildLocalProactiveHiddenContext(payload: any): string {
   const lines = [
     LOCAL_PROACTIVE_MARKER,
-    'This is a proactive wake-up. You MUST actively work on tasks — not just list or acknowledge them.',
+    'This is a proactive wake-up. Follow the OBSERVE FIRST, THEN ACT procedure from your system prompt.',
     'Return a normal plain markdown/text reply only. Do NOT use GenUI, interactive UI blocks, JSON UI payloads, or code fences unless the user explicitly asks for code.',
     '',
-    'CRITICAL: For each queued/in-progress task you MUST:',
+    '## PHASE 1 — SITUATIONAL AWARENESS (do this first)',
+    'Before working on tasks, observe the user\'s current state:',
+    '1. Use execute_tool to call list_open_windows — see what apps/windows are open',
+    '2. Use execute_tool to call calendar tools — check upcoming events in the next few hours',
+    '3. Cross-reference: Is the user doing something that conflicts with their schedule?',
+    '4. Determine urgency level (critical/high/normal/low)',
+    '',
+    '## PHASE 2 — ACT ON OBSERVATIONS',
+    'If you detect a conflict (e.g., gaming before an exam), lead with that.',
+    'If the user is focused on productive work, keep your message minimal.',
+    '',
+    '## PHASE 3 — WORK ON TASKS',
+    'For each queued/in-progress task:',
     '1. Call proactive_task_update(task_id, "in_progress") to claim it',
     '2. Use tools (web_search, execute_tool, search_tools, etc.) to ACTUALLY DO THE WORK',
     '3. Call proactive_task_update(task_id, "completed", result="summary") when done',
     '4. Or set status="failed" with the reason if you cannot complete it',
     '',
+    '## PHASE 4 — SESSION MEMORY',
+    'Before finishing, call write_session_summary to record what you observed.',
     'Other task tools: proactive_task_create (new tasks), proactive_task_delete (remove obsolete).',
   ];
+
+  // Inject time context
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  const dayStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+  lines.push('');
+  lines.push(`Current time: ${timeStr}, ${dayStr}`);
+
+  // Inject open windows context if available
+  if (Array.isArray(payload?.context?.openWindows) && payload.context.openWindows.length > 0) {
+    lines.push('');
+    lines.push('[OPEN WINDOWS — user\'s currently visible apps]');
+    for (const w of payload.context.openWindows.slice(0, 20)) {
+      const title = String(w?.title || '').trim();
+      if (title) lines.push(`- ${title}`);
+    }
+  }
+
+  // Inject upcoming calendar events if available
+  if (Array.isArray(payload?.context?.upcomingEvents) && payload.context.upcomingEvents.length > 0) {
+    lines.push('');
+    lines.push('[UPCOMING EVENTS — next few hours]');
+    for (const ev of payload.context.upcomingEvents.slice(0, 10)) {
+      const title = String(ev?.title || ev?.summary || '').trim();
+      const start = String(ev?.start || ev?.startTime || '').trim();
+      if (title) lines.push(`- ${title}${start ? ` (${start})` : ''}`);
+    }
+  }
 
   const instructions = String(payload?.config?.instructions || '').trim();
   if (instructions) lines.push(`\nUser-configured proactive instructions: ${instructions}`);
 
   if (Array.isArray(payload?.config?.allowedTools) && payload.config.allowedTools.length > 0) {
     lines.push(`Preferred non-proactive tools: ${payload.config.allowedTools.join(', ')}.`);
+  }
+
+  // Inject previous session summaries for pattern awareness
+  if (Array.isArray(payload?.context?.recentSessionSummaries) && payload.context.recentSessionSummaries.length > 0) {
+    lines.push('');
+    lines.push('[RECENT SESSION OBSERVATIONS — patterns from your previous wake-ups]');
+    for (const summary of payload.context.recentSessionSummaries.slice(0, 5)) {
+      lines.push(`- ${String(summary).trim()}`);
+    }
   }
 
   // Skill and workflow awareness

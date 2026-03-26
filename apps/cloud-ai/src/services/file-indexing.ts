@@ -517,7 +517,7 @@ export async function searchFiles(
     mode,
     kind,
     limit,
-  });
+  }, undefined, 300000, { silent: true });
 
   return result;
 }

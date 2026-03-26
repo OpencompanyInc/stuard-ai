@@ -366,7 +366,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
 
   // --- BROWSER USE (Playwright-powered browser automation) ---
   { id: 'browser_use_status', category: 'system', kind: 'local', description: 'Check if browser-use is installed and the browser server is running', argsTemplate: {}, outputSchema: { ok: 'boolean', installed: 'boolean', running: 'boolean', serverAlive: 'boolean', mode: 'string', profile: 'string', profileDir: 'string', currentUrl: 'string', title: 'string', sessionId: 'string', hasPython: 'boolean', error: 'string' } },
-  { id: 'browser_use_configure', category: 'system', kind: 'local', description: 'Configure browser mode (headed, headless, or connect to existing browser via CDP)', argsTemplate: { mode: 'headed', cdp_url: '', profile: 'default' }, outputSchema: { ok: 'boolean', mode: 'string', profile: 'string', restarted: 'boolean', error: 'string' } },
+  { id: 'browser_use_configure', category: 'system', kind: 'local', description: 'Configure browser mode (headed or headless)', argsTemplate: { mode: 'headed', profile: 'default' }, outputSchema: { ok: 'boolean', mode: 'string', profile: 'string', restarted: 'boolean', error: 'string' } },
   { id: 'browser_use_navigate', category: 'system', kind: 'local', description: 'Navigate the browser to a URL and wait for the page to load', argsTemplate: { url: 'https://example.com', wait_until: 'domcontentloaded', timeout: 30000, wait_for_selector: '' }, outputSchema: { ok: 'boolean', url: 'string', title: 'string', error: 'string' } },
   { id: 'browser_use_click', category: 'system', kind: 'local', description: 'Click an element on the page by CSS selector or visible text', argsTemplate: { selector: '', text: '', exact: false, timeout: 5000 }, outputSchema: { ok: 'boolean', clicked: 'string', method: 'string', error: 'string' } },
   { id: 'browser_use_type', category: 'system', kind: 'local', description: 'Type text into an input field or the active element. Works with React, Vue, Angular.', argsTemplate: { selector: '', text: '', clear: true, timeout: 5000 }, outputSchema: { ok: 'boolean', typed: 'number', method: 'string', error: 'string' } },
@@ -384,8 +384,6 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'browser_use_fill_form', category: 'system', kind: 'local', description: 'Fill multiple form fields at once and optionally submit. Supports text fields, dropdowns, toggles, and file paths when type is "file".', argsTemplate: { fields: {}, submit: false, form_selector: '' }, outputSchema: { ok: 'boolean', filled: 'number', total: 'number', submitted: 'boolean', errors: 'array', error: 'string' } },
   { id: 'browser_use_upload_file', category: 'system', kind: 'local', description: 'Upload a local file from disk into a browser file input', argsTemplate: { selector: '', filePath: '', timeout: 5000 }, outputSchema: { ok: 'boolean', uploaded: 'boolean', filePath: 'string', fileName: 'string', selector: 'string', method: 'string', error: 'string' } },
   { id: 'browser_use_wait_for', category: 'system', kind: 'local', description: 'Wait for an element, text, or URL change before proceeding. Essential for SPAs and dynamic pages.', argsTemplate: { selector: '', text: '', url_pattern: '', state: 'visible', timeout: 10000 }, outputSchema: { ok: 'boolean', matched: 'boolean', url: 'string', type: 'string', error: 'string' } },
-  { id: 'browser_use_sync_chrome', category: 'system', kind: 'local', description: 'Sync cookies and profile data from your Chrome browser into the browser-use session', argsTemplate: { action: 'sync', browser_name: 'Chrome', profile_name: 'Default', force_clone: false, restart_browser: false }, outputSchema: { ok: 'boolean', synced: 'number', failed: 'number', total: 'number', browser: 'string', profile: 'string', message: 'string', error: 'string' } },
-  { id: 'browser_use_list_chrome_profiles', category: 'system', kind: 'local', description: 'List available Chrome/Edge/Brave browser profiles for cookie sync', argsTemplate: {}, outputSchema: { ok: 'boolean', browsers: 'array', error: 'string' } },
 ];
 
 const TRIGGER_DEFINITIONS = [
@@ -3431,7 +3429,6 @@ if (TOOL_SCHEMAS['ollama_models']) {
 const BROWSER_USE_MODE_OPTIONS: ArgOption[] = [
   { value: 'headed', label: 'Headed (Visible)', description: 'Browser window is visible on screen' },
   { value: 'headless', label: 'Headless (Hidden)', description: 'No visible browser window — runs in background' },
-  { value: 'connect', label: 'Connect (CDP)', description: 'Attach to an existing browser via Chrome DevTools Protocol' },
 ];
 
 const BROWSER_USE_WAIT_UNTIL_OPTIONS: ArgOption[] = [
@@ -3494,12 +3491,6 @@ const BROWSER_USE_KEY_OPTIONS: ArgOption[] = [
   { value: 'Control+v', label: 'Paste (Ctrl+V)' },
 ];
 
-const BROWSER_USE_SYNC_ACTION_OPTIONS: ArgOption[] = [
-  { value: 'sync', label: 'Sync Cookies', description: 'Copy cookies from Chrome into the browser session' },
-  { value: 'list_profiles', label: 'List Profiles', description: 'Discover available Chrome profiles' },
-  { value: 'list_domains', label: 'List Domains', description: 'Show cookie domains in a Chrome profile' },
-];
-
 // browser_use_configure
 if (TOOL_SCHEMAS['browser_use_configure']) {
   TOOL_SCHEMAS['browser_use_configure'].label = 'Configure Browser';
@@ -3507,17 +3498,10 @@ if (TOOL_SCHEMAS['browser_use_configure']) {
     mode: {
       type: 'select',
       label: 'Browser Mode',
-      description: 'How the browser runs. Headed shows a visible window; headless runs invisibly; connect attaches to an existing browser.',
+      description: 'How the browser runs. Headed shows a visible window; headless runs invisibly.',
       options: BROWSER_USE_MODE_OPTIONS,
       default: 'headed',
       required: true,
-    },
-    cdp_url: {
-      type: 'string',
-      label: 'CDP URL',
-      description: 'Chrome DevTools Protocol URL to connect to (only for "connect" mode)',
-      placeholder: 'http://localhost:9222',
-      showWhen: { field: 'mode', value: 'connect' },
     },
     profile: {
       type: 'string',
@@ -4020,66 +4004,9 @@ if (TOOL_SCHEMAS['browser_use_wait_for']) {
   };
 }
 
-// browser_use_sync_chrome
-if (TOOL_SCHEMAS['browser_use_sync_chrome']) {
-  TOOL_SCHEMAS['browser_use_sync_chrome'].label = 'Sync Chrome Cookies';
-  TOOL_SCHEMAS['browser_use_sync_chrome'].args = {
-    action: {
-      type: 'select',
-      label: 'Action',
-      description: 'What to do',
-      options: BROWSER_USE_SYNC_ACTION_OPTIONS,
-      default: 'sync',
-    },
-    browser_name: {
-      type: 'select',
-      label: 'Browser',
-      description: 'Which browser to sync from',
-      options: [
-        { value: 'Chrome', label: 'Google Chrome' },
-        { value: 'Edge', label: 'Microsoft Edge' },
-        { value: 'Brave', label: 'Brave' },
-        { value: 'Chromium', label: 'Chromium' },
-      ],
-      default: 'Chrome',
-      allowFreeform: true,
-      showWhen: { field: 'action', value: 'sync' },
-    },
-    profile_name: {
-      type: 'string',
-      label: 'Profile Name',
-      description: 'Chrome profile to sync from (e.g. "Default", "Profile 1")',
-      default: 'Default',
-      placeholder: 'Default',
-      showWhen: { field: 'action', values: ['sync', 'list_domains'] },
-    },
-    force_clone: {
-      type: 'boolean',
-      label: 'Force Clone',
-      description: 'Re-clone the Chrome profile even if one already exists',
-      default: false,
-      advanced: true,
-      showWhen: { field: 'action', value: 'sync' },
-    },
-    restart_browser: {
-      type: 'boolean',
-      label: 'Restart Browser',
-      description: 'Restart the browser session after syncing',
-      default: false,
-      advanced: true,
-      showWhen: { field: 'action', value: 'sync' },
-    },
-  };
-}
-
 // browser_use_status
 if (TOOL_SCHEMAS['browser_use_status']) {
   TOOL_SCHEMAS['browser_use_status'].label = 'Browser Status';
-}
-
-// browser_use_list_chrome_profiles
-if (TOOL_SCHEMAS['browser_use_list_chrome_profiles']) {
-  TOOL_SCHEMAS['browser_use_list_chrome_profiles'].label = 'List Chrome Profiles';
 }
 
 export { TOOL_SCHEMAS };

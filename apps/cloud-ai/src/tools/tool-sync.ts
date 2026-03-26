@@ -162,8 +162,6 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   link_conversation_to_space: ['link conversation', 'associate space', 'connect conversation'],
   update_space_item: ['edit space item', 'update note', 'modify item'],
   delete_space_item: ['remove item', 'delete note', 'remove from space'],
-  get_memory_stats: ['memory stats', 'memory count', 'how many spaces'],
-
   // Workflows
   search_local_workflows: ['workflows', 'automations', 'stuards'],
   run_automation: ['run workflow', 'execute automation'],

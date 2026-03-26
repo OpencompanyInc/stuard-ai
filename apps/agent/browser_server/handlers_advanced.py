@@ -1079,16 +1079,22 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
                   const elements = [];
                   const forms = [];
 
+                  function tagNameOf(node) {
+                    return String(node?.tagName || '').toLowerCase();
+                  }
+
                   function getSelector(el) {
+                    const tag = tagNameOf(el);
+                    if (!tag) return '';
                     if (el.id) return '#' + CSS.escape(el.id);
-                    if (el.name && el.tagName !== 'DIV' && el.tagName !== 'SPAN') {
-                      const byName = document.querySelectorAll(el.tagName.toLowerCase() + '[name="' + el.name + '"]');
-                      if (byName.length === 1) return el.tagName.toLowerCase() + '[name="' + el.name + '"]';
+                    if (el.name && tag !== 'div' && tag !== 'span') {
+                      const byName = document.querySelectorAll(tag + '[name="' + el.name + '"]');
+                      if (byName.length === 1) return tag + '[name="' + el.name + '"]';
                     }
                     if (el.className && typeof el.className === 'string') {
                       const classes = el.className.trim().split(/\\s+/).filter(c => c && !c.startsWith('css-') && c.length < 40).slice(0, 3);
                       if (classes.length > 0) {
-                        const sel = el.tagName.toLowerCase() + '.' + classes.map(c => CSS.escape(c)).join('.');
+                        const sel = tag + '.' + classes.map(c => CSS.escape(c)).join('.');
                         const found = document.querySelectorAll(sel);
                         if (found.length === 1) return sel;
                       }
@@ -1096,11 +1102,13 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
                     const path = [];
                     let current = el;
                     while (current && current !== document.body && path.length < 5) {
-                      let seg = current.tagName.toLowerCase();
+                      const currentTag = tagNameOf(current);
+                      if (!currentTag) break;
+                      let seg = currentTag;
                       if (current.id) { path.unshift('#' + CSS.escape(current.id)); break; }
                       const parent = current.parentElement;
                       if (parent) {
-                        const siblings = Array.from(parent.children).filter(c => c.tagName === current.tagName);
+                        const siblings = Array.from(parent.children).filter(c => tagNameOf(c) === currentTag);
                         if (siblings.length > 1) {
                           const idx = siblings.indexOf(current) + 1;
                           seg += ':nth-of-type(' + idx + ')';
@@ -1128,7 +1136,7 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
                       const label = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
                       if (label) return (label.innerText || label.textContent || '').trim();
                     }
-                    const parentLabel = el.closest('label');
+                    const parentLabel = el.closest?.('label');
                     if (parentLabel) {
                       const text = (parentLabel.innerText || parentLabel.textContent || '').trim();
                       const inputVal = ('value' in el && el.value) ? el.value : '';
@@ -1142,7 +1150,8 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
                       if (labelEl) return (labelEl.innerText || labelEl.textContent || '').trim();
                     }
                     const prev = el.previousElementSibling;
-                    if (prev && (prev.tagName === 'LABEL' || prev.tagName === 'SPAN' || prev.tagName === 'DIV')) {
+                    const prevTag = tagNameOf(prev);
+                    if (prev && (prevTag === 'label' || prevTag === 'span' || prevTag === 'div')) {
                       const t = (prev.innerText || prev.textContent || '').trim();
                       if (t && t.length < 80) return t;
                     }
@@ -1150,18 +1159,19 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
                   }
 
                   function isVisible(el) {
+                    if (!el?.getBoundingClientRect) return false;
                     const r = el.getBoundingClientRect();
                     const s = window.getComputedStyle(el);
                     return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
                   }
 
                   function popupFor(el) {
-                    const controlsId = el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '';
+                    const controlsId = el.getAttribute?.('aria-controls') || el.getAttribute?.('aria-owns') || '';
                     if (controlsId) {
                       const popup = document.getElementById(controlsId);
                       if (popup) return popup;
                     }
-                    const within = el.closest('[role="combobox"], [role="listbox"], [data-headlessui-state], [data-radix-popper-content-wrapper]');
+                    const within = el.closest?.('[role="combobox"], [role="listbox"], [data-headlessui-state], [data-radix-popper-content-wrapper]');
                     if (within && within !== el) return within;
                     const sib = el.parentElement?.querySelector?.('[role="listbox"], [role="menu"], [data-radix-popper-content-wrapper], [data-headlessui-state]');
                     if (sib) return sib;
@@ -1172,9 +1182,10 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
                   }
 
                   function getDropdownMeta(el) {
-                    const tag = el.tagName.toLowerCase();
-                    const role = el.getAttribute('role') || '';
-                    const popupHint = el.getAttribute('aria-haspopup') || '';
+                    const tag = tagNameOf(el);
+                    if (!tag) return { isDropdown: false };
+                    const role = el.getAttribute?.('role') || '';
+                    const popupHint = el.getAttribute?.('aria-haspopup') || '';
                     const popup = popupFor(el);
                     const isDropdown = tag === 'select'
                       || role === 'combobox'
@@ -1208,21 +1219,21 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
                             .filter((opt) => opt.text || opt.value)
                             .slice(0, 30)
                         : [];
-                      const activeId = el.getAttribute('aria-activedescendant') || '';
+                      const activeId = el.getAttribute?.('aria-activedescendant') || '';
                       if (activeId) {
                         const activeEl = document.getElementById(activeId);
                         if (activeEl) selectedText = textOf(activeEl);
                       }
                       if (!selectedText) {
-                        selectedText = String(el.getAttribute('aria-valuetext') || '').trim();
+                        selectedText = String(el.getAttribute?.('aria-valuetext') || '').trim();
                       }
                       if (!selectedText && (role === 'combobox' || tag === 'button')) {
                         selectedText = textOf(el).substring(0, 200);
                       }
-                      currentValue = String(el.getAttribute('data-value') || el.getAttribute('value') || '').trim();
+                      currentValue = String(el.getAttribute?.('data-value') || el.getAttribute?.('value') || '').trim();
                     }
 
-                    const expandedAttr = el.getAttribute('aria-expanded');
+                    const expandedAttr = el.getAttribute?.('aria-expanded');
                     return {
                       isDropdown: true,
                       expanded: expandedAttr == null ? undefined : expandedAttr === 'true',
@@ -1238,69 +1249,73 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
                   const all = Array.from(new Set(Array.from(document.querySelectorAll(interactiveSelectors))));
 
                   for (const el of all) {
-                    const tag = el.tagName.toLowerCase();
-                    const type = (el.getAttribute('type') || '').toLowerCase();
-                    const role = el.getAttribute('role') || '';
-                    const name = el.getAttribute('name') || '';
-                    const id = el.id || '';
-                    const placeholder = el.getAttribute('placeholder') || '';
-                    const ariaLabel = el.getAttribute('aria-label') || '';
-                    const disabled = el.disabled || el.getAttribute('aria-disabled') === 'true';
-                    const required = el.required || el.getAttribute('aria-required') === 'true';
-                    const readonly = el.readOnly || el.getAttribute('aria-readonly') === 'true';
-                    const visible = isVisible(el);
-                    const isFileInput = tag === 'input' && type === 'file';
-                    const dropdownMeta = getDropdownMeta(el);
+                    try {
+                      const tag = tagNameOf(el);
+                      if (!tag) continue;
+                      const type = String(el.getAttribute?.('type') || '').toLowerCase();
+                      const role = el.getAttribute?.('role') || '';
+                      const name = el.getAttribute?.('name') || '';
+                      const id = el.id || '';
+                      const placeholder = el.getAttribute?.('placeholder') || '';
+                      const disabled = !!el.disabled || el.getAttribute?.('aria-disabled') === 'true';
+                      const required = !!el.required || el.getAttribute?.('aria-required') === 'true';
+                      const readonly = !!el.readOnly || el.getAttribute?.('aria-readonly') === 'true';
+                      const visible = isVisible(el);
+                      const isFileInput = tag === 'input' && type === 'file';
+                      const dropdownMeta = getDropdownMeta(el);
 
-                    if (!visible && !isFileInput) continue;
+                      if (!visible && !isFileInput) continue;
 
-                    const entry = {
-                      index: elements.length,
-                      tag,
-                      selector: getSelector(el),
-                    };
+                      const entry = {
+                        index: elements.length,
+                        tag,
+                        selector: getSelector(el),
+                      };
 
-                    if (!visible) entry.hidden = true;
-                    if (type) entry.type = type;
-                    if (role) entry.role = role;
-                    if (name) entry.name = name;
-                    if (id) entry.id = id;
+                      if (!visible) entry.hidden = true;
+                      if (type) entry.type = type;
+                      if (role) entry.role = role;
+                      if (name) entry.name = name;
+                      if (id) entry.id = id;
 
-                    const text = textOf(el);
-                    if ((['button', 'a'].includes(tag) || ['button', 'link', 'tab', 'menuitem'].includes(role) || dropdownMeta.isDropdown) && text) {
-                      entry.text = text.substring(0, 200);
+                      const text = textOf(el);
+                      if ((['button', 'a'].includes(tag) || ['button', 'link', 'tab', 'menuitem'].includes(role) || dropdownMeta.isDropdown) && text) {
+                        entry.text = text.substring(0, 200);
+                      }
+                      if (tag === 'a') entry.href = el.getAttribute?.('href') || '';
+
+                      const label = getLabel(el);
+                      if (label) entry.label = label.substring(0, 200);
+                      if (placeholder) entry.placeholder = placeholder;
+
+                      if (isFileInput) {
+                        entry.controlType = 'file';
+                        entry.accept = el.getAttribute?.('accept') || '';
+                        if (el.multiple) entry.multiple = true;
+                      } else if (dropdownMeta.isDropdown) {
+                        entry.controlType = 'dropdown';
+                        if (dropdownMeta.value) entry.value = String(dropdownMeta.value).substring(0, 500);
+                        if (dropdownMeta.selectedText) entry.selectedText = String(dropdownMeta.selectedText).substring(0, 200);
+                        if (dropdownMeta.popupRole) entry.popupRole = dropdownMeta.popupRole;
+                        if (typeof dropdownMeta.expanded === 'boolean') entry.expanded = dropdownMeta.expanded;
+                        if (dropdownMeta.optionCount) entry.optionCount = dropdownMeta.optionCount;
+                        if (dropdownMeta.options?.length) entry.options = dropdownMeta.options;
+                      } else if (type === 'checkbox' || type === 'radio' || ['checkbox', 'radio', 'switch'].includes(role)) {
+                        entry.controlType = 'toggle';
+                        entry.checked = !!el.checked || el.getAttribute?.('aria-checked') === 'true';
+                      } else if (['input', 'textarea'].includes(tag) || ['textbox', 'searchbox', 'combobox'].includes(role)) {
+                        entry.controlType = 'text';
+                        entry.value = String(el.value || '').substring(0, 500);
+                      }
+
+                      if (disabled) entry.disabled = true;
+                      if (required) entry.required = true;
+                      if (readonly) entry.readonly = true;
+
+                      elements.push(entry);
+                    } catch (err) {
+                      continue;
                     }
-                    if (tag === 'a') entry.href = el.getAttribute('href') || '';
-
-                    const label = getLabel(el);
-                    if (label) entry.label = label.substring(0, 200);
-                    if (placeholder) entry.placeholder = placeholder;
-
-                    if (isFileInput) {
-                      entry.controlType = 'file';
-                      entry.accept = el.getAttribute('accept') || '';
-                      if (el.multiple) entry.multiple = true;
-                    } else if (dropdownMeta.isDropdown) {
-                      entry.controlType = 'dropdown';
-                      if (dropdownMeta.value) entry.value = String(dropdownMeta.value).substring(0, 500);
-                      if (dropdownMeta.selectedText) entry.selectedText = String(dropdownMeta.selectedText).substring(0, 200);
-                      if (dropdownMeta.popupRole) entry.popupRole = dropdownMeta.popupRole;
-                      if (typeof dropdownMeta.expanded === 'boolean') entry.expanded = dropdownMeta.expanded;
-                      if (dropdownMeta.optionCount) entry.optionCount = dropdownMeta.optionCount;
-                      if (dropdownMeta.options?.length) entry.options = dropdownMeta.options;
-                    } else if (type === 'checkbox' || type === 'radio' || ['checkbox', 'radio', 'switch'].includes(role)) {
-                      entry.controlType = 'toggle';
-                      entry.checked = !!el.checked || el.getAttribute('aria-checked') === 'true';
-                    } else if (['input', 'textarea'].includes(tag) || ['textbox', 'searchbox', 'combobox'].includes(role)) {
-                      entry.controlType = 'text';
-                      entry.value = String(el.value || '').substring(0, 500);
-                    }
-
-                    if (disabled) entry.disabled = true;
-                    if (required) entry.required = true;
-                    if (readonly) entry.readonly = true;
-
-                    elements.push(entry);
                   }
 
                   const allForms = document.querySelectorAll('form');

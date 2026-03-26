@@ -5,7 +5,7 @@ import fs from 'fs';
 import net from 'net';
 import { randomBytes } from 'crypto';
 import { RouterContext } from '../types';
-import { loadSettings } from '../../settings';
+import { isDev } from '../../env';
 
 const BROWSER_USE_PORT = 18082;
 const BROWSER_USE_DEFAULT_HOST = 'http://localhost';
@@ -18,16 +18,23 @@ type BrowserUseRuntime = {
   process: ChildProcess | null;
   ready: boolean;
   setupPromise: Promise<{ ok: boolean; error?: string; step?: string; alreadyRunning?: boolean }> | null;
-  chromeSyncPromise: Promise<void> | null;
+  chromeSyncPromise: Promise<{ ok: boolean; error?: string }> | null;
   lastChromeSyncAt: number;
   lastChromeSyncKey: string;
+};
+
+type BrowserServerExecutable = {
+  binary: string;
+  args: string[];
+  cwd: string;
+  displayPath: string;
+  isPacked: boolean;
+  needsPathLookup?: boolean;
 };
 
 const browserUseRuntimes = new Map<string, BrowserUseRuntime>();
 const browserUseRuntimePromises = new Map<string, Promise<BrowserUseRuntime>>();
 let lastActiveBrowserUseSessionId = 'default';
-
-const CHROME_SYNC_MIN_INTERVAL_MS = 15000;
 
 function normalizeBrowserUseSessionId(value: any): string {
   const raw = String(value || 'default').trim();
@@ -129,6 +136,11 @@ function getPythonCmd(): string {
   return process.platform === 'win32' ? 'python' : 'python3';
 }
 
+function shouldPreferPackagedServices(): boolean {
+  const forced = String(process.env.STUARD_USE_PACKAGED_SERVICES || '').trim().toLowerCase();
+  return !isDev || forced === '1' || forced === 'true' || forced === 'yes';
+}
+
 function runCmd(cmd: string, args: string[], timeoutMs = 120000): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     execFile(cmd, args, { timeout: timeoutMs, windowsHide: true }, (err, stdout, stderr) => {
@@ -167,6 +179,32 @@ export async function installBrowserUse(): Promise<{ ok: boolean; error?: string
   // Return cached result if we already verified everything is installed
   if (_installCheckResult?.ok) return { ok: true };
 
+  // If we have a packaged binary, we only need to ensure Chromium is available
+  // (the binary bundles Python + playwright + aiohttp already)
+  const exe = getServerExecutable();
+  if (exe.isPacked) {
+    console.log('[browser-use] Using packaged binary — skipping Python/pip checks');
+    // Still need Chromium browser binary (not bundled due to size)
+    const hasPython = await checkPythonAvailable();
+    if (hasPython) {
+      const hasChromium = await checkPlaywrightChromium();
+      if (!hasChromium) {
+        // Try to install Chromium using the bundled playwright inside the binary
+        const pw = await runCmd(exe.binary, ['--install-chromium'], 300000);
+        if (!pw.ok) {
+          // Fall back to system Python's playwright
+          const pwFallback = await runCmd(getPythonCmd(), ['-m', 'playwright', 'install', 'chromium'], 300000);
+          if (!pwFallback.ok) {
+            return { ok: false, error: 'Chromium browser not installed. Run: python -m playwright install chromium', step: 'playwright' };
+          }
+        }
+      }
+    }
+    _installCheckResult = { ok: true };
+    return { ok: true };
+  }
+
+  // Fallback: Python script mode — need full Python + pip setup
   if (!(await checkPythonAvailable())) {
     return { ok: false, error: 'Python is not installed. Please install Python 3.11+ from python.org first.', step: 'python' };
   }
@@ -239,20 +277,59 @@ export async function uninstallBrowserUse(): Promise<{ ok: boolean; error?: stri
   return { ok: true };
 }
 
-function getServerScript(): string {
-  // Dev mode: app.getAppPath() is apps/desktop, so ../agent/ reaches apps/agent/
-  const devPath = path.join(app.getAppPath(), '..', 'agent', 'browser_server_main.py');
-  if (fs.existsSync(devPath)) return devPath;
+/**
+ * Resolve the browser server executable or script.
+ * In dev, prefer Python source scripts. In packaged builds, prefer bundled binaries.
+ * Set STUARD_USE_PACKAGED_SERVICES=1 to test the packaged binary from a dev build.
+ */
+function getServerExecutable(): BrowserServerExecutable {
+  const binaryName = process.platform === 'win32' ? 'stuard-browser.exe' : 'stuard-browser';
+  const preferPackaged = shouldPreferPackagedServices();
 
-  // Packaged mode: extraResources copies scripts into resources/agent/
-  const resourcesPath = path.join(process.resourcesPath, 'agent', 'browser_server_main.py');
-  if (fs.existsSync(resourcesPath)) return resourcesPath;
+  const resourceBin = path.join(process.resourcesPath, 'agent', binaryName);
+  const distBin = path.join(app.getAppPath(), '..', '..', 'dist', binaryName);
+  const devScript = path.join(app.getAppPath(), '..', 'agent', 'browser_server_main.py');
+  const resourceScript = path.join(process.resourcesPath, 'agent', 'browser_server_main.py');
+  const altScript = path.resolve(__dirname, '..', '..', '..', '..', 'agent', 'browser_server_main.py');
+  const pythonCmd = getPythonCmd();
 
-  const altPath = path.resolve(__dirname, '..', '..', '..', '..', 'agent', 'browser_server_main.py');
-  if (fs.existsSync(altPath)) return altPath;
+  const scriptCandidates = [devScript, resourceScript, altScript];
+  const binaryCandidates = preferPackaged ? [resourceBin, distBin] : [];
 
-  // Return the resources path for better error messages in packaged mode
-  return app.isPackaged ? resourcesPath : devPath;
+  for (const candidate of binaryCandidates) {
+    if (fs.existsSync(candidate)) {
+      return {
+        binary: candidate,
+        args: [],
+        cwd: path.dirname(candidate),
+        displayPath: candidate,
+        isPacked: true,
+      };
+    }
+  }
+
+  for (const candidate of scriptCandidates) {
+    if (fs.existsSync(candidate)) {
+      return {
+        binary: pythonCmd,
+        args: [candidate],
+        cwd: path.dirname(candidate),
+        displayPath: candidate,
+        isPacked: false,
+        needsPathLookup: true,
+      };
+    }
+  }
+
+  const fallback = preferPackaged ? resourceBin : devScript;
+  return {
+    binary: preferPackaged ? fallback : pythonCmd,
+    args: preferPackaged ? [] : [fallback],
+    cwd: path.dirname(fallback),
+    displayPath: fallback,
+    isPacked: preferPackaged,
+    needsPathLookup: !preferPackaged,
+  };
 }
 
 async function killPortProcess(port: number): Promise<void> {
@@ -281,15 +358,10 @@ async function killPortProcess(port: number): Promise<void> {
   }
 }
 
-async function ensureBrowserPageOpen(sessionId = 'default', { skipChromeSync = false } = {}): Promise<{ ok: boolean; error?: string }> {
+async function ensureBrowserPageOpen(sessionId = 'default', {} = {}): Promise<{ ok: boolean; error?: string }> {
   try {
     const statusResp = await browserUseFetch('/status', { timeoutMs: 5000 }, sessionId);
     if (statusResp.ok) {
-      // Run Chrome sync in background — don't block the browser from being used
-      // Skip during prewarm to avoid launching a browser window on app startup
-      if (!skipChromeSync) {
-        ensureChromeSyncFresh(sessionId).catch(() => {});
-      }
       return { ok: true };
     }
     const errText = await statusResp.text().catch(() => '');
@@ -299,12 +371,12 @@ async function ensureBrowserPageOpen(sessionId = 'default', { skipChromeSync = f
   }
 }
 
-export async function startBrowserUseServer(sessionId = 'default', { skipChromeSync = false } = {}): Promise<{ ok: boolean; error?: string }> {
+export async function startBrowserUseServer(sessionId = 'default', {} = {}): Promise<{ ok: boolean; error?: string }> {
   const runtime = await getRuntime(sessionId);
   if (runtime.process && !runtime.process.killed) {
     const alive = await isBrowserUseAlive(sessionId);
     if (alive) {
-      const opened = await ensureBrowserPageOpen(sessionId, { skipChromeSync });
+      const opened = await ensureBrowserPageOpen(sessionId);
       return opened.ok ? { ok: true } : opened;
     }
     try { runtime.process.kill(); } catch {}
@@ -314,24 +386,32 @@ export async function startBrowserUseServer(sessionId = 'default', { skipChromeS
 
   if (await isBrowserUseAlive(sessionId)) {
     runtime.ready = true;
-    const opened = await ensureBrowserPageOpen(sessionId, { skipChromeSync });
+    const opened = await ensureBrowserPageOpen(sessionId);
     return opened.ok ? { ok: true } : opened;
   }
 
   await killPortProcess(runtime.port);
   await new Promise((r) => setTimeout(r, 500));
 
-  const script = getServerScript();
+  const exe = getServerExecutable();
   const profileDir = getProfileDir(sessionId);
 
-  if (!fs.existsSync(script)) {
-    return { ok: false, error: `Server script not found: ${script}` };
+  if (exe.needsPathLookup) {
+    if (!(await checkPythonAvailable())) {
+      return { ok: false, error: 'Python is not installed. Please install Python 3.11+ from python.org first.' };
+    }
+    if (!exe.args[0] || !fs.existsSync(exe.args[0])) {
+      return { ok: false, error: `Browser server script not found: ${exe.displayPath}` };
+    }
+  } else if (!fs.existsSync(exe.binary)) {
+    return { ok: false, error: `Browser server not found: ${exe.displayPath}` };
   }
 
   let earlyStderr = '';
 
   try {
-    runtime.process = spawn(getPythonCmd(), [script], {
+    const spawnArgs = [...exe.args]; // for packed binary: [], for python: [script.py]
+    runtime.process = spawn(exe.binary, spawnArgs, {
       env: {
         ...process.env,
         BROWSER_USE_PORT: String(runtime.port),
@@ -344,7 +424,7 @@ export async function startBrowserUseServer(sessionId = 'default', { skipChromeS
         // instead of launching Playwright's own Chromium (which looks like guest mode).
         STUARD_BROWSER_MODE: process.env.STUARD_BROWSER_MODE || 'connect',
       },
-      cwd: path.dirname(script),
+      cwd: exe.cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -354,7 +434,6 @@ export async function startBrowserUseServer(sessionId = 'default', { skipChromeS
       runtime.process = null;
       runtime.ready = false;
       runtime.setupPromise = null;
-      runtime.chromeSyncPromise = null;
     });
 
     runtime.process.stdout?.on('data', (data: Buffer) => {
@@ -379,7 +458,7 @@ export async function startBrowserUseServer(sessionId = 'default', { skipChromeS
 
       if (await isBrowserUseAlive(sessionId)) {
         runtime.ready = true;
-        const opened = await ensureBrowserPageOpen(sessionId, { skipChromeSync });
+        const opened = await ensureBrowserPageOpen(sessionId);
         return opened.ok ? { ok: true } : opened;
       }
     }
@@ -399,9 +478,6 @@ export async function stopBrowserUseServer(sessionId = 'default'): Promise<{ ok:
   }
   runtime.ready = false;
   runtime.setupPromise = null;
-  runtime.chromeSyncPromise = null;
-  runtime.lastChromeSyncAt = 0;
-  runtime.lastChromeSyncKey = '';
   return { ok: true };
 }
 
@@ -516,7 +592,7 @@ export async function prewarmBrowserUseServer(): Promise<void> {
       const runtime = await getRuntime('default');
       if (!runtime.process || runtime.process.killed) {
         console.log('[browser-server] Pre-warming server...');
-        startBrowserUseServer('default', { skipChromeSync: true }).catch(() => {});
+        startBrowserUseServer('default', {}).catch(() => {});
       }
     } else {
       // Do a quick Python check (just version, not full import), then start if available
@@ -525,7 +601,7 @@ export async function prewarmBrowserUseServer(): Promise<void> {
         // Run full install check in background (caches result for later)
         installBrowserUse().then((result) => {
           if (result.ok) {
-            startBrowserUseServer('default', { skipChromeSync: true }).catch(() => {});
+            startBrowserUseServer('default', {}).catch(() => {});
           }
         }).catch(() => {});
       }
@@ -538,7 +614,6 @@ export async function prewarmBrowserUseServer(): Promise<void> {
 export async function execBrowserUseStatus(args: any, _ctx: RouterContext): Promise<any> {
   const sessionId = getStatusSessionId(args);
   const serverAlive = await isBrowserUseAlive(sessionId);
-  const settings = loadSettings();
   if (serverAlive) {
     try {
       const resp = await browserUseFetch('/status', { timeoutMs: 5000 }, sessionId);
@@ -550,13 +625,6 @@ export async function execBrowserUseStatus(args: any, _ctx: RouterContext): Prom
           serverAlive: true,
           sessionId,
           lastActiveSessionId: lastActiveBrowserUseSessionId,
-          chromeSyncSettings: {
-            chromeSyncEnabled: settings.chromeSyncEnabled !== false,
-            chromeSyncBrowserName: settings.chromeSyncBrowserName || 'Chrome',
-            chromeSyncProfileName: settings.chromeSyncProfileName || 'Default',
-            chromeSyncProfilePath: settings.chromeSyncProfilePath || null,
-            chromeSyncUserDataDir: settings.chromeSyncUserDataDir || null,
-          },
         };
       }
     } catch {}
@@ -576,13 +644,6 @@ export async function execBrowserUseStatus(args: any, _ctx: RouterContext): Prom
     profileDir: String(getProfileDir(sessionId)),
     sessionId,
     lastActiveSessionId: lastActiveBrowserUseSessionId,
-    chromeSyncSettings: {
-      chromeSyncEnabled: settings.chromeSyncEnabled !== false,
-      chromeSyncBrowserName: settings.chromeSyncBrowserName || 'Chrome',
-      chromeSyncProfileName: settings.chromeSyncProfileName || 'Default',
-      chromeSyncProfilePath: settings.chromeSyncProfilePath || null,
-      chromeSyncUserDataDir: settings.chromeSyncUserDataDir || null,
-    },
   };
 }
 
@@ -593,40 +654,12 @@ export async function execBrowserUseConfigure(args: any, _ctx: RouterContext): P
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         mode: args?.mode,
-        cdp_url: args?.cdp_url,
         profile: args?.profile,
-        connect_profile: args?.connect_profile,
       }),
     }, sessionId);
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
       return { ok: false, error: `Configure failed: ${resp.status} ${errText}` };
-    }
-    return await resp.json();
-  });
-}
-
-export async function execBrowserUseConnectedProfiles(_args: any, _ctx: RouterContext): Promise<any> {
-  return withServer('Connected Profiles', _args, async (sessionId) => {
-    const resp = await browserUseFetch('/connected-profiles', { timeoutMs: 5000 }, sessionId);
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => '');
-      return { ok: false, error: `Failed: ${resp.status} ${errText}` };
-    }
-    return await resp.json();
-  });
-}
-
-export async function execBrowserUseSwitchProfile(args: any, _ctx: RouterContext): Promise<any> {
-  return withServer('Switch Profile', args, async (sessionId) => {
-    const resp = await browserUseFetch('/switch-profile', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile: args?.profile }),
-    }, sessionId);
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => '');
-      return { ok: false, error: `Switch failed: ${resp.status} ${errText}` };
     }
     return await resp.json();
   });
@@ -849,104 +882,6 @@ export async function execBrowserUseCookies(args: any, _ctx: RouterContext): Pro
     }
     return await resp.json();
   });
-}
-
-export async function execBrowserUseSyncChrome(args: any, _ctx: RouterContext): Promise<any> {
-  return withServer('SyncChrome', args, async (sessionId) => {
-    const resp = await browserUseFetch('/sync-chrome', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: args?.action || 'sync',
-        browser: args?.browser,
-        browser_name: args?.browser_name,
-        profile_name: args?.profile_name,
-        profile_path: args?.profile_path,
-        user_data_dir: args?.user_data_dir,
-        force_clone: args?.force_clone,
-        restart_browser: args?.restart_browser,
-      }),
-      timeoutMs: 60000,
-    }, sessionId);
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => '');
-      return { ok: false, error: `Chrome sync failed: ${resp.status} ${errText}` };
-    }
-    return await resp.json();
-  });
-}
-
-export async function execBrowserUseListChromeProfiles(args: any, _ctx: RouterContext): Promise<any> {
-  return withServer('ListChromeProfiles', args, async (sessionId) => {
-    const resp = await browserUseFetch('/sync-chrome', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'list_profiles' }),
-      timeoutMs: 15000,
-    }, sessionId);
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => '');
-      return { ok: false, error: `List profiles failed: ${resp.status} ${errText}` };
-    }
-    return await resp.json();
-  });
-}
-
-async function autoSyncChromeCookies(sessionId = 'default'): Promise<void> {
-  const settings = loadSettings();
-  if ((settings as any).chromeSyncEnabled === false) return;
-
-  try {
-    const resp = await browserUseFetch('/sync-chrome', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'sync',
-        browser_name: (settings as any).chromeSyncBrowserName || 'Chrome',
-        profile_name: (settings as any).chromeSyncProfileName || 'Default',
-        profile_path: (settings as any).chromeSyncProfilePath || undefined,
-        user_data_dir: (settings as any).chromeSyncUserDataDir || undefined,
-      }),
-      timeoutMs: 60000,
-    }, sessionId);
-    if (resp.ok) {
-      const data = await resp.json();
-      console.log(`[chrome-sync:${sessionId}] Auto-synced ${data.synced ?? 0} cookies from Chrome`);
-    } else {
-      console.warn(`[chrome-sync:${sessionId}] Auto-sync failed:`, await resp.text().catch(() => ''));
-    }
-  } catch (err: any) {
-    console.warn(`[chrome-sync:${sessionId}] Auto-sync error:`, err.message);
-  }
-}
-
-async function ensureChromeSyncFresh(sessionId = 'default', force = false): Promise<void> {
-  const runtime = await getRuntime(sessionId);
-  const settings = loadSettings();
-  if ((settings as any).chromeSyncEnabled === false) return;
-
-  const syncKey = JSON.stringify({
-    enabled: settings.chromeSyncEnabled !== false,
-    browser: settings.chromeSyncBrowserName || 'Chrome',
-    profile: settings.chromeSyncProfileName || 'Default',
-    profilePath: settings.chromeSyncProfilePath || null,
-    userDataDir: settings.chromeSyncUserDataDir || null,
-  });
-  const now = Date.now();
-  if (!force && runtime.chromeSyncPromise) {
-    await runtime.chromeSyncPromise;
-    return;
-  }
-  if (!force && runtime.lastChromeSyncKey === syncKey && now - runtime.lastChromeSyncAt < CHROME_SYNC_MIN_INTERVAL_MS) {
-    return;
-  }
-
-  runtime.lastChromeSyncKey = syncKey;
-  runtime.lastChromeSyncAt = now;
-  runtime.chromeSyncPromise = autoSyncChromeCookies(sessionId).finally(() => {
-    runtime.chromeSyncPromise = null;
-  });
-  await runtime.chromeSyncPromise;
 }
 
 export async function execBrowserUseHover(args: any, _ctx: RouterContext): Promise<any> {

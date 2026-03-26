@@ -10,11 +10,43 @@ export const calendar_crud = makeLocalTool(
   z.object({ action: z.string(), data: z.any().optional() }),
 );
 
-export const task_crud = makeLocalTool(
+const _task_crud_base = makeLocalTool(
   'task_crud',
   'Full task management with priorities, due dates, tags for Stuard local tasks.',
   z.object({ action: z.string(), data: z.any().optional() }),
 );
+
+// Wrap task_crud: post-filter list results to respect limit/offset/status
+export const task_crud = createTool({
+  id: _task_crud_base.id!,
+  description: _task_crud_base.description! +
+    ' For list action, pass limit (default 20), offset (default 0), and optional status in data to reduce payload.',
+  inputSchema: (_task_crud_base as any).inputSchema,
+  outputSchema: z.any(),
+  execute: async (input, context) => {
+    const result = await (_task_crud_base.execute as any)(input, context);
+    const inp = input as any;
+
+    // Post-filter list results
+    if (inp.action === 'list' && result && Array.isArray(result.items)) {
+      const d = inp.data || {};
+      const limit = typeof d.limit === 'number' ? Math.min(Math.max(d.limit, 1), 100) : 20;
+      const offset = typeof d.offset === 'number' ? Math.max(d.offset, 0) : 0;
+      let items = result.items;
+      const total = items.length;
+
+      if (d.status) {
+        items = items.filter((t: any) => t?.status === d.status);
+      }
+
+      result.items = items.slice(offset, offset + limit);
+      result.total = total;
+      result.hasMore = offset + limit < items.length;
+    }
+
+    return result;
+  },
+});
 
 const recurrenceSchema = z.object({
   frequency: z.enum(['daily', 'weekly', 'monthly', 'yearly']).describe('How often to repeat.'),
@@ -27,7 +59,8 @@ const recurrenceSchema = z.object({
 const _task_reminders_base = makeLocalTool(
   'task_reminders',
   'Schedule, update, cancel/delete, list, and resume reminders. Supports one-time and recurring reminders. ' +
-  'Set cloud_notify=true to also auto-send an SMS or WhatsApp message at the scheduled time (works even when desktop is offline).',
+  'Set cloud_notify=true to also auto-send an SMS or WhatsApp message at the scheduled time (works even when desktop is offline). ' +
+  'For list action, use limit (default 20) and offset (default 0) to paginate results.',
   z.object({
     action: z.enum(['schedule', 'update', 'cancel', 'delete', 'list', 'resume']).describe(
       'schedule: create a new reminder | update: modify an existing reminder | cancel/delete: remove a reminder | list: list all pending reminders | resume: restart pending reminders after agent restart'
@@ -40,10 +73,12 @@ const _task_reminders_base = makeLocalTool(
     recurrence: recurrenceSchema.optional().describe('Make this reminder repeat. Omit for one-time. Pass null/undefined in update to remove recurrence.'),
     cloud_notify: z.boolean().optional().describe('When true, also sends an SMS/WhatsApp at the scheduled time via the cloud. Requires a connected Telnyx or WhatsApp number.'),
     cloud_notify_method: z.enum(['sms', 'whatsapp', 'both']).optional().describe('Delivery method for cloud notification. Default: "sms".'),
+    limit: z.number().int().min(1).max(100).default(20).optional().describe('Max items for list action (default 20).'),
+    offset: z.number().int().min(0).default(0).optional().describe('Skip N items for list pagination (default 0).'),
   }),
 );
 
-// Wrap task_reminders: on schedule with cloud_notify, sync to cloud
+// Wrap task_reminders: on schedule with cloud_notify, sync to cloud; on list, post-filter with limit/offset
 export const task_reminders = createTool({
   id: _task_reminders_base.id!,
   description: _task_reminders_base.description!,
@@ -52,8 +87,19 @@ export const task_reminders = createTool({
   execute: async (input, context) => {
     const result = await (_task_reminders_base.execute as any)(input, context);
 
-    // Auto-sync to cloud when cloud_notify is set
     const inp = input as any;
+
+    // Post-filter list results with limit/offset
+    if (inp.action === 'list' && result && Array.isArray(result.items)) {
+      const limit = typeof inp.limit === 'number' ? Math.min(Math.max(inp.limit, 1), 100) : 20;
+      const offset = typeof inp.offset === 'number' ? Math.max(inp.offset, 0) : 0;
+      const total = result.items.length;
+      result.items = result.items.slice(offset, offset + limit);
+      result.total = total;
+      result.hasMore = offset + limit < total;
+    }
+
+    // Auto-sync to cloud when cloud_notify is set
     if (inp.action === 'schedule' && inp.cloud_notify && inp.message && (inp.when || inp.scheduledAt)) {
       try {
         const secrets = getBridgeSecrets();
@@ -75,10 +121,11 @@ export const task_reminders = createTool({
   },
 });
 
-export const unified_task_assignments = makeLocalTool(
+const _unified_task_assignments_base = makeLocalTool(
   'unified_task_assignments',
   'Manage user task assignments (reminders, actions, check-ins scheduled by the user for the agent). ' +
-  'Use this to list pending assignments, mark them as triggered/completed, or get assignment details.',
+  'Use this to list pending assignments, mark them as triggered/completed, or get assignment details. ' +
+  'For list_pending, use limit (default 20) and offset (default 0) to paginate.',
   z.object({
     action: z.enum(['list_pending', 'mark_triggered', 'mark_completed', 'get_task']).describe(
       'Action: list_pending (get due assignments), mark_triggered (when you start handling), ' +
@@ -86,8 +133,33 @@ export const unified_task_assignments = makeLocalTool(
     ),
     taskId: z.string().optional().describe('Task ID (required for mark_triggered, mark_completed, get_task).'),
     assignmentId: z.string().optional().describe('Assignment ID (required for mark_triggered, mark_completed).'),
+    limit: z.number().int().min(1).max(100).default(20).optional().describe('Max items for list_pending (default 20).'),
+    offset: z.number().int().min(0).default(0).optional().describe('Skip N items for pagination (default 0).'),
   }),
 );
+
+export const unified_task_assignments = createTool({
+  id: _unified_task_assignments_base.id!,
+  description: _unified_task_assignments_base.description!,
+  inputSchema: (_unified_task_assignments_base as any).inputSchema,
+  outputSchema: z.any(),
+  execute: async (input, context) => {
+    const result = await (_unified_task_assignments_base.execute as any)(input, context);
+    const inp = input as any;
+
+    // Post-filter list_pending results
+    if (inp.action === 'list_pending' && result && Array.isArray(result.items)) {
+      const limit = typeof inp.limit === 'number' ? Math.min(Math.max(inp.limit, 1), 100) : 20;
+      const offset = typeof inp.offset === 'number' ? Math.max(inp.offset, 0) : 0;
+      const total = result.items.length;
+      result.items = result.items.slice(offset, offset + limit);
+      result.total = total;
+      result.hasMore = offset + limit < total;
+    }
+
+    return result;
+  },
+});
 
 // Unified planner helper: aggregate meetings (Google Calendar), local tasks, and local reminders
 export const planner_list_items = createTool({
@@ -101,6 +173,7 @@ export const planner_list_items = createTool({
     start: z.string().optional().describe('ISO 8601 start (when range="custom").'),
     end: z.string().optional().describe('ISO 8601 end (when range="custom").'),
     maxEvents: z.number().int().min(1).max(500).default(250).describe('Maximum number of calendar events to return.'),
+    maxItems: z.number().int().min(1).max(500).default(50).describe('Maximum total items (events + tasks + reminders) to return (default 50).'),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
@@ -175,7 +248,7 @@ export const planner_list_items = createTool({
     // Local Stuard tasks (from tasks.db)
     try {
       if (hasClientBridge()) {
-        const taskRes: any = await execLocalTool('task_crud', { action: 'list', data: {} }, undefined as any, 30000);
+        const taskRes: any = await execLocalTool('task_crud', { action: 'list', data: { limit: 500 } }, undefined as any, 30000);
         const tItems = Array.isArray(taskRes?.items) ? taskRes.items : [];
         for (const t of tItems) {
           if (!t || !t.due) continue;
@@ -206,7 +279,7 @@ export const planner_list_items = createTool({
     // Local Stuard reminders
     try {
       if (hasClientBridge()) {
-        const remRes: any = await execLocalTool('task_reminders', { action: 'list' }, undefined as any, 30000);
+        const remRes: any = await execLocalTool('task_reminders', { action: 'list', limit: 500 }, undefined as any, 30000);
         const rItems = Array.isArray(remRes?.items) ? remRes.items : [];
         for (const r of rItems) {
           if (!r) continue;
@@ -328,7 +401,12 @@ export const planner_list_items = createTool({
       return { ok: false, items: [], error: calendarError };
     }
 
-    return { ok: true, items };
+    // Cap total items to maxItems
+    const maxItems = Number(c.maxItems || 50);
+    const totalBeforeCap = items.length;
+    const cappedItems = items.slice(0, maxItems);
+
+    return { ok: true, items: cappedItems, total: totalBeforeCap, hasMore: totalBeforeCap > maxItems };
   },
 });
 

@@ -1,27 +1,24 @@
 """Browser lifecycle: initialization, page state, shutdown."""
 
 import asyncio
-from pathlib import Path
 from typing import Any, Optional
 
 from browser_server import state
 from browser_server.utils import _clamp_int, _normalize_wait_until, _is_allowed_url
-from browser_server.profile import (
-    _current_profile_dir,
-    _read_sync_meta,
-)
-from browser_server.cookie_sync import (
-    _resolve_sync_source,
-    _read_chrome_cookies,
-    _inject_cookies_into_session,
-)
+from browser_server.profile import _current_profile_dir
 
 
 async def _page_is_alive() -> bool:
     if state._page is None:
         return False
     try:
-        return not state._page.is_closed()
+        if state._page.is_closed():
+            return False
+        # Verify the page is actually usable — is_closed() can return False
+        # even when the execution context is destroyed (e.g. after force stop
+        # during navigation). Do a quick evaluate to confirm.
+        await asyncio.wait_for(state._page.evaluate("() => true"), timeout=2.0)
+        return True
     except Exception:
         return False
 
@@ -50,12 +47,24 @@ async def _get_page_title(timeout: float | None = None) -> str:
 async def _evaluate(js_arrow_fn: str, *args: Any) -> Any:
     if state._page is None:
         return ""
-    if len(args) == 0:
-        return await state._page.evaluate(js_arrow_fn)
-    elif len(args) == 1:
-        return await state._page.evaluate(js_arrow_fn, args[0])
-    else:
-        return await state._page.evaluate(js_arrow_fn, list(args))
+    try:
+        if len(args) == 0:
+            coro = state._page.evaluate(js_arrow_fn)
+        elif len(args) == 1:
+            coro = state._page.evaluate(js_arrow_fn, args[0])
+        else:
+            coro = state._page.evaluate(js_arrow_fn, list(args))
+        return await asyncio.wait_for(coro, timeout=30.0)
+    except asyncio.TimeoutError:
+        return ""
+    except Exception as exc:
+        # If execution context is destroyed, mark the page as dead so
+        # _ensure_browser will re-launch on the next call.
+        msg = str(exc).lower()
+        if "execution context" in msg or "destroyed" in msg or "target closed" in msg:
+            print(f"[browser-server] Page execution context lost, will re-launch: {exc}", flush=True)
+            state._page = None
+        raise
 
 
 async def _wait_for_ready(wait_until: str = "domcontentloaded", timeout: int = 30000) -> None:
@@ -224,240 +233,26 @@ async def _smart_wait_for_element(selector: str = "", text: str = "", timeout: i
     return False
 
 
-async def _auto_inject_cookies_on_startup() -> None:
-    profile_dir = _current_profile_dir()
-    sync_meta = _read_sync_meta(profile_dir)
-
-    source_profile_path = str(sync_meta.get("sourceProfilePath") or "").strip()
-    source_user_data_dir = str(sync_meta.get("sourceUserDataDir") or "").strip()
-
-    if not source_profile_path or not source_user_data_dir:
-        resolved = await asyncio.to_thread(
-            _resolve_sync_source, None, None, "Chrome", "Default"
-        )
-        if resolved:
-            source_profile_path = str(resolved.get("profilePath") or "")
-            source_user_data_dir = str(resolved.get("userDataDir") or "")
-
-    if not source_profile_path or not source_user_data_dir:
-        return
-
-    if not Path(source_profile_path).exists():
-        return
-
-    cookies = await asyncio.to_thread(_read_chrome_cookies, source_profile_path, source_user_data_dir)
-    if not cookies:
-        print(f"[browser-server] No cookies read from Chrome profile", flush=True)
-        return
-
-    try:
-        result = await _inject_cookies_into_session(cookies)
-        injected = result.get("injected", 0)
-        failed = result.get("failed", 0)
-        print(f"[browser-server] Auto-injected {injected} cookies ({failed} failed) from {source_profile_path}", flush=True)
-    except Exception as e:
-        print(f"[browser-server] Cookie injection error: {e}", flush=True)
-
-
 async def _ensure_browser() -> tuple[bool, Optional[str]]:
     """Lazily start the browser + context + page.
 
-    Three modes:
-    - Headless: Playwright's own Chromium, managed profile
-    - Headed: Playwright's own Chromium visible, managed profile
-    - Connect: attach to existing browser via CDP URL
+    Uses a single persistent Playwright Chromium instance that remembers
+    passwords, Google auth, cookies, etc. across sessions.
     """
     if await _page_is_alive():
         return True, None
-    state._page = None
-    state._cdp_session = None
+
+    # Page is dead/gone — clean up stale Playwright resources before re-launching.
+    # Without this, a force-stop during navigation leaves a zombie context that
+    # blocks the persistent-context profile directory lock.
+    print("[browser-server] Page not alive, cleaning up before re-launch...", flush=True)
+    await _close_browser()
 
     profile_dir = _current_profile_dir()
     profile_dir.mkdir(parents=True, exist_ok=True)
 
     headless = state._config["mode"] == "headless"
-    cdp_url = state._config.get("cdp_url") if state._config["mode"] == "connect" else None
 
-    # ── Headless mode: use Playwright's own Chromium with managed profile ──
-    # Never touch the user's running Chrome — just launch a clean instance.
-    if headless:
-        try:
-            from playwright.async_api import async_playwright
-
-            pw_instance = await async_playwright().start()
-            state._playwright = pw_instance
-
-            launch_args: list[str] = [
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--disable-infobars",
-            ]
-
-            state._context = await pw_instance.chromium.launch_persistent_context(
-                str(profile_dir),
-                headless=True,
-                args=launch_args,
-                ignore_default_args=["--enable-automation"],
-                viewport={"width": 1280, "height": 900},
-                no_viewport=False,
-            )
-            pages = state._context.pages
-            state._page = pages[0] if pages else await state._context.new_page()
-
-            print(f"[browser-server] Launched headless Chromium (managed profile: {profile_dir})",
-                  flush=True)
-
-            try:
-                await _auto_inject_cookies_on_startup()
-            except Exception as cookie_err:
-                print(f"[browser-server] Cookie auto-inject failed (non-fatal): {cookie_err}", flush=True)
-
-            return True, None
-        except Exception as pw_err:
-            print(f"[browser-server] Headless launch failed: {pw_err}", flush=True)
-            try:
-                if state._context:
-                    await state._context.close()
-            except Exception:
-                pass
-            state._context = state._page = None
-            return False, f"Headless browser launch failed: {pw_err}"
-
-    # ── Connect mode: attach to user's real browser via CDP ──
-    if state._config["mode"] == "connect":
-        # Auto-detect or set up CDP if no cdp_url was provided
-        if not cdp_url:
-            try:
-                from browser_server.chrome_manager import ensure_chrome_debug_connection
-                cdp_url = await ensure_chrome_debug_connection()
-                if cdp_url:
-                    state._config["cdp_url"] = cdp_url
-                    print(f"[browser-server] Auto-detected CDP URL: {cdp_url}", flush=True)
-                else:
-                    return False, (
-                        "Could not start Chrome with debug port. "
-                        "Try closing Chrome completely and reopening it, or launch Chrome manually with:\n"
-                        '  chrome.exe --remote-debugging-port=9222 --restore-last-session'
-                    )
-            except Exception as detect_err:
-                print(f"[browser-server] Chrome debug detection failed: {detect_err}", flush=True)
-                return False, f"Failed to detect Chrome debug port: {detect_err}"
-
-        # Verify the debug port is actually responding via HTTP before
-        # attempting the heavier Playwright CDP handshake.
-        import urllib.request
-        port_alive = False
-        for pre_check in range(8):
-            try:
-                resp = urllib.request.urlopen(
-                    f"{cdp_url}/json/version", timeout=2
-                )
-                if resp.status == 200:
-                    port_alive = True
-                    break
-            except Exception:
-                pass
-            if pre_check < 7:
-                print(f"[browser-server] Waiting for CDP port ({pre_check + 1}/8)...", flush=True)
-                await asyncio.sleep(2)
-
-        if not port_alive:
-            print(f"[browser-server] CDP port at {cdp_url} never responded to HTTP", flush=True)
-            state._config["cdp_url"] = None  # clear stale URL
-            return False, (
-                f"Chrome debug port at {cdp_url} is not responding. "
-                "Close Chrome completely, then reopen it — the debug port flag "
-                "should be configured automatically. If it still fails, launch Chrome with:\n"
-                '  chrome.exe --remote-debugging-port=9222 --restore-last-session'
-            )
-
-        try:
-            from playwright.async_api import async_playwright
-            pw_instance = await async_playwright().start()
-            state._playwright = pw_instance
-
-            # Retry CDP connection — Chrome may still be finishing startup
-            browser_obj = None
-            last_err = None
-            for attempt in range(6):
-                try:
-                    browser_obj = await pw_instance.chromium.connect_over_cdp(cdp_url)
-                    break
-                except Exception as retry_err:
-                    last_err = retry_err
-                    if attempt < 5:
-                        print(f"[browser-server] CDP connect attempt {attempt + 1} failed, retrying in 2s...", flush=True)
-                        await asyncio.sleep(2)
-            if browser_obj is None:
-                raise last_err  # type: ignore[misc]
-
-            state._browser = browser_obj
-            contexts = browser_obj.contexts
-
-            # Enumerate all connected contexts (each Chrome profile = separate context)
-            context_info: list[dict] = []
-            for i, ctx in enumerate(contexts):
-                pages = ctx.pages
-                page_summaries = []
-                for p in pages[:8]:
-                    try:
-                        title = await asyncio.wait_for(p.title(), timeout=1.0)
-                    except Exception:
-                        title = ""
-                    page_summaries.append({"url": p.url or "", "title": title})
-                context_info.append({
-                    "index": i,
-                    "pageCount": len(pages),
-                    "pages": page_summaries,
-                })
-            state._connected_contexts = context_info
-
-            if len(contexts) > 1:
-                print(f"[browser-server] Found {len(contexts)} browser contexts (profiles):", flush=True)
-                for info in context_info:
-                    first_pages = ", ".join(
-                        p.get("title") or p.get("url", "?") for p in info["pages"][:3]
-                    )
-                    print(f"  [{info['index']}] {info['pageCount']} tabs — {first_pages}", flush=True)
-
-            # Select which context to use
-            selected_idx = 0
-            connect_profile = state._config.get("connect_profile")
-            if connect_profile is not None and contexts:
-                if isinstance(connect_profile, int) and 0 <= connect_profile < len(contexts):
-                    selected_idx = connect_profile
-                elif isinstance(connect_profile, str):
-                    if connect_profile.isdigit():
-                        idx = int(connect_profile)
-                        if 0 <= idx < len(contexts):
-                            selected_idx = idx
-                    else:
-                        # Try to match by page title/URL containing the profile name
-                        for info in context_info:
-                            needle = connect_profile.lower()
-                            for p in info["pages"]:
-                                if needle in (p.get("title") or "").lower() or needle in (p.get("url") or "").lower():
-                                    selected_idx = info["index"]
-                                    break
-
-            if contexts:
-                state._context = contexts[selected_idx]
-                pages = state._context.pages
-                state._page = pages[0] if pages else await state._context.new_page()
-                print(f"[browser-server] Using context [{selected_idx}] with {len(pages)} tabs", flush=True)
-            else:
-                state._context = await browser_obj.new_context()
-                state._page = await state._context.new_page()
-
-            print(f"[browser-server] Connected via CDP ({cdp_url})", flush=True)
-            return True, None
-        except Exception as cdp_err:
-            print(f"[browser-server] CDP connection failed: {cdp_err}", flush=True)
-            state._context = state._page = None
-            return False, f"CDP connection to {cdp_url} failed: {cdp_err}"
-
-    # ── Headed mode: launch Playwright's own Chromium (never touch user's browser) ──
-    # Window is positioned off-screen so it doesn't pop up — sidebar mirrors via screenshots.
     try:
         from playwright.async_api import async_playwright
 
@@ -468,12 +263,11 @@ async def _ensure_browser() -> tuple[bool, Optional[str]]:
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-infobars",
-            "--window-position=-32000,-32000",
         ]
 
         state._context = await pw_instance.chromium.launch_persistent_context(
             str(profile_dir),
-            headless=False,
+            headless=headless,
             args=launch_args,
             ignore_default_args=["--enable-automation"],
             viewport={"width": 1280, "height": 900},
@@ -482,52 +276,38 @@ async def _ensure_browser() -> tuple[bool, Optional[str]]:
         pages = state._context.pages
         state._page = pages[0] if pages else await state._context.new_page()
 
-        print(f"[browser-server] Launched headed Chromium (managed profile: {profile_dir})", flush=True)
-
-        try:
-            await _auto_inject_cookies_on_startup()
-        except Exception as cookie_err:
-            print(f"[browser-server] Cookie auto-inject failed (non-fatal): {cookie_err}", flush=True)
-
+        mode_label = "headless" if headless else "headed"
+        print(f"[browser-server] Launched {mode_label} Chromium (profile: {profile_dir})", flush=True)
         return True, None
     except Exception as pw_err:
-        print(f"[browser-server] Headed launch failed: {pw_err}", flush=True)
+        print(f"[browser-server] Browser launch failed: {pw_err}", flush=True)
         try:
             if state._context:
                 await state._context.close()
         except Exception:
             pass
         state._context = state._page = None
-
-    return False, "Browser init failed. Ensure playwright is installed: pip install playwright && python -m playwright install chromium"
+        return False, f"Browser launch failed: {pw_err}"
 
 
 async def _close_browser():
-    is_cdp_connected = state._browser is not None
-
+    # Use timeouts on every close operation — if the browser process
+    # crashed or the protocol pipe is broken, these can hang forever.
     try:
         if state._cdp_session:
-            await state._cdp_session.detach()
+            await asyncio.wait_for(state._cdp_session.detach(), timeout=5.0)
     except Exception:
         pass
 
-    if is_cdp_connected:
-        # CDP connect mode — just disconnect, do NOT close the user's browser.
-        # Skipping browser.close() intentionally — it would kill their Chrome.
-        # playwright.stop() below just tears down the websocket, leaving Chrome running.
+    try:
+        if state._context:
+            await asyncio.wait_for(state._context.close(), timeout=10.0)
+    except Exception:
         pass
-    else:
-        # Headed/headless mode — we own this browser, close it.
-        try:
-            if state._context:
-                await state._context.close()
-        except Exception:
-            pass
 
     try:
         if state._playwright:
-            await state._playwright.stop()
+            await asyncio.wait_for(state._playwright.stop(), timeout=5.0)
     except Exception:
         pass
-    state._context = state._page = state._playwright = state._browser = state._cdp_session = None
-    state._connected_contexts = []
+    state._context = state._page = state._playwright = state._cdp_session = None

@@ -75,7 +75,7 @@ export async function detectEntities(message: string): Promise<string[]> {
   
   try {
     // Get list of known entities
-    const res = await execLocalTool('knowledge_list_entities', { limit: 100 }, undefined, 10000);
+    const res = await execLocalTool('knowledge_list_entities', { limit: 100 }, undefined, 10000, { silent: true });
     const entities: any[] = Array.isArray(res)
       ? res
       : Array.isArray((res as any)?.entities)
@@ -111,7 +111,7 @@ export async function getIdentityLens(): Promise<Fact[]> {
   if (!hasClientBridge()) return [];
   
   try {
-    const res = await execLocalTool('knowledge_get_identity', {}, undefined, 10000);
+    const res = await execLocalTool('knowledge_get_identity', {}, undefined, 10000, { silent: true });
     const facts: any[] = Array.isArray(res)
       ? res
       : Array.isArray((res as any)?.facts)
@@ -131,7 +131,7 @@ export async function getDirectiveLens(): Promise<Fact[]> {
   if (!hasClientBridge()) return [];
   
   try {
-    const res = await execLocalTool('knowledge_get_directives', {}, undefined, 10000);
+    const res = await execLocalTool('knowledge_get_directives', {}, undefined, 10000, { silent: true });
     const facts: any[] = Array.isArray(res)
       ? res
       : Array.isArray((res as any)?.facts)
@@ -151,7 +151,7 @@ export async function getEntityContext(entityName: string): Promise<{ entity: En
   if (!hasClientBridge()) return null;
   
   try {
-    const result = await execLocalTool('knowledge_get_entity_context', { name: entityName }, undefined, 10000);
+    const result = await execLocalTool('knowledge_get_entity_context', { name: entityName }, undefined, 10000, { silent: true });
     if (!result?.entity) return null;
     return {
       entity: result.entity,
@@ -170,7 +170,7 @@ export async function getBioLens(limit: number = 10): Promise<Fact[]> {
   if (!hasClientBridge()) return [];
 
   try {
-    const res = await execLocalTool('knowledge_get_bio', { limit }, undefined, 10000);
+    const res = await execLocalTool('knowledge_get_bio', { limit }, undefined, 10000, { silent: true });
     const facts: any[] = Array.isArray(res)
       ? res
       : Array.isArray((res as any)?.facts)
@@ -190,7 +190,7 @@ export async function getPendingMemoriesLens(limit: number = 10): Promise<Pendin
   if (!hasClientBridge()) return [];
 
   try {
-    const res = await execLocalTool('pending_memory_list', { limit }, undefined, 10000);
+    const res = await execLocalTool('pending_memory_list', { limit }, undefined, 10000, { silent: true });
     const pending: any[] = Array.isArray(res)
       ? res
       : Array.isArray((res as any)?.pending)
@@ -220,7 +220,7 @@ export async function searchGlobalFacts(
       limit,
       threshold,
       include_vectors: includeVectors,
-    }, undefined, 10000);
+    }, undefined, 10000, { silent: true });
     return Array.isArray(results) ? results : [];
   } catch (error) {
     writeLog('global_search_error', { error: String(error) });
@@ -377,22 +377,41 @@ export async function buildKnowledgeContext(
   };
 
   const sections: string[] = [];
-  let detectedEntities: string[] = [];
 
-  // Parallel fetch of fixed lenses
-  const [identityFacts, directiveFacts, bioFacts, pendingMemories, detected] = await Promise.all([
+  // Resolve embedding upfront (needed by searchGlobalFacts in the parallel batch)
+  const embeddingVec = opts.queryEmbedding && opts.queryEmbedding.length > 0
+    ? opts.queryEmbedding
+    : null;
+
+  // Fetch more candidates than needed so composite scoring + MMR can select the best
+  const fetchLimit = Math.min(opts.maxGlobalFacts * 3, 30);
+
+  // ── Single parallel batch: lenses + entity detect→context chain + global facts ──
+  const [identityFacts, directiveFacts, bioFacts, pendingMemories, entityResult, globalSearchResults] = await Promise.all([
     opts.includeIdentity ? getIdentityLens() : Promise.resolve([]),
     opts.includeDirectives ? getDirectiveLens() : Promise.resolve([]),
     opts.includeBio ? getBioLens() : Promise.resolve([]),
     opts.includePendingMemories ? getPendingMemoriesLens() : Promise.resolve([]),
-    opts.detectEntities ? detectEntities(userMessage) : Promise.resolve([]),
+    // Chain: detectEntities → getEntityContext (runs in parallel with everything else)
+    opts.detectEntities
+      ? detectEntities(userMessage).then(async (detected): Promise<{ context: Awaited<ReturnType<typeof getEntityContext>> | null; names: string[] }> => {
+          if (detected.length > 0) {
+            const ctx = await getEntityContext(detected[0]);
+            return { context: ctx, names: detected };
+          }
+          return { context: null, names: detected };
+        }).catch(() => ({ context: null, names: [] as string[] }))
+      : Promise.resolve({ context: null, names: [] as string[] }),
+    // Global semantic search runs in parallel (only needs embedding, not entity results)
+    opts.maxGlobalFacts > 0 && embeddingVec
+      ? searchGlobalFacts(embeddingVec, fetchLimit, 0.45).catch(() => [] as Awaited<ReturnType<typeof searchGlobalFacts>>)
+      : Promise.resolve([] as Awaited<ReturnType<typeof searchGlobalFacts>>),
   ]);
 
   lenses.identity = identityFacts;
   lenses.directives = directiveFacts;
   lenses.bio = bioFacts;
   lenses.pendingMemories = pendingMemories;
-  detectedEntities = detected;
 
   // Layer 1: Identity
   const missingProfileKeys = new Set(
@@ -432,21 +451,19 @@ export async function buildKnowledgeContext(
     sections.push(lines.join('\n'));
   }
 
-  // Layer 3: Active Focus (entity context)
-  if (detectedEntities.length > 0) {
-    // Use the first detected entity for context
-    const entityContext = await getEntityContext(detectedEntities[0]);
-    if (entityContext) {
-      lenses.activeEntity = entityContext;
-      const lines = [`[CURRENT CONTEXT: ${entityContext.entity.name}]`];
-      if (entityContext.entity.summary) {
-        lines.push(`Summary: ${entityContext.entity.summary}`);
-      }
-      for (const f of entityContext.facts.slice(0, 10)) {
-        lines.push(`- ${f.text}`);
-      }
-      sections.push(lines.join('\n'));
+  // Layer 3: Active Focus (entity context — already resolved in parallel)
+  const entityContext = entityResult.context;
+  const detectedEntities = entityResult.names;
+  if (entityContext) {
+    lenses.activeEntity = entityContext;
+    const lines = [`[CURRENT CONTEXT: ${entityContext.entity.name}]`];
+    if (entityContext.entity.summary) {
+      lines.push(`Summary: ${entityContext.entity.summary}`);
     }
+    for (const f of entityContext.facts.slice(0, 10)) {
+      lines.push(`- ${f.text}`);
+    }
+    sections.push(lines.join('\n'));
   }
 
   // Layer 4: Bio (if requested)
@@ -458,24 +475,12 @@ export async function buildKnowledgeContext(
     sections.push(lines.join('\n'));
   }
 
-  // Layer 5: Global search (semantic) with composite scoring + MMR diversity
-  if (opts.maxGlobalFacts > 0) {
+  // Layer 5: Global search — results already fetched in parallel, apply scoring + dedup
+  if (opts.maxGlobalFacts > 0 && globalSearchResults.length > 0) {
     try {
-      // Reuse pre-computed embedding when available; otherwise generate one
-      const embeddingVec = opts.queryEmbedding && opts.queryEmbedding.length > 0
-        ? opts.queryEmbedding
-        : (await embed({
-            model: google.textEmbeddingModel('gemini-embedding-2-preview'),
-            value: userMessage,
-          })).embedding;
-
-      // Fetch more candidates than needed so composite scoring + MMR can select the best
-      const fetchLimit = Math.min(opts.maxGlobalFacts * 3, 30);
-      const searchResults = await searchGlobalFacts(embeddingVec, fetchLimit, 0.45);
-
       // Filter out facts already shown in entity context
       const entityFactIds = new Set(lenses.activeEntity?.facts.map(f => f.id) || []);
-      const filtered = searchResults.filter(r => !entityFactIds.has(r.fact.id));
+      const filtered = globalSearchResults.filter(r => !entityFactIds.has(r.fact.id));
 
       // Apply composite scoring (cosine + recency + confidence + source)
       const temporalBoost = hasTemporalIntent(userMessage);
@@ -494,6 +499,38 @@ export async function buildKnowledgeContext(
 
       lenses.globalSearch = reranked;
 
+      if (reranked.length > 0) {
+        const lines = ['[RELEVANT MEMORIES]'];
+        for (const { fact } of reranked) {
+          lines.push(`- ${fact.text}`);
+        }
+        sections.push(lines.join('\n'));
+      }
+    } catch (error) {
+      writeLog('global_search_embed_error', { error: String(error) });
+    }
+  } else if (opts.maxGlobalFacts > 0 && !embeddingVec) {
+    // Fallback: no pre-computed embedding, generate one and search (rare path)
+    try {
+      const fallbackVec = (await embed({
+        model: google.textEmbeddingModel('gemini-embedding-2-preview'),
+        value: userMessage,
+      })).embedding;
+      const searchResults = await searchGlobalFacts(fallbackVec, fetchLimit, 0.45);
+      const entityFactIds = new Set(lenses.activeEntity?.facts.map(f => f.id) || []);
+      const filtered = searchResults.filter(r => !entityFactIds.has(r.fact.id));
+      const temporalBoost = hasTemporalIntent(userMessage);
+      const scored = filtered.map((r) => ({
+        fact: r.fact,
+        score: computeCompositeScore(r.score, {
+          created_at: r.fact.created_at,
+          confidence: (r.fact as any).confidence,
+          source: r.fact.source,
+        }, { temporalBoost }),
+        vector: r.fact.vector || undefined,
+      }));
+      const reranked = mmrRerank(scored, opts.maxGlobalFacts, 0.7);
+      lenses.globalSearch = reranked;
       if (reranked.length > 0) {
         const lines = ['[RELEVANT MEMORIES]'];
         for (const { fact } of reranked) {

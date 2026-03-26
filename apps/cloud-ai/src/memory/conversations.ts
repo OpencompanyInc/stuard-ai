@@ -559,7 +559,7 @@ export async function searchSegmentsByEmbedding(
     embedding,
     limit: options?.limit ?? 10,
     threshold: options?.threshold ?? 0.6,
-  });
+  }, undefined, 300000, { silent: true });
 
   if (result?.ok && result.results) {
     return result.results;

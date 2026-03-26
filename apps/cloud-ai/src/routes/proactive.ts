@@ -277,6 +277,73 @@ function createKanbanTools(initialTasks: TaskState[]) {
   };
 }
 
+// ─── Urgency-Based Channel Selection Tool ────────────────────────────────────
+
+function createChannelSelectionTool(enabledChannels: string[]) {
+  let chosenChannel: string = 'app';
+  let chosenUrgency: string = 'normal';
+
+  const choose_notification_channel = createTool({
+    id: 'choose_notification_channel',
+    description: `Decide which notification channel to use based on urgency. Available channels: ${enabledChannels.join(', ')}. Use this AFTER assessing the situation in Phase 1. Urgency levels: critical (call), high (sms/whatsapp), normal (app notification), low (skip or minimal notification).`,
+    inputSchema: z.object({
+      urgency: z.enum(['critical', 'high', 'normal', 'low']).describe('How urgent is this notification?'),
+      channel: z.enum(['app', 'sms', 'whatsapp', 'call', 'skip']).describe('Which channel to use'),
+      reason: z.string().describe('Brief reason for this choice (e.g., "exam in 1 hour and user is gaming")'),
+    }),
+    outputSchema: z.object({ ok: z.boolean(), channel: z.string(), urgency: z.string() }),
+    execute: async ({ urgency, channel, reason }) => {
+      // Enforce: only allow channels the user has enabled
+      if (channel !== 'skip' && !enabledChannels.includes(channel)) {
+        // Fall back to the best available channel for this urgency
+        if (urgency === 'critical' && enabledChannels.includes('call')) channel = 'call';
+        else if ((urgency === 'critical' || urgency === 'high') && enabledChannels.includes('sms')) channel = 'sms';
+        else if ((urgency === 'critical' || urgency === 'high') && enabledChannels.includes('whatsapp')) channel = 'whatsapp';
+        else channel = 'app';
+      }
+      chosenChannel = channel;
+      chosenUrgency = urgency;
+      return { ok: true, channel, urgency };
+    },
+  });
+
+  return {
+    tool: choose_notification_channel,
+    getChoice: () => ({ channel: chosenChannel, urgency: chosenUrgency }),
+  };
+}
+
+// ─── Session Summary Tool ────────────────────────────────────────────────────
+
+function createSessionSummaryTool() {
+  let sessionSummary: string | null = null;
+
+  const write_session_summary = createTool({
+    id: 'write_session_summary',
+    description: 'Record observations from this proactive session for future pattern learning. Note what the user was doing, whether you intervened, and any behavioral patterns. This helps your future self make smarter decisions.',
+    inputSchema: z.object({
+      user_activity: z.string().describe('What the user was doing (e.g., "playing Fortnite", "working in VS Code", "idle")'),
+      intervention: z.string().optional().describe('What you did or suggested, if anything'),
+      pattern_notes: z.string().optional().describe('Any behavioral patterns noticed (e.g., "user always games Tuesday evenings", "user studies best in morning")'),
+      urgency_used: z.string().optional().describe('What urgency level you chose and why'),
+    }),
+    outputSchema: z.object({ ok: z.boolean() }),
+    execute: async ({ user_activity, intervention, pattern_notes, urgency_used }) => {
+      const parts = [`Activity: ${user_activity}`];
+      if (intervention) parts.push(`Intervention: ${intervention}`);
+      if (pattern_notes) parts.push(`Patterns: ${pattern_notes}`);
+      if (urgency_used) parts.push(`Urgency: ${urgency_used}`);
+      sessionSummary = parts.join(' | ');
+      return { ok: true };
+    },
+  });
+
+  return {
+    tool: write_session_summary,
+    getSummary: () => sessionSummary,
+  };
+}
+
 // ─── Route Handler ───────────────────────────────────────────────────────────
 
 export async function handleProactiveRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
@@ -325,9 +392,17 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
 
     const kanban = createKanbanTools(taskStates);
 
+    // Create channel selection + session summary tools
+    const enabledChannels = (Array.isArray(notificationChannels) ? notificationChannels : ['app'])
+      .map((c: any) => String(c).toLowerCase().trim()).filter(Boolean);
+    const channelSelector = createChannelSelectionTool(enabledChannels);
+    const sessionSummaryTool = createSessionSummaryTool();
+
     // Build tool set — include kanban, discovery, web search, skills, and headless agents
     const availableTools: Record<string, any> = {
       ...kanban.tools,
+      choose_notification_channel: channelSelector.tool,
+      write_session_summary: sessionSummaryTool.tool,
       web_search,
       deploy_headless_agent: deployHeadlessAgent,
       search_tools,
@@ -403,6 +478,38 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       console.warn('[proactive] Memory context injection failed:', e?.message);
     }
 
+    // Inject environmental context (open windows, time, session summaries)
+    const envContextParts: string[] = [];
+
+    // Time context
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    const dayStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+    envContextParts.push(`Current time: ${timeStr}, ${dayStr}`);
+
+    // Open windows from desktop
+    if (Array.isArray(context.openWindows) && context.openWindows.length > 0) {
+      const winLines = ['[OPEN WINDOWS — user\'s currently visible apps]'];
+      for (const w of (context.openWindows as any[]).slice(0, 20)) {
+        const title = String(w?.title || '').trim();
+        if (title) winLines.push(`- ${title}`);
+      }
+      envContextParts.push(winLines.join('\n'));
+    }
+
+    // Recent session summaries for pattern awareness
+    if (Array.isArray(context.recentSessionSummaries) && context.recentSessionSummaries.length > 0) {
+      const sumLines = ['[RECENT SESSION OBSERVATIONS — patterns from previous wake-ups]'];
+      for (const s of (context.recentSessionSummaries as string[]).slice(0, 5)) {
+        sumLines.push(`- ${String(s).trim()}`);
+      }
+      envContextParts.push(sumLines.join('\n'));
+    }
+
+    if (envContextParts.length > 0) {
+      systemPrompt += `\n\n${envContextParts.join('\n\n')}`;
+    }
+
     // Set up secrets context so get_skill_info can access skills
     const secretBag: Record<string, any> = {};
     secretBag.userId = auth.userId;
@@ -473,8 +580,23 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
         const text = response?.text || '';
         const usage = response?.usage ? normalizeUsage(response.usage) : undefined;
         const { taskUpdates, newTasks, deletedTaskIds } = kanban.getResults();
-        const notifications = (deliverNotifications || sendNotifications)
-          ? await deliverProactiveNotifications(text, notificationChannels, auth.userId)
+
+        // Use agent's channel choice if it called choose_notification_channel,
+        // otherwise fall back to user-configured channels
+        const agentChoice = channelSelector.getChoice();
+        const sessionSummary = sessionSummaryTool.getSummary();
+        let effectiveChannels = notificationChannels;
+
+        if (agentChoice.channel === 'skip') {
+          // Agent decided not to notify — respect that
+          effectiveChannels = [];
+        } else if (agentChoice.channel !== 'app') {
+          // Agent chose a specific elevated channel — use it
+          effectiveChannels = [agentChoice.channel];
+        }
+
+        const notifications = (deliverNotifications || sendNotifications) && effectiveChannels.length > 0
+          ? await deliverProactiveNotifications(text, effectiveChannels, auth.userId)
           : undefined;
 
         writeJson(res, 200, {
@@ -486,6 +608,9 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
           notifications,
           usage,
           modelId: resolvedModelId,
+          agentUrgency: agentChoice.urgency,
+          agentChannel: agentChoice.channel,
+          sessionSummary,
         });
       } catch (e: any) {
         console.error('[proactive] Agent execution failed:', e?.message || e);

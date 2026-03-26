@@ -232,21 +232,49 @@ async function loadKnowledgeFacts(userId: string): Promise<{
   bio: Fact[];
 }> {
   const empty = { identity: [] as Fact[], directives: [] as Fact[], bio: [] as Fact[] };
+
+  // Try desktop bridge first (full knowledge graph access)
   const desktopWs = getDesktopWs(userId);
-  if (!desktopWs) return empty;
+  if (desktopWs) {
+    try {
+      const result = await withClientBridge(desktopWs, async () => {
+        const [identity, directives, bio] = await Promise.all([
+          getIdentityLens().catch(() => [] as Fact[]),
+          getDirectiveLens().catch(() => [] as Fact[]),
+          getBioLens(10).catch(() => [] as Fact[]),
+        ]);
+        return { identity, directives, bio };
+      }) as { identity: Fact[]; directives: Fact[]; bio: Fact[] };
+      return result;
+    } catch (e: any) {
+      console.warn('[voice-context] Desktop bridge failed, trying Supabase fallback:', e?.message);
+    }
+  }
+
+  // Cloud-sync fallback: load knowledge facts directly from Supabase
+  const supabase = getSupabaseService();
+  if (!supabase) return empty;
 
   try {
-    const result = await withClientBridge(desktopWs, async () => {
-      const [identity, directives, bio] = await Promise.all([
-        getIdentityLens().catch(() => [] as Fact[]),
-        getDirectiveLens().catch(() => [] as Fact[]),
-        getBioLens(10).catch(() => [] as Fact[]),
-      ]);
-      return { identity, directives, bio };
-    }) as { identity: Fact[]; directives: Fact[]; bio: Fact[] };
-    return result;
+    const [identityRes, directiveRes, bioRes] = await Promise.all([
+      supabase.from('knowledge_facts')
+        .select('id, entity_id, category, subtype, attribute_key, text, created_at, validity, source')
+        .eq('owner', userId).eq('category', 'identity').eq('validity', true).limit(20),
+      supabase.from('knowledge_facts')
+        .select('id, entity_id, category, subtype, attribute_key, text, created_at, validity, source')
+        .eq('owner', userId).eq('category', 'directive').eq('validity', true).limit(10),
+      supabase.from('knowledge_facts')
+        .select('id, entity_id, category, subtype, attribute_key, text, created_at, validity, source')
+        .eq('owner', userId).eq('category', 'bio').eq('validity', true).limit(10),
+    ]);
+
+    return {
+      identity: (identityRes.data || []) as Fact[],
+      directives: (directiveRes.data || []) as Fact[],
+      bio: (bioRes.data || []) as Fact[],
+    };
   } catch (e: any) {
-    console.warn('[voice-context] Failed to load knowledge facts:', e?.message);
+    console.warn('[voice-context] Supabase knowledge fallback failed:', e?.message);
     return empty;
   }
 }

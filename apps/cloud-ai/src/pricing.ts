@@ -170,7 +170,7 @@ export function estimateStorageCostCredits(hotGb: number, coldBytes: number, hou
   const coldGb = coldBytes / (1024 * 1024 * 1024);
   const hotUsd = (hotGb * STORAGE_PRICING.hotPerGbMonthUsd / hoursPerMonth) * hours;
   const coldUsd = (coldGb * STORAGE_PRICING.coldPerGbMonthUsd / hoursPerMonth) * hours;
-  return creditsFromUsd(hotUsd + coldUsd);
+  return preciseCreditsFromUsd(hotUsd + coldUsd);
 }
 
 function envNumber(key: string, def: number) {
@@ -245,6 +245,16 @@ export function estimateCostUsd(model: string, promptTokens: number, completionT
 
 export function creditsPerUsd(): number {
   return envNumber('CREDITS_PER_USD', 33);
+}
+
+/**
+ * Convert USD to credits without minimum-billable snapping.
+ * This keeps metered storage aligned to its true hourly cost.
+ */
+export function preciseCreditsFromUsd(usd: number): number {
+  const safe = Number(usd || 0);
+  if (!Number.isFinite(safe) || safe <= 0) return 0;
+  return Number((safe * creditsPerUsd()).toFixed(4));
 }
 
 /**

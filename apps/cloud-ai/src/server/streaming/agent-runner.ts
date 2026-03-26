@@ -159,6 +159,7 @@ export function abortAgent(ws: WebSocket): boolean {
 }
 
 export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: WebSocket): Promise<{ text: string } | null> {
+  const _rt0 = Date.now();
   const agentType = message.agent || 'stuard';
   let model = normalizeTier(message.model);
   const integrations = message.integrations || [];
@@ -174,9 +175,11 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
 
   // 1. Auto-Routing Logic
   if (model === 'auto') {
+    const _rStart = Date.now();
     const routingResult = await routeModel({
       messages: [...history, { role: 'user', content: message.text }],
     });
+    console.log(`[perf] routeModel: ${Date.now() - _rStart}ms`);
     model = routingResult.model;
     // Notify UI of routing decision
     send(ws, { type: 'progress', event: 'routing', data: { m: routingResult.modelIndex, l: routingResult.layerIndexes } });
@@ -186,19 +189,24 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
     (typeof message.modelId === 'string' && message.modelId.trim())
       ? message.modelId.trim()
       : pickDefaultModelId(message.modelConfig, model);
+  const _bStart = Date.now();
   const budget = computeBudget(chosenModelId || model);
   pruneToolOutputs(history as any[], budget);
   if (estimateTokens(history as any[]).totalTokens > budget.historyBudget) {
     emergencyTruncate(history as any[], budget);
   }
   const effectiveHistory = getRecentWithinBudget(history as any[], budget);
+  console.log(`[perf] budget+prune: ${Date.now() - _bStart}ms`);
 
   // Notify UI of final model decision (tier + optional concrete provider modelId)
   try {
     send(ws, { type: 'progress', event: 'model', data: { tier: model, modelId: chosenModelId } });
   } catch { }
 
+  console.log(`[perf] runAgent pre-stream total: ${Date.now() - _rt0}ms`);
+
   await withClientBridge(bridgeWs || ws, async () => {
+    const _sStart = Date.now();
     let fullText = '';
     let usage: any = null;
 
@@ -214,11 +222,13 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         } catch { }
       }
 
+      const _agentStart = Date.now();
       const agent = agentType === 'workflow'
         ? getWorkflowAgent(chosenModelId)
         : agentType === 'skill'
           ? getSkillAgent(chosenModelId)
           : getStuardAgent(model as ModelChoice, undefined, integrations, {}, chosenModelId);
+      console.log(`[perf] agent instantiation: ${Date.now() - _agentStart}ms`);
 
       // Build context prefix for paths
       let contextPrefix = '';
@@ -414,12 +424,18 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         const modelPart = (chosenModelId || '').split('/').pop() || '';
         const supportsEffort = /^(o[1-9]|gpt-5(?:$|[-.]))/.test(modelPart);
         if (supportsEffort) {
+          // gpt-5.1 only supports up to 'medium' reasoning effort
+          const maxEffort = /^gpt-5\.1/.test(modelPart) ? 'medium' : 'high';
+          const effortLevels: string[] = ['none', 'low', 'medium', 'high'];
+          const clampedEffort = effortLevels.indexOf(reasoningLevel) > effortLevels.indexOf(maxEffort)
+            ? maxEffort
+            : reasoningLevel;
           streamOptions.providerOptions = {
             ...(streamOptions.providerOptions || {}),
             openai: {
-              reasoningEffort: reasoningLevel,
+              reasoningEffort: clampedEffort,
               // Responses API: expose reasoning summaries as streaming chunks
-              reasoningSummary: reasoningLevel !== 'none' ? 'auto' : undefined,
+              reasoningSummary: clampedEffort !== 'none' ? 'auto' : undefined,
             },
           };
         }
@@ -470,7 +486,9 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
           midTurnCompacted = false;
 
           // Get stream result from Mastra
+          console.log(`[perf] agent.stream() called at +${Date.now() - _rt0}ms`);
           const streamResult: any = await agent.stream(input, streamOptions);
+          console.log(`[perf] agent.stream() returned at +${Date.now() - _rt0}ms`);
 
           // Try to get the async iterable - Mastra uses fullStream
           const stream = streamResult?.fullStream || streamResult;
@@ -480,7 +498,9 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
             // Stream is async iterable - process chunks
             let chunkCount = 0;
             let reasoningChunks = 0;
+            let _firstChunk = true;
             for await (const chunk of stream) {
+              if (_firstChunk) { console.log(`[perf] first stream chunk at +${Date.now() - _rt0}ms`); _firstChunk = false; }
               chunkCount++;
               if (chunk?.type === 'finish') {
                 const finishUsage = chunk?.usage ?? chunk?.payload?.usage ?? chunk?.payload;

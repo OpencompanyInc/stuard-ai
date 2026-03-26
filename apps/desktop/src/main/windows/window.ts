@@ -1346,6 +1346,12 @@ export function showWindow() {
   try {
     win.webContents.send("overlay:showed");
   } catch {}
+
+  // Show keyboard shortcut tip popup (separate window, top-right)
+  try {
+    const { maybeShowFirstToggleTip } = require("./tips-window");
+    maybeShowFirstToggleTip();
+  } catch {}
 }
 
 export function hideWindow() {

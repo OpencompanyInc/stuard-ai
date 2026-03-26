@@ -9,6 +9,7 @@ import { execCallWorkflow, execInvokeWorkflow, execTestRunSteps, execListLocalWo
 import { execCallWorkspaceFunction, execListWorkspaceFunctions } from './handlers/workspace-functions';
 import { execWorkspaceReadFile, execWorkspaceWriteFile, execWorkspaceDeleteFile, execWorkspaceListFiles, execWorkspaceCreateFolder, execWorkspaceGetInfo } from './handlers/workspace-files';
 import { execProactiveTaskCreate, execProactiveTaskList, execProactiveTaskUpdate, execProactiveTaskDelete } from './handlers/proactive';
+import { skills_save, skills_list } from '../skills';
 import {
   execCanvasList,
   execCanvasRead,
@@ -17,7 +18,7 @@ import {
   execCanvasDelete,
 } from './handlers/canvas';
 import { execOllamaStatus, execOllamaStart, execOllamaChat, execOllamaGenerate, execOllamaVision, execOllamaEmbeddings, execOllamaModels } from './handlers/ollama';
-import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseExecuteScript, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, execBrowserUseSyncChrome, execBrowserUseListChromeProfiles, execBrowserUseHover, execBrowserUseSelectOption, execBrowserUseGetDropdownOptions, execBrowserUseGetInteractiveElements, execBrowserUseFillForm, execBrowserUseUploadFile, execBrowserUseWaitFor, execBrowserUseConnectedProfiles, execBrowserUseSwitchProfile, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse } from './handlers/browser-use';
+import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseExecuteScript, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, execBrowserUseHover, execBrowserUseSelectOption, execBrowserUseGetDropdownOptions, execBrowserUseGetInteractiveElements, execBrowserUseFillForm, execBrowserUseUploadFile, execBrowserUseWaitFor, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse } from './handlers/browser-use';
 import {
   execBrowserGetContent,
   execBrowserClickElement,
@@ -171,8 +172,6 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'browser_use_scroll') return execBrowserUseScroll(args, ctx);
       if (toolName === 'browser_use_tabs') return execBrowserUseTabs(args, ctx);
       if (toolName === 'browser_use_cookies') return execBrowserUseCookies(args, ctx);
-      if (toolName === 'browser_use_sync_chrome') return execBrowserUseSyncChrome(args, ctx);
-      if (toolName === 'browser_use_list_chrome_profiles') return execBrowserUseListChromeProfiles(args, ctx);
       if (toolName === 'browser_use_hover') return execBrowserUseHover(args, ctx);
       if (toolName === 'browser_use_select_option') return execBrowserUseSelectOption(args, ctx);
       if (toolName === 'browser_use_get_dropdown_options') return execBrowserUseGetDropdownOptions(args, ctx);
@@ -180,12 +179,44 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'browser_use_fill_form') return execBrowserUseFillForm(args, ctx);
       if (toolName === 'browser_use_upload_file') return execBrowserUseUploadFile(args, ctx);
       if (toolName === 'browser_use_wait_for') return execBrowserUseWaitFor(args, ctx);
-      if (toolName === 'browser_use_connected_profiles') return execBrowserUseConnectedProfiles(args, ctx);
-      if (toolName === 'browser_use_switch_profile') return execBrowserUseSwitchProfile(args, ctx);
       if (toolName === 'proactive_task_list') return execProactiveTaskList(args, ctx);
       if (toolName === 'proactive_task_update') return execProactiveTaskUpdate(args, ctx);
       if (toolName === 'proactive_task_create') return execProactiveTaskCreate(args, ctx);
       if (toolName === 'proactive_task_delete') return execProactiveTaskDelete(args, ctx);
+
+      // Auto-skill storage (from cloud-ai auto-skills pipeline)
+      if (toolName === 'auto_skill_store') {
+        try {
+          const skill = args?.skill;
+          if (!skill || typeof skill !== 'object') return { ok: false, error: 'skill object required' };
+          // Ensure required fields
+          const now = new Date().toISOString();
+          const fullSkill = {
+            id: skill.id || `auto_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            name: skill.name || 'Auto-Generated Skill',
+            description: skill.description || '',
+            icon: skill.icon || 'Sparkles',
+            color: skill.color || 'purple',
+            trigger: skill.trigger || '',
+            steps: Array.isArray(skill.steps) ? skill.steps : [],
+            isActive: skill.isActive ?? false,
+            createdAt: now,
+            updatedAt: now,
+            ...(skill.source ? { source: skill.source } : {}),
+            ...(skill.metadata ? { metadata: skill.metadata } : {}),
+          };
+          const result = skills_save(fullSkill);
+          if (result.ok) {
+            console.log(`[auto-skill] Stored skill "${fullSkill.name}" (${fullSkill.id})`);
+          }
+          return { ...result, skillId: fullSkill.id };
+        } catch (e: any) {
+          return { ok: false, error: e?.message || 'auto_skill_store_failed' };
+        }
+      }
+      if (toolName === 'auto_skill_list') {
+        return skills_list();
+      }
 
       // ask_user — blocking interactive questionnaire rendered in chat overlay
       if (toolName === 'ask_user') {

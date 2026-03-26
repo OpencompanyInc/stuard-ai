@@ -30,6 +30,7 @@ import { useSpeechToText } from "./hooks/useSpeechToText";
 import { usePlannerData } from "./hooks/usePlannerData";
 import { LauncherView } from "./components/LauncherView";
 import { ChatView } from "./components/ChatView";
+import { BillingCreditNotice } from "./components/chat-view/BillingCreditNotice";
 import {
   Mic,
   Plus,
@@ -268,6 +269,45 @@ export default function App() {
   const [contextPaths, setContextPaths] = useState<ContextItem[]>([]);
   const [showMiniOutput, setShowMiniOutput] = useState(true);
   const activeConversationIdRef = useRef<string | null>(null);
+  const [creditSummary, setCreditSummary] = useState<null | {
+    plan?: string;
+    limit?: number;
+    used?: number;
+    remaining?: number;
+    unlimited?: boolean;
+    addonRemaining?: number;
+    currentPeriodStart?: string;
+    currentPeriodEnd?: string;
+  }>(null);
+  const [billingCustomer, setBillingCustomer] = useState<null | {
+    id: string;
+    email: string;
+  }>(null);
+  const [billingProducts, setBillingProducts] = useState<
+    Array<{
+      id: string;
+      name: string;
+      description: string;
+      isRecurring: boolean;
+      prices: Array<{
+        id: string;
+        amount: number;
+        currency: string;
+        type: string;
+        recurringInterval?: string;
+      }>;
+      benefits: string[];
+    }>
+  >([]);
+  const [billingUserEmail, setBillingUserEmail] = useState<string | null>(null);
+  const [billingUserId, setBillingUserId] = useState<string | null>(null);
+  const [creditNoticeLoading, setCreditNoticeLoading] = useState(false);
+  const [creditNoticeError, setCreditNoticeError] = useState<string | null>(
+    null,
+  );
+  const [dismissedCreditNoticeKey, setDismissedCreditNoticeKey] = useState<
+    string | null
+  >(null);
 
   const overlayModeRef = useRef<"compact" | "sidebar" | "window">(overlayMode);
   const prevOverlayModeRef = useRef<"compact" | "sidebar" | "window">(
@@ -960,6 +1000,164 @@ export default function App() {
       } catch {}
     };
   }, []);
+
+  const loadCreditNoticeData = useCallback(async () => {
+    if (!signedIn || !accessToken) {
+      setCreditSummary(null);
+      setBillingCustomer(null);
+      setBillingProducts([]);
+      setBillingUserEmail(null);
+      setBillingUserId(null);
+      setCreditNoticeError(null);
+      return;
+    }
+
+    setCreditNoticeLoading(true);
+    setCreditNoticeError(null);
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const email = session?.user?.email || null;
+      const userId = session?.user?.id || null;
+      setBillingUserEmail(email);
+      setBillingUserId(userId);
+
+      const cloudBase = String((window as any).__CLOUD_AI_HTTP__ || "").trim();
+      const [creditsPayload, customerResult, productsResult] = await Promise.all([
+        (async () => {
+          if (!cloudBase) return null;
+          const resp = await fetch(`${cloudBase}/v1/credits`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          const json = await resp.json().catch(() => null);
+          if (!resp.ok || !json || typeof json !== "object") return null;
+          return json as any;
+        })(),
+        email ? window.desktopAPI?.billingGetCustomer?.(email) : null,
+        window.desktopAPI?.billingListProducts?.(),
+      ]);
+
+      if (creditsPayload) {
+        setCreditSummary({
+          plan: creditsPayload.plan,
+          limit: creditsPayload.limit,
+          used: creditsPayload.used,
+          remaining: creditsPayload.remaining,
+          unlimited: creditsPayload.unlimited,
+          addonRemaining: creditsPayload.addonRemaining,
+          currentPeriodStart: creditsPayload.currentPeriodStart,
+          currentPeriodEnd: creditsPayload.currentPeriodEnd,
+        });
+      } else {
+        setCreditSummary(null);
+      }
+
+      if (customerResult?.ok) {
+        setBillingCustomer(customerResult.customer || null);
+      } else {
+        setBillingCustomer(null);
+      }
+
+      if (productsResult?.ok && Array.isArray(productsResult.products)) {
+        setBillingProducts(productsResult.products);
+      } else {
+        setBillingProducts([]);
+      }
+    } catch (err: any) {
+      setCreditSummary(null);
+      setBillingCustomer(null);
+      setBillingProducts([]);
+      setCreditNoticeError(
+        String(err?.message || "Failed to load billing details."),
+      );
+    } finally {
+      setCreditNoticeLoading(false);
+    }
+  }, [signedIn, accessToken]);
+
+  useEffect(() => {
+    loadCreditNoticeData();
+  }, [loadCreditNoticeData, lastError?.code]);
+
+  const creditNoticeMode = useMemo<"low" | "exceeded" | null>(() => {
+    if (!signedIn) return null;
+    if (lastError?.code === "monthly_credit_limit_exceeded") return "exceeded";
+    if (!creditSummary || creditSummary.unlimited) return null;
+    const limit = Number(creditSummary.limit || 0);
+    const remaining = Number(
+      creditSummary.remaining ??
+        Math.max(0, limit - Number(creditSummary.used || 0)),
+    );
+    if (!Number.isFinite(limit) || limit <= 0) return null;
+    if (remaining <= 0) return "exceeded";
+    if (remaining / limit <= 0.1) return "low";
+    return null;
+  }, [signedIn, lastError?.code, creditSummary]);
+
+  const creditNoticeKey = useMemo(() => {
+    if (!creditNoticeMode) return null;
+    return `${creditNoticeMode}:${creditSummary?.currentPeriodEnd || "current-period"}`;
+  }, [creditNoticeMode, creditSummary?.currentPeriodEnd]);
+
+  useEffect(() => {
+    if (!creditNoticeKey) {
+      setDismissedCreditNoticeKey(null);
+      return;
+    }
+    if (
+      dismissedCreditNoticeKey &&
+      dismissedCreditNoticeKey !== creditNoticeKey
+    ) {
+      setDismissedCreditNoticeKey(null);
+    }
+  }, [creditNoticeKey, dismissedCreditNoticeKey]);
+
+  const showCreditNotice =
+    !!creditNoticeMode && creditNoticeKey !== dismissedCreditNoticeKey;
+
+  const handleOpenPricing = useCallback(async () => {
+    await (window as any).desktopAPI?.openExternal?.("https://stuard.ai/pricing");
+  }, []);
+
+  const handleManageBilling = useCallback(async () => {
+    if (!billingCustomer?.id) {
+      throw new Error("Billing is not connected yet.");
+    }
+    const result = await window.desktopAPI?.billingOpenPortal?.(
+      billingCustomer.id,
+    );
+    if (!result?.ok) {
+      throw new Error(result?.error || "Failed to open billing portal.");
+    }
+  }, [billingCustomer?.id]);
+
+  const handleBuyCredits = useCallback(async () => {
+    if (!billingUserEmail) {
+      throw new Error("You need to sign in before buying credits.");
+    }
+    const addonProduct = [...billingProducts]
+      .filter((product) => !product.isRecurring)
+      .sort((a, b) => {
+        const aPrice = Number(a.prices?.[0]?.amount || 0);
+        const bPrice = Number(b.prices?.[0]?.amount || 0);
+        return aPrice - bPrice;
+      })[0];
+
+    if (!addonProduct) {
+      throw new Error("No credit packs are available right now.");
+    }
+
+    const result = await window.desktopAPI?.billingPurchaseCredits?.({
+      productId: addonProduct.id,
+      email: billingUserEmail,
+      userId: billingUserId || undefined,
+    });
+    if (!result?.ok) {
+      throw new Error(result?.error || "Failed to open credit checkout.");
+    }
+  }, [billingProducts, billingUserEmail, billingUserId]);
 
   // Conversation Title
   useEffect(() => {
@@ -2119,7 +2317,13 @@ export default function App() {
     handleAttachImages,
   ]);
 
-  const hasMessages = messages.length > 0;
+  const hasMessages =
+    messages.length > 0 ||
+    !!(currentResponse || "").trim() ||
+    !!(currentReasoning || "").trim() ||
+    currentToolCalls.length > 0 ||
+    ai.phase === "responding" ||
+    ai.phase === "tool";
   const showResizeGrips = overlayMode === "sidebar" || overlayMode === "window";
 
   const lastAssistantMessage = useMemo(() => {
@@ -2266,30 +2470,24 @@ export default function App() {
                   className="absolute top-14 right-3 z-50 pointer-events-none"
                 />
 
-                {/* Error Notifications */}
-                {lastError?.code === "monthly_credit_limit_exceeded" && (
-                  <div className="absolute left-4 right-4 bottom-4 z-50 animate-in slide-in-from-bottom-2 duration-300">
-                    <div className="rounded-lg border border-rose-500/30 bg-black/90 backdrop-blur-md p-4">
-                      <h3 className="text-rose-400 font-semibold text-sm">
-                        Monthly Credits Exceeded
-                      </h3>
-                      <p className="text-white/70 text-xs mt-1 mb-3">
-                        You have used all your credits for this month.
-                      </p>
-                      <button
-                        onClick={() => {
-                          try {
-                            (window as any).desktopAPI?.openExternal?.(
-                              "https://stuard.ai/pricing",
-                            );
-                          } catch {}
-                        }}
-                        className="w-full py-1.5 bg-rose-500 hover:bg-rose-400 rounded text-xs text-black font-bold"
-                      >
-                        Upgrade Plan
-                      </button>
-                    </div>
-                  </div>
+                {/* Credit Notice */}
+                {showCreditNotice && creditNoticeMode && (
+                  <BillingCreditNotice
+                    mode={creditNoticeMode}
+                    summary={creditSummary}
+                    customer={billingCustomer}
+                    products={billingProducts}
+                    loading={creditNoticeLoading}
+                    error={creditNoticeError}
+                    onDismiss={() => {
+                      if (creditNoticeKey) {
+                        setDismissedCreditNoticeKey(creditNoticeKey);
+                      }
+                    }}
+                    onOpenPricing={handleOpenPricing}
+                    onManageBilling={handleManageBilling}
+                    onBuyCredits={handleBuyCredits}
+                  />
                 )}
 
                 {/* Session Expired Notification */}

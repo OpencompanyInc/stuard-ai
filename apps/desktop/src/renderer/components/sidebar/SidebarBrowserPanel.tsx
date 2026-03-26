@@ -66,7 +66,7 @@ export const SidebarBrowserPanel: React.FC<SidebarBrowserPanelProps> = ({ classN
   const [recentActivity, setRecentActivity] = useState(false);
   const activityResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Screenshot mirror state
+  // Screenshot mirror state — double-buffered to prevent flicker
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
   const [pageUrl, setPageUrl] = useState('');
   const [pageTitle, setPageTitle] = useState('');
@@ -76,6 +76,9 @@ export const SidebarBrowserPanel: React.FC<SidebarBrowserPanelProps> = ({ classN
   const imgRef = useRef<HTMLImageElement>(null);
   const mirrorIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isMirroringRef = useRef(false);
+  // Double-buffer: pre-load new screenshot offscreen before swapping
+  const pendingImgRef = useRef<HTMLImageElement | null>(null);
+  const prevBlobUrlRef = useRef<string | null>(null);
 
   const api = (window as any).desktopAPI;
 
@@ -118,14 +121,29 @@ export const SidebarBrowserPanel: React.FC<SidebarBrowserPanelProps> = ({ classN
     };
   }, [api]);
 
-  // --- Screenshot mirror polling ---
+  // --- Screenshot mirror polling (double-buffered) ---
   const captureScreenshot = useCallback(async () => {
     if (isMirroringRef.current) return; // skip if previous capture still in flight
     isMirroringRef.current = true;
     try {
       const result = await api?.browserMirrorScreenshot?.(activeSessionId, 55);
       if (result?.ok && result.dataUrl) {
-        setScreenshotUrl(result.dataUrl);
+        // Double-buffer: load the new image offscreen first, then swap
+        const dataUrl: string = result.dataUrl;
+        const img = new Image();
+        img.onload = () => {
+          // Revoke previous blob URL if we created one
+          if (prevBlobUrlRef.current) {
+            try { URL.revokeObjectURL(prevBlobUrlRef.current); } catch {}
+            prevBlobUrlRef.current = null;
+          }
+          setScreenshotUrl(dataUrl);
+          pendingImgRef.current = null;
+        };
+        img.onerror = () => { pendingImgRef.current = null; };
+        pendingImgRef.current = img;
+        img.src = dataUrl;
+
         if (result.url) { setPageUrl(result.url); if (!interacting) setAddress(result.url); }
         if (result.title) setPageTitle(result.title);
         if (result.viewportWidth && result.viewportHeight) {
@@ -144,8 +162,8 @@ export const SidebarBrowserPanel: React.FC<SidebarBrowserPanelProps> = ({ classN
 
     // Immediate first capture
     void captureScreenshot();
-    // Poll: faster when user is interacting or agent is active
-    const ms = (recentActivity || interacting) ? 500 : 1000;
+    // Poll: moderate pace to avoid flicker — the double-buffer handles smoothness
+    const ms = (recentActivity || interacting) ? 800 : 1500;
     mirrorIntervalRef.current = setInterval(() => void captureScreenshot(), ms);
 
     return () => {
@@ -164,9 +182,8 @@ export const SidebarBrowserPanel: React.FC<SidebarBrowserPanelProps> = ({ classN
 
     setInteracting(true);
     await api?.browserMirrorClickAt?.(activeSessionId, x, y, 'click');
-    // Refresh screenshot immediately after click
-    setTimeout(() => void captureScreenshot(), 200);
-    setTimeout(() => void captureScreenshot(), 600);
+    // Single delayed capture — polling handles the rest
+    setTimeout(() => void captureScreenshot(), 350);
     setTimeout(() => setInteracting(false), 3000);
   }, [activeSessionId, api, captureScreenshot, isRunning, viewportSize]);
 
@@ -177,8 +194,8 @@ export const SidebarBrowserPanel: React.FC<SidebarBrowserPanelProps> = ({ classN
     const direction = e.deltaY > 0 ? 'down' : 'up';
     const amount = Math.min(800, Math.max(100, Math.abs(e.deltaY) * 2));
     api?.browserMirrorScroll?.(activeSessionId, direction, amount);
-    // Refresh after scroll
-    setTimeout(() => void captureScreenshot(), 300);
+    // Single delayed capture — polling handles the rest
+    setTimeout(() => void captureScreenshot(), 400);
   }, [activeSessionId, api, captureScreenshot, isRunning]);
 
   // --- Keyboard forwarding (when mirror is focused) ---
@@ -232,8 +249,7 @@ export const SidebarBrowserPanel: React.FC<SidebarBrowserPanelProps> = ({ classN
         timeout: 60000,
         session_id: activeSessionId,
       });
-      setTimeout(() => void captureScreenshot(), 500);
-      setTimeout(() => void captureScreenshot(), 1500);
+      setTimeout(() => void captureScreenshot(), 600);
       setTimeout(() => setInteracting(false), 3000);
     }
   }, [activeSessionId, address, api, captureScreenshot, isRunning]);
@@ -354,7 +370,7 @@ export const SidebarBrowserPanel: React.FC<SidebarBrowserPanelProps> = ({ classN
               onClick={handleMirrorClick}
               draggable={false}
               className="max-w-full max-h-full object-contain select-none"
-              style={{ imageRendering: 'auto' }}
+              style={{ imageRendering: 'auto', willChange: 'contents' }}
             />
           </div>
         ) : isRunning && !screenshotUrl ? (

@@ -26,9 +26,16 @@ import {
   Trash2,
   Tv,
   Upload,
+  Wand2,
 } from "lucide-react";
 import { DiscoverTips } from "./DiscoverTips";
-import { formatRelativeTime } from "./Skills";
+import {
+  formatRelativeTime,
+  SkillsLibrary,
+  SkillEditor,
+  SKILL_COLORS,
+  type Skill,
+} from "./Skills";
 import { useWorkflowTheme } from "../WorkflowThemeContext";
 import { getValidAccessToken } from "../../auth/authManager";
 import {
@@ -38,7 +45,7 @@ import {
   type MarketplaceWorkflow,
 } from "../../utils/cloud";
 
-type ActiveView = "workflows" | "deployed" | "shared" | "marketplace";
+type ActiveView = "workflows" | "deployed" | "shared" | "marketplace" | "skills";
 type DeployFilter = "all" | "running" | "idle";
 
 interface WorkflowItem {
@@ -105,6 +112,15 @@ export function WorkflowLauncherV2({
   const [featuredItems, setFeaturedItems] = useState<MarketplaceWorkflow[]>([]);
   const [marketplaceLoading, setMarketplaceLoading] = useState(false);
   const [marketplaceError, setMarketplaceError] = useState<string | null>(null);
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [skillSearch, setSkillSearch] = useState("");
+  const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
+
+  useEffect(() => {
+    window.desktopAPI?.skillsList?.().then((res: any) => {
+      if (res?.ok && Array.isArray(res.skills)) setSkills(res.skills as Skill[]);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -255,6 +271,45 @@ export function WorkflowLauncherV2({
     setSelectedIndex(0);
   }, [activeView, deployFilter, marketplaceCategory, marketplaceSearch, search, visibleItems.length]);
 
+  const handleCreateSkill = () => {
+    const newSkill: Skill = {
+      id: `skill_${Date.now()}`,
+      name: 'New Skill',
+      description: 'Describe what this skill does...',
+      icon: 'Wand2',
+      color: SKILL_COLORS[Math.floor(Math.random() * SKILL_COLORS.length)],
+      trigger: 'When the user asks to...',
+      steps: [{ id: `step_${Date.now()}`, type: 'prompt', label: 'Step 1', content: 'Enter instructions here...' }],
+      isActive: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    setEditingSkill(newSkill);
+  };
+
+  const handleSaveSkill = (skill: Skill) => {
+    const updated = { ...skill, updatedAt: new Date().toISOString() };
+    window.desktopAPI?.skillsSave?.(updated).catch(() => {});
+    const exists = skills.find(s => s.id === skill.id);
+    if (exists) {
+      setSkills(skills.map(s => s.id === skill.id ? updated : s));
+    } else {
+      setSkills([...skills, updated]);
+    }
+    setEditingSkill(null);
+  };
+
+  const handleDeleteSkill = (id: string) => {
+    if (!confirm('Delete this skill?')) return;
+    window.desktopAPI?.skillsDelete?.(id).catch(() => {});
+    setSkills(skills.filter(s => s.id !== id));
+  };
+
+  const handleToggleSkill = (id: string) => {
+    window.desktopAPI?.skillsToggle?.(id).catch(() => {});
+    setSkills(skills.map(s => s.id === id ? { ...s, isActive: !s.isActive } : s));
+  };
+
   const executeAction = useCallback(
     async (key: string, action?: () => Promise<void>) => {
       if (!action) return;
@@ -301,7 +356,9 @@ export function WorkflowLauncherV2({
   }, [featuredItems, marketplaceCategory, marketplaceItems, marketplaceSearch]);
 
   const title =
-    activeView === "marketplace"
+    activeView === "skills"
+      ? "Skills"
+      : activeView === "marketplace"
       ? "Marketplace"
       : activeView === "shared"
       ? "Shared Workflows"
@@ -314,7 +371,9 @@ export function WorkflowLauncherV2({
       : "My Workflows";
 
   const subtitle =
-    activeView === "marketplace"
+    activeView === "skills"
+      ? `${skills.length} skill${skills.length !== 1 ? "s" : ""} · ${skills.filter(s => s.isActive).length} active`
+      : activeView === "marketplace"
       ? "Discover community-built automations with theme-aware browsing."
       : activeView === "shared"
       ? `${sharedItems.length} imported or synced workflows`
@@ -324,6 +383,10 @@ export function WorkflowLauncherV2({
 
   const workspaceLabel = activeView === "marketplace" ? "Community Library" : "Your Workspace";
   const showCreateCard = activeView === "workflows" && !search.trim();
+
+  if (editingSkill) {
+    return <SkillEditor skill={editingSkill} onSave={handleSaveSkill} onCancel={() => setEditingSkill(null)} />;
+  }
 
   return (
     <div className="flex h-screen w-screen overflow-hidden wf-bg wf-fg font-sans">
@@ -336,6 +399,7 @@ export function WorkflowLauncherV2({
 
         <div className="rounded-[24px] p-3 flex-1 no-drag overflow-y-auto scrollbar-minimal shadow-sm border space-y-1 wf-bg-elevated wf-border">
           <SideNavItem d={d} active={activeView === "workflows"} icon={Layers} label="My Workflows" onClick={() => setActiveView("workflows")} />
+          <SideNavItem d={d} active={activeView === "skills"} icon={Wand2} label="Skills" onClick={() => setActiveView("skills")} />
           <SideNavItem d={d} active={activeView === "deployed"} icon={Rocket} label="Deployed Workflows" onClick={() => setActiveView("deployed")} />
           <SideNavItem d={d} active={activeView === "shared"} icon={Share2} label="Shared Workflows" onClick={() => setActiveView("shared")} />
           <SideNavItem d={d} active={activeView === "marketplace"} icon={Store} label="Marketplace" onClick={() => setActiveView("marketplace")} accent />
@@ -371,19 +435,19 @@ export function WorkflowLauncherV2({
               <input
                 ref={inputRef}
                 type="text"
-                value={activeView === "marketplace" ? marketplaceSearch : search}
-                onChange={(e) => (activeView === "marketplace" ? setMarketplaceSearch(e.target.value) : setSearch(e.target.value))}
+                value={activeView === "marketplace" ? marketplaceSearch : activeView === "skills" ? skillSearch : search}
+                onChange={(e) => (activeView === "marketplace" ? setMarketplaceSearch(e.target.value) : activeView === "skills" ? setSkillSearch(e.target.value) : setSearch(e.target.value))}
                 onKeyDown={handleKeyDown}
-                placeholder={activeView === "marketplace" ? "Search marketplace..." : activeView === "deployed" ? "Search deployed workflows..." : activeView === "shared" ? "Search shared workflows..." : "Search workflows..."}
+                placeholder={activeView === "skills" ? "Search skills..." : activeView === "marketplace" ? "Search marketplace..." : activeView === "deployed" ? "Search deployed workflows..." : activeView === "shared" ? "Search shared workflows..." : "Search workflows..."}
                 className="w-full rounded-full pl-11 pr-4 py-3 text-[14px] focus:outline-none focus:border-blue-500/60 focus:ring-4 focus:ring-blue-500/15 transition-all border shadow-sm"
                 style={{ background: "var(--wf-input-bg)", borderColor: "var(--wf-input-border)", color: "var(--wf-fg)" }}
               />
             </div>
             <button
               type="button"
-              disabled={!selectedItem || activeView === "marketplace"}
+              disabled={!selectedItem || activeView === "marketplace" || activeView === "skills"}
               onClick={() => selectedItem ? onSelect(selectedItem.id) : undefined}
-              className={`rounded-[14px] border px-4 py-3 text-[13px] font-medium transition-all ${!selectedItem || activeView === "marketplace" ? "opacity-40 cursor-not-allowed" : ""} ${d ? "border-white/10 bg-white/[0.03] text-white/80 hover:bg-white/[0.06]" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+              className={`rounded-[14px] border px-4 py-3 text-[13px] font-medium transition-all ${!selectedItem || activeView === "marketplace" || activeView === "skills" ? "opacity-40 cursor-not-allowed" : ""} ${d ? "border-white/10 bg-white/[0.03] text-white/80 hover:bg-white/[0.06]" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
             >
               <span className="flex items-center gap-2">
                 <ExternalLink className="w-4 h-4" />
@@ -393,7 +457,7 @@ export function WorkflowLauncherV2({
           </div>
         </div>
 
-        <div className="px-10 flex gap-3 overflow-x-auto shrink-0 pb-8 scrollbar-minimal">
+        {activeView !== "skills" && <div className="px-10 flex gap-3 overflow-x-auto shrink-0 pb-8 scrollbar-minimal">
           {activeView === "marketplace" ? (
             <>
               <FilterChip d={d} active={marketplaceCategory === "all"} label="All" icon={LayoutGrid} onClick={() => setMarketplaceCategory("all")} />
@@ -412,10 +476,20 @@ export function WorkflowLauncherV2({
               <FilterChip d={d} label="Media" icon={Tv} />
             </>
           )}
-        </div>
+        </div>}
 
         <div className="flex-1 overflow-y-auto px-10 pb-10 scrollbar-minimal">
-          {activeView !== "marketplace" && loading ? (
+          {activeView === "skills" ? (
+            <SkillsLibrary
+              skills={skills}
+              search={skillSearch}
+              onSearchChange={setSkillSearch}
+              onCreateSkill={handleCreateSkill}
+              onEditSkill={setEditingSkill}
+              onDeleteSkill={handleDeleteSkill}
+              onToggleSkill={handleToggleSkill}
+            />
+          ) : activeView !== "marketplace" && loading ? (
             <div className="py-12 max-w-2xl mx-auto flex flex-col items-center gap-5">
               <div className={`w-8 h-8 border-2 rounded-full animate-spin ${d ? "border-white/10 border-t-blue-400" : "border-slate-200 border-t-blue-500"}`} />
               <DiscoverTips

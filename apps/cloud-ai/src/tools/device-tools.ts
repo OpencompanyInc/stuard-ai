@@ -360,7 +360,6 @@ export {
   add_to_space_path,
   get_space_tree,
   create_space,
-  get_memory_stats,
   add_source_to_space,
   add_note_to_space,
   add_code_snippet_to_space,

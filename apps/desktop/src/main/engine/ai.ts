@@ -21,9 +21,16 @@ export async function aiDecideNext(
       },
     };
 
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (engineCtx.accessToken) {
+      headers.Authorization = `Bearer ${engineCtx.accessToken}`;
+    }
+
     const resp = await net.fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(body),
     });
 

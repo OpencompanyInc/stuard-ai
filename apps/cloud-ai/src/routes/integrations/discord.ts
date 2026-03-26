@@ -11,6 +11,7 @@ import {
   DISCORD_REDIRECT_PATH,
   INTEGRATION_STATE_SECRET,
 } from '../../utils/config';
+import { getDiscordBotClient } from '../../services/discord-bot';
 
 // Valid Discord OAuth2 scopes
 // See https://discord.com/developers/docs/topics/oauth2#shared-resources-oauth2-scopes
@@ -47,12 +48,19 @@ export async function handleDiscordRoutes(req: IncomingMessage, res: ServerRespo
       let connected = false;
       let acc: any = null;
       try { acc = await getExternalAccount(userId, 'discord', profileLabel); connected = !!acc; } catch { }
+
+      // Include bot DM link so the frontend can show a "Chat with bot" button
+      const botClient = getDiscordBotClient();
+      const botId = botClient?.user?.id || DISCORD_CLIENT_ID || '';
+      const botDmLink = botId ? `https://discord.com/users/${botId}` : null;
+
       const body = JSON.stringify({
         ok: true,
         connected,
         profile: acc?.profile_label || null,
         isDefault: acc?.is_default ?? null,
         email: acc?.account_email || null,
+        botDmLink,
       });
       res.writeHead(200, {
         'Content-Type': 'application/json',
@@ -225,7 +233,15 @@ export async function handleDiscordRoutes(req: IncomingMessage, res: ServerRespo
         res.end();
         return true;
       }
-      res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/success?provider=discord&profile=${encodeURIComponent(profileLabel)}`, 'Cache-Control': 'no-store' });
+      // Include the bot's user ID in the redirect so the frontend can show a "Chat with bot" link
+      const botClient = getDiscordBotClient();
+      const botUserId = botClient?.user?.id || DISCORD_CLIENT_ID || '';
+      const successParams = new URLSearchParams({
+        provider: 'discord',
+        profile: profileLabel,
+        ...(botUserId ? { bot_id: botUserId } : {}),
+      });
+      res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/success?${successParams.toString()}`, 'Cache-Control': 'no-store' });
       res.end();
       return true;
     } catch (e: any) {

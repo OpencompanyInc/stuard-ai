@@ -28,3 +28,11 @@ export {
   type ContextLenses,
   type BuiltContext,
 } from './retrieval';
+
+export {
+  analyzeForAutoSkill,
+  type AutoSkillDraft,
+  type AutoSkillStep,
+  type AutoSkillToolUsage,
+  type AutoSkillInjection,
+} from './auto-skills';

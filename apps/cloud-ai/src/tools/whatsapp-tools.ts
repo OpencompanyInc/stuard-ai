@@ -10,6 +10,7 @@ import { waSendText, waSendMedia, waSendReaction, waMarkRead, waUploadMediaFromU
 import { messagingCreditCost } from '../pricing';
 import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
 import { uploadUserFileBuffer } from '../services/cold-storage';
+import { fetchFromWhatsApp, transcribeAudio } from '../media';
 
 async function requireUserId(): Promise<string> {
   const secrets = getBridgeSecrets();
@@ -366,43 +367,16 @@ export const whatsapp_transcribe_voice_note = createTool({
   execute: async (input) => {
     try {
       await requireUserId();
-      const { WA_ACCESS_TOKEN } = await import('../utils/config');
-      if (!WA_ACCESS_TOKEN) throw new Error('WhatsApp not configured on server.');
 
-      const info = await waGetMediaUrl(String(input.media_id));
-      const mediaRes = await fetch(info.url, { headers: { 'Authorization': `Bearer ${WA_ACCESS_TOKEN}` } });
-      if (!mediaRes.ok) throw new Error(`Failed to download voice note (${mediaRes.status})`);
-      const buffer = Buffer.from(await mediaRes.arrayBuffer());
-
-      // Save to temp file for transcription
-      const dir = join(tmpdir(), 'stuard-wa-media');
-      await mkdir(dir, { recursive: true }).catch(() => {});
-      const ext = info.mimeType.includes('ogg') ? 'ogg' : info.mimeType.includes('mp4') ? 'm4a' : 'mp3';
-      const tempPath = join(dir, `transcribe_${randomUUID().slice(0, 8)}.${ext}`);
-      await writeFile(tempPath, buffer);
-
-      // Transcribe using OpenAI Whisper API
-      const openaiKey = process.env.OPENAI_API_KEY || '';
-      if (!openaiKey) throw new Error('OPENAI_API_KEY not configured for transcription.');
-
-      const form = new FormData();
-      form.append('file', new Blob([buffer], { type: info.mimeType }), `audio.${ext}`);
-      form.append('model', 'whisper-1');
-      if (input.language) form.append('language', input.language);
-
-      const whisperRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${openaiKey}` },
-        body: form,
-      });
-      if (!whisperRes.ok) throw new Error(`Transcription failed (${whisperRes.status})`);
-      const whisperJson = await whisperRes.json() as any;
+      // Use shared media fetcher + transcription from media module
+      const { buffer, mimeType } = await fetchFromWhatsApp(String(input.media_id));
+      const result = await transcribeAudio(buffer, mimeType, input.language);
 
       return {
         ok: true,
-        transcript: whisperJson.text || '',
-        language: whisperJson.language,
-        duration: whisperJson.duration,
+        transcript: result.transcript,
+        language: result.language,
+        duration: result.duration,
       };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };

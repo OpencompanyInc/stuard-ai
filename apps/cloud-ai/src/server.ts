@@ -6,8 +6,8 @@ import { getSkillAgent, SKILL_SYSTEM_PROMPT, setSessionSkill, clearSessionSkill 
 import { setSessionWorkflow, clearSessionWorkflow } from './tools/workflow';
 import { withClientBridge, handleClientToolMessage } from './tools/bridge';
 import { routeModel, type ModelChoice } from './router/model-router';
-import { verifyAccessToken, AuthErrorCode } from './auth';
-import { createConversation, addAssistantMessage, addUserMessage, getConversationMessages, logUsageEvent, checkAccess, incrementDailyRequestCounter, finishRun, setConversationTitle, getExternalAccount } from './supabase';
+import { verifyAccessToken, AuthErrorCode, parseTokenInfo } from './auth';
+import { createConversation, addAssistantMessage, addUserMessage, getConversationMessages, logUsageEvent, checkAccess, incrementDailyRequestCounter, finishRun, setConversationTitle, getExternalAccount, type MessageMetadata } from './supabase';
 import { getDefaultModelForCategory, priceForModel } from './pricing';
 import { buildProviderModel } from './utils/models';
 import { randomUUID } from 'crypto';
@@ -43,12 +43,17 @@ import { getAgentForQuery } from './agents/stuard/index';
 import { startVMHealthMonitor } from './services/vm-health';
 import { startBillingCron } from './services/compute-billing';
 import { startReminderCron } from './services/cloud-reminders';
+import { startDiscordBot } from './services/discord-bot';
 import { registerConnection, getDesktopWs, getConnectionInfo } from './services/vm-bridge';
 import { verifyVMToken, mintVMToken } from './services/vm-tokens';
 import { handleDesktopRelayResult } from './routes/desktop-tool-relay';
 import { resolveVMBaseUrl, resolveVMSecret } from './services/vm-command';
 
 // Configuration moved to utils/config
+
+// Token verification cache (avoids Supabase auth round-trip on every message)
+const _serverTokenCache = new Map<string, { ts: number; user: { userId: string; email?: string } }>();
+const SERVER_TOKEN_CACHE_TTL_MS = 60_000; // 60 seconds
 
 type TierChoice = 'auto' | ModelChoice;
 
@@ -287,8 +292,10 @@ server.on('upgrade', (req, socket, head) => {
           return;
         }
 
-        const baseUrl = await resolveVMBaseUrl(authResult.userId);
-        const vmSecret = await resolveVMSecret(authResult.userId);
+        const [baseUrl, vmSecret] = await Promise.all([
+          resolveVMBaseUrl(authResult.userId),
+          resolveVMSecret(authResult.userId),
+        ]);
         if (!baseUrl || !vmSecret) {
           socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
           socket.destroy();
@@ -462,6 +469,11 @@ server.listen(PORT, () => {
   } catch (e) {
     console.warn('[cloud-ai] Reminder cron failed to start:', e);
   }
+
+  // Start Discord bot (DM-based personal assistant)
+  startDiscordBot().catch((e) => {
+    console.warn('[cloud-ai] Discord bot failed to start:', e?.message || e);
+  });
 });
 
 // Increase HTTP keep-alive and headers timeouts to be friendly to long-lived WS
@@ -791,6 +803,11 @@ wss.on('connection', (ws: WebSocket, req: any) => {
       // Hoisted so the outer catch block can persist partial work on error
       let authUser: { userId: string; email?: string } | null = null;
       let requestedMode: TierChoice = 'balanced';
+      let prompt = '';
+      let thread = '';
+      let contextPathsForMeta: MessageMetadata['contextPaths'];
+      let conversationSource: 'stuard' | 'workflow' | 'skill' | 'proactive' = 'stuard';
+      const _msgT0 = Date.now();
       const toolCallsMap = new Map<string, any>();
       type StreamChunk = { type: 'text'; content: string } | { type: 'reasoning'; content: string } | { type: 'tool'; tool: any };
       const streamChunks: StreamChunk[] = [];
@@ -822,42 +839,86 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         }
 
         const accessToken = String(msg?.auth?.accessToken || '');
-        const authResult = accessToken ? await verifyAccessToken(accessToken) : null;
-        authUser = authResult?.success ? { userId: authResult.userId!, email: authResult.email } : null;
+        const _authStart = Date.now();
+
+        // Parse JWT locally for userId to enable parallel auth + access check
+        const _tokenInfo = accessToken ? parseTokenInfo(accessToken) : null;
+        const _cachedAuth = accessToken ? _serverTokenCache.get(accessToken) : null;
+
+        if (_cachedAuth && Date.now() - _cachedAuth.ts < SERVER_TOKEN_CACHE_TTL_MS) {
+          // Fast path: cached token
+          authUser = _cachedAuth.user;
+        } else if (_tokenInfo && _tokenInfo.userId && !_tokenInfo.isExpired) {
+          // Run verifyAccessToken + checkAccess in parallel using locally-parsed userId
+          const [authResult, access] = await Promise.all([
+            verifyAccessToken(accessToken),
+            checkAccess(_tokenInfo.userId),
+          ]);
+          authUser = authResult?.success ? { userId: authResult.userId!, email: authResult.email } : null;
+          if (authUser) {
+            _serverTokenCache.set(accessToken, { ts: Date.now(), user: authUser });
+          }
+
+          if (REQUIRE_AUTH && !authUser) {
+            const errorCode = authResult?.error || AuthErrorCode.UNAUTHORIZED;
+            const errorMessage = authResult?.message || 'unauthorized';
+            send(ws, {
+              type: 'error',
+              message: errorMessage,
+              code: errorCode,
+              data: { requiresReauth: errorCode === AuthErrorCode.EXPIRED_TOKEN }
+            }, requestId);
+            return;
+          }
+
+          if (authUser && !access.allowed) {
+            send(ws, { type: 'error', message: access.reason || 'access_denied', data: { plan: access.plan, limit: access.limit, used: access.used } }, requestId);
+            return;
+          }
+        } else {
+          const authResult = accessToken ? await verifyAccessToken(accessToken) : null;
+          authUser = authResult?.success ? { userId: authResult.userId!, email: authResult.email } : null;
+          if (authUser) {
+            _serverTokenCache.set(accessToken, { ts: Date.now(), user: authUser });
+          }
+
+          if (REQUIRE_AUTH && !authUser) {
+            const errorCode = authResult?.error || AuthErrorCode.UNAUTHORIZED;
+            const errorMessage = authResult?.message || 'unauthorized';
+            send(ws, {
+              type: 'error',
+              message: errorMessage,
+              code: errorCode,
+              data: { requiresReauth: errorCode === AuthErrorCode.EXPIRED_TOKEN }
+            }, requestId);
+            return;
+          }
+
+          if (authUser) {
+            const access = await checkAccess(authUser.userId);
+            if (!access.allowed) {
+              send(ws, { type: 'error', message: access.reason || 'access_denied', data: { plan: access.plan, limit: access.limit, used: access.used } }, requestId);
+              return;
+            }
+          }
+        }
+
+        console.log(`[perf] auth+access: ${Date.now() - _authStart}ms`);
 
         // Update secretBag with userId and accessToken if authenticated
         if (authUser?.userId) secretBag.userId = authUser.userId;
         if (accessToken) secretBag.accessToken = accessToken;
 
-        if (REQUIRE_AUTH && !authUser) {
-          // Provide specific error codes for client-side handling
-          const errorCode = authResult?.error || AuthErrorCode.UNAUTHORIZED;
-          const errorMessage = authResult?.message || 'unauthorized';
-          send(ws, {
-            type: 'error',
-            message: errorMessage,
-            code: errorCode,
-            data: { requiresReauth: errorCode === AuthErrorCode.EXPIRED_TOKEN }
-          }, requestId);
-          return;
-        }
-
         if (authUser) {
-          const access = await checkAccess(authUser.userId);
-          if (!access.allowed) {
-            send(ws, { type: 'error', message: access.reason || 'access_denied', data: { plan: access.plan, limit: access.limit, used: access.used } }, requestId);
-            return;
-          }
-          // Count this chat request towards daily usage
-          try { await incrementDailyRequestCounter(authUser.userId); } catch { }
+          // Fire-and-forget — don't block the request pipeline
+          incrementDailyRequestCounter(authUser.userId).catch(() => {});
 
-          // Register for webhook delivery and deliver any queued webhooks
+          // Register for webhook delivery and deliver any queued webhooks (non-blocking)
           try {
             registerWebhookClient(authUser.userId, ws);
-            const delivered = await deliverQueuedWebhooks(authUser.userId, ws);
-            if (delivered > 0) {
-              writeLog('queued_webhooks_delivered', { userId: authUser.userId, count: delivered });
-            }
+            deliverQueuedWebhooks(authUser.userId, ws).then(delivered => {
+              if (delivered > 0) writeLog('queued_webhooks_delivered', { userId: authUser!.userId, count: delivered });
+            }).catch(() => {});
           } catch { }
 
           // Register this WS as a desktop connection so VM agent relay works
@@ -867,6 +928,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           } catch { }
         }
 
+        const _routeStart = Date.now();
         requestedMode = normalizeTierChoice((msg as any)?.model);
         let routed: { model: ModelChoice; modelIndex: number; layerIndexes: number[] } = {
           model: 'balanced',
@@ -894,6 +956,8 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           routedTier = requestedMode;
         }
 
+        console.log(`[perf] routing: ${Date.now() - _routeStart}ms`);
+
         chosenModelId =
           (typeof (msg as any)?.modelId === 'string' && String((msg as any).modelId).trim())
             ? String((msg as any).modelId).trim()
@@ -903,32 +967,37 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           send(ws, { type: 'progress', event: 'model', data: { tier: routedTier, modelId: chosenModelId } }, requestId);
         } catch { }
 
+        const _intStart = Date.now();
+
         let enabledIntegrations: string[] = [];
         let mcpTools: Record<string, any> = {};
 
         if (authUser) {
           const _au = authUser; // local const for TS narrowing (authUser is `let`)
-          // Check integrations
+          // Check integrations + load MCP tools in parallel
           const providers = ['github', 'google', 'outlook', 'facebook', 'instagram', 'threads', 'whatsapp'];
-          try {
-            const checks = await Promise.all(providers.map(p => getExternalAccount(_au.userId, p)));
-            enabledIntegrations = providers.filter((_, i) => !!checks[i]);
-          } catch (e) {
-            // ignore
-          }
-
-          // Load MCP tools from connected integrations (Notion, Linear, Stripe)
-          try {
-            const { getConnectedMCPIntegrations, getMCPToolsForIntegrations } = await import('./mcp');
-            const connected = await getConnectedMCPIntegrations(authUser.userId);
-            if (connected.length > 0) {
-              mcpTools = await getMCPToolsForIntegrations(authUser.userId, connected);
-              console.log(`[cloud-ai] Loaded ${Object.keys(mcpTools).length} MCP tools from ${connected.length} integrations`);
-            }
-          } catch (e) {
-            console.warn('[cloud-ai] Failed to load MCP tools:', e);
-          }
+          const [checks, mcpResult] = await Promise.all([
+            Promise.all(providers.map(p => getExternalAccount(_au.userId, p))).catch(() => [] as any[]),
+            (async () => {
+              try {
+                const { getConnectedMCPIntegrations, getMCPToolsForIntegrations } = await import('./mcp');
+                const connected = await getConnectedMCPIntegrations(_au.userId);
+                if (connected.length > 0) {
+                  const tools = await getMCPToolsForIntegrations(_au.userId, connected);
+                  console.log(`[cloud-ai] Loaded ${Object.keys(tools).length} MCP tools from ${connected.length} integrations`);
+                  return tools;
+                }
+              } catch (e) {
+                console.warn('[cloud-ai] Failed to load MCP tools:', e);
+              }
+              return {};
+            })(),
+          ]);
+          enabledIntegrations = providers.filter((_, i) => !!checks[i]);
+          mcpTools = mcpResult;
         }
+
+        console.log(`[perf] integrations+mcp: ${Date.now() - _intStart}ms`);
 
         // Merge desktop-reported integrations (browser_use, ollama, telnyx, etc.)
         // outside auth gate so local desktop tools work even when user isn't signed in.
@@ -981,7 +1050,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
 
         // Use the last user message as the prompt (text-only)
         const lastUserMsg = messages.filter((m) => m.role === 'user').slice(-1)[0];
-        const prompt = contentToText(lastUserMsg?.content);
+        prompt = contentToText(lastUserMsg?.content);
 
         if (!prompt) {
           send(ws, { type: 'error', message: 'no user message found' }, requestId);
@@ -992,10 +1061,9 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         send(ws, { type: 'progress', event: 'ack', data: { ts: Date.now() } }, requestId);
 
         // Kick off embedding early (memoized promise - will be reused by knowledge/memory later)
-        // This runs in parallel with agent selection and other setup
-        const earlyEmbeddingPromise = process.env.SIS_PARALLEL_EMBEDDINGS === '1'
-          ? getOrCreateQueryEmbedding(prompt).catch(() => null)
-          : null;
+        // This runs in parallel with agent selection and other setup.
+        // Always enabled — the memoized promise is reused downstream so no duplicate calls.
+        const earlyEmbeddingPromise = getOrCreateQueryEmbedding(prompt).catch(() => null);
 
         // Determine which agent/model to use
         const rawAgent = typeof (msg as any)?.agent === 'string' ? String((msg as any).agent) : '';
@@ -1033,7 +1101,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                   ? 'skill'
                   : 'stuard';
 
-        const conversationSource: 'stuard' | 'workflow' | 'skill' | 'proactive' =
+        conversationSource =
           hiddenContextRaw.includes('[PROACTIVE MODE]') || hiddenContextRaw.includes('[PROACTIVE FOLLOW-UP]')
             ? 'proactive'
             : agentType === 'workflow'
@@ -1064,7 +1132,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             : (chosenModelId || routedTier);
 
         const incomingCtxForMeta: any = (msg as any)?.context || {};
-        const contextPathsForMeta = Array.isArray(incomingCtxForMeta?.paths) ? incomingCtxForMeta.paths : undefined;
+        contextPathsForMeta = Array.isArray(incomingCtxForMeta?.paths) ? incomingCtxForMeta.paths : undefined;
 
         // Select agent based on type
         let agent: any;
@@ -1283,23 +1351,21 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           // Re-fetch a clean history array after reset
           history.length = 0;
         }
+        // Start conversation creation as a non-blocking promise so it runs in
+        // parallel with knowledge retrieval (only needed before stream starts).
+        let _convCreatePromise: Promise<string | null> | null = null;
         if (authUser) {
           const requestedId = typeof (msg as any)?.conversationId === 'string' ? String((msg as any).conversationId).trim() : '';
           if (requestedId) {
             conversationId = requestedId;
           } else {
-            conversationId = await createConversation(
+            _convCreatePromise = createConversation(
               authUser.userId,
               prompt,
               modelLabel,
               { mode: requestedMode, tier: routedTier, modelId: chosenModelId, contextPaths: contextPathsForMeta },
               conversationSource
-            ) as any;
-            if (conversationId) {
-              conversationCreatedNow = true;
-              // Immediately notify client of new conversation ID so it can be used for subsequent messages
-              send(ws, { type: 'conversation', conversationId }, requestId);
-            }
+            ).then(id => id as string | null).catch(() => null);
           }
         }
 
@@ -1315,11 +1381,10 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           }
         }
 
-        let thread = '';
-        // Prefer Supabase conversation thread when available
-        if (conversationId) {
-          thread = conversationId;
-        } else {
+        // Use a temporary thread for now; conversationId is resolved later in
+        // parallel with knowledge retrieval to avoid blocking.
+        thread = conversationId || '';
+        if (!thread) {
           thread = anonThreads.get(ws) || '';
           if (!thread) {
             thread = 'ws-' + randomUUID();
@@ -1335,6 +1400,52 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         if (incomingMem && typeof incomingMem.thread === 'string' && incomingMem.thread.trim()) {
           thread = incomingMem.thread.trim();
         }
+
+        const fireEarlyTitleGeneration = (resolvedConversationId: string) => {
+          const titleAuthUser = authUser;
+          void (async () => {
+            try {
+              const titlePrompt = `You will create a short, descriptive chat thread title from the user's question. At most 6 words. No quotes or punctuation.\nUser: ${prompt}\n\nTitle:`;
+              const titleModelId = getDefaultModelForCategory('fast');
+              const titleModel = buildProviderModel(titleModelId);
+              const tRes = await generateText({ model: titleModel as any, prompt: titlePrompt, temperature: 0.2 });
+              if (titleAuthUser) {
+                try { await logUsageEvent(titleAuthUser.userId, resolvedConversationId || null, titleModelId, { ...((tRes as any).usage || {}), sourceType: 'title_generation' }); } catch {}
+              }
+              let title = String((tRes as any)?.text || '').trim();
+              title = title.replace(/^"+|"+$/g, '').replace(/[\.\!?]+$/g, '').slice(0, 80);
+              if (titleAuthUser && resolvedConversationId) {
+                await setConversationTitle(titleAuthUser.userId, resolvedConversationId, title);
+              }
+              if (conversationSource === 'stuard') {
+                try {
+                  await memoryService.ensureLocalConversation(resolvedConversationId, modelLabel, conversationSource);
+                  await memoryService.updateConversation(resolvedConversationId, { title });
+                } catch { }
+              }
+              send(ws, { type: 'title', conversationId: resolvedConversationId, title }, requestId);
+            } catch (titleErr) {
+              console.error('[cloud-ai] Early title generation failed:', titleErr);
+            }
+          })();
+        };
+
+        const finalizeConversationCreation = async (resolvedConversationId?: string | null) => {
+          if (conversationId) return conversationId;
+          const nextConversationId = resolvedConversationId !== undefined
+            ? resolvedConversationId
+            : (_convCreatePromise ? await _convCreatePromise : null);
+          _convCreatePromise = null;
+          if (!nextConversationId || conversationId) {
+            return conversationId;
+          }
+          conversationId = nextConversationId;
+          conversationCreatedNow = true;
+          thread = conversationId;
+          send(ws, { type: 'conversation', conversationId }, requestId);
+          fireEarlyTitleGeneration(conversationId);
+          return conversationId;
+        };
 
         if (conversationSource === 'stuard' && !conversationId && thread) {
           send(ws, { type: 'conversation', conversationId: thread }, requestId);
@@ -1566,105 +1677,75 @@ ${skillLines}`;
         } catch { }
 
         // Retrieve knowledge context and similar conversations, inject into messages
-        if (agentType !== 'workflow' && agentType !== 'skill') {
+        if (agentType !== 'workflow' && agentType !== 'skill' && prompt) {
           // ─── Parallel knowledge + memory retrieval ───────────────────
-          // When SIS_PARALLEL_EMBEDDINGS=1, reuse the shared embedding
-          // so knowledge and memory search run in parallel without
-          // duplicate OpenAI embedding calls.
-          const useParallelEmbeddings = process.env.SIS_PARALLEL_EMBEDDINGS === '1';
-
-          // Token budget for knowledge context (chars, not tokens — ~4 chars/token)
+          // Reuse the shared embedding (kicked off earlier) so knowledge
+          // and memory search run in parallel without duplicate OpenAI calls.
           const KNOWLEDGE_MAX_CHARS = 2000;
 
-          if (useParallelEmbeddings && prompt) {
-            try {
-              const queryEmbedding = await getOrCreateQueryEmbedding(prompt);
+          try {
+            const _kStart = Date.now();
+            const queryEmbedding = await getOrCreateQueryEmbedding(prompt);
+            console.log(`[perf] embedding await: ${Date.now() - _kStart}ms`);
 
-              const [knowledgeCtx, segmentMatches, fileMatches] = await Promise.all([
-                buildKnowledgeContext(prompt, {
-                  includeIdentity: true,
-                  includeDirectives: true,
-                  includeBio: false,
-                  maxGlobalFacts: 4,
-                  detectEntities: true,
-                  queryEmbedding,
-                }).catch(() => null),
-                memoryService.searchSegmentsByEmbedding(queryEmbedding, { limit: 3, threshold: 0.6 })
-                  .catch(() => [] as Awaited<ReturnType<typeof memoryService.searchSegmentsByEmbedding>>),
-                searchFiles(prompt, { mode: 'semantic', limit: 5 })
-                  .catch(() => null),
-              ]);
-
-              // Build ONE merged context block
-              const ctxParts: string[] = [];
-              if (knowledgeCtx && knowledgeCtx.text.trim()) {
-                ctxParts.push(knowledgeCtx.text.trim().slice(0, KNOWLEDGE_MAX_CHARS));
-              }
-              if (segmentMatches.length > 0) {
-                const similar = segmentMatches.filter(({ score }) => score >= 0.6).slice(0, 3);
-                if (similar.length > 0) {
-                  const lines = ['[PAST CONTEXT]'];
-                  for (const { segment } of similar) {
-                    const summary = String(segment.summary || '').trim().slice(0, 100);
-                    if (summary) lines.push(`- ${summary}`);
-                  }
-                  if (lines.length > 1) ctxParts.push(lines.join('\n'));
-                }
-              }
-              // Inject relevant file results from semantic search
-              if (fileMatches?.ok && Array.isArray(fileMatches.results) && fileMatches.results.length > 0) {
-                const topFiles = fileMatches.results.slice(0, 5);
-                const lines = ['[RELEVANT FILES]'];
-                for (const f of topFiles) {
-                  const name = f.filename || f.path || '';
-                  const score = typeof f.score === 'number' ? ` (${(f.score * 100).toFixed(0)}%)` : '';
-                  const summary = f.summary ? ` — ${String(f.summary).slice(0, 80)}` : '';
-                  lines.push(`- ${name}${score}${summary}`);
-                }
-                if (lines.length > 1) ctxParts.push(lines.join('\n'));
-              }
-              if (ctxParts.length > 0) {
-                inputMessages = [{ role: 'system', content: ctxParts.join('\n\n') }, ...inputMessages];
-              }
-            } catch (parallelErr) {
-              console.error('[cloud-ai] Parallel knowledge/memory pipeline failed:', parallelErr);
-            }
-          } else {
-            // ─── Legacy sequential path ──
-            const ctxParts: string[] = [];
-            try {
-              const knowledgeCtx = await buildKnowledgeContext(prompt, {
+            const _pStart = Date.now();
+            const [knowledgeCtx, segmentMatches, fileMatches, _resolvedConvId] = await Promise.all([
+              buildKnowledgeContext(prompt, {
                 includeIdentity: true,
                 includeDirectives: true,
                 includeBio: false,
                 maxGlobalFacts: 4,
                 detectEntities: true,
-              });
-              if (knowledgeCtx.text.trim()) {
-                ctxParts.push(knowledgeCtx.text.trim().slice(0, KNOWLEDGE_MAX_CHARS));
-              }
-            } catch { }
+                queryEmbedding,
+              }).catch(() => null),
+              memoryService.searchSegmentsByEmbedding(queryEmbedding, { limit: 3, threshold: 0.6 })
+                .catch(() => [] as Awaited<ReturnType<typeof memoryService.searchSegmentsByEmbedding>>),
+              searchFiles(prompt, { mode: 'semantic', limit: 5 })
+                .catch(() => null),
+              // Resolve conversation creation in parallel (first-message-per-tab only)
+              _convCreatePromise || Promise.resolve(null),
+            ]);
+            console.log(`[perf] knowledge+memory+files parallel: ${Date.now() - _pStart}ms (total from embedding start: ${Date.now() - _kStart}ms)`);
 
-            try {
-              const query = String(prompt || '').trim();
-              if (query) {
-                const matches = await memoryService.searchSegments(query, { limit: 3, threshold: 0.6 });
-                const similar = matches.filter(({ score }) => score >= 0.6).slice(0, 3);
-                if (similar.length > 0) {
-                  const lines = ['[PAST CONTEXT]'];
-                  for (const { segment } of similar) {
-                    const summary = String(segment.summary || '').trim().slice(0, 100);
-                    if (summary) lines.push(`- ${summary}`);
-                  }
-                  if (lines.length > 1) ctxParts.push(lines.join('\n'));
+            await finalizeConversationCreation(_resolvedConvId);
+
+            // Build ONE merged context block
+            const ctxParts: string[] = [];
+            if (knowledgeCtx && knowledgeCtx.text.trim()) {
+              ctxParts.push(knowledgeCtx.text.trim().slice(0, KNOWLEDGE_MAX_CHARS));
+            }
+            if (segmentMatches.length > 0) {
+              const similar = segmentMatches.filter(({ score }) => score >= 0.6).slice(0, 3);
+              if (similar.length > 0) {
+                const lines = ['[PAST CONTEXT]'];
+                for (const { segment } of similar) {
+                  const summary = String(segment.summary || '').trim().slice(0, 100);
+                  if (summary) lines.push(`- ${summary}`);
                 }
+                if (lines.length > 1) ctxParts.push(lines.join('\n'));
               }
-            } catch { }
-
+            }
+            // Inject relevant file results from semantic search
+            if (fileMatches?.ok && Array.isArray(fileMatches.results) && fileMatches.results.length > 0) {
+              const topFiles = fileMatches.results.slice(0, 5);
+              const lines = ['[RELEVANT FILES]'];
+              for (const f of topFiles) {
+                const name = f.filename || f.path || '';
+                const score = typeof f.score === 'number' ? ` (${(f.score * 100).toFixed(0)}%)` : '';
+                const summary = f.summary ? ` — ${String(f.summary).slice(0, 80)}` : '';
+                lines.push(`- ${name}${score}${summary}`);
+              }
+              if (lines.length > 1) ctxParts.push(lines.join('\n'));
+            }
             if (ctxParts.length > 0) {
               inputMessages = [{ role: 'system', content: ctxParts.join('\n\n') }, ...inputMessages];
             }
+          } catch (err) {
+            console.error('[cloud-ai] Knowledge/memory pipeline failed:', err);
+            await finalizeConversationCreation();
           }
+        } else if (_convCreatePromise) {
+          await finalizeConversationCreation();
         }
 
 
@@ -1761,9 +1842,15 @@ ${skillLines}`;
           const modelPart = (chosenModelId || modelLabel || '').split('/').pop() || '';
           const supportsEffort = /^(o[1-9]|gpt-5(?:$|[-.]))/.test(modelPart);
           if (supportsEffort) {
+            // gpt-5.1 only supports up to 'medium' reasoning effort
+            const maxEffort = /^gpt-5\.1/.test(modelPart) ? 'medium' : 'high';
+            const effortLevels = ['none', 'low', 'medium', 'high'];
+            const clampedEffort = effortLevels.indexOf(reasoningLevel) > effortLevels.indexOf(maxEffort)
+              ? maxEffort
+              : reasoningLevel;
             providerOptions.openai = {
               ...(providerOptions.openai || {}),
-              reasoningEffort: reasoningLevel as 'none' | 'low' | 'medium' | 'high',
+              reasoningEffort: clampedEffort as 'none' | 'low' | 'medium' | 'high',
             };
           }
         }
@@ -1920,33 +2007,31 @@ ${skillLines}`;
 
             const stepsSafe = typeof steps !== 'undefined' ? sanitizeSteps(steps) : steps;
             send(ws, { type: 'final', origin: 'cloud-ai', model: chosenModelId || routedTier, conversationId, result: { text: finalText, steps: stepsSafe, finishReason, usage: normalizedUsage } }, requestId);
-            const titleConversationId = conversationId || (conversationSource === 'stuard' ? thread : '');
-            const shouldGenerateTitle = !!(titleConversationId && (conversationCreatedNow || (conversationSource === 'stuard' && resetRequested)));
-            if (shouldGenerateTitle) {
-              // Only generate title for newly-started conversations/threads
-              try {
-                const titlePrompt = `You will create a short, descriptive chat thread title from the user's question and the assistant's answer. At most 6 words. No quotes or punctuation.
-User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
-                const titleModelId = getDefaultModelForCategory('fast');
-                const titleModel = buildProviderModel(titleModelId);
-                const tRes = await generateText({ model: titleModel as any, prompt: titlePrompt, temperature: 0.2 });
-                if (authUser) {
-                  try { await logUsageEvent(authUser.userId, conversationId || null, titleModelId, { ...((tRes as any).usage || {}), sourceType: 'title_generation' }); } catch {}
-                }
-                let title = String((tRes as any)?.text || '').trim();
-                title = title.replace(/^"+|"+$/g, '').replace(/[\.\!?]+$/g, '').slice(0, 80);
-                if (authUser && conversationId) {
-                  await setConversationTitle(authUser.userId, conversationId, title);
-                }
-                if (conversationSource === 'stuard') {
+            // Title generation for stuard reset-conversations (non-new convos)
+            // New conversations already get title generated immediately on creation (above)
+            if (!conversationCreatedNow && conversationSource === 'stuard' && resetRequested) {
+              const titleConversationId = conversationId || thread;
+              if (titleConversationId) {
+                try {
+                  const titlePrompt = `You will create a short, descriptive chat thread title from the user's question and the assistant's answer. At most 6 words. No quotes or punctuation.\nUser: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
+                  const titleModelId = getDefaultModelForCategory('fast');
+                  const titleModel = buildProviderModel(titleModelId);
+                  const tRes = await generateText({ model: titleModel as any, prompt: titlePrompt, temperature: 0.2 });
+                  if (authUser) {
+                    try { await logUsageEvent(authUser.userId, conversationId || null, titleModelId, { ...((tRes as any).usage || {}), sourceType: 'title_generation' }); } catch {}
+                  }
+                  let title = String((tRes as any)?.text || '').trim();
+                  title = title.replace(/^"+|"+$/g, '').replace(/[\.\!?]+$/g, '').slice(0, 80);
+                  if (authUser && conversationId) {
+                    await setConversationTitle(authUser.userId, conversationId, title);
+                  }
                   try {
                     await memoryService.ensureLocalConversation(titleConversationId, modelLabel, conversationSource);
                     await memoryService.updateConversation(titleConversationId, { title });
                   } catch { }
-                }
-                // Send title update to client
-                send(ws, { type: 'title', conversationId: titleConversationId, title }, requestId);
-              } catch { }
+                  send(ws, { type: 'title', conversationId: titleConversationId, title }, requestId);
+                } catch { }
+              }
             }
             if (authUser) { try { await logUsageEvent(authUser.userId, conversationId, chosenModelId || routedTier, normalizedUsage); } catch { } try { if (conversationId) await finishRun(authUser.userId, conversationId, finalText || ''); } catch { } }
 
@@ -2016,6 +2101,34 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               console.error('[cloud-ai] Local memory storage import failed:', memoryErr);
             }
 
+            // Auto-Skills — analyze conversation for teachable patterns
+            // Runs in background after every stuard conversation. If the user had to
+            // correct/guide the AI through a procedure, generates a reusable skill.
+            try {
+              if (conversationSource === 'stuard') {
+                const { analyzeForAutoSkill } = await import('./knowledge');
+                const autoSkillHistory = [...history];
+                const autoSkillConvId = conversationId || thread;
+                analyzeForAutoSkill(autoSkillHistory, autoSkillConvId).then((draft) => {
+                  if (draft) {
+                    console.log(`[cloud-ai] Auto-skill generated: "${draft.name}" (${draft.steps.length} steps, confidence=${draft.confidence})`);
+                    writeLog('auto_skill_generated', {
+                      name: draft.name,
+                      steps: draft.steps.length,
+                      confidence: draft.confidence,
+                      tools: draft.toolUsage.length,
+                      injections: draft.userInjections.length,
+                      conversationId: autoSkillConvId,
+                    });
+                  }
+                }).catch((err) => {
+                  console.error('[cloud-ai] Auto-skill analysis failed:', err);
+                });
+              }
+            } catch (autoSkillErr) {
+              console.error('[cloud-ai] Auto-skill import failed:', autoSkillErr);
+            }
+
             }); // end withClientBridge re-wrap for onFinish
           },
         };
@@ -2042,6 +2155,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
 
         let cumulativeInputTokens = 0;
 
+        console.log(`[perf] TOTAL pre-stream: ${Date.now() - _msgT0}ms`);
         const stream: any = await agent.stream(inputMessages, streamOptions);
 
         const hasFull = !!(stream as any)?.fullStream;
@@ -2345,6 +2459,25 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
             } catch { }
           }
 
+          // Local memory storage on abort — don't lose conversation data
+          try {
+            if (conversationSource === 'stuard' || conversationSource === 'proactive') {
+              const localConvId = conversationId || thread;
+              if (prompt) {
+                await memoryService.storeMessageLocally(localConvId, 'user', prompt, {
+                  metadata: { mode: requestedMode, tier: routedTier, modelId: chosenModelId, contextPaths: contextPathsForMeta },
+                  model: modelLabel, source: conversationSource,
+                });
+              }
+              if (partialText) {
+                await memoryService.storeMessageLocally(localConvId, 'assistant', partialText, {
+                  metadata: buildAssistantMetadata('aborted'),
+                  model: modelLabel, source: conversationSource,
+                });
+              }
+            }
+          } catch { }
+
           send(
             ws,
             {
@@ -2419,6 +2552,25 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                 await addAssistantMessage(authUser.userId, conversationId, partialText, metadata);
               } catch { }
             }
+
+            // Local memory storage on abort — don't lose conversation data
+            try {
+              if (conversationSource === 'stuard' || conversationSource === 'proactive') {
+                const localConvId = conversationId || thread;
+                if (prompt) {
+                  await memoryService.storeMessageLocally(localConvId, 'user', prompt, {
+                    metadata: { mode: requestedMode, tier: routedTier, modelId: chosenModelId, contextPaths: contextPathsForMeta },
+                    model: modelLabel, source: conversationSource,
+                  });
+                }
+                if (partialText) {
+                  await memoryService.storeMessageLocally(localConvId, 'assistant', partialText, {
+                    metadata: buildAssistantMetadata('aborted'),
+                    model: modelLabel, source: conversationSource,
+                  });
+                }
+              }
+            } catch { }
 
             send(ws, {
               type: 'final',

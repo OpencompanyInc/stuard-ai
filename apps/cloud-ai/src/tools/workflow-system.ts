@@ -328,8 +328,9 @@ async function runOne(step: z.infer<typeof StepSchema>, writer?: WritableStreamD
     let result: any;
     if (kind === 'cloud' || (kind === 'auto' && getCloudTools().has(toolName))) {
       const t = getCloudTools().get(toolName);
-      // Do NOT pass the outer ToolStream writer to nested cloud tool to avoid stream lock
-      result = await (t as any).execute?.(args);
+      // Do NOT pass the outer ToolStream writer to nested cloud tool to avoid stream lock.
+      // Still pass an empty context object so destructuring ({ writer }) doesn't crash.
+      result = await (t as any).execute?.(args, {});
     } else {
       result = await execLocalTool(
         toolName,
@@ -404,8 +405,9 @@ export const runParallelTool = createTool({
           let result: any;
           if (step.kind === 'cloud' || (step.kind === 'auto' && getCloudTools().has(toolName))) {
             const t = getCloudTools().get(toolName);
-            // Avoid passing parent ToolStream writer to nested cloud tool to prevent lock
-            result = await (t as any).execute?.(step.args);
+            // Avoid passing parent ToolStream writer to nested cloud tool to prevent lock.
+            // Still pass an empty context object so destructuring ({ writer }) doesn't crash.
+            result = await (t as any).execute?.(step.args, {});
           } else {
             result = await execLocalTool(
               toolName,
@@ -863,7 +865,7 @@ export const testWorkflowStepTool = createTool({
         const cloudTools = getCloudTools();
         if (cloudTools.has(toolName)) {
           const t = cloudTools.get(toolName);
-          result = await (t as any).execute?.(c?.args);
+          result = await (t as any).execute?.(c?.args, {});
         } else {
           result = await execLocalTool(toolName, markWorkflowToolArgs(c?.args), writer as any, 30000);
         }

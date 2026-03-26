@@ -3,8 +3,11 @@ import type { RouterContext } from '../types';
 
 const VALID_STATUSES = new Set(['queued', 'in_progress', 'completed', 'failed']);
 
-export async function execProactiveTaskList(_args: any, _ctx: RouterContext): Promise<any> {
-  return proactiveService.listTasks();
+export async function execProactiveTaskList(args: any, _ctx: RouterContext): Promise<any> {
+  const status = typeof args?.status === 'string' ? args.status : undefined;
+  const limit = typeof args?.limit === 'number' ? Math.min(Math.max(args.limit, 1), 100) : 20;
+  const offset = typeof args?.offset === 'number' ? Math.max(args.offset, 0) : 0;
+  return proactiveService.listTasks({ status, limit, offset });
 }
 
 export async function execProactiveTaskUpdate(args: any, _ctx: RouterContext): Promise<any> {

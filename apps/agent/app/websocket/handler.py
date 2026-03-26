@@ -134,6 +134,23 @@ async def ws_endpoint(ws: WebSocket) -> None:
                             cancelled_count += 1
                     except Exception:
                         pass
+                # Also cancel any pending client tool futures immediately so
+                # handle_cloud_tool_request doesn't block for up to 5 min waiting
+                # for a tool_result that's no longer needed.
+                for fut in list(session.pending_client_tool_results.values()):
+                    try:
+                        if not fut.done():
+                            fut.cancel()
+                    except Exception:
+                        pass
+                session.pending_client_tool_results.clear()
+                for fut in list(session.pending_approvals.values()):
+                    try:
+                        if not fut.done():
+                            fut.cancel()
+                    except Exception:
+                        pass
+                session.pending_approvals.clear()
                 logger.info("stop_requested cancelled=%d", cancelled_count)
                 await session.send_json({"type": "stopped", "success": cancelled_count > 0})
 

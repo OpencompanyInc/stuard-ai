@@ -572,6 +572,7 @@ export function useAgent(options?: string | UseAgentOptions) {
   const modifiedFilesRef = useRef<Set<string>>(new Set()); // Track files modified in current turn
   const turnCheckpointIdRef = useRef<string | null>(null); // Checkpoint ID for current turn
   const turnCheckpointPromiseRef = useRef<Promise<string | null> | null>(null);
+  const activeSkillsCacheRef = useRef<any[]>([]);
 
   // File-modifying tool names
   const FILE_MODIFYING_TOOLS = new Set([
@@ -611,6 +612,46 @@ export function useAgent(options?: string | UseAgentOptions) {
     return id;
   }, []);
 
+  const mapActiveSkills = useCallback((skillsRes: any) => {
+    if (!skillsRes?.ok || !Array.isArray(skillsRes.skills)) {
+      return [];
+    }
+    return skillsRes.skills
+      .filter((s: any) => s?.isActive)
+      .slice(0, 20)
+      .map((s: any) => ({
+        id: String(s?.id || '').trim(),
+        name: String(s?.name || '').trim(),
+        description: String(s?.description || '').trim(),
+        trigger: String(s?.trigger || '').trim(),
+        icon: typeof s?.icon === 'string' ? s.icon : undefined,
+        color: typeof s?.color === 'string' ? s.color : undefined,
+        isActive: true,
+        steps: Array.isArray(s?.steps)
+          ? s.steps.slice(0, 30).map((step: any) => {
+            const toolName = String(step?.toolName || '').trim();
+            return {
+              id: String(step?.id || '').trim(),
+              type: String(step?.type || 'prompt').trim() || 'prompt',
+              label: String(step?.label || '').trim(),
+              content: String(step?.content || '').trim(),
+              ...(toolName ? { toolName } : {}),
+            };
+          }).filter((step: any) => step.id && step.type)
+          : [],
+      }))
+      .filter((s: any) => s.id && s.name);
+  }, []);
+
+  const refreshActiveSkillsCache = useCallback(async () => {
+    try {
+      const skillsRes = await window.desktopAPI?.skillsList?.().catch(() => null);
+      activeSkillsCacheRef.current = mapActiveSkills(skillsRes);
+    } catch {
+    }
+    return activeSkillsCacheRef.current;
+  }, [mapActiveSkills]);
+
   // Tab Management
   const addTab = useCallback((tab: Partial<ConversationTab> = {}) => {
     const id = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -633,6 +674,8 @@ export function useAgent(options?: string | UseAgentOptions) {
       hiddenState: createEmptyHiddenState(),
       ...tab
     };
+    tabsRef.current = [...tabsRef.current, newTab];
+    activeTabIdRef.current = id;
     setTabs(prev => [...prev, newTab]);
     setActiveTabId(id);
     return id;
@@ -2019,7 +2062,7 @@ export function useAgent(options?: string | UseAgentOptions) {
         contextPaths: options.contextPaths,
       };
 
-      const targetTabId = activeTabId;
+      const targetTabId = activeTabIdRef.current;
       const isTabRunning = runningTabsRef.current.has(targetTabId);
 
       // Get active tab history BEFORE adding the new message
@@ -2046,8 +2089,14 @@ export function useAgent(options?: string | UseAgentOptions) {
         ));
       }
 
+      if (!isTabRunning) {
+        setTabs(prev => prev.map(t =>
+          t.id === targetTabId ? { ...t, aiState: { phase: 'routing', statusText: wsReady ? 'Preparing...' : 'Connecting...' } } : t
+        ));
+      }
+
       const accessTokenPromise = getFastAccessToken();
-      const skillsPromise = window.desktopAPI?.skillsList?.().catch(() => null);
+      void refreshActiveSkillsCache();
 
       const payload: any = {
         type: 'chat',
@@ -2085,45 +2134,10 @@ export function useAgent(options?: string | UseAgentOptions) {
         }
       } catch { }
 
-      // Inject active skills into context for agent system prompt + tool execution.
-      // Include steps so cloud get_skill_info can return actionable skill flows.
-      try {
-        const skillsRes = await Promise.race([
-          skillsPromise,
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 150)),
-        ]);
-        if (skillsRes?.ok && Array.isArray(skillsRes.skills)) {
-          const active = skillsRes.skills
-            .filter((s: any) => s?.isActive)
-            .slice(0, 20)
-            .map((s: any) => ({
-              id: String(s?.id || '').trim(),
-              name: String(s?.name || '').trim(),
-              description: String(s?.description || '').trim(),
-              trigger: String(s?.trigger || '').trim(),
-              icon: typeof s?.icon === 'string' ? s.icon : undefined,
-              color: typeof s?.color === 'string' ? s.color : undefined,
-              isActive: true,
-              steps: Array.isArray(s?.steps)
-                ? s.steps.slice(0, 30).map((step: any) => {
-                  const toolName = String(step?.toolName || '').trim();
-                  return {
-                    id: String(step?.id || '').trim(),
-                    type: String(step?.type || 'prompt').trim() || 'prompt',
-                    label: String(step?.label || '').trim(),
-                    content: String(step?.content || '').trim(),
-                    ...(toolName ? { toolName } : {}),
-                  };
-                }).filter((step: any) => step.id && step.type)
-                : [],
-            }))
-            .filter((s: any) => s.id && s.name);
-
-          if (active.length > 0) {
-            payload.context.skills = active;
-          }
-        }
-      } catch { }
+      const activeSkills = activeSkillsCacheRef.current;
+      if (activeSkills.length > 0) {
+        payload.context.skills = activeSkills;
+      }
 
       // Include hidden state context for AI (terminals, subagents, recent tool results)
       const hiddenState = currentTab?.hiddenState;
@@ -2411,11 +2425,12 @@ export function useAgent(options?: string | UseAgentOptions) {
     connect();
     // Set up automatic token refresh
     const cleanupAutoRefresh = setupAutoRefresh();
+    void refreshActiveSkillsCache();
     return () => {
       disconnect();
       cleanupAutoRefresh();
     };
-  }, []);
+  }, [connect, disconnect, refreshActiveSkillsCache]);
 
   useEffect(() => {
     const bumpReconnect = () => {

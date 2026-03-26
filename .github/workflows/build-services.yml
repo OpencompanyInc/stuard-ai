@@ -1,0 +1,107 @@
+name: Build Service Executables
+
+on:
+  workflow_dispatch:
+    inputs:
+      services:
+        description: 'Services to build (space-separated: agent browser mediapipe)'
+        required: false
+        default: 'agent browser mediapipe'
+      os:
+        description: 'Target OS'
+        type: choice
+        options:
+          - all
+          - windows
+          - macos
+          - linux
+        default: 'all'
+  workflow_call:
+    inputs:
+      services:
+        type: string
+        default: 'agent browser'
+      ref:
+        type: string
+        default: ''
+
+jobs:
+  build:
+    name: Services (${{ matrix.os }}${{ matrix.arch && format(' {0}', matrix.arch) || '' }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            artifact-suffix: windows
+          - os: macos-13
+            platform: macos
+            artifact-suffix: mac-intel
+            arch: x64
+          - os: macos-latest
+            platform: macos
+            artifact-suffix: mac-silicon
+            arch: arm64
+          - os: ubuntu-latest
+            platform: linux
+            artifact-suffix: linux
+    runs-on: ${{ matrix.os }}
+    # Skip platforms not requested (for workflow_dispatch)
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.os == 'all' ||
+      inputs.os == matrix.platform
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk python3-dev libportaudio2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'apps/agent/requirements.txt'
+
+      - name: Install Python dependencies
+        working-directory: apps/agent
+        run: |
+          pip install -r requirements.txt
+          pip install mediapipe opencv-python
+
+      - name: Cache PyInstaller builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/agent/build
+            ~/.pyinstaller
+          key: pyinstaller-services-${{ runner.os }}-${{ hashFiles('apps/agent/requirements.txt', 'apps/agent/stuard-*.spec') }}
+          restore-keys: |
+            pyinstaller-services-${{ runner.os }}-
+
+      - name: Build services
+        working-directory: apps/agent
+        run: |
+          SERVICES="${{ inputs.services || 'agent browser mediapipe' }}"
+          python build-services.py --services $SERVICES
+        shell: bash
+
+      - name: List outputs
+        run: ls -la dist/stuard-* 2>/dev/null || echo "No binaries found"
+        shell: bash
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: services-${{ matrix.artifact-suffix }}
+          path: dist/stuard-*
+          if-no-files-found: error
+          retention-days: 7

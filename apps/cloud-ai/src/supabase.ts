@@ -866,7 +866,7 @@ function normalizePhoneLookup(phone: string): string {
 
 export type SmsMode = 'agent' | 'proactive';
 export type SmsPreferredModel = 'fast' | 'balanced' | 'smart' | 'research';
-export type SmsAgentTarget = 'desktop' | 'vm' | 'auto';
+export type SmsAgentTarget = 'desktop' | 'vm' | 'auto' | 'cloud';
 
 export interface SmsUserState {
   user_id: string;
@@ -927,6 +927,7 @@ function normalizeSmsAgentTarget(target: unknown): SmsAgentTarget {
   const raw = String(target || '').toLowerCase().trim();
   if (raw === 'desktop') return 'desktop';
   if (raw === 'vm') return 'vm';
+  if (raw === 'cloud') return 'cloud';
   return 'auto';
 }
 
@@ -1646,13 +1647,32 @@ export async function getCurrentPeriodDebitedCredits(userId: string, monthStart?
   }
 }
 
+// Short-lived cache for checkAccess / getCreditSummary to avoid repeated DB round-trips
+// within the same request burst (e.g. first message).
+const _creditCache = new Map<string, { ts: number; value: CreditSummary }>();
+const CREDIT_CACHE_TTL_MS = 15_000; // 15 seconds
+
 export async function getCreditSummary(userId: string): Promise<CreditSummary> {
+  // Return cached result if fresh
+  const cached = _creditCache.get(userId);
+  if (cached && Date.now() - cached.ts < CREDIT_CACHE_TTL_MS) {
+    return cached.value;
+  }
+
   const profile = await getProfile(userId);
   const plan = String(profile?.plan || 'free');
   const fallbackLimit = creditLimitFromProfile(plan, profile?.monthly_token_limit ?? null);
   const unlimited = fallbackLimit < 0;
   const period = currentBillingPeriod(profile || null);
-  let grants = unlimited ? [] : await getActiveCreditGrants(userId, new Date(), { includeSpent: true });
+
+  // Run grants + usage queries in parallel
+  const [grantsInitial, fallbackUsed, debitedCredits] = await Promise.all([
+    unlimited ? Promise.resolve([]) : getActiveCreditGrants(userId, new Date(), { includeSpent: true }),
+    getMonthlyUsageCredits(userId, period.start),
+    getCurrentPeriodDebitedCredits(userId, period.start),
+  ]);
+
+  let grants = grantsInitial;
   if (!unlimited && fallbackLimit > 0 && !grants.some((grant) => isIncludedGrant(grant.source_type))) {
     await ensureLegacyPlanGrant(userId, profile);
     grants = await getActiveCreditGrants(userId, new Date(), { includeSpent: true });
@@ -1670,8 +1690,6 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
       addonRemaining += Number(grant.remaining_credits) || 0;
     }
   }
-  const fallbackUsed = await getMonthlyUsageCredits(userId, period.start);
-  const debitedCredits = await getCurrentPeriodDebitedCredits(userId, period.start);
   const used = Math.max(fallbackUsed, debitedCredits);
   const grantedCredits = includedCredits + addonCredits;
   const remainingCredits = includedRemaining + addonRemaining;
@@ -1682,7 +1700,7 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
   const limit = unlimited
     ? -1
     : Math.max(0, displayCredits(grantedCredits > 0 ? grantedCredits : fallbackLimit));
-  return {
+  const result: CreditSummary = {
     plan,
     limit,
     used: snapCredits(used),
@@ -1695,6 +1713,8 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
     currentPeriodStart: period.start.toISOString(),
     currentPeriodEnd: period.end.toISOString(),
   };
+  _creditCache.set(userId, { ts: Date.now(), value: result });
+  return result;
 }
 
 export async function addMemoryOutbox(
@@ -1976,6 +1996,7 @@ export async function insertBillingEvent(
   if (!supabaseService) return;
   try {
     const billingHourStr = (billingHour || new Date()).toISOString();
+    const targetCredits = roundCredits(creditsDeducted);
 
     // Use INSERT (not upsert) so we can detect whether the row already existed.
     // If the unique constraint (user_id, event_type, billing_hour) fires, the
@@ -1985,7 +2006,7 @@ export async function insertBillingEvent(
       .insert({
         user_id: userId,
         event_type: eventType,
-        credits_deducted: creditsDeducted,
+        credits_deducted: targetCredits,
         details,
         billing_hour: billingHourStr,
       });
@@ -1998,17 +2019,35 @@ export async function insertBillingEvent(
     }
 
     // Only debit credits when we successfully inserted a NEW billing event
-    if (creditsDeducted > 0) {
+    if (targetCredits > 0) {
       const amountUsd = Number(details?.hourlyUsd ?? details?.hourly_usd ?? details?.monthly_usd ?? 0) || null;
-      await debitCredits(userId, {
+      const debitResult = await debitCredits(userId, {
         sourceType: `billing_${eventType}`,
         sourceRef: eventType === 'storage_purchase'
           ? `${eventType}:${details?.plan_id || 'plan'}:${billingHourStr}`
           : `${eventType}:${billingHourStr}`,
-        credits: creditsDeducted,
+        credits: targetCredits,
         amountUsd,
         metadata: details,
       });
+      const allocatedCredits = roundCredits(debitResult.allocatedCredits);
+      const unallocatedCredits = roundCredits(debitResult.unallocatedCredits);
+      if (allocatedCredits !== targetCredits || unallocatedCredits > 0) {
+        const normalizedDetails = details && typeof details === 'object' ? details : {};
+        await supabaseService
+          .from('compute_billing_events')
+          .update({
+            credits_deducted: allocatedCredits,
+            details: {
+              ...normalizedDetails,
+              attemptedCredits: targetCredits,
+              unallocatedCredits,
+            },
+          })
+          .eq('user_id', userId)
+          .eq('event_type', eventType)
+          .eq('billing_hour', billingHourStr);
+      }
     }
   } catch {}
 }

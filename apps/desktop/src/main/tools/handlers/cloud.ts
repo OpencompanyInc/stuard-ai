@@ -13,6 +13,17 @@ export async function execCloudTool(tool: string, args: any, ctx: RouterContext)
     const entry = TOOL_REGISTRY[tool];
     let endpoint = entry?.handler || `/tools/${tool}`;
     
+    // Special handling for image-based vision tools - need local file reads / screenshot capture
+    if (tool === 'analyze_image') {
+      return execAnalyzeImage(args, ctx);
+    }
+    if (tool === 'analyze_current_screen') {
+      return execAnalyzeCurrentScreen(args, ctx);
+    }
+    if (tool === 'cloud_ai_vision') {
+      return execCloudAiVision(args, ctx);
+    }
+
     // Special handling for analyze_media - need to read files and convert to base64
     if (tool === 'analyze_media') {
       return execAnalyzeMedia(args, ctx);
@@ -229,6 +240,199 @@ async function execAgentToolBridged(tool: string, args: any, ctx: RouterContext)
 }
 
 /**
+ * Shared MIME sniffing for local media/image paths.
+ */
+function inferMimeType(filePath: string): string {
+  const ext = filePath.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] || '';
+  const mimeMap: Record<string, string> = {
+    mp3: 'audio/mpeg',
+    wav: 'audio/wav',
+    ogg: 'audio/ogg',
+    m4a: 'audio/mp4',
+    mp4: 'video/mp4',
+    webm: 'video/webm',
+    mov: 'video/quicktime',
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    bmp: 'image/bmp',
+    tif: 'image/tiff',
+    tiff: 'image/tiff',
+  };
+  return mimeMap[ext] || 'application/octet-stream';
+}
+
+/**
+ * Read a local image file as base64 for cloud vision endpoints.
+ */
+function readImageAsBase64(filePath: string): { ok: true; data: string; mimeType: string } | { ok: false; error: string } {
+  const resolvedPath = String(filePath || '').trim();
+  if (!resolvedPath) return { ok: false, error: 'missing_image_path' };
+
+  try {
+    const buf = fs.readFileSync(resolvedPath);
+    return {
+      ok: true,
+      data: buf.toString('base64'),
+      mimeType: inferMimeType(resolvedPath),
+    };
+  } catch {
+    return { ok: false, error: `read_image_failed: ${resolvedPath}` };
+  }
+}
+
+/**
+ * Special handler for analyze_image - reads a local image and sends it via multimodal analyze-media.
+ */
+async function execAnalyzeImage(args: any, ctx: RouterContext): Promise<any> {
+  const imagePath = String(args?.imagePath || args?.path || args?.filePath || '').trim();
+  const prompt = String(args?.prompt || 'Analyze this image and describe what is important.').trim();
+
+  if (!imagePath) {
+    return { ok: false, error: 'missing_image_path' };
+  }
+
+  const result = await execAnalyzeMedia(
+    {
+      task: prompt,
+      mode: args?.mode,
+      sources: [
+        {
+          path: imagePath,
+          mimeType: args?.mimeType || inferMimeType(imagePath),
+        },
+      ],
+    },
+    ctx,
+  );
+
+  if (!result?.ok) return result;
+  return {
+    ok: true,
+    text: String(result?.summary || result?.text || ''),
+    summary: String(result?.summary || result?.text || ''),
+    filePath: imagePath,
+    ...result,
+  };
+}
+
+/**
+ * Structured AI vision helper for workflow tools that expect JSON output.
+ */
+async function execCloudAiVision(args: any, ctx: RouterContext): Promise<any> {
+  try {
+    const prompt = String(args?.prompt || '').trim() || 'Analyze the image and return structured results.';
+    const imagePath = String(args?.imagePath || args?.path || args?.filePath || '').trim();
+    const schema = args?.schema;
+
+    if (!imagePath) return { ok: false, error: 'missing_image_path' };
+    if (!schema || typeof schema !== 'object') return { ok: false, error: 'missing_schema' };
+
+    const image = readImageAsBase64(imagePath);
+    if (!image.ok) return image;
+
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (ctx.accessToken) {
+      headers.Authorization = `Bearer ${ctx.accessToken}`;
+    }
+
+    const resp = await net.fetch(`${ctx.cloudAiUrl}/inference/ai/vision-structured`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        prompt,
+        imageB64: image.data,
+        mimeType: args?.mimeType || image.mimeType || 'image/jpeg',
+        schema,
+      }),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, error: `cloud_error_${resp.status}: ${errText}` };
+    }
+
+    const result: any = await resp.json().catch(() => ({}));
+    const object = result?.object;
+    const text = typeof object?.summary === 'string' ? object.summary : JSON.stringify(object || {});
+    return {
+      ok: true,
+      object,
+      json: object,
+      text,
+      filePath: imagePath,
+      ...result,
+    };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'cloud_ai_vision_failed') };
+  }
+}
+
+/**
+ * Special handler for analyze_current_screen - captures locally, then routes through structured vision.
+ */
+async function execAnalyzeCurrentScreen(args: any, ctx: RouterContext): Promise<any> {
+  try {
+    const { execLocalTool } = await import('./local');
+    const shot = await execLocalTool('take_screenshot', {}, ctx, 60000);
+    const filePath = String(shot?.filePath || shot?.path || '').trim();
+    if (!filePath) {
+      return { ok: false, error: 'screenshot_failed' };
+    }
+
+    const mode = String(args?.mode || 'text').trim().toLowerCase();
+    const booleanKey = String(args?.booleanKey || 'value').trim() || 'value';
+    const schema = args?.schema && typeof args.schema === 'object'
+      ? args.schema
+      : mode === 'boolean' || mode === 'bool'
+        ? {
+            type: 'object',
+            properties: {
+              summary: { type: 'string' },
+              [booleanKey]: { type: 'boolean' },
+            },
+          }
+        : {
+            type: 'object',
+            properties: {
+              summary: { type: 'string' },
+            },
+          };
+
+    const result = await execCloudAiVision(
+      {
+        ...args,
+        imagePath: filePath,
+        schema,
+      },
+      ctx,
+    );
+
+    if (!result?.ok) return result;
+
+    const object = result?.object || result?.json || {};
+    const text = typeof object?.summary === 'string' ? object.summary : String(result?.text || '');
+    const booleanValue = typeof object?.[booleanKey] === 'boolean'
+      ? object[booleanKey]
+      : typeof object?.value === 'boolean'
+        ? object.value
+        : undefined;
+
+    return {
+      ...result,
+      filePath,
+      json: object,
+      text,
+      ...(booleanValue !== undefined ? { boolean: booleanValue, [booleanKey]: booleanValue } : {}),
+    };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'analyze_current_screen_failed') };
+  }
+}
+
+/**
  * Special handler for analyze_media - reads local files and sends to cloud
  */
 async function execAnalyzeMedia(args: any, ctx: RouterContext): Promise<any> {
@@ -249,13 +453,7 @@ async function execAnalyzeMedia(args: any, ctx: RouterContext): Promise<any> {
       ctx.logFn(`analyze_media: checking path="${filePath}"`);
       if (!filePath) continue;
       
-      const ext = filePath.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] || '';
-      const mimeMap: Record<string, string> = {
-        mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4',
-        mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime',
-        png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
-      };
-      const mimeType = src?.mimeType || mimeMap[ext] || 'application/octet-stream';
+      const mimeType = src?.mimeType || inferMimeType(filePath);
       
       try {
         const buf = fs.readFileSync(filePath);
@@ -631,4 +829,3 @@ async function execCloudStorageUpload(args: any, ctx: RouterContext): Promise<an
     return { ok: false, error: String(e?.message || 'cloud_storage_upload_failed') };
   }
 }
-

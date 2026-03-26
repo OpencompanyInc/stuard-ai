@@ -9,7 +9,7 @@
  * This module handles quota management, plan upgrades, and billing.
  */
 
-import { STORAGE_PRICING, creditsFromUsd } from '../pricing';
+import { STORAGE_PRICING, creditsFromUsd, preciseCreditsFromUsd } from '../pricing';
 import {
   getStorageUsage,
   upsertStorageUsage,
@@ -293,7 +293,7 @@ export async function billStorageHourly(userId: string): Promise<void> {
   // Hot storage billing (based on plan disk allocation)
   const hotMonthlyUsd = info.hotDiskGb * STORAGE_PRICING.hotPerGbMonthUsd;
   const hotHourlyUsd = hotMonthlyUsd / hoursPerMonth;
-  const hotCredits = creditsFromUsd(hotHourlyUsd);
+  const hotCredits = preciseCreditsFromUsd(hotHourlyUsd);
 
   if (hotCredits > 0) {
     await insertBillingEvent(userId, 'hot_storage', hotCredits, {
@@ -307,7 +307,7 @@ export async function billStorageHourly(userId: string): Promise<void> {
   const coldGb = info.coldStorageBytes / (1024 * 1024 * 1024);
   const coldMonthlyUsd = coldGb * STORAGE_PRICING.coldPerGbMonthUsd;
   const coldHourlyUsd = coldMonthlyUsd / hoursPerMonth;
-  const coldCredits = creditsFromUsd(coldHourlyUsd);
+  const coldCredits = preciseCreditsFromUsd(coldHourlyUsd);
 
   if (coldCredits > 0) {
     await insertBillingEvent(userId, 'cold_storage', coldCredits, {

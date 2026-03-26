@@ -101,7 +101,6 @@ const MEMORY_AI_TOOL_IDS = new Set([
     'add_to_space_path',
     'get_space_tree',
     'create_space',
-    'get_memory_stats',
     'add_source_to_space',
     'add_note_to_space',
     'add_code_snippet_to_space',
@@ -117,7 +116,7 @@ const MEMORY_AI_ALLOWLIST = new Set([
     // Space management tools — must be registered so search_tools/get_tool_schema/execute_tool can find them
     'list_user_spaces', 'get_space_contents', 'add_to_space',
     'ensure_space_path', 'list_space_path', 'add_to_space_path', 'get_space_tree',
-    'create_space', 'get_memory_stats',
+    'create_space',
     'add_source_to_space', 'add_note_to_space', 'add_code_snippet_to_space',
     'link_conversation_to_space', 'find_or_create_space',
     'update_space_item', 'delete_space_item',
@@ -514,7 +513,7 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'Workflow');
     } else if (['search_past_conversations', 'get_conversation_context', 'browse_topic_collections', 'get_collection_detail', 'synthesize_collection'].includes(name)) {
         registerTool(t, 'Memory');
-    } else if (['list_user_spaces', 'get_space_contents', 'add_to_space', 'ensure_space_path', 'list_space_path', 'add_to_space_path', 'get_space_tree', 'create_space', 'get_memory_stats', 'add_source_to_space', 'add_note_to_space', 'add_code_snippet_to_space', 'link_conversation_to_space', 'find_or_create_space', 'update_space_item', 'delete_space_item'].includes(name)) {
+    } else if (['list_user_spaces', 'get_space_contents', 'add_to_space', 'ensure_space_path', 'list_space_path', 'add_to_space_path', 'get_space_tree', 'create_space', 'add_source_to_space', 'add_note_to_space', 'add_code_snippet_to_space', 'link_conversation_to_space', 'find_or_create_space', 'update_space_item', 'delete_space_item'].includes(name)) {
         registerTool(t, 'Spaces');
     } else if (['knowledge_add_instruction', 'knowledge_remember_about_user', 'knowledge_update_profile', 'knowledge_add_project_fact', 'knowledge_stats'].includes(name)) {
         registerTool(t, 'Knowledge');

@@ -475,6 +475,7 @@ async function runSmsTurn(input: {
   replyToPhone: string;
   proactiveMessage?: string | null;
   provider?: string | null;
+  attachments?: any[];
 }): Promise<{ replyText: string; conversationId: string | null }> {
   const session = getMainAuthSession();
   const token = session?.access_token;
@@ -542,6 +543,7 @@ async function runSmsTurn(input: {
           conversationId: input.conversationId || undefined,
           hiddenContext: buildSmsHiddenContext(input.mode, input.proactiveMessage),
           auth: { accessToken: token },
+          ...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
         });
       } catch (e: any) {
         finish(() => reject(new Error(`sms_cloud_ws_send_failed: ${String(e?.message || e)}`)));
@@ -698,6 +700,12 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
 
   // ── Agent turn (direct cloud WS with full tool bridge) ───────────────────
   const replyToPhone = String(item.reply_to_phone || effectiveState.last_reply_to_phone || '');
+
+  // Extract processed media attachments from queue metadata (populated by cloud-ai MediaProcessor)
+  const processedAttachments = Array.isArray(item.metadata?.processedAttachments)
+    ? item.metadata.processedAttachments
+    : [];
+
   const turn = await runSmsTurn({
     text: incomingText,
     mode: effectiveState.mode,
@@ -707,6 +715,7 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
     replyToPhone,
     proactiveMessage: effectiveState.proactive_message,
     provider: itemProvider,
+    attachments: processedAttachments.length > 0 ? processedAttachments : undefined,
   });
   if (!turn.replyText) throw new Error('sms_empty_agent_reply');
 

@@ -184,6 +184,43 @@ async def run_tests():
         info(f"Manual scan: {json.dumps(manual_test.get('result', manual_test.get('error', '?')))[:300]}")
 
         # ── Get interactive elements ───────────────────────────────
+        _, anomaly = await req(session, "post", "/execute-script", {
+            "script": """
+                const interactiveSelectors = 'input, textarea, select, button, a[href], [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="checkbox"], [role="radio"], [role="switch"], [role="combobox"], [role="listbox"], [role="searchbox"], [role="textbox"], [aria-haspopup="listbox"], [aria-haspopup="menu"], [contenteditable="true"]';
+                if (!document.__stuardOriginalQuerySelectorAll) {
+                    document.__stuardOriginalQuerySelectorAll = document.querySelectorAll.bind(document);
+                    document.querySelectorAll = function(selector) {
+                        const result = document.__stuardOriginalQuerySelectorAll(selector);
+                        if (selector !== interactiveSelectors) return result;
+                        const fakeNode = {
+                            id: '',
+                            name: '',
+                            className: '',
+                            disabled: false,
+                            required: false,
+                            readOnly: false,
+                            multiple: false,
+                            value: '',
+                            tagName: undefined,
+                            parentElement: null,
+                            previousElementSibling: null,
+                            closest: function() { return null; },
+                            getAttribute: function() { return ''; },
+                            getBoundingClientRect: function() {
+                                return { width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0 };
+                            }
+                        };
+                        return Array.from(result).concat(fakeNode);
+                    };
+                }
+                return {
+                    patched: true,
+                    interactiveCount: document.__stuardOriginalQuerySelectorAll(interactiveSelectors).length
+                };
+            """
+        }, timeout=15)
+        info(f"Injected anomaly: {json.dumps(anomaly.get('result', anomaly.get('error', '?')))}")
+
         section("Discover interactive elements")
         _, elems = await req(session, "post", "/get_interactive_elements", {})
         info(f"Raw get_interactive_elements response: ok={elems.get('ok')}, elementCount={elems.get('elementCount')}, error={elems.get('error', 'none')}")

@@ -11,6 +11,8 @@ const PROACTIVE_CORE_TOOLS = [
   'get_skill_info',
   'search_past_conversations',
   'get_conversation_context',
+  'choose_notification_channel',
+  'write_session_summary',
 ] as const;
 
 interface TaskSnapshot {

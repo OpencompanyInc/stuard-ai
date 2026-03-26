@@ -609,8 +609,8 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
         return true;
       }
 
-      // Catch up on any unbilled hours (setInterval is unreliable on Cloud Run)
-      await catchUpBilling(engine);
+      // Keep status polling from replaying long billing history after restarts.
+      await catchUpBilling(engine, { maxBackfillHours: 6 });
 
       const syncStatus = await getSyncStatus(user.userId);
       const computeUsage = await getUserComputeUsage(user.userId);

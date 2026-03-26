@@ -2,6 +2,7 @@ import { COMPUTE_BILLING_INTERVAL_MS } from '../utils/config';
 import {
   STORAGE_PRICING,
   creditsFromUsd,
+  preciseCreditsFromUsd,
   resolveComputeMachineSpec,
 } from '../pricing';
 import {
@@ -82,7 +83,7 @@ async function billEngine(engine: CloudEngine, billingHour: Date): Promise<void>
   // ── Hot storage billing (24/7 while engine exists) ───────────────────────
   const hotGb = engine.disk_size_gb;
   const hotHourlyUsd = (hotGb * STORAGE_PRICING.hotPerGbMonthUsd) / HOURS_PER_MONTH;
-  const hotCredits = creditsFromUsd(hotHourlyUsd);
+  const hotCredits = preciseCreditsFromUsd(hotHourlyUsd);
   if (hotCredits > 0) {
     await insertBillingEvent(userId, 'hot_storage', hotCredits, {
       diskSizeGb: hotGb,
@@ -96,7 +97,7 @@ async function billEngine(engine: CloudEngine, billingHour: Date): Promise<void>
   if (coldBytes > 0) {
     const coldGb = coldBytes / (1024 * 1024 * 1024);
     const coldHourlyUsd = (coldGb * STORAGE_PRICING.coldPerGbMonthUsd) / HOURS_PER_MONTH;
-    const coldCredits = creditsFromUsd(coldHourlyUsd);
+    const coldCredits = preciseCreditsFromUsd(coldHourlyUsd);
     if (coldCredits > 0) {
       await insertBillingEvent(userId, 'cold_storage', coldCredits, {
         coldBytes,
@@ -138,8 +139,15 @@ async function billEngine(engine: CloudEngine, billingHour: Date): Promise<void>
  *
  * Compute is only billed from `started_at` (current running session).
  * Storage is billed from `created_at` or month start, whichever is later.
+ *
+ * The optional lookback cap is important for interactive status polling:
+ * it prevents a single page load from replaying an entire month of missed
+ * hours after a local restart or manual row edits.
  */
-export async function catchUpBilling(engine: CloudEngine): Promise<void> {
+export async function catchUpBilling(
+  engine: CloudEngine,
+  options?: { maxBackfillHours?: number },
+): Promise<void> {
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
@@ -150,16 +158,26 @@ export async function catchUpBilling(engine: CloudEngine): Promise<void> {
   };
 
   const currentHour = truncateToHour(now);
+  const maxBackfillHours = Math.max(0, Math.floor(Number(options?.maxBackfillHours || 0)));
+  const lookbackStart = maxBackfillHours > 0
+    ? new Date(currentHour.getTime() - ((maxBackfillHours - 1) * 3_600_000))
+    : null;
 
   // Storage: bill from max(month_start, created_at)
   const engineCreated = engine.created_at ? new Date(engine.created_at) : now;
-  const storageFrom = truncateToHour(engineCreated > monthStart ? engineCreated : monthStart);
+  let storageFrom = truncateToHour(engineCreated > monthStart ? engineCreated : monthStart);
+  if (lookbackStart && storageFrom < lookbackStart) {
+    storageFrom = lookbackStart;
+  }
 
   // Compute: only bill from started_at if currently running
   let computeFrom: Date | null = null;
   if (engine.status === 'running' && engine.started_at) {
     const started = new Date(engine.started_at);
     computeFrom = truncateToHour(started > monthStart ? started : monthStart);
+    if (lookbackStart && computeFrom < lookbackStart) {
+      computeFrom = lookbackStart;
+    }
   }
 
   // Walk each hour and bill appropriately

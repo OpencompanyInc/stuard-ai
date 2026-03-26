@@ -161,8 +161,19 @@ export const proactiveService = {
     return { ok: true, config: data.config };
   },
 
-  listTasks(): { ok: true; tasks: ProactiveTask[] } {
-    return { ok: true, tasks: loadData().tasks };
+  listTasks(opts?: { status?: string; limit?: number; offset?: number }): { ok: true; tasks: ProactiveTask[]; total: number; hasMore: boolean } {
+    let tasks = loadData().tasks;
+    const total = tasks.length;
+
+    if (opts?.status) {
+      tasks = tasks.filter(t => t.status === opts.status);
+    }
+
+    const offset = opts?.offset ?? 0;
+    const limit = opts?.limit ?? 20;
+    const paged = tasks.slice(offset, offset + limit);
+
+    return { ok: true, tasks: paged, total, hasMore: offset + limit < tasks.length };
   },
 
   addTask(task: Partial<ProactiveTask>): { ok: true; task: ProactiveTask; tasks: ProactiveTask[] } {
@@ -334,4 +345,71 @@ export const proactiveService = {
     data.config.lastWakeUpAt = at;
     saveData(data);
   },
+
+  // ── Session Summary Storage ──────────────────────────────────────────────
+
+  addSessionSummary(summary: string): void {
+    if (!summary?.trim()) return;
+    try {
+      const p = sessionSummariesPath();
+      const existing = loadSessionSummaries();
+      existing.unshift({
+        summary: summary.trim(),
+        at: new Date().toISOString(),
+      });
+      // Keep last 50 summaries
+      const trimmed = existing.slice(0, 50);
+      fs.writeFileSync(p, JSON.stringify(trimmed, null, 2), 'utf-8');
+    } catch (e) {
+      logger.warn('[proactive] Failed to save session summary:', e);
+    }
+  },
+
+  getRecentSessionSummaries(limit = 5): string[] {
+    try {
+      const summaries = loadSessionSummaries();
+      return summaries.slice(0, limit).map(s => {
+        const timeAgo = getTimeAgo(s.at);
+        return `[${timeAgo}] ${s.summary}`;
+      });
+    } catch {
+      return [];
+    }
+  },
 };
+
+// ── Session summaries persistence ────────────────────────────────────────────
+
+interface SessionSummaryEntry {
+  summary: string;
+  at: string;
+}
+
+function sessionSummariesPath(): string {
+  return path.join(app.getPath('userData'), 'proactive-session-summaries.json');
+}
+
+function loadSessionSummaries(): SessionSummaryEntry[] {
+  try {
+    const p = sessionSummariesPath();
+    if (fs.existsSync(p)) {
+      const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      return Array.isArray(data) ? data : [];
+    }
+  } catch {}
+  return [];
+}
+
+function getTimeAgo(isoDate: string): string {
+  try {
+    const diff = Date.now() - new Date(isoDate).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  } catch {
+    return 'recently';
+  }
+}

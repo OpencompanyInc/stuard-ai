@@ -38,6 +38,10 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'proactive_task_create': { kind: 'electron' },
   'proactive_task_delete': { kind: 'electron' },
 
+  // Auto-skill storage (called from cloud-ai auto-skills pipeline)
+  'auto_skill_store': { kind: 'electron' },
+  'auto_skill_list': { kind: 'electron' },
+
   'list_open_windows': { kind: 'electron' },
   'bring_window_to_foreground': { kind: 'electron' },
   'get_window_info': { kind: 'electron' },
@@ -131,6 +135,7 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'ai_inference': { kind: 'cloud', handler: '/inference/ai/text' },
   'analyze_image': { kind: 'cloud', handler: '/inference/ai/analyze-image' },
   'analyze_current_screen': { kind: 'cloud', handler: '/inference/ai/vision-structured' },
+  'cloud_ai_vision': { kind: 'cloud', handler: '/inference/ai/vision-structured' },
   'find_text': { kind: 'cloud' },
   'find_text_on_screen': { kind: 'cloud' },
   'find_and_click_text': { kind: 'cloud' },

@@ -104,6 +104,7 @@ describe('Tool Registry - Extended Tests', () => {
       'ai_inference',
       'analyze_image',
       'analyze_current_screen',
+      'cloud_ai_vision',
       'web_search',
       'text_to_speech',
       'list_tts_voices',
@@ -146,6 +147,10 @@ describe('Tool Registry - Extended Tests', () => {
 
     it('should have correct handler for ai_inference', () => {
       expect(TOOL_REGISTRY['ai_inference'].handler).toBe('/inference/ai/text');
+    });
+
+    it('should have correct handler for cloud_ai_vision', () => {
+      expect(TOOL_REGISTRY['cloud_ai_vision'].handler).toBe('/inference/ai/vision-structured');
     });
 
     it('should have correct handler for web_search', () => {

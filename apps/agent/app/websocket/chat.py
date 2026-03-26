@@ -161,8 +161,11 @@ async def handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
 
                 elif ctype == "tool_request":
                     from .tools import handle_cloud_tool_request
-                    # We need to pass cws to handle_cloud_tool_request to send results back to cloud
-                    await handle_cloud_tool_request(cdata, session, cws, request_id=rid)
+                    # Spawn as concurrent task so multiple tool_requests run in parallel
+                    # (cloud-ai fires them via Promise.all but this loop is sequential)
+                    asyncio.create_task(
+                        handle_cloud_tool_request(cdata, session, cws, request_id=rid)
+                    )
 
                 elif ctype == "final":
                     logger.info("cloud_final model=%s", cdata.get("model"))
