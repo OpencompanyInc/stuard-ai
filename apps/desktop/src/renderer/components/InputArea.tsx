@@ -1475,7 +1475,7 @@ const InputArea = forwardRef(function InputArea(
               style={{ maxHeight: compactSearchDropdownMaxHeight }}
             >
               <div
-                className="p-2 pr-1 space-y-1.5 overflow-y-auto custom-scrollbar"
+                className="p-2 pr-1 space-y-1.5 overflow-y-auto scrollbar-none"
                 style={{ maxHeight: compactSearchDropdownScrollHeight }}
               >
                 {/* Quick Shortcuts */}

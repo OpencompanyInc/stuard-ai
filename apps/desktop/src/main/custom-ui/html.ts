@@ -297,7 +297,7 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
     }`;
   }
 
-  const { code: processedComponent } = prepareComponentCode(rawCode);
+  const { code: processedComponent, diagnostics } = prepareComponentCode(rawCode);
 
   // Load bundled React runtime (offline)
   let reactRuntime: string;
@@ -312,7 +312,7 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
 
   // Build the runtime script for the custom UI window
   const runtimeScript = buildRuntimeScript({
-    id, flowId, data, processedComponent,
+    id, flowId, data, processedComponent, diagnostics,
   });
 
   return `<!DOCTYPE html>
@@ -343,8 +343,9 @@ function buildRuntimeScript(options: {
   flowId: string;
   data: any;
   processedComponent: string;
+  diagnostics?: import('./jsx-transform').ComponentDiagnostic[];
 }): string {
-  const { id, flowId, data, processedComponent } = options;
+  const { id, flowId, data, processedComponent, diagnostics } = options;
 
   return `
     // === Stuard Custom UI Runtime (React + JSX) ===
@@ -528,6 +529,68 @@ function buildRuntimeScript(options: {
         return [value, setVar];
       }
 
+      // === useStyles Hook ===
+      // Injects dynamic CSS into the document head. Auto-cleans on unmount.
+      function useStyles(cssString) {
+        var idRef = React.useRef(null);
+        React.useEffect(function() {
+          if (!cssString) return;
+          // Reuse existing style element if present (HMR-safe)
+          if (idRef.current) {
+            var existing = document.getElementById(idRef.current);
+            if (existing) { existing.textContent = cssString; return; }
+          }
+          var id = 'useStyles-' + Math.random().toString(36).substr(2, 9);
+          idRef.current = id;
+          var style = document.createElement('style');
+          style.id = id;
+          style.textContent = cssString;
+          document.head.appendChild(style);
+          return function() {
+            var el = document.getElementById(id);
+            if (el) el.remove();
+          };
+        }, [cssString]);
+      }
+
+      // === useInterval Hook ===
+      function useInterval(callback, delay) {
+        var savedCallback = React.useRef(callback);
+        React.useEffect(function() { savedCallback.current = callback; });
+        React.useEffect(function() {
+          if (delay === null || delay === undefined) return;
+          var id = setInterval(function() { savedCallback.current(); }, delay);
+          return function() { clearInterval(id); };
+        }, [delay]);
+      }
+
+      // === useTimeout Hook ===
+      function useTimeout(callback, delay) {
+        var savedCallback = React.useRef(callback);
+        React.useEffect(function() { savedCallback.current = callback; });
+        React.useEffect(function() {
+          if (delay === null || delay === undefined) return;
+          var id = setTimeout(function() { savedCallback.current(); }, delay);
+          return function() { clearTimeout(id); };
+        }, [delay]);
+      }
+
+      // === useLocalStorage Hook ===
+      function useLocalStorage(key, initialValue) {
+        var state = React.useState(function() {
+          try {
+            var item = localStorage.getItem(key);
+            return item !== null ? JSON.parse(item) : initialValue;
+          } catch(e) { return initialValue; }
+        });
+        var storedValue = state[0], setStoredValue = state[1];
+        var setValue = React.useCallback(function(newValue) {
+          setStoredValue(newValue);
+          try { localStorage.setItem(key, JSON.stringify(newValue)); } catch(e) {}
+        }, [key]);
+        return [storedValue, setValue];
+      }
+
       // === useStream Hook ===
       function useStream(streamId) {
         var chunkState = React.useState(null);
@@ -568,6 +631,64 @@ function buildRuntimeScript(options: {
         };
       }
 
+      // === Pre-render Diagnostics ===
+      var __diagnostics = ${JSON.stringify(diagnostics || [])};
+      if (__diagnostics.length > 0) {
+        console.warn('[stuard] Component validation issues:');
+        __diagnostics.forEach(function(d) {
+          var method = d.severity === 'error' ? 'error' : 'warn';
+          console[method]('  Line ' + d.line + ': [' + d.severity + '] ' + d.message);
+        });
+      }
+
+      // === Component Source (for error display) ===
+      var __componentSource = ${JSON.stringify(processedComponent)};
+
+      // Build line-numbered source display with optional highlighted lines
+      function __buildSourceDisplay(errorMsg) {
+        var lines = __componentSource.split('\\n');
+        var highlightLines = {};
+
+        // Identify error lines: check for "X is not defined" and highlight references
+        var undefMatch = errorMsg && errorMsg.match(/(\\w+) is not defined/);
+        if (undefMatch) {
+          var ident = undefMatch[1];
+          lines.forEach(function(line, i) {
+            if (line.indexOf(ident) !== -1) highlightLines[i] = true;
+          });
+        }
+
+        return lines.map(function(line, i) {
+          var num = String(i + 1);
+          while (num.length < 3) num = ' ' + num;
+          var isErr = highlightLines[i] === true;
+          var arrow = isErr ? '>>>' : '   ';
+          var bg = isErr ? 'background:#451a03;display:inline-block;width:100%' : '';
+          var color = isErr ? 'color:#fbbf24;font-weight:bold' : 'color:#94a3b8';
+          return '<span style="' + color + ';' + bg + '">' + arrow + ' ' + num + ' | ' +
+            line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</span>';
+        }).join('\\n');
+      }
+
+      function __showComponentError(title, error, hint) {
+        var root = document.getElementById('stuard-root');
+        var msg = error && error.message ? error.message : String(error);
+        var sourceHtml = __buildSourceDisplay(msg);
+        root.innerHTML =
+          '<div style="padding:20px;color:#f87171;font-family:system-ui;height:100%;overflow:auto;background:#0f0f0f">' +
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
+          '<span style="background:#dc2626;color:white;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:bold">ERROR</span>' +
+          '<span style="font-size:16px;font-weight:bold;color:#fca5a5">' + title + '</span></div>' +
+          '<pre style="font-size:12px;background:#1c1c1c;padding:12px;border-radius:8px;white-space:pre-wrap;overflow:auto;max-height:120px;margin-bottom:12px;border:1px solid #7f1d1d">' +
+          msg.replace(/</g, '&lt;') + '</pre>' +
+          '<div style="font-size:11px;color:#6b7280;margin-bottom:8px;font-weight:600">COMPONENT SOURCE</div>' +
+          '<pre style="font-size:11px;line-height:1.6;background:#1a1a1a;padding:12px;border-radius:8px;overflow:auto;max-height:300px;border:1px solid #333;font-family:Consolas,Monaco,monospace">' +
+          sourceHtml + '</pre>' +
+          (hint ? '<p style="color:#6b7280;font-size:12px;margin-top:12px">' + hint + '</p>' : '') +
+          '<button onclick="if(window.stuard)stuard.close()" style="margin-top:12px;padding:6px 16px;background:#333;color:#ccc;border:none;border-radius:6px;cursor:pointer;font-size:12px">Close</button>' +
+          '</div>';
+      }
+
       // === User Component ===
       // NOTE: In strict mode, function declarations inside blocks (try/catch)
       // are block-scoped. We convert "function App(" to "App = function App("
@@ -578,17 +699,9 @@ function buildRuntimeScript(options: {
       } catch (__compDefError) {
         console.error('[stuard] Component definition error:', __compDefError);
         App = function ErrorApp() {
-          return React.createElement('div', { className: 'p-6 space-y-3' },
-            React.createElement('h2', { className: 'text-red-500 font-bold text-lg' }, 'Component Error'),
-            React.createElement('pre', {
-              className: 'text-xs text-red-400 bg-red-50 rounded-lg p-3 overflow-auto max-h-60 whitespace-pre-wrap'
-            }, String(__compDefError && __compDefError.message || __compDefError)),
-            React.createElement('p', { className: 'text-slate-500 text-sm' }, 'Check the component code for syntax errors.'),
-            React.createElement('button', {
-              onClick: function() { if (hasStuardApi) stuard.close(); },
-              className: 'btn-secondary mt-2'
-            }, 'Close')
-          );
+          __showComponentError('Component Definition Error', __compDefError,
+            'The component code threw an error while being defined. Check for syntax errors or undefined references.');
+          return null;
         };
       }
 
@@ -603,12 +716,8 @@ function buildRuntimeScript(options: {
         ReactDOM.render(React.createElement(AppComponent), root);
       } catch (__renderError) {
         console.error('[stuard] Render error:', __renderError);
-        document.getElementById('stuard-root').innerHTML =
-          '<div style="padding:24px;color:#f87171;font-family:monospace">' +
-          '<h2 style="font-size:18px;font-weight:bold;margin-bottom:8px">Render Error</h2>' +
-          '<pre style="font-size:12px;background:#fef2f2;padding:12px;border-radius:8px;white-space:pre-wrap;overflow:auto;max-height:300px">' +
-          String(__renderError && __renderError.message || __renderError).replace(/</g, '&lt;') +
-          '</pre><p style="color:#94a3b8;font-size:13px;margin-top:12px">The component defined an App function but it failed to render.</p></div>';
+        __showComponentError('Render Error', __renderError,
+          'The component defined an App function but it failed to render.');
       }
     })();
   `;

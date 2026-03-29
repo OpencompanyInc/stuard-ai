@@ -73,16 +73,112 @@ export function transformJsx(code: string): string {
 }
 
 /**
+ * Diagnostic produced by component code validation.
+ */
+export interface ComponentDiagnostic {
+  line: number;
+  column?: number;
+  severity: 'error' | 'warning';
+  message: string;
+}
+
+/**
+ * Hooks and globals provided by the custom UI runtime.
+ * Used by the validator to detect references to undefined identifiers.
+ */
+const RUNTIME_HOOKS = new Set([
+  'useState', 'useEffect', 'useRef', 'useMemo', 'useCallback',
+  'useReducer', 'useContext', 'useLayoutEffect',
+  'useVar', 'useStream', 'useStyles', 'useInterval', 'useTimeout', 'useLocalStorage',
+  'useAnimation', 'useMotionValue', 'useTransform', 'useSpring',
+]);
+
+const RUNTIME_GLOBALS = new Set([
+  'React', 'ReactDOM', 'Fragment', 'createElement',
+  'motion', 'AnimatePresence',
+  'stuard', 'initialData', 'formData',
+  'ReactMarkdown',
+]);
+
+/**
+ * Validate component code for common issues before rendering.
+ *
+ * Performs lightweight static analysis:
+ * - Checks for App function definition
+ * - Detects calls to unknown hooks not provided by the runtime
+ * - Flags common JSX mistakes (class= instead of className=)
+ *
+ * @returns Array of diagnostics with line numbers
+ */
+export function validateComponentCode(code: string): ComponentDiagnostic[] {
+  const diagnostics: ComponentDiagnostic[] = [];
+  const lines = code.split('\n');
+
+  // Check for App function
+  const hasAppFunction = /function\s+App\s*\(/.test(code)
+    || /(?:const|let|var)\s+App\s*=/.test(code);
+  if (!hasAppFunction) {
+    diagnostics.push({
+      line: 1,
+      severity: 'error',
+      message: 'Component must define a function named "App".',
+    });
+  }
+
+  // Scan each line
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineNum = i + 1;
+
+    // Check for unknown hooks (use* calls not in the runtime)
+    const hookRegex = /\b(use[A-Z]\w*)\s*\(/g;
+    let match: RegExpExecArray | null;
+    while ((match = hookRegex.exec(line)) !== null) {
+      const hookName = match[1];
+      if (!RUNTIME_HOOKS.has(hookName)) {
+        diagnostics.push({
+          line: lineNum,
+          column: match.index + 1,
+          severity: 'error',
+          message: `Unknown hook "${hookName}" — not provided by the runtime. Available hooks: ${[...RUNTIME_HOOKS].join(', ')}`,
+        });
+      }
+    }
+
+    // Check for class= in JSX (should be className=)
+    if (/<[a-zA-Z]/.test(line) && /\bclass=["'{]/.test(line) && !/className=/.test(line)) {
+      diagnostics.push({
+        line: lineNum,
+        severity: 'warning',
+        message: 'Use "className" instead of "class" in JSX.',
+      });
+    }
+
+    // Check for onclick= (should be onClick=)
+    if (/<[a-zA-Z]/.test(line) && /\bonclick=/i.test(line) && !/onClick=/.test(line)) {
+      diagnostics.push({
+        line: lineNum,
+        severity: 'warning',
+        message: 'Use "onClick" (camelCase) instead of "onclick" in JSX.',
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
+/**
  * Prepare component code for embedding in HTML.
  *
  * - Sanitizes double-escaped strings from LLM output
  * - Strips leaked scaffolding from UI builder
+ * - Validates for common issues (undefined hooks, missing App, etc.)
  * - Detects JSX syntax and transforms to React.createElement calls
  *
  * @param code - Raw component code string
- * @returns Object with the processed code and detected syntax type
+ * @returns Object with the processed code, detected syntax type, and diagnostics
  */
-export function prepareComponentCode(code: string): { code: string; syntax: 'jsx' | 'plain' } {
+export function prepareComponentCode(code: string): { code: string; syntax: 'jsx' | 'plain'; diagnostics?: ComponentDiagnostic[] } {
   let processed = code;
 
   // Step 0: Decode HTML entities (common when component code passes through HTML pipelines)
@@ -161,17 +257,35 @@ export function prepareComponentCode(code: string): { code: string; syntax: 'jsx
     );
   }).join('\n');
 
-  // Step 4: Detect syntax
+  // Step 4: Validate before transform (on the pre-transform source for accurate line numbers)
+  const diagnostics = validateComponentCode(processed);
+  const errors = diagnostics.filter(d => d.severity === 'error');
+
+  // If there are hard errors (like unknown hooks), log them but still attempt rendering
+  // so the runtime error handler can show line-numbered source
+  if (errors.length > 0) {
+    console.warn('[custom-ui] Component validation found issues:');
+    for (const d of diagnostics) {
+      console.warn(`  Line ${d.line}: [${d.severity}] ${d.message}`);
+    }
+  }
+
+  // Step 5: Detect syntax
   const syntax = detectComponentSyntax(processed);
 
-  // Step 5: Transform JSX if detected
+  // Step 6: Transform JSX if detected
   if (syntax === 'jsx') {
     try {
       processed = transformJsx(processed);
     } catch (error: any) {
       console.error('[custom-ui] JSX transform failed:', error.message);
+      // Extract line number from sucrase error if available
+      const lineMatch = error.message?.match(/\((\d+):(\d+)\)/);
+      const errLine = lineMatch ? parseInt(lineMatch[1]) : null;
+      const errCol = lineMatch ? parseInt(lineMatch[2]) : null;
+      const locationHint = errLine ? ` (line ${errLine}${errCol ? ', col ' + errCol : ''})` : '';
       processed = `
-// JSX Transform Error: ${error.message}
+// JSX Transform Error${locationHint}: ${error.message}
 function App() {
   return React.createElement('div', { className: 'p-6 space-y-3' },
     React.createElement('h2', { className: 'text-red-500 font-bold text-lg' }, 'JSX Syntax Error'),
@@ -181,9 +295,9 @@ function App() {
     React.createElement('p', { className: 'text-slate-500 text-sm' }, 'Check the component code for syntax errors.')
   );
 }`;
-      return { code: processed, syntax: 'jsx' };
+      return { code: processed, syntax: 'jsx', diagnostics };
     }
   }
 
-  return { code: processed, syntax };
+  return { code: processed, syntax, diagnostics };
 }

@@ -462,7 +462,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               )}
             >
               {/* Top Header */}
-              <div className="flex items-center justify-between px-2 py-2 border-b border-theme/10 bg-theme-hover/40 backdrop-blur-sm w-full min-w-0">
+              <div className="flex items-center justify-between px-2 py-2 border-b border-theme/10 backdrop-blur-sm w-full min-w-0">
                 <div className="flex-1 w-0 min-w-0 overflow-hidden mr-2">
                   <ChatTabs
                     tabs={tabs}

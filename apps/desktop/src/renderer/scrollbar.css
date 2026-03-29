@@ -13,8 +13,8 @@
 
 .custom-scrollbar::-webkit-scrollbar,
 .slick-scrollbar::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track,
@@ -32,8 +32,8 @@
     transparent
   );
   border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
+  border: 3px solid transparent;
+  background-clip: content-box;
   transition: background-color 160ms ease, border-color 160ms ease;
 }
 
@@ -106,8 +106,8 @@
 }
 
 .scrollbar-hide-show:hover::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 .scrollbar-hide-show:hover::-webkit-scrollbar-track {
@@ -121,8 +121,8 @@
     transparent
   );
   border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
+  border: 3px solid transparent;
+  background-clip: content-box;
 }
 
 /* XTerm specific scrollbar styling */
@@ -132,8 +132,8 @@
 }
 
 .xterm-viewport::-webkit-scrollbar {
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
 }
 
 .xterm-viewport::-webkit-scrollbar-track {
@@ -143,8 +143,8 @@
 .xterm-viewport::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.18);
   border-radius: 999px;
-  border: 2px solid #1e1e1e;
-  background-clip: padding-box;
+  border: 3px solid transparent;
+  background-clip: content-box;
 }
 
 .xterm-viewport::-webkit-scrollbar-thumb:hover {

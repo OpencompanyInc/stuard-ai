@@ -102,6 +102,9 @@ let resizingProgrammatically = false;
 type OverlayMode = "compact" | "sidebar" | "window";
 let currentMode: OverlayMode = "compact";
 
+type BoardWindowRecord = { id: string; [key: string]: any };
+const boardWindows = new Map<string, BoardWindowRecord>();
+
 // Track the last active window handle (for split-screen in sidebar mode)
 let lastActiveWindowHandle: string | null = null;
 
@@ -1169,7 +1172,7 @@ export function toggleSidebarExpanded() {
 
 export function setSidebarPresentation(mode: SidebarPresentationMode, tab?: SidebarTabId) {
   if (!sidebarWin || sidebarWin.isDestroyed()) {
-    openSidebarWindow({ tab, expanded: true });
+    openSidebarWindow({ tab, expanded: true, presentation: mode });
   }
   if (tab && sidebarWin && !sidebarWin.isDestroyed()) {
     try {
@@ -1177,6 +1180,54 @@ export function setSidebarPresentation(mode: SidebarPresentationMode, tab?: Side
     } catch {}
   }
   return applySidebarPresentation(mode);
+}
+
+// Legacy canvas board-window API.
+// The dedicated canvas windows no longer exist, but the IPC surface is still used.
+export function createBoardWindow(item: any) {
+  const id = String(item?.id || "");
+  if (!id) return;
+  boardWindows.set(id, { ...(item || {}), id, visible: true });
+}
+
+export function updateBoardWindow(item: any) {
+  const id = String(item?.id || "");
+  if (!id) return;
+  const existing = boardWindows.get(id) || { id };
+  boardWindows.set(id, { ...existing, ...(item || {}), id });
+}
+
+export function deleteBoardWindow(id: string) {
+  boardWindows.delete(String(id || ""));
+}
+
+export function listBoardWindows() {
+  return Array.from(boardWindows.values());
+}
+
+export function clearBoardWindows() {
+  boardWindows.clear();
+}
+
+export function hideBoardWindow(id: string) {
+  const key = String(id || "");
+  const existing = boardWindows.get(key);
+  if (!existing) return;
+  boardWindows.set(key, { ...existing, visible: false });
+}
+
+export function focusBoardWindow(id: string) {
+  const key = String(id || "");
+  const existing = boardWindows.get(key);
+  if (!existing) return;
+  boardWindows.set(key, { ...existing, focusedAt: Date.now(), visible: true });
+}
+
+export function showBoardWindow(id: string) {
+  const key = String(id || "");
+  const existing = boardWindows.get(key);
+  if (!existing) return;
+  boardWindows.set(key, { ...existing, visible: true });
 }
 
 // Legacy Spaces Window functions - now redirect to sidebar

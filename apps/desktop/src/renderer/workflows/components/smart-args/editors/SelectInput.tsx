@@ -110,7 +110,7 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
               />
             </div>
           )}
-          <div className="overflow-y-auto max-h-60 p-1">
+          <div className="overflow-y-auto max-h-60 p-1 scrollbar-none">
             {showCustomOption && (
               <button
                 onClick={() => { onChange(searchTrimmed); setOpen(false); setSearch(''); }}

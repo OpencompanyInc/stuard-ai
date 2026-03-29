@@ -12,7 +12,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import { verifyToken, getProfile, logUsageEvent } from '../supabase';
-import { WAKEWORD_ALLOWED_PLANS, WAKEWORD_ENROLL_CREDIT_COST } from '../pricing';
+import { WAKEWORD_ALLOWED_PLANS, WAKEWORD_ENROLL_CREDIT_COST, creditsPerUsd } from '../pricing';
 import {
   startEnrollment,
   getEnrollment,
@@ -217,13 +217,12 @@ export async function handleWakewordRoutes(
 
       // Log usage event for billing
       try {
-        await logUsageEvent(user.userId, {
-          event_type: 'wakeword_enroll',
-          model: 'wakeword-finetune',
+        await logUsageEvent(user.userId, null, 'wakeword-finetune', {
           prompt_tokens: 0,
           completion_tokens: 0,
           total_tokens: 0,
-          cost_credits: WAKEWORD_ENROLL_CREDIT_COST,
+          costUsd: WAKEWORD_ENROLL_CREDIT_COST / Math.max(creditsPerUsd(), 1),
+          sourceType: 'wakeword_enroll',
           metadata: { jobId: result.jobId, wakePhrase, sampleCount: wavFiles.length },
         });
       } catch {}

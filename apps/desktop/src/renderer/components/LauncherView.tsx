@@ -881,10 +881,6 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
           {/* Top Header */}
           <div
             className="flex items-center justify-between px-2 py-2 border-b border-theme backdrop-blur-sm w-full min-w-0 shrink-0"
-            style={{
-              background:
-                "color-mix(in srgb, var(--sidebar-item-hover) 40%, transparent)",
-            }}
           >
             <div className="flex-1 w-0 min-w-0 overflow-hidden mr-2">
               <ChatTabs

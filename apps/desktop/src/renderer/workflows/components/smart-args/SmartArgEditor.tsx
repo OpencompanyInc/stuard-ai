@@ -394,6 +394,19 @@ export function ToolArgsEditor({
   // Special case: custom_ui tool - show React component editor + visual builder + key args
   if (toolName === 'custom_ui') {
     const hasComponent = typeof args.component === 'string' && args.component.trim().length > 0;
+    const isBlocking = !(
+      args.blocking === false ||
+      args.blocking === 'false' ||
+      args.window?.blocking === false ||
+      args.window?.blocking === 'false'
+    );
+    const timeoutMsValue =
+      typeof args.timeoutMs === 'number'
+        ? args.timeoutMs
+        : typeof args.timeoutMs === 'string' && args.timeoutMs.trim() !== '' && !Number.isNaN(Number(args.timeoutMs))
+          ? Number(args.timeoutMs)
+          : '';
+    const keepOpenAfterResolve = args.keepOpen === true;
 
     const handleUIBuilderSave = (result: { html: string; css: string; js: string; window: UIWindowConfig; pages?: Record<string, any>; startPage?: string }) => {
       const newArgs: Record<string, any> = {
@@ -421,9 +434,26 @@ export function ToolArgsEditor({
       });
     };
 
-    // Key args to show prominently (in order)
-    const keyArgs = ['id', 'title', 'data', 'blocking'];
     const hasPages = args.pages && typeof args.pages === 'object' && Object.keys(args.pages).length > 0;
+    const setBlockingMode = (nextBlocking: boolean) => {
+      onUpdate({ ...args, blocking: nextBlocking });
+    };
+    const setTimeoutMs = (nextValue: string) => {
+      const trimmed = nextValue.trim();
+      const nextArgs = { ...args };
+      if (!trimmed) {
+        delete nextArgs.timeoutMs;
+      } else {
+        nextArgs.timeoutMs = Math.max(0, Number(trimmed));
+      }
+      onUpdate(nextArgs);
+    };
+    const setKeepOpenAfterResolve = (nextKeepOpen: boolean) => {
+      const nextArgs = { ...args };
+      if (nextKeepOpen) nextArgs.keepOpen = true;
+      else delete nextArgs.keepOpen;
+      onUpdate(nextArgs);
+    };
 
     // Add custom property handler for custom_ui
     const addCustomArg = () => {
@@ -474,19 +504,144 @@ export function ToolArgsEditor({
           </div>
         </details>
 
-        {/* Key Arguments - Always Visible */}
-        <div className="space-y-4">
-          {keyArgs.map(key => (
+        {/* UI Identity */}
+        <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+          <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/80">
+            <div className="text-sm font-semibold text-slate-700">UI Details</div>
+            <p className="text-[11px] text-slate-500 mt-1">
+              Give the window a clear title and a stable ID so you can update or close it later.
+            </p>
+          </div>
+          <div className="p-4 space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <SmartArgEditor
+                toolName={toolName}
+                argKey="title"
+                value={args.title}
+                onChange={v => onUpdate({ ...args, title: v })}
+                upstreamNodes={upstreamNodes}
+                workflowVariables={workflowVariables}
+              />
+              <SmartArgEditor
+                toolName={toolName}
+                argKey="id"
+                value={args.id}
+                onChange={v => onUpdate({ ...args, id: v })}
+                upstreamNodes={upstreamNodes}
+                workflowVariables={workflowVariables}
+              />
+            </div>
             <SmartArgEditor
-              key={key}
               toolName={toolName}
-              argKey={key}
-              value={args[key]}
-              onChange={v => onUpdate({ ...args, [key]: v })}
+              argKey="data"
+              value={args.data}
+              onChange={v => onUpdate({ ...args, data: v })}
               upstreamNodes={upstreamNodes}
               workflowVariables={workflowVariables}
             />
-          ))}
+          </div>
+        </div>
+
+        {/* Runtime Behavior */}
+        <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+          <div className="px-4 py-3 border-b border-slate-200 bg-gradient-to-r from-violet-50 to-sky-50">
+            <div className="text-sm font-semibold text-slate-700">Run Behavior</div>
+            <p className="text-[11px] text-slate-500 mt-1">
+              Choose whether this UI pauses the workflow for a decision or behaves like a live panel in the background.
+            </p>
+          </div>
+          <div className="p-4 space-y-4">
+            <div className="grid gap-3">
+              <button
+                type="button"
+                onClick={() => setBlockingMode(true)}
+                className={`w-full rounded-xl border px-4 py-3 text-left transition-all ${
+                  isBlocking
+                    ? 'border-violet-300 bg-violet-50 shadow-sm'
+                    : 'border-slate-200 hover:border-violet-200 hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800">Wait for a response</div>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Best for forms, confirmations, and approval flows. The workflow continues after `stuard.submit()` or closing the window.
+                    </p>
+                  </div>
+                  <div className={`h-5 w-5 rounded-full border flex items-center justify-center ${isBlocking ? 'border-violet-500 bg-violet-500' : 'border-slate-300 bg-white'}`}>
+                    {isBlocking && <div className="h-2 w-2 rounded-full bg-white" />}
+                  </div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setBlockingMode(false)}
+                className={`w-full rounded-xl border px-4 py-3 text-left transition-all ${
+                  !isBlocking
+                    ? 'border-emerald-300 bg-emerald-50 shadow-sm'
+                    : 'border-slate-200 hover:border-emerald-200 hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800">Show it and keep going</div>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Best for widgets, overlays, and status panels. The UI stays open while the workflow continues immediately.
+                    </p>
+                  </div>
+                  <div className={`h-5 w-5 rounded-full border flex items-center justify-center ${!isBlocking ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300 bg-white'}`}>
+                    {!isBlocking && <div className="h-2 w-2 rounded-full bg-white" />}
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            {isBlocking ? (
+              <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-4 space-y-4">
+                <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]">
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-semibold text-slate-700">Auto-timeout (ms)</label>
+                    <p className="text-[11px] text-slate-500">
+                      Optional. Leave blank or `0` to wait indefinitely.
+                    </p>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1000"
+                      value={timeoutMsValue}
+                      onChange={e => setTimeoutMs(e.target.value)}
+                      placeholder="0"
+                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-violet-100 focus:border-violet-300"
+                    />
+                  </div>
+
+                  <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white px-3 py-3 cursor-pointer hover:border-violet-200 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={keepOpenAfterResolve}
+                      onChange={e => setKeepOpenAfterResolve(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
+                    />
+                    <div>
+                      <div className="text-sm font-semibold text-slate-700">Keep window open after resolve</div>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        Useful when submit should unblock the workflow but the UI should remain visible.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
+                <div className="rounded-lg border border-violet-200 bg-white/80 px-3 py-2 text-[11px] text-slate-600">
+                  The workflow will wait for `stuard.submit(...)`, `stuard.close()`, a manual close, or the timeout above.
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-[11px] text-slate-600">
+                The workflow continues right away. Use `update_custom_ui` to refresh this panel and `close_custom_ui` when you are done with it.
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Window Configuration - Collapsible */}

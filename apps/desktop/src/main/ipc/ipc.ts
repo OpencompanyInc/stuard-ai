@@ -117,10 +117,10 @@ export function setupIpc() {
   ipcMain.handle('spaces:toggle', () => toggleSpacesWindow());
 
   // Sidebar window (new unified sidebar with Spaces, Canvas, Terminal)
-  ipcMain.handle('sidebar:open', (_e, options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) => openSidebarWindow(options));
+  ipcMain.handle('sidebar:open', (_e, options?: { tab?: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo'; expanded?: boolean }) => openSidebarWindow(options));
   ipcMain.handle('sidebar:close', () => closeSidebarWindow());
-  ipcMain.handle('sidebar:toggle', (_e, options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) => toggleSidebarWindow(options));
-  ipcMain.handle('sidebar:navigate', (_e, tab: 'spaces' | 'canvas' | 'terminal') => {
+  ipcMain.handle('sidebar:toggle', (_e, options?: { tab?: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo'; expanded?: boolean }) => toggleSidebarWindow(options));
+  ipcMain.handle('sidebar:navigate', (_e, tab: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo') => {
     const sidebar = getSidebarWindow();
     if (sidebar && !sidebar.isDestroyed()) {
       sidebar.webContents.send('sidebar:navigate', { tab });
@@ -133,6 +133,11 @@ export function setupIpc() {
   ipcMain.handle('sidebar:isExpanded', () => {
     const { isSidebarExpanded } = require('../windows');
     return { expanded: isSidebarExpanded() };
+  });
+  ipcMain.handle('sidebar:setPresentation', (_e, payload?: { mode?: 'full' | 'popup'; tab?: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo' }) => {
+    const { setSidebarPresentation } = require('../windows');
+    const mode = payload?.mode === 'popup' ? 'popup' : 'full';
+    return setSidebarPresentation(mode, payload?.tab);
   });
 
   // Canvas document storage (persisted locally)
@@ -1053,7 +1058,7 @@ export function setupIpc() {
           openSidebarWindow({ tab: 'spaces', expanded: true });
           break;
         case 'canvas':
-          openSidebarWindow({ tab: 'canvas', expanded: true });
+          openSidebarWindow({ tab: 'spaces', expanded: true });
           break;
         case 'tasks':
           setOverlayMode('window');
@@ -1344,8 +1349,8 @@ export function setupIpc() {
           return { ok: true };
 
         case 'canvas':
-          // Open sidebar to canvas tab in expanded mode and select specific document
-          openSidebarWindow({ tab: 'canvas', expanded: true });
+          // Canvas documents currently live behind the unified spaces view.
+          openSidebarWindow({ tab: 'spaces', expanded: true });
           // Handle special '_new' target to create a fresh canvas
           if (target === '_new') {
             const newId = `canvas_${Date.now()}`;

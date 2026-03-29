@@ -593,7 +593,7 @@ export async function startDiscordBot(): Promise<void> {
   });
 
   // ── Interaction (slash commands) ──
-  client.on(Events.InteractionCreate, async (interaction) => {
+  client.on(Events.InteractionCreate, async (interaction: Interaction) => {
     try {
       await handleInteraction(interaction);
     } catch (err: any) {
@@ -686,7 +686,7 @@ export async function startDiscordBot(): Promise<void> {
   });
 
   // ── Reaction handling (user reacts to bot messages) ──
-  client.on(Events.MessageReactionAdd, async (reaction, user) => {
+  client.on(Events.MessageReactionAdd, async (reaction: any, user: any) => {
     if (user.bot) return;
 
     // Fetch partial reactions
@@ -713,7 +713,7 @@ export async function startDiscordBot(): Promise<void> {
   });
 
   // ── Voice state changes (DM call detection) ──
-  client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
+  client.on(Events.VoiceStateUpdate, async (oldState: any, newState: any) => {
     try {
       const userId = newState.member?.user?.id || newState.id;
       if (!userId || userId === client.user?.id) return; // Ignore self

@@ -101,6 +101,7 @@ interface SpacesSidebarProps {
   selectedSpaceId?: string;
   onSelectedSpaceHandled?: () => void;
   accessToken?: string | null;
+  embedded?: boolean;
 }
 
 // Icon helpers
@@ -537,6 +538,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
   onClose,
   selectedSpaceId,
   onSelectedSpaceHandled,
+  embedded,
   accessToken
 }) => {
   // State
@@ -1042,7 +1044,8 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
   // Render
   return (
     <div className={clsx(
-      "relative flex h-full rounded-[28px] overflow-hidden transition-all duration-300 border border-theme",
+      "relative flex h-full overflow-hidden transition-all duration-300",
+      !embedded && "rounded-[28px] border border-theme",
       translucentMode ? "bg-theme-card backdrop-blur-2xl" : "bg-theme-bg",
       className
     )}
@@ -1050,9 +1053,9 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
       background: translucentMode
         ? "color-mix(in srgb, var(--card-bg) 82%, transparent)"
         : undefined,
-      boxShadow: translucentMode
+      boxShadow: embedded ? undefined : (translucentMode
         ? "0 18px 42px rgba(15, 23, 42, 0.12)"
-        : "0 18px 40px rgba(15, 23, 42, 0.08)",
+        : "0 18px 40px rgba(15, 23, 42, 0.08)"),
     }}>
       <div
         aria-hidden="true"

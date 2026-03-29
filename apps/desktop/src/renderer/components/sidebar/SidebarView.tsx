@@ -156,6 +156,7 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
             translucentMode={translucentMode}
             selectedSpaceId={selectedItem?.type === 'space' ? selectedItem.id : undefined}
             onSelectedSpaceHandled={selectedItem?.type === 'space' ? onSelectedItemHandled : undefined}
+            embedded
           />
         );
       case 'todo':

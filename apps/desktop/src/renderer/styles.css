@@ -269,10 +269,12 @@
 .memory-context-scrollbar::-webkit-scrollbar {
   width: 11px;
   height: 11px;
+  border-radius: 999px;
 }
 
 .memory-context-scrollbar::-webkit-scrollbar-track {
   background: transparent;
+  border-radius: 999px;
 }
 
 .memory-context-scrollbar::-webkit-scrollbar-thumb {
@@ -880,8 +882,8 @@ body {
 }
 
 .scrollbar-minimal::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 10px;
+  height: 10px;
 }
 
 .scrollbar-minimal::-webkit-scrollbar-track {
@@ -889,8 +891,10 @@ body {
 }
 
 .scrollbar-minimal::-webkit-scrollbar-thumb {
-  background-color: rgba(148, 163, 184, 0.2);
-  border-radius: 9999px;
+  background-color: rgba(148, 163, 184, 0.22);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
   transition: background-color 0.2s ease;
 }
 
@@ -910,7 +914,10 @@ body {
 
 .dark .scrollbar-minimal::-webkit-scrollbar-thumb,
 [data-theme='dark'] .scrollbar-minimal::-webkit-scrollbar-thumb {
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
 }
 
 .dark .scrollbar-minimal:hover::-webkit-scrollbar-thumb,
@@ -943,22 +950,19 @@ body {
 }
 
 .genui-scrollbar::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 10px;
+  height: 10px;
 }
 
 .genui-scrollbar::-webkit-scrollbar-track {
   background: transparent;
-  border-radius: 10px;
 }
 
 .genui-scrollbar::-webkit-scrollbar-thumb {
-  background: linear-gradient(135deg,
-      color-mix(in srgb, var(--primary, #007acc) 40%, transparent),
-      color-mix(in srgb, var(--primary, #007acc) 60%, transparent));
-  border-radius: 10px;
-  border: 1px solid transparent;
-  background-clip: padding-box;
+  background: color-mix(in srgb, var(--primary, #007acc) 50%, transparent);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
   transition: all 0.2s ease;
 }
 
