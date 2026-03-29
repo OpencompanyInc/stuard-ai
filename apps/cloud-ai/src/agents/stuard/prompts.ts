@@ -1,9 +1,4 @@
 import os from 'node:os';
-import { getToolRegistry, getToolCategories } from '../../tools/tool-registry';
-import { initToolRegistry } from '../../tools/meta-tools';
-
-// Ensure the tool registry is populated
-initToolRegistry();
 
 const DEFAULT_USER_HOME_DIR = (() => {
   const envHome = process.env.USERPROFILE || os.homedir();
@@ -11,41 +6,6 @@ const DEFAULT_USER_HOME_DIR = (() => {
 })();
 
 const IS_VM_CONTEXT = process.platform === 'linux' && !!process.env.STUARD_VM_TOKEN;
-
-/**
- * Build a compact, token-efficient catalog of ALL available tools.
- * Grouped by category, one line per tool: "name — short description"
- * This is injected into the system prompt so the LLM knows what's available
- * without paying the full JSON-schema cost for each tool.
- */
-export function buildToolCatalog(): string {
-  const categories = getToolCategories();
-  const registry = getToolRegistry();
-  
-  if (categories.size === 0 || registry.size === 0) return '';
-
-  const lines: string[] = [];
-  
-  // Sort categories for consistency
-  const sortedCats = Array.from(categories.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  
-  for (const [cat, toolNames] of sortedCats) {
-    if (toolNames.length === 0) continue;
-    const entries: string[] = [];
-    for (const name of toolNames) {
-      const tool = registry.get(name);
-      if (!tool) continue;
-      // Truncate description to save tokens
-      const desc = (tool.description || '').split('\n')[0].slice(0, 80).trim();
-      entries.push(`${name}${desc ? ' — ' + desc : ''}`);
-    }
-    if (entries.length > 0) {
-      lines.push(`[${cat}] ${entries.join(' | ')}`);
-    }
-  }
-  
-  return lines.join('\n');
-}
 
 const _SYSTEM_CONTEXT = IS_VM_CONTEXT
   ? `**System**: Linux (VM) | Home: /home/stuard | Temp: /tmp | Use Unix paths (/home/stuard/workspace/...)
@@ -65,27 +25,66 @@ Show local media in chat with <<path>> syntax.`;
 function buildIntegrationsContext(enabledIntegrations: string[] = []): string {
   if (enabledIntegrations.length === 0) return '';
 
-  const integrationLabels: Record<string, string> = {
-    google: 'Google Workspace (Gmail, Calendar, Drive, Sheets, Docs, Tasks)',
-    outlook: 'Microsoft Outlook (Email, Calendar)',
-    github: 'GitHub (Repos, Issues, PRs, Actions, Gists)',
-    facebook: 'Facebook (Pages, Posts, Messenger)',
-    instagram: 'Instagram (Media, Comments, DMs)',
-    threads: 'Threads (Posts, Replies)',
-    reddit: 'Reddit (Search, Subreddits, Posts, Comments)',
-    ollama: 'Ollama (Local AI Models)',
-    telnyx: 'Telnyx (SMS, Voice Calls)',
-    whatsapp: 'WhatsApp (Messages, Media, Voice)',
-    browser_use: 'Browser Use (AI Browser Automation)',
+  const integrationHints: Record<string, { label: string; families?: string[] }> = {
+    google: {
+      label: 'Google Workspace (Gmail, Calendar, Drive, Sheets, Docs, Tasks)',
+      families: ['gmail_*', 'calendar_*', 'drive_*', 'sheets_*', 'docs_*', 'tasks_*'],
+    },
+    outlook: {
+      label: 'Microsoft Outlook (Email, Calendar)',
+      families: ['outlook_*'],
+    },
+    github: {
+      label: 'GitHub (Repos, Issues, PRs, Actions, Gists)',
+      families: ['github_*'],
+    },
+    facebook: {
+      label: 'Facebook (Pages, Posts, Messenger)',
+      families: ['facebook_*'],
+    },
+    instagram: {
+      label: 'Instagram (Media, Comments, DMs)',
+      families: ['instagram_*'],
+    },
+    threads: {
+      label: 'Threads (Posts, Replies)',
+      families: ['threads_*'],
+    },
+    reddit: {
+      label: 'Reddit (Search, Subreddits, Posts, Comments)',
+      families: ['reddit_*'],
+    },
+    ollama: {
+      label: 'Ollama (Local AI Models)',
+      families: ['ollama_*'],
+    },
+    telnyx: {
+      label: 'Telnyx (SMS, Voice Calls)',
+      families: ['telnyx_*'],
+    },
+    whatsapp: {
+      label: 'WhatsApp (Messages, Media, Voice)',
+      families: ['whatsapp_*'],
+    },
+    browser_use: {
+      label: 'Browser Use (AI Browser Automation)',
+      families: ['browser_use_*'],
+    },
   };
 
   const connected = enabledIntegrations
-    .map(i => integrationLabels[i] || i)
+    .map((integrationId) => {
+      const hint = integrationHints[integrationId];
+      if (!hint) return integrationId;
+      const families = hint.families?.length ? ` | families: ${hint.families.join(', ')}` : '';
+      return `${hint.label}${families}`;
+    })
     .join('\n- ');
 
   return `\n**Connected Integrations**:
 - ${connected}
-These integrations are available — use search_tools / get_tool_schema / execute_tool to discover and call their tools. Do NOT guess tool names; always search first.`;
+These integrations are available — use search_tools / get_tool_schema / execute_tool to discover and call their tools.
+Search with the integration name plus the action you need (for example: "gmail email", "calendar event", "github pull request"). Do NOT guess tool names; always search first.`;
 }
 
 export function buildSystemInstructions(enabledIntegrations: string[] = []): string {
@@ -100,15 +99,9 @@ ${_SYSTEM_CONTEXT}
 - For interactive CLIs: use terminal_create → terminal_send_input → terminal_read (get schema via get_tool_schema first)
 
 **Tool Discovery & Execution**:
-You have ~15 tools loaded natively. For anything else, you have 180+ tools available.
-Direct-call native tools include: read_file, write_file, list_directory, file_edit, run_command, run_system_command, web_search, scrape_url, ${IS_VM_CONTEXT ? '' : 'capture_screen, '}search_past_conversations, agent_todo, get_tool_schema, execute_tool, search_tools, get_skill_info, ${IS_VM_CONTEXT ? '' : 'ask_user, '}wait, run_sequential, run_parallel, terminal_create, terminal_send_input, terminal_read, search_local_workflows, run_workflow.
-To use a non-native tool:
-1. Find it: use search_tools with a query or category, OR check the TOOL CATALOG below
-2. Get its schema: call get_tool_schema with the exact tool name
-3. Execute it: call execute_tool with the tool name and args matching the schema
-This covers email, calendar, GitHub, browser automation, media, terminals, and much more.
+You have ~15 tools loaded natively. For anything else, use search_tools → get_tool_schema → execute_tool.
+Categories: email, calendar, GitHub, browser, media, terminals, files, windows, ffmpeg, spaces, workflows, utilities.
 IMPORTANT: Do NOT guess tool arguments. Always call get_tool_schema first for tools you haven't used before.
-IMPORTANT: The TOOL CATALOG is for discovery only. If a tool is mentioned there but is not one of your natively loaded tools, do NOT call that tool name directly. Use get_tool_schema, then execute_tool.
 
 **Workflows**: search_local_workflows to find, run_workflow to execute (these are native).
 
@@ -210,9 +203,7 @@ RULES:
 
 **Task Assignments**: When [TASK ASSIGNMENTS] context appears, handle based on type (reminder/action/check-in) and mark completed.
 
-── TOOL CATALOG (use get_tool_schema + execute_tool to invoke) ──
-${buildToolCatalog()}
-── END TOOL CATALOG ──
+Use search_tools to discover tools by name or category. Use get_tool_schema before calling any non-native tool.
 ${buildIntegrationsContext(enabledIntegrations)}`;
 }
 

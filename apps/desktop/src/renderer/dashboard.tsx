@@ -479,7 +479,7 @@ function DashboardApp() {
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
         const [p, u] = await Promise.all([
           supabase.from("profiles").select("*").eq("user_id", userId).limit(1),
-          supabase.from("usage_events").select("*").eq("user_id", userId).gte("created_at", monthStart).order("created_at", { ascending: false }).limit(100),
+          supabase.from("usage_events").select("id, model, cost_usd, created_at").eq("user_id", userId).gte("created_at", monthStart).order("created_at", { ascending: false }).limit(100),
         ]);
         if (!p.error) {
           const profileData = (p.data as any[])?.[0] ?? null;
@@ -507,15 +507,24 @@ function DashboardApp() {
           if (!exists) { setSelectedConversation(null); setConvMessages([]); }
         }
       } catch { }
-      // Fetch credits from cloud server
-      try {
-        const token = session?.access_token;
-        if (token) {
-          const resp = await fetch(`${CLOUD_AI_HTTP}/v1/credits`, { headers: { Authorization: `Bearer ${token}` } });
-          const j = await resp.json().catch(() => null);
-          if (j && typeof j === 'object' && (j.ok === true || j.plan)) setCreditsInfo(j);
+      // Fetch credits from cloud server (retry once if cloud-ai is still starting)
+      if (session?.access_token) {
+        const fetchCredits = async () => {
+          try {
+            const resp = await fetch(`${CLOUD_AI_HTTP}/v1/credits`, { headers: { Authorization: `Bearer ${session.access_token}` } });
+            const j = await resp.json().catch(() => null);
+            if (j && typeof j === 'object' && (j.ok === true || j.plan)) {
+              setCreditsInfo(j);
+              return true;
+            }
+          } catch { }
+          return false;
+        };
+        if (!(await fetchCredits())) {
+          // Retry once after 2s (cloud-ai may still be booting)
+          setTimeout(() => { fetchCredits().catch(() => {}); }, 2000);
         }
-      } catch { }
+      }
     } catch (e) {
     } finally {
       setLoading(false);
@@ -557,14 +566,10 @@ function DashboardApp() {
     }
   };
 
+  // Fetch data when session changes or when navigating to overview/history.
+  // Single effect avoids the previous double-fetch race on session change.
   useEffect(() => {
     fetchData();
-  }, [session]);
-
-  useEffect(() => {
-    if (tab === 'overview' || tab === 'history') {
-      fetchData();
-    }
   }, [tab, session]);
 
   const firstOkJsonPlanner = async (urls: string[]) => {

@@ -136,10 +136,10 @@ interface ChatViewProps {
 
   // Internal Sidebar
   internalSidebarOpen?: boolean;
-  activeSidebarTab?: "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo";
+  activeSidebarTab?: "spaces" | "terminal" | "tasks" | "browser" | "todo";
   onToggleInternalSidebar?: () => void;
   onCloseInternalSidebar?: () => void;
-  onSwitchSidebarTab?: (tab: "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo") => void;
+  onSwitchSidebarTab?: (tab: "spaces" | "terminal" | "tasks" | "browser" | "todo") => void;
 }
 
 const ChatViewInner: React.FC<ChatViewProps> = ({

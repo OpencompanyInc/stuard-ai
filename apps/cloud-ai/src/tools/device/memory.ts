@@ -158,17 +158,17 @@ export const search_past_conversations = createTool({
         return { ok: false, error: 'missing_query', results: [], debug: { stats: stats0 } };
       }
 
-      const probe = await memoryService.generateEmbedding(String(query || ''));
-      if (!probe.length) {
+      const queryEmbedding = await memoryService.generateEmbedding(query);
+      if (!queryEmbedding.length) {
         return {
           ok: false,
-          error: 'Embeddings are unavailable (OPENAI_API_KEY not configured or embedding provider failing).',
+          error: 'Embeddings are unavailable (embedding provider failing).',
           results: [],
           debug: { stats: stats0 },
         };
       }
 
-      const segmentResults = await memoryService.searchSegments(query, {
+      const segmentResults = await memoryService.searchSegmentsByEmbedding(queryEmbedding, {
         limit,
         threshold: 0.2,
       });
@@ -189,7 +189,7 @@ export const search_past_conversations = createTool({
 
       const segmentResults2 =
         segmentResults.length === 0
-          ? await memoryService.searchSegments(query, { limit, threshold: 0.0 })
+          ? await memoryService.searchSegmentsByEmbedding(queryEmbedding, { limit, threshold: 0.0 })
           : segmentResults;
 
       const segmentResults3 =

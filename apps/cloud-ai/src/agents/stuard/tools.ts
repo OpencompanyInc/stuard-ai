@@ -25,8 +25,8 @@ import {
   github_list_workflow_runs, github_get_workflow_run, github_rerun_workflow, github_dispatch_workflow,
   github_list_gists, github_create_gist,
 } from '../../tools/github-tools';
-import { google_get_userinfo, google_list_profiles, gmail_send_message, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, gmail_modify_message, gmail_delete_message, gmail_archive_message, gmail_mark_as_read, gmail_mark_as_unread, gmail_download_attachment, calendar_list_events, calendar_create_event, calendar_delete_event, calendar_update_event, tasks_list, drive_list_files, sheets_read_range, sheets_create_spreadsheet, sheets_write_range, sheets_append_rows, sheets_clear_range, sheets_get_spreadsheet, sheets_add_sheet, sheets_format_cells, sheets_batch_update_values, sheets_delete_rows_columns, sheets_sort_range, sheets_auto_resize, docs_get_document, docs_create_document, docs_write_text } from '../../tools/google-tools';
-import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, canvas_list, canvas_read, canvas_write, canvas_create, canvas_delete, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, stop_system_audio, describe_system_audio_capabilities, run_command, run_system_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, list_local_stuards, show_json_workflow_code, execute_workflow, find_workflow_semantic, import_workflow, run_automation, stop_automation, invoke_workflow, search_local_workflows, run_workflow, search_past_conversations, get_conversation_context, list_user_spaces, get_space_contents, add_to_space, ensure_space_path, list_space_path, add_to_space_path, get_space_tree, create_space, add_source_to_space, add_note_to_space, add_code_snippet_to_space, link_conversation_to_space, find_or_create_space, update_space_item, delete_space_item, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, get_window_info, set_window_bounds, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, glob, grep, browser_get_content, browser_click_element, browser_type_text, browser_find_text, browser_get_element_position, browser_find_clickable, browser_hover, browser_select_option, browser_press_key, browser_get_form_fields, browser_fill_form, browser_wait_for_element, browser_scroll_to, browser_get_page_info, browser_execute_script, browser_upload_file, browser_set_toggle, agent_todo, get_mouse_position, computer_use, click_at_coordinates, double_click_at_coordinates, type_text, scroll, drag_and_drop } from '../../tools/device-tools';
+import { google_get_userinfo, google_list_profiles, gmail_send_message, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, gmail_modify_message, gmail_delete_message, gmail_archive_message, gmail_mark_as_read, gmail_mark_as_unread, gmail_download_attachment, gmail_retrieve_messages_with_attachments, calendar_list_events, calendar_create_event, calendar_delete_event, calendar_update_event, tasks_list, drive_list_files, sheets_read_range, sheets_create_spreadsheet, sheets_write_range, sheets_append_rows, sheets_clear_range, sheets_get_spreadsheet, sheets_add_sheet, sheets_format_cells, sheets_batch_update_values, sheets_delete_rows_columns, sheets_sort_range, sheets_auto_resize, docs_get_document, docs_create_document, docs_write_text } from '../../tools/google-tools';
+import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, stop_system_audio, describe_system_audio_capabilities, run_command, run_system_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, list_local_stuards, show_json_workflow_code, execute_workflow, find_workflow_semantic, import_workflow, run_automation, stop_automation, invoke_workflow, search_local_workflows, run_workflow, search_past_conversations, get_conversation_context, list_user_spaces, get_space_contents, add_to_space, ensure_space_path, list_space_path, add_to_space_path, get_space_tree, create_space, add_source_to_space, add_note_to_space, add_code_snippet_to_space, link_conversation_to_space, find_or_create_space, update_space_item, delete_space_item, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, get_window_info, set_window_bounds, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, glob, grep, browser_get_content, browser_click_element, browser_type_text, browser_find_text, browser_get_element_position, browser_find_clickable, browser_hover, browser_select_option, browser_press_key, browser_get_form_fields, browser_fill_form, browser_wait_for_element, browser_scroll_to, browser_get_page_info, browser_execute_script, browser_upload_file, browser_set_toggle, agent_todo, get_mouse_position, computer_use, click_at_coordinates, double_click_at_coordinates, type_text, scroll, drag_and_drop } from '../../tools/device-tools';
 import { computer_use_agent, agent_node, agent_decision, agent_extract } from '../../tools/device-tools';
 import { web_search } from '../../tools/perplexity-tools';
 import { scrape_url } from '../../tools/tavily-tools';
@@ -50,10 +50,11 @@ import { createRequire } from 'node:module';
 import type { SIS as SISType } from 'sis-tools';
 import { searchToolsSemanticSupabase, isSupabaseSISEnabled } from '../../tools/sis-supabase';
 import { SIS_RUNTIME_TOOLS } from '../../tools/sis-runtime-tools';
-import { get_tool_schema, execute_tool, search_tools } from '../../tools/meta-tools';
+import { get_tool_schema, execute_tool, search_tools, initToolRegistry } from '../../tools/meta-tools';
 import { get_skill_info } from '../../tools/skill-tools';
 import { hasClientBridge } from '../../tools/bridge';
 import { ask_user } from '../../tools/ask-user';
+import { getToolRegistry } from '../../tools/tool-registry';
 
 const require = createRequire(import.meta.url);
 const { SIS: SISRuntime } = require('sis-tools') as { SIS: new (...args: any[]) => SISType };
@@ -114,6 +115,7 @@ export const ALL_TOOLS = {
   gmail_mark_as_read,
   gmail_mark_as_unread,
   gmail_download_attachment,
+  gmail_retrieve_messages_with_attachments,
   calendar_list_events,
   calendar_create_event,
   calendar_delete_event,
@@ -144,11 +146,6 @@ export const ALL_TOOLS = {
   type_text,
   scroll,
   drag_and_drop,
-  canvas_list,
-  canvas_read,
-  canvas_write,
-  canvas_create,
-  canvas_delete,
   capture_media,
   stop_capture,
   describe_media_capture_capabilities,
@@ -456,6 +453,26 @@ export const ALL_TOOLS = {
   threads_reply_to_post,
 } as const;
 
+let _toolUniverseCache: Record<string, any> | null = null;
+
+function getToolUniverse(): Record<string, any> {
+  if (_toolUniverseCache) return _toolUniverseCache;
+
+  const merged: Record<string, any> = { ...(ALL_TOOLS as Record<string, any>) };
+
+  try {
+    initToolRegistry();
+    for (const [name, tool] of getToolRegistry().entries()) {
+      if (!merged[name] && tool && typeof (tool as any).execute === 'function') {
+        merged[name] = tool;
+      }
+    }
+  } catch { }
+
+  _toolUniverseCache = merged;
+  return merged;
+}
+
 const _INTERNAL_SPACE_TOOLS = {
   list_user_spaces,
   get_space_contents,
@@ -604,7 +621,7 @@ async function getSis(): Promise<SISType | null> {
 
   // Build SIS index once from ALL_TOOLS. We use descriptions + lightweight semantic hints.
   // We intentionally do not include handlers here; we only use SIS for selection.
-  for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+  for (const [name, tool] of Object.entries(getToolUniverse() as any)) {
     if (isLegacyBrowserExtensionTool(name)) continue;
     const description = String((tool as any)?.description || '').trim();
     _sis.register({
@@ -641,57 +658,54 @@ export function getTools(
   mcpTools: Record<string, any> = {},
   modelId?: string
 ): Record<string, any> {
+  const toolUniverse = getToolUniverse();
   // Start with MCP tools
   const tools: Record<string, any> = { ...mcpTools };
 
   // Default: Tier 1 + SIS discovery tools (lean ~35 tools)
   // Use SIS_LOAD_ALL=1 to force loading all tools (legacy behavior)
   if (process.env.SIS_LOAD_ALL === '1') {
-    Object.assign(tools, ALL_TOOLS);
+    Object.assign(tools, toolUniverse);
     return tools;
   }
 
   // Load Tier 1 tools
   for (const name of TIER_1_PARAMOUNT_TOOLS) {
-    if ((ALL_TOOLS as any)[name]) {
-      tools[name] = (ALL_TOOLS as any)[name];
+    if ((toolUniverse as any)[name]) {
+      tools[name] = (toolUniverse as any)[name];
     }
   }
 
   // Always load essential orchestration tools (wait, run_sequential, run_parallel)
   for (const name of SIS_ESSENTIAL_TOOLS) {
-    if ((ALL_TOOLS as any)[name]) {
-      tools[name] = (ALL_TOOLS as any)[name];
+    if ((toolUniverse as any)[name]) {
+      tools[name] = (toolUniverse as any)[name];
     }
   }
 
   // Always load prompt direct tools
   for (const name of PROMPT_DIRECT_TOOLS) {
-    if ((ALL_TOOLS as any)[name]) {
-      tools[name] = (ALL_TOOLS as any)[name];
+    if ((toolUniverse as any)[name]) {
+      tools[name] = (toolUniverse as any)[name];
     }
   }
 
   // Always add SIS discovery tools
   for (const name of SIS_META_TOOL_NAMES) {
-    if ((ALL_TOOLS as any)[name]) {
-      tools[name] = (ALL_TOOLS as any)[name];
+    if ((toolUniverse as any)[name]) {
+      tools[name] = (toolUniverse as any)[name];
     }
   }
 
-  // Integration tools are NOT loaded natively to save tokens.
-  // Instead, the system prompt tells the model which integrations are connected,
-  // and the model discovers/executes them via search_tools + get_tool_schema + execute_tool.
-
   // Browser use tools are still loaded natively when bridge is active (needed for real-time automation)
   if (enabledIntegrations.includes('browser_use') || hasClientBridge()) {
-    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+    for (const [name, tool] of Object.entries(toolUniverse as any)) {
       if (name.startsWith('browser_use_')) tools[name] = tool;
     }
   }
 
   if (process.env.SIS_DEBUG === '1') {
-    console.log(`[tools] Lean mode: ${Object.keys(tools).length} tools (Tier1 + SIS, integrations via prompt)`);
+    console.log(`[tools] Lean mode: ${Object.keys(tools).length} tools (Tier1 + SIS, connected integrations via discovery)`);
   }
 
   return tools;
@@ -704,39 +718,40 @@ export async function getToolsForQuery(
   modelId?: string,
   rankedToolNames?: string[]
 ): Promise<Record<string, any>> {
+  const toolUniverse = getToolUniverse();
   const selected: Record<string, any> = { ...mcpTools };
 
   // ── Escape hatch: SIS_LOAD_ALL=1 loads everything (legacy) ──
   if (process.env.SIS_LOAD_ALL === '1') {
-    Object.assign(selected, ALL_TOOLS);
+    Object.assign(selected, toolUniverse);
     return selected;
   }
 
   // ── 1. Tier 1 paramount tools (always loaded, ~35) ──
   for (const name of TIER_1_PARAMOUNT_TOOLS) {
-    if ((ALL_TOOLS as any)[name]) {
-      selected[name] = (ALL_TOOLS as any)[name];
+    if ((toolUniverse as any)[name]) {
+      selected[name] = (toolUniverse as any)[name];
     }
   }
 
   // ── 1b. Essential orchestration tools (wait, run_sequential, run_parallel) ──
   for (const name of SIS_ESSENTIAL_TOOLS) {
-    if ((ALL_TOOLS as any)[name]) {
-      selected[name] = (ALL_TOOLS as any)[name];
+    if ((toolUniverse as any)[name]) {
+      selected[name] = (toolUniverse as any)[name];
     }
   }
 
   // ── 1c. Prompt direct tools (always loaded) ──
   for (const name of PROMPT_DIRECT_TOOLS) {
-    if ((ALL_TOOLS as any)[name]) {
-      selected[name] = (ALL_TOOLS as any)[name];
+    if ((toolUniverse as any)[name]) {
+      selected[name] = (toolUniverse as any)[name];
     }
   }
 
   // ── 2. SIS meta-tools for long-tail discovery (always loaded, 3) ──
   for (const name of SIS_META_TOOL_NAMES) {
-    if ((ALL_TOOLS as any)[name]) {
-      selected[name] = (ALL_TOOLS as any)[name];
+    if ((toolUniverse as any)[name]) {
+      selected[name] = (toolUniverse as any)[name];
     }
   }
 
@@ -747,8 +762,8 @@ export async function getToolsForQuery(
   if (rankedToolNames && rankedToolNames.length > 0) {
     for (const name of rankedToolNames) {
       if (isLegacyBrowserExtensionTool(name)) continue;
-      if ((ALL_TOOLS as any)[name] && !selected[name]) {
-        selected[name] = (ALL_TOOLS as any)[name];
+      if ((toolUniverse as any)[name] && !selected[name]) {
+        selected[name] = (toolUniverse as any)[name];
       }
     }
   }
@@ -759,7 +774,7 @@ export async function getToolsForQuery(
 
   // Browser use tools are still loaded natively when bridge is active (needed for real-time automation)
   if (enabledIntegrations.includes('browser_use') || hasClientBridge()) {
-    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+    for (const [name, tool] of Object.entries(toolUniverse as any)) {
       if (!selected[name] && name.startsWith('browser_use_')) {
         selected[name] = tool;
       }
@@ -768,7 +783,7 @@ export async function getToolsForQuery(
 
   if (process.env.SIS_DEBUG === '1') {
     const rankedCount = rankedToolNames?.length || 0;
-    console.log(`[tools] ${Object.keys(selected).length} tools loaded (Tier1=${TIER_1_PARAMOUNT_TOOLS.length} + SIS=${SIS_META_TOOL_NAMES.length} + Ranked=${rankedCount}, integrations via prompt)`);
+    console.log(`[tools] ${Object.keys(selected).length} tools loaded (Tier1=${TIER_1_PARAMOUNT_TOOLS.length} + SIS=${SIS_META_TOOL_NAMES.length} + Ranked=${rankedCount}, connected integrations via discovery)`);
   }
 
   return selected;

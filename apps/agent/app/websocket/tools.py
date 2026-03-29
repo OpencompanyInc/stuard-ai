@@ -44,17 +44,6 @@ CLIENT_TOOLS = {
     "browser_get_content",
     "browser_click_element",
     "browser_type_text",
-    # Canvas document tools (use desktop storage)
-    "canvas_list",
-    "canvas_read",
-    "canvas_write",
-    "canvas_create",
-    "canvas_delete",
-    "sidebar_canvas_list",
-    "sidebar_canvas_read",
-    "sidebar_canvas_write",
-    "sidebar_canvas_create",
-    "sidebar_canvas_delete",
     # Workflow execution tools (must run on desktop IPC)
     "invoke_workflow",
     "run_automation",

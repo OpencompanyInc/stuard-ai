@@ -27,7 +27,7 @@ interface ChatHeaderActionsProps {
   onDeleteConversation?: (id: string) => void;
   viewMode?: 'chat' | 'tasks';
   onViewModeChange?: (mode: 'chat' | 'tasks') => void;
-  onSwitchSidebarTab?: (tab: 'spaces' | 'canvas' | 'terminal' | 'tasks' | 'browser' | 'todo') => void;
+  onSwitchSidebarTab?: (tab: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo') => void;
 }
 
 export const ChatHeaderActions: React.FC<ChatHeaderActionsProps> = ({
@@ -48,7 +48,7 @@ export const ChatHeaderActions: React.FC<ChatHeaderActionsProps> = ({
 }) => {
   return (
     <div className="flex items-center gap-1 flex-shrink-0">
-      {/* Internal Sidebar (Spaces, Canvas, Terminal) - shown in window/sidebar modes */}
+      {/* Internal Sidebar (Spaces, Terminal) - shown in window/sidebar modes */}
       {(overlayMode === 'window' || overlayMode === 'sidebar') && onToggleSidebar && (
         <button
           onClick={onToggleSidebar}
@@ -56,7 +56,7 @@ export const ChatHeaderActions: React.FC<ChatHeaderActionsProps> = ({
             "w-8 h-8 rounded-lg flex items-center justify-center hover:bg-theme-hover transition-colors border border-theme/10",
             sidebarOpen ? "bg-primary/10 text-primary border-primary/20" : "bg-theme-card/80 text-theme-muted"
           )}
-          title="Sidebar (Spaces, Notes, Terminal)"
+          title="Sidebar (Spaces, Terminal)"
         >
           <PanelLeftClose className="w-3.5 h-3.5" />
         </button>

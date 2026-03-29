@@ -8,7 +8,6 @@ import {
   FileText,
   Zap,
   MessageSquare,
-  NotebookPen,
   Terminal,
   Plus,
   X,
@@ -27,7 +26,7 @@ import {
 export interface Bookmark {
   id: string;
   name: string;
-  type: 'url' | 'app' | 'file' | 'folder' | 'workflow' | 'space' | 'canvas' | 'dashboard' | 'tasks' | 'terminal' | 'overlay' | 'semantic-search';
+  type: 'url' | 'app' | 'file' | 'folder' | 'workflow' | 'space' | 'dashboard' | 'tasks' | 'terminal' | 'overlay' | 'semantic-search';
   target: string;
   icon?: string;
   color?: string;
@@ -41,7 +40,6 @@ const BOOKMARK_TYPES = [
   { type: 'folder', label: 'Folder', icon: Folder, color: 'text-yellow-500', bg: 'bg-yellow-500/10', description: 'Open a folder' },
   { type: 'workflow', label: 'Workflow', icon: Zap, color: 'text-amber-500', bg: 'bg-amber-500/10', description: 'Run a Stuard workflow' },
   { type: 'space', label: 'Space', icon: MessageSquare, color: 'text-cyan-500', bg: 'bg-cyan-500/10', description: 'Open a conversation space' },
-  { type: 'canvas', label: 'Quick Note', icon: NotebookPen, color: 'text-pink-500', bg: 'bg-pink-500/10', description: 'Open a note in Quick Notes' },
   { type: 'terminal', label: 'Terminal', icon: Terminal, color: 'text-orange-500', bg: 'bg-orange-500/10', description: 'Open the built-in terminal' },
   { type: 'overlay', label: 'Overlay', icon: Sparkles, color: 'text-violet-500', bg: 'bg-violet-500/10', description: 'Open the Stuard overlay' },
   { type: 'dashboard', label: 'Dashboard', icon: Settings2, color: 'text-indigo-500', bg: 'bg-indigo-500/10', description: 'Open Dashboard tab' },
@@ -55,7 +53,6 @@ const QUICK_PRESETS = [
   { name: 'YouTube', type: 'url' as const, target: 'https://youtube.com', icon: Globe },
   { name: 'GitHub', type: 'url' as const, target: 'https://github.com', icon: Globe },
   { name: 'ChatGPT', type: 'url' as const, target: 'https://chat.openai.com', icon: Sparkles },
-  { name: 'Quick Note', type: 'canvas' as const, target: '_new', icon: NotebookPen },
   { name: 'Terminal', type: 'terminal' as const, target: 'terminal', icon: Terminal },
   { name: 'Overlay', type: 'overlay' as const, target: 'overlay', icon: Sparkles },
   { name: 'Planner', type: 'dashboard' as const, target: 'planner', icon: Settings2 },
@@ -68,14 +65,12 @@ export const getTypeConfig = (type: string) => {
   return BOOKMARK_TYPES.find(t => t.type === type) || BOOKMARK_TYPES[0];
 };
 
-const TYPES_WITH_DEFAULT_TARGET = new Set<Bookmark['type']>(['space', 'canvas', 'tasks', 'terminal', 'overlay', 'semantic-search']);
+const TYPES_WITH_DEFAULT_TARGET = new Set<Bookmark['type']>(['space', 'tasks', 'terminal', 'overlay', 'semantic-search']);
 
 const getDefaultBookmarkTarget = (type?: Bookmark['type'] | null): string => {
   switch (type) {
     case 'space':
       return 'spaces';
-    case 'canvas':
-      return '_new';
     case 'tasks':
       return 'todo';
     case 'terminal':
@@ -482,15 +477,13 @@ export function BookmarkEditor({
   onClose,
   bookmarks,
   onSave,
-  workflows = [],
-  canvasDocuments = []
+  workflows = []
 }: {
   isOpen: boolean;
   onClose: () => void;
   bookmarks: Bookmark[];
   onSave: (bookmarks: Bookmark[]) => void;
   workflows?: Array<{ id: string; name: string }>;
-  canvasDocuments?: Array<{ id: string; title: string }>;
 }) {
   const [localBookmarks, setLocalBookmarks] = useState<Bookmark[]>(bookmarks);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -498,20 +491,6 @@ export function BookmarkEditor({
   const [selectedType, setSelectedType] = useState<Bookmark['type'] | null>(null);
   const [newBookmark, setNewBookmark] = useState<Partial<Bookmark>>({});
   const newBookmarkConflict = findKeybindConflict(newBookmark.keybind, localBookmarks);
-
-  // Load canvas documents on mount
-  const [loadedCanvasDocs, setLoadedCanvasDocs] = useState<Array<{ id: string; title: string }>>([]);
-  useEffect(() => {
-    if (isOpen && canvasDocuments.length === 0) {
-      (window as any).desktopAPI?.canvasListDocuments?.().then((res: any) => {
-        if (res?.ok && Array.isArray(res.documents)) {
-          setLoadedCanvasDocs(res.documents.map((d: any) => ({ id: d.id, title: d.title || 'Quick Note' })));
-        }
-      }).catch(() => {});
-    }
-  }, [isOpen, canvasDocuments.length]);
-
-  const canvasDocs = canvasDocuments.length > 0 ? canvasDocuments : loadedCanvasDocs;
 
   useEffect(() => {
     setLocalBookmarks(bookmarks);
@@ -817,42 +796,6 @@ export function BookmarkEditor({
                   ) : (
                     <div className="text-center py-6 text-theme-muted">
                       <p className="text-[12px]">No workflows found</p>
-                    </div>
-                  )}
-                </>
-              )}
-
-              {/* Canvas selector */}
-              {selectedType === 'canvas' && (
-                <>
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-theme-muted mb-2">Select Note</div>
-                  <button
-                    onClick={() => setNewBookmark({ ...newBookmark, target: '_new', name: newBookmark.name || 'New Quick Note' })}
-                    className={clsx(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left mb-2",
-                      newBookmark.target === '_new' ? "bg-primary/15 ring-1 ring-primary/40" : "bg-theme-hover/40 hover:bg-theme-hover"
-                    )}
-                  >
-                    <Plus className={clsx("w-4 h-4", newBookmark.target === '_new' ? "text-primary" : "text-pink-500")} />
-                    <span className="text-[13px] font-medium text-theme-fg">Create Fresh Quick Note</span>
-                    {newBookmark.target === '_new' && <Check className="w-4 h-4 text-primary ml-auto" />}
-                  </button>
-                  {canvasDocs.length > 0 && (
-                    <div className="space-y-1.5 max-h-[150px] overflow-y-auto custom-scrollbar">
-                      {canvasDocs.map(d => (
-                        <button
-                          key={d.id}
-                          onClick={() => setNewBookmark({ ...newBookmark, target: d.id, name: newBookmark.name || d.title })}
-                          className={clsx(
-                            "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left",
-                            newBookmark.target === d.id ? "bg-primary/15 ring-1 ring-primary/40" : "bg-theme-hover/40 hover:bg-theme-hover"
-                          )}
-                        >
-                          <NotebookPen className={clsx("w-4 h-4", newBookmark.target === d.id ? "text-primary" : "text-pink-500")} />
-                          <span className="text-[13px] font-medium text-theme-fg truncate">{d.title}</span>
-                          {newBookmark.target === d.id && <Check className="w-4 h-4 text-primary ml-auto" />}
-                        </button>
-                      ))}
                     </div>
                   )}
                 </>

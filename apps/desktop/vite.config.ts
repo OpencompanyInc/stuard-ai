@@ -13,6 +13,7 @@ export default defineConfig(() => ({
     fs: {
       allow: [
         resolve(__dirname, ".."),
+        resolve(__dirname, "../.."),
         resolve(__dirname, "../website/assets"),
       ],
     },
@@ -37,7 +38,6 @@ export default defineConfig(() => ({
         index: resolve(__dirname, "src/renderer/index.html"),
         dashboard: resolve(__dirname, "src/renderer/dashboard.html"),
         onboarding: resolve(__dirname, "src/renderer/onboarding.html"),
-        board: resolve(__dirname, "src/renderer/board.html"),
         workflows: resolve(__dirname, "src/renderer/workflows.html"),
         spaces: resolve(__dirname, "src/renderer/spaces.html"),
         sidebar: resolve(__dirname, "src/renderer/sidebar.html"),

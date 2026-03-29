@@ -11,11 +11,19 @@ import {
   DISCORD_REDIRECT_PATH,
   INTEGRATION_STATE_SECRET,
 } from '../../utils/config';
-import { getDiscordBotClient } from '../../services/discord-bot';
 
 // Valid Discord OAuth2 scopes
 // See https://discord.com/developers/docs/topics/oauth2#shared-resources-oauth2-scopes
 const DISCORD_SCOPES = 'identify guilds guilds.members.read';
+
+async function getDiscordBotClientSafe(): Promise<any | null> {
+  try {
+    const mod = await import('../../services/discord-bot');
+    return typeof mod.getDiscordBotClient === 'function' ? mod.getDiscordBotClient() : null;
+  } catch {
+    return null;
+  }
+}
 
 export async function handleDiscordRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   // ── Status ──
@@ -50,7 +58,7 @@ export async function handleDiscordRoutes(req: IncomingMessage, res: ServerRespo
       try { acc = await getExternalAccount(userId, 'discord', profileLabel); connected = !!acc; } catch { }
 
       // Include bot DM link so the frontend can show a "Chat with bot" button
-      const botClient = getDiscordBotClient();
+      const botClient = await getDiscordBotClientSafe();
       const botId = botClient?.user?.id || DISCORD_CLIENT_ID || '';
       const botDmLink = botId ? `https://discord.com/users/${botId}` : null;
 
@@ -234,7 +242,7 @@ export async function handleDiscordRoutes(req: IncomingMessage, res: ServerRespo
         return true;
       }
       // Include the bot's user ID in the redirect so the frontend can show a "Chat with bot" link
-      const botClient = getDiscordBotClient();
+      const botClient = await getDiscordBotClientSafe();
       const botUserId = botClient?.user?.id || DISCORD_CLIENT_ID || '';
       const successParams = new URLSearchParams({
         provider: 'discord',

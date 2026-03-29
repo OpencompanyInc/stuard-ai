@@ -232,7 +232,7 @@ const ModifyWorkflowView = ({
   const hasError = resultError || resultFailed;
   const errorMessage = resultError || (resultFailed ? 'Modification failed' : null);
 
-  const showSuccess = resultOk && (resultSpec || result?.changes);
+  const showSuccess = resultOk && (resultSpec || result?.changes || result?.diagram || result?.affectedFlow || result?.message);
   const showError = hasError && errorMessage;
   const showPending = !result;
   const showUnknown = result && !showSuccess && !showError;
@@ -761,4 +761,3 @@ export function ChatHistory({
     </div>
   );
 }
-

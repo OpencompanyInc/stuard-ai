@@ -21,8 +21,7 @@ import {
   Image as ImageIcon,
   CornerDownLeft,
   ArrowUp,
-  ArrowDown,
-  PenTool
+  ArrowDown
 } from "lucide-react";
 import { clsx } from "clsx";
 
@@ -30,7 +29,7 @@ export interface ContextItem {
   path: string;
   name: string;
   isDirectory: boolean;
-  type?: 'file' | 'directory' | 'space' | 'space-item' | 'canvas';
+  type?: 'file' | 'directory' | 'space' | 'space-item';
   metadata?: any;
 }
 
@@ -67,7 +66,6 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
   
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [spacesLoaded, setSpacesLoaded] = useState(false);
-  const [canvasDocs, setCanvasDocs] = useState<any[]>([]);
   const [currentEntries, setCurrentEntries] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -89,7 +87,7 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
     };
   }, [filter]);
 
-  // Load Spaces and Canvas docs on mount
+  // Load Spaces on mount
   useEffect(() => {
     const loadSpaces = async () => {
       try {
@@ -103,18 +101,7 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
         setSpacesLoaded(true);
       }
     };
-    const loadCanvasDocs = async () => {
-      try {
-        const res = await (window as any).desktopAPI?.canvasListDocuments?.();
-        if (res?.ok && Array.isArray(res?.documents)) {
-          setCanvasDocs(res.documents);
-        }
-      } catch (e) {
-        console.error("Failed to load canvas documents", e);
-      }
-    };
     loadSpaces();
-    loadCanvasDocs();
   }, []);
 
   // Load content based on pathContext
@@ -210,7 +197,7 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
   const filteredItems = useMemo(() => {
     let items = [...currentEntries];
     
-    // If at root, also include spaces and canvas docs in the list
+    // If at root, also include spaces in the list
     if (isRoot) {
       const spaceItems = spaces.map(s => ({
         name: s.name,
@@ -219,14 +206,7 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
         type: 'space',
         metadata: s
       }));
-      const canvasItems = canvasDocs.map(doc => ({
-        name: doc.title || 'Untitled Canvas',
-        path: `canvas://${doc.id}`,
-        isDirectory: false,
-        type: 'canvas',
-        metadata: doc
-      }));
-      items = [...spaceItems, ...canvasItems, ...items];
+      items = [...spaceItems, ...items];
     }
 
     if (!queryText) return items;
@@ -241,10 +221,6 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
       // Spaces first (if root)
       if (a.type === 'space' && b.type !== 'space') return -1;
       if (a.type !== 'space' && b.type === 'space') return 1;
-      
-      // Canvas docs second
-      if (a.type === 'canvas' && b.type !== 'canvas' && b.type !== 'space') return -1;
-      if (a.type !== 'canvas' && a.type !== 'space' && b.type === 'canvas') return 1;
       
       // Directories first
       if (a.isDirectory && !b.isDirectory) return -1;
@@ -390,13 +366,11 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
                 <div className={clsx(
                   "w-6 h-6 flex items-center justify-center shrink-0 rounded-md transition-colors",
                   item.type === 'space' ? (isSelected ? "bg-blue-500 text-white shadow-blue-500/20 shadow-lg" : "bg-blue-500/10 text-blue-400") :
-                  item.type === 'canvas' ? (isSelected ? "bg-purple-500 text-white shadow-purple-500/20 shadow-lg" : "bg-purple-500/10 text-purple-400") :
                   item.isDirectory ? (isSelected ? "bg-theme-fg text-theme-bg" : "bg-theme-hover text-theme-muted") :
                   item.type === 'space-item' ? (isSelected ? "bg-blue-500 text-white shadow-blue-500/20 shadow-lg" : "bg-blue-500/10 text-blue-400") :
                   (isSelected ? "bg-primary text-primary-fg shadow-primary/20 shadow-lg" : "bg-primary/10 text-primary")
                 )}>
                   {item.type === 'space' ? <Layout className="w-3.5 h-3.5" /> :
-                   item.type === 'canvas' ? <PenTool className="w-3.5 h-3.5" /> :
                    item.isDirectory ? <Folder className="w-3.5 h-3.5" /> :
                    item.type === 'space-item' ? <FileText className="w-3.5 h-3.5" /> :
                    <File className="w-3.5 h-3.5" />}
@@ -414,11 +388,6 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
                   {item.type === 'space' && (
                     <span className={clsx("text-[10px] truncate transition-colors", isSelected ? "text-blue-300" : "text-theme-muted")}>
                       Space • {item.metadata?.type}
-                    </span>
-                  )}
-                  {item.type === 'canvas' && (
-                    <span className={clsx("text-[10px] truncate transition-colors", isSelected ? "text-purple-300" : "text-theme-muted")}>
-                      Canvas Document
                     </span>
                   )}
                 </div>

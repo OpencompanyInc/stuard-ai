@@ -25,7 +25,7 @@ import { analyzeMediaTool } from './analyze-media';
 import { aiInferenceTool } from './ai-inference';
 import { executeAgenticTask } from './agentic-task';
 import { runSequentialTool, runParallelTool } from './workflow-system';
-import { resolveEmbedder, cosineSimilarity } from '../utils/embeddings';
+import { resolveEmbedder } from '../utils/embeddings';
 import { embedMany } from 'ai';
 import { getSupabaseService } from '../supabase';
 import { registerTool, getToolRegistry, getToolCategories, getTool, type ToolLocation } from './tool-registry';
@@ -519,8 +519,6 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'Knowledge');
     } else if (['calendar_crud', 'task_crud', 'task_reminders', 'planner_list_items'].includes(name)) {
         registerTool(t, 'Productivity');
-    } else if (['canvas_list', 'canvas_read', 'canvas_write', 'canvas_create', 'canvas_delete'].includes(name)) {
-        registerTool(t, 'Canvas');
     } else if (['workspace_read_file', 'workspace_write_file', 'workspace_delete_file', 'workspace_list_files', 'workspace_create_folder', 'workspace_get_info'].includes(name)) {
         registerTool(t, 'Workspace');
     } else if (['set_variable', 'get_variable', 'toggle_variable', 'increment_variable', 'append_to_list', 'list_variables', 'delete_variable'].includes(name)) {
@@ -625,8 +623,9 @@ export const search_tools = createTool({
         const categories = getToolCategories();
 
         const keywordSearch = () => {
-            const results: Array<{ name: string; description: string; category: string }> = [];
-            const q = (query || '').toLowerCase();
+            const results: Array<{ name: string; description: string; category: string; score: number }> = [];
+            const q = String(query || '').trim().toLowerCase();
+            const tokens = q.split(/[\s_\-]+/).map(t => t.trim()).filter(Boolean);
 
             for (const [cat, names] of categories.entries()) {
                 if (category && cat !== category) continue;
@@ -636,17 +635,42 @@ export const search_tools = createTool({
                     if (!tool) continue;
 
                     const desc = tool.description || '';
-                    if (q && !name.toLowerCase().includes(q) && !desc.toLowerCase().includes(q)) continue;
+                    const haystack = `${name} ${desc}`.toLowerCase();
+
+                    let score = 0;
+                    if (q) {
+                        if (name.toLowerCase() === q) score += 100;
+                        if (name.toLowerCase().includes(q)) score += 40;
+                        if (desc.toLowerCase().includes(q)) score += 20;
+
+                        for (const token of tokens) {
+                            if (name.toLowerCase().includes(token)) score += 8;
+                            if (desc.toLowerCase().includes(token)) score += 4;
+                        }
+
+                        const missingToken = tokens.some(token => !haystack.includes(token));
+                        if (score === 0 || missingToken) continue;
+                    } else {
+                        score = 1;
+                    }
 
                     results.push({
                         name,
                         description: desc,
                         category: cat,
+                        score,
                     });
                 }
             }
 
-            return { tools: results };
+            results.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+            return {
+                tools: results.slice(0, 15).map(({ name, description, category }) => ({
+                    name,
+                    description,
+                    category,
+                })),
+            };
         };
 
         const supabase = getSupabaseService();
@@ -667,34 +691,29 @@ export const search_tools = createTool({
             const { embeddings } = await embedMany({ model: embedder as any, values: [query] });
             const queryVector = embeddings[0];
 
-            // Fetch all tools (caching in memory would be better, but for <1000 tools this is fast enough)
-            const { data: rows, error } = await supabase.from('tool_embeddings').select('name, description, category, embedding');
+            const { data: rows, error } = await supabase.rpc('search_tools', {
+                query_embedding: queryVector,
+                match_threshold: 0.2,
+                match_count: 10,
+                filter_category: category || null,
+                filter_kind: null,
+                enabled_only: true,
+            });
             if (error || !rows) throw error;
 
-            let candidates = rows;
-            if (category) {
-                candidates = rows.filter((r: any) => r.category === category);
-            }
-
-            const withScores = candidates.map((r: any) => {
-                let vec = r.embedding;
-                if (typeof vec === 'string') {
-                    try { vec = JSON.parse(vec); } catch { }
-                }
-                const sim = Array.isArray(vec) ? cosineSimilarity(queryVector, vec) : -1;
-                return { ...r, score: sim };
-            });
-
-            withScores.sort((a: any, b: any) => b.score - a.score);
-
-            // Return top 10
-            const top = withScores.slice(0, 10).map((t: any) => ({
+            const top = (rows as any[]).slice(0, 10).map((t: any) => ({
                 name: t.name,
                 description: t.description,
                 category: t.category,
             }));
 
-            return { tools: top };
+            const keywordTop = keywordSearch().tools;
+            const merged = [...top, ...keywordTop];
+            const deduped = merged.filter((tool, index) =>
+                merged.findIndex(other => other.name === tool.name) === index
+            );
+
+            return { tools: deduped.slice(0, 15) };
 
         } catch (e) {
             console.warn('Vector search failed, falling back to keyword search', e);

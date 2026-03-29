@@ -1,14 +1,13 @@
 import React, { useEffect, useState, useRef } from "react";
 import { clsx } from "clsx";
-import { Bot, Globe, Layers, ListTodo, Maximize2, NotebookPen, Terminal, X } from "lucide-react";
+import { Bot, Globe, Layers, ListTodo, Maximize2, Terminal, X } from "lucide-react";
 import { SpacesSidebar } from "./SpacesSidebar";
 import { SubAgentsView } from "./SubAgentsView";
 import { XTerminalPanel } from "./XTerminalPanel";
 import { SidebarBrowserPanel } from "./sidebar/SidebarBrowserPanel";
-import { QuickNotesPanel } from "./sidebar/QuickNotesPanel";
 import { SidebarTodoPanel } from "./sidebar/SidebarTodoPanel";
 
-type SidebarTabId = "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo";
+type SidebarTabId = "spaces" | "terminal" | "tasks" | "browser" | "todo";
 
 const SIDEBAR_TABS: Array<{
   id: SidebarTabId;
@@ -16,7 +15,6 @@ const SIDEBAR_TABS: Array<{
   icon: React.ComponentType<{ className?: string }>;
 }> = [
   { id: "spaces", label: "Spaces", icon: Layers },
-  { id: "canvas", label: "Notes", icon: NotebookPen },
   { id: "todo", label: "To-Do", icon: ListTodo },
   { id: "terminal", label: "Terminal", icon: Terminal },
   { id: "tasks", label: "Agents", icon: Bot },
@@ -145,8 +143,6 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
             translucentMode={translucentMode}
           />
         );
-      case "canvas":
-        return <QuickNotesPanel className="w-full h-full" />;
       case "todo":
         return <SidebarTodoPanel className="w-full h-full" />;
       case "terminal":

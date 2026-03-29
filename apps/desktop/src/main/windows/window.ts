@@ -23,7 +23,7 @@ let dashboardWin: BrowserWindow | null = null;
 let notificationWin: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let sidebarExpanded = false;
-type SidebarTabId = "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo";
+type SidebarTabId = "spaces" | "terminal" | "tasks" | "browser" | "todo";
 type SidebarPresentationMode = "full" | "popup";
 let sidebarPresentation: SidebarPresentationMode = "full";
 
@@ -421,7 +421,6 @@ export function getRendererUrl(
     | "index"
     | "dashboard"
     | "onboarding"
-    | "board"
     | "workflows"
     | "hud-test"
     | "spaces"
@@ -2113,189 +2112,6 @@ function registerMoveShortcuts() {
   registerMove("Control+Shift+Right", { ctrl: true, shift: true, right: true });
   registerMove("Control+Shift+Up", { ctrl: true, shift: true, up: true });
   registerMove("Control+Shift+Down", { ctrl: true, shift: true, down: true });
-}
-
-// Canvas/Board windows management
-const boardWindows = new Map<string, BrowserWindow>();
-const boardStates = new Map<string, any>();
-
-export function createBoardWindow(item: any) {
-  const id = String(item?.id || "").trim();
-  if (!id) return;
-  // If exists, update instead
-  if (boardWindows.has(id)) {
-    updateBoardWindow(item);
-    return;
-  }
-  const pos = item?.position || {};
-  const size = item?.size || {};
-  const width = Math.max(240, Number(size.width || 360));
-  const height = Math.max(180, Number(size.height || 240));
-  const w = new BrowserWindow({
-    width,
-    height,
-    show: true,
-    frame: false,
-    transparent: true,
-    resizable: true,
-    movable: true,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    skipTaskbar: true,
-    alwaysOnTop: true,
-    useContentSize: true,
-    webPreferences: {
-      preload: getPreloadPath(),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      devTools: isDev,
-    },
-    backgroundColor: "#00000000",
-  });
-  w.setMenu(null);
-  // Hide from alt-tab on Windows by setting tool window style
-  try {
-    w.setAlwaysOnTop(true, "pop-up-menu");
-  } catch {}
-  // Position near specified coords or center-top
-  try {
-    if (pos && typeof pos.x === "number" && typeof pos.y === "number") {
-      const { workArea } = screen.getPrimaryDisplay();
-      const bx = Math.round(pos.x);
-      const by = Math.round(pos.y);
-      w.setPosition(
-        clamp(bx, workArea.x, workArea.x + workArea.width - width),
-        clamp(by, workArea.y, workArea.y + workArea.height - height),
-      );
-    } else {
-      const { workArea } = screen.getPrimaryDisplay();
-      const x = Math.round(workArea.x + (workArea.width - width) / 2);
-      const y = Math.round(workArea.y + workArea.height * 0.18);
-      w.setPosition(x, y);
-    }
-  } catch {}
-  if (isDev) {
-    w.loadURL(getRendererUrl("board"));
-  } else {
-    const candidates = [
-      path.join(__dirname, "../renderer/board.html"),
-      path.join(__dirname, "../../renderer/board.html"),
-    ];
-    for (const p of candidates) {
-      if (fs.existsSync(p)) {
-        w.loadFile(p);
-        break;
-      }
-    }
-  }
-  w.on("closed", () => {
-    try {
-      boardWindows.delete(id);
-    } catch {}
-  });
-  boardWindows.set(id, w);
-  try {
-    boardStates.set(id, { ...(boardStates.get(id) || {}), ...item });
-  } catch {}
-  // Send initial data once DOM is ready
-  try {
-    w.webContents.on("did-finish-load", () => {
-      try {
-        w.webContents.send("board:init", item);
-      } catch {}
-    });
-  } catch {}
-}
-
-export function updateBoardWindow(item: any) {
-  const id = String(item?.id || "").trim();
-  if (!id) return;
-  const w = boardWindows.get(id);
-  if (!w || w.isDestroyed()) return;
-  const pos = item?.position || {};
-  const size = item?.size || {};
-  try {
-    const bounds = w.getBounds();
-    const width = clamp(Number(size?.width || bounds.width), 180, 3000);
-    const height = clamp(Number(size?.height || bounds.height), 120, 3000);
-    let x = bounds.x;
-    let y = bounds.y;
-    if (typeof pos?.x === "number") x = pos.x;
-    if (typeof pos?.y === "number") y = pos.y;
-    const display = screen.getDisplayMatching({ x, y, width, height });
-    const wa = display.workArea;
-    const targetX = clamp(x, wa.x, wa.x + wa.width - width);
-    const targetY = clamp(y, wa.y, wa.y + wa.height - height);
-    w.setBounds({ x: targetX, y: targetY, width, height });
-  } catch {}
-  try {
-    w.webContents.send("board:update", item);
-  } catch {}
-  try {
-    boardStates.set(id, { ...(boardStates.get(id) || {}), ...item });
-  } catch {}
-}
-
-export function deleteBoardWindow(id: string) {
-  const w = boardWindows.get(id);
-  if (w && !w.isDestroyed()) {
-    try {
-      w.close();
-    } catch {}
-  }
-  try {
-    boardWindows.delete(id);
-  } catch {}
-  try {
-    boardStates.delete(id);
-  } catch {}
-}
-
-export function showBoardWindow(id: string) {
-  const w = boardWindows.get(id);
-  try {
-    w?.show();
-    w?.focus();
-    w?.moveTop();
-  } catch {}
-}
-
-export function hideBoardWindow(id: string) {
-  const w = boardWindows.get(id);
-  try {
-    w?.hide();
-  } catch {}
-}
-
-export function focusBoardWindow(id: string) {
-  const w = boardWindows.get(id);
-  try {
-    w?.show();
-    w?.focus();
-    w?.moveTop();
-  } catch {}
-}
-
-export function clearBoardWindows() {
-  try {
-    for (const [id, w] of boardWindows) {
-      try {
-        w.close();
-      } catch {}
-    }
-    boardWindows.clear();
-    boardStates.clear();
-  } catch {}
-}
-
-export function listBoardWindows() {
-  try {
-    return Array.from(boardStates.values());
-  } catch {
-    return [];
-  }
 }
 
 export function getNotificationWindow() {

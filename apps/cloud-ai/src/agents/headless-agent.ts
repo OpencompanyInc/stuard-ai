@@ -19,12 +19,14 @@ import {
   outlook_calendar_update_event, outlook_calendar_delete_event,
 } from '../tools/outlook-tools';
 import { github_get_me, github_list_repos, github_list_issues, github_create_issue } from '../tools/github-tools';
-import { google_get_userinfo, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, calendar_list_events, calendar_create_event, calendar_delete_event, calendar_update_event, tasks_list, drive_list_files, sheets_read_range, sheets_create_spreadsheet, sheets_write_range, sheets_append_rows, sheets_clear_range, sheets_get_spreadsheet, sheets_add_sheet, sheets_format_cells, sheets_batch_update_values, sheets_delete_rows_columns, sheets_sort_range, sheets_auto_resize, docs_get_document, docs_create_document, docs_write_text } from '../tools/google-tools';
+import { google_get_userinfo, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, gmail_retrieve_messages_with_attachments, calendar_list_events, calendar_create_event, calendar_delete_event, calendar_update_event, tasks_list, drive_list_files, sheets_read_range, sheets_create_spreadsheet, sheets_write_range, sheets_append_rows, sheets_clear_range, sheets_get_spreadsheet, sheets_add_sheet, sheets_format_cells, sheets_batch_update_values, sheets_delete_rows_columns, sheets_sort_range, sheets_auto_resize, docs_get_document, docs_create_document, docs_write_text } from '../tools/google-tools';
 import { facebook_get_me, facebook_list_pages, facebook_list_page_posts, facebook_create_page_post, facebook_list_post_comments, facebook_reply_comment, facebook_delete_post, facebook_list_conversations, facebook_get_conversation_messages, facebook_send_message, instagram_get_me, instagram_list_media, instagram_publish_media, instagram_list_comments, instagram_reply_comment, instagram_delete_comment, instagram_list_conversations, instagram_get_conversation_messages, instagram_send_dm, threads_get_me, threads_list_posts, threads_publish_post, threads_get_post, threads_list_replies, threads_reply_to_post } from '../tools/meta-social-tools';
 import { whatsapp_send_message, whatsapp_send_media, whatsapp_send_reaction, whatsapp_mark_read, whatsapp_upload_media, whatsapp_status, whatsapp_get_media_url, whatsapp_download_media, whatsapp_send_voice_note, whatsapp_transcribe_voice_note, whatsapp_send_template, whatsapp_voice_call, whatsapp_make_call } from '../tools/whatsapp-tools';
 import { telnyx_send_sms, telnyx_call_control, telnyx_phone_status, telnyx_send_mms, telnyx_send_voice_note, telnyx_voice_call, telnyx_list_voice_providers, telnyx_list_active_calls, telnyx_hangup_call } from '../tools/telnyx-tools';
-import { send_hotkey, list_directory, read_file, write_file, create_directory, move_file, canvas_list, canvas_read, canvas_write, canvas_create, canvas_delete, calendar_crud, task_crud, task_reminders, planner_list_items, capture_media, describe_media_capture_capabilities, run_command, run_system_command, search_local_workflows, import_workflow, run_automation, stop_automation, search_past_conversations, get_conversation_context, agent_decision, agent_extract, glob, grep, browser_use_status, browser_use_configure, browser_use_execute_script, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies, browser_use_hover, browser_use_select_option, browser_use_get_dropdown_options, browser_use_get_interactive_elements, browser_use_fill_form, browser_use_upload_file, browser_use_wait_for } from '../tools/device-tools';
+import { send_hotkey, list_directory, read_file, write_file, create_directory, move_file, calendar_crud, task_crud, task_reminders, planner_list_items, capture_media, describe_media_capture_capabilities, run_command, run_system_command, search_local_workflows, import_workflow, run_automation, stop_automation, search_past_conversations, get_conversation_context, agent_decision, agent_extract, glob, grep, browser_use_status, browser_use_configure, browser_use_execute_script, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies, browser_use_hover, browser_use_select_option, browser_use_get_dropdown_options, browser_use_get_interactive_elements, browser_use_fill_form, browser_use_upload_file, browser_use_wait_for } from '../tools/device-tools';
 import { web_search } from '../tools/perplexity-tools';
+import { initToolRegistry } from '../tools/meta-tools';
+import { getToolRegistry } from '../tools/tool-registry';
 
 const HEADLESS_SYSTEM_INSTRUCTIONS = `You are the Headless Execution Agent for StuardAI.
 You are a highly optimized, non-conversational agent designed for autonomous task execution within a workflow.
@@ -118,7 +120,7 @@ export function getHeadlessAgent(
   } else {
     model = modelOrOpts;
   }
-  const allTools = {
+  const allTools: Record<string, any> = {
     wait: waitTool,
     run_sequential: runSequentialTool,
     run_parallel: runParallelTool,
@@ -157,6 +159,7 @@ export function getHeadlessAgent(
     gmail_get_messages_brief,
     gmail_list_recent_brief,
     gmail_get_most_recent_full,
+    gmail_retrieve_messages_with_attachments,
     calendar_list_events,
     calendar_create_event,
     calendar_delete_event,
@@ -234,11 +237,6 @@ export function getHeadlessAgent(
     send_hotkey,
     glob,
     grep,
-    canvas_list,
-    canvas_read,
-    canvas_write,
-    canvas_create,
-    canvas_delete,
     capture_media,
     describe_media_capture_capabilities,
     run_system_command,
@@ -281,7 +279,16 @@ export function getHeadlessAgent(
     // AI reasoning helpers (not agent_node to avoid infinite recursion)
     agent_decision,
     agent_extract,
-  } as const;
+  };
+
+  try {
+    initToolRegistry();
+    for (const [name, tool] of getToolRegistry().entries()) {
+      if (!allTools[name] && tool && typeof (tool as any).execute === 'function') {
+        allTools[name] = tool;
+      }
+    }
+  } catch { }
 
   const tools: Record<string, any> = { ...mcpTools };
 
@@ -289,7 +296,7 @@ export function getHeadlessAgent(
   let coreTools = [
     'wait', 'run_sequential', 'run_parallel', 'analyze_media', 'web_search',
     'deploy_headless_agent', 'get_headless_agent_status', 'list_headless_agent_tasks',
-    'send_hotkey', 'glob', 'grep', 'canvas_list', 'canvas_read', 'canvas_write', 'canvas_create', 'canvas_delete', 'capture_media',
+    'send_hotkey', 'glob', 'grep', 'capture_media',
     'describe_media_capture_capabilities', 'run_system_command', 'run_command',
     'browser_use_status', 'browser_use_configure', 'browser_use_execute_script', 'browser_use_navigate', 'browser_use_click',
     'browser_use_type', 'browser_use_press_key', 'browser_use_screenshot', 'browser_use_content', 'browser_use_scroll',
@@ -309,10 +316,31 @@ export function getHeadlessAgent(
   }
 
   coreTools.forEach(name => {
-    if ((allTools as any)[name]) {
-      tools[name] = (allTools as any)[name];
+    if (allTools[name]) {
+      tools[name] = allTools[name];
     }
   });
+
+  const integrationPrefixes: Record<string, string[]> = {
+    outlook: ['outlook_'],
+    google: ['google_', 'gmail_', 'calendar_', 'drive_', 'sheets_', 'docs_', 'tasks_'],
+    github: ['github_'],
+    facebook: ['facebook_'],
+    instagram: ['instagram_'],
+    threads: ['threads_'],
+    whatsapp: ['whatsapp_'],
+    telnyx: ['telnyx_'],
+  };
+
+  for (const integration of enabledIntegrations) {
+    const prefixes = integrationPrefixes[integration];
+    if (!prefixes) continue;
+    for (const [name, tool] of Object.entries(allTools)) {
+      if (!tools[name] && prefixes.some(prefix => name.startsWith(prefix))) {
+        tools[name] = tool;
+      }
+    }
+  }
 
   if (enabledIntegrations.includes('outlook')) {
     tools.outlook_get_me = outlook_get_me;
@@ -446,6 +474,8 @@ export function getHeadlessAgent(
     [...allowedTools, ...essentialTools].forEach(name => {
       if (tools[name]) {
         filteredTools[name] = tools[name];
+      } else if (allTools[name]) {
+        filteredTools[name] = allTools[name];
       }
     });
 

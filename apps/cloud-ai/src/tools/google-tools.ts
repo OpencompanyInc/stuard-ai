@@ -371,11 +371,11 @@ export const gmail_send_message = createTool({
 
 export const gmail_list_messages = createTool({
   id: 'gmail_list_messages',
-  description: 'List Gmail messages. Requires gmail.readonly. Use optional query and labelIds.',
+  description: 'List Gmail messages with compact brief metadata. Requires gmail.readonly. Use optional query and labelIds.',
   inputSchema: z.object({
     q: z.string().optional(),
     labelIds: z.array(z.string()).optional(),
-    maxResults: z.number().int().min(1).max(100).default(10),
+    maxResults: z.number().int().min(1).max(100).default(5),
     includeSpamTrash: z.boolean().optional(),
     profile: profileField,
   }),
@@ -387,11 +387,22 @@ export const gmail_list_messages = createTool({
     const params = new URLSearchParams();
     if (typeof q === 'string' && q) params.set('q', q);
     if (Array.isArray(labelIds) && labelIds.length) for (const l of labelIds) params.append('labelIds', l);
-    params.set('maxResults', String(maxResults || 10));
+    params.set('maxResults', String(maxResults || 5));
     if (typeof includeSpamTrash === 'boolean') params.set('includeSpamTrash', includeSpamTrash ? 'true' : 'false');
     const data = await googleAuthorizedFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params.toString()}`, undefined, profile);
     const items = Array.isArray((data as any)?.messages) ? (data as any).messages : [];
-    return { items, count: items.length, nextPageToken: (data as any)?.nextPageToken };
+    const briefItems = (
+      await Promise.all(
+        items.map(async (item: any) => {
+          try {
+            return await fetchGmailBriefMessage(String(item?.id || ''), profile);
+          } catch {
+            return null;
+          }
+        }),
+      )
+    ).filter(Boolean);
+    return { items: briefItems, count: briefItems.length, nextPageToken: (data as any)?.nextPageToken };
   },
 });
 
@@ -1986,6 +1997,105 @@ function decodeBase64Url(data?: string): string {
   }
 }
 
+const GMAIL_FROM_MAX_CHARS = 120;
+const GMAIL_SUBJECT_MAX_CHARS = 160;
+const GMAIL_SNIPPET_MAX_CHARS = 180;
+const GMAIL_BODY_TEXT_MAX_CHARS = 1200;
+const GMAIL_BODY_HTML_MAX_CHARS = 300;
+const GMAIL_GIST_MAX_CHARS = 320;
+const GMAIL_ATTACHMENTS_MAX_ITEMS = 8;
+const GMAIL_COMPACT_LABELS = new Set([
+  'UNREAD',
+  'INBOX',
+  'IMPORTANT',
+  'STARRED',
+  'SENT',
+  'DRAFT',
+  'TRASH',
+  'SPAM',
+]);
+
+function truncateGmailText(value: any, maxChars: number): string {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length > maxChars ? text.slice(0, Math.max(0, maxChars - 3)) + '...' : text;
+}
+
+function compactGmailLabelIds(labelIds: any): string[] {
+  const labels = Array.isArray(labelIds) ? labelIds.map((label) => String(label || '')) : [];
+  return labels.filter((label) => GMAIL_COMPACT_LABELS.has(label));
+}
+
+function htmlToTextPreview(html: string): string {
+  return truncateGmailText(
+    String(html || '')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>'),
+    GMAIL_BODY_TEXT_MAX_CHARS,
+  );
+}
+
+function normalizeGmailGistText(value: any): string {
+  return String(value || '')
+    .replace(/https?:\/\/\S+/gi, ' ')
+    .replace(/[|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function splitGmailGistSegments(value: string): string[] {
+  return normalizeGmailGistText(value)
+    .split(/(?<=[.!?])\s+|\s*[•·]\s+|\s{2,}/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+function isLowSignalGmailSegment(segment: string): boolean {
+  const text = segment.toLowerCase();
+  if (text.length < 24) return true;
+  if (/^(view|open|click|tap)\b/.test(text) && text.length < 80) return true;
+  if (/unsubscribe|manage preferences|email preferences|privacy policy|terms of service|all rights reserved/.test(text)) return true;
+  if (/follow us|facebook|instagram|linkedin|twitter|tiktok|youtube/.test(text)) return true;
+  if (/no-reply|do not reply|sent from my/.test(text)) return true;
+  if (/^https?:\/\//.test(text)) return true;
+  return false;
+}
+
+function buildGmailGist(brief: { subject?: string; snippet?: string }, body: { html?: string; text?: string }) {
+  const bodyText = normalizeGmailGistText(body?.text || htmlToTextPreview(body?.html || ''));
+  const candidates = [
+    ...splitGmailGistSegments(brief?.snippet || ''),
+    ...splitGmailGistSegments(bodyText).slice(0, 8),
+  ];
+
+  const seen = new Set<string>();
+  const selected: string[] = [];
+
+  for (const candidate of candidates) {
+    const cleaned = truncateGmailText(candidate, 180);
+    const normalized = cleaned.toLowerCase();
+    if (!cleaned) continue;
+    if (isLowSignalGmailSegment(cleaned)) continue;
+    if (normalized === String(brief?.subject || '').trim().toLowerCase()) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    selected.push(cleaned);
+    if (selected.length >= 2) break;
+  }
+
+  const summary = selected.join(' ');
+  if (summary) return truncateGmailText(summary, GMAIL_GIST_MAX_CHARS);
+
+  if (brief?.snippet) return truncateGmailText(brief.snippet, GMAIL_GIST_MAX_CHARS);
+  if (bodyText) return truncateGmailText(bodyText, GMAIL_GIST_MAX_CHARS);
+  return truncateGmailText(brief?.subject || '', GMAIL_GIST_MAX_CHARS);
+}
+
 function extractBody(payload: any): { html?: string; text?: string } {
   const out: { html?: string; text?: string } = {};
   try {
@@ -2036,6 +2146,73 @@ function extractAttachments(payload: any): Array<{ filename: string; mimeType: s
   return out;
 }
 
+function buildGmailBriefMessage(data: any, fallbackId: string) {
+  const headers = (data?.payload?.headers || []) as Array<{ name?: string; value?: string }>;
+  const labelIds = compactGmailLabelIds(data?.labelIds);
+  return {
+    id: String(data?.id || fallbackId),
+    threadId: String(data?.threadId || ''),
+    from: truncateGmailText(getHeader(headers, 'From'), GMAIL_FROM_MAX_CHARS),
+    subject: truncateGmailText(getHeader(headers, 'Subject'), GMAIL_SUBJECT_MAX_CHARS),
+    date: getHeader(headers, 'Date'),
+    snippet: truncateGmailText(data?.snippet || '', GMAIL_SNIPPET_MAX_CHARS),
+    labelIds,
+    unread: labelIds.includes('UNREAD'),
+  };
+}
+
+function buildCompactGmailBody(body: { html?: string; text?: string }) {
+  const text = truncateGmailText(body?.text || '', GMAIL_BODY_TEXT_MAX_CHARS);
+  const html = truncateGmailText(body?.html || '', GMAIL_BODY_HTML_MAX_CHARS);
+  const fallbackText = !text && html ? htmlToTextPreview(html) : '';
+  const preferredText = text || fallbackText;
+
+  return {
+    ...(preferredText ? { text: preferredText } : {}),
+    ...(!preferredText && html ? { html } : {}),
+    truncated: Boolean((body?.text || '').length > GMAIL_BODY_TEXT_MAX_CHARS || (body?.html || '').length > GMAIL_BODY_HTML_MAX_CHARS),
+  };
+}
+
+function buildCompactGmailAttachments(payload: any) {
+  const allAttachments = extractAttachments(payload);
+  return {
+    attachmentCount: allAttachments.length,
+    attachments: allAttachments.slice(0, GMAIL_ATTACHMENTS_MAX_ITEMS).map((attachment) => ({
+      filename: truncateGmailText(attachment.filename, 80),
+      mimeType: attachment.mimeType,
+      size: attachment.size,
+      attachmentId: attachment.attachmentId,
+    })),
+    attachmentsTruncated: allAttachments.length > GMAIL_ATTACHMENTS_MAX_ITEMS,
+  };
+}
+
+function buildCompactGmailFullMessage(data: any, fallbackId: string) {
+  const body = extractBody(data?.payload);
+  const compactBody = buildCompactGmailBody(body);
+  const compactAttachments = buildCompactGmailAttachments(data?.payload);
+  const brief = buildGmailBriefMessage(data, fallbackId);
+  return {
+    ...brief,
+    gist: buildGmailGist(brief, body),
+    sizeEstimate: typeof data?.sizeEstimate === 'number' ? data.sizeEstimate : undefined,
+    body: compactBody,
+    attachmentCount: compactAttachments.attachmentCount,
+    attachments: compactAttachments.attachments,
+    attachmentsTruncated: compactAttachments.attachmentsTruncated,
+  };
+}
+
+async function fetchGmailBriefMessage(id: string, profile?: string) {
+  const data = await googleAuthorizedFetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`,
+    undefined,
+    profile,
+  );
+  return buildGmailBriefMessage(data, id);
+}
+
 export const gmail_get_message_brief = createTool({
   id: 'gmail_get_message_brief',
   description: 'Get a Gmail message brief (from, subject, date, snippet) by ID. Requires gmail.readonly.',
@@ -2044,46 +2221,20 @@ export const gmail_get_message_brief = createTool({
     const { id, profile } = inputData as any;
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.readonly'], profile);
     if ((gate as any).ok !== true) return gate;
-    const data = await googleAuthorizedFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`, undefined, profile);
-    const headers = (data?.payload?.headers || []) as Array<{ name?: string; value?: string }>;
-    const brief = {
-      id: String(data?.id || id),
-      threadId: String(data?.threadId || ''),
-      from: getHeader(headers, 'From'),
-      subject: getHeader(headers, 'Subject'),
-      date: getHeader(headers, 'Date'),
-      snippet: String(data?.snippet || ''),
-      labelIds: Array.isArray(data?.labelIds) ? data.labelIds : [],
-    };
-    return { message: brief };
+    return { message: await fetchGmailBriefMessage(id, profile) };
   },
 });
 
 export const gmail_get_message_full = createTool({
   id: 'gmail_get_message_full',
-  description: 'Get a Gmail message with full content (headers, snippet, decoded text/html body, attachments) by ID. Requires gmail.readonly.',
+  description: 'Get a Gmail message with a compact gist, trimmed body preview, and attachment metadata by ID. Requires gmail.readonly.',
   inputSchema: z.object({ id: z.string(), profile: profileField }),
   execute: async (inputData, context) => {
     const { id, profile } = inputData as any;
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.readonly'], profile);
     if ((gate as any).ok !== true) return gate;
     const data = await googleAuthorizedFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`, undefined, profile);
-    const headers = (data?.payload?.headers || []) as Array<{ name?: string; value?: string }>;
-    const body = extractBody(data?.payload);
-    const attachments = extractAttachments(data?.payload);
-    const full = {
-      id: String(data?.id || id),
-      threadId: String(data?.threadId || ''),
-      from: getHeader(headers, 'From'),
-      subject: getHeader(headers, 'Subject'),
-      date: getHeader(headers, 'Date'),
-      snippet: String(data?.snippet || ''),
-      labelIds: Array.isArray(data?.labelIds) ? data.labelIds : [],
-      sizeEstimate: typeof data?.sizeEstimate === 'number' ? data.sizeEstimate : undefined,
-      body,
-      attachments,
-    };
-    return { message: full };
+    return { message: buildCompactGmailFullMessage(data, id) };
   },
 });
 
@@ -2129,22 +2280,17 @@ export const gmail_get_messages_brief = createTool({
     const { ids, profile } = inputData as any;
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/gmail.readonly'], profile);
     if ((gate as any).ok !== true) return gate;
-    const results: any[] = [];
-    for (const id of ids) {
-      try {
-        const d = await googleAuthorizedFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`, undefined, profile);
-        const headers = (d?.payload?.headers || []) as Array<{ name?: string; value?: string }>;
-        results.push({
-          id: String(d?.id || id),
-          threadId: String(d?.threadId || ''),
-          from: getHeader(headers, 'From'),
-          subject: getHeader(headers, 'Subject'),
-          date: getHeader(headers, 'Date'),
-          snippet: String(d?.snippet || ''),
-          labelIds: Array.isArray(d?.labelIds) ? d.labelIds : [],
-        });
-      } catch { }
-    }
+    const results = (
+      await Promise.all(
+        ids.map(async (id: string) => {
+          try {
+            return await fetchGmailBriefMessage(String(id), profile);
+          } catch {
+            return null;
+          }
+        }),
+      )
+    ).filter(Boolean);
     return { items: results, count: results.length };
   },
 });
@@ -2159,29 +2305,24 @@ export const gmail_list_recent_brief = createTool({
     if ((gate as any).ok !== true) return gate;
     const list = await googleAuthorizedFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${encodeURIComponent(String(maxResults || 5))}`, undefined, profile);
     const ids = Array.isArray((list as any)?.messages) ? (list as any).messages.map((m: any) => String(m.id)) : [];
-    const results: any[] = [];
-    for (const id of ids) {
-      try {
-        const d = await googleAuthorizedFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`, undefined, profile);
-        const headers = (d?.payload?.headers || []) as Array<{ name?: string; value?: string }>;
-        results.push({
-          id: String(d?.id || id),
-          threadId: String(d?.threadId || ''),
-          from: getHeader(headers, 'From'),
-          subject: getHeader(headers, 'Subject'),
-          date: getHeader(headers, 'Date'),
-          snippet: String(d?.snippet || ''),
-          labelIds: Array.isArray(d?.labelIds) ? d.labelIds : [],
-        });
-      } catch { }
-    }
+    const results = (
+      await Promise.all(
+        ids.map(async (id: string) => {
+          try {
+            return await fetchGmailBriefMessage(String(id), profile);
+          } catch {
+            return null;
+          }
+        }),
+      )
+    ).filter(Boolean);
     return { items: results, count: results.length };
   },
 });
 
 export const gmail_get_most_recent_full = createTool({
   id: 'gmail_get_most_recent_full',
-  description: 'Get the most recent Gmail message with full content (decoded text/html). Requires gmail.readonly.',
+  description: 'Get the most recent Gmail message with a compact gist, trimmed body preview, and attachment metadata. Requires gmail.readonly.',
   inputSchema: z.object({ labelIds: z.array(z.string()).optional(), profile: profileField }),
   execute: async (inputData, context) => {
     const { labelIds, profile } = inputData as any;
@@ -2195,20 +2336,7 @@ export const gmail_get_most_recent_full = createTool({
     const firstId = Array.isArray((list as any)?.messages) && (list as any).messages.length > 0 ? String((list as any).messages[0].id) : '';
     if (!firstId) return { ok: true, message: null };
     const data = await googleAuthorizedFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(firstId)}?format=full`, undefined, profile);
-    const headers = (data?.payload?.headers || []) as Array<{ name?: string; value?: string }>;
-    const body = extractBody(data?.payload);
-    const full = {
-      id: String(data?.id || firstId),
-      threadId: String(data?.threadId || ''),
-      from: getHeader(headers, 'From'),
-      subject: getHeader(headers, 'Subject'),
-      date: getHeader(headers, 'Date'),
-      snippet: String(data?.snippet || ''),
-      labelIds: Array.isArray(data?.labelIds) ? data.labelIds : [],
-      sizeEstimate: typeof data?.sizeEstimate === 'number' ? data.sizeEstimate : undefined,
-      body,
-    };
-    return { message: full };
+    return { message: buildCompactGmailFullMessage(data, firstId) };
   },
 });
 

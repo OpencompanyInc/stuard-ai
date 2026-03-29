@@ -51,7 +51,6 @@ import {
   Zap,
   CloudDownload,
   ExternalLink,
-  NotebookPen,
   Terminal,
   AppWindow,
 } from "lucide-react";
@@ -889,28 +888,6 @@ export default function App() {
             }
           }
 
-          // Canvas Actions
-          if (toolName === "canvas_manager") {
-            const kind = String(d.kind || "");
-            if (kind === "canvas_action") {
-              const action = String(d.action || "");
-              if (action === "clear") await window.desktopAPI.canvasClear();
-              else if (action === "create")
-                d.canvas?.id &&
-                  (await window.desktopAPI.canvasCreate(d.canvas));
-              else if (action === "update")
-                d.canvas?.id &&
-                  (await window.desktopAPI.canvasUpdate(d.canvas));
-              else if (action === "delete")
-                d.id && (await window.desktopAPI.canvasDelete(String(d.id)));
-              else if (action === "show")
-                d.id && (await window.desktopAPI.canvasShow(String(d.id)));
-              else if (action === "hide")
-                d.id && (await window.desktopAPI.canvasHide(String(d.id)));
-              else if (action === "focus")
-                d.id && (await window.desktopAPI.canvasFocus(String(d.id)));
-            }
-          }
         }
 
         // Notifications - Handled by NotificationController
@@ -1274,7 +1251,7 @@ export default function App() {
   // --- Sidebar & Tabs State ---
   const [internalSidebarOpen, setInternalSidebarOpen] = useState(false);
   const [activeSidebarTab, setActiveSidebarTab] = useState<
-    "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo"
+    "spaces" | "terminal" | "tasks" | "browser" | "todo"
   >("spaces");
 
   useEffect(() => {
@@ -1876,7 +1853,7 @@ export default function App() {
     setInternalSidebarOpen(false);
   }, [overlayMode]);
   const handleSwitchSidebarTab = useCallback(
-    (tab: "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo") => setActiveSidebarTab(tab),
+    (tab: "spaces" | "terminal" | "tasks" | "browser" | "todo") => setActiveSidebarTab(tab),
     [],
   );
 
@@ -1990,73 +1967,6 @@ export default function App() {
     window.desktopAPI.setMode("window");
   }, []);
 
-  const handleCreateQuickNote = useCallback(async () => {
-    const now = new Date().toISOString();
-    const note = {
-      id: `canvas_${Date.now()}`,
-      title: "Quick Note",
-      content: "",
-      createdAt: now,
-      updatedAt: now,
-    };
-    await window.desktopAPI?.canvasCreateDocument?.(note);
-    await window.desktopAPI?.canvasCreate?.({
-      id: note.id,
-      title: note.title,
-      content: note.content,
-      template: "notes",
-      createdAt: note.createdAt,
-      updatedAt: note.updatedAt,
-      size: { width: 320, height: 220 },
-    });
-  }, []);
-
-  const handleOpenQuickNotes = useCallback(async () => {
-    const listResult = await window.desktopAPI?.canvasListDocuments?.();
-    const documents = Array.isArray(listResult?.documents)
-      ? listResult.documents
-      : [];
-    const latest = documents
-      .slice()
-      .sort((a: any, b: any) => {
-        const aTime = new Date(a?.updatedAt || a?.createdAt || 0).getTime();
-        const bTime = new Date(b?.updatedAt || b?.createdAt || 0).getTime();
-        return bTime - aTime;
-      })[0];
-
-    if (latest?.id) {
-      await window.desktopAPI?.canvasCreate?.({
-        id: latest.id,
-        title: latest.title || "Quick Note",
-        content: latest.content || "",
-        template: "notes",
-        createdAt: latest.createdAt,
-        updatedAt: latest.updatedAt,
-        size: { width: 320, height: 220 },
-      });
-      return;
-    }
-
-    const now = new Date().toISOString();
-    const note = {
-      id: `canvas_${Date.now()}`,
-      title: "Quick Note",
-      content: "",
-      createdAt: now,
-      updatedAt: now,
-    };
-    await window.desktopAPI?.canvasCreateDocument?.(note);
-    await window.desktopAPI?.canvasCreate?.({
-      id: note.id,
-      title: note.title,
-      content: note.content,
-      template: "notes",
-      createdAt: note.createdAt,
-      updatedAt: note.updatedAt,
-      size: { width: 320, height: 220 },
-    });
-  }, []);
-
   const handleOpenTerminal = useCallback(async () => {
     await window.desktopAPI?.openSidebar?.({ tab: "terminal", expanded: true });
   }, []);
@@ -2109,22 +2019,6 @@ export default function App() {
         run: handleShowWindow,
       },
 
-      {
-        id: "new-quick-note",
-        title: "New Quick Note",
-        description: "Create and open a new quick note",
-        icon: <NotebookPen className="w-5 h-5" />,
-        group: "Launch",
-        run: handleCreateQuickNote,
-      },
-      {
-        id: "open-quick-notes",
-        title: "Open Quick Notes",
-        description: "Open your notes sidebar",
-        icon: <NotebookPen className="w-5 h-5" />,
-        group: "Launch",
-        run: handleOpenQuickNotes,
-      },
       {
         id: "open-terminal",
         title: "Open Terminal",
@@ -2308,8 +2202,6 @@ export default function App() {
     handleShowSidebar,
     handleShowWindow,
     handleNewChat,
-    handleCreateQuickNote,
-    handleOpenQuickNotes,
     handleOpenTerminal,
     handleOpenSpacesPanel,
     handleOpenWorkflowsPanel,

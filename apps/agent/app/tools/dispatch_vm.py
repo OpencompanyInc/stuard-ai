@@ -19,7 +19,7 @@ from typing import Any, Dict, Callable, Awaitable
 
 # ── VM-compatible modules (no GUI, no display, no hardware capture) ──────────
 from . import (
-    system, fs, memory, knowledge, canvas, tasks, workflows,
+    system, fs, memory, knowledge, tasks, workflows,
     context, concurrency, transform, loops, memory_conversations,
     file_scanner, file_search, subagents, agent_todo, ffmpeg,
     math_ops, http, streams, database, folder_limiter, utils,
@@ -164,12 +164,6 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "memory_stats": ("memory", "Get memory statistics"),
 
     # ── Canvas ───────────────────────────────────────────────────────────────
-    "canvas_list": ("ui", "List canvas documents"),
-    "canvas_read": ("ui", "Read a canvas document"),
-    "canvas_write": ("ui", "Write to a canvas document"),
-    "canvas_create": ("ui", "Create a canvas document"),
-    "canvas_delete": ("ui", "Delete a canvas document"),
-
     # ── Tasks / Reminders ────────────────────────────────────────────────────
     "calendar_crud": ("integrations", "Manage calendar events"),
     "task_crud": ("integrations", "Manage tasks"),
@@ -748,11 +742,6 @@ _HANDLERS.update({
     "memory_stats": memory_conversations.memory_stats,
 
     # Canvas (in-memory doc store — works on VM)
-    "canvas_list": canvas.canvas_list,
-    "canvas_read": canvas.canvas_read,
-    "canvas_write": canvas.canvas_write,
-    "canvas_create": canvas.canvas_create,
-    "canvas_delete": canvas.canvas_delete,
 
     # Tasks & Reminders
     "calendar_crud": tasks.calendar_crud,
@@ -958,7 +947,6 @@ _TOOL_METADATA["list_tool_categories"] = ("core", "List tool categories")
 _EMIT_TOOLS = {
     "run_system_command", "run_command",
     "python_install", "run_python_script", "run_node_script",
-    "canvas_list", "canvas_read", "canvas_write", "canvas_create", "canvas_delete",
     "task_reminders",
     "ffmpeg_setup", "ffmpeg_run", "ffmpeg_convert_media", "ffmpeg_extract_audio",
     "ffmpeg_trim_media", "ffmpeg_probe_media", "ffmpeg_extract_frames",

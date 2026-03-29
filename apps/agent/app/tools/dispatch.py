@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Callable, Awaitable
 
-from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, canvas, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http, streams, database, folder_limiter, mediapipe_tools, utils, vault
+from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http, streams, database, folder_limiter, mediapipe_tools, utils, vault
 
 
 # Tool metadata for discovery (category and description)
@@ -213,13 +213,6 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "ffmpeg_trim_media": ("vision", "Trim media to time range"),
     "ffmpeg_probe_media": ("vision", "Probe media file metadata"),
     "ffmpeg_extract_frames": ("vision", "Extract frames from video"),
-
-    # Canvas
-    "canvas_list": ("ui", "List canvas documents"),
-    "canvas_read": ("ui", "Read a canvas document"),
-    "canvas_write": ("ui", "Write to a canvas document"),
-    "canvas_create": ("ui", "Create a canvas document"),
-    "canvas_delete": ("ui", "Delete a canvas document"),
 
     # Calendar / Tasks / Reminders
     "calendar_crud": ("integrations", "Manage calendar events"),
@@ -585,13 +578,6 @@ _HANDLERS = {
     "ffmpeg_probe_media": ffmpeg.ffmpeg_probe_media,
     "ffmpeg_extract_frames": ffmpeg.ffmpeg_extract_frames,
 
-    # Canvas Document Tools
-    "canvas_list": canvas.canvas_list,
-    "canvas_read": canvas.canvas_read,
-    "canvas_write": canvas.canvas_write,
-    "canvas_create": canvas.canvas_create,
-    "canvas_delete": canvas.canvas_delete,
-
     # Calendar / Tasks / Reminders
     "calendar_crud": tasks.calendar_crud,
     "task_crud": tasks.task_crud,
@@ -789,11 +775,6 @@ async def execute(tool: str, args: Dict[str, Any], emit: Callable[[str, Dict[str
         "capture_media",
         "stop_capture",
         "list_active_captures",
-        "canvas_list",
-        "canvas_read",
-        "canvas_write",
-        "canvas_create",
-        "canvas_delete",
         "task_reminders",
         "python_install",
         "run_python_script",

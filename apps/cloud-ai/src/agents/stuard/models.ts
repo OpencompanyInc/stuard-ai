@@ -16,11 +16,15 @@ export function getModel(model: ModelChoice, modelId?: string) {
     // Fallback if buildProviderModel failed for some reason
     if (!selectedModel) {
       if (model === 'fast') {
-        selectedModel = buildProviderModel('deepseek/deepseek-chat');
+        selectedModel = buildProviderModel('google/gemini-3.1-flash-lite-preview');
       } else if (model === 'balanced') {
-        selectedModel = buildProviderModel('xai/grok-4-1-fast');
+        selectedModel =
+          buildProviderModel('openai/gpt-5-chat-latest') ||
+          buildProviderModel('google/gemini-3.1-flash-lite-preview');
       } else {
-        selectedModel = buildProviderModel('google/gemini-2.5-pro');
+        selectedModel =
+          buildProviderModel('google/gemini-3.1-pro-preview') ||
+          buildProviderModel('google/gemini-3.1-flash-lite-preview');
       }
     }
   }

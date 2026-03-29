@@ -10,13 +10,6 @@ import { execCallWorkspaceFunction, execListWorkspaceFunctions } from './handler
 import { execWorkspaceReadFile, execWorkspaceWriteFile, execWorkspaceDeleteFile, execWorkspaceListFiles, execWorkspaceCreateFolder, execWorkspaceGetInfo } from './handlers/workspace-files';
 import { execProactiveTaskCreate, execProactiveTaskList, execProactiveTaskUpdate, execProactiveTaskDelete } from './handlers/proactive';
 import { skills_save, skills_list } from '../skills';
-import {
-  execCanvasList,
-  execCanvasRead,
-  execCanvasWrite,
-  execCanvasCreate,
-  execCanvasDelete,
-} from './handlers/canvas';
 import { execOllamaStatus, execOllamaStart, execOllamaChat, execOllamaGenerate, execOllamaVision, execOllamaEmbeddings, execOllamaModels } from './handlers/ollama';
 import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseExecuteScript, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, execBrowserUseHover, execBrowserUseSelectOption, execBrowserUseGetDropdownOptions, execBrowserUseGetInteractiveElements, execBrowserUseFillForm, execBrowserUseUploadFile, execBrowserUseWaitFor, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse } from './handlers/browser-use';
 import {
@@ -96,13 +89,6 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'get_window_info') return execGetWindowInfo(args, ctx);
       if (toolName === 'smart_bring_window_to_foreground') return execSmartBringWindowToForeground(args, ctx);
       if (toolName === 'set_window_bounds') return execSetWindowBounds(args, ctx);
-
-      // Canvas document tools
-      if (toolName === 'canvas_list' || toolName === 'sidebar_canvas_list') return execCanvasList(args, ctx);
-      if (toolName === 'canvas_read' || toolName === 'sidebar_canvas_read') return execCanvasRead(args, ctx);
-      if (toolName === 'canvas_write' || toolName === 'sidebar_canvas_write') return execCanvasWrite(args, ctx);
-      if (toolName === 'canvas_create' || toolName === 'sidebar_canvas_create') return execCanvasCreate(args, ctx);
-      if (toolName === 'canvas_delete' || toolName === 'sidebar_canvas_delete') return execCanvasDelete(args, ctx);
 
       // Variable management tools
       if (toolName === 'set_variable') return execSetVariable(args, ctx);

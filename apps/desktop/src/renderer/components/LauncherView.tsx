@@ -111,9 +111,9 @@ interface LauncherViewProps {
   onAddTab?: () => void;
 
   // Internal Sidebar
-  activeSidebarTab?: "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo";
+  activeSidebarTab?: "spaces" | "terminal" | "tasks" | "browser" | "todo";
   onCloseInternalSidebar?: () => void;
-  onSwitchSidebarTab?: (tab: "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo") => void;
+  onSwitchSidebarTab?: (tab: "spaces" | "terminal" | "tasks" | "browser" | "todo") => void;
 }
 
 // Helper to get icon for next up item

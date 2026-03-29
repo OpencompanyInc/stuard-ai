@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabaseClient';
 import type { ReasoningLevel } from '../../hooks/usePreferences';
 import { StreamItem, ToolEvent } from '../components/ChatPanel';
 import { specToDesignerModel } from '../utils/conversions';
+import { formatWorkflowSchematic, type WorkflowValidationIssue } from '../../../../../../shared/workflow-topology';
 import {
   ChatSession,
   createSession,
@@ -255,6 +256,16 @@ IMPORTANT: Fix these validation errors FIRST before making other changes.
       }
 
       const wiresArr = Array.isArray(designerModel.wires) ? designerModel.wires : [];
+      const validationIssues: WorkflowValidationIssue[] = Array.isArray(errors)
+        ? errors
+          .filter((issue: any) => issue && typeof issue.message === 'string' && (issue.type === 'error' || issue.type === 'warning'))
+          .map((issue: any) => ({
+            type: issue.type,
+            message: issue.message,
+            nodeId: typeof issue.nodeId === 'string' ? issue.nodeId : undefined,
+            wireId: typeof issue.wireId === 'string' ? issue.wireId : undefined,
+          }))
+        : [];
       const wiresSummary = wiresArr.length > 0
         ? `Connections (wires): ${wiresArr.map((w: any) => `${w.from} → ${w.to}${w.guard ? ` [${w.guard}]` : ''}`).join(', ')}`
         : 'Connections (wires): NONE - nodes are not connected!';
@@ -285,12 +296,12 @@ subdirs: ${(workspaceInfo.subdirs || []).join(', ')}
 Files:\n${fileTree || '  (empty workspace)'}\n`;
       }
 
-      // Build context as a separate system message, and keep user request clean
-      const workflowContextText = `${debugSection ? debugSection + '\n' : ''}${workspaceSection}CURRENT WORKFLOW (for reference only - do NOT modify unless user requests):
-${JSON.stringify(designerModel, null, 2)}
+      const workflowSchematic = formatWorkflowSchematic(designerModel, {
+        validationIssues,
+      });
 
-${structureSummary}
-${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors shown above first.' : ''}${wiresArr.length === 0 ? '\nNOTE: Wires are missing - nodes are not connected!' : ''}${imageSection}`;
+      // Build context as a separate system message, and keep user request clean
+      const workflowContextText = `${debugSection ? debugSection + '\n' : ''}${workflowSchematic}${workspaceSection}${hasErrors ? '\nPRIORITY: If user asks for changes, fix the validation errors shown above first.' : ''}${wiresArr.length === 0 ? '\nNOTE: Wires are missing - nodes are not connected!' : ''}${imageSection}`;
 
       // User's actual request is kept separate
       const userRequest = text;

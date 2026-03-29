@@ -1,14 +1,13 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { clsx } from 'clsx';
-import { Bot, Globe, GripVertical, Layers, ListTodo, Maximize2, Minimize2, NotebookPen, Terminal, X } from 'lucide-react';
+import { Bot, Globe, GripVertical, Layers, ListTodo, Maximize2, Minimize2, Terminal, X } from 'lucide-react';
 import { SpacesSidebar } from '../SpacesSidebar';
 import { SubAgentsView } from '../SubAgentsView';
 import { XTerminalPanel } from '../XTerminalPanel';
 import { SidebarBrowserPanel } from './SidebarBrowserPanel';
-import { QuickNotesPanel } from './QuickNotesPanel';
 import { SidebarTodoPanel } from './SidebarTodoPanel';
 
-type SidebarTabId = 'spaces' | 'canvas' | 'terminal' | 'tasks' | 'browser' | 'todo';
+type SidebarTabId = 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo';
 
 const SIDEBAR_TABS: Array<{
   id: SidebarTabId;
@@ -16,7 +15,6 @@ const SIDEBAR_TABS: Array<{
   icon: React.ComponentType<{ className?: string }>;
 }> = [
   { id: 'spaces', label: 'Spaces', icon: Layers },
-  { id: 'canvas', label: 'Notes', icon: NotebookPen },
   { id: 'todo', label: 'To-Do', icon: ListTodo },
   { id: 'terminal', label: 'Terminal', icon: Terminal },
   { id: 'tasks', label: 'Agents', icon: Bot },
@@ -32,7 +30,7 @@ interface SidebarViewProps {
   onClose?: () => void;
   isExpanded?: boolean;
   onToggleExpand?: () => void;
-  selectedItem?: { type: 'space' | 'canvas'; id: string } | null;
+  selectedItem?: { type: 'space'; id: string } | null;
   onSelectedItemHandled?: () => void;
 }
 
@@ -158,14 +156,6 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
             translucentMode={translucentMode}
             selectedSpaceId={selectedItem?.type === 'space' ? selectedItem.id : undefined}
             onSelectedSpaceHandled={selectedItem?.type === 'space' ? onSelectedItemHandled : undefined}
-          />
-        );
-      case 'canvas':
-        return (
-          <QuickNotesPanel
-            className="w-full h-full"
-            selectedDocumentId={selectedItem?.type === 'canvas' ? selectedItem.id : undefined}
-            onSelectedDocumentHandled={selectedItem?.type === 'canvas' ? onSelectedItemHandled : undefined}
           />
         );
       case 'todo':

@@ -1,6 +1,6 @@
 export { };
 
- type SidebarTabId = 'spaces' | 'canvas' | 'terminal' | 'tasks' | 'browser' | 'todo';
+ type SidebarTabId = 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo';
 
 declare global {
   interface Window {
@@ -25,7 +25,7 @@ declare global {
       openSpaces: () => Promise<void>;
       closeSpaces: () => Promise<void>;
       toggleSpaces: () => Promise<void>;
-      // Sidebar window (unified Spaces, Notes, Terminal, Agent Tasks, Browser)
+      // Sidebar window (unified Spaces, Terminal, Agent Tasks, Browser)
       openSidebar: (options?: { tab?: SidebarTabId; expanded?: boolean }) => Promise<void>;
       closeSidebar: () => Promise<void>;
       toggleSidebar: (options?: { tab?: SidebarTabId; expanded?: boolean }) => Promise<void>;
@@ -34,18 +34,7 @@ declare global {
       sidebarSetPresentation: (mode: 'full' | 'popup', tab?: SidebarTabId) => Promise<{ ok: boolean; mode?: 'full' | 'popup'; error?: string }>;
       onSidebarNavigate: (cb: (data: { tab: SidebarTabId }) => void) => () => void;
       onSidebarExpandedChange: (cb: (data: { expanded: boolean }) => void) => () => void;
-      onSidebarSelectItem: (cb: (data: { type: 'space' | 'canvas'; id: string }) => void) => () => void;
-      // Canvas document operations
-      canvasListDocuments: () => Promise<{ ok: boolean; documents?: any[]; error?: string }>;
-      canvasCreateDocument: (doc: any) => Promise<{ ok: boolean; error?: string }>;
-      canvasSaveDocument: (doc: any) => Promise<{ ok: boolean; error?: string }>;
-      canvasDeleteDocument: (docId: string) => Promise<{ ok: boolean; error?: string }>;
-      canvasGetDocument: (docId: string) => Promise<{ ok: boolean; document?: any; error?: string }>;
-      canvasRead: (docId?: string) => Promise<{ ok: boolean; document?: any; error?: string }>;
-      canvasWrite: (data: { documentId?: string; content?: string; title?: string; action?: 'append' | 'replace' | 'insert'; position?: number }) => Promise<{ ok: boolean; error?: string }>;
-      onCanvasUpdate: (cb: (data: { documentId?: string; content?: string; title?: string; action?: 'append' | 'replace' | 'insert'; position?: number }) => void) => () => void;
-      onCanvasRead: (cb: (data: { requestId: string }) => void) => () => void;
-      canvasReadResponse: (data: { requestId: string; documentId?: string | null; title?: string; content?: string }) => Promise<void>;
+      onSidebarSelectItem: (cb: (data: { type: 'space'; id: string }) => void) => () => void;
       closeOnboarding: () => Promise<void>;
       showItemInFolder: (filePath: string) => Promise<{ ok: boolean; error?: string }>;
       openExternal: (url: string) => Promise<void>;
@@ -61,18 +50,6 @@ declare global {
       onOpenChat: (cb: (id: string) => void) => void | (() => void);
       onDashboardNavigate: (cb: (data: { tab: string }) => void) => () => void;
       onWorkflowsNavigate: (cb: (data: { marketplaceSlug: string }) => void) => () => void;
-      // Canvas windows
-      canvasCreate: (item: any) => Promise<void>;
-      canvasUpdate: (item: any) => Promise<void>;
-      canvasDelete: (id: string) => Promise<void>;
-      canvasShow: (id: string) => Promise<void>;
-      canvasHide: (id: string) => Promise<void>;
-      canvasFocus: (id: string) => Promise<void>;
-      canvasClear: () => Promise<void>;
-      canvasList: () => Promise<any[]>;
-      // Board window lifecycle
-      onBoardInit: (cb: (data: any) => void) => void | (() => void);
-      onBoardUpdate: (cb: (data: any) => void) => void | (() => void);
       // Custom UI prebuilt assets (for UI builder preview — offline, no CDN)
       customUiGetPrebuiltAssets: () => Promise<{ ok: boolean; reactUmd?: string; reactDomUmd?: string; tailwindCss?: string; extraCss?: string; error?: string }>;
       customUiTransformJsx: (code: string) => Promise<{ ok: boolean; code: string; syntax?: string; error?: string }>;

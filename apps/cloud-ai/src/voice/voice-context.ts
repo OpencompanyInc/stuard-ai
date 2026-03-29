@@ -14,6 +14,7 @@
 import type { VoiceToolDefinition } from './types';
 import {
   getConversationMessages,
+  getSyncPreferences,
   getSupabaseService,
 } from '../supabase';
 import {
@@ -22,6 +23,10 @@ import {
   getBioLens,
   type Fact,
 } from '../knowledge/retrieval';
+import {
+  getMessages as getLocalMessages,
+  listConversations as listLocalConversations,
+} from '../memory/conversations';
 import { getDesktopWs } from '../services/vm-bridge';
 import { withClientBridge } from '../tools/bridge';
 
@@ -251,6 +256,9 @@ async function loadKnowledgeFacts(userId: string): Promise<{
     }
   }
 
+  const syncPrefs = await getSyncPreferences(userId);
+  if (!syncPrefs.sync_memories) return empty;
+
   // Cloud-sync fallback: load knowledge facts directly from Supabase
   const supabase = getSupabaseService();
   if (!supabase) return empty;
@@ -279,9 +287,45 @@ async function loadKnowledgeFacts(userId: string): Promise<{
   }
 }
 
+async function loadRecentContextFromDesktop(userId: string): Promise<string> {
+  const desktopWs = getDesktopWs(userId);
+  if (!desktopWs) return '';
+
+  try {
+    const recentContext = await withClientBridge(desktopWs, async () => {
+      const conversations = await listLocalConversations({ limit: 3 }).catch(() => []);
+      if (!Array.isArray(conversations) || conversations.length === 0) return '';
+
+      const summaries = await Promise.all(
+        conversations.slice(0, 3).map(async (conv) => {
+          const title = conv.title || 'Untitled conversation';
+          const date = new Date(conv.created_at).toLocaleDateString('en-US', {
+            month: 'short', day: 'numeric',
+          });
+          const msgs = await getLocalMessages(conv.id, { limit: 2 }).catch(() => []);
+          if (!Array.isArray(msgs) || msgs.length === 0) {
+            return `[${date}] ${title}`;
+          }
+          const preview = msgs.map((m) =>
+            `${m.role === 'user' ? 'User' : 'You'}: ${String(m.content).slice(0, 80)}${m.content.length > 80 ? '...' : ''}`,
+          ).join(' | ');
+          return `[${date}] ${title}: ${preview}`;
+        }),
+      );
+
+      return summaries.filter(Boolean).join('\n');
+    });
+    return typeof recentContext === 'string' ? recentContext : '';
+  } catch (e: any) {
+    console.warn('[voice-context] Desktop recent-context lookup failed:', e?.message);
+    return '';
+  }
+}
+
 /**
  * Build voice context for a user making/receiving a call.
- * Loads user profile and recent conversation context from Supabase.
+ * Loads user profile and recent conversation context from local SQLite when
+ * the desktop bridge is available, otherwise from Supabase when sync allows it.
  * Designed to be fast — no embedding search, just direct DB queries.
  */
 export async function buildVoiceContext(opts: {
@@ -348,11 +392,18 @@ async function loadUserName(userId: string): Promise<string | undefined> {
 }
 
 /**
- * Load recent conversation context from Supabase.
+ * Load recent conversation context from local SQLite when the desktop bridge
+ * is available, otherwise from Supabase when conversation sync is enabled.
  * Returns a compact summary of recent interactions.
  */
 async function loadRecentContext(userId: string): Promise<string> {
   try {
+    const desktopRecent = await loadRecentContextFromDesktop(userId);
+    if (desktopRecent) return desktopRecent;
+
+    const syncPrefs = await getSyncPreferences(userId);
+    if (!syncPrefs.sync_conversations) return '';
+
     const supabase = getSupabaseService();
     if (!supabase) return '';
 

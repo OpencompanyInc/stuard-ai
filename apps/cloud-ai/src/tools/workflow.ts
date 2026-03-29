@@ -10,6 +10,11 @@ import { z } from 'zod';
 import { safeToolWrite, getBridgeState, setBridgeState } from './bridge';
 import { workflowMap } from './workflow-system';
 import { writeLog } from '../utils/logger';
+import {
+  analyzeWorkflowTopology,
+  getFlowContextById,
+  type WorkflowElementFlowContext,
+} from '../../../../shared/workflow-topology';
 
 // ============================================================================
 // Types
@@ -386,6 +391,113 @@ function setPath(obj: any, path: string, value: any): void {
   current[parts[parts.length - 1]] = value;
 }
 
+function addTouchedId(touchedIds: Set<string>, id?: string | null): void {
+  if (typeof id === 'string' && id.trim()) {
+    touchedIds.add(id);
+  }
+}
+
+function addWireEndpoints(touchedIds: Set<string>, wire: any): void {
+  if (!wire || typeof wire !== 'object') return;
+  addTouchedId(touchedIds, typeof wire.from === 'string' ? wire.from : undefined);
+  addTouchedId(touchedIds, typeof wire.to === 'string' ? wire.to : undefined);
+}
+
+function addTouchedIdsFromPath(
+  touchedIds: Set<string>,
+  path: string,
+  beforeWorkflow: Workflow,
+  afterWorkflow: Workflow,
+): void {
+  if (!path) return;
+
+  const nodeMatch = path.match(/^nodes\[(\d+)\]/);
+  if (nodeMatch) {
+    const index = Number(nodeMatch[1]);
+    addTouchedId(touchedIds, afterWorkflow.nodes[index]?.id || beforeWorkflow.nodes[index]?.id);
+    return;
+  }
+
+  const triggerMatch = path.match(/^triggers\[(\d+)\]/);
+  if (triggerMatch) {
+    const index = Number(triggerMatch[1]);
+    addTouchedId(touchedIds, afterWorkflow.triggers[index]?.id || beforeWorkflow.triggers[index]?.id);
+    return;
+  }
+
+  const wireMatch = path.match(/^wires\[(\d+)\]/);
+  if (wireMatch) {
+    const index = Number(wireMatch[1]);
+    addWireEndpoints(touchedIds, beforeWorkflow.wires[index]);
+    addWireEndpoints(touchedIds, afterWorkflow.wires[index]);
+    return;
+  }
+
+  if (path === 'wires' || path.startsWith('wires.')) {
+    for (const wire of beforeWorkflow.wires) addWireEndpoints(touchedIds, wire);
+    for (const wire of afterWorkflow.wires) addWireEndpoints(touchedIds, wire);
+    return;
+  }
+
+  if (path === 'nodes' || path.startsWith('nodes.')) {
+    for (const node of beforeWorkflow.nodes) addTouchedId(touchedIds, node.id);
+    for (const node of afterWorkflow.nodes) addTouchedId(touchedIds, node.id);
+    return;
+  }
+
+  if (path === 'triggers' || path.startsWith('triggers.')) {
+    for (const trigger of beforeWorkflow.triggers) addTouchedId(touchedIds, trigger.id);
+    for (const trigger of afterWorkflow.triggers) addTouchedId(touchedIds, trigger.id);
+  }
+}
+
+function buildRemovedContext(id: string, beforeContext: WorkflowElementFlowContext | null): WorkflowElementFlowContext {
+  if (beforeContext) {
+    return {
+      ...beforeContext,
+      exists: false,
+      removed: true,
+    };
+  }
+
+  return {
+    id,
+    kind: id.startsWith('trig_') ? 'trigger' : 'node',
+    exists: false,
+    removed: true,
+    predecessorIds: [],
+    successorIds: [],
+    incomingWires: [],
+    outgoingWires: [],
+    startAdjacent: false,
+    terminal: true,
+    waitForAll: false,
+  };
+}
+
+function buildAffectedFlowReport(
+  beforeWorkflow: Workflow,
+  afterWorkflow: Workflow,
+  touchedIds: Set<string>,
+): { touchedIds: string[]; contexts: WorkflowElementFlowContext[] } {
+  const beforeAnalysis = analyzeWorkflowTopology(beforeWorkflow);
+  const afterAnalysis = analyzeWorkflowTopology(afterWorkflow);
+  const orderedIds = Array.from(touchedIds);
+
+  const contexts = orderedIds.map((id) => {
+    const afterContext = getFlowContextById(afterAnalysis, id);
+    if (afterContext) return afterContext;
+
+    const beforeContext = getFlowContextById(beforeAnalysis, id);
+    return buildRemovedContext(id, beforeContext);
+  });
+
+  return {
+    touchedIds: orderedIds,
+    contexts,
+  };
+}
+
 // ============================================================================
 // THE TOOL
 // ============================================================================
@@ -513,11 +625,11 @@ STUARD FILE TARGETING:
 
   outputSchema: z.object({
     ok: z.boolean(),
-    workflow: z.any().optional(),
     stuardFile: z.string().optional().describe('Which .stuard file was modified (if specified)'),
     message: z.string().optional(),
     error: z.string().optional(),
     diagram: z.string().optional().describe('ASCII diagram of the workflow structure'),
+    affectedFlow: z.any().optional().describe('Topology context for touched nodes/triggers after the mutation'),
   }),
 
   execute: async (inputData, { writer }) => {
@@ -573,6 +685,8 @@ STUARD FILE TARGETING:
     }
 
     const wf = cloneWorkflow(workflow);
+    const beforeWorkflow = cloneWorkflow(wf);
+    const touchedIds = new Set<string>();
     log('start', { op, workflowId: wf.id, stuardFile: stuardFile || undefined });
 
     try {
@@ -595,10 +709,12 @@ STUARD FILE TARGETING:
               position: nextPosition(wf, 'trigger'),
             };
             wf.triggers.push(newTrigger);
+            addTouchedId(touchedIds, newTrigger.id);
             message = `Added trigger "${newTrigger.label}" (${newTrigger.id})`;
 
             if (connectFrom && elementExists(wf, connectFrom)) {
               wf.wires.push({ from: newTrigger.id, to: connectFrom });
+              addTouchedId(touchedIds, connectFrom);
               message += ` wired to ${connectFrom}`;
             }
             break;
@@ -615,10 +731,12 @@ STUARD FILE TARGETING:
           };
 
           wf.nodes.push(newNode);
+          addTouchedId(touchedIds, newNode.id);
           message = `Added node "${newNode.label}" (${newNode.id})`;
 
           if (connectFrom && elementExists(wf, connectFrom)) {
             wf.wires.push({ from: connectFrom, to: newNode.id });
+            addTouchedId(touchedIds, connectFrom);
             message += ` wired from ${connectFrom}`;
           }
           break;
@@ -631,6 +749,7 @@ STUARD FILE TARGETING:
           const nodeId = ctx.nodeId || ctx.stepId;
           const { args, label, tool, triggerType, triggerArgs, path, value } = ctx;
           if (!nodeId) return { ok: false, error: 'nodeId is required for update_node' };
+          addTouchedId(touchedIds, nodeId);
 
           const idx = nodeIndex(wf, nodeId);
           if (idx >= 0) {
@@ -713,6 +832,13 @@ STUARD FILE TARGETING:
         case 'remove_node': {
           const nodeId = ctx.nodeId || ctx.stepId;
           if (!nodeId) return { ok: false, error: 'nodeId is required for remove_node' };
+          addTouchedId(touchedIds, nodeId);
+          for (const wire of wf.wires) {
+            if (wire.from === nodeId || wire.to === nodeId) {
+              addTouchedId(touchedIds, wire.from);
+              addTouchedId(touchedIds, wire.to);
+            }
+          }
 
           const idx = nodeIndex(wf, nodeId);
           if (idx >= 0) {
@@ -738,6 +864,8 @@ STUARD FILE TARGETING:
         case 'add_wire': {
           const { from, to, guard } = ctx;
           if (!from || !to) return { ok: false, error: 'from and to are required for add_wire' };
+          addTouchedId(touchedIds, from);
+          addTouchedId(touchedIds, to);
 
           if (!elementExists(wf, from)) return { ok: false, error: `Source not found: ${from}` };
           if (!elementExists(wf, to)) return { ok: false, error: `Target not found: ${to}` };
@@ -759,6 +887,8 @@ STUARD FILE TARGETING:
         case 'remove_wire': {
           const { from, to } = ctx;
           if (!from || !to) return { ok: false, error: 'from and to are required for remove_wire' };
+          addTouchedId(touchedIds, from);
+          addTouchedId(touchedIds, to);
 
           const idx = wf.wires.findIndex(w => w.from === from && w.to === to);
           if (idx < 0) return { ok: false, error: `Wire not found: ${from} → ${to}` };
@@ -777,6 +907,7 @@ STUARD FILE TARGETING:
           if (value === undefined) return { ok: false, error: 'value is required for set_path' };
 
           setPath(wf, path, value);
+          addTouchedIdsFromPath(touchedIds, path, beforeWorkflow, wf);
           message = `Set ${path} = ${JSON.stringify(value)}`;
           break;
         }
@@ -825,8 +956,20 @@ STUARD FILE TARGETING:
 
       // Generate diagram for visual understanding
       const diagram = generateWorkflowDiagram(wf);
+      const affectedFlow = buildAffectedFlowReport(beforeWorkflow, wf, touchedIds);
 
-      const result = { ok: true as const, workflow: wf, message, diagram, ...(stuardFile ? { stuardFile } : {}) };
+      const result = {
+        ok: true as const,
+        message,
+        diagram,
+        affectedFlow,
+        ...(stuardFile ? { stuardFile } : {}),
+      };
+
+      const uiResult = {
+        ...result,
+        workflow: wf,
+      };
 
       log('success', { workflowId: wf.id, message, stuardFile: stuardFile || undefined });
 
@@ -837,7 +980,7 @@ STUARD FILE TARGETING:
         status: 'completed',
         workflowId: wf.id,
         ...(stuardFile ? { stuardFile } : {}),
-        result,
+        result: uiResult,
       });
 
       return result;

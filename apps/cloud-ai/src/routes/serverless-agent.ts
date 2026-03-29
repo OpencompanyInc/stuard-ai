@@ -40,7 +40,17 @@ import type { ModelChoice } from '../router/model-router';
 
 // ─── Cloud-Only System Prompt ──────────────────────────────────────────────
 
-function buildCloudSyncSystemPrompt(knowledgeContext: string): string {
+function buildCloudSyncSystemPrompt(
+  knowledgeContext: string,
+  options?: { syncMemories?: boolean },
+): string {
+  const knowledgeCapabilityLine = options?.syncMemories === false
+    ? '- Knowledge graph access is unavailable unless the user has cloud memory sync enabled'
+    : '- Knowledge graph (facts, entities, user profile)';
+  const memorySection = options?.syncMemories === false
+    ? '**Memory**: Cloud memory sync is off for this user, so personal facts and long-term memories may be unavailable in this session.'
+    : '**Memory**: Conversations are stored in the cloud. You can search past conversations for context.\nInformation you learn about the user is stored in the knowledge graph automatically.';
+
   return `You are Stuard — a proactive, warm AI assistant operating in cloud-sync mode.
 You do NOT have access to the user's local machine (no terminal, no file system, no screen capture, no GUI).
 You ARE able to use cloud-based tools: web search, integrations (email, calendar, messaging), knowledge search, and more.
@@ -54,7 +64,7 @@ ${knowledgeContext ? `\n${knowledgeContext}\n` : ''}
 - SMS and WhatsApp messaging
 - Voice calls (outbound)
 - Memory search across past conversations
-- Knowledge graph (facts, entities, user profile)
+${knowledgeCapabilityLine}
 - Workflow execution
 - Tool discovery (search_tools → get_tool_schema → execute_tool)
 
@@ -76,8 +86,7 @@ IMPORTANT: Do NOT attempt to use local/device tools — they will fail. Only use
 **Behavior**: Be warm, concise, actionable. Complete requests end-to-end using available cloud tools.
 When you can't do something because it requires local access, explain that and suggest the user switch to desktop or VM mode.
 
-**Memory**: Conversations are stored in the cloud. You can search past conversations for context.
-Information you learn about the user is stored in the knowledge graph automatically.`;
+${memorySection}`;
 }
 
 // ─── Cloud-Only Memory Search Tool ─────────────────────────────────────────
@@ -131,111 +140,119 @@ function createCloudMemorySearchTool(userId: string) {
 
 // ─── Cloud Knowledge Context Builder ───────────────────────────────────────
 
-async function buildCloudKnowledgeContext(userId: string, message: string): Promise<string> {
+/** Max chars per individual fact to prevent unbounded growth */
+const CLOUD_FACT_MAX_CHARS = 300;
+/** Hard cap on total knowledge context (chars). ~1200 tokens at 3.5 chars/token. */
+const CLOUD_KNOWLEDGE_MAX_CHARS = 4200;
+
+function truncFact(text: string): string {
+  if (!text || text.length <= CLOUD_FACT_MAX_CHARS) return text;
+  return text.slice(0, CLOUD_FACT_MAX_CHARS - 1) + '…';
+}
+
+async function buildCloudKnowledgeContext(
+  userId: string,
+  message: string,
+  options?: { syncMemories?: boolean },
+): Promise<string> {
+  if (options?.syncMemories === false) return '';
+
   const supabase = getSupabaseService();
   if (!supabase) return '';
 
   const sections: string[] = [];
 
   try {
-    // Fetch user profile facts from knowledge graph in Supabase
-    const { data: identityFacts } = await supabase
-      .from('knowledge_facts')
-      .select('category, attribute_key, text')
-      .eq('owner', userId)
-      .eq('category', 'identity')
-      .eq('validity', true)
-      .limit(20);
+    const memorySearchPromise = (async () => {
+      try {
+        const embedding = await getOrCreateQueryEmbedding(message);
+        if (!embedding || embedding.length === 0) return [] as Array<{ text?: string }>;
+        const { data } = await supabase.rpc('match_knowledge_facts', {
+          query_embedding: embedding,
+          match_threshold: 0.65,
+          match_count: 3,
+          filter_owner: userId,
+        });
+        return Array.isArray(data) ? data : [];
+      } catch {
+        return [] as Array<{ text?: string }>;
+      }
+    })();
+
+    const [identityRes, directiveRes, bioRes, memoryResults] = await Promise.all([
+      supabase
+        .from('knowledge_facts')
+        .select('category, attribute_key, text')
+        .eq('owner', userId)
+        .eq('category', 'identity')
+        .eq('validity', true)
+        .limit(5),
+      supabase
+        .from('knowledge_facts')
+        .select('text')
+        .eq('owner', userId)
+        .eq('category', 'directive')
+        .eq('validity', true)
+        .limit(5),
+      supabase
+        .from('knowledge_facts')
+        .select('text')
+        .eq('owner', userId)
+        .eq('category', 'bio')
+        .eq('validity', true)
+        .limit(3),
+      memorySearchPromise,
+    ]);
+
+    const identityFacts = identityRes.data || [];
+    const directiveFacts = directiveRes.data || [];
+    const bioFacts = bioRes.data || [];
 
     if (identityFacts && identityFacts.length > 0) {
       const lines = ['[USER IDENTITY]'];
       for (const f of identityFacts) {
         const key = f.attribute_key || 'info';
-        lines.push(`${key}: ${f.text}`);
+        lines.push(`${key}: ${truncFact(f.text)}`);
       }
       sections.push(lines.join('\n'));
     }
-
-    // Fetch directive facts
-    const { data: directiveFacts } = await supabase
-      .from('knowledge_facts')
-      .select('text')
-      .eq('owner', userId)
-      .eq('category', 'directive')
-      .eq('validity', true)
-      .limit(10);
 
     if (directiveFacts && directiveFacts.length > 0) {
       const lines = ['[SYSTEM INSTRUCTIONS]'];
       for (const f of directiveFacts) {
-        lines.push(`- ${f.text}`);
+        lines.push(`- ${truncFact(f.text)}`);
       }
       sections.push(lines.join('\n'));
     }
-
-    // Fetch bio facts
-    const { data: bioFacts } = await supabase
-      .from('knowledge_facts')
-      .select('text')
-      .eq('owner', userId)
-      .eq('category', 'bio')
-      .eq('validity', true)
-      .limit(10);
 
     if (bioFacts && bioFacts.length > 0) {
       const lines = ['[ABOUT USER]'];
       for (const f of bioFacts) {
-        lines.push(`- ${f.text}`);
+        lines.push(`- ${truncFact(f.text)}`);
       }
       sections.push(lines.join('\n'));
     }
 
-    // Semantic search for relevant memories
-    try {
-      const embedding = await getOrCreateQueryEmbedding(message);
-      if (embedding && embedding.length > 0) {
-        const { data: memoryResults } = await supabase.rpc('match_knowledge_facts', {
-          query_embedding: embedding,
-          match_threshold: 0.6,
-          match_count: 8,
-          filter_owner: userId,
-        });
-
-        if (memoryResults && memoryResults.length > 0) {
-          const lines = ['[RELEVANT MEMORIES]'];
-          for (const r of memoryResults) {
-            lines.push(`- ${r.text}`);
-          }
-          sections.push(lines.join('\n'));
-        }
+    if (memoryResults && memoryResults.length > 0) {
+      const lines = ['[RELEVANT MEMORIES]'];
+      for (const r of memoryResults) {
+        lines.push(`- ${truncFact(r.text || '')}`);
       }
-    } catch {
-      // Non-fatal: semantic search may not be available
+      sections.push(lines.join('\n'));
     }
 
-    // Get recent conversation context
-    try {
-      const { data: recentMsgs } = await supabase
-        .from('messages')
-        .select('role, content')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(5);
-
-      if (recentMsgs && recentMsgs.length > 0) {
-        const lines = ['[RECENT CONVERSATION CONTEXT]'];
-        for (const m of [...recentMsgs].reverse()) {
-          const role = m.role === 'assistant' ? 'You' : 'User';
-          lines.push(`${role}: ${String(m.content || '').slice(0, 200)}`);
-        }
-        sections.push(lines.join('\n'));
-      }
-    } catch {}
+    // Recent conversation context REMOVED — conversation history is already
+    // loaded separately (getConversationMessages call below) and was a duplicate.
   } catch (e: any) {
     console.error('[serverless-agent] knowledge context build error:', e?.message);
   }
 
-  return sections.join('\n\n');
+  let result = sections.join('\n\n');
+  // Hard cap: truncate total knowledge context if it exceeds budget
+  if (result.length > CLOUD_KNOWLEDGE_MAX_CHARS) {
+    result = result.slice(0, CLOUD_KNOWLEDGE_MAX_CHARS - 1) + '…';
+  }
+  return result;
 }
 
 // ─── Serverless Agent Execution ────────────────────────────────────────────
@@ -292,8 +309,12 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
       await addUserMessage(userId, conversationId, message, { mode: modelChoice }, true);
     }
 
+    const syncPrefs = await getSyncPreferences(userId);
+
     // 2. Build knowledge context from Supabase
-    const knowledgeContext = await buildCloudKnowledgeContext(userId, message);
+    const knowledgeContext = await buildCloudKnowledgeContext(userId, message, {
+      syncMemories: syncPrefs.sync_memories,
+    });
 
     // 3. Load conversation history for multi-turn
     let conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [];
@@ -306,7 +327,9 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
     }
 
     // 4. Build system prompt
-    let systemPrompt = buildCloudSyncSystemPrompt(knowledgeContext);
+    let systemPrompt = buildCloudSyncSystemPrompt(knowledgeContext, {
+      syncMemories: syncPrefs.sync_memories,
+    });
 
     if (extraContext) {
       systemPrompt += `\n\n[ADDITIONAL CONTEXT]\n${extraContext}`;
@@ -431,10 +454,15 @@ export async function buildVoiceCallContext(
   userId: string,
   taskMessage?: string,
 ): Promise<{ systemPrompt: string; tools: any[] }> {
-  const knowledgeContext = await buildCloudKnowledgeContext(userId, taskMessage || 'voice call');
+  const syncPrefs = await getSyncPreferences(userId);
+  const knowledgeContext = await buildCloudKnowledgeContext(userId, taskMessage || 'voice call', {
+    syncMemories: syncPrefs.sync_memories,
+  });
 
   let systemPrompt = `You are Stuard — a friendly AI assistant on a voice call.
-You know the user from past conversations and have their context loaded.
+${syncPrefs.sync_memories
+    ? 'You know the user from past conversations and have their context loaded.'
+    : 'Cloud memory sync is off for this user, so rely on the live conversation when personal context is missing.'}
 
 ${knowledgeContext ? `\n${knowledgeContext}\n` : ''}
 **Voice Call Guidelines**:

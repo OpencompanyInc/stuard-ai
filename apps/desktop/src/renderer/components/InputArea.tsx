@@ -11,7 +11,7 @@ import {
   HomeIcon,
   PlusIcon
 } from "@radix-ui/react-icons";
-import { Mic, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle, NotebookPen, Terminal, LayoutGrid } from 'lucide-react';
+import { Mic, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle, Terminal, LayoutGrid } from 'lucide-react';
 import { clsx } from 'clsx';
 import QueuePanel from './QueuePanel';
 import { FileNavigator, ContextItem, FileNavRef } from './FileNavigator';
@@ -898,79 +898,6 @@ const InputArea = forwardRef(function InputArea(
     } catch { }
   }, []);
 
-  const handleCreateQuickNote = useCallback(async () => {
-    const api = (window as any).desktopAPI;
-    const now = new Date().toISOString();
-    const note = {
-      id: `canvas_${Date.now()}`,
-      title: 'Quick Note',
-      content: '',
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    try {
-      await api?.canvasCreateDocument?.(note);
-      await api?.canvasCreate?.({
-        id: note.id,
-        title: note.title,
-        content: note.content,
-        template: 'notes',
-        createdAt: note.createdAt,
-        updatedAt: note.updatedAt,
-        size: { width: 320, height: 220 },
-      });
-      await api?.hide?.();
-    } catch { }
-  }, []);
-
-  const handleOpenQuickNotes = useCallback(async () => {
-    try {
-      const api = (window as any).desktopAPI;
-      const listResult = await api?.canvasListDocuments?.();
-      const documents = Array.isArray(listResult?.documents) ? listResult.documents : [];
-      const latest = documents
-        .slice()
-        .sort((a: any, b: any) => {
-          const aTime = new Date(a?.updatedAt || a?.createdAt || 0).getTime();
-          const bTime = new Date(b?.updatedAt || b?.createdAt || 0).getTime();
-          return bTime - aTime;
-        })[0];
-
-      if (latest?.id) {
-        await api?.canvasCreate?.({
-          id: latest.id,
-          title: latest.title || 'Quick Note',
-          content: latest.content || '',
-          template: 'notes',
-          createdAt: latest.createdAt,
-          updatedAt: latest.updatedAt,
-          size: { width: 320, height: 220 },
-        });
-      } else {
-        const now = new Date().toISOString();
-        const note = {
-          id: `canvas_${Date.now()}`,
-          title: 'Quick Note',
-          content: '',
-          createdAt: now,
-          updatedAt: now,
-        };
-        await api?.canvasCreateDocument?.(note);
-        await api?.canvasCreate?.({
-          id: note.id,
-          title: note.title,
-          content: note.content,
-          template: 'notes',
-          createdAt: note.createdAt,
-          updatedAt: note.updatedAt,
-          size: { width: 320, height: 220 },
-        });
-      }
-      await api?.hide?.();
-    } catch { }
-  }, []);
-
   const handleOpenTerminal = useCallback(async () => {
     try {
       const api = (window as any).desktopAPI;
@@ -1007,26 +934,6 @@ const InputArea = forwardRef(function InputArea(
     if (!q || q.length < 2) return [] as QuickLaunchAction[];
 
     const actions: QuickLaunchAction[] = [
-      {
-        id: 'new-quick-note',
-        title: 'New Quick Note',
-        description: 'Create and open a fresh quick note',
-        keywords: 'new quick note note notes canvas memo jot notebook',
-        icon: <NotebookPen className="w-3.5 h-3.5" />,
-        iconClassName: 'text-pink-500',
-        iconWrapperClassName: 'bg-pink-500/10 border-pink-500/20',
-        run: handleCreateQuickNote,
-      },
-      {
-        id: 'open-quick-notes',
-        title: 'Open Quick Notes',
-        description: 'Jump straight into your notes sidebar',
-        keywords: 'open quick notes notes canvas sidebar notebook',
-        icon: <FileText className="w-3.5 h-3.5" />,
-        iconClassName: 'text-fuchsia-500',
-        iconWrapperClassName: 'bg-fuchsia-500/10 border-fuchsia-500/20',
-        run: handleOpenQuickNotes,
-      },
       {
         id: 'open-terminal',
         title: 'Open Terminal',
@@ -1078,7 +985,7 @@ const InputArea = forwardRef(function InputArea(
       .sort((a, b) => b.score - a.score || a.action.title.localeCompare(b.action.title))
       .slice(0, 5)
       .map((item) => item.action);
-  }, [normalizedDeferredQuery, handleCreateQuickNote, handleOpenQuickNotes, handleOpenTerminal, handleOpenSpaces, handleOpenWorkflows, handleOpenDashboardAction]);
+  }, [normalizedDeferredQuery, handleOpenTerminal, handleOpenSpaces, handleOpenWorkflows, handleOpenDashboardAction]);
 
   // Handle adding a file result as context
   const handleAddFileAsContext = useCallback((file: any) => {

@@ -43,7 +43,6 @@ import { getAgentForQuery } from './agents/stuard/index';
 import { startVMHealthMonitor } from './services/vm-health';
 import { startBillingCron } from './services/compute-billing';
 import { startReminderCron } from './services/cloud-reminders';
-import { startDiscordBot } from './services/discord-bot';
 import { registerConnection, getDesktopWs, getConnectionInfo } from './services/vm-bridge';
 import { verifyVMToken, mintVMToken } from './services/vm-tokens';
 import { handleDesktopRelayResult } from './routes/desktop-tool-relay';
@@ -470,10 +469,13 @@ server.listen(PORT, () => {
     console.warn('[cloud-ai] Reminder cron failed to start:', e);
   }
 
-  // Start Discord bot (DM-based personal assistant)
-  startDiscordBot().catch((e) => {
-    console.warn('[cloud-ai] Discord bot failed to start:', e?.message || e);
-  });
+  // Start Discord bot (DM-based personal assistant) only when the optional
+  // Discord dependencies are actually available in this workspace.
+  import('./services/discord-bot')
+    .then((mod) => mod.startDiscordBot())
+    .catch((e) => {
+      console.warn('[cloud-ai] Discord bot unavailable or failed to start:', e?.message || e);
+    });
 });
 
 // Increase HTTP keep-alive and headers timeouts to be friendly to long-lived WS

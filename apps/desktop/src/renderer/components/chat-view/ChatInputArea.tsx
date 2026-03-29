@@ -2,7 +2,7 @@ import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { clsx } from 'clsx';
 import TextareaAutosize from 'react-textarea-autosize';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { Image, File, X, Plus, Mic, Square, Upload, Zap, Phone, PhoneOff } from 'lucide-react';
+import { Image, File, X, Plus, Mic, Square, Upload, Phone, PhoneOff } from 'lucide-react';
 import QueuePanel from '../QueuePanel';
 import { CheckpointManager } from '../CheckpointManager';
 import { ModelSelector } from '../ModelSelector';
@@ -657,22 +657,6 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         />
 
         <FolderPermissionsPopover sessionId={activeTabId} />
-
-        <button
-          type="button"
-          onClick={() => setRtOpen((v) => !v)}
-          className={clsx(
-            "h-8 w-8 rounded-full flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0",
-            rtOpen
-              ? voiceStatus === 'listening'
-                ? "bg-emerald-500 text-white animate-pulse"
-                : "bg-amber-500 text-white"
-              : "text-theme-muted hover:text-theme-fg hover:bg-theme-card"
-          )}
-          title="Realtime Voice Test"
-        >
-          <Zap className="w-4 h-4" />
-        </button>
 
         {isStreaming ? (
           <button

@@ -555,9 +555,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
   const [newFolderName, setNewFolderName] = useState("");
   
   // Link item states
-  const [availableCanvases, setAvailableCanvases] = useState<Array<{ id: string; title: string }>>([]);
   const [availableConversations, setAvailableConversations] = useState<Array<{ id: string; title: string; preview?: string }>>([]);
-  const [selectedCanvasId, setSelectedCanvasId] = useState<string>("");
   const [selectedConversationId, setSelectedConversationId] = useState<string>("");
   const [selectedFilePath, setSelectedFilePath] = useState<string>("");
   const [isLoadingLinkOptions, setIsLoadingLinkOptions] = useState(false);
@@ -692,11 +690,6 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
   const loadLinkOptions = async () => {
     setIsLoadingLinkOptions(true);
     try {
-      // Load canvases
-      const canvasResult = await (window as any).desktopAPI?.listCanvasDocuments?.();
-      if (Array.isArray(canvasResult)) {
-        setAvailableCanvases(canvasResult.map((c: any) => ({ id: c.id, title: c.title || 'Untitled' })));
-      }
       // Load conversations
       const convResult = await (window as any).desktopAPI?.listConversations?.();
       if (Array.isArray(convResult)) {
@@ -741,12 +734,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
     let content = newItemContent.trim();
     let metadata: any = {};
     
-    if (newItemType === 'canvas') {
-      if (!selectedCanvasId) return;
-      const canvas = availableCanvases.find(c => c.id === selectedCanvasId);
-      content = canvas?.title || 'Quick Note';
-      metadata.canvasId = selectedCanvasId;
-    } else if (newItemType === 'conversation') {
+    if (newItemType === 'conversation') {
       if (!selectedConversationId) return;
       const conv = availableConversations.find(c => c.id === selectedConversationId);
       content = conv?.title || 'Conversation';
@@ -773,7 +761,6 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
         setToastMessage('Added to space');
         setNewItemContent("");
         setNewItemTitle("");
-        setSelectedCanvasId("");
         setSelectedConversationId("");
         setSelectedFilePath("");
         setIsAddItemOpen(false);
@@ -1125,14 +1112,13 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                     { id: 'link', label: 'Link', icon: Link2 },
                     { id: 'snippet', label: 'Code', icon: Code },
                     { id: 'conversation', label: 'Chat', icon: MessageSquare },
-                    { id: 'file', label: 'File', icon: File },
-                    { id: 'canvas', label: 'Quick Note', icon: PenTool }
+                    { id: 'file', label: 'File', icon: File }
                   ].map(t => (
                     <button
                       key={t.id}
                       onClick={() => {
                         setNewItemType(t.id as any);
-                        if (t.id === 'canvas' || t.id === 'conversation') {
+                        if (t.id === 'conversation') {
                           loadLinkOptions();
                         }
                       }}
@@ -1182,34 +1168,6 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                     onChange={e => setNewItemContent(e.target.value)}
                     autoFocus
                   />
-                </div>
-              )}
-
-              {/* Canvas dropdown */}
-              {newItemType === 'canvas' && (
-                <div>
-                  <label className="block text-xs font-medium text-theme-muted mb-2">Select Quick Note</label>
-                  {isLoadingLinkOptions ? (
-                    <div className="flex items-center justify-center py-4">
-                      <Loader2 className="w-5 h-5 animate-spin text-theme-muted" />
-                    </div>
-                  ) : availableCanvases.length === 0 ? (
-                    <div className="text-center py-4 text-sm text-theme-muted bg-theme-hover rounded-xl">
-                      <PenTool className="w-6 h-6 mx-auto mb-2 opacity-50" />
-                      No quick notes yet
-                    </div>
-                  ) : (
-                    <select
-                      value={selectedCanvasId}
-                      onChange={e => setSelectedCanvasId(e.target.value)}
-                      className="w-full bg-theme-hover border border-theme rounded-xl px-3.5 py-2.5 text-sm text-theme-fg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all cursor-pointer"
-                    >
-                      <option value="">Choose a quick note...</option>
-                      {availableCanvases.map(c => (
-                        <option key={c.id} value={c.id}>{c.title}</option>
-                      ))}
-                    </select>
-                  )}
                 </div>
               )}
 
@@ -1275,7 +1233,6 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                 <button
                   onClick={() => {
                     setIsAddItemOpen(false);
-                    setSelectedCanvasId("");
                     setSelectedConversationId("");
                     setSelectedFilePath("");
                   }}
@@ -1287,7 +1244,6 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                   onClick={handleAddItem}
                   disabled={
                     isAddingItem ||
-                    (newItemType === 'canvas' && !selectedCanvasId) ||
                     (newItemType === 'conversation' && !selectedConversationId) ||
                     ((newItemType === 'file' || newItemType === 'image') && !selectedFilePath) ||
                     ((newItemType === 'note' || newItemType === 'link' || newItemType === 'snippet') && !newItemContent.trim())

@@ -276,21 +276,6 @@ export {
   browser_use_switch_profile,
 } from './device/browser-use';
 
-// Canvas Document Tools (AI can read/write user's canvas notes)
-export {
-  canvas_list,
-  canvas_read,
-  canvas_write,
-  canvas_create,
-  canvas_delete,
-  // Backward compatibility aliases
-  sidebar_canvas_list,
-  sidebar_canvas_read,
-  sidebar_canvas_write,
-  sidebar_canvas_create,
-  sidebar_canvas_delete,
-} from './device/sidebar-canvas';
-
 // ============================================================================
 // Workspace File Management — Read/write/list files in workflow workspace
 // ============================================================================

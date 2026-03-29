@@ -34,14 +34,6 @@ import {
   showWindow,
   hideWindow,
   toggleWindow,
-  createBoardWindow,
-  updateBoardWindow,
-  deleteBoardWindow,
-  listBoardWindows,
-  clearBoardWindows,
-  hideBoardWindow,
-  focusBoardWindow,
-  showBoardWindow,
   getOverlaySize,
   getOverlayMode,
   toggleInternalSidebar,
@@ -121,11 +113,6 @@ import {
   reinitializeDefaultFolders,
   runStartupIndexing,
   processSemanticIndexing,
-  createCheckout,
-  getCustomer,
-  listProducts,
-  openCustomerPortal,
-  purchaseCredits,
   unifiedTasksService,
   offlineCalendarService,
   getInstalledApps,
@@ -170,6 +157,10 @@ let nodeNotifier: any = null;
 try {
   nodeNotifier = require("node-notifier");
 } catch {}
+
+async function loadPolarService() {
+  return import("../services/polar");
+}
 
 function pickChromeProfileDisplayName(
   profilePath: string,
@@ -508,12 +499,12 @@ export function setupIpc() {
   ipcMain.handle("spaces:close", () => closeSpacesWindow());
   ipcMain.handle("spaces:toggle", () => toggleSpacesWindow());
 
-  // Sidebar window (new unified sidebar with Spaces, Notes, Terminal, Agent Tasks, Browser)
+  // Sidebar window (new unified sidebar with Spaces, Terminal, Agent Tasks, Browser)
   ipcMain.handle(
     "sidebar:open",
     (
       _e,
-      options?: { tab?: "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo"; expanded?: boolean; presentation?: "full" | "popup" },
+      options?: { tab?: "spaces" | "terminal" | "tasks" | "browser" | "todo"; expanded?: boolean; presentation?: "full" | "popup" },
     ) => openSidebarWindow(options),
   );
   ipcMain.handle("sidebar:close", () => closeSidebarWindow());
@@ -521,12 +512,12 @@ export function setupIpc() {
     "sidebar:toggle",
     (
       _e,
-      options?: { tab?: "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo"; expanded?: boolean },
+      options?: { tab?: "spaces" | "terminal" | "tasks" | "browser" | "todo"; expanded?: boolean },
     ) => toggleSidebarWindow(options),
   );
   ipcMain.handle(
     "sidebar:navigate",
-    (_e, tab: "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo") => {
+    (_e, tab: "spaces" | "terminal" | "tasks" | "browser" | "todo") => {
       const sidebar = getSidebarWindow();
       if (sidebar && !sidebar.isDestroyed()) {
         sidebar.webContents.send("sidebar:navigate", { tab });
@@ -535,7 +526,7 @@ export function setupIpc() {
   );
   ipcMain.handle(
     "sidebar:setPresentation",
-    (_e, payload: { mode: "full" | "popup"; tab?: "spaces" | "canvas" | "terminal" | "tasks" | "browser" | "todo" }) =>
+    (_e, payload: { mode: "full" | "popup"; tab?: "spaces" | "terminal" | "tasks" | "browser" | "todo" }) =>
       setSidebarPresentation(payload?.mode || "full", payload?.tab),
   );
   ipcMain.handle("sidebar:toggleExpanded", () => {
@@ -546,127 +537,6 @@ export function setupIpc() {
     const { isSidebarExpanded } = require("../windows");
     return { expanded: isSidebarExpanded() };
   });
-
-  // Canvas document storage (persisted locally)
-  const canvasDocsPath = () => {
-    const userDataPath = app.getPath("userData");
-    const docsPath = require("path").join(
-      userDataPath,
-      "canvas-documents.json",
-    );
-    return docsPath;
-  };
-
-  const loadCanvasDocs = (): any[] => {
-    try {
-      const p = canvasDocsPath();
-      if (fs.existsSync(p)) {
-        return JSON.parse(fs.readFileSync(p, "utf-8"));
-      }
-    } catch (e) {
-      logger.warn("Failed to load canvas documents:", e);
-    }
-    return [];
-  };
-
-  const saveCanvasDocs = (docs: any[]) => {
-    try {
-      fs.writeFileSync(
-        canvasDocsPath(),
-        JSON.stringify(docs, null, 2),
-        "utf-8",
-      );
-    } catch (e) {
-      logger.warn("Failed to save canvas documents:", e);
-    }
-  };
-
-  ipcMain.handle("canvas:listDocuments", () => {
-    return { ok: true, documents: loadCanvasDocs() };
-  });
-
-  ipcMain.handle("canvas:createDocument", (_e, doc: any) => {
-    const docs = loadCanvasDocs();
-    const now = new Date().toISOString();
-    const normalizedDoc = {
-      ...doc,
-      id: String(doc?.id || `canvas_${Date.now()}`),
-      title: String(doc?.title || "Quick Note"),
-      content: String(doc?.content || ""),
-      createdAt: doc?.createdAt || now,
-      updatedAt: doc?.updatedAt || now,
-    };
-    docs.unshift(normalizedDoc);
-    saveCanvasDocs(docs);
-    return { ok: true, document: normalizedDoc };
-  });
-
-  ipcMain.handle("canvas:saveDocument", (_e, doc: any) => {
-    const docs = loadCanvasDocs();
-    const existing = docs.find((d: any) => d.id === doc.id);
-    const normalizedDoc = {
-      ...(existing || {}),
-      ...doc,
-      id: String(doc?.id || existing?.id || `canvas_${Date.now()}`),
-      title: String(doc?.title ?? existing?.title ?? "Quick Note"),
-      content: String(doc?.content ?? existing?.content ?? ""),
-      createdAt:
-        doc?.createdAt || existing?.createdAt || new Date().toISOString(),
-      updatedAt: doc?.updatedAt || new Date().toISOString(),
-    };
-    const idx = docs.findIndex((d: any) => d.id === normalizedDoc.id);
-    if (idx >= 0) {
-      docs[idx] = normalizedDoc;
-    } else {
-      docs.unshift(normalizedDoc);
-    }
-    saveCanvasDocs(docs);
-    return { ok: true, document: normalizedDoc };
-  });
-
-  ipcMain.handle("canvas:deleteDocument", (_e, docId: string) => {
-    const docs = loadCanvasDocs();
-    const filtered = docs.filter((d: any) => d.id !== docId);
-    saveCanvasDocs(filtered);
-    return { ok: true };
-  });
-
-  ipcMain.handle("canvas:getDocument", (_e, docId: string) => {
-    const docs = loadCanvasDocs();
-    const doc = docs.find((d: any) => d.id === docId);
-    return { ok: true, document: doc || null };
-  });
-
-  // Canvas AI read/write (for AI to access canvas content)
-  ipcMain.handle("canvas:read", (_e, docId?: string) => {
-    const docs = loadCanvasDocs();
-    if (docId) {
-      const doc = docs.find((d: any) => d.id === docId);
-      return { ok: true, document: doc || null };
-    }
-    // Return the most recent document if no ID specified
-    return { ok: true, document: docs[0] || null };
-  });
-
-  ipcMain.handle(
-    "canvas:write",
-    (
-      _e,
-      data: {
-        documentId?: string;
-        content?: string;
-        title?: string;
-        action?: "append" | "replace" | "insert";
-        position?: number;
-      },
-    ) => {
-      const sidebar = getSidebarWindow();
-      if (sidebar && !sidebar.isDestroyed()) {
-        sidebar.webContents.send("canvas:update", data);
-      }
-      return { ok: true };
-    },
-  );
 
   // Local webhook URL
   ipcMain.handle("webhooks:localUrl", (_e, id?: string) => {
@@ -1366,50 +1236,6 @@ export function setupIpc() {
   });
   ipcMain.handle("outlook:status", async () => getOutlookStatus());
 
-  // Canvas/Board windows management
-  ipcMain.handle("canvas:create", (_e, item: any) => {
-    try {
-      createBoardWindow(item);
-    } catch {}
-  });
-  ipcMain.handle("canvas:update", (_e, item: any) => {
-    try {
-      updateBoardWindow(item);
-    } catch {}
-  });
-  ipcMain.handle("canvas:delete", (_e, id: string) => {
-    try {
-      deleteBoardWindow(id);
-    } catch {}
-  });
-  ipcMain.handle("canvas:show", (_e, id: string) => {
-    try {
-      showBoardWindow(id);
-    } catch {}
-  });
-  ipcMain.handle("canvas:hide", (_e, id: string) => {
-    try {
-      hideBoardWindow(id);
-    } catch {}
-  });
-  ipcMain.handle("canvas:focus", (_e, id: string) => {
-    try {
-      focusBoardWindow(id);
-    } catch {}
-  });
-  ipcMain.handle("canvas:clear", () => {
-    try {
-      clearBoardWindows();
-    } catch {}
-  });
-  ipcMain.handle("canvas:list", () => {
-    try {
-      return listBoardWindows();
-    } catch {
-      return [];
-    }
-  });
-
   // Workflows
   ipcMain.handle("workflows:list", () => workflows_list());
   ipcMain.handle("workflows:read", (_e, id: string) => workflows_read(id));
@@ -1557,8 +1383,6 @@ export function setupIpc() {
         'show_table', 'show_info', 'show_details', 'show_files',
         'show_command', 'show_json', 'show_link', 'show_colors',
         'show_progress', 'show_info_card', 'show_feedback_form',
-        'sidebar_canvas_list', 'sidebar_canvas_read', 'sidebar_canvas_write',
-        'sidebar_canvas_create', 'sidebar_canvas_delete',
         'ai_inference', 'analyze_image', 'analyze_current_screen',
         'find_text', 'find_text_on_screen', 'find_and_click_text',
         'google_cloud_ocr', 'browser_status',
@@ -1596,7 +1420,6 @@ export function setupIpc() {
         ['telnyx_', 'Telnyx'],
         ['browser_use_', 'Browser'],
         ['terminal_', 'Terminal'],
-        ['canvas_', 'Canvas'],
         ['ollama_', 'Ollama (Local AI)'],
         ['cloud_storage_', 'Cloud Storage'],
         ['workspace_', 'Workspace'],
@@ -2136,6 +1959,7 @@ export function setupIpc() {
   // Polar Billing
   ipcMain.handle("billing:createCheckout", async (_e, options: any) => {
     try {
+      const { createCheckout } = await loadPolarService();
       return await createCheckout(options);
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
@@ -2144,6 +1968,7 @@ export function setupIpc() {
 
   ipcMain.handle("billing:getCustomer", async (_e, email: string) => {
     try {
+      const { getCustomer } = await loadPolarService();
       return await getCustomer(email);
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
@@ -2152,6 +1977,7 @@ export function setupIpc() {
 
   ipcMain.handle("billing:listProducts", async () => {
     try {
+      const { listProducts } = await loadPolarService();
       return await listProducts();
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
@@ -2160,6 +1986,7 @@ export function setupIpc() {
 
   ipcMain.handle("billing:openPortal", async (_e, customerId: string) => {
     try {
+      const { openCustomerPortal } = await loadPolarService();
       return await openCustomerPortal(customerId);
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
@@ -2168,6 +1995,7 @@ export function setupIpc() {
 
   ipcMain.handle("billing:purchaseCredits", async (_e, options: any) => {
     try {
+      const { purchaseCredits } = await loadPolarService();
       return await purchaseCredits(options);
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
@@ -2208,9 +2036,6 @@ export function setupIpc() {
           break;
         case "space":
           openSidebarWindow({ tab: "spaces", expanded: true });
-          break;
-        case "canvas":
-          openSidebarWindow({ tab: "canvas", expanded: true });
           break;
         case "tasks":
           setOverlayMode("window");
@@ -2282,7 +2107,10 @@ export function setupIpc() {
     try {
       const p = bookmarksPath();
       if (fs.existsSync(p)) {
-        return JSON.parse(fs.readFileSync(p, "utf-8"));
+        const parsed = JSON.parse(fs.readFileSync(p, "utf-8"));
+        return Array.isArray(parsed)
+          ? parsed.filter((bookmark: any) => String(bookmark?.type || "").toLowerCase() !== "canvas")
+          : [];
       }
     } catch (e) {
       logger.warn("Failed to load bookmarks:", e);
@@ -2365,7 +2193,7 @@ export function setupIpc() {
       const target = String(bookmark.target || "").trim();
 
       const sendSidebarSelectItem = (payload: {
-        type: "space" | "canvas";
+        type: "space";
         id: string;
       }) => {
         try {
@@ -2429,36 +2257,6 @@ export function setupIpc() {
             sendSidebarSelectItem({ type: "space", id: target });
           }
           return { ok: true };
-
-        case "canvas": {
-          const docs = loadCanvasDocs();
-          let note =
-            target && target !== "_new" && target !== "canvas"
-              ? docs.find((d: any) => d.id === target)
-              : null;
-
-          if (!note) {
-            const now = new Date().toISOString();
-            note = {
-              id: `canvas_${Date.now()}`,
-              title: "Quick Note",
-              content: "",
-              createdAt: now,
-              updatedAt: now,
-            };
-            docs.unshift(note);
-            saveCanvasDocs(docs);
-          }
-
-          createBoardWindow({
-            ...note,
-            template: "notes",
-            size: { width: 300, height: 220 },
-          });
-          focusBoardWindow(note.id);
-
-          return { ok: true, documentId: note.id };
-        }
 
         case "dashboard":
           openDashboardWindow({ tab: target || undefined });

@@ -76,19 +76,6 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'list_variables': { kind: 'electron' },
   'delete_variable': { kind: 'electron' },
 
-  // Canvas document tools (sidebar canvas)
-  'canvas_list': { kind: 'electron' },
-  'canvas_read': { kind: 'electron' },
-  'canvas_write': { kind: 'electron' },
-  'canvas_create': { kind: 'electron' },
-  'canvas_delete': { kind: 'electron' },
-  // Backward compatibility aliases
-  'sidebar_canvas_list': { kind: 'electron' },
-  'sidebar_canvas_read': { kind: 'electron' },
-  'sidebar_canvas_write': { kind: 'electron' },
-  'sidebar_canvas_create': { kind: 'electron' },
-  'sidebar_canvas_delete': { kind: 'electron' },
-
   // GenUI interactive tools (rendered by overlay, handled via custom_ui internally)
   'ask_confirmation': { kind: 'electron' },
   'show_choices': { kind: 'electron' },

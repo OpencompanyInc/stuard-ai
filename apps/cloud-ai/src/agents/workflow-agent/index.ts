@@ -2,7 +2,7 @@
  * Workflow Agent - Lean & Fast
  *
  * Specialized agent for designing, testing, and modifying Stuard workflows.
- * Only 7 core tools - all guidance lives in the system prompt.
+ * Lean workflow agent with topology inspection and focused edit tools.
  */
 
 import { Agent } from '@mastra/core/agent';
@@ -17,7 +17,7 @@ import { workflowModifyTool } from '../../tools/workflow';
 import { stop_automation, write_file, create_directory } from '../../tools/device-tools';
 import { file_edit } from '../../tools/agentic-file-tools';
 import { web_search } from '../../tools/perplexity-tools';
-import { executeStep, listWorkflows } from './tools';
+import { executeStep, inspectWorkflow, listWorkflows } from './tools';
 
 const GOOGLE_API_KEY = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
@@ -34,7 +34,7 @@ const USER_HOME_DIR = (process.env.USERPROFILE || os.homedir()).replace(/\\/g, '
 
 export const WORKFLOW_SYSTEM_PROMPT = `You are the Workflow Architect for StuardAI.
 
-You design and modify local automations. The user provides current workflow JSON - you modify it with modify_workflow.
+You design and modify local automations. The prompt includes a workflow schematic for overview only, while the real workflow stays in session state for tools.
 
 **System Context**:
 - Operating System: Windows
@@ -52,6 +52,12 @@ FILE & DIRECTORY TOOLS:
 • create_directory({ path }) - Create directories/subdirectories
 • file_edit({ path, mode, old_string, new_string, replace_all? }) - Edit non-stuard files using string-based find/replace
   Modes: replace, insert_before, insert_after, delete, regex
+
+WORKFLOW INSPECTION:
+- The inline WORKFLOW SCHEMATIC is authoritative for high-level overview only
+- Use inspect_workflow for exact node flow, trigger flow, wire classifications, branch order, loop exits, and convergence details
+- After every modify_workflow call, read affectedFlow before making another wiring change
+- Never expect full workflow JSON in the prompt or in any tool response
 
 TARGETING SUB-WORKFLOWS:
 • modify_workflow edits the main workflow by default
@@ -952,8 +958,9 @@ MODIFY_WORKFLOW OPERATIONS
 
 **IMPORTANT: DO NOT pass the full workflow JSON. The workflow is auto-loaded from session.**
 Just pass the operation and parameters.
+Use inspect_workflow before rewiring anything ambiguous, and use affectedFlow after each edit to confirm the local flow is now correct.
 
-After each operation, you'll receive a DIAGRAM showing the current workflow structure.
+After each operation, you'll receive a DIAGRAM plus affectedFlow showing the touched nodes/triggers, their predecessors, successors, and wire classifications.
 
 ADD NODE:
   modify_workflow({ op: "add_node", tool: "log", args: { message: "hi" }, connectFrom: "trig_0" })
@@ -1343,16 +1350,20 @@ EXAMPLE - File Converter App:
   }}
 
 ═══════════════════════════════════════════════════════════════════════════════
-YOUR 7 TOOLS
+YOUR 11 TOOLS
 ═══════════════════════════════════════════════════════════════════════════════
 
 1. search_tools({ query }) - Find tools by keyword
 2. get_tool_schema({ toolName }) - Get exact args format and output schema
-3. modify_workflow({ op, ...params }) - Edit workflow (NO workflow param needed!)
-4. execute_step({ tool, args }) - Test a tool
-5. list_workflows({}) - List saved workflows
-6. stop_workflow({ id }) - Stop running workflow
-7. web_search({ query }) - Search the web for up-to-date information
+3. inspect_workflow({ mode, ...selectors }) - Read topology, wire types, branch order, loops, and convergence without loading full JSON
+4. modify_workflow({ op, ...params }) - Edit workflow (NO workflow param needed!)
+5. execute_step({ tool, args }) - Test a tool
+6. list_workflows({}) - List saved workflows
+7. stop_workflow({ id }) - Stop running workflow
+8. web_search({ query }) - Search the web for up-to-date information
+9. write_file({ path, content, append? }) - Create or update workspace files
+10. create_directory({ path }) - Create workspace directories
+11. file_edit({ path, mode, old_string, new_string }) - Edit non-stuard files with targeted replacements
 
 CRITICAL: NEVER pass the full workflow JSON to modify_workflow. Just use the op and params.
 NEVER output raw JSON. Use modify_workflow for all changes.`;
@@ -1444,27 +1455,29 @@ export function getWorkflowAgent(modelIdOverride?: string): Agent {
     }
   });
 
-  // 10 CORE TOOLS
+  // 11 CORE TOOLS
   const tools = {
     // 1. Search tools (sis search)
     search_tools: createLoggedTool(search_tools, 'search_tools'),
     // 2. Get tool schema
     get_tool_schema: createLoggedTool(retrieveToolFormat, 'get_tool_schema'),
-    // 3. Modify workflow
+    // 3. Inspect workflow topology
+    inspect_workflow: createLoggedTool(inspectWorkflow, 'inspect_workflow'),
+    // 4. Modify workflow
     modify_workflow: createLoggedTool(workflowModifyTool, 'modify_workflow'),
-    // 4. Execute step (sis execute)
+    // 5. Execute step (sis execute)
     execute_step: createLoggedTool(executeStep, 'execute_step'),
-    // 5. List workflows
+    // 6. List workflows
     list_workflows: createLoggedTool(listWorkflows, 'list_workflows'),
-    // 6. Stop workflow
+    // 7. Stop workflow
     stop_workflow: createLoggedTool(stop_automation, 'stop_workflow'),
-    // 7. Web search
+    // 8. Web search
     web_search: createLoggedTool(web_search, 'web_search'),
-    // 8. Create/write files in the workspace or on disk
+    // 9. Create/write files in the workspace or on disk
     write_file: createLoggedWorkflowFileTool(write_file, 'write_file'),
-    // 9. Create directories
+    // 10. Create directories
     create_directory: createLoggedWorkflowFileTool(create_directory, 'create_directory'),
-    // 10. Edit non-stuard files (string-based find/replace)
+    // 11. Edit non-stuard files (string-based find/replace)
     file_edit: createLoggedWorkflowFileTool(file_edit, 'file_edit'),
   };
 
@@ -1510,5 +1523,5 @@ export function getWorkflowAgent(modelIdOverride?: string): Agent {
 }
 
 // Re-export tools for external use
-export { executeStep, listWorkflows } from './tools';
+export { executeStep, inspectWorkflow, listWorkflows } from './tools';
 export { workflowModifyTool } from '../../tools/workflow';

@@ -5,7 +5,7 @@ import './scrollbar.css';
 import { usePreferences } from './hooks/usePreferences';
 import { SidebarView } from './components/sidebar/SidebarView';
 
-type SidebarTabId = 'spaces' | 'canvas' | 'terminal' | 'tasks' | 'browser' | 'todo';
+type SidebarTabId = 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo';
 
 function SidebarApp() {
   const { translucentMode, themeMode, themeDarkShade, themeLightShade, themeText } = usePreferences();
@@ -17,7 +17,7 @@ function SidebarApp() {
 
   const [activeTab, setActiveTab] = useState<SidebarTabId>(initialTab);
   const [isExpanded, setIsExpanded] = useState(initialExpanded);
-  const [selectedItem, setSelectedItem] = useState<{ type: 'space' | 'canvas'; id: string } | null>(null);
+  const [selectedItem, setSelectedItem] = useState<{ type: 'space'; id: string } | null>(null);
 
   // Notify main process of active tab changes
   useEffect(() => {
@@ -88,10 +88,9 @@ function SidebarApp() {
 
   // Listen for selectItem event from main process (bookmark navigation)
   useEffect(() => {
-    const unsub = (window as any).desktopAPI?.onSidebarSelectItem?.((data: { type: 'space' | 'canvas'; id: string }) => {
+    const unsub = (window as any).desktopAPI?.onSidebarSelectItem?.((data: { type: 'space'; id: string }) => {
       if (data?.type && data?.id) {
         if (data.type === 'space') setActiveTab('spaces');
-        else if (data.type === 'canvas') setActiveTab('canvas');
         setSelectedItem(data);
       }
     });
