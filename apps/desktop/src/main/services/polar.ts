@@ -2,10 +2,10 @@ import { Polar } from "@polar-sh/sdk";
 import { shell } from "electron";
 
 // Polar SDK client - uses environment variable for access token
-const getPolarClient = () => {
+const getPolarClient = (): Polar | null => {
   const accessToken = process.env.POLAR_ACCESS_TOKEN || '';
   if (!accessToken) {
-    throw new Error('POLAR_ACCESS_TOKEN not configured');
+    return null;
   }
   return new Polar({ accessToken });
 };
@@ -41,6 +41,7 @@ export interface PolarCustomerInfo {
 export async function createCheckout(options: PolarCheckoutOptions): Promise<{ ok: boolean; url?: string; error?: string }> {
   try {
     const polar = getPolarClient();
+    if (!polar) return { ok: false, error: 'Billing not configured' };
 
     const result = await polar.checkouts.create({
       products: [options.productId],
@@ -68,6 +69,7 @@ export async function createCheckout(options: PolarCheckoutOptions): Promise<{ o
 export async function getCustomer(email: string): Promise<{ ok: boolean; customer?: PolarCustomerInfo; error?: string }> {
   try {
     const polar = getPolarClient();
+    if (!polar) return { ok: false, error: 'Billing not configured' };
 
     // List customers by email
     const customers = await polar.customers.list({
@@ -122,6 +124,7 @@ export async function getCustomer(email: string): Promise<{ ok: boolean; custome
 export async function listProducts(): Promise<{ ok: boolean; products?: any[]; error?: string }> {
   try {
     const polar = getPolarClient();
+    if (!polar) return { ok: false, error: 'Billing not configured' };
 
     const products = await polar.products.list({
       isArchived: false,
@@ -156,6 +159,7 @@ export async function listProducts(): Promise<{ ok: boolean; products?: any[]; e
 export async function openCustomerPortal(customerId: string): Promise<{ ok: boolean; url?: string; error?: string }> {
   try {
     const polar = getPolarClient();
+    if (!polar) return { ok: false, error: 'Billing not configured' };
 
     const session = await polar.customerSessions.create({
       customerId,

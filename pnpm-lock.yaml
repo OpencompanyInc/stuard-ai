@@ -72,6 +72,9 @@ importers:
       '@openrouter/ai-sdk-provider':
         specifier: ^1.4.1
         version: 1.4.1(ai@6.0.64)(zod@4.3.6)
+      '@polar-sh/sdk':
+        specifier: ^0.46.7
+        version: 0.46.7
       '@supabase/supabase-js':
         specifier: ^2.45.4
         version: 2.76.0
@@ -4591,6 +4594,13 @@ packages:
       zod: 3.25.76
     dev: false
 
+  /@polar-sh/sdk@0.46.7:
+    resolution: {integrity: sha512-g8/goRQFfnik9Ood2Ej5AsbEXv2rohzhVlmW7wjkCuwdc8i59FWhdBjolX2tUwcXXjugziXrhCZJLivY3W6ytQ==}
+    dependencies:
+      standardwebhooks: 1.0.0
+      zod: 4.3.6
+    dev: false
+
   /@posthog/core@1.6.0:
     resolution: {integrity: sha512-Tbh8UACwbb7jFdDC7wwXHtfNzO+4wKh3VbyMHmp2UBe6w1jliJixexTJNfkqdGZm+ht3M10mcKvGGPnoZ2zLBg==}
     dependencies:
@@ -7220,7 +7230,7 @@ packages:
       '@vitest/spy': 4.0.10
       estree-walker: 3.0.3
       magic-string: 0.30.21
-      vite: 7.2.2(@types/node@24.10.1)(tsx@4.20.6)
+      vite: 7.2.2(@types/node@20.19.22)(terser@5.46.0)
     dev: true
 
   /@vitest/pretty-format@4.0.10:

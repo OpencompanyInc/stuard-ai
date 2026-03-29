@@ -13,7 +13,9 @@ import { setupTerminalIpc } from "../terminal";
 import logger from "../utils/logger";
 import * as fs from "fs";
 import { Buffer } from "node:buffer";
-import { getGlobalHotkey, setGlobalHotkey as saveGlobalHotkey, getTimezone, setTimezone } from "../settings";
+import { getGlobalHotkey, setGlobalHotkey as saveGlobalHotkey, getTimezone, setTimezone, getRendererPrefs, setRendererPrefs } from "../settings";
+import { syncMainAuthSession } from "../services/auth-session";
+import { skills_list, skills_get, skills_save, skills_delete, skills_toggle, loadSkills } from "../skills";
 
 let nodeNotifier: any = null;
 try { nodeNotifier = require('node-notifier'); } catch { }
@@ -594,6 +596,44 @@ export function setupIpc() {
       return { ok: false, error: String(e?.message || 'failed') };
     }
   });
+
+  // Renderer preferences (getAll / set / setMany)
+  ipcMain.handle('prefs:getAll', () => {
+    try {
+      return { ok: true, prefs: getRendererPrefs() };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+  ipcMain.handle('prefs:set', (_e, key: string, value: any) => {
+    try {
+      setRendererPrefs({ [key]: value });
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+  ipcMain.handle('prefs:setMany', (_e, prefs: Record<string, any>) => {
+    try {
+      setRendererPrefs(prefs);
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+
+  // Auth session sync
+  ipcMain.handle('auth:syncSession', async (_e, session: any) => {
+    return syncMainAuthSession(session);
+  });
+
+  // Skills
+  loadSkills();
+  ipcMain.handle('skills:list', () => skills_list());
+  ipcMain.handle('skills:get', (_e, id: string) => skills_get(id));
+  ipcMain.handle('skills:save', (_e, skill: any) => skills_save(skill));
+  ipcMain.handle('skills:delete', (_e, id: string) => skills_delete(id));
+  ipcMain.handle('skills:toggle', (_e, id: string) => skills_toggle(id));
 
   // Outlook
   ipcMain.handle("outlook:getToken", async () => {
