@@ -34,6 +34,38 @@ function wfLog(event: string, data?: Record<string, any>) {
   writeLog(`wf_agent_tool_${event}`, data);
 }
 
+function getWorkflowElementById(workflow: any, id: string) {
+  return workflow?.nodes?.find((node: any) => node?.id === id)
+    || workflow?.triggers?.find((trigger: any) => trigger?.id === id)
+    || null;
+}
+
+function buildElementInspection(workflow: any, flowContext: any) {
+  if (!flowContext?.id) return null;
+
+  const element = getWorkflowElementById(workflow, flowContext.id);
+  const predecessorElements = (flowContext.predecessorIds || [])
+    .map((id: string) => getWorkflowElementById(workflow, id))
+    .filter(Boolean);
+  const successorElements = (flowContext.successorIds || [])
+    .map((id: string) => getWorkflowElementById(workflow, id))
+    .filter(Boolean);
+  const relatedWires = (workflow?.wires || []).filter((wire: any) =>
+    wire?.from === flowContext.id
+    || wire?.to === flowContext.id
+    || (flowContext.predecessorIds || []).includes(wire?.from)
+    || (flowContext.successorIds || []).includes(wire?.to),
+  );
+
+  return {
+    ...flowContext,
+    element,
+    predecessorElements,
+    successorElements,
+    relatedWires,
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // EXECUTE STEP - Test/run a single tool (sis execute)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -135,7 +167,7 @@ export const listWorkflows = createTool({
 
 export const inspectWorkflow = createTool({
   id: 'inspect_workflow',
-  description: 'Inspect workflow topology without returning full workflow JSON. Use this for overview, node flow, trigger flow, or a single wire lookup.',
+  description: 'Inspect workflow topology. Use this for overview, full selected node/trigger details plus surrounding topology, or a single wire lookup.',
   inputSchema: z.object({
     mode: z.enum(['overview', 'node_flow', 'trigger_flow', 'wire']),
     nodeId: z.string().optional(),
@@ -187,7 +219,7 @@ export const inspectWorkflow = createTool({
       if (!nodeFlow || nodeFlow.kind !== 'node') {
         return { ok: false, error: `Node not found: ${nodeId}` };
       }
-      return { ok: true, validation, topology, nodeFlow };
+      return { ok: true, validation, topology, nodeFlow: buildElementInspection(workflow, nodeFlow) };
     }
 
     if (mode === 'trigger_flow') {
@@ -198,7 +230,7 @@ export const inspectWorkflow = createTool({
       if (!triggerFlow || triggerFlow.kind !== 'trigger') {
         return { ok: false, error: `Trigger not found: ${triggerId}` };
       }
-      return { ok: true, validation, topology, triggerFlow };
+      return { ok: true, validation, topology, triggerFlow: buildElementInspection(workflow, triggerFlow) };
     }
 
     const wire = getWireBySelector(analysis, { from, to, index });

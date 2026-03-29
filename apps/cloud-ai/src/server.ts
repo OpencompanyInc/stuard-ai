@@ -3,7 +3,7 @@ import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { getWorkflowAgent, WORKFLOW_SYSTEM_PROMPT } from './agents/workflow-agent';
 import { getSkillAgent, SKILL_SYSTEM_PROMPT, setSessionSkill, clearSessionSkill } from './agents/skill-agent';
-import { setSessionWorkflow, clearSessionWorkflow } from './tools/workflow';
+import { setSessionWorkflow, clearSessionWorkflow, getSessionWorkflow } from './tools/workflow';
 import { withClientBridge, handleClientToolMessage } from './tools/bridge';
 import { routeModel, type ModelChoice } from './router/model-router';
 import { verifyAccessToken, AuthErrorCode, parseTokenInfo } from './auth';
@@ -2292,17 +2292,31 @@ ${skillLines}`;
                     const toolCallId = (chunk as any)?.payload?.toolCallId || '';
                     const toolResult = (chunk as any)?.payload?.result;
                     const safeToolResult = sanitizeToolResult(toolResult);
+                    const uiToolResult = (() => {
+                      const isWorkflowModifyTool =
+                        toolName === 'modify_workflow' || toolName === 'workflow_modify' || toolName === 'create_workflow';
+                      if (!isWorkflowModifyTool) return safeToolResult;
+                      if (safeToolResult?.workflow) return safeToolResult;
+
+                      const currentWorkflow = getSessionWorkflow();
+                      if (!currentWorkflow) return safeToolResult;
+
+                      return {
+                        ...safeToolResult,
+                        workflow: currentWorkflow,
+                      };
+                    })();
 
                     // Update tool call with result
                     const existingCall = toolCallsMap.get(toolCallId);
                     if (existingCall) {
                       existingCall.status = 'completed';
-                      existingCall.result = safeToolResult;
+                      existingCall.result = uiToolResult;
                       // Update in streamChunks
                       for (const sc of streamChunks) {
                         if (sc.type === 'tool' && sc.tool.id === toolCallId) {
                           sc.tool.status = 'completed';
-                          sc.tool.result = safeToolResult;
+                          sc.tool.result = uiToolResult;
                           break;
                         }
                       }
@@ -2310,7 +2324,7 @@ ${skillLines}`;
 
                     // Only send to UI if not a SIS meta-tool
                     if (!isSISMetaTool(toolName)) {
-                      send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolName, status: 'completed', toolCallId, result: safeToolResult } }, requestId);
+                      send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolName, status: 'completed', toolCallId, result: uiToolResult } }, requestId);
                     }
                     handledChunk = true;
                     break;

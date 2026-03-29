@@ -51,7 +51,7 @@ declare global {
       onDashboardNavigate: (cb: (data: { tab: string }) => void) => () => void;
       onWorkflowsNavigate: (cb: (data: { marketplaceSlug: string }) => void) => () => void;
       // Custom UI prebuilt assets (for UI builder preview — offline, no CDN)
-      customUiGetPrebuiltAssets: () => Promise<{ ok: boolean; reactUmd?: string; reactDomUmd?: string; tailwindCss?: string; extraCss?: string; error?: string }>;
+      customUiGetPrebuiltAssets: () => Promise<{ ok: boolean; reactUmd?: string; reactDomUmd?: string; framerMotionUmd?: string; tailwindCss?: string; extraCss?: string; error?: string }>;
       customUiTransformJsx: (code: string) => Promise<{ ok: boolean; code: string; syntax?: string; error?: string }>;
 
       workflowsList: () => Promise<{ ok: boolean; items?: Array<{ id: string; name?: string; updatedAt?: string; folder?: string }>; folders?: string[]; error?: string }>;

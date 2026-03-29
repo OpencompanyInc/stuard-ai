@@ -14,7 +14,7 @@ import os from 'node:os';
 import { search_tools } from '../../tools/meta-tools';
 import { retrieveToolFormat } from '../../tools/workflow-system';
 import { workflowModifyTool } from '../../tools/workflow';
-import { stop_automation, write_file, create_directory } from '../../tools/device-tools';
+import { stop_automation, write_file, create_directory, read_file, workspace_read_file, show_json_workflow_code } from '../../tools/device-tools';
 import { file_edit } from '../../tools/agentic-file-tools';
 import { web_search } from '../../tools/perplexity-tools';
 import { executeStep, inspectWorkflow, listWorkflows } from './tools';
@@ -48,16 +48,20 @@ STRATEGY:
 • Prefer existing tools over custom scripts
 
 FILE & DIRECTORY TOOLS:
+• read_file({ path, line_start?, line_end? }) - Read text file contents from disk
+• workspace_read_file({ path }) - Read a file relative to the current workflow workspace
+• show_json_workflow_code({ id }) - Read the full workflow JSON by workflow ID
 • write_file({ path, content, append? }) - Create/write files on disk or in the workspace
 • create_directory({ path }) - Create directories/subdirectories
 • file_edit({ path, mode, old_string, new_string, replace_all? }) - Edit non-stuard files using string-based find/replace
   Modes: replace, insert_before, insert_after, delete, regex
+• NEVER use write_file to inspect or read a file. write_file only writes and can overwrite content.
 
 WORKFLOW INSPECTION:
 - The inline WORKFLOW SCHEMATIC is authoritative for high-level overview only
-- Use inspect_workflow for exact node flow, trigger flow, wire classifications, branch order, loop exits, and convergence details
+- Use inspect_workflow for exact node flow, trigger flow, the selected node/trigger's full config, wire classifications, branch order, loop exits, and convergence details
 - After every modify_workflow call, read affectedFlow before making another wiring change
-- Never expect full workflow JSON in the prompt or in any tool response
+- Do not expect full workflow JSON by default; use show_json_workflow_code({ id }) only when you explicitly need the complete saved workflow
 
 TARGETING SUB-WORKFLOWS:
 • modify_workflow edits the main workflow by default
@@ -70,7 +74,7 @@ WORKSPACE PATH SYSTEM
 Each workflow has a workspace directory. The paths are provided in the system context
 as "WORKSPACE PATHS" (workspacePath, subdirs, files list). Use these to:
 • Know where files live on disk (absolute paths)
-• Reference files in tool args (write_file, file_edit, etc.) using the workspace paths
+• Reference files in tool args (read_file, workspace_read_file, write_file, file_edit, etc.) using the workspace paths
 • Understand the workspace structure before creating/editing files
 
 Standard workspace layout:
@@ -1350,7 +1354,7 @@ EXAMPLE - File Converter App:
   }}
 
 ═══════════════════════════════════════════════════════════════════════════════
-YOUR 11 TOOLS
+YOUR WORKFLOW TOOLS
 ═══════════════════════════════════════════════════════════════════════════════
 
 1. search_tools({ query }) - Find tools by keyword
@@ -1360,10 +1364,13 @@ YOUR 11 TOOLS
 5. execute_step({ tool, args }) - Test a tool
 6. list_workflows({}) - List saved workflows
 7. stop_workflow({ id }) - Stop running workflow
-8. web_search({ query }) - Search the web for up-to-date information
-9. write_file({ path, content, append? }) - Create or update workspace files
-10. create_directory({ path }) - Create workspace directories
-11. file_edit({ path, mode, old_string, new_string }) - Edit non-stuard files with targeted replacements
+8. read_file({ path, line_start?, line_end? }) - Read text files from disk
+9. workspace_read_file({ path }) - Read files from the current workflow workspace
+10. show_json_workflow_code({ id }) - Read the full workflow JSON for a saved workflow
+11. web_search({ query }) - Search the web for up-to-date information
+12. write_file({ path, content, append? }) - Create or update workspace files
+13. create_directory({ path }) - Create workspace directories
+14. file_edit({ path, mode, old_string, new_string }) - Edit non-stuard files with targeted replacements
 
 CRITICAL: NEVER pass the full workflow JSON to modify_workflow. Just use the op and params.
 NEVER output raw JSON. Use modify_workflow for all changes.`;
@@ -1455,7 +1462,7 @@ export function getWorkflowAgent(modelIdOverride?: string): Agent {
     }
   });
 
-  // 11 CORE TOOLS
+  // Workflow tools
   const tools = {
     // 1. Search tools (sis search)
     search_tools: createLoggedTool(search_tools, 'search_tools'),
@@ -1471,13 +1478,19 @@ export function getWorkflowAgent(modelIdOverride?: string): Agent {
     list_workflows: createLoggedTool(listWorkflows, 'list_workflows'),
     // 7. Stop workflow
     stop_workflow: createLoggedTool(stop_automation, 'stop_workflow'),
-    // 8. Web search
+    // 8. Read files
+    read_file: createLoggedWorkflowFileTool(read_file, 'read_file'),
+    // 9. Read workspace files
+    workspace_read_file: createLoggedWorkflowFileTool(workspace_read_file, 'workspace_read_file'),
+    // 10. Read full workflow JSON
+    show_json_workflow_code: createLoggedTool(show_json_workflow_code, 'show_json_workflow_code'),
+    // 11. Web search
     web_search: createLoggedTool(web_search, 'web_search'),
-    // 9. Create/write files in the workspace or on disk
+    // 12. Create/write files in the workspace or on disk
     write_file: createLoggedWorkflowFileTool(write_file, 'write_file'),
-    // 10. Create directories
+    // 13. Create directories
     create_directory: createLoggedWorkflowFileTool(create_directory, 'create_directory'),
-    // 11. Edit non-stuard files (string-based find/replace)
+    // 14. Edit non-stuard files (string-based find/replace)
     file_edit: createLoggedWorkflowFileTool(file_edit, 'file_edit'),
   };
 

@@ -127,6 +127,22 @@ const getSpaceAccent = (type: Space['type']) => {
   return accents[type] || accents.custom;
 };
 
+const SPACE_TYPE_LABELS: Record<Space['type'], string> = {
+  project: 'Projects',
+  topic: 'Topics',
+  research: 'Research',
+  reference: 'Reference',
+  custom: 'Custom',
+};
+
+const SPACE_TYPE_HINTS: Record<Space['type'], string> = {
+  project: 'Active work and deliverables',
+  topic: 'Ideas, plans, and notes',
+  research: 'Sources, findings, and evidence',
+  reference: 'Docs, snippets, and reusable context',
+  custom: 'Everything else you want to keep close',
+};
+
 const ItemIcon: React.FC<{ type: SpaceItem['type']; className?: string }> = ({ type, className }) => {
   const icons: Record<string, React.FC<{ className?: string }>> = {
     note: FileText,
@@ -186,7 +202,7 @@ const EmptyState: React.FC<{ title: string; description: string; icon: React.Ele
   title, description, icon: Icon, action
 }) => (
   <div className="flex flex-col items-center justify-center py-16 px-8 text-center">
-    <div className="w-14 h-14 rounded-2xl bg-theme-hover/80 flex items-center justify-center mb-4">
+    <div className="w-14 h-14 rounded-2xl theme-surface-soft flex items-center justify-center mb-4">
       <Icon className="w-6 h-6 text-theme-muted" />
     </div>
     <h3 className="text-sm font-medium text-theme-fg mb-1">{title}</h3>
@@ -232,7 +248,7 @@ const TreeItem: React.FC<{
           "group flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-all",
           selectedId === item.id
             ? "bg-primary/10 border border-primary/20"
-            : "hover:bg-theme-hover/60 border border-transparent"
+            : "border border-transparent theme-surface-hover"
         )}
         style={{ paddingLeft: `${8 + depth * 16}px` }}
         onClick={(e) => {
@@ -247,7 +263,7 @@ const TreeItem: React.FC<{
         {isFolder ? (
           <button
             onClick={(e) => { e.stopPropagation(); onToggle(item.id); }}
-            className="p-0.5 hover:bg-theme-active rounded transition-colors"
+            className="p-0.5 rounded transition-colors theme-surface-strong"
           >
             {isExpanded ? (
               <ChevronDown className="w-3.5 h-3.5 text-theme-muted" />
@@ -316,32 +332,50 @@ const SpaceListItem: React.FC<{
     <div
       onClick={onSelect}
       className={clsx(
-        "group flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-all",
+        "group flex items-start gap-3 rounded-2xl border px-3 py-3 cursor-pointer transition-all duration-200",
         isSelected
-          ? "bg-theme-card border border-theme shadow-sm"
-          : "hover:bg-theme-hover/60 border border-transparent"
+          ? "bg-theme-card shadow-[0_14px_34px_rgba(15,23,42,0.08)]"
+          : "theme-surface-hover"
       )}
+      style={{
+        borderColor: isSelected
+          ? "color-mix(in srgb, var(--primary) 24%, var(--border))"
+          : "color-mix(in srgb, var(--border) 76%, transparent)",
+      }}
     >
-      <div className={clsx("w-8 h-8 rounded-lg flex items-center justify-center", accent.bg)}>
+      <div className={clsx("w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0", accent.bg)}>
         <SpaceTypeIcon type={space.type} className={clsx("w-4 h-4", accent.text)} />
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-[13px] font-medium text-theme-fg truncate">{space.name}</span>
+          <span className="text-[13px] font-semibold text-theme-fg truncate">{space.name}</span>
           {shareInfo?.is_shared && (
             <Users className="w-3 h-3 text-primary flex-shrink-0" />
           )}
         </div>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <span className={clsx("rounded-full px-2 py-0.5 text-[10px] font-semibold", accent.bg, accent.text)}>
+            {SPACE_TYPE_LABELS[space.type]}
+          </span>
+          {typeof space.item_count === 'number' && (
+            <span className="rounded-full bg-theme-hover px-2 py-0.5 text-[10px] font-medium text-theme-muted">
+              {space.item_count} item{space.item_count === 1 ? '' : 's'}
+            </span>
+          )}
+        </div>
         {space.description && (
-          <div className="text-[11px] text-theme-muted truncate mt-0.5">{space.description}</div>
+          <div className="mt-1.5 text-[11px] leading-relaxed text-theme-muted line-clamp-2">
+            {space.description}
+          </div>
         )}
       </div>
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
           <button
             className={clsx(
-              "p-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity",
-              "hover:bg-theme-active text-theme-muted hover:text-theme-fg"
+              "mt-0.5 flex h-8 w-8 items-center justify-center rounded-xl text-theme-muted transition-all",
+              isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+              "theme-surface-strong theme-text-hover"
             )}
             onClick={e => e.stopPropagation()}
           >
@@ -352,14 +386,14 @@ const SpaceListItem: React.FC<{
           <DropdownMenu.Content className="z-[10005] min-w-[140px] bg-theme-card rounded-xl border border-theme p-1 shadow-xl" align="end">
             <DropdownMenu.Item
               onClick={(e) => { e.stopPropagation(); onShare?.(); }}
-              className="text-[13px] px-2.5 py-1.5 rounded-lg hover:bg-theme-hover outline-none cursor-pointer flex items-center gap-2 text-theme-muted"
+              className="text-[13px] px-2.5 py-1.5 rounded-lg outline-none cursor-pointer flex items-center gap-2 text-theme-muted theme-surface-hover theme-text-hover"
             >
               <Share2 className="w-3.5 h-3.5" /> Share
             </DropdownMenu.Item>
-            <DropdownMenu.Item className="text-[13px] px-2.5 py-1.5 rounded-lg hover:bg-theme-hover outline-none cursor-pointer flex items-center gap-2 text-theme-muted">
+            <DropdownMenu.Item className="text-[13px] px-2.5 py-1.5 rounded-lg outline-none cursor-pointer flex items-center gap-2 text-theme-muted theme-surface-hover theme-text-hover">
               <Edit3 className="w-3.5 h-3.5" /> Rename
             </DropdownMenu.Item>
-            <DropdownMenu.Item className="text-[13px] px-2.5 py-1.5 rounded-lg hover:bg-theme-hover outline-none cursor-pointer flex items-center gap-2 text-theme-muted">
+            <DropdownMenu.Item className="text-[13px] px-2.5 py-1.5 rounded-lg outline-none cursor-pointer flex items-center gap-2 text-theme-muted theme-surface-hover theme-text-hover">
               <Archive className="w-3.5 h-3.5" /> Archive
             </DropdownMenu.Item>
             <DropdownMenu.Separator className="h-px bg-theme my-1" />
@@ -409,7 +443,10 @@ const ContentCard: React.FC<{
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       onClick={onClick}
-      className="group relative bg-theme-card hover:bg-theme-hover/50 border border-theme hover:border-theme-sidebar rounded-xl p-4 cursor-pointer transition-all"
+      className="group relative rounded-2xl border border-theme bg-theme-card p-4 cursor-pointer transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_16px_36px_rgba(15,23,42,0.08)]"
+      style={{
+        borderColor: "color-mix(in srgb, var(--border) 82%, transparent)",
+      }}
     >
       {item.pinned && (
         <div className="absolute top-3 right-3">
@@ -428,7 +465,7 @@ const ContentCard: React.FC<{
           </h4>
 
           {item.type === 'snippet' ? (
-            <pre className="mt-2 text-[11px] text-theme-muted font-mono bg-theme-hover/50 rounded-lg p-2 overflow-hidden line-clamp-3">
+            <pre className="mt-2 text-[11px] text-theme-muted font-mono theme-surface-soft rounded-xl p-2.5 overflow-hidden line-clamp-3">
               {getPreview()}
             </pre>
           ) : item.type === 'folder' ? (
@@ -442,7 +479,7 @@ const ContentCard: React.FC<{
           )}
 
           <div className="flex items-center gap-2 mt-2.5">
-            <span className="text-[10px] text-theme-muted capitalize px-1.5 py-0.5 rounded bg-theme-hover">
+            <span className="text-[10px] text-theme-muted capitalize px-2 py-0.5 rounded-full bg-theme-hover">
               {item.type}
             </span>
             {item.updated_at && (
@@ -459,7 +496,7 @@ const ContentCard: React.FC<{
       {item.type !== 'folder' && onMoveToFolder && (
         <button
           onClick={(e) => { e.stopPropagation(); onMoveToFolder(); }}
-          className="absolute bottom-3 right-3 p-1.5 rounded-lg bg-theme-hover opacity-0 group-hover:opacity-100 hover:bg-theme-active text-theme-muted hover:text-theme-fg transition-all"
+          className="absolute bottom-3 right-3 p-1.5 rounded-xl bg-theme-hover opacity-0 group-hover:opacity-100 text-theme-muted transition-all theme-surface-strong theme-text-hover"
           title="Move to folder"
         >
           <MoveRight className="w-3.5 h-3.5" />
@@ -479,10 +516,10 @@ const FilterTab: React.FC<{
   <button
     onClick={onClick}
     className={clsx(
-      "px-3 py-1.5 text-[12px] font-medium rounded-lg transition-all",
+      "px-3 py-1.5 text-[12px] font-medium rounded-xl whitespace-nowrap transition-all",
       isActive
-        ? "bg-theme-card text-theme-fg shadow-sm"
-        : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover/50"
+        ? "bg-theme-card text-theme-fg shadow-sm ring-1 ring-primary/10"
+        : "text-theme-muted theme-surface-hover theme-text-hover"
     )}
   >
     {label}
@@ -986,11 +1023,6 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
     [items]
   );
 
-  const typeLabels: Record<string, string> = {
-    project: 'Projects', topic: 'Topics', research: 'Research',
-    reference: 'Reference', custom: 'Custom'
-  };
-
   const toggleType = (type: string) => {
     setExpandedTypes(prev => {
       const next = new Set(prev);
@@ -1010,10 +1042,27 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
   // Render
   return (
     <div className={clsx(
-      "flex h-full rounded-2xl overflow-hidden transition-all duration-300 border border-theme relative",
-      translucentMode ? "bg-theme-card/80 backdrop-blur-2xl" : "bg-theme-bg",
+      "relative flex h-full rounded-[28px] overflow-hidden transition-all duration-300 border border-theme",
+      translucentMode ? "bg-theme-card backdrop-blur-2xl" : "bg-theme-bg",
       className
-    )}>
+    )}
+    style={{
+      background: translucentMode
+        ? "color-mix(in srgb, var(--card-bg) 82%, transparent)"
+        : undefined,
+      boxShadow: translucentMode
+        ? "0 18px 42px rgba(15, 23, 42, 0.12)"
+        : "0 18px 40px rgba(15, 23, 42, 0.08)",
+    }}>
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(circle at top left, color-mix(in srgb, var(--primary) 10%, transparent) 0%, transparent 34%)",
+        }}
+      />
+
       {/* Toast */}
       <AnimatePresence>
         {toastMessage && (
@@ -1434,7 +1483,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                 Moving: <span className="text-theme-fg font-medium">{itemToMove.title || 'Untitled'}</span>
               </p>
 
-              <div className="max-h-64 overflow-y-auto border border-theme rounded-xl">
+              <div className="max-h-64 overflow-y-auto border border-theme rounded-xl scrollbar-minimal">
                 {/* Root option */}
                 <button
                   onClick={() => handleMoveItem(null)}
@@ -1488,45 +1537,76 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
         selectedSpace ? "-translate-x-full" : "translate-x-0"
       )}>
         {/* Header */}
-        <div className="px-4 py-4 flex items-center justify-between flex-shrink-0 border-b border-theme">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center">
-              <Sparkles className="w-4 h-4 text-primary-fg" />
+        <div className="px-4 pt-4 pb-3 flex-shrink-0 border-b border-theme">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center shadow-sm">
+                  <Sparkles className="w-4 h-4 text-primary-fg" />
+                </div>
+                <div className="min-w-0">
+                  <span className="font-semibold text-theme-fg text-[15px]">Spaces</span>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-theme-muted">
+                    Organize projects, notes, files, and research in one place.
+                  </p>
+                </div>
+              </div>
             </div>
-            <span className="font-semibold text-theme-fg text-[15px]">Spaces</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setIsCreateSpaceOpen(true)}
-              className="p-2 hover:bg-primary/10 text-theme-muted hover:text-primary rounded-xl transition-colors"
-              title="New Space"
-            >
-              <Plus className="w-4 h-4" />
-            </button>
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-theme-hover rounded-xl text-theme-muted hover:text-theme-fg transition-colors"
-            >
-              <PanelLeftClose className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setIsCreateSpaceOpen(true)}
+                className="p-2 hover:bg-primary/10 text-theme-muted hover:text-primary rounded-xl transition-colors"
+                title="New Space"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+              <button
+                onClick={onClose}
+                className="p-2 rounded-xl text-theme-muted transition-colors theme-surface-hover theme-text-hover"
+              >
+                <PanelLeftClose className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Search */}
         <div className="px-4 py-3 flex-shrink-0">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-theme-muted" />
-            <input
-              className="w-full bg-theme-hover hover:bg-theme-active border border-transparent focus:bg-theme-card focus:border-theme rounded-xl pl-9 pr-3 py-2.5 text-[13px] text-theme-fg outline-none transition-all placeholder:text-theme-muted"
-              placeholder="Search spaces..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-            />
+          <div className="rounded-[22px] border border-theme bg-theme-card p-3 shadow-sm">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-theme-muted" />
+              <input
+                className="w-full bg-theme-hover border border-transparent rounded-xl pl-9 pr-9 py-2.5 text-[13px] text-theme-fg outline-none transition-all placeholder:text-theme-muted theme-surface-strong focus:bg-theme-card focus:border-theme"
+                placeholder="Search spaces, notes, and research"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                autoComplete="off"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-lg text-theme-muted transition-colors theme-surface-hover theme-text-hover"
+                  aria-label="Clear search"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary">
+                {filteredSpaces.length} shown
+              </span>
+              <span className="rounded-full bg-theme-hover px-2.5 py-1 text-[11px] font-medium text-theme-muted">
+                {spaces.length} total
+              </span>
+            </div>
           </div>
         </div>
 
         {/* Space List */}
-        <div className="flex-1 overflow-y-auto px-3 pb-4 slick-scrollbar">
+        <div className="flex-1 overflow-y-auto px-3 pb-5 scrollbar-minimal">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-16">
               <Loader2 className="w-6 h-6 text-primary animate-spin" />
@@ -1549,43 +1629,56 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
               )}
             />
           ) : (
-            Object.entries(groupedSpaces).map(([type, typeSpaces]) => (
-              <div key={type} className="mb-3">
-                <button
-                  onClick={() => toggleType(type)}
-                  className="flex items-center gap-2 px-2 py-2 w-full text-left text-[11px] font-semibold text-theme-muted uppercase tracking-wider hover:text-theme-fg transition-colors"
+            Object.entries(groupedSpaces).map(([type, typeSpaces]) => {
+              const typedType = type as Space['type'];
+
+              return (
+                <div
+                  key={type}
+                  className="mb-3 rounded-[22px] border border-theme bg-theme-card p-2 shadow-sm"
+                  style={{
+                    borderColor: "color-mix(in srgb, var(--border) 74%, transparent)",
+                  }}
                 >
-                  {expandedTypes.has(type) ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                  {typeLabels[type] || type}
-                  <span className="ml-auto text-[10px] font-medium bg-theme-hover px-1.5 py-0.5 rounded-full">
-                    {typeSpaces.length}
-                  </span>
-                </button>
-                <AnimatePresence initial={false}>
-                  {expandedTypes.has(type) && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.2 }}
-                      className="overflow-hidden"
-                    >
-                      <div className="space-y-1">
-                        {typeSpaces.map(space => (
-                          <SpaceListItem
-                            key={space.id}
-                            space={space}
-                            isSelected={selectedSpace?.id === space.id}
-                            onSelect={() => handleSelectSpace(space)}
-                            onShare={() => { handleSelectSpace(space); setIsShareOpen(true); }}
-                          />
-                        ))}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            ))
+                  <button
+                    onClick={() => toggleType(type)}
+                    className="flex items-center gap-2 px-2.5 py-2.5 w-full text-left rounded-2xl text-[11px] font-semibold text-theme-muted uppercase tracking-wider transition-colors theme-surface-hover theme-text-hover"
+                  >
+                    {expandedTypes.has(type) ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                    <span>{SPACE_TYPE_LABELS[typedType] || type}</span>
+                    <span className="ml-auto text-[10px] font-medium bg-theme-hover px-2 py-0.5 rounded-full">
+                      {typeSpaces.length}
+                    </span>
+                  </button>
+                  <p className="px-2.5 pb-1 text-[11px] text-theme-muted">
+                    {SPACE_TYPE_HINTS[typedType]}
+                  </p>
+                  <AnimatePresence initial={false}>
+                    {expandedTypes.has(type) && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.2 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="space-y-1 pt-1">
+                          {typeSpaces.map(space => (
+                            <SpaceListItem
+                              key={space.id}
+                              space={space}
+                              isSelected={selectedSpace?.id === space.id}
+                              onSelect={() => handleSelectSpace(space)}
+                              onShare={() => { handleSelectSpace(space); setIsShareOpen(true); }}
+                            />
+                          ))}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              );
+            })
           )}
         </div>
       </div>
@@ -1598,11 +1691,11 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
         {selectedSpace && (
           <>
             {/* Space Header */}
-            <div className="px-5 py-4 flex-shrink-0 border-b border-theme">
-              <div className="flex items-center justify-between mb-4">
+            <div className="px-5 pt-4 pb-4 flex-shrink-0 border-b border-theme bg-theme-card">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
                 <button
                   onClick={() => { setSelectedSpace(null); setViewingItem(null); setCurrentFolderId(null); setFolderPath([]); }}
-                  className="flex items-center gap-2 text-theme-muted hover:text-theme-fg transition-colors"
+                  className="flex items-center gap-2 rounded-xl px-2.5 py-2 text-theme-muted transition-colors theme-surface-hover theme-text-hover"
                 >
                   <ArrowLeft className="w-4 h-4" />
                   <span className="text-xs font-medium">Back</span>
@@ -1610,7 +1703,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => setIsCreateFolderOpen(true)}
-                    className="p-2 hover:bg-theme-hover rounded-xl text-theme-muted hover:text-theme-fg transition-colors"
+                    className="p-2 rounded-xl text-theme-muted transition-colors theme-surface-hover theme-text-hover"
                     title="New Folder"
                   >
                     <FolderPlus className="w-4 h-4" />
@@ -1621,7 +1714,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                       "p-2 rounded-xl transition-colors",
                       shareInfo?.is_shared
                         ? "bg-primary/10 text-primary"
-                        : "hover:bg-theme-hover text-theme-muted hover:text-theme-fg"
+                        : "text-theme-muted theme-surface-hover theme-text-hover"
                     )}
                     title="Share"
                   >
@@ -1636,7 +1729,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                   </button>
                   <button
                     onClick={onClose}
-                    className="p-2 hover:bg-theme-hover rounded-xl text-theme-muted hover:text-theme-fg transition-colors"
+                    className="p-2 rounded-xl text-theme-muted transition-colors theme-surface-hover theme-text-hover"
                   >
                     <PanelLeftClose className="w-4 h-4" />
                   </button>
@@ -1651,22 +1744,29 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                   <div className="flex items-center gap-2">
                     <h1 className="text-lg font-semibold text-theme-fg truncate">{selectedSpace.name}</h1>
                     {shareInfo?.is_shared && (
-                      <span className="text-[10px] text-primary bg-primary/10 px-1.5 py-0.5 rounded">Shared</span>
+                      <span className="text-[10px] text-primary bg-primary/10 px-2 py-0.5 rounded-full">Shared</span>
                     )}
                   </div>
-                  <p className="text-xs text-theme-muted mt-0.5">
-                    {items.length} item{items.length !== 1 ? 's' : ''}
-                    {selectedSpace.description && ` · ${selectedSpace.description}`}
-                  </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-theme-muted">
+                    <span>{items.length} item{items.length !== 1 ? 's' : ''}</span>
+                    <span className="rounded-full bg-theme-hover px-2 py-0.5">
+                      {SPACE_TYPE_LABELS[selectedSpace.type]}
+                    </span>
+                  </div>
+                  {selectedSpace.description && (
+                    <p className="mt-2 text-[12px] leading-relaxed text-theme-muted">
+                      {selectedSpace.description}
+                    </p>
+                  )}
                 </div>
               </div>
 
               {/* Breadcrumb for folder navigation */}
               {folderPath.length > 0 && (
-                <div className="flex items-center gap-1 mt-3 text-xs">
+                <div className="flex items-center gap-1 mt-4 text-xs overflow-x-auto scrollbar-hidden">
                   <button
                     onClick={() => { setCurrentFolderId(null); setFolderPath([]); }}
-                    className="text-theme-muted hover:text-theme-fg transition-colors"
+                    className="text-theme-muted transition-colors theme-text-hover"
                   >
                     Root
                   </button>
@@ -1683,7 +1783,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                           "transition-colors",
                           idx === folderPath.length - 1
                             ? "text-theme-fg font-medium"
-                            : "text-theme-muted hover:text-theme-fg"
+                            : "text-theme-muted theme-text-hover"
                         )}
                       >
                         {folder.title || 'Folder'}
@@ -1693,19 +1793,19 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                 </div>
               )}
 
-              <div className="flex items-center justify-between mt-4">
-                <div className="flex items-center gap-1 p-1 bg-theme-hover/50 rounded-xl">
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <div className="flex max-w-full items-center gap-1 overflow-x-auto p-1 theme-surface-soft rounded-2xl scrollbar-hidden">
                   <FilterTab label="All" count={itemCounts.all} isActive={contentFilter === 'all'} onClick={() => setContentFilter('all')} />
                   <FilterTab label="Notes" count={itemCounts.notes} isActive={contentFilter === 'notes'} onClick={() => setContentFilter('notes')} />
                   <FilterTab label="Links" count={itemCounts.links} isActive={contentFilter === 'links'} onClick={() => setContentFilter('links')} />
                   <FilterTab label="Code" count={itemCounts.code} isActive={contentFilter === 'code'} onClick={() => setContentFilter('code')} />
                 </div>
-                <div className="flex items-center gap-1 p-1 bg-theme-hover/50 rounded-xl">
+                <div className="flex items-center gap-1 p-1 theme-surface-soft rounded-2xl">
                   <button
                     onClick={() => setViewMode('tree')}
                     className={clsx(
-                      "p-1.5 rounded-lg transition-all",
-                      viewMode === 'tree' ? "bg-theme-card shadow-sm text-theme-fg" : "text-theme-muted hover:text-theme-fg"
+                      "p-1.5 rounded-xl transition-all",
+                      viewMode === 'tree' ? "bg-theme-card shadow-sm text-theme-fg ring-1 ring-primary/10" : "text-theme-muted theme-text-hover"
                     )}
                     title="Tree View"
                   >
@@ -1714,8 +1814,8 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                   <button
                     onClick={() => setViewMode('list')}
                     className={clsx(
-                      "p-1.5 rounded-lg transition-all",
-                      viewMode === 'list' ? "bg-theme-card shadow-sm text-theme-fg" : "text-theme-muted hover:text-theme-fg"
+                      "p-1.5 rounded-xl transition-all",
+                      viewMode === 'list' ? "bg-theme-card shadow-sm text-theme-fg ring-1 ring-primary/10" : "text-theme-muted theme-text-hover"
                     )}
                     title="List View"
                   >
@@ -1726,7 +1826,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
             </div>
 
             {/* Content */}
-            <div className="flex-1 overflow-y-auto px-5 py-4 slick-scrollbar">
+            <div className="flex-1 overflow-y-auto px-5 py-5 scrollbar-minimal">
               {itemsLoading ? (
                 <div className="flex flex-col items-center justify-center py-16">
                   <Loader2 className="w-6 h-6 text-primary animate-spin" />
@@ -1791,7 +1891,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
               <div className="flex items-center justify-between">
                 <button
                   onClick={() => setViewingItem(null)}
-                  className="flex items-center gap-2 text-theme-muted hover:text-theme-fg transition-colors"
+                  className="flex items-center gap-2 rounded-xl px-2.5 py-2 text-theme-muted transition-colors theme-surface-hover theme-text-hover"
                 >
                   <ArrowLeft className="w-4 h-4" />
                   <span className="text-xs font-medium">Back</span>
@@ -1799,7 +1899,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => openEditModal(viewingItem)}
-                    className="p-2 hover:bg-theme-hover rounded-xl text-theme-muted hover:text-theme-fg transition-colors"
+                    className="p-2 rounded-xl text-theme-muted transition-colors theme-surface-hover theme-text-hover"
                     title="Edit"
                   >
                     <Edit3 className="w-4 h-4" />
@@ -1809,7 +1909,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                       navigator.clipboard.writeText(viewingItem.content);
                       setToastMessage('Copied to clipboard');
                     }}
-                    className="p-2 hover:bg-theme-hover rounded-xl text-theme-muted hover:text-theme-fg transition-colors"
+                    className="p-2 rounded-xl text-theme-muted transition-colors theme-surface-hover theme-text-hover"
                     title="Copy"
                   >
                     <Copy className="w-4 h-4" />
@@ -1817,7 +1917,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                   {(viewingItem.type === 'link' || viewingItem.type === 'source') && viewingItem.content.startsWith('http') && (
                     <button
                       onClick={() => (window as any).desktopAPI?.openExternal?.(viewingItem.content)}
-                      className="p-2 hover:bg-theme-hover rounded-xl text-theme-muted hover:text-theme-fg transition-colors"
+                      className="p-2 rounded-xl text-theme-muted transition-colors theme-surface-hover theme-text-hover"
                       title="Open"
                     >
                       <ExternalLink className="w-4 h-4" />
@@ -1854,9 +1954,9 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-5">
+            <div className="flex-1 overflow-y-auto p-5 scrollbar-minimal">
               {viewingItem.type === 'file' ? (
-                <div className="flex flex-col items-center justify-center py-12 gap-4 border border-dashed border-theme rounded-2xl bg-theme-hover/30">
+                <div className="flex flex-col items-center justify-center py-12 gap-4 border border-dashed border-theme rounded-2xl theme-surface-muted">
                   {getFileIcon(viewingItem.content, "w-16 h-16 text-theme-muted")}
                   <div className="text-center">
                     <p className="font-medium text-theme-fg mb-1">
@@ -1872,7 +1972,7 @@ export const SpacesSidebar: React.FC<SpacesSidebarProps> = ({
                   </button>
                 </div>
               ) : viewingItem.type === 'snippet' ? (
-                <pre className="bg-theme-hover/50 rounded-xl p-4 text-sm font-mono text-theme-fg overflow-x-auto">
+                <pre className="theme-surface-soft rounded-xl p-4 text-sm font-mono text-theme-fg overflow-x-auto scrollbar-minimal">
                   {viewingItem.content.replace(/```[\w]*\n?/g, '').replace(/```/g, '').trim()}
                 </pre>
               ) : (

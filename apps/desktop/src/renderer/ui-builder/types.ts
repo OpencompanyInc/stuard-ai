@@ -204,7 +204,7 @@ export interface UICanvasConfig {
 export interface UIWindowConfig {
   width: number;
   height: number;
-  position: 'center' | 'topleft' | 'topright' | 'bottomleft' | 'bottomright' | 'bottomcenter' | 'mouse' | 'cursor' | 'custom';
+  position: 'center' | 'topleft' | 'topcenter' | 'topright' | 'bottomleft' | 'bottomright' | 'bottomcenter' | 'mouse' | 'cursor' | 'custom';
   customX?: number;
   customY?: number;
   alwaysOnTop: boolean;
@@ -293,6 +293,9 @@ export interface UIWindowConfig {
 
   // Content padding
   contentPadding?: number;
+
+  // Screen edge margin (distance from screen edge for position presets)
+  margin?: number;
 
   // Typography defaults
   typography?: {

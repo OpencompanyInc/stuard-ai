@@ -892,6 +892,7 @@ export function generateCustomUIArgs(design: UIDesign): Record<string, any> {
       border: wc.border,
       animation: wc.animation,
       contentPadding: wc.contentPadding,
+      margin: wc.margin,
     },
     _uiDesign: design,
   };
@@ -934,6 +935,8 @@ export function parseCustomUIArgs(args: Record<string, any>): UIDesign | null {
     if (windowConfig.backgroundType) design.windowConfig.backgroundType = windowConfig.backgroundType;
     if (windowConfig.translucent) design.windowConfig.translucent = windowConfig.translucent;
     if (windowConfig.backgroundColor) design.windowConfig.backgroundColor = windowConfig.backgroundColor;
+    if (windowConfig.contentPadding !== undefined) design.windowConfig.contentPadding = windowConfig.contentPadding;
+    if (windowConfig.margin !== undefined) design.windowConfig.margin = windowConfig.margin;
 
     return design;
   }
@@ -961,6 +964,7 @@ function parseHtmlToDesign(args: Record<string, any>): UIDesign {
   if (args.frameless !== undefined) design.windowConfig.frameless = args.frameless;
   if (args.transparent !== undefined) design.windowConfig.transparent = args.transparent;
   if (args.borderRadius !== undefined) design.windowConfig.borderRadius = args.borderRadius;
+  if (args.margin !== undefined) design.windowConfig.margin = args.margin;
   if (args.title) design.windowConfig.title = args.title;
 
   // Parse HTML into elements

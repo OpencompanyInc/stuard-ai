@@ -38,6 +38,16 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
   onSwitchTab,
   translucentMode,
 }) => {
+  const panelShadow = translucentMode
+    ? "0 20px 48px rgba(15, 23, 42, 0.16)"
+    : "0 18px 42px rgba(15, 23, 42, 0.10)";
+  const railBackground = translucentMode
+    ? "color-mix(in srgb, var(--background) 72%, transparent)"
+    : "color-mix(in srgb, var(--background) 78%, var(--card-bg) 22%)";
+  const contentBackground = translucentMode
+    ? "color-mix(in srgb, var(--card-bg) 78%, transparent)"
+    : "color-mix(in srgb, var(--card-bg) 92%, var(--background) 8%)";
+
   // Auto-switch to tasks tab when agents are running
   const [hasRunningAgents, setHasRunningAgents] = useState(false);
   const [hasBrowserActivity, setHasBrowserActivity] = useState(false);
@@ -161,15 +171,36 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
   return (
     <div
       className={clsx(
-        "h-full min-h-0 shrink-0 flex overflow-hidden rounded-l-[28px] border-r border-theme/5",
+        "relative h-full min-h-0 shrink-0 flex overflow-hidden rounded-l-[32px] border border-theme",
         translucentMode
-          ? "bg-theme-bg/30 backdrop-blur-3xl"
-          : "bg-theme-sidebar",
+          ? "bg-theme-bg backdrop-blur-3xl"
+          : "bg-theme-card",
       )}
-      style={{ transition: "transform 150ms ease-out, opacity 150ms ease-out" }}
+      style={{
+        boxShadow: panelShadow,
+        transition: "transform 150ms ease-out, opacity 150ms ease-out",
+      }}
     >
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(circle at top, color-mix(in srgb, var(--primary) 12%, transparent) 0%, transparent 42%)",
+        }}
+      />
+
       {/* Icon Rail */}
-      <div className="flex flex-col items-center w-[48px] shrink-0 py-3 gap-1 border-r border-theme/5">
+      <div
+        className="relative flex flex-col items-center w-[60px] shrink-0 px-2 py-3 gap-2 border-r border-theme"
+        style={{ background: railBackground }}
+      >
+        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/15 shadow-sm">
+          <Layers className="w-[18px] h-[18px]" />
+        </div>
+
+        <div className="h-px w-8 bg-theme-hover" />
+
         {SIDEBAR_TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -181,17 +212,19 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
             <button
               key={tab.id}
               onClick={() => onSwitchTab(tab.id)}
+              aria-label={tab.label}
+              aria-pressed={isActive}
               className={clsx(
-                "relative flex items-center justify-center w-9 h-9 rounded-xl transition-all duration-150",
+                "relative flex items-center justify-center w-10 h-10 rounded-2xl border transition-all duration-150",
                 isActive
-                  ? "bg-theme-card text-theme-fg shadow-sm ring-1 ring-theme/10"
-                  : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60"
+                  ? "bg-theme-card text-theme-fg border-theme shadow-sm"
+                  : "text-theme-muted border-transparent theme-text-hover theme-surface-hover theme-border-hover"
               )}
               title={tab.label}
             >
               <Icon className="w-[18px] h-[18px]" />
               {showDot && (
-                <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-blue-500 ring-2 ring-theme-sidebar animate-pulse" />
+                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-blue-500 ring-2 ring-theme-card animate-pulse" />
               )}
             </button>
           );
@@ -199,6 +232,8 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
 
         {/* Spacer */}
         <div className="flex-1" />
+
+        <div className="h-px w-8 bg-theme-hover" />
 
         {/* Expand to window */}
         <button
@@ -209,7 +244,7 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
               expanded: true,
             });
           }}
-          className="flex items-center justify-center w-9 h-9 rounded-xl text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-all"
+          className="flex items-center justify-center w-10 h-10 rounded-2xl border border-transparent text-theme-muted theme-text-hover theme-surface-hover theme-border-hover transition-all"
           title="Open in separate window"
         >
           <Maximize2 className="w-4 h-4" />
@@ -218,7 +253,7 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
         {/* Close */}
         <button
           onClick={onClose}
-          className="flex items-center justify-center w-9 h-9 rounded-xl text-theme-muted hover:text-red-500 hover:bg-red-500/10 transition-all"
+          className="flex items-center justify-center w-10 h-10 rounded-2xl border border-transparent text-theme-muted hover:text-red-500 hover:bg-red-500/10 hover:border-red-500/20 transition-all"
           title="Close Sidebar"
         >
           <X className="w-4 h-4" />
@@ -226,7 +261,10 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
       </div>
 
       {/* Content Area */}
-      <div className="flex-1 min-w-0 min-h-0 overflow-hidden w-[272px]">
+      <div
+        className="relative flex-1 min-w-[304px] w-[304px] min-h-0 overflow-hidden"
+        style={{ background: contentBackground }}
+      >
         {renderContent()}
       </div>
     </div>

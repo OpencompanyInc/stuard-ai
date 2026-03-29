@@ -37,9 +37,10 @@ interface UIBuilderCanvasProps {
   js: string;
   canvasWidth: number;
   canvasHeight: number;
-  windowPosition?: 'center' | 'topleft' | 'topright' | 'bottomleft' | 'bottomright' | 'bottomcenter' | 'mouse' | 'cursor' | 'custom';
+  windowPosition?: 'center' | 'topleft' | 'topcenter' | 'topright' | 'bottomleft' | 'bottomright' | 'bottomcenter' | 'mouse' | 'cursor' | 'custom';
   customX?: number;
   customY?: number;
+  windowMargin?: number;
   backgroundColor: string;
   borderRadius?: number;
   zoom: number;
@@ -47,11 +48,9 @@ interface UIBuilderCanvasProps {
   gridSize: number;
   previewMode: boolean;
   selectedPath: string | null;
-  onZoomChange?: (zoom: number) => void;
   onSelectElement: (element: SelectedElementInfo | null) => void;
   onHoverElement: (path: string | null) => void;
   onHtmlChange?: (html: string) => void;
-  onBreadcrumbsChange?: (breadcrumbs: { path: string; tagName: string; label: string }[]) => void;
 }
 
 export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasProps>(function UIBuilderCanvas({
@@ -63,6 +62,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   windowPosition = 'center',
   customX,
   customY,
+  windowMargin,
   backgroundColor,
   borderRadius: borderRadiusProp = 0,
   zoom,
@@ -70,11 +70,9 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   gridSize,
   previewMode,
   selectedPath,
-  onZoomChange,
   onSelectElement,
   onHoverElement,
   onHtmlChange,
-  onBreadcrumbsChange,
 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -84,7 +82,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
 
   // Prebuilt assets (React UMD + Tailwind CSS) loaded from main process — no CDN
   const [prebuiltAssets, setPrebuiltAssets] = useState<{
-    reactUmd?: string; reactDomUmd?: string; tailwindCss?: string; extraCss?: string;
+    reactUmd?: string; reactDomUmd?: string; framerMotionUmd?: string; tailwindCss?: string; extraCss?: string;
   }>({});
   const assetsLoadedRef = useRef(false);
 
@@ -96,6 +94,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         setPrebuiltAssets({
           reactUmd: res.reactUmd,
           reactDomUmd: res.reactDomUmd,
+          framerMotionUmd: res.framerMotionUmd,
           tailwindCss: res.tailwindCss,
           extraCss: res.extraCss,
         });
@@ -115,33 +114,34 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   const scaledCanvasHeight = safeCanvasHeight * zoom;
 
   const windowOffset = useMemo(() => {
+    const m = typeof windowMargin === 'number' ? windowMargin : PREVIEW_WINDOW_MARGIN;
     const centeredX = (PREVIEW_SURFACE_WIDTH - scaledCanvasWidth) / 2;
     const centeredY = (PREVIEW_SURFACE_HEIGHT - scaledCanvasHeight) / 2;
     const pos = String(windowPosition || 'center').toLowerCase().replace(/[_-]/g, '');
 
     switch (pos) {
       case 'topleft':
-        return { x: PREVIEW_WINDOW_MARGIN, y: PREVIEW_WINDOW_MARGIN };
+        return { x: m, y: m };
       case 'top':
       case 'topcenter':
-        return { x: centeredX, y: PREVIEW_WINDOW_MARGIN };
+        return { x: centeredX, y: m };
       case 'topright':
-        return { x: PREVIEW_SURFACE_WIDTH - PREVIEW_WINDOW_MARGIN - scaledCanvasWidth, y: PREVIEW_WINDOW_MARGIN };
+        return { x: PREVIEW_SURFACE_WIDTH - m - scaledCanvasWidth, y: m };
       case 'left':
       case 'centerleft':
-        return { x: PREVIEW_WINDOW_MARGIN, y: centeredY };
+        return { x: m, y: centeredY };
       case 'right':
       case 'centerright':
-        return { x: PREVIEW_SURFACE_WIDTH - PREVIEW_WINDOW_MARGIN - scaledCanvasWidth, y: centeredY };
+        return { x: PREVIEW_SURFACE_WIDTH - m - scaledCanvasWidth, y: centeredY };
       case 'bottomleft':
-        return { x: PREVIEW_WINDOW_MARGIN, y: PREVIEW_SURFACE_HEIGHT - PREVIEW_WINDOW_MARGIN - scaledCanvasHeight };
+        return { x: m, y: PREVIEW_SURFACE_HEIGHT - m - scaledCanvasHeight };
       case 'bottom':
       case 'bottomcenter':
-        return { x: centeredX, y: PREVIEW_SURFACE_HEIGHT - PREVIEW_WINDOW_MARGIN - scaledCanvasHeight };
+        return { x: centeredX, y: PREVIEW_SURFACE_HEIGHT - m - scaledCanvasHeight };
       case 'bottomright':
         return {
-          x: PREVIEW_SURFACE_WIDTH - PREVIEW_WINDOW_MARGIN - scaledCanvasWidth,
-          y: PREVIEW_SURFACE_HEIGHT - PREVIEW_WINDOW_MARGIN - scaledCanvasHeight,
+          x: PREVIEW_SURFACE_WIDTH - m - scaledCanvasWidth,
+          y: PREVIEW_SURFACE_HEIGHT - m - scaledCanvasHeight,
         };
       case 'mouse':
       case 'cursor':
@@ -162,7 +162,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       default:
         return { x: centeredX, y: centeredY };
     }
-  }, [windowPosition, customX, customY, scaledCanvasWidth, scaledCanvasHeight]);
+  }, [windowPosition, windowMargin, customX, customY, scaledCanvasWidth, scaledCanvasHeight]);
 
   const generateIframeContent = useCallback(() => {
     return `
@@ -172,6 +172,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   <meta charset="UTF-8">
   ${prebuiltAssets.reactUmd ? `<script>${prebuiltAssets.reactUmd}</script>` : '<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>'}
   ${prebuiltAssets.reactDomUmd ? `<script>${prebuiltAssets.reactDomUmd}</script>` : '<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>'}
+  ${prebuiltAssets.framerMotionUmd ? `<script>${prebuiltAssets.framerMotionUmd}</script>` : ''}
   ${prebuiltAssets.tailwindCss ? `<style>${prebuiltAssets.tailwindCss}</style>` : '<script src="https://cdn.tailwindcss.com"></script>'}
   ${prebuiltAssets.extraCss ? `<style>${prebuiltAssets.extraCss}</style>` : ''}
   <style>
@@ -374,6 +375,14 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       useContext = React.useContext; useLayoutEffect = React.useLayoutEffect;
       Fragment = React.Fragment; createElement = React.createElement;
     }
+
+    // Framer Motion globals
+    var motion = (window.Motion && window.Motion.motion) ? window.Motion.motion : undefined;
+    var AnimatePresence = (window.Motion && window.Motion.AnimatePresence) ? window.Motion.AnimatePresence : undefined;
+    var useAnimation = (window.Motion && window.Motion.useAnimation) ? window.Motion.useAnimation : undefined;
+    var useMotionValue = (window.Motion && window.Motion.useMotionValue) ? window.Motion.useMotionValue : undefined;
+    var useTransform = (window.Motion && window.Motion.useTransform) ? window.Motion.useTransform : undefined;
+    var useSpring = (window.Motion && window.Motion.useSpring) ? window.Motion.useSpring : undefined;
     var hasStuardApi = typeof window.stuard !== 'undefined';
     window.__varListeners = {};
 
@@ -592,50 +601,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       }
     });
 
-    // Build breadcrumb chain from element up to root
-    function getBreadcrumbs(el) {
-      const root = getDesignerRoot();
-      const crumbs = [];
-      let cur = el;
-      while (cur && cur !== root && cur !== document.body) {
-        const path = cur.getAttribute && cur.getAttribute('data-elements-path');
-        if (path) {
-          let label = cur.tagName.toLowerCase();
-          if (cur.id) label += '#' + cur.id;
-          else if (cur.className && typeof cur.className === 'string') {
-            const cls = cur.className.split(/\\s+/).filter(c => !c.startsWith('ui-'))[0];
-            if (cls) label += '.' + cls;
-          }
-          crumbs.unshift({ path: path, tagName: cur.tagName.toLowerCase(), label: label });
-        }
-        cur = cur.parentElement;
-      }
-      return crumbs;
-    }
-
-    function selectTarget(target) {
-      document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
-      if (target) {
-        target.classList.add('ui-selected');
-        selectedPath = target.getAttribute('data-elements-path');
-        const info = getElementInfo(target);
-        const breadcrumbs = getBreadcrumbs(target);
-        window.parent.postMessage({ type: 'select', element: info, breadcrumbs: breadcrumbs }, '*');
-      } else {
-        selectedPath = null;
-        window.parent.postMessage({ type: 'select', element: null, breadcrumbs: [] }, '*');
-      }
-    }
-
-    // Find the smallest (most deeply nested) element at a given point
-    function findDeepestElementAt(x, y) {
-      const els = document.elementsFromPoint(x, y);
-      if (!els || els.length === 0) return null;
-      const annotated = els.filter(el => el.hasAttribute('data-elements-path'));
-      if (annotated.length === 0) return null;
-      return annotated[0];
-    }
-
     document.body.addEventListener('click', (e) => {
       window.focus();
       if (isDragging) {
@@ -644,49 +609,17 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       }
       e.preventDefault();
       e.stopPropagation();
-
-      // Alt+click: select parent of currently selected element
-      if (e.altKey && selectedPath) {
-        const currentEl = findElementByPath(selectedPath);
-        if (currentEl && currentEl.parentElement) {
-          const parent = currentEl.parentElement.closest('[data-elements-path]');
-          if (parent) {
-            selectTarget(parent);
-            return;
-          }
-        }
-      }
-
-      // Default: find the deepest (smallest) element at click point
-      const deepest = findDeepestElementAt(e.clientX, e.clientY);
-      if (deepest) {
-        selectTarget(deepest);
+      const target = e.target.closest('[data-elements-path]');
+      if (target) {
+        document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
+        target.classList.add('ui-selected');
+        selectedPath = target.getAttribute('data-elements-path');
+        const info = getElementInfo(target);
+        window.parent.postMessage({ type: 'select', element: info }, '*');
       } else {
-        const target = e.target.closest('[data-elements-path]');
-        if (target) {
-          selectTarget(target);
-        } else {
-          selectTarget(null);
-        }
-      }
-    }, true);
-
-    // Double-click: drill into children of the currently selected element
-    document.body.addEventListener('dblclick', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (!selectedPath) return;
-      const currentEl = findElementByPath(selectedPath);
-      if (!currentEl) return;
-
-      const els = document.elementsFromPoint(e.clientX, e.clientY);
-      const annotated = els.filter(el =>
-        el.hasAttribute('data-elements-path') &&
-        el !== currentEl &&
-        currentEl.contains(el)
-      );
-      if (annotated.length > 0) {
-        selectTarget(annotated[0]);
+        document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
+        selectedPath = null;
+        window.parent.postMessage({ type: 'select', element: null }, '*');
       }
     }, true);
 
@@ -934,7 +867,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         }
       } else if (e.data.type === 'select') {
         onSelectElement(e.data.element);
-        onBreadcrumbsChange?.(e.data.breadcrumbs || []);
       } else if (e.data.type === 'hover') {
         setHoveredPath(e.data.path);
         onHoverElement(e.data.path);
@@ -958,20 +890,6 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       iframeRef.current.contentWindow.postMessage({ type: 'setSelected', path: selectedPath }, '*');
     }
   }, [selectedPath, iframeReady]);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el || !onZoomChange) return;
-    const handleWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey && !e.metaKey) return;
-      e.preventDefault();
-      const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      const next = Math.round(Math.max(0.25, Math.min(3, zoom + delta)) * 100) / 100;
-      onZoomChange(next);
-    };
-    el.addEventListener('wheel', handleWheel, { passive: false });
-    return () => el.removeEventListener('wheel', handleWheel);
-  }, [zoom, onZoomChange]);
 
   useEffect(() => {
     const el = containerRef.current;

@@ -47,6 +47,7 @@ const PRESET_SIZES = [
 const POSITIONS = [
   { value: 'center', label: 'Center' },
   { value: 'topleft', label: 'Top Left' },
+  { value: 'topcenter', label: 'Top Center' },
   { value: 'topright', label: 'Top Right' },
   { value: 'bottomleft', label: 'Bottom Left' },
   { value: 'bottomcenter', label: 'Bottom Center' },
@@ -59,6 +60,7 @@ const POSITIONS = [
 const POSITION_COORDS: Record<string, { x: number; y: number }> = {
   center: { x: 50, y: 50 },
   topleft: { x: 15, y: 15 },
+  topcenter: { x: 50, y: 15 },
   topright: { x: 85, y: 15 },
   bottomleft: { x: 15, y: 85 },
   bottomcenter: { x: 50, y: 85 },
@@ -417,6 +419,28 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                   </div>
                 </div>
               )}
+
+              {/* Screen Edge Margin */}
+              <div>
+                <label className="text-xs text-slate-500 mb-1 block">
+                  Screen Edge Margin: {config.margin ?? 20}px
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="60"
+                  step="2"
+                  value={config.margin ?? 20}
+                  onChange={(e) => updateConfig('margin', parseInt(e.target.value))}
+                  className="w-full"
+                />
+                <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+                  <span>0px (flush)</span>
+                  <span>20px</span>
+                  <span>60px</span>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">Distance from screen edge when using position presets</p>
+              </div>
 
               <label className="flex items-center gap-2 cursor-pointer">
                 <input

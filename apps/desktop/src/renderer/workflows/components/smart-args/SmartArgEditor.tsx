@@ -2,10 +2,10 @@
  * SmartArgEditor - Main schema-aware argument editor component
  * Uses modular editors from ./editors folder
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Paintbrush, Plus, X, Settings, Code2, LayoutGrid } from 'lucide-react';
 import type { WorkflowVariable } from '../../types';
-import { getToolSchema, type ArgOption } from '../../constants/tool-schemas';
+import { getToolSchema } from '../../constants/tool-schemas';
 import { SmartValueEditor } from '../SmartValueEditor';
 import { EnhancedUIBuilderModal } from '../../../ui-builder/EnhancedUIBuilderModal';
 import type { UIWindowConfig } from '../../../ui-builder/types';
@@ -27,86 +27,17 @@ import { MemoryEditor } from './editors/MemoryEditor';
 import { BooleanToggle } from './editors/BooleanToggle';
 import { CronEditor } from '../CronEditor';
 import { UIBuilderModal } from '../../../ui-builder';
-import { supabase } from '../../../lib/supabaseClient';
 
 export type { UpstreamNode };
-
-const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || 'http://127.0.0.1:8082';
-
-interface IntegrationProfile {
-  provider: string;
-  profile_label: string;
-  is_default: boolean;
-  account_email?: string | null;
-}
-
-function buildIntegrationProfileOptions(profiles: IntegrationProfile[], provider: string, providerLabel: string): ArgOption[] {
-  const filteredProfiles = [...profiles]
-    .filter((profile) => profile.provider === provider)
-    .sort((a, b) => {
-      if (a.is_default !== b.is_default) return a.is_default ? -1 : 1;
-      return String(a.account_email || a.profile_label || '').localeCompare(String(b.account_email || b.profile_label || ''));
-    });
-
-  if (filteredProfiles.length === 0) {
-    return [];
-  }
-
-  const defaultProfile = filteredProfiles.find((profile) => profile.is_default);
-  const options: ArgOption[] = [
-    {
-      value: '',
-      label: defaultProfile?.account_email ? `Default: ${defaultProfile.account_email}` : `Default ${providerLabel} account`,
-      description: defaultProfile?.profile_label
-        ? `Uses profile "${defaultProfile.profile_label}"`
-        : `Use the default connected ${providerLabel} account`,
-    },
-  ];
-
-  for (const profile of filteredProfiles) {
-    const label = profile.account_email || profile.profile_label || `${providerLabel} account`;
-    const suffix = profile.is_default ? 'default' : `profile "${profile.profile_label}"`;
-    options.push({
-      value: profile.profile_label,
-      label,
-      description: profile.account_email && profile.account_email !== profile.profile_label
-        ? `${profile.profile_label} • ${suffix}`
-        : suffix,
-    });
-  }
-
-  return options;
-}
-
-function getProfileProvider(toolName: string, argKey: string): { provider: string; label: string } | null {
-  if (argKey !== 'profile' && argKey !== 'account') return null;
-  if (toolName.startsWith('google_') || toolName.startsWith('gmail_') || toolName.startsWith('calendar_') || toolName.startsWith('drive_') || toolName.startsWith('docs_') || toolName.startsWith('sheets_') || toolName.startsWith('tasks_') || toolName === 'gmail_send') {
-    return { provider: 'google', label: 'Google' };
-  }
-  if (toolName.startsWith('facebook_')) return { provider: 'facebook', label: 'Facebook' };
-  if (toolName.startsWith('instagram_')) return { provider: 'instagram', label: 'Instagram' };
-  if (toolName.startsWith('threads_')) return { provider: 'threads', label: 'Threads' };
-  if (toolName.startsWith('outlook_')) return { provider: 'outlook', label: 'Outlook' };
-  if (toolName.startsWith('github_')) return { provider: 'github', label: 'GitHub' };
-  if (toolName.startsWith('discord_')) return { provider: 'discord', label: 'Discord' };
-  if (toolName.startsWith('reddit_')) return { provider: 'reddit', label: 'Reddit' };
-  return null;
-}
 
 /**
  * Unescape double-escaped component code from LLM output.
  * Converts literal \n → newline, \t → tab, \" → ", \' → '
  * so the code editor shows properly formatted code.
- *
- * Only triggers when the code has NO real newlines (indicating double JSON
- * encoding). If the code already has real newlines, \n sequences are
- * legitimate JS escape sequences (e.g., 'Hello\nWorld') and must stay.
  */
 function unescapeComponentCode(code: string): string {
   if (!code) return code;
-  // If code already has real newlines, the \n sequences are real JS escapes — don't touch
-  if (code.includes('\n')) return code;
-  // Detect double-escaping: has literal \n or \" text but no real newlines
+  // Detect double-escaping: has literal \n or \" text
   const hasLiteralEscapes = code.includes('\\n') || code.includes('\\t') || code.includes('\\"');
   if (!hasLiteralEscapes) return code;
   // Preserve real backslashes first
@@ -135,78 +66,6 @@ export interface SmartArgEditorProps {
 export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNodes, workflowVariables }: SmartArgEditorProps) {
   const schema = useMemo(() => getToolSchema(toolName), [toolName]);
   const argSchema = schema?.args[argKey];
-  const profileProvider = useMemo(() => getProfileProvider(toolName, argKey), [toolName, argKey]);
-  const shouldUseIntegrationProfileDropdown = !!profileProvider;
-  const [integrationProfileOptions, setIntegrationProfileOptions] = useState<ArgOption[]>([]);
-  const [integrationProfilesLoading, setIntegrationProfilesLoading] = useState(false);
-
-  // Dynamic agent tools for agent_node multiselect
-  const isAgentToolsPicker = toolName === 'agent_node' && argKey === 'tools';
-  const [dynamicAgentTools, setDynamicAgentTools] = useState<ArgOption[] | null>(null);
-
-  useEffect(() => {
-    if (!isAgentToolsPicker) return;
-    let cancelled = false;
-    const api = (window as any).desktopAPI;
-    if (!api?.workflowsGetAgentToolOptions) return;
-    api.workflowsGetAgentToolOptions().then((result: any) => {
-      if (cancelled) return;
-      if (result?.ok && Array.isArray(result.tools)) {
-        setDynamicAgentTools(result.tools);
-      }
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [isAgentToolsPicker]);
-
-  useEffect(() => {
-    if (!shouldUseIntegrationProfileDropdown || !profileProvider) return;
-
-    let cancelled = false;
-
-    const loadProfiles = async () => {
-      setIntegrationProfilesLoading(true);
-      try {
-        const { data } = await supabase.auth.getSession();
-        const token = data.session?.access_token;
-        if (!token) {
-          if (!cancelled) setIntegrationProfileOptions([]);
-          return;
-        }
-
-        const resp = await fetch(`${CLOUD_AI_HTTP}/integrations/profiles?provider=${encodeURIComponent(profileProvider.provider)}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const json = await resp.json().catch(() => null);
-        const rawProfiles = Array.isArray(json?.profiles) ? json.profiles : [];
-        const profiles: IntegrationProfile[] = rawProfiles.map((profile: any) => ({
-          provider: profile.provider || profileProvider.provider,
-          profile_label: profile.profile || profile.profile_label || 'default',
-          is_default: !!(profile.isDefault ?? profile.is_default),
-          account_email: profile.email || profile.account_email || null,
-        }));
-
-        if (!cancelled) {
-          setIntegrationProfileOptions(buildIntegrationProfileOptions(profiles, profileProvider.provider, profileProvider.label));
-        }
-      } catch {
-        if (!cancelled) setIntegrationProfileOptions([]);
-      } finally {
-        if (!cancelled) setIntegrationProfilesLoading(false);
-      }
-    };
-
-    void loadProfiles();
-
-    const handleProfilesChanged = () => {
-      void loadProfiles();
-    };
-
-    window.addEventListener('integrations.connected.changed', handleProfilesChanged);
-    return () => {
-      cancelled = true;
-      window.removeEventListener('integrations.connected.changed', handleProfilesChanged);
-    };
-  }, [shouldUseIntegrationProfileDropdown, profileProvider]);
 
   // If no schema, infer the best editor from the value type
   if (!argSchema) {
@@ -214,7 +73,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
     if (typeof value === 'boolean') {
       return (
         <div className="space-y-2">
-          <label className="text-sm font-semibold wf-fg">{argKey}</label>
+          <label className="text-sm font-semibold text-slate-700">{argKey}</label>
           <BooleanToggle value={value} onChange={onChange} />
         </div>
       );
@@ -223,7 +82,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
     if (Array.isArray(value)) {
       return (
         <div className="space-y-2">
-          <label className="text-sm font-semibold wf-fg">{argKey}</label>
+          <label className="text-sm font-semibold text-slate-700">{argKey}</label>
           <ArrayEditor
             value={value}
             onChange={onChange}
@@ -238,7 +97,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
     if (typeof value === 'object' && value !== null) {
       return (
         <div className="space-y-2">
-          <label className="text-sm font-semibold wf-fg">{argKey}</label>
+          <label className="text-sm font-semibold text-slate-700">{argKey}</label>
           <JsonEditor
             value={value}
             onChange={onChange}
@@ -252,7 +111,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
     if (typeof value === 'number') {
       return (
         <div className="space-y-2">
-          <label className="text-sm font-semibold wf-fg">{argKey}</label>
+          <label className="text-sm font-semibold text-slate-700">{argKey}</label>
           <TextInputWithVariables
             value={String(value)}
             onChange={(v: string) => {
@@ -270,7 +129,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
     // Default: string text input
     return (
       <div className="space-y-2">
-        <label className="text-sm font-semibold wf-fg">{argKey}</label>
+        <label className="text-sm font-semibold text-slate-700">{argKey}</label>
         <TextInputWithVariables
           value={String(value ?? '')}
           onChange={onChange}
@@ -311,31 +170,6 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
           workflowVariables={workflowVariables}
           isParallel={toolName === 'run_parallel'}
         />
-      );
-    }
-
-    if (shouldUseIntegrationProfileDropdown && profileProvider) {
-      return (
-        <div className="space-y-2">
-          <SelectInput
-            value={String(value ?? '')}
-            onChange={onChange}
-            options={integrationProfileOptions}
-            placeholder={
-              integrationProfilesLoading
-                ? `Loading connected ${profileProvider.label} accounts...`
-                : integrationProfileOptions.length > 0
-                  ? `Select connected ${profileProvider.label} account`
-                  : `No ${profileProvider.label} accounts connected`
-            }
-            allowFreeform={integrationProfileOptions.length === 0}
-          />
-          {!integrationProfilesLoading && integrationProfileOptions.length === 0 && (
-            <p className="text-[11px] wf-fg-faint leading-snug">
-              Connect a {profileProvider.label} account in Integrations to populate this list.
-            </p>
-          )}
-        </div>
       );
     }
 
@@ -384,25 +218,15 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
           />
         ) : null;
 
-      case 'multiselect': {
-        const resolvedOptions = isAgentToolsPicker && dynamicAgentTools
-          ? dynamicAgentTools
-          : (options && options.length > 0 ? options : undefined);
-        return resolvedOptions ? (
+      case 'multiselect':
+        return options ? (
           <MultiSelectInput
             value={Array.isArray(value) ? value : (value ? [value] : [])}
             onChange={onChange}
-            options={resolvedOptions}
-            placeholder={isAgentToolsPicker && !dynamicAgentTools ? 'Loading tools...' : placeholder}
+            options={options}
+            placeholder={placeholder}
           />
-        ) : (
-          isAgentToolsPicker ? (
-            <div className="px-4 py-3 text-sm wf-fg-faint wf-bg-overlay rounded-xl border wf-border-subtle">
-              Loading available tools...
-            </div>
-          ) : null
-        );
-      }
+        ) : null;
 
       case 'hotkey':
         return <HotkeyEditor value={Array.isArray(value) ? value : []} onChange={onChange} />;
@@ -456,7 +280,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
                   console.error('Failed to pick path:', e);
                 }
               }}
-              className="px-3 py-2 wf-bg-overlay wf-hover-bg border wf-border-subtle rounded-xl wf-fg-muted wf-hover-fg transition-all flex items-center gap-1.5 text-sm font-medium shrink-0"
+              className="px-3 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-xl text-slate-600 hover:text-slate-800 transition-all flex items-center gap-1.5 text-sm font-medium shrink-0"
               title="Browse..."
             >
               Browse
@@ -473,13 +297,9 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
         );
 
       case 'array':
-        // Allow string variable references (e.g. "{{step.items}}") to pass through
-        const isVarRefArray = typeof value === 'string' && value.includes('{{');
-        const arrayValue = isVarRefArray
+        const arrayValue = Array.isArray(value)
           ? value
-          : Array.isArray(value)
-            ? value
-            : (value !== undefined && value !== null && value !== '' ? [value] : []);
+          : (value !== undefined && value !== null && value !== '' ? [value] : []);
         return (
           <ArrayEditor
             value={arrayValue}
@@ -505,9 +325,9 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
       case 'json':
       case 'object':
         return (
-          <JsonEditor
-            value={value || {}}
-            onChange={onChange}
+          <JsonEditor 
+            value={value || {}} 
+            onChange={onChange} 
             upstreamNodes={upstreamNodes}
             workflowVariables={workflowVariables}
           />
@@ -534,12 +354,12 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
   return (
     <div className="space-y-2">
       <div className="flex flex-col gap-0.5 mb-1">
-        <label className="text-sm font-semibold wf-fg flex items-center gap-1.5">
+        <label className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
           {label || argKey}
           {required && <span className="text-red-400 text-xs">*</span>}
         </label>
         {description && (
-          <p className="text-[11px] wf-fg-faint leading-snug">
+          <p className="text-[11px] text-slate-400 leading-snug">
             {description}
           </p>
         )}
@@ -616,17 +436,17 @@ export function ToolArgsEditor({
     return (
       <div className="space-y-5">
         {/* React Component Editor - Primary mode */}
-        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden" open>
-          <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 bg-gradient-to-r from-blue-500/10 to-sky-500/10 hover:from-blue-500/20 hover:to-sky-500/20 transition-colors">
-            <Code2 className="w-4 h-4 text-blue-400" />
-            <span className="text-blue-400">Component (React)</span>
+        <details className="text-sm border border-slate-200 rounded-xl overflow-hidden" open>
+          <summary className="cursor-pointer text-slate-600 hover:text-slate-800 font-medium p-3 flex items-center gap-2 bg-gradient-to-r from-blue-50 to-sky-50 hover:from-blue-100 hover:to-sky-100 transition-colors">
+<Code2 className="w-4 h-4 text-blue-600" />
+            <span className="text-blue-700">Component (React)</span>
             {hasComponent && (
-              <span className="ml-auto text-xs bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full">active</span>
+              <span className="ml-auto text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">active</span>
             )}
           </summary>
-          <div className="p-4 space-y-3 bg-black/20">
-            <p className="text-[11px] wf-fg-faint leading-snug">
-              Define a function App() using JSX. <b className="wf-fg-muted">Hooks:</b> useState, useEffect, useVar(name, default), useStyles(css), useInterval, useTimeout, useLocalStorage. <b className="wf-fg-muted">Animation:</b> motion.div (Framer Motion), AnimatePresence, useAnimation, useMotionValue. <b className="wf-fg-muted">Components:</b> Badge, Progress, Spinner, Skeleton, Tooltip, Switch, Toast, Avatar, Divider, Kbd. <b className="wf-fg-muted">API:</b> stuard.submit(data), stuard.close(), stuard.callTool(name, args). <b className="wf-fg-muted">Fonts:</b> Inter, Outfit, Space Grotesk, JetBrains Mono.
+          <div className="p-4 space-y-3 bg-white">
+            <p className="text-[11px] text-slate-400 leading-snug">
+              Define a function App() using JSX. Hooks: useState, useEffect, useVar(name, default). API: stuard.submit(data), stuard.close(), stuard.callTool(name, args). Use useState for multi-page navigation.
             </p>
             <button
               onClick={() => setShowUIBuilder(true)}
@@ -670,15 +490,15 @@ export function ToolArgsEditor({
         </div>
 
         {/* Window Configuration - Collapsible */}
-        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden">
-          <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 wf-bg-overlay hover:wf-bg-overlay transition-colors">
+        <details className="text-sm border border-slate-200 rounded-xl overflow-hidden">
+          <summary className="cursor-pointer text-slate-600 hover:text-slate-800 font-medium p-3 flex items-center gap-2 bg-slate-50 hover:bg-slate-100 transition-colors">
             <Settings className="w-4 h-4" />
             Window Settings
-            <span className="ml-auto text-xs wf-fg-faint">
+            <span className="ml-auto text-xs text-slate-400">
               {args.window?.width || args.width || 600}×{args.window?.height || args.height || 450}
             </span>
           </summary>
-          <div className="p-4 space-y-4 bg-black/20">
+          <div className="p-4 space-y-4 bg-white">
             <SmartArgEditor
               toolName={toolName}
               argKey="window"
@@ -691,17 +511,17 @@ export function ToolArgsEditor({
         </details>
 
         {/* Pages System - Collapsible */}
-        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden" open={hasPages}>
-          <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 wf-bg-overlay hover:wf-bg-overlay transition-colors">
+        <details className="text-sm border border-slate-200 rounded-xl overflow-hidden" open={hasPages}>
+          <summary className="cursor-pointer text-slate-600 hover:text-slate-800 font-medium p-3 flex items-center gap-2 bg-slate-50 hover:bg-slate-100 transition-colors">
             <LayoutGrid className="w-4 h-4" />
             Pages (Multi-page SPA)
             {hasPages && (
-              <span className="ml-auto text-xs bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full">
+              <span className="ml-auto text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
                 {Object.keys(args.pages).length} page(s)
               </span>
             )}
           </summary>
-          <div className="p-4 space-y-4 bg-black/20">
+          <div className="p-4 space-y-4 bg-white">
             <SmartArgEditor
               toolName={toolName}
               argKey="pages"
@@ -725,24 +545,24 @@ export function ToolArgsEditor({
 
         {/* Add Custom Property */}
         {showAddArg ? (
-          <div className="flex gap-2 items-center p-3 bg-black/20 rounded-xl border border-indigo-500/30 shadow-sm animate-in fade-in slide-in-from-bottom-2">
+          <div className="flex gap-2 items-center p-3 bg-slate-50 rounded-xl border border-indigo-200 shadow-sm animate-in fade-in slide-in-from-bottom-2">
             <input
               value={newArgKey}
               onChange={e => setNewArgKey(e.target.value)}
               placeholder="custom_property_name"
-              className="flex-1 px-3 py-2 text-sm border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/50 font-mono wf-bg-overlay wf-fg"
+className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300 font-mono bg-white"
               onKeyDown={e => e.key === 'Enter' && addCustomArg()}
               autoFocus
             />
             <button
               onClick={addCustomArg}
-              className="px-4 py-2 bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded-lg text-sm font-medium hover:bg-blue-500/30 shadow-sm transition-colors"
+className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm transition-colors"
             >
               Add
             </button>
             <button
               onClick={() => { setShowAddArg(false); setNewArgKey(''); }}
-              className="p-2 wf-fg-faint wf-hover-fg hover:wf-bg-overlay rounded-lg transition-colors"
+              className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 rounded-lg transition-colors"
             >
               <X className="w-4 h-4" />
             </button>
@@ -750,9 +570,9 @@ export function ToolArgsEditor({
         ) : (
           <button
             onClick={() => setShowAddArg(true)}
-            className="w-full py-3 border border-dashed wf-border-subtle rounded-xl text-xs font-semibold wf-fg-faint hover:text-blue-400 hover:border-blue-500/50 hover:bg-blue-500/10 transition-all flex items-center justify-center gap-2 group"
-          >
-            <div className="w-6 h-6 rounded-full wf-bg-overlay group-hover:bg-blue-500/20 flex items-center justify-center transition-colors">
+className="w-full py-3 border border-dashed border-slate-200 rounded-xl text-xs font-semibold text-slate-400 hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50/30 transition-all flex items-center justify-center gap-2 group"
+            >
+              <div className="w-6 h-6 rounded-full bg-slate-50 group-hover:bg-blue-50 flex items-center justify-center transition-colors">
               <Plus className="w-3.5 h-3.5" />
             </div>
             Add Custom Property
@@ -775,23 +595,25 @@ export function ToolArgsEditor({
               outputMode="react"
               originalComponent={args.component || ''}
               windowConfig={{
-                width: args.window?.width || args.width || 600,
-                height: args.window?.height || args.height || 450,
-                position: args.window?.position || args.position || 'center',
-                alwaysOnTop: args.window?.alwaysOnTop ?? args.alwaysOnTop ?? false,
+                width: args.window?.width ?? args.width ?? 600,
+                height: args.window?.height ?? args.height ?? 450,
+                position: args.window?.position ?? args.position ?? 'center',
+                alwaysOnTop: args.window?.alwaysOnTop ?? args.alwaysOnTop ?? true,
                 frameless: args.window?.frameless ?? args.frameless ?? false,
                 transparent: args.window?.transparent ?? args.transparent ?? false,
-                borderRadius: args.window?.borderRadius || args.borderRadius || 12,
+                borderRadius: args.window?.borderRadius ?? args.borderRadius ?? 12,
                 resizable: args.window?.resizable ?? args.resizable ?? false,
-                title: args.title || args.window?.title || 'Custom UI',
-                backgroundType: args.window?.backgroundType || 'color',
-                backgroundColor: args.window?.backgroundColor || '#1a1a2e',
+                draggable: args.window?.draggable,
+                title: args.window?.title ?? args.title,
+                backgroundType: args.window?.backgroundType,
+                backgroundColor: args.window?.backgroundColor,
                 gradient: args.window?.gradient,
                 backgroundImage: args.window?.backgroundImage,
-                shadow: args.window?.shadow || { enabled: true, color: '#00000040', blur: 20, spread: 0, x: 0, y: 8 },
+                shadow: args.window?.shadow,
                 border: args.window?.border,
-                animation: args.window?.animation || { open: 'fade', close: 'fade', duration: 300, easing: 'ease-out' },
-                contentPadding: args.window?.contentPadding || 24,
+                animation: args.window?.animation,
+                contentPadding: args.window?.contentPadding ?? 24,
+                margin: args.window?.margin,
               }}
               onSave={handleUIBuilderSave}
               onSaveComponent={handleReactBuilderSave}
@@ -855,15 +677,15 @@ export function ToolArgsEditor({
 
         {/* Pages Navigation - if pages exist */}
         {hasPages && (
-          <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden" open>
-            <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 wf-bg-overlay hover:wf-bg-overlay transition-colors">
+          <details className="text-sm border border-slate-200 rounded-xl overflow-hidden" open>
+            <summary className="cursor-pointer text-slate-600 hover:text-slate-800 font-medium p-3 flex items-center gap-2 bg-slate-50 hover:bg-slate-100 transition-colors">
               <LayoutGrid className="w-4 h-4" />
               Pages
-              <span className="ml-auto text-xs bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full">
+              <span className="ml-auto text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">
                 {Object.keys(args.pages).length} page(s)
               </span>
             </summary>
-            <div className="p-4 space-y-4 wf-bg-overlay">
+            <div className="p-4 space-y-4 bg-white">
               <SmartArgEditor
                 toolName={toolName}
                 argKey="pages"
@@ -885,12 +707,12 @@ export function ToolArgsEditor({
         )}
 
         {/* Raw Code Editing */}
-        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden">
-          <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 wf-bg-overlay hover:wf-bg-overlay transition-colors">
+        <details className="text-sm border border-slate-200 rounded-xl overflow-hidden">
+          <summary className="cursor-pointer text-slate-600 hover:text-slate-800 font-medium p-3 flex items-center gap-2 bg-slate-50 hover:bg-slate-100 transition-colors">
             <Code2 className="w-4 h-4" />
             Edit HTML/CSS/JS
           </summary>
-          <div className="p-4 space-y-4 wf-bg-overlay">
+          <div className="p-4 space-y-4 bg-white">
             <SmartArgEditor
               toolName={toolName}
               argKey="html"
@@ -927,217 +749,30 @@ export function ToolArgsEditor({
             startPage={args.navigateTo || args.startPage}
             mode="update"
             windowConfig={{
-              width: args.window?.width || args.width || 600,
-              height: args.window?.height || args.height || 450,
-              position: args.window?.position || args.position || 'center',
-              alwaysOnTop: args.window?.alwaysOnTop ?? args.alwaysOnTop ?? false,
+              width: args.window?.width ?? args.width ?? 600,
+              height: args.window?.height ?? args.height ?? 450,
+              position: args.window?.position ?? args.position ?? 'center',
+              alwaysOnTop: args.window?.alwaysOnTop ?? args.alwaysOnTop ?? true,
               frameless: args.window?.frameless ?? args.frameless ?? false,
               transparent: args.window?.transparent ?? args.transparent ?? false,
-              borderRadius: args.window?.borderRadius || args.borderRadius || 12,
+              borderRadius: args.window?.borderRadius ?? args.borderRadius ?? 12,
               resizable: args.window?.resizable ?? args.resizable ?? false,
-              title: 'Update UI',
-              // Enhanced properties from existing window config if available
-              backgroundType: args.window?.backgroundType || 'color',
-              backgroundColor: args.window?.backgroundColor || '#1a1a2e',
+              draggable: args.window?.draggable,
+              title: args.window?.title ?? 'Update UI',
+              backgroundType: args.window?.backgroundType,
+              backgroundColor: args.window?.backgroundColor,
               gradient: args.window?.gradient,
               backgroundImage: args.window?.backgroundImage,
-              shadow: args.window?.shadow || { enabled: true, color: '#00000040', blur: 20, spread: 0, x: 0, y: 8 },
+              shadow: args.window?.shadow,
               border: args.window?.border,
-              animation: args.window?.animation || { open: 'fade', close: 'fade', duration: 300, easing: 'ease-out' },
-              contentPadding: args.window?.contentPadding || 24,
+              animation: args.window?.animation,
+              contentPadding: args.window?.contentPadding ?? 24,
+              margin: args.window?.margin,
             }}
             onSave={handleUIBuilderSave}
             onClose={() => setShowUIBuilder(false)}
           />
         )}
-      </div>
-    );
-  }
-
-  // Special case: analyze_media — structured sources editor with file path pickers
-  if (toolName === 'analyze_media') {
-    const sources: Array<{ path?: string; url?: string; data?: string; captureScreen?: boolean }> =
-      Array.isArray(args.sources) ? args.sources : [{ path: '' }];
-
-    const updateSource = (idx: number, update: Record<string, any>) => {
-      const newSources = [...sources];
-      newSources[idx] = { ...newSources[idx], ...update };
-      onUpdate({ ...args, sources: newSources });
-    };
-
-    const addSource = () => {
-      onUpdate({ ...args, sources: [...sources, { path: '' }] });
-    };
-
-    const removeSource = (idx: number) => {
-      const newSources = sources.filter((_, i) => i !== idx);
-      onUpdate({ ...args, sources: newSources.length > 0 ? newSources : [{ path: '' }] });
-    };
-
-    return (
-      <div className="space-y-5">
-        {/* Task */}
-        <SmartArgEditor
-          toolName={toolName}
-          argKey="task"
-          value={args.task || ''}
-          onChange={v => onUpdate({ ...args, task: v })}
-          upstreamNodes={upstreamNodes}
-          workflowVariables={workflowVariables}
-        />
-
-        {/* Media Sources */}
-        <div className="space-y-2">
-          <label className="text-sm font-semibold wf-fg flex items-center gap-1.5">
-            Media Sources
-            <span className="text-red-400 text-xs">*</span>
-          </label>
-          <p className="text-[11px] wf-fg-faint leading-snug">
-            Add the media files to analyze. Use template variables like {'{{step_N.filePath}}'} to reference outputs from previous steps.
-          </p>
-
-          <div className="space-y-2">
-            {sources.map((source, idx) => {
-              const sourceType = source.captureScreen ? 'screen' : source.url ? 'url' : source.data ? 'data' : 'file';
-
-              return (
-                <div key={idx} className="border wf-border-subtle rounded-xl overflow-hidden wf-bg-overlay">
-                  {/* Source type tabs */}
-                  <div className="flex items-center gap-1 p-1.5 wf-bg-overlay border-b wf-border-subtle">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const newSources = [...sources];
-                        newSources[idx] = { path: source.path || '' };
-                        onUpdate({ ...args, sources: newSources });
-                      }}
-                      className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-semibold transition-all ${sourceType === 'file'
-                        ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                        : 'wf-fg-faint hover:wf-fg-muted hover:wf-bg-overlay'
-                        }`}
-                    >
-                      📁 File Path
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const newSources = [...sources];
-                        newSources[idx] = { url: source.url || '' };
-                        onUpdate({ ...args, sources: newSources });
-                      }}
-                      className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-semibold transition-all ${sourceType === 'url'
-                        ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                        : 'wf-fg-faint hover:wf-fg-muted hover:wf-bg-overlay'
-                        }`}
-                    >
-                      🔗 URL
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const newSources = [...sources];
-                        newSources[idx] = { captureScreen: true };
-                        onUpdate({ ...args, sources: newSources });
-                      }}
-                      className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-semibold transition-all ${sourceType === 'screen'
-                        ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                        : 'wf-fg-faint hover:wf-fg-muted hover:wf-bg-overlay'
-                        }`}
-                    >
-                      🖥️ Screen
-                    </button>
-                    {sources.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeSource(idx)}
-                        className="p-1 wf-fg-faint hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
-                        title="Remove source"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Source value */}
-                  <div className="p-3">
-                    {sourceType === 'screen' ? (
-                      <p className="text-xs wf-fg-muted italic">Will capture the current screen when executed.</p>
-                    ) : sourceType === 'url' ? (
-                      <TextInputWithVariables
-                        value={source.url || ''}
-                        onChange={v => updateSource(idx, { url: v })}
-                        placeholder="https://youtube.com/watch?v=... or direct media URL"
-                        upstreamNodes={upstreamNodes}
-                        workflowVariables={workflowVariables}
-                      />
-                    ) : (
-                      <div className="flex gap-2">
-                        <div className="flex-1">
-                          <TextInputWithVariables
-                            value={source.path || ''}
-                            onChange={v => updateSource(idx, { path: v })}
-                            placeholder="C:/path/to/media.mp4 or {{step_N.filePath}}"
-                            upstreamNodes={upstreamNodes}
-                            workflowVariables={workflowVariables}
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            try {
-                              const api = (window as any).desktopAPI;
-                              if (!api?.pickFiles) return;
-                              const result = await api.pickFiles({
-                                title: 'Select Media File',
-                                multiple: false,
-                                filters: [
-                                  { name: 'Media Files', extensions: ['mp4', 'webm', 'mov', 'avi', 'mkv', 'mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp'] },
-                                  { name: 'All Files', extensions: ['*'] },
-                                ],
-                              });
-                              if (result?.ok && result.files?.length > 0) {
-                                const file = result.files[0];
-                                updateSource(idx, { path: typeof file === 'string' ? file : file.path });
-                              }
-                            } catch (e) {
-                              console.error('Failed to pick file:', e);
-                            }
-                          }}
-                          className="px-3 py-2 wf-bg-overlay wf-hover-bg border wf-border-subtle rounded-xl wf-fg-muted wf-hover-fg transition-all flex items-center gap-1.5 text-sm font-medium shrink-0"
-                          title="Browse for media file"
-                        >
-                          Browse
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Add source button */}
-          <button
-            type="button"
-            onClick={addSource}
-            className="w-full py-2.5 border border-dashed wf-border-subtle rounded-xl text-xs font-semibold wf-fg-faint hover:text-blue-400 hover:border-blue-500/50 hover:bg-blue-500/10 transition-all flex items-center justify-center gap-2 group"
-          >
-            <div className="w-5 h-5 rounded-full wf-bg-overlay group-hover:bg-blue-500/20 flex items-center justify-center transition-colors">
-              <Plus className="w-3 h-3" />
-            </div>
-            Add Another Source
-          </button>
-        </div>
-
-        {/* Mode */}
-        <SmartArgEditor
-          toolName={toolName}
-          argKey="mode"
-          value={args.mode || 'fast'}
-          onChange={v => onUpdate({ ...args, mode: v })}
-          upstreamNodes={upstreamNodes}
-          workflowVariables={workflowVariables}
-        />
       </div>
     );
   }
@@ -1180,30 +815,32 @@ export function ToolArgsEditor({
     return (
       <div className="space-y-5">
         {/* Input Source */}
-        <div className="border wf-border-subtle rounded-xl overflow-hidden">
-          <div className="flex items-center gap-1 p-1.5 wf-bg-overlay">
+        <div className="border border-slate-200 rounded-xl overflow-hidden">
+          <div className="flex items-center gap-1 p-1.5 bg-slate-50">
             <button
               type="button"
               onClick={() => setInputMode('file')}
-              className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${inputMode === 'file'
-                ? 'bg-white/[0.08] text-lime-400 shadow-sm border border-lime-500/30'
-                : 'wf-fg-muted hover:wf-fg hover:wf-bg-overlay'
-                }`}
+              className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                inputMode === 'file'
+                  ? 'bg-white text-lime-700 shadow-sm border border-lime-200'
+                  : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100'
+              }`}
             >
               📁 Image File
             </button>
             <button
               type="button"
               onClick={() => setInputMode('base64')}
-              className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${inputMode === 'base64'
-                ? 'bg-white/[0.08] text-lime-400 shadow-sm border border-lime-500/30'
-                : 'wf-fg-muted hover:wf-fg hover:wf-bg-overlay'
-                }`}
+              className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                inputMode === 'base64'
+                  ? 'bg-white text-lime-700 shadow-sm border border-lime-200'
+                  : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100'
+              }`}
             >
               🔗 Base64 / Data URL
             </button>
           </div>
-          <div className="p-3 wf-bg-overlay">
+          <div className="p-3 bg-white">
             {inputMode === 'file' ? (
               <SmartArgEditor
                 toolName={toolName}
@@ -1270,17 +907,17 @@ export function ToolArgsEditor({
           const advKeys = Object.keys(schema.args).filter(k => schema.args[k]?.advanced && !['outputPath'].includes(k));
           if (advKeys.length === 0) return null;
           return (
-            <div className="border wf-border-subtle rounded-xl overflow-hidden">
+            <div className="border border-slate-200 rounded-xl overflow-hidden">
               <button
                 type="button"
                 onClick={() => setShowAdvancedArgs(v => !v)}
-                className="w-full flex items-center justify-between px-3 py-2 wf-bg-overlay hover:wf-bg-overlay transition-colors text-xs font-semibold wf-fg-muted"
+                className="w-full flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-slate-100 transition-colors text-xs font-semibold text-slate-600"
               >
                 <span>Advanced Settings</span>
-                <span className="text-[10px] wf-fg-faint">{advKeys.length} option(s)</span>
+                <span className="text-[10px] text-slate-400">{advKeys.length} option(s)</span>
               </button>
               {showAdvancedArgs && (
-                <div className="p-4 space-y-4 wf-bg-overlay border-t wf-border-subtle">
+                <div className="p-4 space-y-4 bg-white border-t border-slate-200">
                   {advKeys.map(key => (
                     <SmartArgEditor
                       key={key}
@@ -1320,7 +957,7 @@ export function ToolArgsEditor({
 
   const schemaKeys = schema ? Object.keys(schema.args) : [];
   const extraKeys = Object.keys(args).filter(k => !schemaKeys.includes(k));
-
+  
   // Check if arg should be visible based on showWhen condition
   const checkShowWhen = (argSchema: any): boolean => {
     if (!argSchema?.showWhen) return true;
@@ -1332,7 +969,7 @@ export function ToolArgsEditor({
     }
     return currentValue === value;
   };
-
+  
   const visibleSchemaKeys = schemaKeys.filter((k) => !schema?.args?.[k]?.hidden && checkShowWhen(schema?.args?.[k]));
   const baseSchemaKeys = visibleSchemaKeys.filter((k) => !schema?.args?.[k]?.advanced);
   const advancedSchemaKeys = visibleSchemaKeys.filter((k) => !!schema?.args?.[k]?.advanced);
@@ -1341,9 +978,9 @@ export function ToolArgsEditor({
   return (
     <div className="space-y-6">
       {allBaseKeys.length === 0 && !showAddArg && advancedSchemaKeys.length === 0 ? (
-        <div className="py-8 px-4 text-center rounded-xl wf-bg-overlay border border-dashed wf-border-subtle">
-          <p className="text-sm wf-fg-muted font-medium">No configuration needed</p>
-          <p className="text-xs wf-fg-faint mt-1">This step doesn't require any settings.</p>
+        <div className="py-8 px-4 text-center rounded-xl bg-slate-50 border border-dashed border-slate-200">
+          <p className="text-sm text-slate-500 font-medium">No configuration needed</p>
+          <p className="text-xs text-slate-400 mt-1">This step doesn't require any settings.</p>
         </div>
       ) : (
         allBaseKeys.map(key => {
@@ -1363,7 +1000,7 @@ export function ToolArgsEditor({
               {(isExtra || !argSchema?.required) && (
                 <button
                   onClick={() => deleteArg(key)}
-                  className="absolute right-0 top-0 p-1.5 wf-fg-faint hover:text-red-400 hover:bg-red-500/10 rounded-lg opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0"
+                  className="absolute right-0 top-0 p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0"
                   title="Remove argument"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -1375,17 +1012,17 @@ export function ToolArgsEditor({
       )}
 
       {advancedSchemaKeys.length > 0 && (
-        <div className="border wf-border-subtle rounded-xl overflow-hidden">
+        <div className="border border-slate-200 rounded-xl overflow-hidden">
           <button
             type="button"
             onClick={() => setShowAdvancedArgs((v) => !v)}
-            className="w-full flex items-center justify-between px-3 py-2 wf-bg-overlay hover:wf-bg-overlay transition-colors text-xs font-semibold wf-fg-muted"
+            className="w-full flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-slate-100 transition-colors text-xs font-semibold text-slate-600"
           >
             <span>Advanced Settings</span>
-            <span className="text-[10px] wf-fg-faint">{advancedSchemaKeys.length} option(s)</span>
+            <span className="text-[10px] text-slate-400">{advancedSchemaKeys.length} option(s)</span>
           </button>
           {showAdvancedArgs && (
-            <div className="p-4 space-y-4 wf-bg-overlay border-t wf-border-subtle">
+            <div className="p-4 space-y-4 bg-white border-t border-slate-200">
               {advancedSchemaKeys.map((key) => (
                 <SmartArgEditor
                   key={key}
@@ -1403,12 +1040,12 @@ export function ToolArgsEditor({
       )}
 
       {showAddArg ? (
-        <div className="flex gap-2 items-center p-3 wf-bg-overlay rounded-xl border border-indigo-500/30 shadow-sm animate-in fade-in slide-in-from-bottom-2">
+        <div className="flex gap-2 items-center p-3 bg-slate-50 rounded-xl border border-indigo-200 shadow-sm animate-in fade-in slide-in-from-bottom-2">
           <input
             value={newArgKey}
             onChange={e => setNewArgKey(e.target.value)}
             placeholder="custom_property_name"
-            className="flex-1 px-3 py-2 text-sm border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 font-mono wf-bg-overlay wf-fg"
+            className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 font-mono bg-white"
             onKeyDown={e => e.key === 'Enter' && addArg()}
             autoFocus
           />
@@ -1420,7 +1057,7 @@ export function ToolArgsEditor({
           </button>
           <button
             onClick={() => { setShowAddArg(false); setNewArgKey(''); }}
-            className="p-2 wf-fg-faint hover:wf-fg-muted hover:wf-bg-overlay rounded-lg transition-colors"
+            className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 rounded-lg transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
@@ -1428,9 +1065,9 @@ export function ToolArgsEditor({
       ) : (
         <button
           onClick={() => setShowAddArg(true)}
-          className="w-full py-3 border border-dashed wf-border-subtle rounded-xl text-xs font-semibold wf-fg-faint hover:text-blue-400 hover:border-blue-500/50 hover:bg-blue-500/10 transition-all flex items-center justify-center gap-2 group"
+          className="w-full py-3 border border-dashed border-slate-200 rounded-xl text-xs font-semibold text-slate-400 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/30 transition-all flex items-center justify-center gap-2 group"
         >
-          <div className="w-6 h-6 rounded-full wf-bg-overlay group-hover:bg-blue-500/20 flex items-center justify-center transition-colors">
+          <div className="w-6 h-6 rounded-full bg-slate-50 group-hover:bg-indigo-50 flex items-center justify-center transition-colors">
             <Plus className="w-3.5 h-3.5" />
           </div>
           Add Custom Property

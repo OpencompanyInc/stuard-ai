@@ -849,26 +849,43 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 
       <div
         className={clsx(
-          "flex-1 min-w-0 min-h-0 flex flex-col p-3 transition-all duration-300",
+          "flex-1 min-w-0 min-h-0 flex flex-col p-3 transition-all duration-300 border border-theme",
           sidebarOpen
             ? "rounded-r-[28px] rounded-l-none border-l-0 overflow-hidden"
             : "rounded-[28px] overflow-hidden",
           translucentMode
-            ? "bg-theme-bg/25 backdrop-blur-2xl border border-theme/20"
-            : "bg-theme-bg border border-theme/10",
+            ? "bg-theme-bg backdrop-blur-2xl"
+            : "bg-theme-bg",
         )}
+        style={{
+          background: translucentMode
+            ? "color-mix(in srgb, var(--background) 76%, transparent)"
+            : undefined,
+          boxShadow: "0 18px 40px rgba(15, 23, 42, 0.08)",
+        }}
       >
         <div
           className={clsx(
-            "flex-1 min-h-0 flex flex-col overflow-hidden p-2",
+            "flex-1 min-h-0 flex flex-col overflow-hidden p-2 border border-theme",
             "rounded-[24px]",
             translucentMode
-              ? "bg-theme-bg backdrop-blur-xl border border-theme/5"
-              : "bg-theme-card border border-theme/10 shadow-sm",
+              ? "bg-theme-bg backdrop-blur-xl"
+              : "bg-theme-card shadow-sm",
           )}
+          style={{
+            background: translucentMode
+              ? "color-mix(in srgb, var(--card-bg) 84%, transparent)"
+              : undefined,
+          }}
         >
           {/* Top Header */}
-          <div className="flex items-center justify-between px-2 py-2 border-b border-theme/10 bg-theme-hover/40 backdrop-blur-sm w-full min-w-0 shrink-0">
+          <div
+            className="flex items-center justify-between px-2 py-2 border-b border-theme backdrop-blur-sm w-full min-w-0 shrink-0"
+            style={{
+              background:
+                "color-mix(in srgb, var(--sidebar-item-hover) 40%, transparent)",
+            }}
+          >
             <div className="flex-1 w-0 min-w-0 overflow-hidden mr-2">
               <ChatTabs
                 tabs={tabs}
@@ -897,9 +914,9 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
           </div>
 
           {/* Main Content Area */}
-          <div className="flex-1 flex flex-col items-center px-4 pb-3 overflow-y-auto custom-scrollbar">
+          <div className="flex-1 flex flex-col items-center px-4 pb-3 overflow-y-auto scrollbar-minimal">
             {viewMode === "tasks" ? (
-              <div className="w-full flex-1 min-h-0 overflow-y-auto custom-scrollbar pt-3">
+              <div className="w-full flex-1 min-h-0 overflow-y-auto scrollbar-minimal pt-3">
                 <TasksView
                   compact
                   defaultSubTab={tasksSubTab}
@@ -973,7 +990,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 
                 {/* Results */}
                 {showResults && (
-                  <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-3 min-h-0">
+                  <div className="flex-1 overflow-y-auto scrollbar-minimal pr-2 space-y-3 min-h-0">
                     <button
                       onClick={onSend}
                       className="w-full flex items-center gap-4 px-4 py-3 rounded-2xl hover:bg-theme-hover transition-all group border border-transparent hover:border-theme/30 relative overflow-hidden bg-theme-bg"
@@ -1127,7 +1144,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
             {overlayMode === "compact" &&
               !showResults &&
               (discoveredApps.length > 0 || bookmarks.length > 0) && (
-                <div className="flex items-center gap-1.5 mb-2 overflow-x-auto scrollbar-none">
+                <div className="flex items-center gap-1.5 mb-2 overflow-x-auto scrollbar-hidden">
                   {/* Discovered apps — always shown first */}
                   {discoveredApps.slice(0, 4).map((da: any) => {
                     const iconUrl =
@@ -1257,7 +1274,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
               <div className="flex items-center gap-2 bg-theme-hover/50 rounded-[24px] p-1.5 pr-2 focus-within:ring-2 focus-within:ring-primary/10 transition-all border border-theme/5">
                 <div className="flex-1 relative rounded-xl transition-all flex items-center">
                   <TextareaAutosize
-                    className="w-full bg-transparent outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-semibold min-w-0 resize-none leading-5 py-2 overflow-y-auto custom-scrollbar px-3"
+                    className="w-full bg-transparent outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-semibold min-w-0 resize-none leading-5 py-2 overflow-y-auto scrollbar-minimal px-3"
                     placeholder="Just ask Stuard"
                     value={query}
                     onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>

@@ -167,6 +167,30 @@
   color: var(--foreground-muted);
 }
 
+.theme-surface-hover:hover {
+  background-color: var(--sidebar-item-hover);
+}
+
+.theme-surface-strong:hover {
+  background-color: var(--sidebar-item-active);
+}
+
+.theme-surface-soft {
+  background-color: color-mix(in srgb, var(--sidebar-item-hover) 52%, transparent);
+}
+
+.theme-surface-muted {
+  background-color: color-mix(in srgb, var(--sidebar-item-hover) 28%, transparent);
+}
+
+.theme-text-hover:hover {
+  color: var(--foreground);
+}
+
+.theme-border-hover:hover {
+  border-color: var(--border);
+}
+
 .border-theme {
   border-color: var(--border);
 }
