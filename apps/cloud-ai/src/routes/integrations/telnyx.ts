@@ -760,7 +760,9 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
       if (eventType === 'message.received') {
         const msgPayload = payload?.data?.payload || {};
         const fromPhone = normalizePhone(String(msgPayload?.from?.phone_number || msgPayload?.from || ''));
-        const inboundText: string = String(msgPayload?.text || '').trim();
+        const rawText: string = String(msgPayload?.text || '').trim();
+        const mediaItems: any[] = msgPayload?.media || [];
+        const hasMedia = mediaItems.length > 0;
         const providerMessageId = String(
           msgPayload?.id ||
           msgPayload?.record_id ||
@@ -768,7 +770,23 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
           '',
         ).trim() || null;
 
-        if (fromPhone && inboundText) {
+        if (fromPhone && (rawText || hasMedia)) {
+          // Process media attachments if present (MMS sent to SMS webhook)
+          let inboundText = rawText;
+          let processedAttachments: any[] = [];
+          if (hasMedia) {
+            try {
+              const inboundMedia = fromTelnyxMms(mediaItems, rawText || undefined);
+              const mediaResult = await MediaProcessor.process(inboundMedia);
+              processedAttachments = mediaResult.attachments || [];
+              // Build message text: original text + any transcriptions/descriptions
+              inboundText = [rawText, mediaResult.supplementaryText].filter(Boolean).join('\n') || '[media received]';
+            } catch (e: any) {
+              console.error('[telnyx] MediaProcessor.process failed in SMS handler:', e?.message);
+              if (!inboundText) inboundText = '[media received]';
+            }
+          }
+
           // Find which user owns this number (primary or secondary)
           const userId = await findUserIdByPhone(fromPhone);
           if (userId) {
@@ -776,6 +794,8 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
               fromPhone,
               userId,
               textPreview: inboundText.slice(0, 80),
+              hasMedia,
+              mediaCount: mediaItems.length,
             });
 
             // ── Handle slash commands ────────────────────────────────
@@ -807,8 +827,9 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
               effectiveTarget = vmRunning ? 'vm' : 'cloud'; // auto now falls back to cloud instead of desktop
             }
 
+            const msgSource = hasMedia ? 'mms' : 'sms';
             console.log('[telnyx] SMS routing decision', {
-              userId, configuredTarget: target, vmRunning, effectiveTarget,
+              userId, configuredTarget: target, vmRunning, effectiveTarget, source: msgSource,
             });
 
             let handled = false;
@@ -840,9 +861,10 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
                   message: inboundText,
                   conversationId: convId || undefined,
                   model: smsState.preferred_model || 'fast',
-                  context: { source: 'sms', fromPhone },
+                  context: { source: msgSource, fromPhone },
                   memoryQuery: inboundText,
                   ...(queryEmbedding ? { queryEmbedding } : {}),
+                  ...(processedAttachments.length > 0 ? { attachments: processedAttachments } : {}),
                 }, 60_000);
 
                 if (vmResult.ok && vmResult.result?.text) {
@@ -879,7 +901,8 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
                   message: inboundText,
                   conversationId: smsState.conversation_id,
                   model: smsState.preferred_model || 'fast',
-                  source: 'sms',
+                  source: msgSource as 'sms' | 'mms',
+                  ...(processedAttachments.length > 0 ? { attachments: processedAttachments } : {}),
                 });
 
                 if (cloudResult.ok && cloudResult.text) {
@@ -923,6 +946,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
                   metadata: {
                     eventType,
                     receivedAt: new Date().toISOString(),
+                    ...(processedAttachments.length > 0 ? { processedAttachments } : {}),
                   },
                 });
                 if (!queued) {
@@ -941,9 +965,10 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
             });
           }
         } else {
-          console.warn('[telnyx] inbound SMS missing sender or text', {
+          console.warn('[telnyx] inbound SMS missing sender or text/media', {
             fromPhone,
-            hasText: !!inboundText,
+            hasText: !!rawText,
+            hasMedia,
           });
         }
       }

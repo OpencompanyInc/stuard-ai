@@ -1,7 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { getExternalAccount, debitCredits } from '../supabase';
-import { getBridgeSecrets } from './bridge';
+import { getBridgeSecrets, execLocalTool } from './bridge';
 import { TELNYX_API_KEY, TELNYX_FROM_NUMBER, TELNYX_MESSAGING_PROFILE_ID } from '../utils/config';
 import { messagingCreditCost } from '../pricing';
 import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
@@ -189,29 +189,75 @@ export const telnyx_phone_status = createTool({
 
 // ── Send MMS (Image/Media via Telnyx) ────────────────────────────────────────
 
+function inferMimeFromFilename(filename: string): string {
+  const ext = filename.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] || '';
+  const map: Record<string, string> = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+    webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml',
+    mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', avi: 'video/x-msvideo',
+    mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4',
+  };
+  return map[ext] || 'application/octet-stream';
+}
+
 export const telnyx_send_mms = createTool({
   id: 'telnyx_send_mms',
-  description: "Send an MMS message with an image or media file to the user's verified phone number.",
+  description: "Send an MMS message with an image or media file to the user's verified phone number. Provide EITHER a public media_url, OR a local file path, OR base64 data. Local files and base64 data are automatically uploaded to get a public URL.",
   inputSchema: z.object({
-    media_url: z.string().describe('Public URL of the media file to send (image, gif, video, etc.).'),
+    media_url: z.string().optional().describe('Public URL of the media file to send (image, gif, video, etc.). Use this if you already have a public URL.'),
+    path: z.string().optional().describe('Local file path on the user\'s machine (e.g. C:\\Users\\me\\photo.jpg). The file will be uploaded automatically.'),
+    data: z.string().optional().describe('Base64-encoded media data. Must also provide mimeType when using this.'),
+    mimeType: z.string().optional().describe('MIME type of the base64 data (e.g. image/png, video/mp4). Required when using data.'),
     message: z.string().default('').describe('Optional text message to include with the media.'),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
     messageId: z.string().optional(),
     to: z.string().optional(),
+    mediaUrl: z.string().optional(),
     error: z.string().optional(),
   }),
-  execute: async (input) => {
+  execute: async (input, execCtx: any) => {
     try {
       const userId = await requireUserId();
       const phone = await getVerifiedPhone(userId);
+
+      let resolvedUrl = input.media_url || '';
+
+      // If a local file path is provided, read it via bridge and upload
+      if (!resolvedUrl && input.path) {
+        const bin = await execLocalTool('read_file_binary', { path: input.path }, execCtx?.writer);
+        const fileData = bin?.data as string | undefined;
+        if (!fileData) {
+          throw new Error(`Could not read file at path: ${input.path}`);
+        }
+        const originalFilename = input.path.replace(/\\/g, '/').split('/').pop() || 'media_file';
+        const contentType = input.mimeType || inferMimeFromFilename(originalFilename);
+        const buffer = Buffer.from(fileData, 'base64');
+        const filename = `mms_${randomUUID().slice(0, 8)}_${originalFilename}`;
+        const uploadResult = await uploadUserFileBuffer(userId, filename, buffer, contentType, 'mms-media', 'public');
+        resolvedUrl = uploadResult.url;
+      }
+
+      // If base64 data is provided directly, upload it
+      if (!resolvedUrl && input.data) {
+        const mime = input.mimeType || 'image/png';
+        const ext = mime.split('/')[1]?.replace('jpeg', 'jpg') || 'bin';
+        const filename = `mms_${randomUUID().slice(0, 8)}.${ext}`;
+        const buffer = Buffer.from(input.data, 'base64');
+        const uploadResult = await uploadUserFileBuffer(userId, filename, buffer, mime, 'mms-media', 'public');
+        resolvedUrl = uploadResult.url;
+      }
+
+      if (!resolvedUrl) {
+        throw new Error('No media provided. Supply one of: media_url (public URL), path (local file), or data (base64).');
+      }
 
       const body: any = {
         from: TELNYX_FROM_NUMBER,
         to: phone,
         text: String(input.message || '').slice(0, 1600),
-        media_urls: [input.media_url],
+        media_urls: [resolvedUrl],
         type: 'MMS',
       };
       if (TELNYX_MESSAGING_PROFILE_ID) {
@@ -229,7 +275,7 @@ export const telnyx_send_mms = createTool({
           metadata: { provider: 'telnyx', tool: 'telnyx_send_mms' },
         }).catch((e: any) => console.error('[telnyx-tools] mms credit deduction failed:', e?.message));
       }
-      return { ok: true, messageId: result?.data?.id || '', to: phone };
+      return { ok: true, messageId: result?.data?.id || '', to: phone, mediaUrl: resolvedUrl };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
     }

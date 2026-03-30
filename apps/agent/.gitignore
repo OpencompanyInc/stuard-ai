@@ -10,8 +10,9 @@ venv/
 # PyInstaller build artifacts
 build/
 dist/
-*.spec
 *.manifest
+# Ignore auto-generated specs but keep our hand-written ones
+!stuard-*.spec
 
 # Built agent executables
 stuard-agent.exe

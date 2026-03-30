@@ -6,7 +6,7 @@ import { setSessionWorkflow, clearSessionWorkflow } from './tools/workflow';
 import { withClientBridge, handleClientToolMessage } from './tools/bridge';
 import { routeModel, type ModelChoice } from './router/model-router';
 import { verifyAccessToken, AuthErrorCode } from './auth';
-import { createConversation, addAssistantMessage, addUserMessage, logUsageEvent, checkAccess, incrementDailyRequestCounter, finishRun, setConversationTitle, getExternalAccount } from './supabase';
+import { createConversation, addAssistantMessage, addUserMessage, logUsageEvent, checkAccess, incrementDailyRequestCounter, finishRun, setConversationTitle, getExternalAccount, getConversationMessages } from './supabase';
 import { getDefaultModelForCategory, priceForModel } from './pricing';
 import { buildProviderModel } from './utils/models';
 import { randomUUID } from 'crypto';
@@ -127,6 +127,11 @@ server.on('close', () => { try { clearInterval(pingTimer); } catch { } });
 
 import { handleSpeechConnection } from './routes/speech';
 import { handleTerminalConnection } from './routes/terminal-relay';
+import { telnyxBridgeWss } from './routes/integrations/telnyx-bridge';
+import { initVoiceProviders } from './voice';
+
+// Register all voice providers (OpenAI Realtime, ElevenLabs, Grok, Gemini Live)
+initVoiceProviders();
 
 server.on('upgrade', (req, socket, head) => {
   const url = req.url || '';
@@ -141,6 +146,10 @@ server.on('upgrade', (req, socket, head) => {
   } else if (url === '/terminal' || url.startsWith('/terminal?')) {
     wss.handleUpgrade(req, socket, head, (ws) => {
       handleTerminalConnection(ws, req);
+    });
+  } else if (url.startsWith('/ws/telnyx-bridge')) {
+    telnyxBridgeWss.handleUpgrade(req, socket, head, (ws) => {
+      telnyxBridgeWss.emit('connection', ws, req);
     });
   } else {
     socket.destroy();
@@ -513,6 +522,26 @@ wss.on('connection', (ws: WebSocket, req: any) => {
 
         // Get conversation history for this connection
         const history = conversations.get(ws) || [];
+
+        // If a conversationId was provided but in-memory history is empty,
+        // load prior messages from Supabase so multi-turn context is preserved
+        // (e.g., SMS where each message opens a new WebSocket connection).
+        if (conversationId && history.length === 0 && authUser) {
+          try {
+            const priorMsgs = await getConversationMessages(authUser.userId, conversationId, 20);
+            for (const pm of priorMsgs) {
+              if (pm.role === 'user' || pm.role === 'assistant') {
+                history.push({ role: pm.role, content: pm.content });
+              }
+            }
+            if (history.length > 0) {
+              conversations.set(ws, history);
+              console.log(`[cloud-ai] Loaded ${history.length} prior messages from Supabase for conversation ${conversationId}`);
+            }
+          } catch (e: any) {
+            console.warn('[cloud-ai] Failed to load conversation history from Supabase:', e?.message);
+          }
+        }
 
         // Add new user messages to history
         const newUserMsgs = messages.filter(m => m.role === 'user');

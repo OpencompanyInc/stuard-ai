@@ -7,7 +7,7 @@ import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
 import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } from "../integrations/outlook";
-import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch } from "../services";
+import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, isProactiveSchedulerRunning, handleProactiveReply } from "../services";
 import { setupSpeechIpc } from "./speech";
 import { setupTerminalIpc } from "../terminal";
 import logger from "../utils/logger";
@@ -16,6 +16,14 @@ import { Buffer } from "node:buffer";
 import { getGlobalHotkey, setGlobalHotkey as saveGlobalHotkey, getTimezone, setTimezone, getRendererPrefs, setRendererPrefs } from "../settings";
 import { syncMainAuthSession } from "../services/auth-session";
 import { skills_list, skills_get, skills_save, skills_delete, skills_toggle, loadSkills } from "../skills";
+import { TOOL_REGISTRY } from "../tools/registry";
+import {
+  browserMirrorClickAt,
+  browserMirrorPressKey,
+  browserMirrorScreenshot,
+  browserMirrorScroll,
+  browserMirrorType,
+} from "../tools/handlers/browser-use";
 
 let nodeNotifier: any = null;
 try { nodeNotifier = require('node-notifier'); } catch { }
@@ -92,6 +100,9 @@ function isPrivateOrInternalUrl(urlString: string): boolean {
 export function setupIpc() {
   setupSpeechIpc();
   setupTerminalIpc();
+  const proactiveAvailableTools = Object.keys(TOOL_REGISTRY)
+    .filter((toolName) => !toolName.startsWith('proactive_task_'))
+    .sort((a, b) => a.localeCompare(b));
   // Overlay
   ipcMain.handle("overlay:show", () => showWindow());
   ipcMain.handle("overlay:hide", () => hideWindow());
@@ -854,6 +865,65 @@ export function setupIpc() {
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
     }
+  });
+
+  // Browser mirror (live browser sidebar controls)
+  ipcMain.handle('browserMirror:screenshot', async (_e, sessionId?: string, quality?: number) => {
+    return browserMirrorScreenshot(
+      typeof sessionId === 'string' && sessionId.trim() ? sessionId.trim() : 'default',
+      typeof quality === 'number' ? quality : 50,
+    );
+  });
+  ipcMain.handle('browserMirror:clickAt', async (_e, sessionId: string, x: number, y: number, type?: 'click' | 'dblclick') => {
+    return browserMirrorClickAt(
+      typeof sessionId === 'string' && sessionId.trim() ? sessionId.trim() : 'default',
+      Number(x),
+      Number(y),
+      type === 'dblclick' ? 'dblclick' : 'click',
+    );
+  });
+  ipcMain.handle('browserMirror:type', async (_e, sessionId: string, text: string) => {
+    return browserMirrorType(
+      typeof sessionId === 'string' && sessionId.trim() ? sessionId.trim() : 'default',
+      String(text || ''),
+    );
+  });
+  ipcMain.handle('browserMirror:pressKey', async (_e, sessionId: string, key: string) => {
+    return browserMirrorPressKey(
+      typeof sessionId === 'string' && sessionId.trim() ? sessionId.trim() : 'default',
+      String(key || ''),
+    );
+  });
+  ipcMain.handle('browserMirror:scroll', async (_e, sessionId: string, direction?: 'up' | 'down', amount?: number) => {
+    return browserMirrorScroll(
+      typeof sessionId === 'string' && sessionId.trim() ? sessionId.trim() : 'default',
+      direction === 'up' ? 'up' : 'down',
+      typeof amount === 'number' ? amount : 300,
+    );
+  });
+
+  // Proactive agent controls
+  ipcMain.handle('proactive:getConfig', () => proactiveService.getConfig());
+  ipcMain.handle('proactive:updateConfig', (_e, updates: any) => proactiveService.updateConfig(updates || {}));
+  ipcMain.handle('proactive:listTasks', () => proactiveService.listTasks({ limit: 500 }));
+  ipcMain.handle('proactive:addTask', (_e, task: any) => proactiveService.addTask(task || {}));
+  ipcMain.handle('proactive:updateTask', (_e, taskId: string, updates: any) =>
+    proactiveService.updateTask(String(taskId || ''), updates || {})
+  );
+  ipcMain.handle('proactive:deleteTask', (_e, taskId: string) => proactiveService.deleteTask(String(taskId || '')));
+  ipcMain.handle('proactive:getWakeUpLog', (_e, limit?: number) =>
+    proactiveService.getWakeUpLog(typeof limit === 'number' ? limit : 20)
+  );
+  ipcMain.handle('proactive:triggerNow', () => triggerManualWakeUp());
+  ipcMain.handle('proactive:getAvailableTools', () => ({ ok: true, tools: proactiveAvailableTools }));
+  ipcMain.handle('proactive:submitResult', (_e, _payload: any) => ({ ok: true }));
+  ipcMain.handle('proactive:isRunning', () => ({ ok: true, running: isProactiveSchedulerRunning() }));
+  ipcMain.handle('proactive:reply', async (_e, payload: { wakeUpId: string; text: string }) => {
+    const wakeUpId = String(payload?.wakeUpId || '').trim();
+    const text = String(payload?.text || '').trim();
+    if (!wakeUpId) return { ok: false, error: 'wakeUpId_required' };
+    if (!text) return { ok: false, error: 'text_required' };
+    return handleProactiveReply(wakeUpId, text);
   });
 
   // File Indexing

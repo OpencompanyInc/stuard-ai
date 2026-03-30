@@ -10,6 +10,12 @@ export * from "./offline-calendar";
 export * from "./auth-session";
 export { startSmsInbox, stopSmsInbox, getSmsInboxStatus } from "./sms-inbox";
 export { startReminderScheduler, stopReminderScheduler } from "./reminder-scheduler";
-export { startProactiveScheduler, stopProactiveScheduler, handleProactiveReply } from "./proactive-scheduler";
+export {
+  startProactiveScheduler,
+  stopProactiveScheduler,
+  handleProactiveReply,
+  triggerManualWakeUp,
+  isProactiveSchedulerRunning,
+} from "./proactive-scheduler";
 export { proactiveService } from "./proactive-service";
 export { startCloudWebhooks, stopCloudWebhooks } from "./cloud-webhooks";
