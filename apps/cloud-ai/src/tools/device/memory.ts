@@ -16,19 +16,42 @@ function normalizePath(rawPath: unknown): string[] {
     .filter((s) => s.length > 0);
 }
 
+async function resolveSpaceId(
+  rawSpaceRef: unknown
+): Promise<{ ok: true; space_id: string } | { ok: false; error: string }> {
+  const spaceRef = String(rawSpaceRef ?? '').trim();
+  if (!spaceRef) return { ok: false, error: 'missing_space_id' };
+
+  const direct = await memoryService.getSpace(spaceRef);
+  if (direct?.id) {
+    return { ok: true, space_id: String(direct.id) };
+  }
+
+  const spaces = await memoryService.listSpaces({ include_archived: true, limit: 500 });
+  const match = spaces.find((space) => String(space?.name || '').trim().toLowerCase() === spaceRef.toLowerCase());
+  if (match?.id) {
+    return { ok: true, space_id: String(match.id) };
+  }
+
+  return { ok: false, error: `space not found: ${spaceRef}` };
+}
+
 async function resolveFolderPath(
   spaceId: string,
   rawPath: unknown,
   options?: { create?: boolean }
-): Promise<{ ok: boolean; folder_id?: string | null; created?: boolean; error?: string }> {
+): Promise<{ ok: true; space_id: string; folder_id: string | null; created: boolean } | { ok: false; error: string }> {
   const create = options?.create ?? false;
   const parts = normalizePath(rawPath);
+  const resolvedSpace = await resolveSpaceId(spaceId);
+  if (!resolvedSpace.ok) return resolvedSpace;
+  const resolvedSpaceId = resolvedSpace.space_id;
 
   let parentId: string | null | undefined = undefined;
   let createdAny = false;
 
   for (const name of parts) {
-    const folders = await memoryService.getSpaceItems(spaceId, {
+    const folders = await memoryService.getSpaceItems(resolvedSpaceId, {
       type: 'folder',
       parent_id: parentId || undefined,
       include_all: false,
@@ -45,7 +68,7 @@ async function resolveFolderPath(
       return { ok: false, error: 'path_not_found' };
     }
 
-    const folder = await memoryService.createSpaceFolder(spaceId, name, {
+    const folder = await memoryService.createSpaceFolder(resolvedSpaceId, name, {
       parent_id: parentId || undefined,
     });
 
@@ -54,7 +77,7 @@ async function resolveFolderPath(
     parentId = String(folder.id);
   }
 
-  return { ok: true, folder_id: parentId ?? null, created: createdAny };
+  return { ok: true, space_id: resolvedSpaceId, folder_id: parentId ?? null, created: createdAny };
 }
 
 export const search_past_conversations = createTool({
@@ -465,7 +488,7 @@ export const ensure_space_path = createTool({
   description:
     'Ensure a folder path exists inside a space (creates nested folders as needed). Paths use "/" separators like "Project/Specs/Backend".',
   inputSchema: z.object({
-    space_id: z.string().describe('The space ID to operate in'),
+    space_id: z.string().describe('The space ID or exact space name to operate in'),
     path: z.string().optional().default('').describe('Folder path within the space (e.g. "A/B/C"). Empty means root.'),
   }),
   outputSchema: z.object({
@@ -480,7 +503,8 @@ export const ensure_space_path = createTool({
 
     try {
       const res = await resolveFolderPath(c.space_id, c.path, { create: true });
-      return res;
+      if (!res.ok) return res;
+      return { ok: true, folder_id: res.folder_id, created: res.created };
     } catch (error) {
       return { ok: false, error: String(error) };
     }
@@ -492,7 +516,7 @@ export const list_space_path = createTool({
   description:
     'List items inside a folder path within a space. Use this to browse subfolders and notes like a filesystem.',
   inputSchema: z.object({
-    space_id: z.string().describe('The space ID to list from'),
+    space_id: z.string().describe('The space ID or exact space name to list from'),
     path: z.string().optional().default('').describe('Folder path within the space. Empty means root.'),
     type: z.enum(['note', 'source', 'link', 'file', 'fact', 'snippet', 'folder']).optional().describe('Optional filter by item type'),
     limit: z.number().int().min(1).max(500).optional().default(200).describe('Max items to return (<= 500)'),
@@ -511,7 +535,7 @@ export const list_space_path = createTool({
       const resolved = await resolveFolderPath(c.space_id, c.path, { create: false });
       if (!resolved.ok) return resolved;
 
-      const items = await memoryService.getSpaceItems(c.space_id, {
+      const items = await memoryService.getSpaceItems(resolved.space_id, {
         type: c.type,
         parent_id: resolved.folder_id || undefined,
         include_all: false,
@@ -530,7 +554,7 @@ export const add_to_space_path = createTool({
   description:
     'Add an item to a space under a folder path (creates folders as needed). This supports a simple path-based organization system.',
   inputSchema: z.object({
-    space_id: z.string().describe('The space ID to add to'),
+    space_id: z.string().describe('The space ID or exact space name to add to'),
     path: z.string().optional().default('').describe('Folder path within the space. Empty means root.'),
     type: z.enum(['note', 'source', 'link', 'file', 'fact', 'snippet']).describe('Type of item to add'),
     title: z.string().describe('The title/name for the item'),
@@ -550,7 +574,7 @@ export const add_to_space_path = createTool({
       const resolved = await resolveFolderPath(c.space_id, c.path, { create: true });
       if (!resolved.ok) return resolved;
 
-      const item = await memoryService.addSpaceItem(c.space_id, c.type, c.content, {
+      const item = await memoryService.addSpaceItem(resolved.space_id, c.type, c.content, {
         title: c.title,
         added_by: 'ai',
         parent_id: resolved.folder_id || undefined,
@@ -568,7 +592,7 @@ export const get_space_tree = createTool({
   id: 'get_space_tree',
   description: 'Get the full folder tree for a space as a nested structure.',
   inputSchema: z.object({
-    space_id: z.string().describe('The space ID to retrieve the tree for'),
+    space_id: z.string().describe('The space ID or exact space name to retrieve the tree for'),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
@@ -580,7 +604,10 @@ export const get_space_tree = createTool({
     if (!hasClientBridge()) return { ok: false, error: 'No client bridge available' };
 
     try {
-      const tree = await memoryService.getSpaceTree(c.space_id);
+      const resolvedSpace = await resolveSpaceId(c.space_id);
+      if (!resolvedSpace.ok) return resolvedSpace;
+
+      const tree = await memoryService.getSpaceTree(resolvedSpace.space_id);
       if (!tree) return { ok: false, error: 'Failed to get tree' };
       return { ok: true, tree };
     } catch (error) {

@@ -877,13 +877,14 @@ body {
 
 /* Custom thin scrollbars - Minimal & Clean */
 .scrollbar-minimal {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(148, 163, 184, 0.2) transparent;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 .scrollbar-minimal::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .scrollbar-minimal::-webkit-scrollbar-track {
@@ -909,7 +910,8 @@ body {
 /* Dark variant */
 .dark .scrollbar-minimal,
 [data-theme='dark'] .scrollbar-minimal {
-  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 .dark .scrollbar-minimal::-webkit-scrollbar-thumb,

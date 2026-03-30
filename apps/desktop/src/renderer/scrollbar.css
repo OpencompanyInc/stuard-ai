@@ -2,19 +2,15 @@
 
 .custom-scrollbar,
 .slick-scrollbar {
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(
-      in srgb,
-      var(--foreground-muted, #94a3b8) 28%,
-      transparent
-    )
-    transparent;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 .custom-scrollbar::-webkit-scrollbar,
 .slick-scrollbar::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track,
@@ -127,13 +123,14 @@
 
 /* XTerm specific scrollbar styling */
 .xterm-viewport {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 .xterm-viewport::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .xterm-viewport::-webkit-scrollbar-track {
