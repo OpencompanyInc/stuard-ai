@@ -17,6 +17,7 @@ import { MemoriesView } from "./components/MemoriesView";
 import { TasksView } from "./components/TasksView";
 import { CloudEngineDashboard } from "./components/CloudEngineDashboard";
 import { StorageView } from "./components/StorageView";
+import { MediaLibraryView } from "./components/MediaLibraryView";
 import { ProactiveView } from "./components/ProactiveView";
 import { VaultView } from "./components/VaultView";
 import { MemoryLockGate } from "./components/MemoryLockGate";
@@ -33,6 +34,7 @@ import {
   ListTodo,
   Cloud,
   HardDrive,
+  Image as ImageIcon,
   Sparkles,
   Shield
 } from "lucide-react";
@@ -227,7 +229,7 @@ function DashboardApp() {
     try {
       const params = new URLSearchParams(window.location.search);
       const initialTab = params.get('tab');
-      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'proactive', 'memories', 'integrations', 'settings', 'cloud', 'storage', 'vault'].includes(initialTab)) {
+      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'proactive', 'memories', 'integrations', 'settings', 'cloud', 'media', 'storage', 'vault'].includes(initialTab)) {
         return initialTab;
       }
     } catch { }
@@ -1061,6 +1063,7 @@ function DashboardApp() {
       key: 'cloud',
       items: [
         { id: 'cloud', label: 'Cloud Engine', icon: Cloud },
+        { id: 'media', label: 'Media', icon: ImageIcon },
         { id: 'vault', label: 'Vault', icon: Shield },
         { id: 'storage', label: 'Storage', icon: HardDrive },
       ],
@@ -1084,6 +1087,7 @@ function DashboardApp() {
     integrations: { title: 'Connected Apps', subtitle: 'Manage the tools and services connected to Stuard.' },
     settings: { title: 'Settings', subtitle: 'Tune themes, behavior, and personalization preferences.' },
     cloud: { title: 'Cloud Engine', subtitle: 'Monitor remote runtime, deployment, and compute status.' },
+    media: { title: 'Media', subtitle: 'Browse screenshots, recordings, generated images, and message media in one gallery.' },
     storage: { title: 'Storage', subtitle: 'Review files, uploads, and your local or cloud storage usage.' },
     vault: { title: 'Vault', subtitle: 'Keep protected data, secure items, and private resources organized.' },
   };
@@ -1093,7 +1097,7 @@ function DashboardApp() {
     subtitle: 'Manage your Stuard workspace from a single dashboard.',
   };
   const showGlobalHeader = !['integrations', 'settings', 'proactive'].includes(tab);
-  const showRefresh = showGlobalHeader && !['planner', 'memories'].includes(tab);
+  const showRefresh = showGlobalHeader && !['planner', 'memories', 'media'].includes(tab);
 
 
   // Apply theme to body
@@ -1333,6 +1337,10 @@ function DashboardApp() {
 
                           {tab === 'cloud' && (
                             <CloudEngineDashboard />
+                          )}
+
+                          {tab === 'media' && (
+                            <MediaLibraryView />
                           )}
 
                           {tab === 'vault' && (

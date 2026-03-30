@@ -12,6 +12,7 @@ import { execProactiveTaskCreate, execProactiveTaskList, execProactiveTaskUpdate
 import { skills_save, skills_list } from '../skills';
 import { execOllamaStatus, execOllamaStart, execOllamaChat, execOllamaGenerate, execOllamaVision, execOllamaEmbeddings, execOllamaModels } from './handlers/ollama';
 import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseExecuteScript, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, execBrowserUseHover, execBrowserUseSelectOption, execBrowserUseGetDropdownOptions, execBrowserUseGetInteractiveElements, execBrowserUseFillForm, execBrowserUseUploadFile, execBrowserUseWaitFor, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse } from './handlers/browser-use';
+import { captureToolMedia } from '../services/media-library';
 import {
   execBrowserGetContent,
   execBrowserClickElement,
@@ -45,6 +46,7 @@ export { execCustomUi, execCloseCustomUi, initCustomUiIpc } from './handlers/ele
  */
 export async function execTool(toolName: string, args: any, ctx: RouterContext): Promise<any> {
   const kind = getToolKind(toolName);
+  const withMediaCapture = async (promise: Promise<any>) => captureToolMedia(toolName, args, await promise);
 
   switch (kind) {
     case 'electron':
@@ -241,7 +243,7 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       return { ok: false, error: `unknown_electron_tool: ${toolName}` };
 
     case 'cloud':
-      return execCloudTool(toolName, args, ctx);
+      return withMediaCapture(execCloudTool(toolName, args, ctx));
 
     case 'orchestration':
       // Orchestration tools are handled by the engine, not here
@@ -249,6 +251,6 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
 
     case 'local':
     default:
-      return execLocalTool(toolName, args, ctx, calcToolTimeout(toolName, args));
+      return withMediaCapture(execLocalTool(toolName, args, ctx, calcToolTimeout(toolName, args)));
   }
 }

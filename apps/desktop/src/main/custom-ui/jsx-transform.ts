@@ -97,7 +97,7 @@ const RUNTIME_GLOBALS = new Set([
   'React', 'ReactDOM', 'Fragment', 'createElement',
   'motion', 'AnimatePresence',
   'stuard', 'initialData', 'formData',
-  'ReactMarkdown',
+  'ReactMarkdown', 'Markdown', 'Badge',
 ]);
 
 /**

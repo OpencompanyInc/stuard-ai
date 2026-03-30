@@ -167,13 +167,20 @@ function buildThemeCss(options: {
     }` : ''}
 
     /* === Component Defaults === */
-    button, .btn {
-      cursor: pointer; user-select: none; display: inline-flex; align-items: center;
-      justify-content: center; padding: 8px 16px; border: none; background: #f1f5f9;
-      color: #475569; border-radius: 8px; font-weight: 500; font-size: 13px;
-      transition: all 0.15s ease; gap: 8px;
+    /* Use .btn class for opinionated button styling; bare <button> stays neutral
+       so Tailwind utility classes (bg-*, text-*, p-*) are not overridden. */
+    button {
+      cursor: pointer; user-select: none; border: none; background: transparent;
+      color: inherit; font: inherit; padding: 0; transition: all 0.15s ease;
     }
-    button:hover { background: #e2e8f0; } button:active { transform: scale(0.98); }
+    button:active { transform: scale(0.98); }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 8px 16px; border: none; background: #f1f5f9;
+      color: #475569; border-radius: 8px; font-weight: 500; font-size: 13px;
+      transition: all 0.15s ease; gap: 8px; cursor: pointer; user-select: none;
+    }
+    .btn:hover { background: #e2e8f0; }
     .btn-primary { background: #4f46e5; color: white; }
     .btn-primary:hover { background: #4338ca; }
     .btn-danger { background: #ef4444; color: white; }
@@ -197,10 +204,21 @@ function buildThemeCss(options: {
 
     .glass { background: rgba(255,255,255,0.7)!important; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(0,0,0,0.08); }
     .card { background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-    h1, h2, h3, h4, h5, h6 { color: #0f172a; font-weight: 600; margin-bottom: 0.5em; }
-    p { margin-bottom: 1em; color: #475569; }
+    /* Use inherit so parent Tailwind text-* classes flow through to rendered elements */
+    h1, h2, h3, h4, h5, h6 { color: inherit; font-weight: 600; margin-bottom: 0.5em; }
+    p { margin-bottom: 1em; color: inherit; }
+    strong { color: inherit; font-weight: 700; }
+    em { color: inherit; }
+    li { color: inherit; }
+    blockquote { color: inherit; }
     label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
     input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
+
+    /* Prose helper: when no Tailwind text-* is set, fall back to sensible defaults */
+    .prose:not([class*="text-"]) { color: #475569; }
+    .prose:not([class*="text-"]) h1, .prose:not([class*="text-"]) h2,
+    .prose:not([class*="text-"]) h3, .prose:not([class*="text-"]) h4,
+    .prose:not([class*="text-"]) h5, .prose:not([class*="text-"]) h6 { color: #0f172a; }
 
     /* Dark mode - add class="dark" to body or html */
     body.dark, .dark body { background: #0f172a; color: #e2e8f0; }
@@ -209,11 +227,8 @@ function buildThemeCss(options: {
     .dark input, .dark textarea, .dark select {
       background: rgba(15,23,42,0.6); border-color: rgba(148,163,184,0.1); color: #f1f5f9;
     }
-    body.dark h1, body.dark h2, body.dark h3, body.dark h4, body.dark h5, body.dark h6,
-    .dark h1, .dark h2, .dark h3, .dark h4, .dark h5, .dark h6 { color: #f8fafc; }
-    body.dark p, .dark p { color: #cbd5e1; }
-    body.dark button, .dark button { background: #334155; color: white; }
-    body.dark button:hover, .dark button:hover { background: #475569; }
+    body.dark .btn, .dark .btn { background: #334155; color: white; }
+    body.dark .btn:hover, .dark .btn:hover { background: #475569; }
     body.dark .btn-secondary, .dark .btn-secondary { background: #334155; color: white; }
     body.dark .btn-ghost, .dark .btn-ghost { color: #94a3b8; }
     body.dark .btn-ghost:hover, .dark .btn-ghost:hover { background: rgba(255,255,255,0.05); color: #f8fafc; }
@@ -469,6 +484,25 @@ function buildRuntimeScript(options: {
       var useMotionValue = (window.Motion && window.Motion.useMotionValue) ? window.Motion.useMotionValue : undefined;
       var useTransform = (window.Motion && window.Motion.useTransform) ? window.Motion.useTransform : undefined;
       var useSpring = (window.Motion && window.Motion.useSpring) ? window.Motion.useSpring : undefined;
+
+      // === React-Markdown globals ===
+      var ReactMarkdown = window.ReactMarkdown || undefined;
+      var Markdown = ReactMarkdown;
+
+      // === Built-in utility components ===
+      var Badge = function Badge(props) {
+        var variant = props.variant || 'default';
+        var colors = {
+          default: 'background:#334155;color:#e2e8f0;',
+          success: 'background:#065f46;color:#6ee7b7;',
+          warning: 'background:#78350f;color:#fcd34d;',
+          error: 'background:#7f1d1d;color:#fca5a5;',
+          info: 'background:#1e3a5f;color:#93c5fd;',
+          primary: 'background:#3730a3;color:#a5b4fc;',
+        };
+        var style = (colors[variant] || colors.default) + 'display:inline-flex;align-items:center;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:500;line-height:1.5;white-space:nowrap;';
+        return React.createElement('span', { style: style, className: props.className }, props.children);
+      };
 
       // === Variable Subscription ===
       window.__varListeners = {};

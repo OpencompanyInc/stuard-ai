@@ -1,6 +1,46 @@
 export { };
 
  type SidebarTabId = 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo';
+ type MediaKind = 'image' | 'video' | 'audio' | 'document' | 'unknown';
+ type MediaSyncMode = 'local-only' | 'mirror-cloud';
+ type MediaSyncStatus = 'local-only' | 'pending' | 'synced' | 'cloud-only' | 'failed';
+
+ interface MediaLibraryItem {
+   id: string;
+   name: string;
+   kind: MediaKind;
+   source: string;
+   classification: string;
+   localPath: string | null;
+   originalPath: string | null;
+   remoteUrl: string | null;
+   cloudObjectName: string | null;
+   syncStatus: MediaSyncStatus;
+   syncError: string | null;
+   syncedAt: string | null;
+   mimeType: string | null;
+   extension: string | null;
+   sizeBytes: number | null;
+   createdAt: string;
+   updatedAt: string;
+   tags: string[];
+   metadata: Record<string, any>;
+ }
+
+ interface MediaLibraryPrefs {
+   syncMode: MediaSyncMode;
+ }
+
+ interface MediaLibrarySummary {
+   total: number;
+   totalBytes: number;
+   synced: number;
+   pending: number;
+   failed: number;
+   cloudOnly: number;
+   byKind: Record<MediaKind, number>;
+   bySource: Record<string, number>;
+ }
 
 declare global {
   interface Window {
@@ -46,6 +86,13 @@ declare global {
       listDirectory: (path: string) => Promise<{ ok: boolean; entries?: Array<{ name: string; path: string; isDirectory: boolean }>; error?: string }>;
       pickFiles: (options?: { type?: string; multiple?: boolean; title?: string; includeData?: boolean }) => Promise<{ ok: boolean; files?: Array<{ name: string; path: string; data?: string; mimeType?: string }>; error?: string }>;
       pickFolder: (options?: { title?: string; multiple?: boolean }) => Promise<{ ok: boolean; folders?: Array<{ path: string }>; error?: string }>;
+      mediaList: () => Promise<{ ok: boolean; items?: MediaLibraryItem[]; error?: string }>;
+      mediaSummary: () => Promise<{ ok: boolean; summary?: MediaLibrarySummary; error?: string }>;
+      mediaGetPrefs: () => Promise<{ ok: boolean; prefs?: MediaLibraryPrefs; error?: string }>;
+      mediaUpdatePrefs: (updates: { syncMode?: MediaSyncMode }) => Promise<{ ok: boolean; prefs?: MediaLibraryPrefs; error?: string }>;
+      mediaSync: (itemIds?: string[]) => Promise<{ ok: boolean; synced?: number; failed?: number; items?: MediaLibraryItem[]; error?: string }>;
+      mediaImportPaths: (paths: string[]) => Promise<{ ok: boolean; items?: MediaLibraryItem[]; error?: string }>;
+      mediaOpenPath: (targetPath: string) => Promise<{ ok: boolean; error?: string }>;
       onShow: (cb: () => void) => () => void;
       onOpenChat: (cb: (id: string) => void) => void | (() => void);
       onDashboardNavigate: (cb: (data: { tab: string }) => void) => () => void;

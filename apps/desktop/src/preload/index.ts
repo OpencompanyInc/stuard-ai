@@ -97,6 +97,14 @@ contextBridge.exposeInMainWorld("desktopAPI", {
       return { ok: false, error: String(e?.message || 'failed') };
     }
   },
+  // Media library
+  mediaList: () => ipcRenderer.invoke('media:list'),
+  mediaSummary: () => ipcRenderer.invoke('media:summary'),
+  mediaGetPrefs: () => ipcRenderer.invoke('media:getPrefs'),
+  mediaUpdatePrefs: (updates: { syncMode?: 'local-only' | 'mirror-cloud' }) => ipcRenderer.invoke('media:updatePrefs', updates),
+  mediaSync: (itemIds?: string[]) => ipcRenderer.invoke('media:sync', itemIds),
+  mediaImportPaths: (paths: string[]) => ipcRenderer.invoke('media:importPaths', paths),
+  mediaOpenPath: (targetPath: string) => ipcRenderer.invoke('media:openPath', targetPath),
   // System helpers
   openExternal: (url: string) => ipcRenderer.invoke('system:openExternal', url),
   getLinkPreview: (url: string) => ipcRenderer.invoke('system:getLinkPreview', url),

@@ -15,6 +15,14 @@ import * as fs from "fs";
 import { Buffer } from "node:buffer";
 import { getGlobalHotkey, setGlobalHotkey as saveGlobalHotkey, getTimezone, setTimezone, getRendererPrefs, setRendererPrefs, loadSettings, saveSettings } from "../settings";
 import { syncMainAuthSession } from "../services/auth-session";
+import {
+  getMediaLibraryPrefs,
+  getMediaLibrarySummary,
+  importMediaPaths,
+  listMediaLibraryItems,
+  syncMediaLibrary,
+  updateMediaLibraryPrefs,
+} from "../services/media-library";
 import { skills_list, skills_get, skills_save, skills_delete, skills_toggle, loadSkills } from "../skills";
 import { TOOL_REGISTRY } from "../tools/registry";
 import {
@@ -405,6 +413,63 @@ export function setupIpc() {
     try {
       const entries = await listDirectory(dirPath);
       return { ok: true, entries };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+  ipcMain.handle("media:list", () => {
+    try {
+      return { ok: true, items: listMediaLibraryItems() };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+  ipcMain.handle("media:summary", () => {
+    try {
+      return { ok: true, summary: getMediaLibrarySummary() };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+  ipcMain.handle("media:getPrefs", () => {
+    try {
+      return { ok: true, prefs: getMediaLibraryPrefs() };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+  ipcMain.handle("media:updatePrefs", (_e, updates?: { syncMode?: 'local-only' | 'mirror-cloud' }) => {
+    try {
+      return { ok: true, prefs: updateMediaLibraryPrefs(updates || {}) };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+  ipcMain.handle("media:sync", async (_e, itemIds?: string[]) => {
+    try {
+      return await syncMediaLibrary(itemIds);
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+  ipcMain.handle("media:importPaths", async (_e, paths?: string[]) => {
+    try {
+      const items = await importMediaPaths(Array.isArray(paths) ? paths : []);
+      return { ok: true, items };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+  ipcMain.handle("media:openPath", async (_e, targetPath: string) => {
+    try {
+      const target = String(targetPath || '').trim();
+      if (!target) return { ok: false, error: 'invalid_path' };
+      if (/^https?:\/\//i.test(target)) {
+        await shell.openExternal(target);
+        return { ok: true };
+      }
+      const error = await shell.openPath(target);
+      return error ? { ok: false, error } : { ok: true };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || 'failed') };
     }

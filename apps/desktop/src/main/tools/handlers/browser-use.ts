@@ -332,6 +332,16 @@ function getServerExecutable(): BrowserServerExecutable {
   };
 }
 
+export function canPrewarmBrowserUseOnStartup(): boolean {
+  try {
+    const exe = getServerExecutable();
+    if (!exe.isPacked) return false;
+    return fs.existsSync(exe.binary);
+  } catch {
+    return false;
+  }
+}
+
 async function killPortProcess(port: number): Promise<void> {
   if (process.platform === 'win32') {
     try {
@@ -580,31 +590,20 @@ async function withServer<T>(
 
 /**
  * Pre-warm the browser server in the background on app startup.
- * This starts the Python server process so the first browser tool call is fast.
+ * This starts the packaged browser server process so the first browser tool call is fast.
  * Non-blocking — fire and forget. If it fails, the normal lazy setup will handle it.
  */
 export async function prewarmBrowserUseServer(): Promise<void> {
   try {
-    // Only pre-warm if we have cached install check or can quickly verify
+    // Keep startup light by only prewarming the packaged service.
     // skipChromeSync: true — prewarm only starts the HTTP server process,
     // it must NOT trigger chrome sync which would launch a browser window
-    if (_installCheckResult?.ok) {
-      const runtime = await getRuntime('default');
-      if (!runtime.process || runtime.process.killed) {
-        console.log('[browser-server] Pre-warming server...');
-        startBrowserUseServer('default', {}).catch(() => {});
-      }
-    } else {
-      // Do a quick Python check (just version, not full import), then start if available
-      const hasPython = await checkPythonAvailable();
-      if (hasPython) {
-        // Run full install check in background (caches result for later)
-        installBrowserUse().then((result) => {
-          if (result.ok) {
-            startBrowserUseServer('default', {}).catch(() => {});
-          }
-        }).catch(() => {});
-      }
+    if (!canPrewarmBrowserUseOnStartup()) return;
+
+    const runtime = await getRuntime('default');
+    if (!runtime.process || runtime.process.killed) {
+      console.log('[browser-server] Pre-warming packaged server...');
+      startBrowserUseServer('default', {}).catch(() => {});
     }
   } catch {
     // Pre-warming is best-effort

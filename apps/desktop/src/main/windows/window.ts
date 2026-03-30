@@ -36,6 +36,14 @@ const SIDEBAR_POPUP_HEIGHT = 560;
 // Internal sidebar (rendered inside overlay window)
 const INTERNAL_SIDEBAR_WIDTH = 320;
 
+function createTempPowerShellScriptPath(prefix: string) {
+  const tmpDir = require("os").tmpdir();
+  const nonce = `${process.pid}_${Date.now()}_${Math.random()
+    .toString(16)
+    .slice(2)}`;
+  return path.join(tmpDir, `${prefix}_${nonce}.ps1`);
+}
+
 function getSidebarBounds(mode: SidebarPresentationMode) {
   const display = screen.getPrimaryDisplay();
   const workArea = display.workArea;
@@ -79,7 +87,15 @@ function applySidebarPresentation(mode: SidebarPresentationMode) {
     sidebarWin.setMinimumSize(mode === "popup" ? 360 : 380, mode === "popup" ? 420 : 400);
   } catch {}
   try {
-    sidebarWin.setBounds(bounds, true);
+    const currentBounds = sidebarWin.getBounds();
+    if (
+      currentBounds.x !== bounds.x ||
+      currentBounds.y !== bounds.y ||
+      currentBounds.width !== bounds.width ||
+      currentBounds.height !== bounds.height
+    ) {
+      sidebarWin.setBounds(bounds, true);
+    }
   } catch {}
   try {
     sidebarWin.show();
@@ -98,6 +114,11 @@ let baseOuterWidth = 0;
 let baseOuterHeight = 0;
 // When changing size programmatically (expand/collapse), temporarily disable the size lock
 let resizingProgrammatically = false;
+let resizeFinalizeTimer: ReturnType<typeof setTimeout> | null = null;
+let resizeBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingResizeBroadcast: { width: number; height: number } | null = null;
+let lastResizeBroadcastAt = 0;
+let splitLayoutRunId = 0;
 
 type OverlayMode = "compact" | "sidebar" | "window";
 let currentMode: OverlayMode = "compact";
@@ -127,8 +148,7 @@ function captureWindowSnapshotByHandle(
   if (!handle || handle === "0") return null;
   try {
     const { execFileSync } = require("child_process");
-    const tmpDir = require("os").tmpdir();
-    const scriptPath = path.join(tmpDir, "stuard_get_bounds.ps1");
+    const scriptPath = createTempPowerShellScriptPath("stuard_get_bounds");
     const ps = `
 Add-Type @"
 using System;
@@ -192,8 +212,7 @@ function restoreWindowSnapshot(snapshot: SplitTargetSnapshot) {
   if (!snapshot?.handle || snapshot.handle === "0") return;
   try {
     const { execFile } = require("child_process");
-    const tmpDir = require("os").tmpdir();
-    const scriptPath = path.join(tmpDir, "stuard_restore_split.ps1");
+    const scriptPath = createTempPowerShellScriptPath("stuard_restore_split");
     const ps = `
 Add-Type @"
 using System;
@@ -249,8 +268,7 @@ function captureForegroundWindowHandle(excludeHandles?: Array<string | null>) {
   if (process.platform !== "win32") return null;
   try {
     const { execFileSync } = require("child_process");
-    const tmpDir = require("os").tmpdir();
-    const getHandleScript = path.join(tmpDir, "stuard_get_handle.ps1");
+    const getHandleScript = createTempPowerShellScriptPath("stuard_get_handle");
     const excludes = (excludeHandles || [])
       .map((h) => (h && h !== "0" ? h : null))
       .filter((h): h is string => !!h);
@@ -325,6 +343,170 @@ $target.ToInt64()
     logger.warn("Error capturing foreground window handle:", err);
   }
   return null;
+}
+
+function captureWindowSnapshotByHandleAsync(
+  handle: string,
+): Promise<SplitTargetSnapshot | null> {
+  if (process.platform !== "win32") return Promise.resolve(null);
+  if (!handle || handle === "0") return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    try {
+      const { execFile } = require("child_process");
+      const scriptPath = createTempPowerShellScriptPath("stuard_get_bounds");
+      const ps = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32Bounds {
+  [StructLayout(LayoutKind.Sequential)]
+  public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+  [DllImport("user32.dll")]
+  public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+  [DllImport("user32.dll")]
+  public static extern bool IsZoomed(IntPtr hWnd);
+  [DllImport("user32.dll")]
+  public static extern bool IsIconic(IntPtr hWnd);
+}
+"@
+$h = [IntPtr]${handle}
+$rect = New-Object Win32Bounds+RECT
+$ok = [Win32Bounds]::GetWindowRect($h, [ref]$rect)
+if (-not $ok) { exit 2 }
+$w = $rect.Right - $rect.Left
+$hgt = $rect.Bottom - $rect.Top
+$isMax = [Win32Bounds]::IsZoomed($h)
+$isMin = [Win32Bounds]::IsIconic($h)
+Write-Output "x=$($rect.Left) y=$($rect.Top) w=$w h=$hgt max=$isMax min=$isMin"
+`;
+      fs.writeFileSync(scriptPath, ps, "utf8");
+      execFile(
+        "powershell.exe",
+        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+        {
+          encoding: "utf8",
+          timeout: 2000,
+          windowsHide: true,
+        },
+        (error: any, stdout: string) => {
+          try {
+            fs.unlinkSync(scriptPath);
+          } catch {}
+          if (error) {
+            resolve(null);
+            return;
+          }
+          const out = (stdout || "").trim();
+          const m =
+            /x=([-\d]+)\s+y=([-\d]+)\s+w=(\d+)\s+h=(\d+)\s+max=(True|False)\s+min=(True|False)/.exec(
+              out,
+            );
+          if (!m) {
+            resolve(null);
+            return;
+          }
+          resolve({
+            handle,
+            x: Number(m[1]),
+            y: Number(m[2]),
+            width: Number(m[3]),
+            height: Number(m[4]),
+            wasMaximized: m[5] === "True",
+            wasMinimized: m[6] === "True",
+          });
+        },
+      );
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+function captureForegroundWindowHandleAsync(
+  excludeHandles?: Array<string | null>,
+): Promise<string | null> {
+  if (process.platform !== "win32") return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    try {
+      const { execFile } = require("child_process");
+      const getHandleScript = createTempPowerShellScriptPath("stuard_get_handle");
+      const excludes = (excludeHandles || [])
+        .map((h) => (h && h !== "0" ? h : null))
+        .filter((h): h is string => !!h);
+      const excludedList = excludes.length ? excludes.join(",") : "0";
+      const getHandlePsScript = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32GetHandle {
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+}
+"@
+$excludeCsv = "${excludedList}"
+$exclude = @()
+try {
+  foreach ($p in $excludeCsv.Split(',') ) {
+    $t = $p.Trim()
+    if ($t -and $t -ne '0') { $exclude += [Int64]$t }
+  }
+} catch { }
+$foreground = [Win32GetHandle]::GetForegroundWindow()
+$target = $foreground
+if ($exclude.Count -gt 0) {
+  if ($exclude -contains $foreground.ToInt64()) {
+    $cursor = $foreground
+    for ($i = 0; $i -lt 20; $i++) {
+      $cursor = [Win32GetHandle]::GetWindow($cursor, 2)
+      if ($cursor -eq [IntPtr]::Zero) { break }
+      if (-not ($exclude -contains $cursor.ToInt64())) {
+        $target = $cursor
+        break
+      }
+    }
+  }
+}
+if ($target -ne [IntPtr]::Zero) {
+  $root = [Win32GetHandle]::GetAncestor($target, 2)
+  if ($root -ne [IntPtr]::Zero) { $target = $root }
+}
+$target.ToInt64()
+`;
+      fs.writeFileSync(getHandleScript, getHandlePsScript, "utf8");
+      execFile(
+        "powershell.exe",
+        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", getHandleScript],
+        {
+          encoding: "utf8",
+          timeout: 2000,
+          windowsHide: true,
+        },
+        (error: any, stdout: string) => {
+          try {
+            fs.unlinkSync(getHandleScript);
+          } catch {}
+          if (error) {
+            logger.warn("Failed to capture foreground window handle:", error);
+            resolve(null);
+            return;
+          }
+          const capturedHandle = (stdout || "").trim();
+          resolve(
+            !capturedHandle || capturedHandle === "0" ? null : capturedHandle,
+          );
+        },
+      );
+    } catch (err) {
+      logger.warn("Error capturing foreground window handle:", err);
+      resolve(null);
+    }
+  });
 }
 
 function updateLastActiveWindowHandle(source: string) {
@@ -439,12 +621,17 @@ function centerTopWithContentSize(
   contentWidth: number,
   contentHeight: number,
 ) {
-  target.setContentSize(contentWidth, contentHeight);
+  const [currentWidth, currentHeight] = target.getContentSize();
+  if (currentWidth !== contentWidth || currentHeight !== contentHeight) {
+    target.setContentSize(contentWidth, contentHeight);
+  }
   const { workArea } = screen.getPrimaryDisplay();
   const b = target.getBounds();
   const x = Math.round(workArea.x + (workArea.width - b.width) / 2);
   const y = Math.round(workArea.y + workArea.height * 0.12);
-  target.setPosition(x, y);
+  if (b.x !== x || b.y !== y) {
+    target.setPosition(x, y);
+  }
 }
 
 function repositionTopCenter(target: BrowserWindow) {
@@ -452,7 +639,257 @@ function repositionTopCenter(target: BrowserWindow) {
   const b = target.getBounds();
   const x = Math.round(workArea.x + (workArea.width - b.width) / 2);
   const y = Math.round(workArea.y + workArea.height * 0.12);
-  target.setPosition(x, y);
+  if (b.x !== x || b.y !== y) {
+    target.setPosition(x, y);
+  }
+}
+
+function scheduleOverlayResizeFinalize() {
+  if (resizeFinalizeTimer) {
+    clearTimeout(resizeFinalizeTimer);
+  }
+  resizeFinalizeTimer = setTimeout(() => {
+    resizeFinalizeTimer = null;
+    if (!win || win.isDestroyed()) {
+      resizingProgrammatically = false;
+      return;
+    }
+    const ob = win.getBounds();
+    baseOuterWidth = ob.width;
+    baseOuterHeight = ob.height;
+    const constraints = MODE_SIZE_CONSTRAINTS[currentMode];
+    const maxWidth =
+      internalSidebarOpen || ob.width > constraints.maxW
+        ? Math.max(constraints.maxW, ob.width)
+        : constraints.maxW;
+    try {
+      win.setMinimumSize(constraints.minW, constraints.minH);
+      win.setMaximumSize(maxWidth, constraints.maxH);
+    } catch {}
+    resizingProgrammatically = false;
+    try {
+      win.webContents.send("overlay:resized", {
+        width: ob.width,
+        height: ob.height,
+        mode: currentMode,
+      });
+    } catch {}
+  }, 0);
+}
+
+function scheduleOverlayResizingBroadcast(width: number, height: number) {
+  if (!win || resizingProgrammatically) return;
+  pendingResizeBroadcast = { width, height };
+
+  const flush = () => {
+    resizeBroadcastTimer = null;
+    if (!win || !pendingResizeBroadcast) return;
+    lastResizeBroadcastAt = Date.now();
+    const payload = pendingResizeBroadcast;
+    pendingResizeBroadcast = null;
+    try {
+      win.webContents.send("overlay:resizing", payload);
+    } catch {}
+  };
+
+  const now = Date.now();
+  const waitMs = Math.max(0, 32 - (now - lastResizeBroadcastAt));
+  if (waitMs === 0 && !resizeBroadcastTimer) {
+    flush();
+    return;
+  }
+  if (!resizeBroadcastTimer) {
+    resizeBroadcastTimer = setTimeout(flush, waitMs);
+  }
+}
+
+function collapseInternalSidebarStateForModeSwitch() {
+  if (!win || win.isDestroyed() || !internalSidebarOpen) return false;
+
+  const current = win.getBounds();
+  const constraints = MODE_SIZE_CONSTRAINTS[currentMode];
+  const contractedWidth = Math.max(
+    current.width - INTERNAL_SIDEBAR_WIDTH,
+    constraints.minW,
+  );
+
+  baseContentWidth = contractedWidth;
+  baseContentHeight = current.height;
+  baseOuterWidth = contractedWidth;
+  baseOuterHeight = current.height;
+
+  if (currentMode !== "sidebar") {
+    userModeSizes[currentMode] = {
+      width: contractedWidth,
+      height: current.height,
+    };
+  }
+
+  internalSidebarOpen = false;
+  return true;
+}
+
+function resizeWindowForSplitScreen(
+  handle: string,
+  bounds: { x: number; y: number; width: number; height: number },
+) {
+  try {
+    const { execFile } = require("child_process");
+    const resizeScript = createTempPowerShellScriptPath("stuard_split");
+    const resizePsScript = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32Split {
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+  [DllImport("user32.dll")]
+  public static extern bool IsIconic(IntPtr hWnd);
+  [DllImport("user32.dll")]
+  public static extern bool IsZoomed(IntPtr hWnd);
+  [DllImport("user32.dll")]
+  public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+  [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
+  public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+  [DllImport("user32.dll")]
+  public static extern int GetWindowTextLength(IntPtr hWnd);
+}
+"@
+$targetWindow = [IntPtr]${handle}
+if ($targetWindow -ne 0) {
+  $root = [Win32Split]::GetAncestor($targetWindow, 2)
+  if ($root -ne 0) { $targetWindow = $root }
+  $len = [Win32Split]::GetWindowTextLength($targetWindow)
+  $title = ""
+  if ($len -gt 0) {
+    $sb = New-Object System.Text.StringBuilder ($len + 1)
+    [Win32Split]::GetWindowText($targetWindow, $sb, $sb.Capacity) | Out-Null
+    $title = $sb.ToString()
+  }
+  Write-Output "SplitTargetHandle=$($targetWindow.ToInt64())"
+  Write-Output "SplitTargetTitle=$title"
+  Write-Output "SplitTargetIsMaximized=$([Win32Split]::IsZoomed($targetWindow))"
+  if ([Win32Split]::IsIconic($targetWindow) -or [Win32Split]::IsZoomed($targetWindow)) {
+    [Win32Split]::ShowWindow($targetWindow, 9)
+  }
+  $result = [Win32Split]::SetWindowPos($targetWindow, [IntPtr]::Zero, ${bounds.x}, ${bounds.y}, ${bounds.width}, ${bounds.height}, 0x14)
+  Write-Output "SplitSetWindowPos=$result"
+}
+`;
+    fs.writeFileSync(resizeScript, resizePsScript, "utf8");
+
+    execFile(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", resizeScript],
+      { windowsHide: true },
+      (error: any, stdout: string, stderr: string) => {
+        const trimmedOut = (stdout || "").trim();
+        const trimmedErr = (stderr || "").trim();
+        if (trimmedOut) {
+          logger.info("Split-screen target info:", trimmedOut);
+        }
+        if (trimmedErr) {
+          logger.warn("Split-screen stderr:", trimmedErr);
+        }
+        if (error) {
+          logger.warn(
+            "Failed to resize active window for split-screen:",
+            error.message,
+          );
+        } else {
+          logger.info("Split-screen layout applied successfully");
+        }
+        try {
+          fs.unlinkSync(resizeScript);
+        } catch {}
+      },
+    );
+  } catch (err) {
+    logger.warn("Error resizing window for split-screen:", err);
+  }
+}
+
+function queueSidebarSplitLayout(
+  sidebarWidth: number,
+  height: number,
+  workArea: { x: number; y: number; width: number; height: number },
+) {
+  if (process.platform !== "win32") return;
+
+  const runId = ++splitLayoutRunId;
+
+  setTimeout(async () => {
+    if (runId !== splitLayoutRunId) return;
+    if (!win || win.isDestroyed() || currentMode !== "sidebar") return;
+
+    try {
+      const overlayHandle = getNativeWindowHandleString(win);
+      logger.info("Overlay window handle:", overlayHandle);
+      logger.info("Last active window handle:", lastActiveWindowHandle);
+
+      let capturedHandle = lastActiveWindowHandle;
+      if (
+        !capturedHandle ||
+        (overlayHandle && capturedHandle === overlayHandle)
+      ) {
+        capturedHandle = await captureForegroundWindowHandleAsync([
+          overlayHandle,
+          getNativeWindowHandleString(spacesWin),
+          getNativeWindowHandleString(hudWin),
+          getNativeWindowHandleString(onboardingWin),
+        ]);
+        if (runId !== splitLayoutRunId || currentMode !== "sidebar") return;
+        if (capturedHandle) {
+          lastActiveWindowHandle = capturedHandle;
+        }
+      }
+
+      if (capturedHandle) {
+        logger.info(
+          "Using foreground window handle for split-screen:",
+          capturedHandle,
+        );
+      }
+
+      if (capturedHandle && capturedHandle !== "0") {
+        lastSplitTarget = await captureWindowSnapshotByHandleAsync(
+          capturedHandle,
+        );
+      } else {
+        lastSplitTarget = null;
+      }
+
+      if (runId !== splitLayoutRunId || currentMode !== "sidebar") return;
+
+      if (capturedHandle && capturedHandle !== "0") {
+        const activeWindowWidth = workArea.width - sidebarWidth;
+        logger.info(
+          "Resizing window with handle:",
+          capturedHandle,
+          "to",
+          activeWindowWidth,
+          "x",
+          height,
+          "at",
+          workArea.x,
+          workArea.y,
+        );
+        resizeWindowForSplitScreen(capturedHandle, {
+          x: workArea.x,
+          y: workArea.y,
+          width: activeWindowWidth,
+          height,
+        });
+      } else {
+        logger.info("No active window to split with, just positioning sidebar");
+      }
+    } catch (err) {
+      logger.warn("Error applying split-screen:", err);
+    }
+  }, 0);
 }
 
 // Handle user resize - save the new size preference for the current mode
@@ -700,7 +1137,7 @@ export function createWindow() {
 
   // Keep overlay visible on focus changes; user controls visibility via hotkey or Escape
   // Prevent minimize to survive Win+D / Show Desktop
-  win.on("minimize", (e: Electron.Event) => {
+  (win as any).on("minimize", (e: Electron.Event) => {
     e.preventDefault();
     win?.restore();
     win?.show();
@@ -720,13 +1157,7 @@ export function createWindow() {
     handleUserResize();
   });
   win.on("will-resize", (_event, newBounds) => {
-    // Notify renderer of incoming resize for smooth animations
-    try {
-      win?.webContents.send("overlay:resizing", {
-        width: newBounds.width,
-        height: newBounds.height,
-      });
-    } catch {}
+    scheduleOverlayResizingBroadcast(newBounds.width, newBounds.height);
   });
   win.on("focus", () => {
     unregisterMoveShortcuts();
@@ -744,12 +1175,6 @@ export function createWindow() {
   win.on("show", () => {
     if (win?.isFocused()) unregisterMoveShortcuts();
     else registerMoveShortcuts();
-  });
-  win.on("move", () => {
-    // No longer repositioning external sidebar - using internal sidebar
-  });
-  win.on("resize", () => {
-    // No longer repositioning external sidebar - using internal sidebar
   });
 }
 
@@ -1449,60 +1874,46 @@ export function setOverlaySize(
   baseContentHeight = height;
 
   if (anchor === "bottom") {
-    // Math must be done on *outer* bounds to be accurate
     const currentBounds = win.getBounds();
-    // We can't easily predict the new outer height from content height without setContentSize...
-    // But setContentSize is top-anchored.
-    // Cleanest way: set size, see difference, fix position? No, that causes flash.
-    // Better: use setBounds if we know the frame differences. The frame is transparent/frameless, so content size ~= outer size usually?
-    // Electron's useContentSize: true means width/height in constructor are content.
-    // win.getBounds() is outer.
-    // Let's assume for this frameless window, setBounds width/height is close enough or use setBounds directly.
-    const dy = height - currentBounds.height; // Approximation if mixing content/outer, but for frameless it's 1:1 usually
+    const dy = height - currentBounds.height;
     const newY = currentBounds.y - dy;
-    win.setBounds({
+    const nextBounds = {
       x: currentBounds.x,
       y: newY,
       width: width,
       height: height,
-    });
+    };
+    if (
+      currentBounds.x !== nextBounds.x ||
+      currentBounds.y !== nextBounds.y ||
+      currentBounds.width !== nextBounds.width ||
+      currentBounds.height !== nextBounds.height
+    ) {
+      win.setBounds(nextBounds);
+    }
   } else {
-    // Only reposition to center-top if explicitly requested or if window isn't visible yet
     if (reposition || !win.isVisible()) {
       centerTopWithContentSize(win, width, height);
     } else {
-      win.setContentSize(width, height);
+      const [currentWidth, currentHeight] = win.getContentSize();
+      if (currentWidth !== width || currentHeight !== height) {
+        win.setContentSize(width, height);
+      }
     }
   }
 
-  setTimeout(() => {
-    if (!win) {
-      resizingProgrammatically = false;
-      return;
-    }
-    const ob = win.getBounds();
-    baseOuterWidth = ob.width;
-    baseOuterHeight = ob.height;
-    // Don't lock min/max to exact size - use mode constraints so window can expand/shrink
-    // for dropdowns like Quick Actions. The mode constraints handle the actual limits.
-    const constraints = MODE_SIZE_CONSTRAINTS[currentMode];
-    try {
-      win.setMinimumSize(constraints.minW, constraints.minH);
-      win.setMaximumSize(constraints.maxW, constraints.maxH);
-    } catch {}
-    resizingProgrammatically = false;
-  }, 0);
+  scheduleOverlayResizeFinalize();
 }
 
 export function setOverlayMode(mode: OverlayMode) {
   const prevMode = currentMode;
+  const collapsedInternalSidebar =
+    internalSidebarOpen && prevMode !== "compact" && mode !== prevMode
+      ? collapseInternalSidebarStateForModeSwitch()
+      : false;
 
-  // If the internal sidebar is open while leaving window/sidebar mode, contract first
-  // so the next mode starts from the true base content width instead of the expanded width.
-  if (internalSidebarOpen && prevMode !== "compact" && mode !== prevMode) {
-    try {
-      toggleInternalSidebar(false);
-    } catch {}
+  if (mode !== "sidebar") {
+    splitLayoutRunId += 1;
   }
 
   currentMode = mode;
@@ -1530,155 +1941,21 @@ export function setOverlayMode(mode: OverlayMode) {
 
   if (mode === "sidebar") {
     const { workArea } = screen.getPrimaryDisplay();
-    // Sidebar: Take ~35% of screen width (not equal split - more room for active window)
     const sidebarWidth = Math.round(workArea.width * 0.35);
     const h = workArea.height;
+    const sidebarX = workArea.x + workArea.width - sidebarWidth;
 
-    // Split-screen: use the last active window handle if available, otherwise capture.
-    try {
-      const { execFile } = require("child_process");
-      const activeWindowWidth = workArea.width - sidebarWidth;
-      const tmpDir = require("os").tmpdir();
-
-      const overlayHandle = getNativeWindowHandleString(win);
-      logger.info("Overlay window handle:", overlayHandle);
-      logger.info("Last active window handle:", lastActiveWindowHandle);
-
-      let capturedHandle = lastActiveWindowHandle;
-      if (
-        !capturedHandle ||
-        (overlayHandle && capturedHandle === overlayHandle)
-      ) {
-        capturedHandle = captureForegroundWindowHandle([
-          overlayHandle,
-          getNativeWindowHandleString(spacesWin),
-          getNativeWindowHandleString(hudWin),
-          getNativeWindowHandleString(onboardingWin),
-        ]);
-        if (capturedHandle) lastActiveWindowHandle = capturedHandle;
-      }
-      if (capturedHandle) {
-        logger.info(
-          "Using foreground window handle for split-screen:",
-          capturedHandle,
-        );
-      }
-
-      if (capturedHandle && capturedHandle !== "0") {
-        lastSplitTarget = captureWindowSnapshotByHandle(capturedHandle);
-      } else {
-        lastSplitTarget = null;
-      }
-
-      // Now position Stuard on the right side
-      const sidebarX = workArea.x + workArea.width - sidebarWidth;
-      win?.setBounds({
+    if (win) {
+      resizingProgrammatically = true;
+      baseContentWidth = sidebarWidth;
+      baseContentHeight = h;
+      win.setBounds({
         x: sidebarX,
         y: workArea.y,
         width: sidebarWidth,
         height: h,
       });
-      setOverlaySize(sidebarWidth, h, false);
-
-      // Step 2: Resize the captured window to the left side
-      if (capturedHandle && capturedHandle !== "0") {
-        logger.info(
-          "Resizing window with handle:",
-          capturedHandle,
-          "to",
-          activeWindowWidth,
-          "x",
-          h,
-          "at",
-          workArea.x,
-          workArea.y,
-        );
-        const resizeScript = path.join(tmpDir, "stuard_split.ps1");
-        const resizePsScript = `
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class Win32Split {
-  [DllImport("user32.dll")]
-  [return: MarshalAs(UnmanagedType.Bool)]
-  public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-  [DllImport("user32.dll")]
-  public static extern bool IsIconic(IntPtr hWnd);
-  [DllImport("user32.dll")]
-  public static extern bool IsZoomed(IntPtr hWnd);
-  [DllImport("user32.dll")]
-  public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-  [DllImport("user32.dll")]
-  public static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
-  [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
-  public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
-  [DllImport("user32.dll")]
-  public static extern int GetWindowTextLength(IntPtr hWnd);
-}
-"@
-$targetWindow = [IntPtr]${capturedHandle}
-if ($targetWindow -ne 0) {
-  $root = [Win32Split]::GetAncestor($targetWindow, 2)
-  if ($root -ne 0) { $targetWindow = $root }
-  $len = [Win32Split]::GetWindowTextLength($targetWindow)
-  $title = ""
-  if ($len -gt 0) {
-    $sb = New-Object System.Text.StringBuilder ($len + 1)
-    [Win32Split]::GetWindowText($targetWindow, $sb, $sb.Capacity) | Out-Null
-    $title = $sb.ToString()
-  }
-  Write-Output "SplitTargetHandle=$($targetWindow.ToInt64())"
-  Write-Output "SplitTargetTitle=$title"
-  Write-Output "SplitTargetIsMaximized=$([Win32Split]::IsZoomed($targetWindow))"
-  if ([Win32Split]::IsIconic($targetWindow) -or [Win32Split]::IsZoomed($targetWindow)) {
-    [Win32Split]::ShowWindow($targetWindow, 9)
-  }
-  $result = [Win32Split]::SetWindowPos($targetWindow, [IntPtr]::Zero, ${workArea.x}, ${workArea.y}, ${activeWindowWidth}, ${h}, 0x14)
-  Write-Output "SplitSetWindowPos=$result"
-}
-`;
-        fs.writeFileSync(resizeScript, resizePsScript, "utf8");
-
-        execFile(
-          "powershell.exe",
-          ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", resizeScript],
-          (error: any, stdout: string, stderr: string) => {
-            const trimmedOut = (stdout || "").trim();
-            const trimmedErr = (stderr || "").trim();
-            if (trimmedOut) {
-              logger.info("Split-screen target info:", trimmedOut);
-            }
-            if (trimmedErr) {
-              logger.warn("Split-screen stderr:", trimmedErr);
-            }
-            if (error) {
-              logger.warn(
-                "Failed to resize active window for split-screen:",
-                error.message,
-              );
-            } else {
-              logger.info("Split-screen layout applied successfully");
-            }
-            try {
-              fs.unlinkSync(resizeScript);
-            } catch {}
-          },
-        );
-      } else {
-        // No window to resize, just position Stuard
-        logger.info("No active window to split with, just positioning sidebar");
-      }
-    } catch (err) {
-      logger.warn("Error applying split-screen:", err);
-      // Still position Stuard even if split fails
-      const sidebarX = workArea.x + workArea.width - sidebarWidth;
-      win?.setBounds({
-        x: sidebarX,
-        y: workArea.y,
-        width: sidebarWidth,
-        height: h,
-      });
-      setOverlaySize(sidebarWidth, h, false);
+      scheduleOverlayResizeFinalize();
     }
 
     // Notify renderer of mode change
@@ -1690,6 +1967,15 @@ if ($targetWindow -ne 0) {
         prevMode,
       });
     } catch {}
+    if (collapsedInternalSidebar) {
+      try {
+        win?.webContents.send("overlay:internalSidebarChanged", {
+          open: false,
+          width: sidebarWidth,
+        });
+      } catch {}
+    }
+    queueSidebarSplitLayout(sidebarWidth, h, workArea);
     return;
   }
 
@@ -1712,6 +1998,14 @@ if ($targetWindow -ne 0) {
       prevMode,
     });
   } catch {}
+  if (collapsedInternalSidebar) {
+    try {
+      win?.webContents.send("overlay:internalSidebarChanged", {
+        open: false,
+        width,
+      });
+    } catch {}
+  }
 }
 
 // Get current mode
@@ -1739,13 +2033,23 @@ export function moveOverlayBy(dx: number, dy: number) {
     wa.y,
     wa.y + wa.height - outer.height,
   );
-  // Lock the outer width/height absolutely when moving
+  if (targetOuterX === outer.x && targetOuterY === outer.y) return;
+
+  const lockedWidth = baseOuterWidth || outer.width;
+  const lockedHeight = baseOuterHeight || outer.height;
+  if (outer.width === lockedWidth && outer.height === lockedHeight) {
+    win.setPosition(targetOuterX, targetOuterY);
+    return;
+  }
+
+  resizingProgrammatically = true;
   win.setBounds({
     x: targetOuterX,
     y: targetOuterY,
-    width: baseOuterWidth,
-    height: baseOuterHeight,
+    width: lockedWidth,
+    height: lockedHeight,
   });
+  scheduleOverlayResizeFinalize();
 }
 
 export function setOverlayBounds(bounds: {
@@ -1759,6 +2063,14 @@ export function setOverlayBounds(bounds: {
   try {
     const current = win.getBounds();
     const target = { ...current, ...bounds };
+    const positionChanged = target.x !== current.x || target.y !== current.y;
+    const sizeChanged =
+      target.width !== current.width || target.height !== current.height;
+
+    if (!positionChanged && !sizeChanged) {
+      resizingProgrammatically = false;
+      return;
+    }
 
     // Update baselines if size changes (essential for keeping lock on future moves)
     if (bounds.width !== undefined) {
@@ -1770,11 +2082,17 @@ export function setOverlayBounds(bounds: {
       baseOuterHeight = bounds.height;
     }
 
+    if (!sizeChanged) {
+      win.setPosition(target.x, target.y);
+      resizingProgrammatically = false;
+      return;
+    }
+
     win.setBounds(target);
   } finally {
-    setTimeout(() => {
-      resizingProgrammatically = false;
-    }, 0);
+    if (resizingProgrammatically) {
+      scheduleOverlayResizeFinalize();
+    }
   }
 }
 
@@ -1889,9 +2207,7 @@ export function toggleInternalSidebar(open?: boolean): {
       });
     } catch {}
   } finally {
-    setTimeout(() => {
-      resizingProgrammatically = false;
-    }, 0);
+    scheduleOverlayResizeFinalize();
   }
 
   return { open: internalSidebarOpen, width: win.getBounds().width };

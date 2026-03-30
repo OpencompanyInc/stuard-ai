@@ -10,6 +10,7 @@ import {
   getMainSupabaseClient,
   onMainAuthSessionChange,
 } from './auth-session';
+import { registerIncomingMessagingMedia } from './media-library';
 
 type SmsMode = 'agent' | 'proactive';
 type SmsPreferredModel = 'fast' | 'balanced' | 'smart' | 'research';
@@ -706,6 +707,12 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
   const processedAttachments = Array.isArray(item.metadata?.processedAttachments)
     ? item.metadata.processedAttachments
     : [];
+
+  if (processedAttachments.length > 0) {
+    void registerIncomingMessagingMedia(String(itemProvider || 'telnyx'), processedAttachments).catch((error) => {
+      logger.warn('[sms-inbox] Failed to ingest message media:', error);
+    });
+  }
 
   const turn = await runSmsTurn({
     text: incomingText,
