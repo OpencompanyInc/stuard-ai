@@ -493,14 +493,15 @@ function buildRuntimeScript(options: {
       var Badge = function Badge(props) {
         var variant = props.variant || 'default';
         var colors = {
-          default: 'background:#334155;color:#e2e8f0;',
-          success: 'background:#065f46;color:#6ee7b7;',
-          warning: 'background:#78350f;color:#fcd34d;',
-          error: 'background:#7f1d1d;color:#fca5a5;',
-          info: 'background:#1e3a5f;color:#93c5fd;',
-          primary: 'background:#3730a3;color:#a5b4fc;',
+          default: { background: '#334155', color: '#e2e8f0' },
+          success: { background: '#065f46', color: '#6ee7b7' },
+          warning: { background: '#78350f', color: '#fcd34d' },
+          error: { background: '#7f1d1d', color: '#fca5a5' },
+          info: { background: '#1e3a5f', color: '#93c5fd' },
+          primary: { background: '#3730a3', color: '#a5b4fc' },
         };
-        var style = (colors[variant] || colors.default) + 'display:inline-flex;align-items:center;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:500;line-height:1.5;white-space:nowrap;';
+        var base = colors[variant] || colors['default'];
+        var style = { background: base.background, color: base.color, display: 'inline-flex', alignItems: 'center', padding: '2px 8px', borderRadius: '9999px', fontSize: '12px', fontWeight: '500', lineHeight: '1.5', whiteSpace: 'nowrap' };
         return React.createElement('span', { style: style, className: props.className }, props.children);
       };
 

@@ -1,4 +1,4 @@
-import { createTool } from '@mastra/core/tools';
+﻿import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import * as deviceTools from './device-tools';
 import * as googleTools from './google-tools';
@@ -33,53 +33,7 @@ import { execLocalTool, hasClientBridge } from './bridge';
 import { get_skill_info } from './skill-tools';
 import { ask_user } from './ask-user';
 
-// ─── Zod → JSON Schema helper (lightweight, no external dep) ─────────────
-function unwrapZodMeta(schema: any): { schema: any; optional: boolean; defaultValue?: any; nullable: boolean } {
-  let s = schema, optional = false, nullable = false, defaultValue: any;
-  try {
-    while (s) {
-      if (s instanceof z.ZodOptional) { optional = true; s = s._def?.innerType; continue; }
-      if (s instanceof z.ZodNullable) { nullable = true; s = s._def?.innerType; continue; }
-      if (s instanceof z.ZodDefault) {
-        try { const dv = s._def?.defaultValue; defaultValue = typeof dv === 'function' ? dv() : dv; } catch {}
-        s = s._def?.innerType; continue;
-      }
-      break;
-    }
-  } catch {}
-  return { schema: s, optional, defaultValue, nullable };
-}
-
-function zodToJsonSchema(schema: any): any {
-  const { schema: s, optional, defaultValue, nullable } = unwrapZodMeta(schema);
-  const desc = schema?.description || schema?._def?.description;
-  const base: any = {};
-  if (desc) base.description = String(desc);
-  if (optional) base.optional = true;
-  if (typeof defaultValue !== 'undefined') base.default = defaultValue;
-  if (nullable) base.nullable = true;
-  if (!s) return { type: 'unknown', ...base };
-  if (s instanceof z.ZodObject) {
-    const shape = s.shape;
-    const properties: any = {}, required: string[] = [];
-    for (const key of Object.keys(shape)) {
-      properties[key] = zodToJsonSchema(shape[key]);
-      const child = unwrapZodMeta(shape[key]);
-      if (!child.optional && typeof child.defaultValue === 'undefined') required.push(key);
-    }
-    return { type: 'object', properties, ...(required.length ? { required } : {}), ...base };
-  }
-  if (s instanceof z.ZodArray) return { type: 'array', items: zodToJsonSchema(s.element), ...base };
-  if (s instanceof z.ZodString) return { type: 'string', ...base };
-  if (s instanceof z.ZodNumber) return { type: 'number', ...base };
-  if (s instanceof z.ZodBoolean) return { type: 'boolean', ...base };
-  if (s instanceof z.ZodEnum) return { type: 'string', enum: (s as any)._def?.values || (s as any).options || [], ...base };
-  if (s instanceof z.ZodLiteral) return { type: 'literal', value: (s._def as any)?.value ?? (s._def as any)?.values?.[0], ...base };
-  if (s instanceof z.ZodRecord) return { type: 'object', additionalProperties: true, ...base };
-  if (s instanceof z.ZodAny) return { type: 'any', ...base };
-  if (s instanceof z.ZodUnion) return { type: 'union', ...base };
-  return { type: 'unknown', ...base };
-}
+import { zodToJsonSchema } from './zod-utils';
 
 const MEMORY_AI_TOOL_IDS = new Set([
     'memory_retrieval',
@@ -113,7 +67,7 @@ const MEMORY_AI_TOOL_IDS = new Set([
 const MEMORY_AI_ALLOWLIST = new Set([
     'search_past_conversations', 'get_conversation_context',
     'browse_topic_collections', 'get_collection_detail', 'synthesize_collection',
-    // Space management tools — must be registered so search_tools/get_tool_schema/execute_tool can find them
+    // Space management tools â€” must be registered so search_tools/get_tool_schema/execute_tool can find them
     'list_user_spaces', 'get_space_contents', 'add_to_space',
     'ensure_space_path', 'list_space_path', 'add_to_space_path', 'get_space_tree',
     'create_space',
@@ -221,11 +175,11 @@ COMPONENT FIELD:
   - onClick={handler}, onChange={e => ...}
   - className="tailwind-classes" (full Tailwind CSS bundled offline)
   - Hooks: useState, useEffect, useRef, useMemo, useCallback
-  - useVar(name, default) — bridges React state to workflow variables. Auto-seeds from data args.
-  - stuard.submit(data) — submit data and close (resolves blocking)
-  - stuard.close() — close window
-  - stuard.callTool(name, args) — call any workflow tool (invisible, no canvas animation)
-  - stuard.callNode(nodeId, data) — call a SIBLING NODE by ID or label (see NODE-ROUTING below)
+  - useVar(name, default) â€” bridges React state to workflow variables. Auto-seeds from data args.
+  - stuard.submit(data) â€” submit data and close (resolves blocking)
+  - stuard.close() â€” close window
+  - stuard.callTool(name, args) â€” call any workflow tool (invisible, no canvas animation)
+  - stuard.callNode(nodeId, data) â€” call a SIBLING NODE by ID or label (see NODE-ROUTING below)
 
 NODE-ROUTING ARCHITECTURE (callNode):
   Instead of encoding all logic inside one custom_ui callTool() block, create STANDALONE
@@ -237,7 +191,7 @@ NODE-ROUTING ARCHITECTURE (callNode):
   2. Connect the custom_ui to each node with callNode wires:
        { from: "my_ui", to: "read_node", callNode: true }
      callNode wires render as DASHED TEAL lines with a plug icon.
-     They are NOT auto-traversed by the engine — they execute ON-DEMAND only.
+     They are NOT auto-traversed by the engine â€” they execute ON-DEMAND only.
   3. In the component, call nodes by ID or LABEL:
        const result = await stuard.callNode('read_node', { filePath: '/path/to/file' });
        // OR by label (case-insensitive, whitespace/underscore/hyphen agnostic):
@@ -252,24 +206,24 @@ NODE-ROUTING ARCHITECTURE (callNode):
     3. Normalized label match ("read_file" matches "Read File", "read-file", "Read_File")
 
   callNode vs callTool:
-    • callTool(name, args) — runs a tool INVISIBLY, no visual feedback in the canvas
-    • callNode(nodeId, data) — routes to a named SIBLING NODE in the same workflow.
-      Shows running → completed animation on the teal wire. Uses {{caller.X}} templates.
+    â€¢ callTool(name, args) â€” runs a tool INVISIBLY, no visual feedback in the canvas
+    â€¢ callNode(nodeId, data) â€” routes to a named SIBLING NODE in the same workflow.
+      Shows running â†’ completed animation on the teal wire. Uses {{caller.X}} templates.
 
   WIRE DEFINITION:
     { "from": "ui_node_id", "to": "target_node_id", "callNode": true }
-    Always include callNode: true — without it the engine auto-traverses the wire.
+    Always include callNode: true â€” without it the engine auto-traverses the wire.
 
 FILE/FOLDER PICKER (native OS dialogs, no tkinter needed):
-  stuard.pickFile({ title, filters, multiple }) → { canceled, filePaths }
-  stuard.pickFolder({ title, multiple }) → { canceled, filePaths }
-  stuard.pickSavePath({ title, defaultPath, filters }) → { canceled, filePath }
+  stuard.pickFile({ title, filters, multiple }) â†’ { canceled, filePaths }
+  stuard.pickFolder({ title, multiple }) â†’ { canceled, filePaths }
+  stuard.pickSavePath({ title, defaultPath, filters }) â†’ { canceled, filePath }
 
-  Example — folder picker:
+  Example â€” folder picker:
     const result = await stuard.pickFolder({ title: 'Select Project' });
     if (!result.canceled) setWorkspace(result.filePaths[0]);
 
-  Example — file picker with filters:
+  Example â€” file picker with filters:
     const result = await stuard.pickFile({
       title: 'Select Image',
       filters: [{ name: 'Images', extensions: ['png', 'jpg', 'gif'] }],
@@ -299,8 +253,8 @@ MARKDOWN RENDERING:
 
   Props:
     - content / src / children: the markdown string to render
-    - dark: boolean — use dark-mode styles (auto-detected if body has .dark class)
-    - compact: boolean — tighter spacing for small containers
+    - dark: boolean â€” use dark-mode styles (auto-detected if body has .dark class)
+    - compact: boolean â€” tighter spacing for small containers
     - className: additional CSS classes
     - style: inline style object
     GFM (tables, strikethrough, task lists, autolinks) is always enabled via remark-gfm.
@@ -313,12 +267,12 @@ MARKDOWN RENDERING:
         \\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}
         $$
     - All standard LaTeX math notation is supported (fractions, matrices, Greek letters, etc.)
-    - Math inherits color from the parent element — works on dark and light backgrounds.
+    - Math inherits color from the parent element â€” works on dark and light backgrounds.
 
   CSS classes for the container:
-    - markdown-body — base styled container (applied automatically)
-    - markdown-dark — dark mode variant (use dark prop or add class)
-    - markdown-compact — tighter spacing for small containers
+    - markdown-body â€” base styled container (applied automatically)
+    - markdown-dark â€” dark mode variant (use dark prop or add class)
+    - markdown-compact â€” tighter spacing for small containers
 
   Example:
     function App() {
@@ -364,17 +318,17 @@ TYPOGRAPHY & FONTS:
   OpenType: tabular-nums, small-caps, all-small-caps, slashed-zero, oldstyle-nums, ordinal
 
   Typography presets (one class = complete style):
-    heading-display — bold modern sans (Outfit), tight tracking
-    heading-serif — elegant serif (Playfair Display)
-    heading-editorial — editorial serif (DM Serif Display)
-    heading-condensed — uppercase condensed (Bebas Neue), great for hero text
-    body-readable — long-form serif (Merriweather), wide line-height
-    body-clean — UI body text (Inter)
-    body-friendly — rounded friendly feel (Nunito/Quicksand)
-    label-ui — small UI labels (Inter medium 13px)
-    caption — subtle gray small text
-    overline — uppercase spaced category labels
-    code-block — code with ligatures (JetBrains Mono)
+    heading-display â€” bold modern sans (Outfit), tight tracking
+    heading-serif â€” elegant serif (Playfair Display)
+    heading-editorial â€” editorial serif (DM Serif Display)
+    heading-condensed â€” uppercase condensed (Bebas Neue), great for hero text
+    body-readable â€” long-form serif (Merriweather), wide line-height
+    body-clean â€” UI body text (Inter)
+    body-friendly â€” rounded friendly feel (Nunito/Quicksand)
+    label-ui â€” small UI labels (Inter medium 13px)
+    caption â€” subtle gray small text
+    overline â€” uppercase spaced category labels
+    code-block â€” code with ligatures (JetBrains Mono)
 
 CRITICAL RULES:
   1. EVERY button MUST have onClick. Use onClick={() => stuard.submit(data)} for submit/done/action buttons.
@@ -506,7 +460,7 @@ Object.values(deviceTools).forEach(t => {
     } else if (['stream_create', 'stream_close', 'stream_list', 'stream_get_status'].includes(name)) {
         registerTool(t, 'Streaming');
     } else if (name.startsWith('_stream_') || name.startsWith('stream_')) {
-        // Internal stream tools (prefixed with _) and deprecated stream_from_* — skip registration
+        // Internal stream tools (prefixed with _) and deprecated stream_from_* â€” skip registration
     } else if (['agent_node', 'agent_decision', 'agent_extract', 'deploy_headless_agent', 'get_headless_agent_status', 'list_headless_agent_tasks'].includes(name)) {
         registerTool(t, 'AI');
     } else if (['search_local_workflows', 'list_local_stuards', 'show_json_workflow_code', 'import_workflow', 'run_automation', 'stop_automation', 'create_workflow', 'workflow_modify', 'retrieve_tool_format', 'run_workflow', 'execute_workflow', 'invoke_workflow'].includes(name)) {

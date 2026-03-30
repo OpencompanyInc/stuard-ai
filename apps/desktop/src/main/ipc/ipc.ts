@@ -2,7 +2,7 @@
 import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut, nativeImage } from "electron";
 import * as path from "path";
 import { selectFiles, selectImages, listDirectory, selectFolder } from "../utils/files";
-import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, getInternalSidebarState, getNotificationWindow, setScreenCaptureInvisible } from "../windows";
+import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, getInternalSidebarState, getNotificationWindow, openNotificationWindow, setScreenCaptureInvisible } from "../windows";
 import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_readWorkspaceFileBinary, workflows_writeWorkspaceFile, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir, workflows_renameWorkspaceFile, workflows_moveWorkspaceFile, workflows_createWorkspaceStuard, workflows_readWorkspaceStuard, workflows_saveWorkspaceStuard, workflows_listWorkspaceFunctions } from "../workflows";
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
@@ -645,9 +645,18 @@ export function setupIpc() {
         duration,
       };
 
+      // Ensure the notification window exists before sending
+      openNotificationWindow();
       const notifWin = getNotificationWindow();
       if (notifWin && !notifWin.isDestroyed()) {
-        notifWin.webContents.send('notification:show', config);
+        const send = () => {
+          try { notifWin.webContents.send('notification:show', config); } catch {}
+        };
+        if (notifWin.webContents.isLoading()) {
+          notifWin.webContents.once('did-finish-load', send);
+        } else {
+          send();
+        }
       } else {
         // Fallback to native
         if (Notification && typeof (Notification as any).isSupported === 'function' && Notification.isSupported()) {
@@ -658,6 +667,15 @@ export function setupIpc() {
       return { ok: true };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e || 'failed') };
+    }
+  });
+
+  // Relay permission responses from the notification window to the overlay window
+  ipcMain.on('permission:respond', (_e, data: { id: string; allow: boolean }) => {
+    if (!data?.id) return;
+    // Broadcast to all windows so the overlay picks it up via onPermissionResponse
+    for (const win of BrowserWindow.getAllWindows()) {
+      try { win.webContents.send('permission:response', data); } catch {}
     }
   });
 

@@ -238,46 +238,47 @@ function getSemanticHints(toolName: string): string[] {
 
 /**
  * Convert Zod schema to a simpler JSON representation for DB storage
- * This is a best-effort conversion to give the AI context about arguments
+ * Uses Zod 4's built-in z.toJSONSchema() for reliable conversion.
  */
 function zodToJSON(schema: any): any {
   try {
     if (!schema) return {};
-    if (schema instanceof z.ZodObject) {
-      const shape = schema.shape;
-      const result: any = {};
-      for (const key in shape) {
-        result[key] = zodToJSON(shape[key]);
-      }
-      return result;
-    }
-    if (schema instanceof z.ZodArray) {
-      return [zodToJSON(schema._def?.type ?? schema.element)];
-    }
-    if (schema instanceof z.ZodString) return "string";
-    if (schema instanceof z.ZodNumber) return "number";
-    if (schema instanceof z.ZodBoolean) return "boolean";
-    if (schema instanceof z.ZodEnum) {
-      const vals = (schema._def as any)?.values;
-      return vals ? `enum(${Array.isArray(vals) ? vals.join('|') : Object.values(vals).join('|')})` : "enum";
-    }
-    if (schema instanceof z.ZodUnion) return "union";
-    if (schema instanceof z.ZodOptional) return zodToJSON(schema._def?.innerType) + "?";
-    if (schema instanceof z.ZodDefault) return zodToJSON(schema._def?.innerType);
-    if (schema instanceof z.ZodAny) return "any";
-    if (schema instanceof z.ZodRecord) return "record";
-    if (schema instanceof z.ZodNullable) return zodToJSON(schema._def?.innerType) + "|null";
-    if (schema instanceof z.ZodLiteral) return `literal(${(schema._def as any)?.value})`;
-    if (schema instanceof z.ZodTuple) return "tuple";
-    if ((schema as any)?._def?.typeName === 'ZodEffects') return zodToJSON((schema._def as any)?.schema);
-    if ((schema as any)?._def?.typeName === 'ZodNativeEnum') {
-      const vals = (schema._def as any)?.values;
-      return vals ? `enum(${Object.values(vals).filter(v => typeof v === 'string').join('|')})` : "enum";
-    }
-    return "unknown";
+    const jsonSchema = z.toJSONSchema(schema, {
+      target: 'draft-07',
+      unrepresentable: 'any',
+      io: 'input',
+    });
+    return jsonSchemaToSimple(jsonSchema);
   } catch {
     return "unknown";
   }
+}
+
+/** Convert a JSON Schema object to the simplified DB format */
+function jsonSchemaToSimple(schema: any): any {
+  if (!schema || typeof schema !== 'object') return 'unknown';
+
+  if (schema.type === 'object' && schema.properties) {
+    const result: any = {};
+    for (const [key, prop] of Object.entries(schema.properties as Record<string, any>)) {
+      const simple = jsonSchemaToSimple(prop);
+      const isRequired = Array.isArray(schema.required) && schema.required.includes(key);
+      result[key] = isRequired ? simple : (typeof simple === 'string' ? simple + '?' : simple);
+    }
+    return result;
+  }
+  if (schema.type === 'array') {
+    return [jsonSchemaToSimple(schema.items)];
+  }
+  if (schema.type === 'string' && schema.enum) {
+    return `enum(${schema.enum.join('|')})`;
+  }
+  if (schema.type === 'string') return 'string';
+  if (schema.type === 'number' || schema.type === 'integer') return 'number';
+  if (schema.type === 'boolean') return 'boolean';
+  if (schema.anyOf || schema.oneOf) return 'union';
+  if (schema.const !== undefined) return `literal(${schema.const})`;
+  return 'unknown';
 }
 
 /**

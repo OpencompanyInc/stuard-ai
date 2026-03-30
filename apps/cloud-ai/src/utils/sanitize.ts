@@ -1,6 +1,21 @@
 import { safeData } from './logger';
 
-const SENSITIVE_KEY_RE = /(token|secret|password|passwd|authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|session|cookie|private[_-]?key|client_secret)/i;
+const SENSITIVE_KEY_RE = /(token|secret|password|passwd|authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|cookie|private[_-]?key|client_secret)/i;
+const SESSION_SECRET_KEY_RE = /(^|[_-])(session|auth[_-]?session)([_-]|$)/i;
+const SAFE_SESSION_ID_KEY_RE = /(^|[_-])session[_-]?id$/i;
+
+function normalizeKey(value: string): string {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .trim()
+    .toLowerCase();
+}
+
+function isSensitiveKey(key: string): boolean {
+  const normalized = normalizeKey(key);
+  if (SAFE_SESSION_ID_KEY_RE.test(normalized)) return false;
+  return SENSITIVE_KEY_RE.test(normalized) || SESSION_SECRET_KEY_RE.test(normalized);
+}
 
 function redactSensitiveString(value: string): string {
   const trimmed = value.trim();
@@ -28,7 +43,7 @@ export function redactSensitiveData(input: any, depth = 0, seen?: WeakSet<object
 
   const out: Record<string, any> = {};
   for (const [k, v] of Object.entries(input)) {
-    if (SENSITIVE_KEY_RE.test(k)) {
+    if (isSensitiveKey(k)) {
       out[k] = '[redacted]';
       continue;
     }

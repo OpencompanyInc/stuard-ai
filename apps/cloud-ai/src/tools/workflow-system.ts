@@ -21,6 +21,10 @@ import { google } from '../utils/models';
 import { writeLog } from '../utils/logger';
 import { getToolRegistry, getToolMetadata } from './tool-registry';
 
+import { zodToJsonSchema, zodToTemplate } from './zod-utils';
+
+// zodToJsonSchema, zodToTemplate imported from ./zod-utils
+const zodToJsonish = zodToJsonSchema;
 // Note: initToolRegistry is called lazily when needed, not at module load time
 // to avoid circular dependency issues with meta-tools.ts
 
@@ -31,114 +35,6 @@ function wfLog(event: string, data?: Record<string, any>) {
   writeLog(`wf_tool_${event}`, data);
 }
 
-function getZodDescription(schema: any): string | undefined {
-  try {
-    const desc = (schema as any)?.description || (schema as any)?._def?.description;
-    return desc ? String(desc) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function unwrapZod(schema: any): { schema: any; optional: boolean; defaultValue?: any; nullable: boolean } {
-  let s = schema;
-  let optional = false;
-  let nullable = false;
-  let defaultValue: any = undefined;
-
-  try {
-    while (s) {
-      if (s instanceof z.ZodOptional) {
-        optional = true;
-        s = (s as any)._def?.innerType;
-        continue;
-      }
-      if (s instanceof z.ZodNullable) {
-        nullable = true;
-        s = (s as any)._def?.innerType;
-        continue;
-      }
-      if (s instanceof z.ZodDefault) {
-        try {
-          const dv = (s as any)?._def?.defaultValue;
-          defaultValue = typeof dv === 'function' ? dv() : dv;
-        } catch {}
-        s = (s as any)._def?.innerType;
-        continue;
-      }
-      break;
-    }
-  } catch {}
-
-  return { schema: s, optional, defaultValue, nullable };
-}
-
-function zodToJsonish(schema: any): any {
-  const { schema: s, optional, defaultValue, nullable } = unwrapZod(schema);
-  const description = getZodDescription(schema);
-
-  const base: any = {};
-  if (description) base.description = description;
-  if (optional) base.optional = true;
-  if (typeof defaultValue !== 'undefined') base.default = defaultValue;
-  if (nullable) base.nullable = true;
-
-  if (!s) return { type: 'unknown', ...base };
-  if (s instanceof z.ZodObject) {
-    const shape = (s as any).shape;
-    const properties: any = {};
-    const required: string[] = [];
-    for (const key of Object.keys(shape)) {
-      const child = shape[key];
-      const childUnwrapped = unwrapZod(child);
-      properties[key] = zodToJsonish(child);
-      if (!childUnwrapped.optional && typeof childUnwrapped.defaultValue === 'undefined') {
-        required.push(key);
-      }
-    }
-    return { type: 'object', properties, required, ...base };
-  }
-  if (s instanceof z.ZodArray) {
-    return { type: 'array', items: zodToJsonish((s as any).element), ...base };
-  }
-  if (s instanceof z.ZodString) return { type: 'string', ...base };
-  if (s instanceof z.ZodNumber) return { type: 'number', ...base };
-  if (s instanceof z.ZodBoolean) return { type: 'boolean', ...base };
-  if (s instanceof z.ZodEnum) return { type: 'enum', values: (s as any)._def?.values || [], ...base };
-  if (s instanceof z.ZodLiteral) return { type: 'literal', value: (s as any)._def?.value, ...base };
-  if (s instanceof z.ZodRecord) return { type: 'record', ...base };
-  if (s instanceof z.ZodAny) return { type: 'any', ...base };
-  if (s instanceof z.ZodUnion) return { type: 'union', ...base };
-  return { type: 'unknown', ...base };
-}
-
-function zodToTemplate(schema: any): any {
-  const { schema: s, defaultValue } = unwrapZod(schema);
-  if (typeof defaultValue !== 'undefined') return defaultValue;
-  if (!s) return null;
-
-  if (s instanceof z.ZodObject) {
-    const shape = (s as any).shape;
-    const out: any = {};
-    for (const key of Object.keys(shape)) {
-      out[key] = zodToTemplate(shape[key]);
-    }
-    return out;
-  }
-  if (s instanceof z.ZodArray) return [];
-  if (s instanceof z.ZodString) return '';
-  if (s instanceof z.ZodNumber) return 0;
-  if (s instanceof z.ZodBoolean) return false;
-  if (s instanceof z.ZodEnum) {
-    const values = (s as any)._def?.values;
-    return Array.isArray(values) && values.length > 0 ? values[0] : '';
-  }
-  if (s instanceof z.ZodLiteral) return (s as any)._def?.value;
-  if (s instanceof z.ZodRecord) return {};
-  if (s instanceof z.ZodAny) return null;
-  if (s instanceof z.ZodUnion) return null;
-  return null;
-}
 
 // Global workflow map to store in-memory workflows in the cloud AI
 export const workflowMap = new Map<string, any>();
